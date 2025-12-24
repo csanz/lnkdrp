@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Paper Plane</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        /* Black background version (animation only) */
+        background: #050506;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      #status {
+        position: fixed;
+        left: 12px;
+        top: 10px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: rgba(0, 0, 0, 0.42);
+        backdrop-filter: blur(6px);
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+          "Courier New", monospace;
+        color: rgba(255, 255, 255, 0.78);
+        user-select: none;
+        pointer-events: none;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">HTML loaded. Initializing…</div>
+    <script src="./boot.js"></script>
+  </body>
+</html>
+
+
