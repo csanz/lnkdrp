@@ -1,0 +1,696 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import {
+  ArchiveBoxIcon,
+  ChevronRightIcon,
+  DocumentMagnifyingGlassIcon,
+  EllipsisHorizontalIcon,
+  FlagIcon,
+  FolderIcon,
+  PlusIcon,
+  TrashIcon,
+} from "@heroicons/react/24/outline";
+import Modal from "@/components/modals/Modal";
+import { fetchJson } from "@/lib/http/fetchJson";
+import { notifyDocsChanged, notifyProjectsChanged } from "@/lib/sidebarCache";
+
+type ProjectDTO = { id: string; name: string; description: string };
+
+// Temporary: hide unfinished actions from the doc menu.
+const SHOW_QUALITY_REVIEW = false;
+const SHOW_ARCHIVE = false;
+const SHOW_REPORT = false;
+
+export default function DocActionsMenu({
+  docId,
+  currentProjectId,
+  currentProjectIds,
+  disabled,
+  onDocPatched,
+  onDeleted,
+  onOpenQualityReview,
+}: {
+  docId: string;
+  currentProjectId?: string | null;
+  currentProjectIds?: string[] | null;
+  disabled?: boolean;
+  onDocPatched?: (patch: {
+    projectId?: string | null;
+    project?: { id: string; name: string } | null;
+    projectIds?: string[];
+    projects?: Array<{ id: string; name: string; slug?: string }>;
+    isArchived?: boolean;
+  }) => void;
+  onDeleted?: () => void;
+  onOpenQualityReview?: () => void;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const [projects, setProjects] = useState<ProjectDTO[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDesc, setNewProjectDesc] = useState("");
+  const [newProjectError, setNewProjectError] = useState<string | null>(null);
+  const [newProjectBusy, setNewProjectBusy] = useState(false);
+
+  const [showReport, setShowReport] = useState(false);
+  const [reportMessage, setReportMessage] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportDone, setReportDone] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        setProjectsOpen(false);
+      }
+    }
+    function onPointerDown(e: MouseEvent | PointerEvent) {
+      const el = rootRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) {
+        setOpen(false);
+        setProjectsOpen(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open]);
+
+  async function loadProjects() {
+    setProjectsLoading(true);
+    setProjectsError(null);
+    try {
+      const res = await fetchJson<{ projects?: ProjectDTO[] }>(`/api/projects?limit=50&page=1`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      setProjects(Array.isArray(res.projects) ? res.projects : []);
+    } catch (e) {
+      setProjectsError(e instanceof Error ? e.message : "Failed to load projects");
+    } finally {
+      setProjectsLoading(false);
+    }
+  }
+
+  async function addToProject(projectId: string) {
+    try {
+      const res = await fetchJson<{
+        doc?: {
+          projectId?: string | null;
+          project?: { id: string; name: string } | null;
+          projectIds?: string[];
+          projects?: Array<{ id: string; name: string; slug?: string }>;
+        };
+      }>(
+        `/api/docs/${docId}`,
+        {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ addProjectId: projectId }),
+        },
+      );
+      onDocPatched?.({
+        projectId: typeof res?.doc?.projectId === "string" ? res.doc.projectId : null,
+        project: res?.doc?.project ?? null,
+        projectIds: Array.isArray(res?.doc?.projectIds) ? res.doc.projectIds : undefined,
+        projects: Array.isArray(res?.doc?.projects) ? res.doc.projects : undefined,
+      });
+      notifyDocsChanged();
+      setOpen(false);
+      setProjectsOpen(false);
+    } catch {
+      // Keep menu open; errors show in projects panel.
+      setProjectsError("Failed to add to project");
+    }
+  }
+
+  async function createProjectAndMove() {
+    const name = newProjectName.trim();
+    const description = newProjectDesc.trim();
+    if (!name) {
+      setNewProjectError("Project name is required");
+      return;
+    }
+    setNewProjectBusy(true);
+    setNewProjectError(null);
+    try {
+      const res = await fetchJson<{ project: ProjectDTO }>("/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, description }),
+      });
+      const id = res?.project?.id;
+      if (typeof id === "string" && id) {
+        // refresh projects list and add immediately
+        setProjects((prev) => [{ id, name, description }, ...prev]);
+        // Notify other UI (sidebar, etc) to refresh projects immediately.
+        notifyProjectsChanged();
+        await addToProject(id);
+      } else {
+        throw new Error("Failed to create project");
+      }
+      setShowNewProject(false);
+      setNewProjectName("");
+      setNewProjectDesc("");
+    } catch (e) {
+      setNewProjectError(e instanceof Error ? e.message : "Failed to create project");
+    } finally {
+      setNewProjectBusy(false);
+    }
+  }
+
+  async function removeFromThisProject() {
+    if (!currentProjectId) return;
+    try {
+      const res = await fetchJson<{
+        doc?: {
+          projectId?: string | null;
+          project?: { id: string; name: string } | null;
+          projectIds?: string[];
+          projects?: Array<{ id: string; name: string; slug?: string }>;
+        };
+      }>(
+        `/api/docs/${docId}`,
+        {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ removeProjectId: currentProjectId }),
+        },
+      );
+      onDocPatched?.({
+        projectId: typeof res?.doc?.projectId === "string" ? res.doc.projectId : null,
+        project: res?.doc?.project ?? null,
+        projectIds: Array.isArray(res?.doc?.projectIds) ? res.doc.projectIds : undefined,
+        projects: Array.isArray(res?.doc?.projects) ? res.doc.projects : undefined,
+      });
+      notifyDocsChanged();
+      setOpen(false);
+      setProjectsOpen(false);
+    } catch {
+      setProjectsError("Failed to remove from project");
+    }
+  }
+
+  async function archiveDoc() {
+    try {
+      await fetchJson(`/api/docs/${docId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ isArchived: true }),
+      });
+      onDocPatched?.({ isArchived: true });
+      notifyDocsChanged();
+      setOpen(false);
+      setProjectsOpen(false);
+      // Archiving removes it from `/api/docs` lists; the current page is still valid.
+    } catch {
+      // ignore (best-effort)
+    }
+  }
+
+  async function submitReport() {
+    setReportBusy(true);
+    setReportError(null);
+    try {
+      await fetchJson(`/api/docs/${docId}/report`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message: reportMessage.trim() }),
+      });
+      setReportDone(true);
+      window.setTimeout(() => {
+        setShowReport(false);
+        setReportDone(false);
+        setReportMessage("");
+      }, 650);
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : "Failed to report");
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
+  async function deleteDoc() {
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      await fetchJson(`/api/docs/${docId}`, { method: "DELETE" });
+      setShowDeleteConfirm(false);
+      setOpen(false);
+      setProjectsOpen(false);
+      notifyDocsChanged();
+      onDeleted?.();
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "Failed to delete");
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
+  const menuItemBase =
+    "flex w-full items-center justify-between gap-3 px-3 py-2 text-[13px] text-[var(--fg)] hover:bg-[var(--panel-hover)]";
+
+  const disabledClass = disabled ? "cursor-not-allowed opacity-50 hover:bg-[var(--panel)]" : "";
+  const selectedProjectIds = new Set(
+    (Array.isArray(currentProjectIds) ? currentProjectIds : null) ??
+      (currentProjectId ? [currentProjectId] : []),
+  );
+
+  const projectsPanel = (
+    <div
+      role="menu"
+      className="absolute right-[calc(100%+10px)] top-0 z-50 w-[260px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+    >
+      <ul className="max-h-[320px] overflow-auto py-1">
+        <li>
+          <button
+            type="button"
+            className={menuItemBase}
+            onClick={() => {
+              setShowNewProject(true);
+              setOpen(false);
+              setProjectsOpen(false);
+              setNewProjectError(null);
+            }}
+          >
+            <span className="inline-flex items-center gap-2">
+              <span className="text-[var(--muted-2)]">
+                <PlusIcon className="h-4 w-4" />
+              </span>
+              <span>New project</span>
+            </span>
+          </button>
+        </li>
+        <li className="my-1 h-px bg-[var(--border)]" />
+        {projectsLoading ? (
+          <li className="px-3 py-2 text-[13px] text-[var(--muted-2)]">Loading…</li>
+        ) : projectsError ? (
+          <li className="px-3 py-2 text-[13px] text-red-700">{projectsError}</li>
+        ) : projects.length ? (
+          projects.map((p) => (
+            <li key={p.id}>
+              <button
+                type="button"
+                className={menuItemBase}
+                onClick={() => {
+                  if (selectedProjectIds.has(p.id)) {
+                    // Best-effort: allow toggling off if we know this doc is already in the project.
+                    void fetchJson<{
+                      doc?: {
+                        projectId?: string | null;
+                        project?: { id: string; name: string } | null;
+                        projectIds?: string[];
+                        projects?: Array<{ id: string; name: string; slug?: string }>;
+                      };
+                    }>(`/api/docs/${docId}`, {
+                      method: "PATCH",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ removeProjectId: p.id }),
+                    })
+                      .then((r) => {
+                        onDocPatched?.({
+                          projectId: typeof r?.doc?.projectId === "string" ? r.doc.projectId : null,
+                          project: r?.doc?.project ?? null,
+                          projectIds: Array.isArray(r?.doc?.projectIds) ? r.doc.projectIds : undefined,
+                          projects: Array.isArray(r?.doc?.projects) ? r.doc.projects : undefined,
+                        });
+                        notifyDocsChanged();
+                        setOpen(false);
+                        setProjectsOpen(false);
+                      })
+                      .catch(() => setProjectsError("Failed to remove from project"));
+                    return;
+                  }
+                  void addToProject(p.id);
+                }}
+              >
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <span className="text-[var(--muted-2)]">
+                    <FolderIcon className="h-4 w-4" />
+                  </span>
+                  <span className="truncate">{p.name}</span>
+                </span>
+                {selectedProjectIds.has(p.id) ? (
+                  <span className="shrink-0 text-[12px] font-semibold text-[var(--muted-2)]">✓</span>
+                ) : null}
+              </button>
+            </li>
+          ))
+        ) : (
+          <li className="px-3 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</li>
+        )}
+      </ul>
+    </div>
+  );
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        disabled={disabled}
+        aria-disabled={disabled}
+        className={[
+          "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+          disabledClass,
+        ].join(" ")}
+        aria-label="Document actions"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => {
+          if (disabled) return;
+          setOpen((v) => !v);
+          setProjectsOpen(false);
+        }}
+      >
+        <EllipsisHorizontalIcon className="h-5 w-5" />
+      </button>
+
+      {open && !disabled ? (
+        <div
+          role="menu"
+          className="absolute right-0 top-[calc(100%+10px)] z-50 w-[220px] overflow-visible rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+        >
+          <ul className="py-1">
+            <li className="relative">
+              <button
+                type="button"
+                className={menuItemBase}
+                onClick={() => {
+                  const next = !projectsOpen;
+                  setProjectsOpen(next);
+                  setProjectsError(null);
+                  if (next) void loadProjects();
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-[var(--muted-2)]">
+                    <FolderIcon className="h-4 w-4" />
+                  </span>
+                  <span>Projects</span>
+                </span>
+                <ChevronRightIcon className="h-4 w-4 text-[var(--muted-2)]" />
+              </button>
+              {projectsOpen ? projectsPanel : null}
+            </li>
+
+            {currentProjectId ? (
+              <li>
+                <button
+                  type="button"
+                  className={menuItemBase}
+                  onClick={() => {
+                    setProjectsError(null);
+                    void removeFromThisProject();
+                  }}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <span className="text-[var(--muted-2)]">
+                      <FolderIcon className="h-4 w-4" />
+                    </span>
+                    <span>Remove from this project</span>
+                  </span>
+                </button>
+              </li>
+            ) : null}
+
+            <li className="my-1 h-px bg-[var(--border)]" />
+
+            {SHOW_QUALITY_REVIEW ? (
+              <li>
+                <button
+                  type="button"
+                  className={menuItemBase}
+                  onClick={() => {
+                    setOpen(false);
+                    setProjectsOpen(false);
+                    onOpenQualityReview?.();
+                  }}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <span className="text-zinc-500">
+                      <DocumentMagnifyingGlassIcon className="h-4 w-4" />
+                    </span>
+                    <span>Quality review</span>
+                  </span>
+                </button>
+              </li>
+            ) : null}
+
+            {SHOW_ARCHIVE ? (
+              <li>
+                <button type="button" className={menuItemBase} onClick={() => void archiveDoc()}>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="text-zinc-500">
+                      <ArchiveBoxIcon className="h-4 w-4" />
+                    </span>
+                    <span>Archive</span>
+                  </span>
+                </button>
+              </li>
+            ) : null}
+
+            {SHOW_REPORT ? (
+              <li>
+                <button
+                  type="button"
+                  className={menuItemBase}
+                  onClick={() => {
+                    setShowReport(true);
+                    setReportError(null);
+                    setReportDone(false);
+                    setOpen(false);
+                    setProjectsOpen(false);
+                  }}
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <span className="text-zinc-500">
+                      <FlagIcon className="h-4 w-4" />
+                    </span>
+                    <span>Report</span>
+                  </span>
+                </button>
+              </li>
+            ) : null}
+            <li>
+              <button
+                type="button"
+                className={[menuItemBase, "text-red-700 hover:bg-red-50"].join(" ")}
+                onClick={() => {
+                  setShowDeleteConfirm(true);
+                  setDeleteError(null);
+                  setOpen(false);
+                  setProjectsOpen(false);
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-red-600">
+                    <TrashIcon className="h-4 w-4" />
+                  </span>
+                  <span>Delete</span>
+                </span>
+              </button>
+            </li>
+          </ul>
+        </div>
+      ) : null}
+
+      <Modal
+        open={showNewProject}
+        onClose={() => {
+          if (newProjectBusy) return;
+          setShowNewProject(false);
+        }}
+        ariaLabel="New project"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-base font-semibold text-[var(--fg)]">New project</div>
+            {newProjectBusy ? (
+              <div
+                className="inline-flex items-center gap-2 text-xs font-medium text-[var(--muted-2)]"
+                aria-live="polite"
+              >
+                <Spinner className="h-4 w-4 text-[var(--muted-2)]" />
+                <span>Creating…</span>
+              </div>
+            ) : null}
+          </div>
+          <div className="text-sm text-[var(--muted)]">
+            Give it a short name and describe it so AI can auto-add docs to this project later.
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Name</div>
+            <input
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              disabled={newProjectBusy}
+              placeholder="e.g. Lnkdrp fundraising"
+              className="mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+            />
+          </div>
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+              Description
+            </div>
+            <textarea
+              value={newProjectDesc}
+              onChange={(e) => setNewProjectDesc(e.target.value)}
+              disabled={newProjectBusy}
+              placeholder="What kinds of docs belong here?"
+              className="mt-1 min-h-[96px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+            />
+          </div>
+          {newProjectError ? (
+            <div className="text-sm font-medium text-red-700">{newProjectError}</div>
+          ) : null}
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
+              disabled={newProjectBusy}
+              onClick={() => setShowNewProject(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
+              disabled={newProjectBusy}
+              onClick={() => void createProjectAndMove()}
+            >
+              {newProjectBusy ? (
+                <span className="inline-flex items-center gap-2">
+                  <Spinner className="h-4 w-4 text-[var(--primary-fg)]" />
+                  <span>Creating…</span>
+                </span>
+              ) : (
+                "Create project"
+              )}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showReport}
+        onClose={() => {
+          if (reportBusy) return;
+          setShowReport(false);
+        }}
+        ariaLabel="Report"
+      >
+        <div className="space-y-4">
+          <div className="text-base font-semibold text-[var(--fg)]">Report</div>
+          <div className="text-sm text-[var(--muted)]">Tell us what’s wrong (optional).</div>
+          <textarea
+            value={reportMessage}
+            onChange={(e) => setReportMessage(e.target.value)}
+            placeholder="Describe the issue…"
+            className="min-h-[120px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+          />
+          {reportError ? <div className="text-sm font-medium text-red-700">{reportError}</div> : null}
+          {reportDone ? <div className="text-sm font-medium text-emerald-700">Reported.</div> : null}
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
+              disabled={reportBusy}
+              onClick={() => setShowReport(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
+              disabled={reportBusy}
+              onClick={() => void submitReport()}
+            >
+              {reportBusy ? "Sending…" : "Send report"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showDeleteConfirm}
+        onClose={() => {
+          if (deleteBusy) return;
+          setShowDeleteConfirm(false);
+        }}
+        ariaLabel="Delete document"
+      >
+        <div className="space-y-4">
+          <div className="text-base font-semibold text-[var(--fg)]">Delete document?</div>
+          <div className="text-sm text-[var(--muted)]">
+            This will remove the document from your lists. You can’t undo this.
+          </div>
+          {deleteError ? <div className="text-sm font-medium text-red-700">{deleteError}</div> : null}
+          <div className="flex items-center justify-end gap-3">
+            <button
+              type="button"
+              className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
+              disabled={deleteBusy}
+              onClick={() => setShowDeleteConfirm(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+              disabled={deleteBusy}
+              onClick={() => void deleteDoc()}
+            >
+              {deleteBusy ? "Deleting…" : "Delete"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+function Spinner({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={["animate-spin", className ?? "h-4 w-4"].join(" ")}
+    >
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        className="opacity-25"
+      />
+      <path
+        fill="currentColor"
+        className="opacity-75"
+        d="M12 3a9 9 0 0 1 9 9h-3a6 6 0 0 0-6-6V3z"
+      />
+    </svg>
+  );
+}
+
+
+
+
+

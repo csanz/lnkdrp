@@ -7,6 +7,32 @@ import Modal from "@/components/modals/Modal";
 
 type PendingRoute = "/client-upload" | "/login";
 
+const INVITE_CODE_STORAGE_KEY = "ld_invite_code";
+
+function normalizeInviteCode(input: string) {
+  // Accept common copy/paste formats (spaces/dashes) and normalize for matching.
+  return input.replace(/[^a-z0-9]/gi, "").trim().toUpperCase();
+}
+
+function readStoredInviteCode(): string {
+  try {
+    const raw = localStorage.getItem(INVITE_CODE_STORAGE_KEY) ?? "";
+    return raw ? normalizeInviteCode(raw) : "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredInviteCode(code: string) {
+  try {
+    const normalized = normalizeInviteCode(code);
+    if (!normalized) return;
+    localStorage.setItem(INVITE_CODE_STORAGE_KEY, normalized);
+  } catch {
+    // ignore
+  }
+}
+
 export default function Home() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -27,6 +53,12 @@ export default function Home() {
 
   const inviteNote = useMemo(() => "Invite required to continue.", []);
 
+  // Load last-entered invite code (if any).
+  useEffect(() => {
+    const stored = readStoredInviteCode();
+    if (stored) setInviteCode(stored);
+  }, []);
+
   const refreshInviteStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/invites/status", { method: "GET" });
@@ -46,6 +78,8 @@ export default function Home() {
       setRequestError(null);
       setRequestDone(false);
       setInviteModalOpen(true);
+      // If the field is empty, prefill with any stored code.
+      setInviteCode((prev) => prev.trim() ? prev : readStoredInviteCode());
       void refreshInviteStatus();
     },
     [refreshInviteStatus],
@@ -54,7 +88,7 @@ export default function Home() {
   const verifyInvite = useCallback(
     async (code: string) => {
       if (isVerifyingInvite) return;
-      const trimmed = code.trim();
+      const trimmed = normalizeInviteCode(code);
       setInviteError(null);
       setIsVerifyingInvite(true);
       try {
@@ -69,6 +103,7 @@ export default function Home() {
           return;
         }
 
+        writeStoredInviteCode(trimmed);
         const res = await fetch("/api/invites/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -116,11 +151,12 @@ export default function Home() {
 
   // Auto-claim from email link: /?invite=CODE
   useEffect(() => {
-    const code = (searchParams.get("invite") ?? "").trim();
+    const code = normalizeInviteCode(searchParams.get("invite") ?? "");
     if (!code) return;
     setPendingRoute("/client-upload");
     setInviteModalOpen(true);
     setInviteCode(code);
+    writeStoredInviteCode(code);
     void verifyInvite(code);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -215,6 +251,9 @@ export default function Home() {
               <input
                 value={inviteCode}
                 onChange={(e) => setInviteCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void verifyInvite(inviteCode);
+                }}
                 placeholder="e.g. ABC123"
                 autoComplete="off"
                 className="w-full rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-white/35 focus:outline-none focus:ring-2 focus:ring-white/20"

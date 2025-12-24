@@ -33,3 +33,5 @@ Choose one accent at a time. Keep it subtle and never replace core black/white c
 - **Focus**: default focus ring should be visible; prefer neutral ring (`zinc-900/20`) unless an accent is required.
 
 
+
+

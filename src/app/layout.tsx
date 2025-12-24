@@ -1,34 +1,24 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
+import Providers from "@/app/providers";
 
 export const metadata: Metadata = {
   title: {
-    default: "LinkDrop — Share Docs",
-    template: "%s — LinkDrop",
+    default: "LinkDrop - Share Docs",
+    template: "%s - LinkDrop",
   },
   description: "Share your docs with a simple link.",
   icons: {
     icon: "/icon.svg",
   },
   openGraph: {
-    title: "LinkDrop — Share Docs",
+    title: "LinkDrop - Share Docs",
     description: "Share your docs with a simple link.",
     type: "website",
   },
   twitter: {
     card: "summary",
-    title: "LinkDrop — Share Docs",
+    title: "LinkDrop - Share Docs",
     description: "Share your docs with a simple link.",
   },
 };
@@ -38,12 +28,25 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Mirror server debug level into the client runtime so client-side debug logs
+  // can use the same switch as server logs.
+  const debugLevel = Number(process.env.DEBUG_LEVEL ?? "0");
+
+  const enableAuth =
+    !!process.env.MONGODB_URI &&
+    !!process.env.NEXTAUTH_SECRET &&
+    !!process.env.GOOGLE_CLIENT_ID &&
+    !!process.env.GOOGLE_CLIENT_SECRET;
+
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
+    <html lang="en" suppressHydrationWarning>
+      <body className="font-sans antialiased">
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__DEBUG_LEVEL__=${Number.isFinite(debugLevel) ? debugLevel : 0};`,
+          }}
+        />
+        <Providers enableAuth={enableAuth}>{children}</Providers>
       </body>
     </html>
   );

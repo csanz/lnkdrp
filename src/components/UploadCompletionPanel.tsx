@@ -24,8 +24,8 @@ export default function UploadCompletionPanel({
   onSelectFile,
 }: Props) {
   return (
-    <aside className="min-h-0 overflow-auto rounded-2xl border border-zinc-200 bg-white p-5">
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+    <aside className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+      <div className="text-xs font-medium uppercase tracking-wide text-[var(--muted-2)]">
         {hasPreview ? "Review" : "Upload"}
       </div>
       <div className="mt-3">
@@ -35,13 +35,13 @@ export default function UploadCompletionPanel({
             type="button"
             onClick={onFinishAndShare}
             disabled={!selectedFile || isFinishing}
-            className="inline-flex w-full items-center justify-center rounded-lg bg-zinc-900 px-5 py-2 text-[13px] font-semibold text-white transition-colors transition-transform duration-150 hover:bg-zinc-800 active:scale-[0.98] disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center rounded-lg bg-[var(--primary-bg)] px-5 py-2 text-[13px] font-semibold text-[var(--primary-fg)] transition-colors transition-transform duration-150 hover:bg-[var(--primary-hover-bg)] active:scale-[0.98] disabled:opacity-50"
           >
             {isFinishing ? "Starting…" : "Finish and share"}
           </button>
         ) : (
           <UploadButton
-            label="Select PDF"
+            label="Browse files"
             accept="pdf"
             variant="cta"
             onFileSelected={onSelectFile}
@@ -50,11 +50,14 @@ export default function UploadCompletionPanel({
         )}
       </div>
       {hasPreview ? (
-        <div className="mt-2 text-xs text-zinc-500">Creates a private share link</div>
+        <div className="mt-2 text-xs text-[var(--muted-2)]">Creates a private share link</div>
       ) : (
-        <div className="mt-2 text-xs text-zinc-500">Choose a PDF to preview before sharing.</div>
+        <div className="mt-2 text-xs text-[var(--muted-2)]">Choose a PDF to preview before sharing.</div>
       )}
     </aside>
   );
 }
+
+
+
 

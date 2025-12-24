@@ -6,6 +6,26 @@
   console.log("[paperplane] overlay.js loaded");
   setStatus("Overlay loaded.");
 
+  const INVITE_CODE_STORAGE_KEY = "ld_invite_code";
+  const normalizeInviteCode = (s) => String(s || "").replace(/[^a-z0-9]/gi, "").trim().toUpperCase();
+  const readStoredInviteCode = () => {
+    try {
+      const raw = window.localStorage.getItem(INVITE_CODE_STORAGE_KEY) || "";
+      return raw ? normalizeInviteCode(raw) : "";
+    } catch {
+      return "";
+    }
+  };
+  const writeStoredInviteCode = (code) => {
+    try {
+      const normalized = normalizeInviteCode(code);
+      if (!normalized) return;
+      window.localStorage.setItem(INVITE_CODE_STORAGE_KEY, normalized);
+    } catch {
+      // ignore
+    }
+  };
+
   const getStarted = document.getElementById("ctaGetStarted");
   const login = document.getElementById("navLogin");
 
@@ -39,6 +59,10 @@
     pendingHref = typeof nextHref === "string" ? nextHref : "/client-upload";
     modal.setAttribute("data-open", "true");
     setMsg("", "");
+    if (!String(input.value || "").trim()) {
+      const stored = readStoredInviteCode();
+      if (stored) input.value = stored;
+    }
     setTimeout(() => input.focus(), 0);
   }
 
@@ -48,7 +72,7 @@
   }
 
   async function verify(code) {
-    const trimmed = (code || "").trim();
+    const trimmed = normalizeInviteCode(code);
     // If already invited (cookie set), allow continuing without re-entering a code.
     if (!trimmed) {
       await refreshInviteStatus();
@@ -63,6 +87,7 @@
     continueBtn.textContent = "Checking…";
     setMsg("", "");
     try {
+      writeStoredInviteCode(trimmed);
       const res = await fetch("/api/invites/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -139,10 +164,11 @@
   // Auto-claim from email link: /?invite=CODE
   try {
     const url = new URL(window.location.href);
-    const code = (url.searchParams.get("invite") || "").trim();
+    const code = normalizeInviteCode(url.searchParams.get("invite") || "");
     if (code) {
       openModal("/client-upload");
       input.value = code;
+      writeStoredInviteCode(code);
       verify(code);
       url.searchParams.delete("invite");
       window.history.replaceState(null, "", url.toString());

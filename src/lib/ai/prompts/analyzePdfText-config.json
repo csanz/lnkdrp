@@ -1,0 +1,7 @@
+{
+  "model": "gpt-4o-mini",
+  "temperature": 0,
+  "maxRetries": 2,
+  "stream": false,
+  "maxTokens": 1200
+}

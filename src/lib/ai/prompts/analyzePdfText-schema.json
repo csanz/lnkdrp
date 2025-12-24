@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AiDocAnalysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "one_liner",
+    "core_problem_or_need",
+    "solution_summary",
+    "primary_capabilities_or_scope",
+    "intended_use_or_context",
+    "outcomes_or_value",
+    "maturity_or_status",
+    "meta_title",
+    "meta_description",
+    "summary",
+    "doc_name",
+    "category",
+    "page_slugs",
+    "tags",
+    "document_purpose",
+    "intended_audience",
+    "company_or_project_name",
+    "industry",
+    "stage",
+    "key_metrics",
+    "ask",
+    "tone",
+    "confidence_level",
+    "structure_signals",
+    "relevant_projects"
+  ],
+  "properties": {
+    "one_liner": { "type": "string" },
+    "core_problem_or_need": { "type": "string" },
+    "solution_summary": { "type": "string" },
+    "primary_capabilities_or_scope": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "intended_use_or_context": { "type": "string" },
+    "outcomes_or_value": { "type": "string" },
+    "maturity_or_status": { "type": "string" },
+    "meta_title": { "type": "string" },
+    "meta_description": { "type": "string" },
+    "summary": { "type": "string", "description": "Markdown summary (no HTML)." },
+    "doc_name": { "type": "string" },
+    "category": {
+      "type": "string",
+      "enum": [
+        "fundraising_pitch",
+        "sales_pitch",
+        "product_overview",
+        "technical_whitepaper",
+        "business_plan",
+        "investor_update",
+        "financial_report",
+        "market_research",
+        "internal_strategy",
+        "partnership_proposal",
+        "marketing_material",
+        "training_or_manual",
+        "legal_document",
+        "resume_or_profile",
+        "academic_paper",
+        "other"
+      ]
+    },
+    "page_slugs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["page_number", "slug"],
+        "properties": {
+          "page_number": { "type": "integer", "minimum": 1 },
+          "slug": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "document_purpose": { "type": "string" },
+    "intended_audience": {
+      "type": "string",
+      "enum": ["investors", "customers", "partners", "internal", "general", "unknown"]
+    },
+    "company_or_project_name": { "type": "string" },
+    "industry": { "type": "string" },
+    "stage": {
+      "type": "string",
+      "enum": ["idea", "pre-seed", "seed", "series_a", "growth", "mature", "unknown"]
+    },
+    "key_metrics": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "ask": { "type": "string" },
+    "tone": {
+      "type": "string",
+      "enum": ["formal", "persuasive", "technical", "marketing", "internal", "mixed"]
+    },
+    "confidence_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "structure_signals": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "relevant_projects": {
+      "type": "array",
+      "description": "Projects this doc should belong to (subset of provided project list).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["project_id", "project_name"],
+        "properties": {
+          "project_id": { "type": "string" },
+          "project_name": { "type": "string" }
+        }
+      }
+    }
+  }
+}
