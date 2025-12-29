@@ -1,0 +1,604 @@
+# Components
+- `src/components/AboutCopy.tsx` — exports: AboutCopy
+- `src/components/AccountMenu.tsx` — exports: AccountMenu
+- `src/components/BlobClientUploadTest.tsx` — exports: BlobClientUploadTest
+- `src/components/DocActionsMenu.tsx` — exports: DocActionsMenu
+- `src/components/DocDebugModal.tsx` — exports: DocDebugModal
+- `src/components/DocSharePanel.tsx` — exports: DocSharePanel
+- `src/admin/components/CacheToolsClient.tsx` — exports: CacheToolsClient
+- `src/components/LeftSidebar.tsx` — exports: LeftSidebar
+- `src/components/SidebarProjectsSection.tsx` — exports: SidebarProjectsSection
+- `src/components/Markdown.tsx` — exports: Markdown
+- `src/components/PasswordGate.tsx` — exports: PasswordGate
+- `src/components/ProjectSharePanel.tsx` — exports: ProjectSharePanel
+- `src/components/modals/CreateLinkRequestRepositoryModal.tsx` — exports: CreateLinkRequestRepositoryModal
+- `src/components/modals/DeleteDocModal.tsx` — exports: DeleteDocModal
+- `src/components/modals/DeleteProjectModal.tsx` — exports: DeleteProjectModal
+- `src/components/modals/DocProjectsModal.tsx` — exports: DocProjectsModal
+- `src/components/modals/Modal.tsx` — exports: Modal
+- `src/components/modals/ReviewPerspectiveModal.tsx` — exports: ReviewPerspectiveModal
+- `src/components/modals/SidebarDocsModal.tsx` — exports: SidebarDocsModal
+- `src/components/modals/SidebarProjectsModal.tsx` — exports: SidebarProjectsModal
+- `src/components/modals/SidebarStarredModal.tsx` — exports: SidebarStarredModal
+- `src/components/modals/TempUserGateModal.tsx` — exports: TempUserGateModal
+- `src/components/PdfJsViewer.tsx` — exports: PdfJsViewer
+- `src/components/RelevanceChecklist.tsx` — exports: RelevanceChecklist
+- `src/components/UploadButton.tsx` — exports: UploadButton, UploadIcon
+- `src/components/UploadCompletionPanel.tsx` — exports: UploadCompletionPanel
+
+# Lib
+- `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
+- `src/lib/metrics/rollupDocMetrics.ts` — exports: rollupDocMetrics
+- `src/lib/models/CronHealth.ts` — exports: CronHealthModel, (type) CronHealth
+- `src/lib/models/AiRun.ts` — exports: AiRunModel, (type) AiRun
+
+# Pages
+- `src/app/(app)/doc/[docId]/ai/page.tsx` — Page for \`/doc/:docId/ai\`.
+- `src/app/(app)/doc/[docId]/page.tsx` — Page for \`/doc/:docId\`.
+- `src/app/(app)/doc/[docId]/metrics/page.tsx` — Page for \`/doc/:docId/metrics\`.
+- `src/app/(app)/doc/[docId]/review/page.tsx` — Page for \`/doc/:docId/review\`.
+- `src/app/(app)/layout.tsx` — Layout for \`/\`.
+- `src/app/(app)/project/[projectSlug]/page.tsx` — Page for \`/project/:projectId\`.
+- `src/app/p/[shareId]/page.tsx` — Page for \`/p/:shareId\`.
+- `src/app/r/[token]/page.tsx` — Page for \`/r/:token\` (request upload link).
+- `src/app/request/[token]/page.tsx` — Page for \`/request/:token\` (request upload link).
+- `src/app/a/invitecodes/page.tsx` — Page for \`/a/invitecodes\`.
+- `src/app/a/cron-health/page.tsx` — Page for \`/a/cron-health\`.
+- `src/app/a/ai-runs/page.tsx` — Page for \`/a/ai-runs\`.
+- `src/app/a/shareviews/[docId]/page.tsx` — Page for \`/a/shareviews/:docId\`.
+- `src/app/a/shareviews/page.tsx` — Page for \`/a/shareviews\`.
+- `src/app/a/data/users/page.tsx` — Page for \`/a/data/users\`.
+- `src/app/a/data/docs/page.tsx` — Page for \`/a/data/docs\`.
+- `src/app/a/data/projects/page.tsx` — Page for \`/a/data/projects\`.
+- `src/app/a/data/projects/[projectId]/page.tsx` — Page for \`/a/data/projects/:projectId\`.
+- `src/app/a/data/requests/page.tsx` — Page for \`/a/data/requests\`.
+- `src/app/a/data/requests/[requestId]/page.tsx` — Page for \`/a/data/requests/:requestId\`.
+- `src/app/a/data/uploads/page.tsx` — Page for \`/a/data/uploads\`.
+- `src/app/a/tools/cache/page.tsx` — Page for \`/a/tools/cache\` (admin cache inspector).
+- `src/app/about/page.tsx` — About page.
+- `src/app/api/admin/shareviews/doc/[docId]/route.ts` — API route for \`/api/admin/shareviews/doc/:docId\`.
+  - GET (function) — Handle GET requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/shareviews/recent/route.ts` — API route for \`/api/admin/shareviews/recent\`.
+  - GET (function) — Handle GET requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/cron-health/route.ts` — API route for \`/api/admin/cron-health\`.
+  - GET (function) — Return cron health snapshots for admin UI.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/ai-runs/route.ts` — API route for \`/api/admin/ai-runs\`.
+  - GET (function) — List AI run logs for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/ai-runs/[runId]/route.ts` — API route for \`/api/admin/ai-runs/:runId\`.
+  - GET (function) — Fetch a single AI run log record (prompt + output).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/users/route.ts` — API route for \`/api/admin/data/users\`.
+  - GET (function) — List users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/docs/route.ts` — API route for \`/api/admin/data/docs\`.
+  - GET (function) — List docs across all users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/projects/route.ts` — API route for \`/api/admin/data/projects\`.
+  - GET (function) — List projects across all users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/requests/route.ts` — API route for \`/api/admin/data/requests\`.
+  - GET (function) — List request link repos across all users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/requests/[requestId]/route.ts` — API route for \`/api/admin/data/requests/:requestId\`.
+  - GET (function) — Return a request repo (Project) plus related docs/uploads for admin inspection.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/projects/[projectId]/route.ts` — API route for \`/api/admin/data/projects/:projectId\`.
+  - GET (function) — Return a project (raw) for admin inspection.
+  - POST (function) — Update a project (admin tool; e.g. set `isRequest=true`).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/uploads/route.ts` — API route for \`/api/admin/data/uploads\`.
+  - GET (function) — List uploads across all users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/auth/[...nextauth]/route.ts` — API route for \`/api/auth/:nextauth*\`.
+  - GET (function) — Handle GET requests.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Force Node.js runtime (Mongoose isn't compatible with Edge runtime).
+- `src/app/api/auth/claim-temp/route.ts` — API route for \`/api/auth/claim-temp\`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/blob/upload/route.ts` — Vercel Blob client-upload route (App Router).
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/cron/doc-metrics/route.ts` — Cron route for rolling up cached doc metrics.
+  - POST (function) — Roll up per-doc metrics into `Doc.metricsSnapshot`.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/debug/route.ts` — API route for \`/api/debug\`.
+  - GET (function) — Debug endpoint to confirm server-side env wiring.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/metrics/events/route.ts` — API route for \`/api/metrics/events\`.
+  - POST (function) — Ingest metrics events (project views, in-project clicks, session page timing).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/pdf/route.ts` — API route for \`/api/docs/:docId/pdf\`.
+  - GET (function) — Same-origin cached PDF proxy for the owner doc page.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/report/route.ts` — API route for \`/api/docs/:docId/report\`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/reviews/route.ts` — API route for \`/api/docs/:docId/reviews\`.
+  - GET (function) — List reviews for a doc (paged).
+  - runtime (const) — Next.js route configuration.
+  - Note: review payload includes \`intel\` (legacy structured output) and \`agentOutput\` (request review output) when available.
+- `src/app/api/docs/[docId]/route.ts` — API route for \`/api/docs/:docId\`.
+  - GET (function) — Handle GET requests.
+  - PATCH (function) — Handle PATCH requests.
+  - DELETE (function) — Handle DELETE requests.
+  - runtime (const) — Next.js route configuration.
+  - Note: GET response doc payload includes \`receivedViaRequestProjectId\` (request uploads) and \`guideForRequestProjectId\` (request guide docs) to relate docs back to their request repo.
+- `src/app/api/docs/[docId]/shareviews/route.ts` — API route for \`/api/docs/:docId/shareviews\`.
+  - GET (function) — Owner-only share metrics (views, downloads, viewers).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/share-password/route.ts` — API route for \`/api/docs/:docId/share-password\`.
+  - POST (function) — Handle POST requests.
+  - GET (function) — Handle GET requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/route.ts` — API route for \`/api/docs\`.
+  - GET (function) — Generate a short public identifier for `/s/:shareId`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+  - Note: GET list items can include \`receivedViaRequestProjectId\` and \`guideForRequestProjectId\` for request context indicators in doc lists.
+- `src/app/api/invites/codes/[inviteId]/toggle-active/route.ts` — API route for \`/api/invites/codes/:inviteId/toggle-active\`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/invites/codes/route.ts` — API route for \`/api/invites/codes\`.
+  - GET (function) — Handle GET requests.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/invites/request/route.ts` — API route for \`/api/invites/request\`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/invites/requests/[requestId]/approve/route.ts` — API route for \`/api/invites/requests/:requestId/approve\`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/invites/requests/route.ts` — API route for \`/api/invites/requests\`.
+  - GET (function) — Handle GET requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/invites/status/route.ts` — API route for \`/api/invites/status\`.
+  - GET (function) — Handle GET requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/invites/verify/route.ts` — API route for \`/api/invites/verify\`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/projects/[projectSlug]/docs/route.ts` — API route for \`/api/projects/:projectSlug/docs\`.
+  - GET (function) — Handle GET requests.
+  - runtime (const) — Next.js route configuration.
+  - Note: response project payload can include request repo settings under \`project.request\` when \`project.isRequest\` is true.
+  - Note: for request repos, doc list items can include \`reviewScore\` (mapped from latest agent relevancy, with legacy fallback) to support sorting.
+- `src/app/api/projects/[projectSlug]/suggested-docs/route.ts` — API route for \`/api/projects/:projectSlug/suggested-docs\`.
+  - GET (function) — Handle GET requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/projects/[projectSlug]/route.ts` — API route for \`/api/projects/:projectSlug\`.
+  - PATCH (function) — Handle PATCH requests.
+  - DELETE (function) — Handle DELETE requests.
+  - runtime (const) — Next.js route configuration.
+  - Note: PATCH accepts \`requestReviewEnabled\` + optional \`requestReviewPrompt\` (reviewer notes) for request repos.
+- `src/app/api/projects/route.ts` — API route for \`/api/projects\`.
+  - GET (function) — Handle GET requests.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+  - Note: GET returns only non-request projects; request repositories are listed via \`/api/requests\`.
+- `src/app/api/requests/route.ts` — API route for \`/api/requests\`.
+  - GET (function) — List request repositories (paged).
+  - POST (function) — Create a new "request" (inbound upload folder).
+  - runtime (const) — Next.js route configuration.
+  - Note: POST accepts \`reviewEnabled\` + optional \`reviewPrompt\` (reviewer notes) to enable the review agent for this request link.
+- `src/app/api/requests/[token]/guide/route.ts` — API route for \`/api/requests/:requestId/guide\`.
+  - POST (function) — Attach a "guide doc" to a request folder (auth required; requestId is a Project ObjectId).
+  - runtime (const) — Next.js route configuration.
+  - Note: POST also sets/clears a doc-level backlink (\`Doc.guideForRequestProjectId\`) so guide docs can be related back to the request repo in list/detail UIs.
+- `src/app/api/requests/[token]/uploads/route.ts` — API route for \`/api/requests/:token/uploads\`.
+  - POST (function) — Start an upload for a request link (creates doc+upload under the owner).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/share/[shareId]/stats/route.ts` — API route for \`/api/share/:shareId/stats\`.
+  - GET (function) — Handle GET requests.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+  - Note: POST records per-viewer share view state (including best-effort `viewerIp`) keyed by (shareId, botIdHash).
+- `src/app/api/share/[shareId]/unlock/route.ts` — API route for \`/api/share/:shareId/unlock\`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/tags/[tag]/docs/route.ts` — API route for \`/api/tags/:tag/docs\`.
+  - GET (function) — List docs that contain a specific AI tag (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/uploads/[uploadId]/process/route.ts` — API route for \`/api/uploads/:uploadId/process\`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+  - Note: supports \`?forceReview=1\` to re-run the review agent for the current upload version (owner-only intent).
+  - Note: for request repos, the request review agent only runs when \`requestReviewEnabled\` is true AND a guide doc is attached (\`requestReviewGuideDocId\`).
+- `src/app/api/uploads/[uploadId]/route.ts` — API route for \`/api/uploads/:uploadId\`.
+  - GET (function) — Fetch upload status; supports \`x-upload-secret\` for request-link uploads.
+  - PATCH (function) — Handle PATCH requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/uploads/route.ts` — API route for \`/api/uploads\`.
+  - GET (function) — Generate a short public identifier for `/s/:shareId`.
+  - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+  - Note: POST supports \`skipReview\` (used for request guide documents).
+  - Note: when \`skipReview\` is true, \`sizeBytes\` is limited to 1MB (guide-doc safety).
+- `src/app/client-upload/page.tsx` — Page for \`/client-upload\`.
+- `src/app/layout.tsx` — Layout for \`/\`.
+- `src/app/login/page.tsx` — Page for \`/login\`.
+- `src/app/page.tsx` — Page for \`/\`.
+- `src/app/s/[shareId]/og.png/route.tsx` — API route for \`/s/:shareId/og.png\`.
+  - GET (function) — Dynamic OG image route for a share page.
+  - runtime (const) — Next.js route configuration.
+- `src/app/s/[shareId]/page.tsx` — Page for \`/s/:shareId\`.
+- `src/app/s/[shareId]/pdf/route.ts` — API route for \`/s/:shareId/pdf\`.
+  - GET (function) — Same-origin PDF proxy for `/s/:shareId`.
+  - runtime (const) — Next.js route configuration.
+- `src/app/share/[shareId]/og.png/route.tsx` — API route for \`/share/:shareId/og.png\`.
+  - GET (function) — Legacy route: `/share/:shareId/og.png` → `/s/:shareId/og.png`
+  - runtime (const) — Next.js route configuration.
+- `src/app/share/[shareId]/page.tsx` — Page for \`/share/:shareId\`.
+- `src/app/test/client-upload/page.tsx` — Test route: Vercel Blob "client uploads"
+- `src/app/test/share-document/og.png/route.tsx` — API route for \`/test/share-document/og.png\`.
+  - GET (function) — Load the sample AI output JSON bundled under /public for testing.
+  - runtime (const) — Next.js route configuration.
+- `src/app/test/share-document/opengraph-image.tsx` — OpenGraph image handler for \`/test/share-document\`.
+- `src/app/test/share-document/page.tsx` — Page for \`/test/share-document\`.
+- `src/app/test/share-document/twitter-image.tsx` — Twitter image handler for \`/test/share-document\`.
+
+# Libraries
+- `src/lib/ai/analyzePdfText.ts`
+  - AiDocAnalysis (type) — Type: AI doc analysis.
+  - analyzePdfText (function) — Analyze PDF text.
+- `src/lib/ai/aiRunRecorder.ts`
+  - AiRunKind (type) — Union of supported AI run kinds.
+  - AiRunMeta (type) — Optional linkage ids for associating runs to app entities.
+  - startAiRun (function) — Best-effort create an `AiRun` record.
+  - completeAiRun (function) — Best-effort mark an `AiRun` as completed.
+  - failAiRun (function) — Best-effort mark an `AiRun` as failed.
+- `src/lib/botId.ts`
+  - BOT_ID_HEADER (const) — Request header name used to pass a lightweight bot/device id.
+  - BOT_ID_STORAGE_KEY (const) — localStorage key for the bot/device id.
+  - getOrCreateBotId (function) — Client-only helper to get/create the id.
+  - AiDocAnalysisSchema (const) — Zod schema for AI doc analysis.
+- `src/lib/ai/reviewDocText.ts`
+  - buildReviewPrompt (function) — Build review prompt.
+  - reviewDocText (function) — Review doc text.
+- `src/lib/ai/requestReviewInvestorFocused.ts`
+  - RequestReviewInvestorFocusedSchema (const) — Zod schema for request review agent output (investor focused).
+  - RequestReviewInvestorFocusedOutput (type) — Output type inferred from schema.
+  - runRequestReviewInvestorFocused (function) — Run the request review agent (Guide vs Deck relevancy).
+- `src/lib/auth.ts`
+  - authOptions (const) — Constant: auth options.
+- `src/lib/blob/clientUpload.ts`
+  - safeTimestamp (function) — Create a filesystem-safe timestamp string.
+  - buildTestBlobPathname (function) — Build test blob pathname.
+  - buildDocBlobPathname (function) — Build doc blob pathname.
+  - buildDocPreviewPngPathname (function) — Build doc preview PNG pathname.
+  - fetchPublicFileAsFile (function) — Fetch public file as file.
+  - BLOB_HANDLE_UPLOAD_URL (const) — URL constant.
+  - TEST_BLOB_PREFIX (const) — Prefix constant.
+  - DOC_BLOB_PREFIX (const) — Prefix constant.
+  - SAMPLE_UPLOADS (const) — Constant: sample uploads.
+- `src/lib/blob/serverClientUploadRoute.ts`
+  - assertAllowedTestPathname (function) — Assert allowed test pathname.
+  - CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES (const) — Constant: client upload allowed content types.
+  - CLIENT_UPLOAD_MAX_SIZE_BYTES (const) — Byte-size limit constant.
+- `src/lib/client/docUploadPipeline.ts`
+  - CreateDocResponse (type) — Type: create doc response.
+  - CreateUploadResponse (type) — Type: create upload response.
+  - CreateUploadInput (type) — Type: create upload input.
+  - apiCreateDoc (function) — Create doc via API.
+  - apiCreateUpload (function) — Create upload via API.
+  - startBlobUploadAndProcess (function) — Client-side helpers for starting the "upload → process" pipeline.
+- `src/lib/db/mongoose.ts`
+  - connectMongoose (function) — Connect to Mongoose.
+- `src/lib/debug.ts`
+  - debugEnabled (function) — Check if debug logging is enabled.
+  - debugLog (function) — Log a debug message.
+  - debugWarn (function) — Log a debug warning.
+  - debugError (function) — Log a debug error.
+- `src/lib/email/sendInviteApprovalEmail.ts`
+  - sendInviteApprovalEmail (function) — Send invite approval email.
+- `src/lib/gating/actor.ts`
+  - Actor (type) — Type: actor.
+  - applyTempUserHeaders (function) — Apply temp user headers.
+  - resolveActor (function) — Resolve actor.
+  - TEMP_USER_ID_HEADER (const) — HTTP header name constant.
+  - TEMP_USER_SECRET_HEADER (const) — HTTP header name constant.
+- `src/lib/gating/tempUserHeaders.ts`
+  - TEMP_USER_ID_HEADER (const) — Temp-user id header name (shared server/client).
+  - TEMP_USER_SECRET_HEADER (const) — Temp-user secret header name (shared server/client).
+- `src/lib/gating/tempUserClient.ts`
+  - TempUserStored (type) — Type: temp user stored.
+  - getTempUser (function) — Get temp user.
+  - setTempUser (function) — Set temp user.
+  - clearTempUser (function) — Clear temp user.
+  - withTempUserHeaders (function) — With temp user headers.
+  - captureTempUserFromResponse (function) — Capture temp user from response.
+  - fetchWithTempUser (function) — Fetch with temp user.
+  - TEMP_USER_STORAGE_KEY (const) — Constant: temp user storage key.
+- `src/lib/http/fetchJson.ts`
+  - ApiErrorShape (type) — Type: API error shape.
+  - extractErrorMessage (function) — Extract error message.
+- `src/lib/metrics/client.ts`
+  - getSessionId (function) — Get/create per-tab session ID (stored in sessionStorage).
+  - trackProjectView (function) — Track a project view (deduped server-side per session).
+  - trackProjectClick (function) — Track a click from within a project.
+  - trackPageTiming (function) — Track time spent on a route within a session.
+- `src/lib/models/Doc.ts` — Data model for the docs collection.
+  - Doc (type) — Mongoose document type for the docs collection.
+  - DocModel (function) — Doc model.
+- `src/lib/models/DocReport.ts` — Data model for the docreports collection.
+  - DocReport (type) — Mongoose document type for the docreports collection.
+  - DocReportModel (const) — Mongoose model for the docreports collection.
+- `src/lib/models/Invite.ts` — Data model for the invites collection.
+  - Invite (type) — Mongoose document type for the invites collection.
+  - InviteModel (function) — Invite model.
+- `src/lib/models/Project.ts` — Data model for the projects collection.
+  - Project (type) — Mongoose document type for the projects collection.
+  - ProjectModel (const) — Mongoose model for the projects collection.
+- `src/lib/models/PageTiming.ts` — Data model for per-session page timing records.
+  - PageTiming (type) — Mongoose document type for the pagetimings collection.
+  - PageTimingModel (const) — Mongoose model for the pagetimings collection.
+- `src/lib/models/ProjectClick.ts` — Data model for project navigation click events.
+  - ProjectClick (type) — Mongoose document type for the projectclicks collection.
+  - ProjectClickModel (const) — Mongoose model for the projectclicks collection.
+- `src/lib/models/ProjectView.ts` — Data model for per-session project views.
+  - ProjectView (type) — Mongoose document type for the projectviews collection.
+  - ProjectViewModel (const) — Mongoose model for the projectviews collection.
+- `src/lib/models/Review.ts` — Data model for the reviews collection.
+  - Review (type) — Mongoose document type for the reviews collection.
+  - ReviewModel (const) — Mongoose model for the reviews collection.
+- `src/lib/models/ShareView.ts` — Data model for the shareviews collection.
+  - ShareView (type) — Mongoose document type for the shareviews collection.
+  - ShareViewModel (const) — Mongoose model for the shareviews collection.
+  - Note: includes best-effort `viewerIp` captured from request proxy headers.
+- `src/lib/models/Upload.ts` — Data model for the uploads collection.
+  - Upload (type) — Mongoose document type for the uploads collection.
+  - UploadModel (const) — Mongoose model for the uploads collection.
+- `src/lib/models/User.ts` — Backwards-compatible re-export.
+  - UserModel (re-export) — Re-export: UserModel.
+  - User (type) — Mongoose document type for the users collection.
+- `src/lib/mongodb.ts`
+  - connectMongo (function) — Re-export a single "MongoDB connect" entrypoint for auth and other server code.
+- `src/lib/og/imageResponse.tsx`
+  - OgDims (type) — Type: OG dims.
+  - mimeFromPath (function) — Infer MIME type from a file path.
+  - parsePngDims (function) — Parse PNG dims.
+  - parseJpegDims (function) — Parse jpeg dims.
+  - sniffImageDims (function) — Utilities for building Open Graph images using `next/og`.
+  - imageResponseFromBytes (function) — Utilities for building Open Graph images using `next/og`.
+  - DEFAULT_OG_SIZE (const) — Constant: default OG size.
+- `src/lib/pendingUpload.tsx`
+  - PendingUploadProvider (function) — Pending upload provider.
+  - usePendingUpload (function) — Use pending upload.
+- `src/lib/sharePassword.ts`
+  - shareAuthCookieName (function) — Share auth cookie name.
+  - hashSharePassword (function) — Hash share password.
+  - verifySharePassword (function) — Verify share password.
+  - shareAuthCookieValue (function) — Produce a per-shareId auth cookie value.
+  - encryptSharePassword (function) — Encrypt share password.
+  - decryptSharePassword (function) — Decrypt share password.
+- `src/lib/sidebarCache.ts`
+  - SidebarDocListItem (type) — Type: sidebar doc list item.
+  - SidebarProjectListItem (type) — Type: sidebar project list item.
+  - SidebarCacheSnapshot (type) — Type: sidebar cache snapshot.
+  - getSidebarCacheSnapshot (function) — Get sidebar cache snapshot.
+  - setSidebarCacheSnapshot (function) — Set sidebar cache snapshot.
+  - clearSidebarCache (function) — Clear sidebar cache (memory + localStorage).
+  - notifyProjectsChanged (function) — Notify about projects changed.
+  - notifyDocsChanged (function) — Notify about docs changed.
+  - refreshSidebarCache (function) — Refresh sidebar cache.
+  - PROJECTS_CHANGED_EVENT (const) — Constant: projects changed event.
+  - DOCS_CHANGED_EVENT (const) — Constant: docs changed event.
+  - SIDEBAR_CACHE_UPDATED_EVENT (const) — Constant: sidebar cache updated event.
+- `src/lib/starredDocs.ts`
+  - StarredDoc (type) — Type: starred doc.
+  - getStarredDocs (function) — Get starred docs.
+  - isDocStarred (function) — Check whether doc starred.
+  - toggleStarredDoc (function) — Toggle starred doc.
+  - upsertStarredDocTitle (function) — Upsert starred doc title.
+  - moveStarredDoc (function) — Move starred doc (manual ordering).
+  - STARRED_DOCS_CHANGED_EVENT (const) — Constant: starred docs changed event.
+- `src/lib/urls.ts`
+  - getPublicSiteBase (function) — Get public site base.
+  - buildPublicShareUrl (function) — URL helpers shared by client components.
+  - buildPublicRequestUrl (function) — Build a public `/request/:token` URL.
+
+# Files
+- Excludes: `node_modules`, `.git`, `.next`, build outputs, dot-dirs, `.env*`, `.DS_Store`
+- `.cursorrules`
+- `.gitignore`
+- `eslint.config.mjs`
+- `next-env.d.ts`
+- `next.config.ts`
+- `package-lock.json`
+- `package.json`
+- `tests/agent/agent.cli.ts`
+- `tests/agent/vitest.config.ts`
+- `tests/agent/vitest.reporter.concise.ts`
+- `tests/agent/vitest.setup.ts`
+- `tests/agent/review/review.tests.json`
+- `tests/agent/review/review.tests.ts`
+- `tests/agent/review/review.vitest.test.ts`
+- `tests/agent/review/promps/investor_focused/thesis_example_2.md`
+- `postcss.config.mjs`
+- `public/icon-black.svg`
+- `public/icon-white.svg`
+- `public/images/archive/icon.svg`
+- `public/paperplane/boot.js`
+- `public/paperplane/index-dark.html`
+- `public/paperplane/index.html`
+- `public/paperplane/land-110m.json`
+- `public/paperplane/main.js`
+- `public/paperplane/overlay.js`
+- `public/sample/sample-ai-output.json`
+- `public/sample/skycatch.jpg`
+- `public/sample/usavx_op.pdf`
+- `public/sample/usavx.pdf`
+- `docs/FEATURES.md`
+- `README.md`
+- `docs/CRON.md`
+- `docs/REQUEST.md`
+- `db/migration/run.mjs`
+- `db/migration/20251226_0001_backfill_deletedDate_from_isDeletedDate.mjs`
+- `db/migration/20251227_0002_backfill_project_isRequest_from_requestUploadToken.mjs`
+- `scripts/lib/time.mjs`
+- `scripts/mongo-clear.mjs`
+- `scripts/mongo-clear-ai-runs-and-requests.mjs`
+- `scripts/pdf-first-page-to-png.mjs`
+- `scripts/pdf-to-text.mjs`
+- `scripts/rollup-doc-metrics.ts`
+- `scripts/project-doc-count-recount.mjs`
+- `scripts/project-shareid-backfill.mjs`
+- `scripts/doc-received-via-request-backfill.mjs`
+- `scripts/request-docs-projectids-backfill.mjs`
+- `scripts/review-intel-backfill.mjs`
+- `scripts/test-ai-extract.mjs`
+- `scripts/test-ai-extract.ts`
+- `scripts/test-vercel-blob.mjs`
+- `src/app/(app)/doc/[docId]/ai/page.tsx`
+- `src/app/(app)/doc/[docId]/page.tsx`
+- `src/app/(app)/doc/[docId]/pageClient.tsx`
+- `src/app/(app)/doc/[docId]/metrics/page.tsx`
+- `src/app/(app)/doc/[docId]/metrics/pageClient.tsx`
+- `src/app/(app)/doc/[docId]/review/page.tsx`
+- `src/app/(app)/doc/[docId]/review/pageClient.tsx`
+- `src/app/(app)/layout.tsx`
+- `src/app/(app)/project/[projectSlug]/page.tsx`
+- `src/app/(app)/project/[projectSlug]/pageClient.tsx`
+- `src/app/a/invitecodes/page.tsx`
+- `src/app/a/shareviews/[docId]/page.tsx`
+- `src/app/a/shareviews/page.tsx`
+- `src/app/about/page.tsx`
+- `src/app/api/admin/shareviews/doc/[docId]/route.ts`
+- `src/app/api/admin/shareviews/recent/route.ts`
+- `src/app/api/auth/[...nextauth]/route.ts`
+- `src/app/api/auth/claim-temp/route.ts`
+- `src/app/api/blob/upload/route.ts`
+- `src/app/api/debug/route.ts`
+- `src/app/api/metrics/events/route.ts`
+- `src/app/api/docs/[docId]/pdf/route.ts`
+- `src/app/api/docs/[docId]/report/route.ts`
+- `src/app/api/docs/[docId]/reviews/route.ts`
+- `src/app/api/docs/[docId]/route.ts`
+- `src/app/api/docs/[docId]/shareviews/route.ts`
+- `src/app/api/docs/[docId]/share-password/route.ts`
+- `src/app/api/docs/route.ts`
+- `src/app/api/invites/codes/[inviteId]/toggle-active/route.ts`
+- `src/app/api/invites/codes/route.ts`
+- `src/app/api/invites/request/route.ts`
+- `src/app/api/invites/requests/[requestId]/approve/route.ts`
+- `src/app/api/invites/requests/route.ts`
+- `src/app/api/invites/status/route.ts`
+- `src/app/api/invites/verify/route.ts`
+- `src/app/api/projects/[projectSlug]/docs/route.ts`
+- `src/app/api/projects/[projectSlug]/suggested-docs/route.ts`
+- `src/app/api/projects/[projectSlug]/route.ts`
+- `src/app/api/projects/route.ts`
+- `src/app/api/share/[shareId]/stats/route.ts`
+- `src/app/api/share/[shareId]/unlock/route.ts`
+- `src/app/api/tags/[tag]/docs/route.ts`
+- `src/app/api/uploads/[uploadId]/process/route.ts`
+- `src/app/api/uploads/[uploadId]/route.ts`
+- `src/app/api/uploads/route.ts`
+- `src/app/client-upload/page.tsx`
+- `src/app/favicon.ico`
+- `src/app/globals.css`
+- `src/app/icon.svg`
+- `src/app/layout.tsx`
+- `src/app/login/page.tsx`
+- `src/app/page.tsx`
+- `src/app/project/[projectSlug]/pageClient.tsx`
+- `src/app/providers.tsx`
+- `src/app/s/[shareId]/og.png/route.tsx`
+- `src/app/s/[shareId]/page.tsx`
+- `src/app/s/[shareId]/PasswordGate.tsx`
+- `src/app/s/[shareId]/pdf/route.ts`
+- `src/app/share/[shareId]/og.png/route.tsx`
+- `src/app/share/[shareId]/page.tsx`
+- `src/app/share/[shareId]/PasswordGate.tsx`
+- `src/app/test/client-upload/page.tsx`
+- `src/app/test/share-document/og.png/route.tsx`
+- `src/app/test/share-document/opengraph-image.tsx`
+- `src/app/test/share-document/page.tsx`
+- `src/app/test/share-document/twitter-image.tsx`
+- `src/components/AboutCopy.tsx`
+- `src/components/AccountMenu.tsx`
+- `src/components/BlobClientUploadTest.tsx`
+- `src/components/DocActionsMenu.tsx`
+- `src/components/DocDebugModal.tsx`
+- `src/components/DocSharePanel.tsx`
+- `src/admin/components/CacheToolsClient.tsx`
+- `src/components/LeftSidebar.tsx`
+- `src/components/Markdown.tsx`
+- `src/components/modals/DeleteProjectModal.tsx`
+- `src/components/modals/DocProjectsModal.tsx`
+- `src/components/modals/Modal.tsx`
+- `src/components/modals/TempUserGateModal.tsx`
+- `src/components/PdfJsViewer.tsx`
+- `src/components/RelevanceChecklist.tsx`
+- `src/components/UploadButton.tsx`
+- `src/components/UploadCompletionPanel.tsx`
+- `src/lib/admin/localStorageTools.ts`
+- `src/lib/ai/analyzePdfText.ts`
+- `src/lib/ai/prompts/analyzePdfText-config.json`
+- `src/lib/ai/prompts/analyzePdfText-schema.json`
+- `src/lib/ai/prompts/analyzePdfText-system.md`
+- `src/lib/ai/prompts/analyzePdfText-user.md`
+- `src/lib/ai/prompts/requestReview/investor_focused/system.md`
+- `src/lib/ai/prompts/requestReview/investor_focused/user.md`
+- `src/lib/ai/prompts/requestReview/investor_focused/schema.json`
+- `src/lib/ai/reviewDocText.ts`
+- `src/lib/auth.ts`
+- `src/lib/blob/clientUpload.ts`
+- `src/lib/blob/serverClientUploadRoute.ts`
+- `src/lib/client/docUploadPipeline.ts`
+- `src/lib/db/mongoose.ts`
+- `src/lib/debug.ts`
+- `src/lib/email/sendInviteApprovalEmail.ts`
+- `src/lib/gating/actor.ts`
+- `src/lib/gating/tempUserHeaders.ts`
+- `src/lib/gating/tempUserClient.ts`
+- `src/lib/http/fetchJson.ts`
+- `src/lib/metrics/client.ts`
+- `src/lib/models/Doc.ts`
+- `src/lib/models/DocReport.ts`
+- `src/lib/models/Invite.ts`
+- `src/lib/models/Project.ts`
+- `src/lib/models/PageTiming.ts`
+- `src/lib/models/ProjectClick.ts`
+- `src/lib/models/ProjectView.ts`
+- `src/lib/models/Review.ts`
+- `src/lib/models/ShareView.ts`
+- `src/lib/models/Upload.ts`
+- `src/lib/models/User.ts`
+- `src/lib/mongodb.ts`
+- `src/lib/og/imageResponse.tsx`
+- `src/lib/pendingUpload.tsx`
+- `src/lib/sharePassword.ts`
+- `src/lib/sidebarCache.ts`
+- `src/lib/starredDocs.ts`
+- `src/lib/urls.ts`
+- `src/types/next-auth.d.ts`
+- `src/types/pdf-parse.d.ts`
+- `src/types/pdfjs-dist.d.ts`
+- `THEME.md`
+- `tmp/archive/src/components/DocDebugModal.tsx`
+- `tmp/archive/src/components/GoogleSignInButton.tsx`
+- `tmp/archive/src/components/RelevanceChecklist.tsx`
+- `tmp/archive/src/components/ShareLinks.tsx`
+- `tmp/usavx-page1.json`
+- `tmp/usavx-page1.png`
+- `tmp/usavx.txt`
+- `tmp/usavx2.txt`
+- `tsconfig.json`
+- `tsconfig.tsbuildinfo`
+
+# Duplicates (identical content)
+- aa664265
+  - `tmp/usavx.txt`
+  - `tmp/usavx2.txt`
+
+# Orphans (best-effort)
+- Heuristic: string scan for import paths across `src/` + `scripts/` (dynamic/Next.js entry usage may be missed).
+- Components
+  - `src/components/DocDebugModal.tsx`
+  - `src/components/RelevanceChecklist.tsx`
+  - `src/components/UploadCompletionPanel.tsx`
