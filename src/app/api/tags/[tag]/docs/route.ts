@@ -6,6 +6,10 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+/**
+ * Escape Regex (uses replace).
+ */
+
 
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -80,6 +84,8 @@ export async function GET(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
+
 
 
 

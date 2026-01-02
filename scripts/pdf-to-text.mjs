@@ -16,7 +16,7 @@ import process from "node:process";
 import pdf from "pdf-parse";
 
 /**
- * Print usage instructions and exit the process.
+ * Print usage instructions for pdf-to-text.mjs and exit.
  */
 function usage(exitCode = 1) {
   const msg = `
@@ -41,7 +41,7 @@ function defaultOutputPathForInput(input) {
 }
 
 /**
- * Entry point: read a PDF from disk, extract text, and write a .txt file.
+ * Run pdf-to-text.mjs: Extract text from a PDF into ./tmp.
  */
 async function main() {
   const pdfPath = process.argv[2] ?? "public/sample/usavx.pdf";
@@ -62,6 +62,8 @@ main().catch((err) => {
   console.error(err?.stack || String(err));
   process.exit(1);
 });
+
+
 
 
 

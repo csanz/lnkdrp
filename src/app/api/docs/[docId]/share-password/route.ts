@@ -6,16 +6,28 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 
 export const runtime = "nodejs";
+/**
+ * Return whether object id.
+ */
+
 
 function isObjectId(id: string) {
   return Types.ObjectId.isValid(id);
 }
+/**
+ * As Password.
+ */
+
 
 function asPassword(v: unknown): string | null {
   if (v === null) return null;
   if (typeof v !== "string") return null;
   return v;
 }
+/**
+ * Handle POST requests.
+ */
+
 
 export async function POST(request: Request, ctx: { params: Promise<{ docId: string }> }) {
   const actor = await resolveActor(request);
@@ -27,11 +39,23 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
 
     const body = (await request.json().catch(() => ({}))) as unknown;
     const password = asPassword((body as { password?: unknown }).password);
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const docObjectId = new Types.ObjectId(docId);
+    const docMatch = allowLegacyByUserId
+      ? {
+          $or: [
+            { _id: docObjectId, orgId },
+            { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+          ],
+        }
+      : { _id: docObjectId, orgId };
     if (password === null) {
       // Remove password.
       await connectMongo();
       const updated = await DocModel.findOneAndUpdate(
-        { _id: new Types.ObjectId(docId), userId: new Types.ObjectId(actor.userId) },
+        { ...docMatch },
         { $set: { sharePasswordHash: null, sharePasswordSalt: null, sharePasswordEnc: null, sharePasswordEncIv: null, sharePasswordEncTag: null } },
         { new: true },
       ).lean();
@@ -63,7 +87,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
 
     await connectMongo();
     const updated = await DocModel.findOneAndUpdate(
-      { _id: new Types.ObjectId(docId), userId: new Types.ObjectId(actor.userId) },
+      { ...docMatch },
       {
         $set: {
           sharePasswordSalt: salt,
@@ -88,6 +112,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
   }
 }
+/**
+ * Handle GET requests.
+ */
+
 
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
   const actor = await resolveActor(request);
@@ -98,10 +126,23 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     }
 
     await connectMongo();
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const doc = await DocModel.findOne({
-      _id: new Types.ObjectId(docId),
-      userId: new Types.ObjectId(actor.userId),
-      isDeleted: { $ne: true },
+      ...(allowLegacyByUserId
+        ? {
+            $or: [
+              { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
+              {
+                _id: new Types.ObjectId(docId),
+                userId: legacyUserId,
+                isDeleted: { $ne: true },
+                $or: [{ orgId: { $exists: false } }, { orgId: null }],
+              },
+            ],
+          }
+        : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
     })
       .select({ sharePasswordHash: 1, sharePasswordEnc: 1, sharePasswordEncIv: 1, sharePasswordEncTag: 1 })
       .lean();
@@ -126,6 +167,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
   }
 }
+
+
+
 
 
 

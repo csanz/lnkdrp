@@ -15,13 +15,33 @@ export const metadata: Metadata = {
     title: "LinkDrop - Share Docs",
     description: "Share your docs with a simple link.",
     type: "website",
+    images: [
+      {
+        url: "/images/og.png",
+        width: 840,
+        height: 491,
+        alt: "LinkDrop - Share Docs",
+      },
+    ],
   },
   twitter: {
     card: "summary",
     title: "LinkDrop - Share Docs",
     description: "Share your docs with a simple link.",
+    images: [
+      {
+        url: "/images/og.png",
+        width: 840,
+        height: 491,
+        alt: "LinkDrop - Share Docs",
+      },
+    ],
   },
 };
+/**
+ * Render the RootLayout UI.
+ */
+
 
 export default function RootLayout({
   children,
@@ -30,7 +50,11 @@ export default function RootLayout({
 }>) {
   // Mirror server debug level into the client runtime so client-side debug logs
   // can use the same switch as server logs.
-  const debugLevel = Number(process.env.DEBUG_LEVEL ?? "0");
+  const debugLevelRaw =
+    process.env.DEBUG_LEVEL ??
+    (process.env.DEBUG_MODE === "verbose" ? "2" : undefined) ??
+    (process.env.NODE_ENV === "development" ? "1" : "0");
+  const debugLevel = Number(debugLevelRaw);
 
   const enableAuth =
     !!process.env.MONGODB_URI &&

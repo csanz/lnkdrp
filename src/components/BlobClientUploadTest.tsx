@@ -29,6 +29,10 @@ export type BlobClientUploadTestProps = {
    */
   backHref?: string;
 };
+/**
+ * Render the BlobClientUploadTest UI (uses memoized values, local state).
+ */
+
 
 export default function BlobClientUploadTest({
   backHref = "/",
@@ -241,6 +245,8 @@ export default function BlobClientUploadTest({
     </main>
   );
 }
+
+
 
 
 

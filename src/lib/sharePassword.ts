@@ -1,13 +1,25 @@
 import crypto from "node:crypto";
 
+/**
+ * Share-password helpers.
+ *
+ * Supports:
+ * - hashing/verifying share passwords for storage
+ * - producing a per-share bearer cookie value (HMAC)
+ * - encrypting/decrypting a share password for short-term handling
+ *
+ * Note: This module uses Node crypto APIs and is server-only.
+ */
 const SALT_BYTES = 16;
 const KEY_BYTES = 64;
 const ENC_IV_BYTES = 12;
 
-export function shareAuthCookieName(shareId: string) {
+/** Return the cookie name used to store share authentication for a given share id. */
+export function shareAuthCookieName(shareId: string): string {
   return `lnkdrp_share_auth_${shareId}`;
 }
 
+/** Return the secret used for share-password hashing/HMAC (throws in production if missing). */
 function getCookieSecret(): string {
   // Prefer a dedicated secret, but fall back to NEXTAUTH_SECRET when available.
   const s = process.env.LNKDRP_SHARE_PASSWORD_SECRET || process.env.NEXTAUTH_SECRET || "";
@@ -22,18 +34,21 @@ function getCookieSecret(): string {
   );
 }
 
+/** Derive a stable AES key from the cookie secret. */
 function getEncryptionKey(): Buffer {
   const secret = getCookieSecret();
   // Derive a stable 32-byte key.
   return crypto.createHash("sha256").update(secret).digest();
 }
 
+/** Hash a share password for storage using scrypt (returns salt + hash). */
 export function hashSharePassword(password: string): { salt: string; hash: string } {
   const salt = crypto.randomBytes(SALT_BYTES).toString("base64url");
   const key = crypto.scryptSync(password, salt, KEY_BYTES);
   return { salt, hash: key.toString("base64url") };
 }
 
+/** Verify a password against stored scrypt hash material (constant-time compare). */
 export function verifySharePassword(args: {
   password: string;
   salt: string | null | undefined;
@@ -57,7 +72,7 @@ export function verifySharePassword(args: {
  * Important: This is NOT the password hash; it's an HMAC over it so it can be used
  * as a bearer token without exposing DB material.
  */
-export function shareAuthCookieValue(args: { shareId: string; sharePasswordHash: string }) {
+export function shareAuthCookieValue(args: { shareId: string; sharePasswordHash: string }): string {
   const secret = getCookieSecret();
   return crypto
     .createHmac("sha256", secret)
@@ -65,6 +80,7 @@ export function shareAuthCookieValue(args: { shareId: string; sharePasswordHash:
     .digest("base64url");
 }
 
+/** Encrypt a share password so it can be stored/transmitted without exposing plaintext. */
 export function encryptSharePassword(password: string): { enc: string; iv: string; tag: string } {
   const key = getEncryptionKey();
   const iv = crypto.randomBytes(ENC_IV_BYTES);
@@ -74,6 +90,7 @@ export function encryptSharePassword(password: string): { enc: string; iv: strin
   return { enc: enc.toString("base64url"), iv: iv.toString("base64url"), tag: tag.toString("base64url") };
 }
 
+/** Decrypt an encrypted share password payload (returns null if invalid). */
 export function decryptSharePassword(args: {
   enc: string | null | undefined;
   iv: string | null | undefined;

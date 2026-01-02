@@ -23,6 +23,10 @@ type Props = {
    */
   contentClassName?: string;
 };
+/**
+ * Render the Modal UI (uses effects).
+ */
+
 
 export default function Modal({
   open,
@@ -35,6 +39,10 @@ export default function Modal({
 }: Props) {
   useEffect(() => {
     if (!open) return;
+/**
+ * Handle key down events; uses onClose.
+ */
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -48,7 +56,7 @@ export default function Modal({
     <div className="fixed inset-0 z-[200]" role="dialog" aria-modal="true" aria-label={ariaLabel}>
       <button
         type="button"
-        className="absolute inset-0 bg-black/25 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/45 backdrop-blur-sm"
         aria-label="Close modal"
         onClick={onClose}
       />
@@ -57,14 +65,14 @@ export default function Modal({
         ref={panelRef}
         className={[
           "absolute left-1/2 top-1/2 w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2",
-          "rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-black/5",
+          "rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-[var(--border)]",
           panelClassName ?? "",
         ].join(" ")}
       >
         <div className="relative">
           <button
             type="button"
-            className="absolute right-5 top-5 rounded-lg p-2 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+            className="absolute right-4 top-4 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-2 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
             aria-label="Close modal"
             onClick={onClose}
           >
@@ -84,6 +92,10 @@ export default function Modal({
     </div>
   );
 }
+/**
+ * Render the XIcon UI.
+ */
+
 
 function XIcon() {
   return (

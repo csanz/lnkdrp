@@ -1,3 +1,8 @@
+/**
+ * API route for `/api/uploads`.
+ *
+ * Lists uploads and creates new upload records for an existing doc.
+ */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import crypto from "node:crypto";
@@ -9,6 +14,26 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
+const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+/**
+ * Random Base62 (uses randomBytes, max, ceil).
+ */
+
+
+function randomBase62(length: number): string {
+  let out = "";
+  while (out.length < length) {
+    const remaining = length - out.length;
+    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
+    for (const b of buf) {
+      // 62 * 4 = 248, so values 0..247 map evenly to base62.
+      if (b < 248) out += BASE62_ALPHABET[b % 62];
+      if (out.length >= length) break;
+    }
+  }
+  return out;
+}
+
 /**
  * Generate a short public identifier for `/s/:shareId`.
  *
@@ -16,7 +41,8 @@ export const runtime = "nodejs";
  */
 function newShareId() {
   // Public, URL-safe identifier (avoid exposing Mongo `_id` in share URLs).
-  return crypto.randomBytes(9).toString("base64url");
+  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
+  return randomBase62(12);
 }
 
 /**
@@ -119,6 +145,7 @@ export async function POST(request: Request) {
       originalFileName: string;
       contentType: string;
       sizeBytes: number;
+      skipReview: boolean;
     }>;
 
     if (!body.docId || !Types.ObjectId.isValid(body.docId)) {
@@ -183,6 +210,21 @@ export async function POST(request: Request) {
       );
     }
 
+    // Guide-doc uploads are used as prompt context; keep them small and PDF-only for cost/latency safety.
+    const skipReview = typeof body.skipReview === "boolean" ? body.skipReview : false;
+    const sizeBytes = Number.isFinite(body.sizeBytes) ? Number(body.sizeBytes) : null;
+    if (skipReview && typeof sizeBytes === "number" && sizeBytes > 1_000_000) {
+      return NextResponse.json({ error: "GUIDE_DOC_TOO_LARGE (max 1MB)" }, { status: 413 });
+    }
+    if (skipReview) {
+      const ct = typeof body.contentType === "string" ? body.contentType.trim().toLowerCase() : "";
+      const name = typeof body.originalFileName === "string" ? body.originalFileName.trim().toLowerCase() : "";
+      const isPdf = ct === "application/pdf" || name.endsWith(".pdf");
+      if (!isPdf) {
+        return NextResponse.json({ error: "GUIDE_DOC_PDF_ONLY" }, { status: 415 });
+      }
+    }
+
     const version = existingUploads + 1;
 
     const upload = await UploadModel.create({
@@ -192,9 +234,10 @@ export async function POST(request: Request) {
       status: "uploading",
       originalFileName: body.originalFileName ?? null,
       contentType: body.contentType ?? null,
-      sizeBytes: Number.isFinite(body.sizeBytes) ? body.sizeBytes : null,
+      sizeBytes,
+      skipReview,
       metadata: {
-        size: Number.isFinite(body.sizeBytes) ? body.sizeBytes : undefined,
+        size: typeof sizeBytes === "number" ? sizeBytes : undefined,
       },
     });
 

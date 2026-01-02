@@ -2,6 +2,10 @@
 
 import { use } from "react";
 import DocReviewPageClient from "./pageClient";
+/**
+ * Render the DocReviewPage UI.
+ */
+
 
 export default function DocReviewPage(props: { params: Promise<{ docId: string }> }) {
   const { docId } = use(props.params);

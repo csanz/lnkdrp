@@ -1,3 +1,7 @@
+/**
+ * Owner doc page (main view).
+ * Route: `/doc/:docId`
+ */
 "use client";
 
 import { use } from "react";

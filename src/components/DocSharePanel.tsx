@@ -1,11 +1,11 @@
 "use client";
 
-import { CheckIcon } from "@heroicons/react/20/solid";
-import { LockClosedIcon, LockOpenIcon, Square2StackIcon } from "@heroicons/react/24/outline";
+import { LockClosedIcon, LockOpenIcon, SparklesIcon, Square2StackIcon } from "@heroicons/react/24/outline";
 import { useState, type RefObject } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { fetchJson } from "@/lib/http/fetchJson";
+import { CopyButton } from "@/components/CopyButton";
 
 type Props = {
   docId: string;
@@ -23,6 +23,10 @@ type Props = {
   aiOutput?: unknown | null;
   uploadError?: unknown | null;
 };
+/**
+ * Render the DocSharePanel UI (uses local state).
+ */
+
 
 export default function DocSharePanel({
   docId,
@@ -48,6 +52,10 @@ export default function DocSharePanel({
   const [sharePasswordError, setSharePasswordError] = useState<string | null>(null);
   const [sharePasswordLoading, setSharePasswordLoading] = useState(false);
   const [sharePasswordVisible, setSharePasswordVisible] = useState(false);
+/**
+ * Save Share Password (updates state (setSharePasswordSaving, setSharePasswordError, setSharePasswordModalOpen); uses setSharePasswordSaving, setSharePasswordError, fetchJson).
+ */
+
 
   async function saveSharePassword(nextPassword: string) {
     setSharePasswordSaving(true);
@@ -70,6 +78,10 @@ export default function DocSharePanel({
       setSharePasswordSaving(false);
     }
   }
+/**
+ * Remove Share Password (updates state (setSharePasswordSaving, setSharePasswordError, setSharePasswordModalOpen); uses setSharePasswordSaving, setSharePasswordError, fetchJson).
+ */
+
 
   async function removeSharePassword() {
     setSharePasswordSaving(true);
@@ -133,7 +145,7 @@ export default function DocSharePanel({
     !hasSnapshot && aiWarning
       ? aiWarning
       : !hasSnapshot
-        ? "AI snapshot is not available for this upload yet."
+        ? "Snapshot is not available for this upload yet."
         : "";
 
   return (
@@ -156,21 +168,15 @@ export default function DocSharePanel({
             }}
             aria-label="Share link"
           />
-          <button
-            type="button"
-            onClick={onCopy}
-            disabled={!shareUrl || isCopying}
+          <CopyButton
+            copyDone={copyDone}
+            isCopying={isCopying}
+            disabled={!shareUrl}
+            onCopy={onCopy}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--primary-bg)] text-[var(--primary-fg)] shadow-sm transition-colors duration-150 hover:bg-[var(--primary-hover-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-ring)] focus:ring-offset-2 focus:ring-offset-[var(--panel)] disabled:opacity-50"
-            aria-label={copyDone ? "Copied" : "Copy link"}
-            title={copyDone ? "Copied" : "Copy link"}
-          >
-            {copyDone ? (
-              <CheckIcon className="h-4 w-4" />
-            ) : (
-              <Square2StackIcon className="h-4 w-4" />
-            )}
-            <span className="sr-only">{copyDone ? "Copied" : "Copy"}</span>
-          </button>
+            copyAriaLabel="Copy link"
+            copiedAriaLabel="Copied"
+          />
           <button
             type="button"
             onClick={() => {
@@ -250,21 +256,32 @@ export default function DocSharePanel({
         </div>
       </div>
 
-      {/* 2) AI snapshot */}
+      {/* 2) Snapshot */}
       {hasSnapshot ? (
         <div className="mt-6 border-t border-[var(--border)] pt-5">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
             <div className="flex items-center justify-between gap-3 pb-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                AI snapshot
+              <div
+                className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]"
+                title="Snapshot (generated)"
+              >
+                <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+                <span className="truncate">Snapshot</span>
+                <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
+                  Generated
+                </span>
               </div>
+              <div className="shrink-0">
                 <button
                   type="button"
-                  className="text-xs font-medium text-[var(--muted)] underline decoration-transparent underline-offset-4 transition-colors hover:text-[var(--fg)] hover:decoration-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  aria-label="Open full snapshot"
+                  title="Open full snapshot"
+                  className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted)] underline decoration-transparent underline-offset-4 transition-colors hover:text-[var(--fg)] hover:decoration-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                   onClick={() => setAiExtractOpen(true)}
                 >
-                  View full AI snapshot
+                  Full snapshot
                 </button>
+              </div>
             </div>
             {oneLiner ? (
               <div className="mt-3 text-[13px] font-semibold leading-snug text-[var(--fg)]">
@@ -300,8 +317,15 @@ export default function DocSharePanel({
       ) : (
         <div className="mt-6 border-t border-[var(--border)] pt-5">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
-            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-              AI snapshot
+            <div
+              className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]"
+              title="Snapshot (generated)"
+            >
+              <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+              <span className="truncate">Snapshot</span>
+              <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
+                Generated
+              </span>
             </div>
             <div className="mt-2 text-[13px] leading-relaxed text-[var(--muted)]">
               {aiMissingMessage}
@@ -313,10 +337,15 @@ export default function DocSharePanel({
       <Modal
         open={aiExtractOpen}
         onClose={() => setAiExtractOpen(false)}
-        ariaLabel="AI Snapshot"
+        ariaLabel="Snapshot (generated)"
         panelClassName="w-[min(860px,calc(100vw-32px))]"
       >
-        <div className="text-base font-semibold text-[var(--fg)]">AI Snapshot</div>
+        <div className="flex items-center gap-2 text-base font-semibold text-[var(--fg)]">
+          <span>Snapshot</span>
+          <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
+            Generated
+          </span>
+        </div>
         <div className="mt-2 text-sm text-[var(--muted)]">
           Structured context captured from the document.
         </div>

@@ -17,6 +17,10 @@ import process from "node:process";
 import dotenv from "dotenv";
 
 import { analyzePdfText } from "../src/lib/ai/analyzePdfText";
+/**
+ * Usage (uses error, trim, exit).
+ */
+
 
 function usage(exitCode = 1) {
   console.error(
@@ -32,6 +36,10 @@ Notes:
   );
   process.exit(exitCode);
 }
+/**
+ * Extract Pages From Pdf (uses readFileSync, getDocument, getPage).
+ */
+
 
 async function extractPagesFromPdf(pdfPath: string): Promise<Array<{ page_number: number; text: string }>> {
   const pdfBytes = new Uint8Array(fs.readFileSync(pdfPath));
@@ -53,6 +61,10 @@ async function extractPagesFromPdf(pdfPath: string): Promise<Array<{ page_number
   }
   return pages;
 }
+/**
+ * Script entry point.
+ */
+
 
 async function main() {
   dotenv.config({ path: path.resolve(process.cwd(), ".env") });
@@ -87,4 +99,6 @@ main().catch((err) => {
   console.error(err?.stack || String(err));
   process.exit(1);
 });
+
+
 

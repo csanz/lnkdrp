@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArchiveBoxIcon,
   ChevronRightIcon,
@@ -21,6 +22,10 @@ type ProjectDTO = { id: string; name: string; description: string };
 const SHOW_QUALITY_REVIEW = false;
 const SHOW_ARCHIVE = false;
 const SHOW_REPORT = false;
+/**
+ * Render the DocActionsMenu UI (uses effects, local state).
+ */
+
 
 export default function DocActionsMenu({
   docId,
@@ -46,11 +51,14 @@ export default function DocActionsMenu({
   onOpenQualityReview?: () => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectDTO[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -70,16 +78,29 @@ export default function DocActionsMenu({
 
   useEffect(() => {
     if (!open) return;
+/**
+ * Handle key down events; updates state (setOpen, setProjectsOpen); uses setOpen, setProjectsOpen.
+ */
+
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setOpen(false);
         setProjectsOpen(false);
       }
     }
+/**
+ * Handle pointer down events; updates state (setOpen, setProjectsOpen); uses contains, setOpen, setProjectsOpen.
+ */
+
     function onPointerDown(e: MouseEvent | PointerEvent) {
       const el = rootRef.current;
-      if (!el) return;
-      if (e.target instanceof Node && !el.contains(e.target)) {
+      const menuEl = menuRef.current;
+      if (!el && !menuEl) return;
+      if (
+        e.target instanceof Node &&
+        !(el && el.contains(e.target)) &&
+        !(menuEl && menuEl.contains(e.target))
+      ) {
         setOpen(false);
         setProjectsOpen(false);
       }
@@ -91,6 +112,44 @@ export default function DocActionsMenu({
       window.removeEventListener("pointerdown", onPointerDown);
     };
   }, [open]);
+
+  const repositionMenu = useCallback(() => {
+    const btn = buttonRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+
+    const margin = 8;
+    const gap = 10;
+    const width = 220; // matches menu width class
+
+    let left = rect.right - width;
+    left = Math.max(margin, Math.min(window.innerWidth - width - margin, left));
+
+    let top = rect.bottom + gap;
+    const menuEl = menuRef.current;
+    const measuredH = menuEl ? menuEl.getBoundingClientRect().height : 260;
+    if (top + measuredH + margin > window.innerHeight) {
+      top = Math.max(margin, rect.top - gap - measuredH);
+    }
+    setMenuPos({ top, left });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    // Position after render so `menuRef` can be measured.
+    window.requestAnimationFrame(() => repositionMenu());
+    window.addEventListener("resize", repositionMenu);
+    // capture scrolls from nested containers too
+    window.addEventListener("scroll", repositionMenu, true);
+    return () => {
+      window.removeEventListener("resize", repositionMenu);
+      window.removeEventListener("scroll", repositionMenu, true);
+    };
+  }, [open, repositionMenu]);
+/**
+ * Load Projects (updates state (setProjectsLoading, setProjectsError, setProjects); uses setProjectsLoading, setProjectsError, fetchJson).
+ */
+
 
   async function loadProjects() {
     setProjectsLoading(true);
@@ -107,6 +166,10 @@ export default function DocActionsMenu({
       setProjectsLoading(false);
     }
   }
+/**
+ * Add To Project (updates state (setOpen, setProjectsOpen, setProjectsError); uses fetchJson, stringify, onDocPatched).
+ */
+
 
   async function addToProject(projectId: string) {
     try {
@@ -132,6 +195,8 @@ export default function DocActionsMenu({
         projects: Array.isArray(res?.doc?.projects) ? res.doc.projects : undefined,
       });
       notifyDocsChanged();
+      // Adding to a project changes the cached project docCount; refresh sidebar projects immediately.
+      notifyProjectsChanged();
       setOpen(false);
       setProjectsOpen(false);
     } catch {
@@ -139,6 +204,10 @@ export default function DocActionsMenu({
       setProjectsError("Failed to add to project");
     }
   }
+/**
+ * Create Project And Move (updates state (setNewProjectError, setNewProjectBusy, setProjects); uses trim, setNewProjectError, setNewProjectBusy).
+ */
+
 
   async function createProjectAndMove() {
     const name = newProjectName.trim();
@@ -174,6 +243,10 @@ export default function DocActionsMenu({
       setNewProjectBusy(false);
     }
   }
+/**
+ * Remove From This Project (updates state (setOpen, setProjectsOpen, setProjectsError); uses fetchJson, stringify, onDocPatched).
+ */
+
 
   async function removeFromThisProject() {
     if (!currentProjectId) return;
@@ -200,12 +273,18 @@ export default function DocActionsMenu({
         projects: Array.isArray(res?.doc?.projects) ? res.doc.projects : undefined,
       });
       notifyDocsChanged();
+      // Removing from a project changes the cached project docCount; refresh sidebar projects immediately.
+      notifyProjectsChanged();
       setOpen(false);
       setProjectsOpen(false);
     } catch {
       setProjectsError("Failed to remove from project");
     }
   }
+/**
+ * Archive Doc (updates state (setOpen, setProjectsOpen); uses fetchJson, stringify, onDocPatched).
+ */
+
 
   async function archiveDoc() {
     try {
@@ -216,6 +295,8 @@ export default function DocActionsMenu({
       });
       onDocPatched?.({ isArchived: true });
       notifyDocsChanged();
+      // Archiving affects project doc counts (active docs only).
+      notifyProjectsChanged();
       setOpen(false);
       setProjectsOpen(false);
       // Archiving removes it from `/api/docs` lists; the current page is still valid.
@@ -223,6 +304,10 @@ export default function DocActionsMenu({
       // ignore (best-effort)
     }
   }
+/**
+ * Submit Report (updates state (setReportBusy, setReportError, setReportDone); uses setReportBusy, setReportError, fetchJson).
+ */
+
 
   async function submitReport() {
     setReportBusy(true);
@@ -245,6 +330,10 @@ export default function DocActionsMenu({
       setReportBusy(false);
     }
   }
+/**
+ * Delete Doc (updates state (setDeleteBusy, setDeleteError, setShowDeleteConfirm); uses setDeleteBusy, setDeleteError, fetchJson).
+ */
+
 
   async function deleteDoc() {
     setDeleteBusy(true);
@@ -255,6 +344,8 @@ export default function DocActionsMenu({
       setOpen(false);
       setProjectsOpen(false);
       notifyDocsChanged();
+      // Deleting affects project doc counts (active docs only).
+      notifyProjectsChanged();
       onDeleted?.();
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "Failed to delete");
@@ -359,9 +450,148 @@ export default function DocActionsMenu({
     </div>
   );
 
+  const renderedMenu =
+    open && !disabled ? (
+      <div
+        ref={menuRef}
+        role="menu"
+        className="fixed z-[1000] w-[220px] overflow-visible rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+        style={{
+          // Always render visibly; if positioning hasn't computed yet, fall back to a safe default.
+          top: menuPos?.top ?? 16,
+          left: menuPos?.left ?? 16,
+        }}
+      >
+        <ul className="py-1">
+          <li className="relative">
+            <button
+              type="button"
+              className={menuItemBase}
+              onClick={() => {
+                const next = !projectsOpen;
+                setProjectsOpen(next);
+                setProjectsError(null);
+                if (next) void loadProjects();
+                // menu height can change; ensure we re-fit to viewport
+                window.requestAnimationFrame(() => repositionMenu());
+              }}
+            >
+              <span className="inline-flex items-center gap-2">
+                <span className="text-[var(--muted-2)]">
+                  <FolderIcon className="h-4 w-4" />
+                </span>
+                <span>Projects</span>
+              </span>
+              <ChevronRightIcon className="h-4 w-4 text-[var(--muted-2)]" />
+            </button>
+            {projectsOpen ? projectsPanel : null}
+          </li>
+
+          {currentProjectId ? (
+            <li>
+              <button
+                type="button"
+                className={menuItemBase}
+                onClick={() => {
+                  setProjectsError(null);
+                  void removeFromThisProject();
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-[var(--muted-2)]">
+                    <FolderIcon className="h-4 w-4" />
+                  </span>
+                  <span>Remove from this project</span>
+                </span>
+              </button>
+            </li>
+          ) : null}
+
+          <li className="my-1 h-px bg-[var(--border)]" />
+
+          {SHOW_QUALITY_REVIEW ? (
+            <li>
+              <button
+                type="button"
+                className={menuItemBase}
+                onClick={() => {
+                  setOpen(false);
+                  setProjectsOpen(false);
+                  onOpenQualityReview?.();
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-zinc-500">
+                    <DocumentMagnifyingGlassIcon className="h-4 w-4" />
+                  </span>
+                  <span>Quality review</span>
+                </span>
+              </button>
+            </li>
+          ) : null}
+
+          {SHOW_ARCHIVE ? (
+            <li>
+              <button type="button" className={menuItemBase} onClick={() => void archiveDoc()}>
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-zinc-500">
+                    <ArchiveBoxIcon className="h-4 w-4" />
+                  </span>
+                  <span>Archive</span>
+                </span>
+              </button>
+            </li>
+          ) : null}
+
+          {SHOW_REPORT ? (
+            <li>
+              <button
+                type="button"
+                className={menuItemBase}
+                onClick={() => {
+                  setShowReport(true);
+                  setReportError(null);
+                  setReportDone(false);
+                  setOpen(false);
+                  setProjectsOpen(false);
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-zinc-500">
+                    <FlagIcon className="h-4 w-4" />
+                  </span>
+                  <span>Report</span>
+                </span>
+              </button>
+            </li>
+          ) : null}
+          <li>
+            <button
+              type="button"
+              className={[menuItemBase, "text-red-700 hover:bg-red-50"].join(" ")}
+              onClick={() => {
+                setShowDeleteConfirm(true);
+                setDeleteError(null);
+                setOpen(false);
+                setProjectsOpen(false);
+              }}
+            >
+              <span className="inline-flex items-center gap-2">
+                <span className="text-red-600">
+                  <TrashIcon className="h-4 w-4" />
+                </span>
+                <span>Delete</span>
+              </span>
+            </button>
+          </li>
+        </ul>
+      </div>
+    ) : null;
+
   return (
     <div ref={rootRef} className="relative">
       <button
+        ref={buttonRef}
         type="button"
         disabled={disabled}
         aria-disabled={disabled}
@@ -374,141 +604,25 @@ export default function DocActionsMenu({
         aria-expanded={open}
         onClick={() => {
           if (disabled) return;
-          setOpen((v) => !v);
-          setProjectsOpen(false);
+          // Compute position immediately so the menu never renders "invisible".
+          repositionMenu();
+          setOpen((v) => {
+            const next = !v;
+            if (next) {
+              setProjectsOpen(false);
+              // Ensure menu is positioned even when inside scroll containers (avoids clipping).
+              window.requestAnimationFrame(() => repositionMenu());
+            } else {
+              setMenuPos(null);
+            }
+            return next;
+          });
         }}
       >
         <EllipsisHorizontalIcon className="h-5 w-5" />
       </button>
 
-      {open && !disabled ? (
-        <div
-          role="menu"
-          className="absolute right-0 top-[calc(100%+10px)] z-50 w-[220px] overflow-visible rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
-        >
-          <ul className="py-1">
-            <li className="relative">
-              <button
-                type="button"
-                className={menuItemBase}
-                onClick={() => {
-                  const next = !projectsOpen;
-                  setProjectsOpen(next);
-                  setProjectsError(null);
-                  if (next) void loadProjects();
-                }}
-              >
-                <span className="inline-flex items-center gap-2">
-                  <span className="text-[var(--muted-2)]">
-                    <FolderIcon className="h-4 w-4" />
-                  </span>
-                  <span>Projects</span>
-                </span>
-                <ChevronRightIcon className="h-4 w-4 text-[var(--muted-2)]" />
-              </button>
-              {projectsOpen ? projectsPanel : null}
-            </li>
-
-            {currentProjectId ? (
-              <li>
-                <button
-                  type="button"
-                  className={menuItemBase}
-                  onClick={() => {
-                    setProjectsError(null);
-                    void removeFromThisProject();
-                  }}
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <span className="text-[var(--muted-2)]">
-                      <FolderIcon className="h-4 w-4" />
-                    </span>
-                    <span>Remove from this project</span>
-                  </span>
-                </button>
-              </li>
-            ) : null}
-
-            <li className="my-1 h-px bg-[var(--border)]" />
-
-            {SHOW_QUALITY_REVIEW ? (
-              <li>
-                <button
-                  type="button"
-                  className={menuItemBase}
-                  onClick={() => {
-                    setOpen(false);
-                    setProjectsOpen(false);
-                    onOpenQualityReview?.();
-                  }}
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <span className="text-zinc-500">
-                      <DocumentMagnifyingGlassIcon className="h-4 w-4" />
-                    </span>
-                    <span>Quality review</span>
-                  </span>
-                </button>
-              </li>
-            ) : null}
-
-            {SHOW_ARCHIVE ? (
-              <li>
-                <button type="button" className={menuItemBase} onClick={() => void archiveDoc()}>
-                  <span className="inline-flex items-center gap-2">
-                    <span className="text-zinc-500">
-                      <ArchiveBoxIcon className="h-4 w-4" />
-                    </span>
-                    <span>Archive</span>
-                  </span>
-                </button>
-              </li>
-            ) : null}
-
-            {SHOW_REPORT ? (
-              <li>
-                <button
-                  type="button"
-                  className={menuItemBase}
-                  onClick={() => {
-                    setShowReport(true);
-                    setReportError(null);
-                    setReportDone(false);
-                    setOpen(false);
-                    setProjectsOpen(false);
-                  }}
-                >
-                  <span className="inline-flex items-center gap-2">
-                    <span className="text-zinc-500">
-                      <FlagIcon className="h-4 w-4" />
-                    </span>
-                    <span>Report</span>
-                  </span>
-                </button>
-              </li>
-            ) : null}
-            <li>
-              <button
-                type="button"
-                className={[menuItemBase, "text-red-700 hover:bg-red-50"].join(" ")}
-                onClick={() => {
-                  setShowDeleteConfirm(true);
-                  setDeleteError(null);
-                  setOpen(false);
-                  setProjectsOpen(false);
-                }}
-              >
-                <span className="inline-flex items-center gap-2">
-                  <span className="text-red-600">
-                    <TrashIcon className="h-4 w-4" />
-                  </span>
-                  <span>Delete</span>
-                </span>
-              </button>
-            </li>
-          </ul>
-        </div>
-      ) : null}
+      {renderedMenu && typeof document !== "undefined" ? createPortal(renderedMenu, document.body) : null}
 
       <Modal
         open={showNewProject}
@@ -664,6 +778,10 @@ export default function DocActionsMenu({
     </div>
   );
 }
+/**
+ * Render the Spinner UI.
+ */
+
 
 function Spinner({ className }: { className?: string }) {
   return (

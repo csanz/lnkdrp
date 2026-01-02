@@ -12,11 +12,19 @@ type SampleAiOutput = {
     imagePath?: string;
   };
 };
+/**
+ * Read Sample Ai Output (uses join, cwd, parse).
+ */
+
 
 function readSampleAiOutput(): SampleAiOutput {
   const jsonPath = join(process.cwd(), "public", "sample", "sample-ai-output.json");
   return JSON.parse(readFileSync(jsonPath, "utf8")) as SampleAiOutput;
 }
+/**
+ * Read Dims (uses join, cwd, parse).
+ */
+
 
 function readDims(): OgDims {
   const metaPath = join(process.cwd(), "tmp", "usavx-page1.json");
@@ -33,6 +41,10 @@ function readDims(): OgDims {
 }
 
 export const size = readDims();
+/**
+ * Render the TwitterImage UI.
+ */
+
 
 export default async function TwitterImage() {
   try {
@@ -75,6 +87,8 @@ export default async function TwitterImage() {
     );
   }
 }
+
+
 
 
 

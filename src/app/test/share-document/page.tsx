@@ -12,6 +12,10 @@ type SampleAiOutput = {
 };
 
 type OgDims = { width: number; height: number };
+/**
+ * Read Og Dims (uses join, cwd, parse).
+ */
+
 
 function readOgDims(): OgDims {
   const metaPath = join(process.cwd(), "tmp", "usavx-page1.json");
@@ -26,6 +30,10 @@ function readOgDims(): OgDims {
   }
   return { width, height };
 }
+/**
+ * Generate Metadata (uses join, cwd, parse).
+ */
+
 
 export async function generateMetadata(): Promise<Metadata> {
   const jsonPath = join(process.cwd(), "public", "sample", "sample-ai-output.json");
@@ -61,12 +69,18 @@ export async function generateMetadata(): Promise<Metadata> {
     },
   };
 }
+/**
+ * Render the ShareDocumentTestPage UI.
+ */
+
 
 export default function ShareDocumentTestPage() {
   const pdfUrl = "/sample/usavx.pdf";
 
   return <PdfJsViewer url={pdfUrl} initialPage={1} />;
 }
+
+
 
 
 

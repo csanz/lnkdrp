@@ -90,7 +90,7 @@ export function imageResponseFromBytes(params: {
   alt: string;
   dims?: OgDims | null;
   cacheControl?: string;
-}) {
+}): ImageResponse {
   const dims = params.dims ?? sniffImageDims(params.bytes) ?? DEFAULT_OG_SIZE;
   const base64 = params.bytes.toString("base64");
   const imgSrc = `data:${params.mime};base64,${base64}`;
@@ -116,6 +116,9 @@ export function imageResponseFromBytes(params: {
 
   return res;
 }
+
+
+
 
 
 

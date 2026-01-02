@@ -20,6 +20,10 @@ type InviteCodeItem = {
   isActive?: boolean | null;
   createdDate?: string | null;
 };
+/**
+ * Fmt Date (uses isNaN, valueOf, toLocaleString).
+ */
+
 
 function fmtDate(v: string | null | undefined) {
   if (!v) return "";
@@ -27,6 +31,10 @@ function fmtDate(v: string | null | undefined) {
   if (Number.isNaN(d.valueOf())) return v;
   return d.toLocaleString();
 }
+/**
+ * Render the InviteCodesAdminPage UI (uses effects, memoized values, local state).
+ */
+
 
 export default function InviteCodesAdminPage() {
   const { data: session, status } = useSession();

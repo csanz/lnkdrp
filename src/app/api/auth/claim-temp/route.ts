@@ -1,12 +1,17 @@
+// Route: POST /api/auth/claim-temp - migrate a temp user's docs/uploads to the signed-in user.
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { resolveActor } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
-import { UserModel, verifyTempUserSecret } from "@/models/User";
+import { UserModel, verifyTempUserSecret } from "@/lib/models/User";
 
 export const runtime = "nodejs";
+/**
+ * Handle POST requests.
+ */
+
 
 export async function POST(request: Request) {
   try {
@@ -70,6 +75,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
+
+
 
 
 

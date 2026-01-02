@@ -5,10 +5,18 @@ import { DocModel } from "@/lib/models/Doc";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+/**
+ * Return whether object id.
+ */
+
 
 function isObjectId(id: string) {
   return Types.ObjectId.isValid(id);
 }
+/**
+ * Pick Header (uses get, set).
+ */
+
 
 function pickHeader(
   src: Headers,
@@ -49,10 +57,23 @@ export async function GET(
   const actor = await resolveActor(request);
   await connectMongo();
 
+  const orgId = new Types.ObjectId(actor.orgId);
+  const legacyUserId = new Types.ObjectId(actor.userId);
+  const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
   const doc = await DocModel.findOne({
-    _id: new Types.ObjectId(docId),
-    userId: new Types.ObjectId(actor.userId),
-    isDeleted: { $ne: true },
+    ...(allowLegacyByUserId
+      ? {
+          $or: [
+            { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
+            {
+              _id: new Types.ObjectId(docId),
+              userId: legacyUserId,
+              isDeleted: { $ne: true },
+              $or: [{ orgId: { $exists: false } }, { orgId: null }],
+            },
+          ],
+        }
+      : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
   })
     .select({ blobUrl: 1 })
     .lean();
@@ -90,5 +111,8 @@ export async function GET(
 
   return applyTempUserHeaders(res, actor);
 }
+
+
+
 
 

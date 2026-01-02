@@ -14,6 +14,21 @@ const shareViewSchema = new Schema(
     botIdHash: { type: String, trim: true, index: true, required: true },
     pagesSeen: { type: [Number], default: [] },
     /**
+     * Best-effort viewer IP address (from proxy headers like x-forwarded-for).
+     * Note: may be a NAT/proxy IP and can change over time for the same viewer.
+     */
+    viewerIp: { type: String, trim: true, default: null },
+    /**
+     * Number of times this viewer downloaded the PDF (best-effort).
+     * Only incremented when the receiver hits `/s/:shareId/pdf?download=1`.
+     */
+    downloads: { type: Number, default: 0, min: 0 },
+    /**
+     * Downloads keyed by UTC day ("YYYY-MM-DD") so we can build a daily series.
+     * Example: { "2025-12-24": 2 }
+     */
+    downloadsByDay: { type: Map, of: Number, default: {} },
+    /**
      * Viewer identity (best-effort):
      * - viewerUserId: present for registered (signed-in) viewers
      * - viewerEmail: present when a viewer provided an email (even if not registered)

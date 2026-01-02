@@ -31,14 +31,6 @@ export async function GET(
   const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } }).lean();
   if (!doc) notFound();
 
-  const sharePasswordHash = (doc as { sharePasswordHash?: unknown }).sharePasswordHash;
-  const sharePasswordSalt = (doc as { sharePasswordSalt?: unknown }).sharePasswordSalt;
-  const passwordEnabled =
-    typeof sharePasswordHash === "string" &&
-    Boolean(sharePasswordHash) &&
-    typeof sharePasswordSalt === "string" &&
-    Boolean(sharePasswordSalt);
-
   const title =
     (doc.aiOutput &&
       typeof doc.aiOutput === "object" &&
@@ -53,13 +45,11 @@ export async function GET(
     : undefined) as { imageUrl?: unknown; imagePath?: unknown } | undefined;
 
   const candidate =
-    passwordEnabled
-      ? null
-      : (typeof doc.previewImageUrl === "string" && doc.previewImageUrl) ||
-        (typeof doc.firstPagePngUrl === "string" && doc.firstPagePngUrl) ||
-        (typeof og?.imageUrl === "string" && og.imageUrl) ||
-        (typeof og?.imagePath === "string" && og.imagePath) ||
-        null;
+    (typeof doc.previewImageUrl === "string" && doc.previewImageUrl) ||
+    (typeof doc.firstPagePngUrl === "string" && doc.firstPagePngUrl) ||
+    (typeof og?.imageUrl === "string" && og.imageUrl) ||
+    (typeof og?.imagePath === "string" && og.imagePath) ||
+    null;
 
   try {
     if (!candidate) throw new Error("no image candidate");
@@ -117,4 +107,7 @@ export async function GET(
     return res;
   }
 }
+
+
+
 

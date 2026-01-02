@@ -8,12 +8,20 @@ import { UserModel } from "@/lib/models/User";
 import { sendInviteApprovalEmail } from "@/lib/email/sendInviteApprovalEmail";
 
 export const runtime = "nodejs";
+/**
+ * Return whether localhost request.
+ */
+
 
 function isLocalhostRequest(request: Request) {
   if (process.env.NODE_ENV === "production") return false;
   const host = (request.headers.get("host") ?? "").toLowerCase();
   return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
 }
+/**
+ * Require Admin (uses isLocalhostRequest, resolveActor, isValid).
+ */
+
 
 async function requireAdmin(request: Request) {
   if (isLocalhostRequest(request)) {
@@ -33,6 +41,10 @@ async function requireAdmin(request: Request) {
 
   return { ok: true as const, userId: actor.userId };
 }
+/**
+ * Generate Invite Code (uses randomBytes).
+ */
+
 
 function generateInviteCode() {
   // 5 chars, A-Z and 0-9, all caps (easy to read/type).
@@ -42,6 +54,10 @@ function generateInviteCode() {
   for (let i = 0; i < 5; i++) out += alphabet[bytes[i] % alphabet.length];
   return out;
 }
+/**
+ * Handle POST requests.
+ */
+
 
 export async function POST(
   request: Request,

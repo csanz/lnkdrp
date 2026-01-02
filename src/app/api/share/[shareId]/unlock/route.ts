@@ -4,12 +4,20 @@ import { DocModel } from "@/lib/models/Doc";
 import { shareAuthCookieName, shareAuthCookieValue, verifySharePassword } from "@/lib/sharePassword";
 
 export const runtime = "nodejs";
+/**
+ * As Non Empty String (uses trim).
+ */
+
 
 function asNonEmptyString(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const s = v.trim();
   return s ? s : null;
 }
+/**
+ * Handle POST requests.
+ */
+
 
 export async function POST(request: Request, ctx: { params: Promise<{ shareId: string }> }) {
   try {
@@ -54,6 +62,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
+
 
 
 

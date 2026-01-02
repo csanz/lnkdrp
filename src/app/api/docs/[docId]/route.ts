@@ -1,3 +1,8 @@
+/**
+ * API route for `/api/docs/:docId`.
+ *
+ * Fetches and updates a doc (ensures it has a public `/s/:shareId`).
+ */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import crypto from "node:crypto";
@@ -10,13 +15,46 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
+const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+/**
+ * Random Base62 (uses randomBytes, max, ceil).
+ */
+
+
+function randomBase62(length: number): string {
+  let out = "";
+  while (out.length < length) {
+    const remaining = length - out.length;
+    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
+    for (const b of buf) {
+      // 62 * 4 = 248, so values 0..247 map evenly to base62.
+      if (b < 248) out += BASE62_ALPHABET[b % 62];
+      if (out.length >= length) break;
+    }
+  }
+  return out;
+}
+/**
+ * Return whether object id.
+ */
+
+
 function isObjectId(id: string) {
   return Types.ObjectId.isValid(id);
 }
+/**
+ * New Share Id (uses randomBase62).
+ */
+
 
 function newShareId() {
-  return crypto.randomBytes(9).toString("base64url");
+  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
+  return randomBase62(12);
 }
+/**
+ * Handle GET requests.
+ */
+
 
 export async function GET(
   request: Request,
@@ -24,7 +62,9 @@ export async function GET(
 ) {
   try {
     const url = new URL(request.url);
-    const includeDebug = url.searchParams.get("debug") === "1" && debugEnabled(1);
+    const wantsDebug = url.searchParams.get("debug") === "1";
+    // In local dev, allow `?debug=1` without requiring DEBUG env.
+    const includeDebug = wantsDebug && (process.env.NODE_ENV !== "production" || debugEnabled(1));
 
     const { docId } = await ctx.params;
     if (!isObjectId(docId)) {
@@ -34,12 +74,37 @@ export async function GET(
     debugLog(2, "[api/docs/:docId] GET", { docId, includeDebug });
     const actor = await resolveActor(request);
     await connectMongo();
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const docObjectId = new Types.ObjectId(docId);
+    const docMatch = allowLegacyByUserId
+      ? {
+          $or: [
+            { _id: docObjectId, orgId },
+            { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+          ],
+        }
+      : { _id: docObjectId, orgId };
+
     // Ensure doc has a shareId (older docs may not). Retry on rare collisions.
     let doc = await DocModel.findOne({
-      _id: new Types.ObjectId(docId),
-      userId: new Types.ObjectId(actor.userId),
+      ...docMatch,
     });
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // Best-effort: backfill orgId for legacy personal docs.
+    if (allowLegacyByUserId && !(doc as unknown as { orgId?: unknown }).orgId) {
+      try {
+        await DocModel.updateOne(
+          { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+          { $set: { orgId } },
+        );
+        (doc as unknown as { orgId?: Types.ObjectId }).orgId = orgId;
+      } catch {
+        // ignore; best-effort
+      }
+    }
 
     if (!doc.shareId) {
       let ensured = false;
@@ -48,8 +113,7 @@ export async function GET(
         try {
           const updated = await DocModel.findOneAndUpdate(
             {
-              _id: new Types.ObjectId(docId),
-              userId: new Types.ObjectId(actor.userId),
+              ...docMatch,
               shareId: { $in: [null, undefined, ""] },
             },
             { $set: { shareId: candidate } },
@@ -62,8 +126,7 @@ export async function GET(
           }
           // Another request beat us to it; re-fetch and continue.
           doc = await DocModel.findOne({
-            _id: new Types.ObjectId(docId),
-            userId: new Types.ObjectId(actor.userId),
+            ...docMatch,
           });
           if (doc?.shareId) {
             ensured = true;
@@ -95,7 +158,6 @@ export async function GET(
       ? await UploadModel.findById(currentUploadId).lean()
       : null;
 
-    const userObjectId = new Types.ObjectId(actor.userId);
     const projectIdsRaw = (docLean as unknown as { projectIds?: unknown }).projectIds;
     const projectIds = Array.isArray(projectIdsRaw)
       ? projectIdsRaw.filter((x) => Types.ObjectId.isValid(String(x))).map((x) => new Types.ObjectId(String(x)))
@@ -109,10 +171,108 @@ export async function GET(
 
     const projects =
       uniqueProjectIds.length
-        ? await ProjectModel.find({ _id: { $in: uniqueProjectIds }, userId: userObjectId })
-            .select({ _id: 1, name: 1, slug: 1 })
+        ? await ProjectModel.find({ _id: { $in: uniqueProjectIds }, orgId })
+            .select({ _id: 1, name: 1, slug: 1, isRequest: 1, requestReviewEnabled: 1 })
             .lean()
         : [];
+
+    const isInRequestRepo = projects.some((p) =>
+      Boolean((p as unknown as { isRequest?: unknown }).isRequest),
+    );
+
+    let repairedFromCompletedUpload = false;
+
+    /**
+     * Repair stuck docs on read (replacement uploads).
+     *
+     * We've seen rare cases where an Upload finishes (`status=completed`) but the Doc record
+     * remains in `preparing` (or has stale artifact pointers). This is especially painful for
+     * "replace file" because the UI + PDF proxy rely on Doc fields (`status`, `blobUrl`, etc).
+     *
+     * For non-request docs only, if the current upload is already completed, re-sync the Doc
+     * to the Upload's canonical artifacts. This is idempotent and keeps the UI responsive even
+     * if a background worker update was interrupted.
+     */
+    if (
+      upload &&
+      (upload as { status?: unknown }).status === "completed" &&
+      !isInRequestRepo &&
+      !docLean.receivedViaRequestProjectId &&
+      (docLean.status !== "ready" ||
+        String(docLean.currentUploadId ?? docLean.uploadId ?? "") !== String((upload as any)._id ?? "") ||
+        (typeof docLean.blobUrl === "string" && typeof (upload as any).blobUrl === "string"
+          ? docLean.blobUrl !== (upload as any).blobUrl
+          : false))
+    ) {
+      const isReplacement = Number.isFinite((upload as any).version) && Number((upload as any).version) > 1;
+      const nextPreview = (upload as any).previewImageUrl ?? (upload as any).firstPagePngUrl ?? null;
+      const nextText = (upload as any).rawExtractedText ?? (upload as any).pdfText ?? null;
+
+      await DocModel.updateOne(
+        { ...docMatch },
+        {
+          $set: {
+            status: "ready",
+            blobUrl: (upload as any).blobUrl ?? docLean.blobUrl ?? null,
+            currentUploadId: (upload as any)._id,
+            uploadId: (upload as any)._id, // backward compat
+            previewImageUrl: nextPreview,
+            firstPagePngUrl: nextPreview, // compat
+            extractedText: nextText,
+            pdfText: nextText, // compat
+            aiOutput: (upload as any).aiOutput ?? (isReplacement ? docLean.aiOutput ?? null : null),
+            docName: (upload as any).docName ?? (isReplacement ? docLean.docName ?? null : null),
+            pageSlugs: Array.isArray((upload as any).pageSlugs)
+              ? (upload as any).pageSlugs
+              : (isReplacement ? (docLean.pageSlugs ?? []) : []),
+          },
+        },
+      );
+      repairedFromCompletedUpload = true;
+
+      // Update the in-memory snapshot we use for the response so the client sees the fix immediately.
+      docLean.status = "ready";
+      docLean.blobUrl = (upload as any).blobUrl ?? docLean.blobUrl ?? null;
+      (docLean as any).currentUploadId = (upload as any)._id;
+      (docLean as any).uploadId = (upload as any)._id;
+      docLean.previewImageUrl = nextPreview;
+      docLean.firstPagePngUrl = nextPreview;
+      docLean.extractedText = nextText;
+      docLean.pdfText = nextText;
+      docLean.aiOutput = (upload as any).aiOutput ?? (isReplacement ? docLean.aiOutput ?? null : null);
+      (docLean as any).docName = (upload as any).docName ?? (isReplacement ? (docLean as any).docName ?? null : null);
+      (docLean as any).pageSlugs = Array.isArray((upload as any).pageSlugs)
+        ? (upload as any).pageSlugs
+        : (isReplacement ? (docLean as any).pageSlugs ?? [] : []);
+    }
+
+    // Best-effort: if this doc is a request guide doc, provide the request repo id even if
+    // older docs aren't backfilled with `guideForRequestProjectId` yet.
+    let guideForRequestProjectId: string | null = null;
+    try {
+      const raw = (docLean as unknown as { guideForRequestProjectId?: unknown }).guideForRequestProjectId;
+      guideForRequestProjectId = raw ? String(raw) : null;
+      if (!guideForRequestProjectId) {
+        const reqProject = await ProjectModel.findOne({
+          ...(allowLegacyByUserId
+            ? {
+                $or: [
+                  { orgId },
+                  { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+                ],
+              }
+            : { orgId }),
+          isDeleted: { $ne: true },
+          requestReviewGuideDocId: new Types.ObjectId(docId),
+          $or: [{ isRequest: true }, { requestUploadToken: { $exists: true, $nin: [null, ""] } }],
+        })
+          .select({ _id: 1 })
+          .lean();
+        guideForRequestProjectId = reqProject ? String(reqProject._id) : null;
+      }
+    } catch {
+      guideForRequestProjectId = null;
+    }
 
     const primaryProject =
       (primaryProjectId
@@ -129,12 +289,23 @@ export async function GET(
         pageSlugs: docLean.pageSlugs ?? [],
         status: docLean.status ?? "draft",
         projectId: primaryProject ? String(primaryProject._id) : null,
-        project: primaryProject ? { id: String(primaryProject._id), name: primaryProject.name ?? "" } : null,
+        project: primaryProject
+          ? {
+              id: String(primaryProject._id),
+              name: primaryProject.name ?? "",
+              isRequest: Boolean((primaryProject as unknown as { isRequest?: unknown }).isRequest),
+              requestReviewEnabled: Boolean(
+                (primaryProject as unknown as { requestReviewEnabled?: unknown }).requestReviewEnabled,
+              ),
+            }
+          : null,
         projectIds: projects.map((p) => String(p._id)),
         projects: projects.map((p) => ({
           id: String(p._id),
           name: p.name ?? "",
           slug: (p as unknown as { slug?: unknown }).slug ?? "",
+          isRequest: Boolean((p as unknown as { isRequest?: unknown }).isRequest),
+          requestReviewEnabled: Boolean((p as unknown as { requestReviewEnabled?: unknown }).requestReviewEnabled),
         })),
         isArchived: Boolean(docLean.isArchived),
         currentUploadId: currentUploadId ? String(currentUploadId) : null,
@@ -148,6 +319,38 @@ export async function GET(
         receiverRelevanceChecklist: Boolean(docLean.receiverRelevanceChecklist),
         shareAllowPdfDownload: Boolean((docLean as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload),
         sharePasswordEnabled: Boolean(docLean.sharePasswordHash),
+        receivedViaRequestProjectId: (function () {
+          const raw = (docLean as unknown as { receivedViaRequestProjectId?: unknown }).receivedViaRequestProjectId;
+          return raw ? String(raw) : null;
+        })(),
+        guideForRequestProjectId,
+        metricsSnapshot: (function () {
+          const ms = (docLean as unknown as { metricsSnapshot?: unknown }).metricsSnapshot;
+          if (!ms || typeof ms !== "object") return null;
+          const m = ms as {
+            updatedAt?: unknown;
+            days?: unknown;
+            lastDaysViews?: unknown;
+            lastDaysDownloads?: unknown;
+            downloadsTotal?: unknown;
+          };
+          const updatedAt =
+            m.updatedAt instanceof Date
+              ? m.updatedAt.toISOString()
+              : typeof m.updatedAt === "string"
+                ? m.updatedAt
+                : null;
+          return {
+            updatedAt,
+            days: typeof m.days === "number" && Number.isFinite(m.days) ? m.days : null,
+            lastDaysViews:
+              typeof m.lastDaysViews === "number" && Number.isFinite(m.lastDaysViews) ? m.lastDaysViews : 0,
+            lastDaysDownloads:
+              typeof m.lastDaysDownloads === "number" && Number.isFinite(m.lastDaysDownloads) ? m.lastDaysDownloads : 0,
+            downloadsTotal:
+              typeof m.downloadsTotal === "number" && Number.isFinite(m.downloadsTotal) ? m.downloadsTotal : 0,
+          };
+        })(),
       },
       upload: upload
         ? {
@@ -173,6 +376,23 @@ export async function GET(
     };
 
     if (includeDebug) {
+      // One-line snapshot log so we can correlate client stuck states with server truth quickly.
+      debugLog(1, "[api/docs/:docId] debug snapshot", {
+        docId,
+        actorKind: actor.kind,
+        orgId: actor.orgId,
+        personalOrgId: actor.personalOrgId,
+        allowLegacyByUserId,
+        isInRequestRepo,
+        repairedFromCompletedUpload,
+        docStatus: (docLean as any).status ?? null,
+        docCurrentUploadId: (docLean as any).currentUploadId ? String((docLean as any).currentUploadId) : null,
+        docBlobUrl: typeof (docLean as any).blobUrl === "string" ? "[set]" : null,
+        uploadStatus: upload ? ((upload as any).status ?? null) : null,
+        uploadVersion: upload && Number.isFinite((upload as any).version) ? Number((upload as any).version) : null,
+        uploadBlobUrl: upload && typeof (upload as any).blobUrl === "string" ? "[set]" : null,
+      });
+
       const uploads = await UploadModel.find({
         docId: new Types.ObjectId(docId),
         isDeleted: { $ne: true },
@@ -185,6 +405,10 @@ export async function GET(
         doc: docLean,
         currentUpload: upload,
         uploads,
+        derived: {
+          isInRequestRepo,
+          repairedFromCompletedUpload,
+        },
       };
     }
 
@@ -195,6 +419,10 @@ export async function GET(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+/**
+ * Handle PATCH requests.
+ */
+
 
 export async function PATCH(
   request: Request,
@@ -225,8 +453,18 @@ export async function PATCH(
 
     await connectMongo();
 
-    const userObjectId = new Types.ObjectId(actor.userId);
     const docObjectId = new Types.ObjectId(docId);
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const docMatch = allowLegacyByUserId
+      ? {
+          $or: [
+            { _id: docObjectId, orgId },
+            { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+          ],
+        }
+      : { _id: docObjectId, orgId };
 
     const setFields: Record<string, unknown> = {};
     const addToSetFields: Record<string, unknown> = {};
@@ -258,7 +496,7 @@ export async function PATCH(
       typeof body.removeProjectId === "string";
 
     const before = wantsProjectChange
-      ? await DocModel.findOne({ _id: docObjectId, userId: userObjectId })
+      ? await DocModel.findOne({ ...docMatch })
           .select({ _id: 1, projectId: 1, projectIds: 1 })
           .lean()
       : null;
@@ -332,7 +570,7 @@ export async function PATCH(
     if (Object.keys(pullFields).length) updateDoc.$pull = pullFields;
 
     const doc = await DocModel.findOneAndUpdate(
-      { _id: docObjectId, userId: userObjectId },
+      { ...docMatch },
       updateDoc,
       { new: true },
     ).lean();
@@ -345,11 +583,13 @@ export async function PATCH(
         : [];
       const nextPrimary = remaining[0] && Types.ObjectId.isValid(remaining[0]) ? new Types.ObjectId(remaining[0]) : null;
       await DocModel.updateOne(
-        { _id: docObjectId, userId: userObjectId },
+        { ...docMatch },
         { $set: { projectId: nextPrimary } },
       );
       (doc as unknown as { projectId?: unknown }).projectId = nextPrimary;
     }
+
+    // Project.docCount is maintained at the model level (Doc middleware).
 
     const docProjectIdsRaw = (doc as unknown as { projectIds?: unknown }).projectIds;
     const docProjectIds = Array.isArray(docProjectIdsRaw)
@@ -369,7 +609,7 @@ export async function PATCH(
 
     const projects =
       uniqueDocProjectIds.length
-        ? await ProjectModel.find({ _id: { $in: uniqueDocProjectIds }, userId: userObjectId })
+        ? await ProjectModel.find({ _id: { $in: uniqueDocProjectIds }, orgId })
             .select({ _id: 1, name: 1, slug: 1 })
             .lean()
         : [];
@@ -415,6 +655,10 @@ export async function PATCH(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+/**
+ * Handle DELETE requests.
+ */
+
 
 export async function DELETE(
   request: Request,
@@ -430,9 +674,24 @@ export async function DELETE(
     const actor = await resolveActor(request);
     await connectMongo();
 
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+    const docObjectId = new Types.ObjectId(docId);
+    const docMatch = allowLegacyByUserId
+      ? {
+          $or: [
+            { _id: docObjectId, orgId },
+            { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+          ],
+        }
+      : { _id: docObjectId, orgId };
+
     const res = await DocModel.updateOne(
-      { _id: new Types.ObjectId(docId), userId: new Types.ObjectId(actor.userId) },
-      { $set: { isDeleted: true, isDeletedDate: new Date() } },
+      { ...docMatch },
+      {
+        $set: { isDeleted: true, deletedDate: new Date(), isDeletedDate: new Date() },
+      },
     );
     if (!res.matchedCount) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

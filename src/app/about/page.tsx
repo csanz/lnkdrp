@@ -4,6 +4,10 @@
  * Lightweight static copy explaining what LinkDrop is.
  */
 import AboutCopy from "@/components/AboutCopy";
+/**
+ * Render the AboutPage UI.
+ */
+
 
 export default function AboutPage() {
   return (
@@ -17,5 +21,7 @@ export default function AboutPage() {
     </main>
   );
 }
+
+
 
 

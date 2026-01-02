@@ -1,3 +1,9 @@
+/**
+ * Admin API route: `/api/admin/shareviews/doc/:docId`
+ *
+ * Returns all per-viewer ShareView records for a specific document.
+ * Used by the admin Share Views dashboard.
+ */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { resolveActor } from "@/lib/gating/actor";
@@ -6,12 +12,20 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { UserModel } from "@/lib/models/User";
 
 export const runtime = "nodejs";
+/**
+ * Return whether localhost request.
+ */
+
 
 function isLocalhostRequest(request: Request) {
   if (process.env.NODE_ENV === "production") return false;
   const host = (request.headers.get("host") ?? "").toLowerCase();
   return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
 }
+/**
+ * Require Admin (uses isLocalhostRequest, resolveActor, isValid).
+ */
+
 
 async function requireAdmin(request: Request) {
   if (isLocalhostRequest(request)) {
@@ -31,6 +45,10 @@ async function requireAdmin(request: Request) {
 
   return { ok: true as const, userId: actor.userId };
 }
+/**
+ * Handle GET requests.
+ */
+
 
 export async function GET(
   request: Request,
@@ -52,10 +70,13 @@ export async function GET(
       shareId: 1,
       docId: 1,
       pagesSeen: 1,
+      downloads: 1,
+      downloadsByDay: 1,
       createdDate: 1,
       updatedDate: 1,
       viewerUserId: 1,
       viewerEmail: 1,
+      viewerIp: 1,
     })
     .populate({ path: "docId", select: { title: 1, shareId: 1 } })
     .populate({ path: "viewerUserId", select: { email: 1, name: 1 } })

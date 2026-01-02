@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "stage_match",
+    "notes",
+    "relevancy",
+    "relevancy_reason",
+    "strengths",
+    "weaknesses",
+    "key_open_questions",
+    "summary_markdown",
+    "founder_note"
+  ],
+  "properties": {
+    "stage_match": { "type": "boolean" },
+    "notes": { "type": "string" },
+    "relevancy": { "type": "string", "enum": ["low", "medium", "high"] },
+    "relevancy_reason": { "type": "string" },
+    "strengths": { "type": "array", "items": { "type": "string" } },
+    "weaknesses": { "type": "array", "items": { "type": "string" } },
+    "key_open_questions": { "type": "array", "items": { "type": "string" } },
+    "summary_markdown": { "type": "string" },
+    "founder_note": { "type": "string" }
+  }
+}
+
+
+
+

@@ -7,6 +7,10 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+/**
+ * Handle POST requests.
+ */
+
 
 export async function POST(
   request: Request,
@@ -24,10 +28,23 @@ export async function POST(
     const message = typeof body.message === "string" ? body.message.trim() : "";
 
     await connectMongo();
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const exists = await DocModel.exists({
-      _id: new Types.ObjectId(docId),
-      userId: new Types.ObjectId(actor.userId),
-      isDeleted: { $ne: true },
+      ...(allowLegacyByUserId
+        ? {
+            $or: [
+              { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
+              {
+                _id: new Types.ObjectId(docId),
+                userId: legacyUserId,
+                isDeleted: { $ne: true },
+                $or: [{ orgId: { $exists: false } }, { orgId: null }],
+              },
+            ],
+          }
+        : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
     });
     if (!exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -44,6 +61,9 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
+
+
 
 
 

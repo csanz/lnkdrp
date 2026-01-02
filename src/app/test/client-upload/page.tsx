@@ -6,6 +6,10 @@
  */
 
 import BlobClientUploadTest from "@/components/BlobClientUploadTest";
+/**
+ * Render the ClientUploadTestPage UI.
+ */
+
 
 export default function ClientUploadTestPage() {
   return <BlobClientUploadTest backHref="/" />;

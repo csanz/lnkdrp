@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 type Props = {
   label?: string;
@@ -17,6 +17,10 @@ type Props = {
   buttonId?: string;
   disabled?: boolean;
 };
+/**
+ * Return whether accepted file.
+ */
+
 
 function isAcceptedFile(file: File, accept: Props["accept"]) {
   if (accept === "pdf") {
@@ -27,6 +31,10 @@ function isAcceptedFile(file: File, accept: Props["accept"]) {
   }
   return file.type === "application/pdf" || file.type.startsWith("image/");
 }
+/**
+ * Render the UploadButton UI (uses effects).
+ */
+
 
 export default function UploadButton({
   label = "Upload",
@@ -39,7 +47,6 @@ export default function UploadButton({
   buttonId,
   disabled = false,
 }: Props) {
-  const id = useId();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const openedViaPointerDownRef = useRef(false);
 
@@ -54,6 +61,10 @@ export default function UploadButton({
     },
     [accept, onFileSelected],
   );
+/**
+ * Open Picker (uses onBeforeOpen, click).
+ */
+
 
   function openPicker() {
     if (disabled) return;
@@ -65,16 +76,32 @@ export default function UploadButton({
   }
 
   useEffect(() => {
+/**
+ * Handle drag over events; uses preventDefault.
+ */
+
     // Enable drag & drop anywhere on the page (and prevent the browser from navigating to the dropped file).
     const onDragOver = (e: DragEvent) => {
       e.preventDefault();
     };
+/**
+ * Handle drag enter events; uses preventDefault.
+ */
+
     const onDragEnter = (e: DragEvent) => {
       e.preventDefault();
     };
+/**
+ * Handle drag leave events; uses preventDefault.
+ */
+
     const onDragLeave = (e: DragEvent) => {
       e.preventDefault();
     };
+/**
+ * Handle drop events; uses preventDefault, handleFile.
+ */
+
     const onDrop = (e: DragEvent) => {
       e.preventDefault();
       const file = e.dataTransfer?.files?.[0] ?? null;
@@ -98,7 +125,6 @@ export default function UploadButton({
     <div className="inline-flex items-center">
       <input
         ref={inputRef}
-        id={id}
         type="file"
         accept={accept === "pdf" ? "application/pdf,.pdf" : "application/pdf,image/*"}
         className="sr-only"
@@ -145,6 +171,10 @@ export default function UploadButton({
     </div>
   );
 }
+/**
+ * Render the AddNewIcon UI.
+ */
+
 
 function AddNewIcon() {
   // Minimal “new” icon, similar vibe to ChatGPT's “New chat”
@@ -173,6 +203,10 @@ function AddNewIcon() {
     </svg>
   );
 }
+/**
+ * Render the UploadIcon UI.
+ */
+
 
 export function UploadIcon() {
   return (

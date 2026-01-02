@@ -25,6 +25,10 @@ const CATEGORY_LABELS: Record<string, string> = {
   academic_paper: "Academic Paper",
   other: "Other",
 };
+/**
+ * Title From Enum (uses join, map, filter).
+ */
+
 
 function titleFromEnum(value: string) {
   return value
@@ -58,7 +62,7 @@ type Props = {
   /**
    * Optional AI output for this specific document.
    * - If omitted (undefined), the viewer falls back to the sample JSON fetch (used by the test page).
-   * - If provided as null, the viewer will show "AI summary unavailable."
+   * - If provided as null, the viewer will show "Summary unavailable."
    */
   ai?: AiOutput | null;
 };
@@ -109,10 +113,18 @@ const SHARE_OWNER_STATS_PREFIX = "lnkdrp_share_owner_stats_v1:";
 
 type OwnerStats = { views: number; pagesViewed: number };
 type ShareContext = { isOwner: boolean; stats?: OwnerStats };
+/**
+ * Return whether browser.
+ */
+
 
 function isBrowser() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
+/**
+ * Get or create bot id.
+ */
+
 
 function getOrCreateBotId(): string | null {
   if (!isBrowser()) return null;
@@ -132,6 +144,10 @@ function getOrCreateBotId(): string | null {
 }
 
 type LocalShareStats = { viewedAt?: number; pagesSeen?: number[] };
+/**
+ * Read Local Share Stats (uses isBrowser, getItem, parse).
+ */
+
 
 function readLocalShareStats(shareId: string): LocalShareStats {
   if (!isBrowser()) return {};
@@ -152,6 +168,10 @@ function readLocalShareStats(shareId: string): LocalShareStats {
     return {};
   }
 }
+/**
+ * Write Local Share Stats (uses isBrowser, setItem, stringify).
+ */
+
 
 function writeLocalShareStats(shareId: string, next: LocalShareStats) {
   if (!isBrowser()) return;
@@ -161,6 +181,10 @@ function writeLocalShareStats(shareId: string, next: LocalShareStats) {
     // ignore
   }
 }
+/**
+ * Write Owner Stats To Local Storage (uses isBrowser, setItem, stringify).
+ */
+
 
 function writeOwnerStatsToLocalStorage(shareId: string, stats: OwnerStats) {
   if (!isBrowser()) return;
@@ -170,6 +194,10 @@ function writeOwnerStatsToLocalStorage(shareId: string, stats: OwnerStats) {
     // ignore
   }
 }
+/**
+ * Render the PdfJsViewer UI (uses effects, memoized values, local state).
+ */
+
 
 export function PdfJsViewer({
   url,
@@ -197,8 +225,15 @@ export function PdfJsViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
-  const [copied, setCopied] = useState(false);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
+  const askText = useMemo(() => {
+    const raw = (aiData?.ask ?? "").trim();
+    if (!raw) return "";
+    // Suppress "zero" placeholder values (common extraction artifact).
+    const compact = raw.replace(/[\s,]/g, "").toLowerCase();
+    if (compact === "$0.00" || compact === "$0" || compact === "0.00" || compact === "0") return "";
+    return raw;
+  }, [aiData?.ask]);
   const [status, setStatus] = useState<
     | { kind: "idle" }
     | { kind: "loading" }
@@ -209,6 +244,28 @@ export function PdfJsViewer({
   const aiProvided = typeof ai !== "undefined";
   const shareIdSafe = typeof shareId === "string" && shareId.trim() ? shareId.trim() : null;
   const canDownload = Boolean(allowDownload && downloadUrl);
+  // Important for hydration: do not read/generate botId during render.
+  // On the server, `window` is undefined and we'd produce a different `href` than the client.
+  const [downloadHref, setDownloadHref] = useState<string | null>(() => {
+    if (!canDownload) return null;
+    return downloadUrl as string;
+  });
+
+  useEffect(() => {
+    if (!canDownload) return;
+    const href = downloadUrl as string;
+    if (!shareIdSafe) {
+      setDownloadHref(href);
+      return;
+    }
+    const botId = getOrCreateBotId();
+    if (!botId) {
+      setDownloadHref(href);
+      return;
+    }
+    const joiner = href.includes("?") ? "&" : "?";
+    setDownloadHref(`${href}${joiner}botId=${encodeURIComponent(botId)}`);
+  }, [canDownload, downloadUrl, shareIdSafe]);
   const ownerViews = shareContext?.stats?.views ?? 0;
   const ownerPagesViewed = shareContext?.stats?.pagesViewed ?? 0;
   const ownerViewsLabel = `${ownerViews} ${ownerViews === 1 ? "view" : "views"}`;
@@ -217,37 +274,6 @@ export function PdfJsViewer({
     aiData?.category
       ? (CATEGORY_LABELS[aiData.category] ?? titleFromEnum(aiData.category))
       : null;
-
-  async function shareOrCopyLink() {
-    const href = window.location.href;
-    if (typeof navigator !== "undefined" && "share" in navigator) {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (navigator as any).share({ url: href, title: document.title });
-        return;
-      } catch (err) {
-        // If the user cancels the share sheet, do nothing (don't "copy" behind their back).
-        if (
-          err &&
-          typeof err === "object" &&
-          "name" in err &&
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (err as any).name === "AbortError"
-        ) {
-          return;
-        }
-        // Otherwise, ignore and fall back to copy.
-      }
-    }
-    try {
-      await navigator.clipboard.writeText(href);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // ignore
-    }
-  }
-
   const canPrev = useMemo(() => pageNumber > 1, [pageNumber]);
   const canNext = useMemo(
     () => (numPages ? pageNumber < numPages : true),
@@ -336,6 +362,10 @@ export function PdfJsViewer({
   }, []);
 
   useEffect(() => {
+/**
+ * Handle fullscreen change events; updates state (setIsFullscreen); uses setIsFullscreen.
+ */
+
     function onFullscreenChange() {
       setIsFullscreen(!!document.fullscreenElement);
     }
@@ -347,6 +377,10 @@ export function PdfJsViewer({
 
   useEffect(() => {
     let cancelled = false;
+/**
+ * Load Summary (updates state (setAiData); uses fetch, json, setAiData).
+ */
+
     async function loadSummary() {
       // If AI output was provided (including null), never load the sample.
       if (aiProvided) return;
@@ -360,7 +394,7 @@ export function PdfJsViewer({
         setAiData(data ?? {});
       } catch {
         if (cancelled) return;
-        setAiData({ summary: "AI summary unavailable." });
+        setAiData({ summary: "Summary unavailable." });
       }
     }
     loadSummary();
@@ -371,6 +405,10 @@ export function PdfJsViewer({
 
   useEffect(() => {
     if (!aiOpen) return;
+/**
+ * Handle pointer down events; updates state (setAiOpen); uses contains, setAiOpen.
+ */
+
 
     function onPointerDown(e: PointerEvent) {
       const t = e.target as Node | null;
@@ -386,6 +424,10 @@ export function PdfJsViewer({
   }, [aiOpen]);
 
   useEffect(() => {
+/**
+ * Handle key down events; updates state (setAiOpen); uses toLowerCase, goPrev, preventDefault.
+ */
+
     function onKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -435,6 +477,10 @@ export function PdfJsViewer({
 
   useEffect(() => {
     let cancelled = false;
+/**
+ * Load (updates state (setStatus, setNumPages, setPageNumber); uses setStatus, getDocument, setNumPages).
+ */
+
 
     async function load() {
       setStatus({ kind: "loading" });
@@ -469,6 +515,10 @@ export function PdfJsViewer({
 
   useEffect(() => {
     let cancelled = false;
+/**
+ * Render (updates state (setStatus); uses setStatus, getPage, getViewport).
+ */
+
 
     async function render() {
       const pdf = pdfRef.current;
@@ -521,6 +571,10 @@ export function PdfJsViewer({
     if (!shareIdSafe) return;
     const shareId = shareIdSafe;
     let cancelled = false;
+/**
+ * Load Context (updates state (setShareContext); uses fetchWithTempUser, catch, json).
+ */
+
     async function loadContext() {
       try {
         const res = await fetchWithTempUser(`/api/share/${shareId}/stats`, {
@@ -643,7 +697,7 @@ export function PdfJsViewer({
               <div className="inline-flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-1.5">
                 <button
                   type="button"
-                  aria-label="AI summary"
+                  aria-label="Summary (generated)"
                   ref={aiButtonRef}
                   onClick={() => {
                     setAiOpen((v) => !v);
@@ -652,42 +706,22 @@ export function PdfJsViewer({
                 >
                   <span className="inline-flex items-center gap-1.5">
                     <SparklesIcon />
-                    AI summary
+                    Summary
                   </span>
                 </button>
 
-                {shareContext?.isOwner ? (
+                {shareIdSafe && !shareContext?.isOwner ? (
                   <>
                     <div className="hidden h-8 w-px bg-white/10 sm:block" aria-hidden="true" />
-
-                    <div className="inline-flex h-8 min-w-0 items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3">
-                      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-emerald-100/90">
-                        Visible to you only
+                    <div className="inline-flex h-8 items-center rounded-xl border border-sky-400/20 bg-sky-500/10 px-3">
+                      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-sky-100/90">
+                        Shared
                       </span>
-
-                      <button
-                        type="button"
-                        aria-label="Share link"
-                        onClick={() => void shareOrCopyLink()}
-                        className="inline-flex h-8 min-w-[84px] shrink-0 items-center justify-center whitespace-nowrap rounded-lg bg-white/5 px-3 text-xs font-semibold text-white/90 hover:bg-white/10"
-                        title={copied ? "Copied!" : "Share / copy link"}
-                      >
-                        <span className="inline-flex items-center gap-1.5">
-                          <ShareIcon />
-                          {copied ? "Copied" : "Share"}
-                        </span>
-                      </button>
-
-                      {shareContext.stats ? (
-                        <div className="hidden items-center gap-1.5 text-[11px] text-white/75 md:inline-flex">
-                          <span className="tabular-nums">{ownerViewsLabel}</span>
-                          <span className="text-white/30">•</span>
-                          <span className="tabular-nums">{ownerPagesLabel}</span>
-                        </div>
-                      ) : null}
                     </div>
                   </>
                 ) : null}
+
+                {/* Intentionally do not show the owner-only "Visible to you only" badge on share views. */}
               </div>
             </div>
 
@@ -763,7 +797,7 @@ export function PdfJsViewer({
 
               {canDownload ? (
                 <a
-                  href={downloadUrl as string}
+                  href={(downloadHref ?? (downloadUrl as string)) as string}
                   className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
                 >
                   Download PDF
@@ -775,7 +809,7 @@ export function PdfJsViewer({
         </div>
       </header>
 
-      {/* AI summary popover (overlays PDF, aligned with top bar) */}
+      {/* Summary popover (overlays PDF, aligned with top bar) */}
       {aiOpen ? (
         <>
           {/* Backdrop: gently dim + blur PDF behind the summary */}
@@ -786,18 +820,22 @@ export function PdfJsViewer({
           />
 
           <div
-            className="pointer-events-none absolute left-0 right-0 z-40"
+            className="pointer-events-none absolute left-0 right-0 bottom-0 z-40"
             style={{ top: headerHeight }}
           >
-            <div className="pointer-events-auto px-3 pt-4 sm:px-6 sm:pt-5">
+            <div className="pointer-events-auto h-full px-3 pt-4 pb-4 sm:px-6 sm:pt-5 sm:pb-6">
             <div
               ref={aiPopoverRef}
-              className="max-w-3xl rounded-2xl border border-white/15 bg-black/95 p-7 text-base text-white shadow-2xl ring-1 ring-white/15"
+              className="max-w-3xl overflow-auto rounded-2xl border border-white/15 bg-black/95 p-7 text-base text-white shadow-2xl ring-1 ring-white/15"
+              style={{ maxHeight: `calc(100svh - ${headerHeight}px - 24px)` }}
             >
               <div className="flex flex-wrap items-center gap-2">
                 <div className="inline-flex items-center gap-2 text-sm font-semibold tracking-wide text-white/90">
                   <SparklesIcon />
-                  AI SUMMARY
+                  SUMMARY
+                  <span className="rounded-md border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/70">
+                    Generated
+                  </span>
                 </div>
                 <div className="ml-auto text-sm text-white/70">Esc to close</div>
               </div>
@@ -814,7 +852,7 @@ export function PdfJsViewer({
                     {aiData.summary}
                   </Markdown>
                 ) : aiProvided ? (
-                  "AI summary unavailable."
+                  "Summary unavailable."
                 ) : (
                   "Loading…"
                 )}
@@ -896,12 +934,12 @@ export function PdfJsViewer({
                         </div>
                       ) : null}
 
-                      {aiData.ask?.trim() ? (
+                      {askText ? (
                         <div className="rounded-lg border-l-2 border-white/25 pl-3">
                           <div className="text-[11px] font-bold uppercase tracking-widest text-white/80">
                             Ask
                           </div>
-                          <div className="mt-1 text-white/95">{aiData.ask.trim()}</div>
+                          <div className="mt-1 text-white/95">{askText}</div>
                         </div>
                       ) : null}
 
@@ -1033,6 +1071,10 @@ export function PdfJsViewer({
     </div>
   );
 }
+/**
+ * Render the SparklesIcon UI.
+ */
+
 
 function SparklesIcon() {
   return (
@@ -1065,6 +1107,10 @@ function SparklesIcon() {
     </svg>
   );
 }
+/**
+ * Render the MinusIcon UI.
+ */
+
 
 function MinusIcon() {
   return (
@@ -1085,6 +1131,10 @@ function MinusIcon() {
     </svg>
   );
 }
+/**
+ * Render the PlusIcon UI.
+ */
+
 
 function PlusIcon() {
   return (
@@ -1105,26 +1155,10 @@ function PlusIcon() {
     </svg>
   );
 }
+/**
+ * Render the FullscreenIcon UI.
+ */
 
-function ShareIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <path
-        d="M18 8a3 3 0 1 0-2.82-4H15a3 3 0 0 0 .18 1.03L8.8 9.1a3 3 0 0 0-1.8-.6 3 3 0 1 0 2.82 4l6.38 3.98A3 3 0 1 0 17 15a2.98 2.98 0 0 0-1.8.6l-6.38-3.98c.11-.32.18-.66.18-1.02 0-.36-.07-.7-.18-1.02l6.38-4.07c.53.32 1.16.5 1.8.5Z"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
 function FullscreenIcon({ isFullscreen }: { isFullscreen: boolean }) {
   return isFullscreen ? (

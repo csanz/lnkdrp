@@ -1,6 +1,13 @@
 import mongoose from "mongoose";
 import { debugError, debugLog } from "@/lib/debug";
 
+/**
+ * Shared Mongoose connection helper.
+ *
+ * Uses a global cache (`globalThis.mongooseCache`) so that in serverless/dev hot-reload
+ * scenarios we don't open duplicate connections.
+ */
+
 type MongooseCache = {
   conn: typeof mongoose | null;
   promise: Promise<typeof mongoose> | null;
@@ -17,6 +24,11 @@ const cache: MongooseCache = globalThis.mongooseCache ?? {
 
 globalThis.mongooseCache = cache;
 
+/**
+ * Connect to MongoDB via Mongoose (cached).
+ *
+ * Throws when `MONGODB_URI` is missing. Safe to call multiple times.
+ */
 export async function connectMongoose(): Promise<typeof mongoose> {
   if (cache.conn) return cache.conn;
 

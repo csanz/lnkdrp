@@ -41,7 +41,7 @@ async function optimizePngLossless(pngBuffer) {
 }
 
 /**
- * Print usage instructions and exit the process.
+ * Print usage instructions for pdf-first-page-to-png.mjs and exit.
  */
 function usage(exitCode = 1) {
   const msg = `
@@ -183,7 +183,7 @@ async function ensureParentDir(filePath) {
 }
 
 /**
- * Entry point: render a page from a PDF to PNG + write metadata JSON.
+ * Run pdf-first-page-to-png.mjs: Render a PDF page to a PNG.
  */
 async function main() {
   const { input, output, scale, page, maxWidth } = parseArgs(process.argv.slice(2));
@@ -258,5 +258,7 @@ main().catch((err) => {
   console.error(err?.stack || String(err));
   process.exit(1);
 });
+
+
 
 

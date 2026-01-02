@@ -1,3 +1,9 @@
+/**
+ * Review model.
+ *
+ * Stores AI-generated review output (markdown + structured "intel") for a doc upload
+ * version. Reviews are unique per `(docId, version)`.
+ */
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 
 const reviewSchema = new Schema(
@@ -29,9 +35,62 @@ const reviewSchema = new Schema(
     inputTextChars: { type: Number, min: 0, default: null },
 
     /**
+     * New request-review agent outputs (Guide vs Deck relevancy).
+     *
+     * These fields are used by request repos. We keep them separate from the legacy
+     * `intel` structure so we can evolve schemas without breaking older records.
+     */
+    agentKind: { type: String, trim: true, default: null },
+    agentSystemPrompt: { type: String, default: null },
+    agentUserPrompt: { type: String, default: null },
+    agentRawOutputText: { type: String, default: null },
+    agentOutput: { type: Schema.Types.Mixed, default: null },
+
+    /**
      * The generated Markdown review.
      */
     outputMarkdown: { type: String, default: null },
+
+    /**
+     * Structured "Intel" extracted by the review agent (owner-only UI).
+     *
+     * This complements `outputMarkdown` so the UI can render consistent fields
+     * (company/contact + score + strengths/risks/recommendations) without parsing text.
+     */
+    intel: {
+      company: {
+        name: { type: String, trim: true, default: null },
+        url: { type: String, trim: true, default: null },
+      },
+      contact: {
+        name: { type: String, trim: true, default: null },
+        email: { type: String, trim: true, default: null },
+        url: { type: String, trim: true, default: null },
+      },
+      overallAssessment: { type: String, trim: true, default: null },
+      effectivenessScore: { type: Number, min: 0, max: 10, default: null },
+      scoreRationale: { type: String, trim: true, default: null },
+      strengths: {
+        type: [{ title: { type: String, trim: true }, detail: { type: String, trim: true, default: null } }],
+        default: [],
+      },
+      weaknessesAndRisks: {
+        type: [{ title: { type: String, trim: true }, detail: { type: String, trim: true, default: null } }],
+        default: [],
+      },
+      recommendations: {
+        type: [{ title: { type: String, trim: true }, detail: { type: String, trim: true, default: null } }],
+        default: [],
+      },
+      actionItems: {
+        type: [{ title: { type: String, trim: true }, detail: { type: String, trim: true, default: null } }],
+        default: [],
+      },
+      /**
+       * Not shown to receivers; requester-only.
+       */
+      suggestedRewrites: { type: String, default: null },
+    },
 
     /**
      * Linkage to prior review context used (if any).
@@ -58,6 +117,7 @@ export type Review = InferSchemaType<typeof reviewSchema>;
 export const ReviewModel: Model<Review> =
   (mongoose.models.Review as Model<Review> | undefined) ??
   mongoose.model<Review>("Review", reviewSchema);
+
 
 
 

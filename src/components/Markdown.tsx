@@ -4,12 +4,20 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 type Tone = "light" | "dark";
+/**
+ * Normalize Markdown Text (uses isArray, join, map).
+ */
+
 
 function normalizeMarkdownText(children: unknown) {
   // react-markdown passes code contents as `children: [string]` in most cases
   if (Array.isArray(children)) return children.map((c) => String(c)).join("");
   return String(children ?? "");
 }
+/**
+ * Render the DiffBlock UI.
+ */
+
 
 function DiffBlock({
   text,
@@ -24,6 +32,10 @@ function DiffBlock({
   // needing a `tone` prop at callsites.
   const baseText = "text-[var(--fg)]";
   const mutedText = "text-[var(--muted-2)]";
+/**
+ * Line Class (uses startsWith).
+ */
+
 
   const lineClass = (line: string) => {
     void tone; // kept for backwards-compat signature; visual styling is theme-driven now.
@@ -33,6 +45,10 @@ function DiffBlock({
     if (line.startsWith("-")) return "bg-[var(--diff-del-bg)]";
     return "";
   };
+/**
+ * Line Text Class (uses startsWith).
+ */
+
 
   const lineTextClass = (line: string) => {
     if (line.startsWith("@@")) return mutedText;
@@ -70,6 +86,10 @@ function DiffBlock({
     </div>
   );
 }
+/**
+ * Render the Markdown UI.
+ */
+
 
 export default function Markdown({
   children,
@@ -148,7 +168,13 @@ export default function Markdown({
               rel="noreferrer"
             />
           ),
-          code: ({ inline, className: codeClassName, children: codeChildren, ...props }) => {
+          code: (codeProps) => {
+            const { className: codeClassName, children: codeChildren, ...props } = codeProps as unknown as {
+              className?: string;
+              children?: unknown;
+              [key: string]: unknown;
+            };
+            const inline = Boolean((codeProps as unknown as { inline?: unknown }).inline);
             const raw = normalizeMarkdownText(codeChildren);
             const lang = (codeClassName ?? "").replace("language-", "").trim().toLowerCase();
 

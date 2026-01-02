@@ -9,9 +9,17 @@
     "lint": "eslint",
     "blob:test": "node scripts/test-vercel-blob.mjs",
     "mongo:clear": "node scripts/mongo-clear.mjs",
+    "mongo:clear:ai-runs-requests": "node scripts/mongo-clear-ai-runs-and-requests.mjs",
+    "metrics:rollup:dev": "tsx scripts/rollup-doc-metrics.ts --interval 10000",
+    "metrics:rollup:once": "tsx scripts/rollup-doc-metrics.ts --once",
     "test:pdf2png": "node scripts/pdf-first-page-to-png.mjs",
     "test:pdf2txt": "node scripts/pdf-to-text.mjs",
-    "test:ai-extract": "tsx scripts/test-ai-extract.ts"
+    "test:ai-extract": "tsx scripts/test-ai-extract.ts",
+    "tests:agent": "tsx tests/agent/agent.cli.ts",
+    "tests:agent:cli": "tsx tests/agent/agent.cli.ts",
+    "tests:agent:vitest": "vitest run --config tests/agent/vitest.config.ts",
+    "tests:upload:vitest": "vitest run --config tests/upload/vitest.config.ts",
+    "tests:routes": "node scripts/tests-routes.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",
@@ -32,6 +40,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "sharp": "^0.34.4",
+    "stripe": "^20.1.0",
     "zod": "^4.1.5"
   },
   "devDependencies": {
@@ -43,6 +52,7 @@
     "eslint-config-next": "16.0.10",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

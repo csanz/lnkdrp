@@ -6,12 +6,20 @@ type Props = {
   storageKey: string;
   items: string[];
 };
+/**
+ * Render the RelevanceChecklist UI (uses memoized values).
+ */
+
 
 export default function RelevanceChecklist({ storageKey, items }: Props) {
   const normalized = useMemo(() => {
     const xs = (items ?? []).filter((t) => typeof t === "string" && t.trim());
     return xs.length ? xs : ["Relevant to me"];
   }, [items]);
+/**
+ * Subscribe (uses addEventListener, removeEventListener).
+ */
+
 
   function subscribe(callback: () => void) {
     // Keep multiple tabs and same-tab writes in sync.
@@ -22,6 +30,10 @@ export default function RelevanceChecklist({ storageKey, items }: Props) {
       window.removeEventListener("lnkdrp:relevance-checklist", callback);
     };
   }
+/**
+   * Get snapshot.
+   */
+
 
   function getSnapshot() {
     try {
@@ -30,6 +42,10 @@ export default function RelevanceChecklist({ storageKey, items }: Props) {
       return "";
     }
   }
+/**
+   * Get server snapshot.
+   */
+
 
   function getServerSnapshot() {
     // SSR-safe. Component is client-only, but required by the hook signature.
@@ -56,6 +72,10 @@ export default function RelevanceChecklist({ storageKey, items }: Props) {
       return {};
     }
   }, [raw]);
+/**
+   * Set checked.
+   */
+
 
   function setChecked(label: string, value: boolean) {
     const next = { ...checked, [label]: value };
@@ -98,6 +118,8 @@ export default function RelevanceChecklist({ storageKey, items }: Props) {
     </div>
   );
 }
+
+
 
 
 

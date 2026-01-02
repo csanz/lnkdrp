@@ -5,6 +5,10 @@ import { FolderIcon } from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
 
 export type DocProjectListItem = { id: string; name: string; slug?: string };
+/**
+ * Render the DocProjectsModal UI.
+ */
+
 
 export default function DocProjectsModal({
   open,
@@ -28,7 +32,7 @@ export default function DocProjectsModal({
       ) : (
         <ul className="mt-2 divide-y divide-zinc-200 overflow-hidden rounded-2xl border border-zinc-200">
           {ps.map((p) => {
-            const href = p.slug ? `/project/${encodeURIComponent(p.slug)}` : null;
+            const href = p.id ? `/project/${encodeURIComponent(p.id)}` : null;
             const Row = (
               <div className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-zinc-50">
                 <div className="min-w-0">
@@ -57,5 +61,8 @@ export default function DocProjectsModal({
     </Modal>
   );
 }
+
+
+
 
 

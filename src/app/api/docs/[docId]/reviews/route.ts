@@ -7,6 +7,10 @@ import { DocModel } from "@/lib/models/Doc";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+/**
+ * Return whether object id.
+ */
+
 
 function isObjectId(id: string) {
   return Types.ObjectId.isValid(id);
@@ -44,10 +48,23 @@ export async function GET(
     await connectMongo();
 
     // Authorization: doc must belong to the actor.
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docExists = await DocModel.exists({
-      _id: new Types.ObjectId(docId),
-      userId: new Types.ObjectId(actor.userId),
-      isDeleted: { $ne: true },
+      ...(allowLegacyByUserId
+        ? {
+            $or: [
+              { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
+              {
+                _id: new Types.ObjectId(docId),
+                userId: legacyUserId,
+                isDeleted: { $ne: true },
+                $or: [{ orgId: { $exists: false } }, { orgId: null }],
+              },
+            ],
+          }
+        : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
     });
     if (!docExists) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -79,6 +96,18 @@ export async function GET(
             ? r.priorReviewVersion
             : null,
           outputMarkdown: r.outputMarkdown ?? null,
+          intel: (function () {
+            const intel = (r as unknown as { intel?: unknown }).intel;
+            return intel && typeof intel === "object" ? intel : null;
+          })(),
+          agentKind:
+            typeof (r as unknown as { agentKind?: unknown }).agentKind === "string"
+              ? ((r as unknown as { agentKind: string }).agentKind ?? null)
+              : null,
+          agentOutput: (function () {
+            const out = (r as unknown as { agentOutput?: unknown }).agentOutput;
+            return out && typeof out === "object" ? out : null;
+          })(),
           createdDate: r.createdDate ? new Date(r.createdDate).toISOString() : null,
           updatedDate: r.updatedDate ? new Date(r.updatedDate).toISOString() : null,
         })),
@@ -91,6 +120,7 @@ export async function GET(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
 
 
 

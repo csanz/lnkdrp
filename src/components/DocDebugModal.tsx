@@ -12,10 +12,18 @@ type DebugApiResponse = {
   };
   error?: string;
 };
+/**
+ * Return whether plain object.
+ */
+
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
+/**
+ * Format Json (uses stringify, String).
+ */
+
 
 function formatJson(v: unknown) {
   try {
@@ -24,10 +32,18 @@ function formatJson(v: unknown) {
     return String(v);
   }
 }
+/**
+ * As Array (uses isArray).
+ */
+
 
 function asArray(v: unknown): unknown[] | null {
   return Array.isArray(v) ? v : null;
 }
+/**
+ * Render the KeyValueTable UI (uses memoized values).
+ */
+
 
 function KeyValueTable({ value }: { value: unknown }) {
   const entries = useMemo(() => {
@@ -72,6 +88,10 @@ function KeyValueTable({ value }: { value: unknown }) {
     </div>
   );
 }
+/**
+ * Render the DocDebugModal UI (uses effects, local state).
+ */
+
 
 export default function DocDebugModal({
   open,
@@ -114,6 +134,10 @@ export default function DocDebugModal({
       cancelled = true;
     };
   }, [open, docId]);
+/**
+ * Tab Button (updates state (setTab); uses setTab).
+ */
+
 
   const tabButton = (id: "doc" | "uploads", label: string) => (
     <button
@@ -166,6 +190,10 @@ export default function DocDebugModal({
     </Modal>
   );
 }
+/**
+ * Render the UploadsView UI.
+ */
+
 
 function UploadsView({
   uploads,
@@ -214,6 +242,8 @@ function UploadsView({
     </div>
   );
 }
+
+
 
 
 

@@ -5,16 +5,29 @@ import { InviteModel } from "@/lib/models/Invite";
 export const runtime = "nodejs";
 
 const INVITE_COOKIE_NAME = "ld_invite_ok";
+/**
+ * Normalize Code (uses toUpperCase, trim, replace).
+ */
+
 
 function normalizeCode(code: string) {
-  return code.trim().toUpperCase();
+  // Accept common copy/paste formats (spaces/dashes) and normalize for matching.
+  return code.replace(/[^a-z0-9]/gi, "").trim().toUpperCase();
 }
+/**
+ * As Non Empty String (uses trim).
+ */
+
 
 function asNonEmptyString(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const s = v.trim();
   return s ? s : null;
 }
+/**
+ * Handle POST requests.
+ */
+
 
 export async function POST(request: Request) {
   try {
@@ -22,13 +35,16 @@ export async function POST(request: Request) {
     const rawCode = asNonEmptyString((body as { code?: unknown }).code);
     if (!rawCode) return NextResponse.json({ error: "Missing code" }, { status: 400 });
 
+    // Support older/manual formats by trying multiple normalized variants.
     const trimmed = rawCode.trim();
-    const code = normalizeCode(rawCode);
+    const upperTrimmed = trimmed.toUpperCase();
+    const normalized = normalizeCode(rawCode);
+    const candidates = Array.from(new Set([trimmed, upperTrimmed, normalized])).filter(Boolean);
 
     await connectMongo();
     const invite = await InviteModel.findOne({
       kind: "invite",
-      code: { $in: [trimmed, code] },
+      code: { $in: candidates },
       isActive: { $ne: false },
     })
       .select({ _id: 1 })

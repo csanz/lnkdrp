@@ -1,13 +1,39 @@
+/**
+ * API route for `/api/docs`.
+ *
+ * Lists and creates docs (ensures each doc has a public `/s/:shareId`).
+ */
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+
+const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+/**
+ * Random Base62 (uses randomBytes, max, ceil).
+ */
+
+
+function randomBase62(length: number): string {
+  let out = "";
+  while (out.length < length) {
+    const remaining = length - out.length;
+    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
+    for (const b of buf) {
+      // 62 * 4 = 248, so values 0..247 map evenly to base62.
+      if (b < 248) out += BASE62_ALPHABET[b % 62];
+      if (out.length >= length) break;
+    }
+  }
+  return out;
+}
 
 /**
  * Generate a short public identifier for `/s/:shareId`.
@@ -17,8 +43,8 @@ export const runtime = "nodejs";
  * - Collisions are extremely unlikely, but callers should still handle dupes.
  */
 function newShareId() {
-  // 12 chars-ish, URL-safe, no secrets (public identifier).
-  return crypto.randomBytes(9).toString("base64url");
+  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
+  return randomBase62(12);
 }
 
 type CreateReturn = Awaited<ReturnType<typeof DocModel.create>>;
@@ -30,6 +56,7 @@ type CreatedDoc = CreateReturn extends (infer U)[] ? U : CreateReturn;
  * Query params:
  * - limit, page
  * - q: basic search over title/shareId
+ * - ids: comma-separated list of doc ObjectIds to fetch directly (bypasses paging/search)
  */
 export async function GET(request: Request) {
   try {
@@ -37,34 +64,79 @@ export async function GET(request: Request) {
     const limitRaw = url.searchParams.get("limit");
     const pageRaw = url.searchParams.get("page");
     const qRaw = url.searchParams.get("q") ?? "";
+    const idsRaw = url.searchParams.get("ids") ?? "";
     const limit = Math.max(
       1,
       Math.min(50, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 25),
     );
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
     const q = qRaw.trim();
+    const idsList = idsRaw
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 50);
+    const ids = idsList.length ? idsList.filter((id) => Types.ObjectId.isValid(id)) : [];
 
-    debugLog(2, "[api/docs] GET", { limit, page, q: q ? "[redacted]" : "" });
+    debugLog(2, "[api/docs] GET", {
+      limit,
+      page,
+      q: q ? "[redacted]" : "",
+      ids: ids.length ? `[${ids.length}]` : "",
+    });
     const actor = await resolveActor(request);
     await connectMongo();
+
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
 
     // List most recently updated docs.
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
       isArchived: { $ne: true },
-      userId: new Types.ObjectId(actor.userId),
+      ...(allowLegacyByUserId
+        ? {
+            $or: [
+              { orgId },
+              { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+            ],
+          }
+        : { orgId }),
     };
-    if (q) {
+    if (ids.length) {
+      // Direct lookup by IDs (used by the client for fast "starred docs" verification/metadata).
+      filter._id = { $in: ids.map((id) => new Types.ObjectId(id)) };
+    } else if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       filter.$or = [{ title: rx }, { shareId: rx }];
     }
 
-    const total = await DocModel.countDocuments(filter);
-    const docs = await DocModel.find(filter)
-      .sort({ updatedDate: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
+    const useIds = Boolean(ids.length);
+    const total = useIds ? 0 : await DocModel.countDocuments(filter);
+    // Stable ordering: when `updatedDate` ties (or is null), add a deterministic tiebreaker.
+    // Without this, MongoDB is free to return ties in arbitrary order, causing UI "flip" on refresh.
+    const docsUnordered = await DocModel.find(filter)
+      .sort({ updatedDate: -1, _id: -1 })
+      .skip(useIds ? 0 : (page - 1) * limit)
+      .limit(useIds ? ids.length : limit)
       .lean();
+    const docs = useIds
+      ? (() => {
+          // Preserve the caller's order for `ids=` requests (useful for starred ordering).
+          const byId = new Map<string, (typeof docsUnordered)[number]>();
+          for (const d of docsUnordered) byId.set(String(d._id), d);
+          const ordered = ids.map((id) => byId.get(id)).filter(Boolean) as (typeof docsUnordered)[number][];
+          // Include any stragglers (shouldn't happen often, but keeps response complete).
+          const orderedIds = new Set(ids);
+          for (const d of docsUnordered) {
+            const id = String(d._id);
+            if (!orderedIds.has(id)) ordered.push(d);
+          }
+          return ordered;
+        })()
+      : docsUnordered;
+    const totalEffective = useIds ? docs.length : total;
 
     // Include current upload version (best-effort) so UI can show v#.
     // Prefer `currentUploadId`, but fall back to legacy `uploadId` when present.
@@ -84,6 +156,22 @@ export async function GET(request: Request) {
 
     // Best-effort: ensure shareIds exist for listed docs so links work.
     for (const d of docs) {
+      // Best-effort: backfill orgId for legacy personal docs so org scoping works.
+      const dOrgId = (d as unknown as { orgId?: unknown }).orgId;
+      if (allowLegacyByUserId && !dOrgId) {
+        try {
+          await DocModel.updateOne(
+            { _id: d._id, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+            { $set: { orgId } },
+            // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
+            { timestamps: false },
+          );
+          (d as unknown as { orgId?: Types.ObjectId }).orgId = orgId;
+        } catch {
+          // ignore
+        }
+      }
+
       if (d.shareId) continue;
       for (let i = 0; i < 3; i++) {
         const candidate = newShareId();
@@ -91,6 +179,8 @@ export async function GET(request: Request) {
           await DocModel.updateOne(
             { _id: d._id, shareId: { $in: [null, undefined, ""] } },
             { $set: { shareId: candidate } },
+            // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
+            { timestamps: false },
           );
           d.shareId = candidate;
           break;
@@ -108,14 +198,54 @@ export async function GET(request: Request) {
       }
     }
 
+    // Best-effort: relate "guide docs" back to request repos even if older docs
+    // haven't been backfilled with `guideForRequestProjectId` yet.
+    const guideProjectIdByDocId = new Map<string, string>();
+    try {
+      const docIds = docs.map((d) => d._id).filter(Boolean);
+      if (docIds.length) {
+        const reqProjects = await ProjectModel.find({
+          ...(allowLegacyByUserId
+            ? {
+                $or: [
+                  { orgId },
+                  { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+                ],
+              }
+            : { orgId }),
+          isDeleted: { $ne: true },
+          requestReviewGuideDocId: { $in: docIds },
+          $or: [{ isRequest: true }, { requestUploadToken: { $exists: true, $nin: [null, ""] } }],
+        })
+          .select({ _id: 1, requestReviewGuideDocId: 1 })
+          .lean();
+        for (const p of reqProjects) {
+          const guideIdRaw = (p as unknown as { requestReviewGuideDocId?: unknown }).requestReviewGuideDocId;
+          if (!guideIdRaw) continue;
+          guideProjectIdByDocId.set(String(guideIdRaw), String(p._id));
+        }
+      }
+    } catch {
+      // ignore; list endpoint is best-effort
+    }
+
     return applyTempUserHeaders(
       NextResponse.json({
-      total,
-      page,
-      limit,
+      total: totalEffective,
+      page: useIds ? 1 : page,
+      limit: useIds ? ids.length : limit,
       docs: docs.map((d) => {
         const currentUploadId =
           d.currentUploadId ?? (d as unknown as { uploadId?: unknown }).uploadId ?? null;
+        const ai = (d as unknown as { aiOutput?: unknown }).aiOutput;
+        const oneLinerRaw =
+          ai && typeof ai === "object" && "one_liner" in ai ? (ai as { one_liner?: unknown }).one_liner : null;
+        const one_liner = typeof oneLinerRaw === "string" ? oneLinerRaw.trim() : "";
+        const receivedViaRequestProjectIdRaw = (d as unknown as { receivedViaRequestProjectId?: unknown })
+          .receivedViaRequestProjectId;
+        const guideForRequestProjectIdRaw = (d as unknown as { guideForRequestProjectId?: unknown })
+          .guideForRequestProjectId;
+        const docId = String(d._id);
         return {
           id: String(d._id),
           shareId: d.shareId ?? null,
@@ -123,7 +253,14 @@ export async function GET(request: Request) {
           status: d.status ?? "draft",
           currentUploadId: currentUploadId ? String(currentUploadId) : null,
           version: currentUploadId ? uploadsById.get(String(currentUploadId)) ?? null : null,
+          previewImageUrl: d.previewImageUrl ?? (d as unknown as { firstPagePngUrl?: unknown }).firstPagePngUrl ?? null,
+          one_liner: one_liner || null,
           receiverRelevanceChecklist: Boolean(d.receiverRelevanceChecklist),
+          receivedViaRequestProjectId: receivedViaRequestProjectIdRaw ? String(receivedViaRequestProjectIdRaw) : null,
+          guideForRequestProjectId: (function () {
+            if (guideForRequestProjectIdRaw) return String(guideForRequestProjectIdRaw);
+            return guideProjectIdByDocId.get(docId) ?? null;
+          })(),
           updatedDate: d.updatedDate ? new Date(d.updatedDate).toISOString() : null,
           createdDate: d.createdDate ? new Date(d.createdDate).toISOString() : null,
         };
@@ -176,6 +313,7 @@ export async function POST(request: Request) {
     for (let i = 0; i < 3; i++) {
       try {
         const created = await DocModel.create({
+          orgId: new Types.ObjectId(actor.orgId),
           userId: new Types.ObjectId(actor.userId),
           title: body.title ?? "Untitled document",
           status: "draft",

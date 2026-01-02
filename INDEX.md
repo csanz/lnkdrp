@@ -1,16 +1,21 @@
 # Components
 - `src/components/AboutCopy.tsx` — exports: AboutCopy
 - `src/components/AccountMenu.tsx` — exports: AccountMenu
+- `src/components/ActiveWorkspacePill.tsx` — exports: ActiveWorkspacePill (default)
 - `src/components/BlobClientUploadTest.tsx` — exports: BlobClientUploadTest
+- `src/components/CopyButton.tsx` — exports: CopyButton
 - `src/components/DocActionsMenu.tsx` — exports: DocActionsMenu
 - `src/components/DocDebugModal.tsx` — exports: DocDebugModal
 - `src/components/DocSharePanel.tsx` — exports: DocSharePanel
+- `src/app/(app)/AppShellLayout.tsx` — exports: AppShellLayout
+- `src/app/dashboard/SubscriptionCard.tsx` — exports: SubscriptionCard (default)
 - `src/admin/components/CacheToolsClient.tsx` — exports: CacheToolsClient
 - `src/components/LeftSidebar.tsx` — exports: LeftSidebar
 - `src/components/SidebarProjectsSection.tsx` — exports: SidebarProjectsSection
 - `src/components/Markdown.tsx` — exports: Markdown
 - `src/components/PasswordGate.tsx` — exports: PasswordGate
 - `src/components/ProjectSharePanel.tsx` — exports: ProjectSharePanel
+- `src/components/SwitchingOverlay.tsx` — exports: SWITCHING_OVERLAY_ID, SWITCHING_OVERLAY_Y_KEY, SWITCHING_OVERLAY_STARTED_AT_KEY, DEFAULT_SWITCHING_OVERLAY_MIN_MS, showSwitchingOverlay, waitForNextPaint, waitForMinOverlayTime, fetchOrgSwitchRedirectTo, switchWorkspaceWithOverlay
 - `src/components/modals/CreateLinkRequestRepositoryModal.tsx` — exports: CreateLinkRequestRepositoryModal
 - `src/components/modals/DeleteDocModal.tsx` — exports: DeleteDocModal
 - `src/components/modals/DeleteProjectModal.tsx` — exports: DeleteProjectModal
@@ -28,6 +33,7 @@
 
 # Lib
 - `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
+- `src/lib/orgsCache.ts` — exports: OrgsCacheOrg, OrgsCacheSnapshot, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, writeOrgsCacheSnapshot, refreshOrgsCache, setCachedActiveOrgId
 - `src/lib/metrics/rollupDocMetrics.ts` — exports: rollupDocMetrics
 - `src/lib/models/CronHealth.ts` — exports: CronHealthModel, (type) CronHealth
 - `src/lib/models/AiRun.ts` — exports: AiRunModel, (type) AiRun
@@ -39,9 +45,14 @@
 - `src/app/(app)/doc/[docId]/review/page.tsx` — Page for \`/doc/:docId/review\`.
 - `src/app/(app)/layout.tsx` — Layout for \`/\`.
 - `src/app/(app)/project/[projectSlug]/page.tsx` — Page for \`/project/:projectId\`.
+- `src/app/preferences/layout.tsx` — Layout for \`/preferences\` (standalone; no app sidebar).
+- `src/app/preferences/page.tsx` — Page for \`/preferences\` (preferences hub).
+- `src/app/preferences/[tab]/page.tsx` — Page for \`/preferences/:tab\` (redirects to query-param tab).
+- `src/app/dashboard/page.tsx` — Page for \`/dashboard\` (standalone dashboard hub; includes Overview/Account/Workspace/Teams/Usage/Spending/Billing tabs).
 - `src/app/p/[shareId]/page.tsx` — Page for \`/p/:shareId\`.
 - `src/app/r/[token]/page.tsx` — Page for \`/r/:token\` (request upload link).
 - `src/app/request/[token]/page.tsx` — Page for \`/request/:token\` (request upload link).
+- `src/app/request-view/[token]/page.tsx` — Page for \`/request-view/:token\` (request repo viewer; read-only capability link).
 - `src/app/a/invitecodes/page.tsx` — Page for \`/a/invitecodes\`.
 - `src/app/a/cron-health/page.tsx` — Page for \`/a/cron-health\`.
 - `src/app/a/ai-runs/page.tsx` — Page for \`/a/ai-runs\`.
@@ -74,6 +85,12 @@
 - `src/app/api/admin/data/users/route.ts` — API route for \`/api/admin/data/users\`.
   - GET (function) — List users for admin inspection (paged).
   - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/orgs/route.ts` — API route for \`/api/admin/data/orgs\`.
+  - GET (function) — List orgs for admin inspection (and org member tooling).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/orgs/[orgId]/members/route.ts` — API route for \`/api/admin/data/orgs/:orgId/members\`.
+  - GET (function) — List org members (user + membership role) for admin inspection.
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/docs/route.ts` — API route for \`/api/admin/data/docs\`.
   - GET (function) — List docs across all users for admin inspection (paged).
   - runtime (const) — Next.js route configuration.
@@ -100,6 +117,15 @@
 - `src/app/api/auth/claim-temp/route.ts` — API route for \`/api/auth/claim-temp\`.
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
+- `src/app/api/dashboard/stats/route.ts` — API route for \`/api/dashboard/stats\`.
+  - GET (function) — Dashboard Overview stats (counts + share view aggregates).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/billing/subscription/route.ts` — API route for \`/api/billing/subscription\`.
+  - GET (function) — Return current org subscription status for dashboard UI.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/billing/subscription/manage/route.ts` — API route for \`/api/billing/subscription/manage\`.
+  - POST (function) — Create Stripe billing portal session URL for the current org customer.
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/blob/upload/route.ts` — Vercel Blob client-upload route (App Router).
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
@@ -111,6 +137,45 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/metrics/events/route.ts` — API route for \`/api/metrics/events\`.
   - POST (function) — Ingest metrics events (project views, in-project clicks, session page timing).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/route.ts` — API route for \`/api/orgs\`.
+  - GET (function) — List orgs for the signed-in user (includes active org id).
+  - POST (function) — Create a new team org and owner membership.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/active/route.ts` — API route for \`/api/orgs/active\`.
+  - GET (function) — Get current active org id for the signed-in user.
+  - POST (function) — Set active org id (membership validated; persisted in httpOnly cookie).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/[orgId]/avatar/route.ts` — API route for \`/api/orgs/:orgId/avatar\`.
+  - POST (function) — Update org avatar URL (owner/admin only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/[orgId]/members/route.ts` — API route for \`/api/orgs/:orgId/members\`.
+  - GET (function) — List org members (owner/admin only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/[orgId]/members/[userId]/revoke/route.ts` — API route for \`/api/orgs/:orgId/members/:userId/revoke\`.
+  - POST (function) — Revoke (remove) an org membership (owner/admin permissions).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/[orgId]/leave/route.ts` — API route for \`/api/orgs/:orgId/leave\`.
+  - POST (function) — Leave a team org (membership soft-delete; switches to personal org if leaving active org).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/claim-join/route.ts` — API route for \`/api/orgs/claim-join\`.
+  - POST (function) — Claim a one-time join cookie to add the signed-in user to the org.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/org-invites/route.ts` — API route for \`/api/org-invites\`.
+  - GET (function) — List existing org invite links (owner/admin only). Includes recipient email for email-sent invites and redeemed-by user info for used invites (when available).
+  - POST (function) — Create a new org invite link (owner/admin only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/org-invites/email/route.ts` — API route for \`/api/org-invites/email\`.
+  - POST (function) — Create an org invite link and email it to a recipient (owner/admin only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/org-invites/revoke/route.ts` — API route for \`/api/org-invites/revoke\`.
+  - POST (function) — Revoke (invalidate) an org invite link (owner/admin only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/org-invites/bootstrap/route.ts` — API route for \`/api/org-invites/bootstrap\`.
+  - GET (function) — Validate an org invite token and set invite-gating cookie so sign-in can proceed.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/org-invites/claim/route.ts` — API route for \`/api/org-invites/claim\`.
+  - POST (function) — Redeem an invite token into an org membership (auth required).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/docs/[docId]/pdf/route.ts` — API route for \`/api/docs/:docId/pdf\`.
   - GET (function) — Same-origin cached PDF proxy for the owner doc page.
@@ -136,7 +201,7 @@
   - GET (function) — Handle GET requests.
   - runtime (const) — Next.js route configuration.
 - `src/app/api/docs/route.ts` — API route for \`/api/docs\`.
-  - GET (function) — Generate a short public identifier for `/s/:shareId`.
+  - GET (function) — List docs (paged; supports `q` search; supports `ids` for direct lookup).
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
   - Note: GET list items can include \`receivedViaRequestProjectId\` and \`guideForRequestProjectId\` for request context indicators in doc lists.
@@ -212,15 +277,23 @@
   - GET (function) — Fetch upload status; supports \`x-upload-secret\` for request-link uploads.
   - PATCH (function) — Handle PATCH requests.
   - runtime (const) — Next.js route configuration.
+- `src/app/api/request-view/[token]/docs/[docId]/pdf/route.ts` — API route for \`/api/request-view/:token/docs/:docId/pdf\`.
+  - GET (function) — View-token authorized PDF proxy for request repo viewing links.
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/uploads/route.ts` — API route for \`/api/uploads\`.
   - GET (function) — Generate a short public identifier for `/s/:shareId`.
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
   - Note: POST supports \`skipReview\` (used for request guide documents).
   - Note: when \`skipReview\` is true, \`sizeBytes\` is limited to 1MB (guide-doc safety).
+- `src/app/api/users/me/name/route.ts` — API route for \`/api/users/me/name\`.
+  - POST (function) — Update the signed-in user's display name.
+  - runtime (const) — Next.js route configuration.
 - `src/app/client-upload/page.tsx` — Page for \`/client-upload\`.
 - `src/app/layout.tsx` — Layout for \`/\`.
 - `src/app/login/page.tsx` — Page for \`/login\`.
+- `src/app/org/switch/route.ts` — Route for \`/org/switch\` (sets active org cookie + redirects).
+- `src/app/org/join/[token]/page.tsx` — Page for \`/org/join/:token\` (accept an org invite and join a workspace).
 - `src/app/page.tsx` — Page for \`/\`.
 - `src/app/s/[shareId]/og.png/route.tsx` — API route for \`/s/:shareId/og.png\`.
   - GET (function) — Dynamic OG image route for a share page.
@@ -270,10 +343,12 @@
   - buildTestBlobPathname (function) — Build test blob pathname.
   - buildDocBlobPathname (function) — Build doc blob pathname.
   - buildDocPreviewPngPathname (function) — Build doc preview PNG pathname.
+  - buildOrgAvatarPathname (function) — Build org avatar blob pathname.
   - fetchPublicFileAsFile (function) — Fetch public file as file.
   - BLOB_HANDLE_UPLOAD_URL (const) — URL constant.
   - TEST_BLOB_PREFIX (const) — Prefix constant.
   - DOC_BLOB_PREFIX (const) — Prefix constant.
+  - ORG_AVATAR_PREFIX (const) — Prefix constant.
   - SAMPLE_UPLOADS (const) — Constant: sample uploads.
 - `src/lib/blob/serverClientUploadRoute.ts`
   - assertAllowedTestPathname (function) — Assert allowed test pathname.
@@ -298,6 +373,7 @@
 - `src/lib/gating/actor.ts`
   - Actor (type) — Type: actor.
   - applyTempUserHeaders (function) — Apply temp user headers.
+  - tryResolveUserActor (function) — Best-effort resolve authenticated user actor without creating temp users.
   - resolveActor (function) — Resolve actor.
   - TEMP_USER_ID_HEADER (const) — HTTP header name constant.
   - TEMP_USER_SECRET_HEADER (const) — HTTP header name constant.
@@ -330,6 +406,16 @@
 - `src/lib/models/Invite.ts` — Data model for the invites collection.
   - Invite (type) — Mongoose document type for the invites collection.
   - InviteModel (function) — Invite model.
+- `src/lib/models/Org.ts` — Data model for the orgs collection.
+  - Org (type) — Mongoose document type for the orgs collection.
+  - OrgModel (const) — Mongoose model for the orgs collection.
+  - ensurePersonalOrgForUserId (function) — Ensure a user has a personal org + membership.
+- `src/lib/models/OrgMembership.ts` — Data model for the orgmemberships collection.
+  - OrgMembership (type) — Mongoose document type for the orgmemberships collection.
+  - OrgMembershipModel (const) — Mongoose model for the orgmemberships collection.
+- `src/lib/models/OrgInvite.ts` — Data model for org invite links (token-based membership grants).
+  - OrgInvite (type) — Mongoose document type for org invites.
+  - OrgInviteModel (const) — Mongoose model for org invites.
 - `src/lib/models/Project.ts` — Data model for the projects collection.
   - Project (type) — Mongoose document type for the projects collection.
   - ProjectModel (const) — Mongoose model for the projects collection.
@@ -349,6 +435,9 @@
   - ShareView (type) — Mongoose document type for the shareviews collection.
   - ShareViewModel (const) — Mongoose model for the shareviews collection.
   - Note: includes best-effort `viewerIp` captured from request proxy headers.
+- `src/lib/models/Subscription.ts` — Data model for org subscriptions (Stripe customer/subscription pointers).
+  - Subscription (type) — Mongoose document type for subscriptions collection.
+  - SubscriptionModel (const) — Mongoose model for subscriptions collection.
 - `src/lib/models/Upload.ts` — Data model for the uploads collection.
   - Upload (type) — Mongoose document type for the uploads collection.
   - UploadModel (const) — Mongoose model for the uploads collection.
@@ -400,6 +489,7 @@
   - getPublicSiteBase (function) — Get public site base.
   - buildPublicShareUrl (function) — URL helpers shared by client components.
   - buildPublicRequestUrl (function) — Build a public `/request/:token` URL.
+  - buildPublicRequestViewUrl (function) — Build a public `/request-view/:token` URL.
 
 # Files
 - Excludes: `node_modules`, `.git`, `.next`, build outputs, dot-dirs, `.env*`, `.DS_Store`
@@ -414,6 +504,10 @@
 - `tests/agent/vitest.config.ts`
 - `tests/agent/vitest.reporter.concise.ts`
 - `tests/agent/vitest.setup.ts`
+- `tests/upload/vitest.config.ts`
+- `tests/upload/clientUpload.test.ts`
+- `tests/upload/serverClientUploadRoute.test.ts`
+- `tests/upload/docUploadPipeline.test.ts`
 - `tests/agent/review/review.tests.json`
 - `tests/agent/review/review.tests.ts`
 - `tests/agent/review/review.vitest.test.ts`
@@ -439,6 +533,9 @@
 - `db/migration/run.mjs`
 - `db/migration/20251226_0001_backfill_deletedDate_from_isDeletedDate.mjs`
 - `db/migration/20251227_0002_backfill_project_isRequest_from_requestUploadToken.mjs`
+- `db/migration/20251229_0003_dedupe_personal_orgs.mjs`
+- `db/migration/20251229_0004_backfill_orgId_to_personal_org.mjs`
+- `db/migration/20251229_0005_create_org_invite_indexes.mjs`
 - `scripts/lib/time.mjs`
 - `scripts/mongo-clear.mjs`
 - `scripts/mongo-clear-ai-runs-and-requests.mjs`

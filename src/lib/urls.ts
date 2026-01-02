@@ -49,6 +49,41 @@ export function buildPublicShareUrl(shareId: string | null): string {
   }
 }
 
+/**
+ * Build a public request-upload URL for a request token.
+ *
+ * Returns an empty string when we cannot build a stable absolute URL.
+ */
+export function buildPublicRequestUrl(uploadToken: string | null): string {
+  const token = typeof uploadToken === "string" ? uploadToken.trim() : "";
+  if (!token) return "";
+  const base = getPublicSiteBase();
+  if (!base) return "";
+  try {
+    return new URL(`/request/${encodeURIComponent(token)}`, base).toString();
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Build a public request-view URL for a request view token.
+ *
+ * Returns an empty string when we cannot build a stable absolute URL.
+ */
+export function buildPublicRequestViewUrl(viewToken: string | null): string {
+  const token = typeof viewToken === "string" ? viewToken.trim() : "";
+  if (!token) return "";
+  const base = getPublicSiteBase();
+  if (!base) return "";
+  try {
+    return new URL(`/request-view/${encodeURIComponent(token)}`, base).toString();
+  } catch {
+    return "";
+  }
+}
+
+
 
 
 

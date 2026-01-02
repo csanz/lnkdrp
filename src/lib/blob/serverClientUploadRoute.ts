@@ -9,7 +9,7 @@
  * Docs: https://vercel.com/docs/vercel-blob/client-upload
  */
 
-import { DOC_BLOB_PREFIX, TEST_BLOB_PREFIX } from "./clientUpload";
+import { DOC_BLOB_PREFIX, ORG_AVATAR_PREFIX, TEST_BLOB_PREFIX } from "./clientUpload";
 
 /**
  * Content types we allow for the demo/test upload route.
@@ -30,15 +30,11 @@ export const CLIENT_UPLOAD_MAX_SIZE_BYTES = 250 * 1024 * 1024; // 250MB
 /**
  * Guardrail: only allow destinations under our test prefix.
  */
-export function assertAllowedTestPathname(pathname: string) {
-  const allowed = [TEST_BLOB_PREFIX, DOC_BLOB_PREFIX];
+export function assertAllowedTestPathname(pathname: string): void {
+  const allowed = [TEST_BLOB_PREFIX, DOC_BLOB_PREFIX, ORG_AVATAR_PREFIX];
   if (!allowed.some((p) => pathname.startsWith(p))) {
     throw new Error(
       `Invalid pathname. Must start with one of: ${allowed.join(", ")}. Got: ${pathname}`,
     );
   }
 }
-
-
-
-

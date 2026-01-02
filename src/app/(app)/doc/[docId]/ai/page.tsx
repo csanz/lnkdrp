@@ -1,3 +1,7 @@
+/**
+ * Owner doc AI page (AI snapshot + related details).
+ * Route: `/doc/:docId/ai`
+ */
 "use client";
 
 import Link from "next/link";
@@ -10,20 +14,36 @@ type DocDTO = {
   title: string | null;
   aiOutput?: unknown | null;
 };
+/**
+ * Return whether record.
+ */
+
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
+/**
+ * As Non Empty String (uses trim).
+ */
+
 
 function asNonEmptyString(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
+/**
+ * As String Array (uses isArray, map, filter).
+ */
+
 
 function asStringArray(v: unknown): string[] {
   return Array.isArray(v)
-    ? v.filter((x): x is string => typeof x === "string" && x.trim()).map((s) => s.trim())
+    ? v.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((s) => s.trim())
     : [];
 }
+/**
+ * Render the DocAiExtractPage UI (uses effects, memoized values, local state).
+ */
+
 
 export default function DocAiExtractPage(props: { params: Promise<{ docId: string }> }) {
   const { docId } = use(props.params);
@@ -35,6 +55,10 @@ export default function DocAiExtractPage(props: { params: Promise<{ docId: strin
 
   useEffect(() => {
     let cancelled = false;
+/**
+ * Load (updates state (setLoading, setError, setDoc); uses setLoading, setError, fetchWithTempUser).
+ */
+
     async function load() {
       setLoading(true);
       setError(null);
@@ -81,6 +105,10 @@ export default function DocAiExtractPage(props: { params: Promise<{ docId: strin
       summary: asNonEmptyString(ai.summary),
     };
   }, [ai]);
+/**
+ * Copy Json (updates state (setCopied); uses stringify, writeText, setCopied).
+ */
+
 
   async function copyJson() {
     try {

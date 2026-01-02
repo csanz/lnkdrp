@@ -1,0 +1,54 @@
+{
+    "testGroups": [{
+        "name": "Investor focused",
+        "description": "Review a pitch deck against an investor thesis",
+        "model": "gpt-4o-mini",
+        "temperature": 0,
+        "prompts": {
+            "system": "promps/investor_focused/agent_system.md",
+            "user": "promps/investor_focused/agent_user.md"
+        },
+        "tests": [
+            {
+                "name": "Thesis vs Deck - Low Relevancy",
+                "thesis_file": "promps/investor_focused/thesis_example_1.md", 
+                "deck_file": "promps/investor_focused/deck_example_1.md",
+                "stage": "pre-seed", 
+                "expected_output": {
+                    "stage_match": true,
+                    "relevancy": "low"
+                }
+            },
+            {
+                "name": "Thesis vs Deck - Medium Relevancy",
+                "thesis_file": "promps/investor_focused/thesis_example_2.md", 
+                "deck_file": "promps/investor_focused/deck_example_1.md",
+                "stage": "pre-seed", 
+                "expected_output": {
+                    "stage_match": true,
+                    "relevancy": "medium"
+                }
+            },  
+            {
+                "name": "Thesis vs Deck - High Relevancy",
+                "thesis_file": "promps/investor_focused/thesis_example_3.md", 
+                "deck_file": "promps/investor_focused/deck_example_1.md",
+                "stage": "pre-seed", 
+                "expected_output": {
+                    "stage_match": true,
+                    "relevancy": "high"
+                }
+            },
+            {
+                "name": "Thesis vs Deck - High Relevancy, Wrong Stage",
+                "thesis_file": "promps/investor_focused/thesis_example_4.md", 
+                "deck_file": "promps/investor_focused/deck_example_1.md",
+                "stage": "pre-seed", 
+                "expected_output": {
+                    "stage_match": false,
+                    "relevancy": "high"
+                }
+            }
+        ]
+    }]
+}

@@ -16,6 +16,7 @@ import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientU
 import { debugError, debugLog } from "@/lib/debug";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { notifyDocsChanged } from "@/lib/sidebarCache";
 
 export type CreateDocResponse = { doc: { id: string } };
 export type CreateUploadResponse = { upload: { id: string } };
@@ -105,9 +106,16 @@ export function startBlobUploadAndProcess(params: {
       } catch {
         // ignore
       }
+    } finally {
+      // Best-effort: once processing is done (or fails), force sidebars/lists to re-sync
+      // from server truth (version badge, status, totals, etc).
+      notifyDocsChanged();
     }
   })();
 }
+
+
+
 
 
 

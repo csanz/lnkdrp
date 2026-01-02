@@ -8,6 +8,7 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { usePendingUpload } from "@/lib/pendingUpload";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import { isDocStarred, STARRED_DOCS_CHANGED_EVENT } from "@/lib/starredDocs";
+import { notifyProjectsChanged, refreshSidebarCache } from "@/lib/sidebarCache";
 
 type DocListItem = {
   id: string;
@@ -24,6 +25,10 @@ type DocListItem = {
 
 type ProjectDTO = { id: string; name: string; slug: string; description: string };
 type Paged<T> = { items: T[]; total: number; page: number; limit: number };
+/**
+ * Format Relative (uses parse, isFinite, now).
+ */
+
 
 function formatRelative(iso: string | null) {
   if (!iso) return "";
@@ -39,6 +44,10 @@ function formatRelative(iso: string | null) {
   if (days === 1) return "Yesterday";
   return `${days} days ago`;
 }
+/**
+ * Render the ProjectPageClient UI (uses effects, memoized values, local state).
+ */
+
 
 export default function ProjectPageClient({ projectSlug }: { projectSlug: string }) {
   const router = useRouter();
@@ -52,6 +61,10 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
 
   useEffect(() => {
     let cancelled = false;
+/**
+ * Load (updates state (setDocsLoading, setNotFound, setProject); uses setDocsLoading, trim, encodeURIComponent).
+ */
+
     async function load() {
       setDocsLoading(true);
       try {
@@ -63,6 +76,9 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         if (cancelled) return;
         if (res.status === 404) {
           setNotFound(true);
+          // If the project was deleted out-of-band (e.g., DB reset), prune stale sidebar cache.
+          notifyProjectsChanged();
+          void refreshSidebarCache({ reason: "project-not-found", force: true });
           setDocsLoading(false);
           return;
         }
@@ -95,9 +111,17 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   }, [projectSlug, docs.page, docs.limit, q]);
 
   useEffect(() => {
+/**
+ * Handle changed events; updates state (setStarredTick); uses setStarredTick.
+ */
+
     function onChanged() {
       setStarredTick((t) => t + 1);
     }
+/**
+ * Handle storage events; uses onChanged.
+ */
+
     function onStorage(e: StorageEvent) {
       if (e.storageArea !== window.localStorage) return;
       onChanged();
@@ -114,6 +138,8 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   const title = useMemo(() => project?.name ?? "", [project?.name]);
   const subtitle = useMemo(() => project?.description || "", [project?.description]);
   const maxPage = useMemo(() => Math.max(1, Math.ceil(docs.total / docs.limit)), [docs.total, docs.limit]);
+  // This route uses `projectSlug` as the projectId; use it as a stable fallback before `project` loads.
+  const projectIdForMenu = project?.id ?? projectSlug;
 
   return (
     <div className="flex h-[100svh] w-full bg-white text-zinc-900">
@@ -243,18 +269,14 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                                 {d.status && d.status.toLowerCase() !== "ready" ? (
                                   <div className="pt-0.5 text-[11px] text-zinc-400">{d.status}</div>
                                 ) : null}
-                                <div
-                                  onClickCapture={(e) => e.stopPropagation()}
-                                  onPointerDownCapture={(e) => e.stopPropagation()}
-                                >
+                                <div onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
                                   <DocActionsMenu
                                     docId={d.id}
-                                    currentProjectId={project?.id ?? null}
+                                    currentProjectId={projectIdForMenu}
                                     onOpenQualityReview={() => router.push(`/doc/${d.id}/review`)}
                                     onDocPatched={(patch) => {
                                       // If the doc is no longer in this project, drop it from this list.
-                                      if (!project?.id) return;
-                                      if (Array.isArray(patch.projectIds) && !patch.projectIds.includes(project.id)) {
+                                      if (Array.isArray(patch.projectIds) && !patch.projectIds.includes(projectIdForMenu)) {
                                         setDocs((s) => ({
                                           ...s,
                                           items: s.items.filter((x) => x.id !== d.id),
@@ -326,6 +348,10 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
     </div>
   );
 }
+/**
+ * Render the SmallStarIcon UI.
+ */
+
 
 function SmallStarIcon({ filled }: { filled: boolean }) {
   return (

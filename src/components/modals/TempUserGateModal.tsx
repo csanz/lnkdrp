@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import Modal from "@/components/modals/Modal";
+/**
+ * Render the TempUserGateModal UI (uses local state).
+ */
+
 
 export default function TempUserGateModal({
   open,

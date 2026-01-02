@@ -53,6 +53,10 @@ Rules:
   - If you truly cannot infer a topic, use a fallback: `page-<page_number>` for most pages, `last-page` for the final page.
   - Always include an entry for every page in order.
 - `tags`: include 3–10 high-signal tags (lowercase; short phrases ok). Only return `[]` if the text truly provides no meaningful tags.
+- `company_url`: best-effort company website URL found in the document (e.g. `https://example.com`). If unknown, `""`.
+- `contact_name`: best-effort contact person name found in the document (often on a "Contact" or final page). If unknown, `""`.
+- `contact_email`: best-effort email found in the document. If unknown, `""`.
+- `contact_url`: best-effort contact URL found in the document (LinkedIn/profile/site). If unknown, `""`.
 - `ask`: if there is an ask, make it a short, specific sentence (not just "$3M"). Include amount + what it's for (e.g. "$3M to complete the first prototype and reach autonomous flight milestones."). If no clear ask, `""`.
 - `key_metrics`: include 2–8 strings. Prefer explicit numbers; if none exist include concrete milestones/claims. Only return `[]` if there are no measurable milestones or concrete targets.
 - `structure_signals`: include 3–12 strings capturing structure cues (e.g. "CONFIDENTIAL", "Vision", "Market Target", "Raising $3M", "Team", "Seed"). Only return `[]` if there are no recognizable structure cues.
@@ -80,6 +84,10 @@ Rules:
   "document_purpose": "Why this document exists, in one sentence",
   "intended_audience": "investors|customers|partners|internal|general|unknown",
   "company_or_project_name": "",
+  "company_url": "",
+  "contact_name": "",
+  "contact_email": "",
+  "contact_url": "",
   "industry": "",
   "stage": "idea|pre-seed|seed|series_a|growth|mature|unknown",
   "key_metrics": [],
@@ -89,3 +97,7 @@ Rules:
   "structure_signals": [],
   "relevant_projects": [{ "project_id": "507f1f77bcf86cd799439011", "project_name": "USAvionix" }]
 }
+
+
+
+

@@ -431,6 +431,23 @@ globeRimSoft.scale.setScalar(GLOBE_SCALE * CONFIG.GLOBE_RIM_SOFT_SCALE);
 globeRimSoft.renderOrder = -1;
 globeMap.add(globeRimSoft);
 
+// Add a faint additive "halo" outside the silhouette to make the rim read as glowing.
+// Keep depthTest enabled so the glow doesn't wash over the globe face.
+const globeRimGlow = new THREE.Mesh(
+  new THREE.SphereGeometry(1, CONFIG.GLOBE_WIDTH_SEGMENTS, CONFIG.GLOBE_HEIGHT_SEGMENTS),
+  new THREE.MeshBasicMaterial({
+    color: 0xe5e7eb, // gray-200 (slightly cooler/brighter than the soft rim)
+    transparent: true,
+    opacity: 0.018,
+    side: THREE.BackSide,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  })
+);
+globeRimGlow.scale.setScalar(GLOBE_SCALE * 1.032);
+globeRimGlow.renderOrder = -2;
+globeMap.add(globeRimGlow);
+
 // Softer/lighter outlines so the globe doesn't dominate the scene.
 const bordersMat = new THREE.LineBasicMaterial({
   color: CONFIG.GLOBE_BORDERS_COLOR,

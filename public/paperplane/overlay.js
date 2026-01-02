@@ -47,7 +47,7 @@
   }
 
   let inviteOk = false;
-  let pendingHref = "/client-upload";
+  let pendingHref = "/login";
 
   function setMsg(text, kind) {
     msg.textContent = text || "";
@@ -56,7 +56,7 @@
   }
 
   function openModal(nextHref) {
-    pendingHref = typeof nextHref === "string" ? nextHref : "/client-upload";
+    pendingHref = typeof nextHref === "string" ? nextHref : "/login";
     modal.setAttribute("data-open", "true");
     setMsg("", "");
     if (!String(input.value || "").trim()) {
@@ -77,7 +77,7 @@
     if (!trimmed) {
       await refreshInviteStatus();
       if (inviteOk) {
-        window.location.href = pendingHref || "/client-upload";
+        window.location.href = pendingHref || "/login";
         return;
       }
       setMsg("Enter an invite code.", "error");
@@ -88,19 +88,29 @@
     setMsg("", "");
     try {
       writeStoredInviteCode(trimmed);
+      const ac = new AbortController();
+      const timeout = window.setTimeout(() => ac.abort(), 8000);
       const res = await fetch("/api/invites/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code: trimmed }),
-      });
+        signal: ac.signal,
+      }).finally(() => window.clearTimeout(timeout));
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setMsg(typeof data.error === "string" ? data.error : "Invalid invite code.", "error");
         return;
       }
+      await refreshInviteStatus();
+      if (!inviteOk) {
+        setMsg(
+          "Invite accepted, but your browser didn’t store the unlock cookie. Check cookie settings and try again.",
+          "error",
+        );
+        return;
+      }
       setMsg("Invite accepted. Redirecting…", "ok");
-      inviteOk = true;
-      window.location.href = pendingHref || "/client-upload";
+      window.location.href = pendingHref || "/login";
     } catch {
       setMsg("Couldn’t verify invite code. Try again.", "error");
     } finally {
@@ -142,7 +152,7 @@
       if (inviteOk) setMsg("Invite already accepted. Continue to proceed.", "ok");
     });
   }
-  intercept(getStarted, "/client-upload");
+  intercept(getStarted, "/login");
   intercept(login, "/login");
 
   // Fallback: event delegation (in case direct handlers didn't bind for any reason).
@@ -151,7 +161,7 @@
     if (!(t instanceof Element)) return;
     if (t.closest("#ctaGetStarted")) {
       await refreshInviteStatus();
-      openModal("/client-upload");
+      openModal("/login");
       if (inviteOk) setMsg("Invite already accepted. Continue to proceed.", "ok");
     }
     if (t.closest("#navLogin")) {

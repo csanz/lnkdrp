@@ -1,222 +1,29 @@
-import { generateText } from "ai";
+/**
+ * AI-powered document review.
+ *
+ * Generates a structured review (plus human-readable markdown) from PDF-extracted
+ * text. The flow is resilient: if structured output fails, it falls back to
+ * plain text generation and best-effort extraction.
+ */
+import { generateObject, generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
-
-const REVIEW_SYSTEM_PROMPT = `You are an expert document analyst and reviewer with the combined mindset of:
-
-a seasoned investor,
-
-a senior sales leader,
-
-a professional editor,
-
-and a strategic communicator.
-
-You are rigorous, practical, and adaptive. You do not force critique where it does not belong. Your primary goal is to add value based on the document’s true intent.
-
-Your job is to analyze the document provided below and decide which mode of analysis is appropriate before responding.
-
-Step 1: Classify the document intent
-
-First, determine whether the document is:
-
-A) Reviewable / Persuasive / Narrative
-Documents designed to be evaluated for effectiveness, tone, clarity, or persuasion. Examples:
-
-fundraising pitch
-
-sales deck or proposal
-
-essay or opinion piece
-
-business plan
-
-investor update
-
-marketing or positioning copy
-
-partnership proposal
-
-resume or professional profile
-
-technical whitepaper
-
-internal strategy memo
-
-B) Functional / Informational / Utility
-Documents not intended for critique of persuasion or tone. Examples:
-
-recipes
-
-task lists or checklists
-
-meeting notes
-
-to-do lists
-
-logs or journals
-
-raw data dumps
-
-configuration or reference notes
-
-instructions meant for personal use
-
-If the document mixes both, explicitly call that out and choose the dominant mode.
-
-Step 2: Choose analysis mode
-
-If the document is Category A (Reviewable)
-→ Perform a full critical review using the Review Mode instructions below.
-
-If the document is Category B (Functional)
-→ Switch to Utility Mode and do NOT score or critique persuasion or tone.
-
-Review Mode (Category A)
-
-When in Review Mode, your responsibilities are:
-
-Identify the document type
-State what the document most likely is and why.
-
-Infer intent and audience
-Clearly state:
-
-the primary audience
-
-the core objective
-
-whether the document aligns with that objective
-
-Evaluate effectiveness across key dimensions
-Assess concisely:
-
-clarity of message
-
-structure and flow
-
-tone and voice
-
-credibility and authority
-
-persuasiveness
-
-completeness vs. fluff
-
-differentiation
-
-call to action or next step (if applicable)
-
-Score the document
-Provide an overall effectiveness score from 1–10 with a brief rationale.
-
-Strengths
-List concrete strengths.
-
-Weaknesses and risks
-Call out what is unclear, weak, missing, or harmful to the document’s goal.
-
-Actionable recommendations
-Provide prioritized, implementable improvements:
-
-what to cut, rewrite, or expand
-
-structural changes
-
-tone or positioning fixes
-
-missing arguments or sections
-
-Rewrite guidance (optional but preferred)
-If helpful, include:
-
-a revised opening or executive summary
-
-example rewrites
-
-a better outline
-
-Utility Mode (Category B)
-
-When in Utility Mode, your responsibilities are:
-
-Identify the document type
-Briefly state what kind of functional document this is.
-
-Provide a clear summary
-Summarize the document in a concise, structured way so it is easier to understand or reuse.
-
-Assess clarity and completeness
-Comment lightly on:
-
-whether anything is ambiguous or missing
-
-whether steps, items, or sections are logically ordered
-
-whether assumptions are unstated
-
-Optimization suggestions (optional)
-Offer improvements only if they add value, such as:
-
-clearer structure
-
-better grouping or labeling
-
-missing steps or checks
-
-simplification or deduplication
-
-Do NOT:
-
-assign a numeric score
-
-critique tone or persuasion
-
-invent a “goal” that doesn’t exist
-
-Output format
-
-Always return a Markdown document.
-
-If Review Mode:
-
-Document Review
-Document Type
-Intended Audience and Goal
-Overall Assessment
-Effectiveness Score
-
-Score: X / 10
-Rationale:
-
-Strengths
-Weaknesses and Risks
-Recommendations
-Suggested Rewrites or Structural Improvements
-
-If Utility Mode:
-
-Document Summary
-Document Type
-Summary
-Clarity and Completeness Check
-Optional Improvements
-
-Tone rules
-
-Be precise and direct
-
-Avoid filler and generic advice
-
-Do not over-editorialize
-
-Do not critique documents that are not meant to persuade
-
-Assume the author is competent and close to their own work
-
-Your goal is always the same:
-Make the document clearer, more useful, or more effective based on what it is actually trying to be.`;
-
-function trimForPrompt(input: string) {
+import { z } from "zod";
+import { Types } from "mongoose";
+import { completeAiRun, failAiRun, startAiRun } from "@/lib/ai/aiRunRecorder";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
+const PROMPTS_DIR = path.join(process.cwd(), "src/lib/prompts");
+const REVIEW_SYSTEM_PROMPT_PATH = path.join(PROMPTS_DIR, "reviewDocText-system.md");
+let cachedReviewSystemPrompt: string | null = null;
+async function loadReviewSystemPrompt(): Promise<string> {
+  if (cachedReviewSystemPrompt) return cachedReviewSystemPrompt;
+  const text = (await readFile(REVIEW_SYSTEM_PROMPT_PATH, "utf8")).toString().trim();
+  cachedReviewSystemPrompt = text;
+  return text;
+}
+/** Trim and cap prompt text to keep token usage bounded (preserves head + tail). */
+function trimForPrompt(input: string): string {
   const text = (input ?? "").trim();
   if (!text) return "";
   // Keep cost bounded; preserve both beginning + end.
@@ -227,12 +34,144 @@ function trimForPrompt(input: string) {
   return `${head}\n\n...[truncated]...\n\n${tail}`;
 }
 
+function looksEarlyStageDeck(docText: string): boolean {
+  const t = (docText ?? "").toLowerCase();
+  if (!t) return false;
+  // Heuristics: explicit stage labels or fundraising-for-prototype language.
+  if (/\b(pre[-\s]?seed|seed)\b/i.test(docText)) return true;
+  if (/\braising\s*\$\s*\d/i.test(docText)) return true;
+  if (/\braising\b/i.test(docText) && (/\bprototype\b/i.test(docText) || /\bmvp\b/i.test(docText))) return true;
+  return false;
+}
+
+function sanitizeInvestorFinancialLanguage(s: string): string {
+  if (!s) return s;
+  // Remove "crucial/critical/essential" framing around financial projections.
+  return s
+    .replace(
+      /\b(crucial|critical|essential|required|must[-\s]?have)\b[^.]*\b(financial (projections?|model)|detailed financials?)\b[^.]*\./gi,
+      "",
+    )
+    .replace(/\b(lacks?|missing)\b[^.]*\b(detailed )?financial (projections?|model)\b[^.]*\./gi, "")
+    .replace(/\b(include|add|prepare|develop)\b[^.]*\b(financial (projections?|model)|detailed financials?)\b[^.]*\./gi, "");
+}
+
+function rewriteFinancialItemToUseOfFunds(item: { title: string; detail?: string | null }) {
+  const title = item.title || "";
+  const detail = item.detail ?? null;
+  const text = `${title}\n${detail ?? ""}`.toLowerCase();
+  const mentionsFinancial =
+    text.includes("financial projection") ||
+    text.includes("financial model") ||
+    text.includes("detailed financial") ||
+    text.includes("revenue projection") ||
+    text.includes("forecast");
+  if (!mentionsFinancial) return item;
+  return {
+    title: "Use of funds, runway, and milestone plan",
+    detail:
+      "For a seed/pre-seed prototype raise, a lightweight plan is enough: how the raise maps to runway, key build milestones, and what “success” unlocks for the next round.",
+  };
+}
+
+function sanitizeIntelForEarlyStage(intel: any) {
+  const next = { ...intel };
+  if (typeof next.overallAssessment === "string") {
+    next.overallAssessment = sanitizeInvestorFinancialLanguage(next.overallAssessment).trim() || next.overallAssessment;
+  }
+  if (typeof next.scoreRationale === "string") {
+    next.scoreRationale = sanitizeInvestorFinancialLanguage(next.scoreRationale).trim() || next.scoreRationale;
+  }
+
+  const rewriteList = (xs: unknown) =>
+    Array.isArray(xs) ? xs.map((x) => (x && typeof x === "object" ? rewriteFinancialItemToUseOfFunds(x as any) : x)) : xs;
+
+  next.weaknessesAndRisks = rewriteList(next.weaknessesAndRisks);
+  next.recommendations = rewriteList(next.recommendations);
+  next.actionItems = rewriteList(next.actionItems);
+
+  // If we removed a primary stated weakness, nudge the score slightly upward.
+  const scoreWas = typeof next.effectivenessScore === "number" ? next.effectivenessScore : null;
+  const rationale = (next.scoreRationale ?? "").toString().toLowerCase();
+  if (scoreWas === 7 && rationale.includes("financial")) {
+    next.effectivenessScore = 8;
+  }
+  return next;
+}
+
+function sanitizeReviewMarkdownForEarlyStage(markdown: string): string {
+  if (!markdown) return markdown;
+  let m = markdown;
+  m = sanitizeInvestorFinancialLanguage(m);
+  m = m.replace(/Lack of Financial Projections/gi, "Use of funds, runway, and milestone plan");
+  m = m.replace(/Include Financial Projections/gi, "Clarify use of funds, runway, and milestones");
+  m = m.replace(/Prepare Financial Model/gi, "Clarify use of funds and runway");
+  return m.trim();
+}
+/** Extract a single "Label: value" line from markdown (case-insensitive). */
+function extractLabeledLine(params: { markdown: string; label: string }): string | null {
+  const { markdown, label } = params;
+  const rx = new RegExp(`${label}\\s*:\\s*(.+)$`, "im");
+  const m = rx.exec(markdown);
+  const v = (m?.[1] ?? "").trim();
+  if (!v) return null;
+  if (/^(not found|n\/a|none|—|-|null)$/i.test(v)) return null;
+  return v;
+}
+/** Extract a multi-line "Label:" block from markdown (best-effort). */
+function extractLabeledBlock(params: { markdown: string; label: string }): string | null {
+  const { markdown, label } = params;
+  // Match:
+  // Label:
+  // <content...>
+  // (until next blank line or next Title Case heading)
+  const rx = new RegExp(
+    `^\\s*${label}\\s*:\\s*(?:\\n+)?([\\s\\S]*?)(?=\\n\\s*\\n|^\\s*[A-Z][A-Za-z &/.-]{2,}\\s*$|\\Z)`,
+    "im",
+  );
+  const m = rx.exec(markdown);
+  const v = (m?.[1] ?? "").trim();
+  if (!v) return null;
+  if (/^(not found|n\/a|none|—|-|null)$/i.test(v)) return null;
+  return v;
+}
+/** Extract a 1-10 relevance/effectiveness score from markdown. */
+function extractScore(markdown: string): number | null {
+  const m =
+    /(?:Relevance\s*Score|Effectiveness\s*Score|Score)\s*:\s*([0-9]{1,2})\s*\/\s*10/i.exec(
+      markdown,
+    );
+  if (!m?.[1]) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  if (n < 1 || n > 10) return null;
+  return Math.floor(n);
+}
+/** Extract a section body under a given heading from markdown (best-effort). */
+function extractSection(markdown: string, heading: string): string | null {
+  // Match a section like:
+  // Heading
+  // <content...>
+  const rx = new RegExp(
+    `^\\s*${heading}\\s*$\\s*([\\s\\S]*?)(?=^\\s*[A-Z][A-Za-z &/.-]{2,}\\s*$|\\Z)`,
+    "im",
+  );
+  const m = rx.exec(markdown);
+  const v = (m?.[1] ?? "").trim();
+  return v ? v : null;
+}
+/**
+ * Build the model prompt for reviewing a doc, including optional prior review
+ * context and requester instructions.
+ */
 export function buildReviewPrompt(input: {
   docText: string;
   priorReviewMarkdown?: string | null;
   priorReviewVersion?: number | null;
-}) {
+  instructions?: string | null;
+}): string {
   const prior = (input.priorReviewMarkdown ?? "").trim();
+  const instructions = (input.instructions ?? "").trim();
   const priorHeader =
     prior && Number.isFinite(input.priorReviewVersion)
       ? `\n\nTHIS IS THE LAST REVIEW (version ${input.priorReviewVersion}):\n\n${prior}\n`
@@ -241,31 +180,215 @@ export function buildReviewPrompt(input: {
         : "";
 
   const docText = trimForPrompt(input.docText);
-  return `${priorHeader}\n\nDOCUMENT (PDF-extracted text):\n\n${docText}\n`;
+  const instructionsHeader = instructions
+    ? `\n\nREQUEST REVIEW INSTRUCTIONS:\n\n${instructions}\n`
+    : "";
+  return `${priorHeader}${instructionsHeader}\n\nDOCUMENT (PDF-extracted text):\n\n${docText}\n`;
 }
-
+/**
+ * Generate a review for the provided document text.
+ *
+ * Returns null when AI is disabled (`OPENAI_API_KEY` not configured) or when
+ * generation fails completely.
+ */
 export async function reviewDocText(input: {
   docText: string;
   priorReviewMarkdown?: string | null;
   priorReviewVersion?: number | null;
-}): Promise<{ markdown: string; prompt: string; model: string } | null> {
+  instructions?: string | null;
+  meta?: {
+    userId?: string | null;
+    projectId?: string | null;
+    projectIds?: string[] | null;
+    docId?: string | null;
+    uploadId?: string | null;
+    reviewId?: string | null;
+    uploadVersion?: number | null;
+  } | null;
+}): Promise<{ markdown: string; prompt: string; model: string; intel?: unknown } | null> {
   // If key isn't configured, treat as "AI disabled" rather than failing uploads.
   if (!process.env.OPENAI_API_KEY) return null;
+
+  const systemPrompt = await loadReviewSystemPrompt();
 
   const prompt = buildReviewPrompt(input);
   if (!prompt.trim()) return null;
 
   const modelName = "gpt-4o-mini";
-  const { text } = await generateText({
-    model: openai(modelName),
-    system: REVIEW_SYSTEM_PROMPT,
-    prompt,
-    temperature: 0.2,
-    maxRetries: 2,
+  const temperature = 0.2;
+  const maxRetries = 2;
+
+  const startedAt = Date.now();
+  const meta = input.meta ?? null;
+  const aiRunId = await startAiRun({
+    kind: "reviewDocText",
+    provider: "openai",
+    model: modelName,
+    temperature,
+    maxRetries,
+    systemPrompt,
+    userPrompt: prompt,
+    inputTextChars: prompt.length,
+    meta,
   });
 
-  return { markdown: (text ?? "").trim(), prompt, model: modelName };
+  const ItemSchema = z.object({
+    title: z.string().min(1),
+    detail: z.string().nullable().optional(),
+  });
+  const IntelSchema = z.object({
+    company: z.object({
+      name: z.string().nullable().optional(),
+      url: z.string().nullable().optional(),
+    }),
+    contact: z.object({
+      name: z.string().nullable().optional(),
+      email: z.string().nullable().optional(),
+      url: z.string().nullable().optional(),
+    }),
+    overallAssessment: z.string().min(1),
+    effectivenessScore: z.number().int().min(1).max(10),
+    scoreRationale: z.string().min(1),
+    strengths: z.array(ItemSchema).default([]),
+    weaknessesAndRisks: z.array(ItemSchema).default([]),
+    recommendations: z.array(ItemSchema).default([]),
+    actionItems: z.array(ItemSchema).default([]),
+    suggestedRewrites: z.string().nullable().optional(),
+    reviewMarkdown: z.string().min(1),
+  });
+
+  try {
+    const { object } = await generateObject({
+      model: openai(modelName),
+      system: systemPrompt,
+      prompt,
+      schema: IntelSchema,
+      temperature,
+      maxRetries,
+    });
+    const markdown = (object.reviewMarkdown ?? "").trim();
+    if (!markdown) return null;
+    const { reviewMarkdown: _rm, ...intelRaw } = object;
+
+    // Some model outputs satisfy the schema but leave key fields null/empty.
+    // Backfill from the markdown so the UI always has the basics.
+    let intel = {
+      ...intelRaw,
+      overallAssessment:
+        (typeof (intelRaw as any).overallAssessment === "string" && (intelRaw as any).overallAssessment.trim()
+          ? (intelRaw as any).overallAssessment.trim()
+          : (extractLabeledBlock({ markdown, label: "Overall Assessment" }) ??
+              extractSection(markdown, "Overall Assessment"))) ?? null,
+      effectivenessScore:
+        (typeof (intelRaw as any).effectivenessScore === "number" && Number.isFinite((intelRaw as any).effectivenessScore)
+          ? (intelRaw as any).effectivenessScore
+          : extractScore(markdown)) ?? null,
+      scoreRationale:
+        (typeof (intelRaw as any).scoreRationale === "string" && (intelRaw as any).scoreRationale.trim()
+          ? (intelRaw as any).scoreRationale.trim()
+          : (extractLabeledBlock({ markdown, label: "Rationale" }) ??
+              extractLabeledLine({ markdown, label: "Rationale" }) ??
+              extractSection(markdown, "Score Rationale"))) ?? null,
+      company: {
+        ...(intelRaw as any).company,
+        name:
+          (typeof (intelRaw as any)?.company?.name === "string" && (intelRaw as any).company.name.trim()
+            ? (intelRaw as any).company.name.trim()
+            : extractLabeledLine({ markdown, label: "Company Name" })) ?? null,
+        url:
+          (typeof (intelRaw as any)?.company?.url === "string" && (intelRaw as any).company.url.trim()
+            ? (intelRaw as any).company.url.trim()
+            : extractLabeledLine({ markdown, label: "Company URL" })) ?? null,
+      },
+      contact: {
+        ...(intelRaw as any).contact,
+        name:
+          (typeof (intelRaw as any)?.contact?.name === "string" && (intelRaw as any).contact.name.trim()
+            ? (intelRaw as any).contact.name.trim()
+            : extractLabeledLine({ markdown, label: "Contact Name" })) ?? null,
+        email:
+          (typeof (intelRaw as any)?.contact?.email === "string" && (intelRaw as any).contact.email.trim()
+            ? (intelRaw as any).contact.email.trim()
+            : extractLabeledLine({ markdown, label: "Contact Email" })) ?? null,
+        url:
+          (typeof (intelRaw as any)?.contact?.url === "string" && (intelRaw as any).contact.url.trim()
+            ? (intelRaw as any).contact.url.trim()
+            : extractLabeledLine({ markdown, label: "Contact URL" })) ?? null,
+      },
+    };
+
+    // Guardrail: for clearly early-stage decks, enforce "no financial projections as a weakness".
+    const earlyStage = looksEarlyStageDeck(input.docText);
+    if (earlyStage) {
+      intel = sanitizeIntelForEarlyStage(intel);
+    }
+    const finalMarkdown = earlyStage ? sanitizeReviewMarkdownForEarlyStage(markdown) : markdown;
+
+    if (aiRunId) {
+      await completeAiRun(aiRunId, {
+        durationMs: Date.now() - startedAt,
+        outputObject: object,
+        outputText: finalMarkdown,
+      });
+    }
+
+    return { markdown: finalMarkdown, prompt, model: modelName, intel };
+  } catch {
+    // Fallback: keep uploads working even if the model can't satisfy structured output.
+    try {
+      const { text } = await generateText({
+        model: openai(modelName),
+        system: systemPrompt,
+        prompt,
+        temperature,
+        maxRetries,
+      });
+      const markdown = (text ?? "").trim();
+      if (!markdown) return null;
+
+      // Best-effort intel extraction from the markdown when structured generation fails.
+      const companyName =
+        extractLabeledLine({ markdown, label: "Company Name" }) ??
+        extractLabeledLine({ markdown, label: "Company" });
+      const companyUrl = extractLabeledLine({ markdown, label: "Company URL" });
+      const contactName = extractLabeledLine({ markdown, label: "Contact Name" });
+      const contactEmail = extractLabeledLine({ markdown, label: "Contact Email" });
+      const contactUrl = extractLabeledLine({ markdown, label: "Contact URL" });
+
+      const effectivenessScore = extractScore(markdown);
+      const overallAssessment = extractSection(markdown, "Overall Assessment");
+      const scoreRationale =
+        extractLabeledBlock({ markdown, label: "Rationale" }) ??
+        extractLabeledLine({ markdown, label: "Rationale" }) ??
+        extractSection(markdown, "Score Rationale");
+
+      const intel = {
+        company: { name: companyName ?? null, url: companyUrl ?? null },
+        contact: { name: contactName ?? null, email: contactEmail ?? null, url: contactUrl ?? null },
+        overallAssessment: overallAssessment ?? null,
+        effectivenessScore: effectivenessScore ?? null,
+        scoreRationale: scoreRationale ?? null,
+        strengths: [],
+        weaknessesAndRisks: [],
+        recommendations: [],
+        actionItems: [],
+        suggestedRewrites: null,
+      };
+
+      if (aiRunId) {
+        await completeAiRun(aiRunId, { durationMs: Date.now() - startedAt, outputText: markdown });
+      }
+
+      return { markdown, prompt, model: modelName, intel };
+    } catch (e) {
+      if (aiRunId) {
+        await failAiRun(aiRunId, { durationMs: Date.now() - startedAt, error: e });
+      }
+      return null;
+    }
+  }
 }
+
 
 
 

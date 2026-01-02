@@ -24,11 +24,19 @@ type ReviewsApiResponse = {
   limit: number;
   reviews: ReviewDTO[];
 };
+/**
+ * Render the DocReviewPageClient UI (uses effects, memoized values, local state).
+ */
+
 
 export default function DocReviewPageClient({ docId }: { docId: string }) {
   const [loading, setLoading] = useState(true);
   const [review, setReview] = useState<ReviewDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
+/**
+ * Refresh (updates state (setLoading, setError, setReview); uses setLoading, setError, fetchWithTempUser).
+ */
+
 
   async function refresh() {
     setLoading(true);

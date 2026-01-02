@@ -45,7 +45,7 @@ const sampleUploads = [
 ];
 
 /**
- * Upload a small set of sample files to Vercel Blob and print results.
+ * Run test-vercel-blob.mjs: Minimal smoke test for Vercel Blob server-side uploads.
  */
 async function main() {
   const prefix = `tests/${safeTimestamp()}`;
@@ -84,6 +84,8 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
+
+
 
 
 

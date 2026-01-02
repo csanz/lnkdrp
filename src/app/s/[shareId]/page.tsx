@@ -1,3 +1,6 @@
+/**
+ * Route: `/s/:shareId` — recipient-facing public share page (optionally password gated).
+ */
 import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -31,15 +34,10 @@ function pickOgStrings(aiOutput: unknown): { title?: string; description?: strin
 
 function pickMetaStrings(aiOutput: unknown): { title?: string; description?: string } {
   if (!aiOutput || typeof aiOutput !== "object") return {};
-  const t =
-    typeof (aiOutput as { meta_title?: unknown }).meta_title === "string"
-      ? ((aiOutput as { meta_title: string }).meta_title ?? undefined)
-      : undefined;
-  const d =
-    typeof (aiOutput as { meta_description?: unknown }).meta_description === "string"
-      ? ((aiOutput as { meta_description: string }).meta_description ?? undefined)
-      : undefined;
-  return { title: t, description: d };
+  const ai = aiOutput as Record<string, unknown>;
+  const title = typeof ai.meta_title === "string" ? ai.meta_title : undefined;
+  const description = typeof ai.meta_description === "string" ? ai.meta_description : undefined;
+  return { title, description };
 }
 
 /**
@@ -97,7 +95,32 @@ export async function generateMetadata(props: {
   const proto = h.get("x-forwarded-proto") ?? "https";
   const metadataBase = new URL(`${proto}://${host}`);
 
-  const ogImageUrl = new URL(`/s/${shareId}/og.png`, metadataBase);
+  // Prefer the doc preview thumbnail (if it's a real URL). Fall back to the site default OG image.
+  const previewCandidate =
+    (typeof (doc as { previewImageUrl?: unknown })?.previewImageUrl === "string" &&
+      (doc as { previewImageUrl: string }).previewImageUrl) ||
+    (typeof (doc as { firstPagePngUrl?: unknown })?.firstPagePngUrl === "string" &&
+      (doc as { firstPagePngUrl: string }).firstPagePngUrl) ||
+    null;
+
+  const ogImageMeta: NonNullable<Metadata["openGraph"]>["images"] = (() => {
+    if (typeof previewCandidate === "string" && previewCandidate) {
+      if (/^https?:\/\//i.test(previewCandidate)) {
+        return [{ url: new URL(previewCandidate), alt: title }];
+      }
+      if (previewCandidate.startsWith("/")) {
+        return [{ url: new URL(previewCandidate, metadataBase), alt: title }];
+      }
+    }
+    return [
+      {
+        url: new URL("/images/og.png", metadataBase),
+        width: 840,
+        height: 491,
+        alt: title,
+      },
+    ];
+  })();
 
   return {
     title,
@@ -107,13 +130,13 @@ export async function generateMetadata(props: {
       card: "summary_large_image",
       title,
       description,
-      images: [{ url: ogImageUrl }],
+      images: ogImageMeta,
     },
     openGraph: {
       type: "website",
       title,
       description,
-      images: [{ url: ogImageUrl }],
+      images: ogImageMeta,
     },
   };
 }
@@ -134,6 +157,8 @@ export default async function SharePage(props: {
   const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } }).lean();
   if (!doc) notFound();
 
+  const previewUrl = doc.previewImageUrl ?? doc.firstPagePngUrl ?? null;
+
   const sharePasswordHash = (doc as { sharePasswordHash?: unknown }).sharePasswordHash;
   const sharePasswordSalt = (doc as { sharePasswordSalt?: unknown }).sharePasswordSalt;
   const passwordEnabled =
@@ -150,12 +175,17 @@ export default async function SharePage(props: {
       sharePasswordHash: sharePasswordHash as string,
     });
     if (!cookie || cookie !== expected) {
-      return <PasswordGate shareId={shareId} title={typeof doc.title === "string" ? doc.title : null} />;
+      return (
+        <PasswordGate
+          shareId={shareId}
+          title={typeof doc.title === "string" ? doc.title : null}
+          previewUrl={typeof previewUrl === "string" ? previewUrl : null}
+        />
+      );
     }
   }
 
   const pdfUrl = doc.blobUrl ? `/s/${encodeURIComponent(shareId)}/pdf` : null;
-  const previewUrl = doc.previewImageUrl ?? doc.firstPagePngUrl ?? null;
   const ai = pickReceiverAi(doc.aiOutput ?? null);
   const allowDownload = Boolean((doc as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload);
 
@@ -200,5 +230,3 @@ export default async function SharePage(props: {
     </main>
   );
 }
-
-

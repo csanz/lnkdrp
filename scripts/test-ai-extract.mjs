@@ -25,7 +25,7 @@ const USER_PROMPT_PATH = path.join(PROMPTS_DIR, "analyzePdfText-user.md");
 const CONFIG_PATH = path.join(PROMPTS_DIR, "analyzePdfText-config.json");
 
 /**
- * Print usage instructions and exit the process.
+ * Print usage instructions for test-ai-extract.mjs and exit.
  */
 function usage(exitCode = 1) {
   console.error(
@@ -108,11 +108,19 @@ const AnalysisSchema = z
   })
   .strict();
 
+/**
+ * Load Analyze Prompts.
+ */
+
 function loadAnalyzePrompts() {
   const system = fs.readFileSync(SYSTEM_PROMPT_PATH, "utf8").trim();
   const user = fs.readFileSync(USER_PROMPT_PATH, "utf8").trim();
   return { system, user };
 }
+
+/**
+ * Load Analyze Config.
+ */
 
 function loadAnalyzeConfig() {
   const raw = fs.readFileSync(CONFIG_PATH, "utf8");
@@ -129,6 +137,10 @@ function loadAnalyzeConfig() {
     stream: typeof cfg.stream === "boolean" ? cfg.stream : undefined,
   };
 }
+
+/**
+ * Fill User Prompt.
+ */
 
 function fillUserPrompt(template, pdfText) {
   const t = (template ?? "").toString();

@@ -4,18 +4,27 @@ type SendInviteApprovalEmailParams = {
   description?: string | null;
 };
 
+/**
+ * Email helper: sends an "invite approved" email with the invite code.
+ *
+ * Uses Resend's HTTP API (`RESEND_API_KEY`) and links to the configured public site URL.
+ */
+
+/** Return an environment variable or throw with a clear configuration error. */
 function mustGetEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required env var: ${name}`);
   return value;
 }
 
+/** Return the public base URL used for email links (empty string when unset). */
 function getPublicBaseUrl(): string {
   const base = (process.env.NEXT_PUBLIC_SITE_URL ?? "").trim();
   return base;
 }
 
-export async function sendInviteApprovalEmail(params: SendInviteApprovalEmailParams) {
+/** Send an invite approval email to the given address. */
+export async function sendInviteApprovalEmail(params: SendInviteApprovalEmailParams): Promise<void> {
   const { to, inviteCode, description } = params;
 
   const apiKey = mustGetEnv("RESEND_API_KEY");
@@ -63,5 +72,3 @@ export async function sendInviteApprovalEmail(params: SendInviteApprovalEmailPar
     throw new Error(`Failed to send email (${res.status}): ${body || res.statusText}`);
   }
 }
-
-

@@ -19,6 +19,10 @@ import {
 import { debugError, debugLog } from "@/lib/debug";
 
 export const runtime = "nodejs";
+/**
+ * Handle POST requests.
+ */
+
 
 export async function POST(request: Request) {
   try {

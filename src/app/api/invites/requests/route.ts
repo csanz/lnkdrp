@@ -6,12 +6,20 @@ import { InviteModel } from "@/lib/models/Invite";
 import { UserModel } from "@/lib/models/User";
 
 export const runtime = "nodejs";
+/**
+ * Return whether localhost request.
+ */
+
 
 function isLocalhostRequest(request: Request) {
   if (process.env.NODE_ENV === "production") return false;
   const host = (request.headers.get("host") ?? "").toLowerCase();
   return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
 }
+/**
+ * Require Admin (uses isLocalhostRequest, resolveActor, isValid).
+ */
+
 
 async function requireAdmin(request: Request) {
   if (isLocalhostRequest(request)) {
@@ -31,6 +39,10 @@ async function requireAdmin(request: Request) {
 
   return { ok: true as const, userId: actor.userId };
 }
+/**
+ * Handle GET requests.
+ */
+
 
 export async function GET(request: Request) {
   const auth = await requireAdmin(request);

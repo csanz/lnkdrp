@@ -1,6 +1,15 @@
+/**
+ * AI-powered document analysis for PDF text.
+ *
+ * Produces metadata (summary, tags, SEO fields, page slugs, and project routing)
+ * from extracted PDF text. The model output is validated/normalized via Zod and
+ * failures degrade gracefully (returns a valid "empty" snapshot instead of throwing).
+ */
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
+import { Types } from "mongoose";
+import { completeAiRun, failAiRun, startAiRun } from "@/lib/ai/aiRunRecorder";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -70,6 +79,10 @@ export const AiDocAnalysisSchema = z
     document_purpose: z.string(),
     intended_audience: z.enum(INTENDED_AUDIENCE_VALUES),
     company_or_project_name: z.string(),
+    company_url: z.string(),
+    contact_name: z.string(),
+    contact_email: z.string(),
+    contact_url: z.string(),
     industry: z.string(),
     stage: z.enum(STAGE_VALUES),
     key_metrics: z.array(z.string()),
@@ -132,6 +145,10 @@ const AiDocAnalysisGenerationSchema = z
     document_purpose: z.string().nullable().optional(),
     intended_audience: z.string().nullable().optional(),
     company_or_project_name: z.string().nullable().optional(),
+    company_url: z.string().nullable().optional(),
+    contact_name: z.string().nullable().optional(),
+    contact_email: z.string().nullable().optional(),
+    contact_url: z.string().nullable().optional(),
     industry: z.string().nullable().optional(),
     stage: z.string().nullable().optional(),
     key_metrics: z.array(z.string()).nullable().optional(),
@@ -151,19 +168,23 @@ const AiDocAnalysisGenerationSchema = z
   })
   .passthrough();
 
+/** Narrow `unknown` to a plain object record (non-null, non-array). */
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
+/** Coerce an unknown value into a string (empty string for non-strings). */
 function asString(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+/** Coerce an unknown value into an integer (or null if invalid). */
 function asInt(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   return Math.floor(v);
 }
 
+/** Pick a string enum value (falls back when the value is missing/invalid). */
 function pickEnum<T extends readonly string[]>(
   v: unknown,
   allowed: T,
@@ -172,6 +193,7 @@ function pickEnum<T extends readonly string[]>(
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T[number]) : fallback;
 }
 
+/** Normalize an unknown value into a trimmed array of strings. */
 function normalizeStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v
@@ -180,6 +202,10 @@ function normalizeStringArray(v: unknown): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Build a fallback list of page slugs from detected page numbers.
+ * Used when the model output omits page slugs.
+ */
 function buildDefaultPageSlugs(pages?: Array<{ page_number: number; text: string }>): Array<{
   page_number: number;
   slug: string;
@@ -195,6 +221,10 @@ function buildDefaultPageSlugs(pages?: Array<{ page_number: number; text: string
   return out;
 }
 
+/**
+ * Normalize model output into a strict `AiDocAnalysis` (never returns null).
+ * Accepts loose model output and repairs common issues (nulls, missing keys, bad enums).
+ */
 function normalizeAiDocAnalysis(raw: unknown, pages?: Array<{ page_number: number; text: string }>): AiDocAnalysis {
   const r = isRecord(raw) ? raw : {};
 
@@ -240,6 +270,10 @@ function normalizeAiDocAnalysis(raw: unknown, pages?: Array<{ page_number: numbe
     document_purpose: asString(r.document_purpose),
     intended_audience: pickEnum(r.intended_audience, INTENDED_AUDIENCE_VALUES, "unknown"),
     company_or_project_name: asString(r.company_or_project_name),
+    company_url: asString(r.company_url),
+    contact_name: asString(r.contact_name),
+    contact_email: asString(r.contact_email),
+    contact_url: asString(r.contact_url),
     industry: asString(r.industry),
     stage: pickEnum(r.stage, STAGE_VALUES, "unknown"),
     key_metrics: normalizeStringArray(r.key_metrics),
@@ -251,12 +285,15 @@ function normalizeAiDocAnalysis(raw: unknown, pages?: Array<{ page_number: numbe
   });
 }
 
-const PROMPTS_DIR = path.join(process.cwd(), "src/lib/ai/prompts");
-const SYSTEM_PROMPT_PATH = path.join(PROMPTS_DIR, "analyzePdfText-system.md");
-const USER_PROMPT_PATH = path.join(PROMPTS_DIR, "analyzePdfText-user.md");
-const CONFIG_PATH = path.join(PROMPTS_DIR, "analyzePdfText-config.json");
+const PROMPTS_MD_DIR = path.join(process.cwd(), "src/lib/prompts");
+const SYSTEM_PROMPT_PATH = path.join(PROMPTS_MD_DIR, "analyzePdfText-system.md");
+const USER_PROMPT_PATH = path.join(PROMPTS_MD_DIR, "analyzePdfText-user.md");
+// Config is not a prompt template; keep it co-located with the analysis code.
+const CONFIG_DIR = path.join(process.cwd(), "src/lib/ai/prompts");
+const CONFIG_PATH = path.join(CONFIG_DIR, "analyzePdfText-config.json");
 
 let cachedPrompts: { system: string; user: string } | null = null;
+/** Load (and cache) system/user prompt templates from disk. */
 async function loadPrompts(): Promise<{ system: string; user: string }> {
   if (cachedPrompts) return cachedPrompts;
   const [system, user] = await Promise.all([
@@ -276,6 +313,7 @@ type AnalyzePdfTextConfig = {
 };
 
 let cachedConfig: AnalyzePdfTextConfig | null = null;
+/** Load (and cache) `analyzePdfText` runtime config from disk. */
 async function loadConfig(): Promise<AnalyzePdfTextConfig> {
   if (cachedConfig) return cachedConfig;
   const raw = await readFile(CONFIG_PATH, "utf8");
@@ -296,14 +334,14 @@ async function loadConfig(): Promise<AnalyzePdfTextConfig> {
   };
   return cachedConfig;
 }
-
-function fillUserPrompt(template: string, pdfText: string) {
+/** Fill the user prompt template with the PDF text (supports `{{PDF_TEXT}}`). */
+function fillUserPrompt(template: string, pdfText: string): string {
   const t = template || "";
   if (t.includes("{{PDF_TEXT}}")) return t.replace("{{PDF_TEXT}}", pdfText);
   return `${t}\n\n${pdfText}`.trim();
 }
-
-function trimForPrompt(input: string) {
+/** Trim and cap prompt text to keep token usage bounded (preserves head + tail). */
+function trimForPrompt(input: string): string {
   const text = (input ?? "").trim();
   if (!text) return "";
   // Keep cost bounded; preserve both beginning + end (often where the ask is).
@@ -313,11 +351,11 @@ function trimForPrompt(input: string) {
   const tail = text.slice(-15_000);
   return `${head}\n\n...[truncated]...\n\n${tail}`;
 }
-
+/** Build the analysis input text from per-page extracts (preferred) or fullText. */
 function buildPrompt(input: {
   fullText?: string | null;
   pages?: Array<{ page_number: number; text: string }>;
-}) {
+}): string {
   const pages = (input.pages ?? []).filter((p) => p && typeof p.text === "string");
   if (pages.length) {
     const lines: string[] = [];
@@ -337,12 +375,12 @@ type ProjectPromptContext = {
   description: string;
   autoAddFiles: boolean;
 };
-
+/** Build an instruction/context block listing the user's projects for routing. */
 function buildProjectsContextBlock(params: {
   projects?: ProjectPromptContext[] | null;
   existingProjectIds?: string[] | null;
   isReplacement?: boolean;
-}) {
+}): string {
   const projects = Array.isArray(params.projects) ? params.projects : [];
   const existing = Array.isArray(params.existingProjectIds) ? params.existingProjectIds : [];
   const isReplacement = Boolean(params.isReplacement);
@@ -386,13 +424,26 @@ function buildProjectsContextBlock(params: {
     JSON.stringify(ctx, null, 2),
   ].join("\n");
 }
-
+/**
+ * Analyze extracted PDF text and return a normalized `AiDocAnalysis`.
+ *
+ * Returns null when AI is disabled (`OPENAI_API_KEY` not configured) or when there
+ * is no usable text.
+ */
 export async function analyzePdfText(input: {
   fullText?: string | null;
   pages?: Array<{ page_number: number; text: string }>;
   projects?: ProjectPromptContext[] | null;
   existingProjectIds?: string[] | null;
   isReplacement?: boolean;
+  meta?: {
+    userId?: string | null;
+    projectId?: string | null;
+    projectIds?: string[] | null;
+    docId?: string | null;
+    uploadId?: string | null;
+    uploadVersion?: number | null;
+  } | null;
 }): Promise<AiDocAnalysis | null> {
   // If key isn't configured, treat as "AI disabled" rather than failing uploads.
   if (!process.env.OPENAI_API_KEY) return null;
@@ -415,6 +466,20 @@ export async function analyzePdfText(input: {
   // to a valid "empty" snapshot if all AI attempts fail.
   const maxTokensCfg = typeof cfg.maxTokens === "number" ? cfg.maxTokens : undefined;
   const maxTokensRetry = Math.max(maxTokensCfg ?? 0, 2500) || undefined;
+  const startedAt = Date.now();
+  const meta = input.meta ?? null;
+  const aiRunId = await startAiRun({
+    kind: "analyzePdfText",
+    provider: "openai",
+    model: cfg.model,
+    temperature: typeof cfg.temperature === "number" ? cfg.temperature : 0,
+    maxRetries: typeof cfg.maxRetries === "number" ? cfg.maxRetries : 2,
+    maxTokens: typeof maxTokensCfg === "number" ? maxTokensCfg : null,
+    systemPrompt: system,
+    userPrompt,
+    inputTextChars: userPrompt.length,
+    meta,
+  });
 
   try {
     const { object } = await generateObject({
@@ -426,7 +491,13 @@ export async function analyzePdfText(input: {
       prompt: userPrompt,
       ...(typeof maxTokensCfg === "number" ? { maxTokens: maxTokensCfg } : {}),
     });
-    return normalizeAiDocAnalysis(object, input.pages);
+    const normalized = normalizeAiDocAnalysis(object, input.pages);
+    await completeAiRun(aiRunId, {
+      durationMs: Date.now() - startedAt,
+      outputObject: object,
+      outputText: JSON.stringify(normalized),
+    });
+    return normalized;
   } catch {
     // Retry once with a higher token budget to reduce truncation-related JSON/schema failures.
     try {
@@ -439,7 +510,13 @@ export async function analyzePdfText(input: {
         prompt: userPrompt,
         ...(typeof maxTokensRetry === "number" ? { maxTokens: maxTokensRetry } : {}),
       });
-      return normalizeAiDocAnalysis(object, input.pages);
+      const normalized = normalizeAiDocAnalysis(object, input.pages);
+      await completeAiRun(aiRunId, {
+        durationMs: Date.now() - startedAt,
+        outputObject: object,
+        outputText: JSON.stringify(normalized),
+      });
+      return normalized;
     } catch (e2) {
       // Last resort: return a valid snapshot so downstream normalization logic can still populate
       // fields (ask/key_metrics/meta) without treating AI as "missing".
@@ -448,6 +525,11 @@ export async function analyzePdfText(input: {
       // eslint-disable-next-line no-console
       console.warn("[analyzePdfText] failed; returning fallback snapshot", {
         message: e2 instanceof Error ? e2.message : String(e2),
+      });
+      await failAiRun(aiRunId, {
+        durationMs: Date.now() - startedAt,
+        outputText: JSON.stringify(fallback),
+        error: e2,
       });
       return fallback;
     }
