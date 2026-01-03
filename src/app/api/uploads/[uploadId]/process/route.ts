@@ -16,8 +16,10 @@ import { UploadModel } from "@/lib/models/Upload";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { ReviewModel } from "@/lib/models/Review";
+import { DocChangeModel } from "@/lib/models/DocChange";
 import { buildDocExtractedTextPathname, buildDocPreviewPngPathname } from "@/lib/blob/clientUpload";
 import { analyzePdfText } from "@/lib/ai/analyzePdfText";
+import { runDocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
 import { runRequestReviewInvestorFocused } from "@/lib/ai/requestReviewInvestorFocused";
 import { debugError, debugLog } from "@/lib/debug";
@@ -907,20 +909,46 @@ export async function POST(
       // Project routing context (used by AI + auto-assignment).
       // For replacement uploads, we keep existing project membership and only add more (never remove).
       const isReplacement = Number.isFinite(upload.version) && Number(upload.version) > 1;
+      const uploadVersion = Number.isFinite(upload.version) ? Number(upload.version) : null;
       const existingDoc = await DocModel.findById(docId)
         .select({
           _id: 1,
+          orgId: 1,
           title: 1,
           projectId: 1,
           projectIds: 1,
           isArchived: 1,
           isDeleted: 1,
+          currentUploadId: 1,
+          uploadId: 1,
+          extractedText: 1,
+          pdfText: 1,
           aiOutput: 1,
           docName: 1,
           pageSlugs: 1,
         })
         .lean();
       const existingDocObj = isRecord(existingDoc) ? existingDoc : null;
+      const priorExtractedTextRaw =
+        existingDocObj && typeof (existingDocObj as { extractedText?: unknown }).extractedText === "string"
+          ? String((existingDocObj as { extractedText: string }).extractedText ?? "")
+          : existingDocObj && typeof (existingDocObj as { pdfText?: unknown }).pdfText === "string"
+            ? String((existingDocObj as { pdfText: string }).pdfText ?? "")
+            : "";
+      const priorUploadIdRaw = existingDocObj
+        ? ((existingDocObj as { currentUploadId?: unknown }).currentUploadId ??
+            (existingDocObj as { uploadId?: unknown }).uploadId ??
+            null)
+        : null;
+      const priorUploadId =
+        priorUploadIdRaw && Types.ObjectId.isValid(String(priorUploadIdRaw))
+          ? new Types.ObjectId(String(priorUploadIdRaw))
+          : null;
+      const existingDocOrgIdRaw = existingDocObj ? (existingDocObj as { orgId?: unknown }).orgId : null;
+      const existingDocOrgId =
+        existingDocOrgIdRaw && Types.ObjectId.isValid(String(existingDocOrgIdRaw))
+          ? new Types.ObjectId(String(existingDocOrgIdRaw))
+          : new Types.ObjectId(actor.orgId);
       // When replacing a file, if AI extraction fails/skips for the new version,
       // we keep the prior AI-derived fields so the UI doesn't "lose" them.
       const priorDocAiOutput = existingDocObj ? (existingDocObj.aiOutput ?? null) : null;
@@ -1007,6 +1035,47 @@ export async function POST(
           firstPagePngUrl: upload.previewImageUrl ?? upload.firstPagePngUrl ?? null,
           pdfText: upload.rawExtractedText ?? upload.pdfText ?? null,
         });
+
+        // Best-effort: ensure a DocChange record exists for completed replacement uploads
+        // (covers rare cases where the initial processing attempt crashed after completing the upload).
+        try {
+          const toVersion = Number.isFinite(upload.version) ? Number(upload.version) : null;
+          if (isReplacement && toVersion && toVersion > 1) {
+            const existing = await DocChangeModel.exists({ docId, toUploadId: upload._id });
+            if (!existing) {
+              const prev = await UploadModel.findOne({
+                docId,
+                version: toVersion - 1,
+                isDeleted: { $ne: true },
+              })
+                .select({ _id: 1, rawExtractedText: 1, pdfText: 1 })
+                .lean();
+              const previousText = (prev?.rawExtractedText ?? (prev as any)?.pdfText ?? "").toString();
+              const newText = (upload.rawExtractedText ?? upload.pdfText ?? "").toString();
+              const diff = await runDocChangeDiff({ previousText, newText }).catch(() => null);
+              await DocChangeModel.updateOne(
+                { docId, toUploadId: upload._id },
+                {
+                  $set: {
+                    orgId: new Types.ObjectId(actor.orgId),
+                    docId,
+                    createdByUserId: new Types.ObjectId(actor.userId),
+                    fromUploadId: prev?._id ?? null,
+                    toUploadId: upload._id,
+                    fromVersion: toVersion - 1,
+                    toVersion,
+                    previousText,
+                    newText,
+                    diff: diff ?? { summary: "", changes: [] },
+                  },
+                },
+                { upsert: true },
+              );
+            }
+          }
+        } catch {
+          // ignore; best-effort
+        }
 
         // IMPORTANT: allow forcing a re-run of the review agent even when the upload is already completed.
         // (Used by "Edit prompt & rerun" for received docs.)
@@ -1329,6 +1398,37 @@ export async function POST(
         });
       }
 
+      // Best-effort: store a DocChange record for replacement uploads.
+      try {
+        if (isReplacement && uploadVersion && uploadVersion > 1) {
+          const previousText = priorExtractedTextRaw.toString();
+          const newText = (extractedText ?? "").toString();
+          if (previousText.trim() && newText.trim()) {
+            const diff = await runDocChangeDiff({ previousText, newText }).catch(() => null);
+            await DocChangeModel.updateOne(
+              { docId, toUploadId: upload._id },
+              {
+                $set: {
+                  orgId: existingDocOrgId,
+                  docId,
+                  createdByUserId: new Types.ObjectId(actor.userId),
+                  fromUploadId: priorUploadId,
+                  toUploadId: upload._id,
+                  fromVersion: uploadVersion - 1,
+                  toVersion: uploadVersion,
+                  previousText,
+                  newText,
+                  diff: diff ?? { summary: "", changes: [] },
+                },
+              },
+              { upsert: true },
+            );
+          }
+        }
+      } catch {
+        // ignore; best-effort
+      }
+
       // Persist extracted text to Blob (best-effort; bounded size).
       // This is especially useful for request guide documents used as prompt context.
       let extractedTextBlobUrl: string | null = null;
@@ -1515,7 +1615,6 @@ export async function POST(
         // ignore (best-effort)
       }
 
-      const uploadVersion = Number.isFinite(upload.version) ? Number(upload.version) : null;
       const skipReview = Boolean((uploadObj as { skipReview?: unknown }).skipReview);
 
       // Request review settings (if this doc belongs to a request repo).

@@ -580,7 +580,7 @@ export default function DocActionsMenu({
                 <span className="text-red-600">
                   <TrashIcon className="h-4 w-4" />
                 </span>
-                <span>Delete</span>
+                <span>Delete document…</span>
               </span>
             </button>
           </li>
@@ -752,7 +752,7 @@ export default function DocActionsMenu({
         <div className="space-y-4">
           <div className="text-base font-semibold text-[var(--fg)]">Delete document?</div>
           <div className="text-sm text-[var(--muted)]">
-            This will remove the document from your lists. You can’t undo this.
+            This will permanently delete the document. This can’t be undone.
           </div>
           {deleteError ? <div className="text-sm font-medium text-red-700">{deleteError}</div> : null}
           <div className="flex items-center justify-end gap-3">

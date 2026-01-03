@@ -140,6 +140,14 @@ const docSchema = new Schema(
     },
 
     /**
+     * Optional public upload capability token for replacing this doc's file.
+     *
+     * This is intended for docs received via request links, so the owner can share a
+     * replacement upload link that creates a new Upload version for the existing doc.
+     */
+    replaceUploadToken: { type: String, trim: true, default: null, index: true, unique: true, sparse: true },
+
+    /**
      * If set, this doc is being used as a "Guide" (thesis/RFP/JD) for a request repo.
      *
      * This is written when attaching a guide doc to a request repo so the doc can be
@@ -383,8 +391,9 @@ export const DocModel: Model<Doc> = (() => {
       Boolean(existing.schema.path("sharePasswordEncTag"));
     const hasProjectIds = Boolean(existing.schema.path("projectIds"));
     const hasShareAllowPdfDownload = Boolean(existing.schema.path("shareAllowPdfDownload"));
+    const hasReplaceUploadToken = Boolean(existing.schema.path("replaceUploadToken"));
     if (
-      (!hasSharePassword || !hasProjectIds || !hasShareAllowPdfDownload) &&
+      (!hasSharePassword || !hasProjectIds || !hasShareAllowPdfDownload || !hasReplaceUploadToken) &&
       process.env.NODE_ENV !== "production"
     ) {
       delete mongoose.models.Doc;

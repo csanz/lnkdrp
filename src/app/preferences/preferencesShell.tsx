@@ -49,7 +49,12 @@ export default function PreferencesShell({ children }: { children: React.ReactNo
             <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
               <Image src={logoSrc} alt="LinkDrop" width={28} height={28} priority />
             </Link>
-            <ActiveWorkspacePill className="hidden sm:inline-flex" maxWidthClassName="max-w-[320px]" />
+            <ActiveWorkspacePill
+              className="hidden sm:inline-flex"
+              maxWidthClassName="max-w-[320px]"
+              // TODO: wire to real subscription plan; temporary UI stub.
+              planBadgeText="PRO"
+            />
           </div>
 
           <div className="shrink-0">

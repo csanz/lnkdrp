@@ -42,6 +42,7 @@
 - `src/app/(app)/doc/[docId]/ai/page.tsx` — Page for \`/doc/:docId/ai\`.
 - `src/app/(app)/doc/[docId]/page.tsx` — Page for \`/doc/:docId\`.
 - `src/app/(app)/doc/[docId]/metrics/page.tsx` — Page for \`/doc/:docId/metrics\`.
+- `src/app/(app)/doc/[docId]/history/page.tsx` — Page for \`/doc/:docId/history\`.
 - `src/app/(app)/doc/[docId]/review/page.tsx` — Page for \`/doc/:docId/review\`.
 - `src/app/(app)/layout.tsx` — Layout for \`/\`.
 - `src/app/(app)/project/[projectSlug]/page.tsx` — Page for \`/project/:projectId\`.
@@ -200,6 +201,9 @@
   - POST (function) — Handle POST requests.
   - GET (function) — Handle GET requests.
   - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/changes/route.ts` — API route for \`/api/docs/:docId/changes\`.
+  - GET (function) — List replacement change history records for a doc (access-gated).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/docs/route.ts` — API route for \`/api/docs\`.
   - GET (function) — List docs (paged; supports `q` search; supports `ids` for direct lookup).
   - POST (function) — Handle POST requests.
@@ -318,6 +322,10 @@
 - `src/lib/ai/analyzePdfText.ts`
   - AiDocAnalysis (type) — Type: AI doc analysis.
   - analyzePdfText (function) — Analyze PDF text.
+- `src/lib/ai/docChangeDiff.ts`
+  - DocChangeDiffSchema (const) — Zod schema for doc replacement change diffs.
+  - DocChangeDiff (type) — Output type inferred from schema.
+  - runDocChangeDiff (function) — Generate summary + change list from previous vs new extracted text.
 - `src/lib/ai/aiRunRecorder.ts`
   - AiRunKind (type) — Union of supported AI run kinds.
   - AiRunMeta (type) — Optional linkage ids for associating runs to app entities.
@@ -400,6 +408,9 @@
 - `src/lib/models/Doc.ts` — Data model for the docs collection.
   - Doc (type) — Mongoose document type for the docs collection.
   - DocModel (function) — Doc model.
+- `src/lib/models/DocChange.ts` — Data model for the docChanges collection.
+  - DocChange (type) — Mongoose document type for the docChanges collection.
+  - DocChangeModel (const) — Mongoose model for doc change history records.
 - `src/lib/models/DocReport.ts` — Data model for the docreports collection.
   - DocReport (type) — Mongoose document type for the docreports collection.
   - DocReportModel (const) — Mongoose model for the docreports collection.
@@ -577,6 +588,7 @@
 - `src/app/api/docs/[docId]/route.ts`
 - `src/app/api/docs/[docId]/shareviews/route.ts`
 - `src/app/api/docs/[docId]/share-password/route.ts`
+- `src/app/api/docs/[docId]/changes/route.ts`
 - `src/app/api/docs/route.ts`
 - `src/app/api/invites/codes/[inviteId]/toggle-active/route.ts`
 - `src/app/api/invites/codes/route.ts`
@@ -635,6 +647,7 @@
 - `src/components/UploadCompletionPanel.tsx`
 - `src/lib/admin/localStorageTools.ts`
 - `src/lib/ai/analyzePdfText.ts`
+- `src/lib/ai/docChangeDiff.ts`
 - `src/lib/ai/prompts/analyzePdfText-config.json`
 - `src/lib/ai/prompts/analyzePdfText-schema.json`
 - `src/lib/ai/prompts/analyzePdfText-system.md`
@@ -656,6 +669,7 @@
 - `src/lib/http/fetchJson.ts`
 - `src/lib/metrics/client.ts`
 - `src/lib/models/Doc.ts`
+- `src/lib/models/DocChange.ts`
 - `src/lib/models/DocReport.ts`
 - `src/lib/models/Invite.ts`
 - `src/lib/models/Project.ts`

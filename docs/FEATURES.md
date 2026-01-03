@@ -55,7 +55,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Active org**:
   - The app tracks an “active org” in the signed-in session (JWT claim) and uses it to scope core data APIs (projects/docs/requests).
   - Workspace switching/management is available in **Preferences** (`/preferences`).
-  - The active workspace indicator is shown in the UI near the top-left brand/logo area (best-effort, client-side indicator). If the workspace has an icon (org avatar), it’s shown next to the workspace name.
+  - The active workspace indicator is shown in the UI near the top-left brand/logo area (best-effort, client-side indicator). If the workspace has an icon (org avatar), it’s shown next to the workspace name. The indicator can optionally include a small plan badge (e.g. “PRO”).
   - The account menu workspace quick switch list also shows the workspace icon when available.
 - **Switching mechanism**:
   - Org switching is performed via a server redirect route (`/org/switch`) which validates membership, sets an httpOnly active-org cookie, shows a brief “Switching workspace…” transition, and then redirects back to the current page (`returnTo`) so the app rehydrates in the new org context.
@@ -89,6 +89,12 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Doc page**: `/doc/:docId`
   - Shows doc status (`draft`/`preparing`/`ready`/`failed`) and updates as processing completes.
   - PDF viewing via `PdfJsViewer` once the PDF is ready (owner uses a same-origin cached PDF proxy at `/api/docs/:docId/pdf`).
+- **Doc replacement change history**:
+  - When the owner replaces a doc file (creating a new upload version), the server stores a best-effort “what changed” record (previous text, new text, summary + changes list).
+  - Changes are only accessible to users who have access to the doc (API: `/api/docs/:docId/changes`).
+  - History UI: `/doc/:docId/history` (version badge links here).
+  - History includes who uploaded each version (best-effort from user record).
+  - History UI includes a right-side overview panel with aggregate stats (replacements count, top editors, cadence, and best-effort impact/signals).
 - **Starred docs**:
   - Client-side “star” state with a local cache and change events.
 - **Assign docs to projects**:
@@ -226,6 +232,11 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **System → Cron health**: `/a/cron-health`
   - API: `/api/admin/cron-health`
   - Shows latest heartbeat snapshots written by cron endpoints (status/duration/last error).
+
+## Revision history (in progress)
+
+- **Record-level revision history**:
+  - We are adding revision history for key records (e.g. docs/projects/requests), capturing **what changed** (field-level details / before-after) along with **when** it changed and best-effort **who/what** initiated the change (user vs system/automation).
 
 ## Debug & utilities
 

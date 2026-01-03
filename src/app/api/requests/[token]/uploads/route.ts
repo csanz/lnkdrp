@@ -46,6 +46,15 @@ function newDocShareId() {
   // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
   return randomBase62(12);
 }
+
+/**
+ * Generate a secret token for a public "replace upload" link for a doc.
+ *
+ * This is a capability token (treat as secret) and should be long enough to be unguessable.
+ */
+function newReplaceUploadToken() {
+  return randomBase62(24);
+}
 /**
  * New Upload Secret (uses toString, randomBytes).
  */
@@ -170,6 +179,7 @@ export async function POST(
           projectId,
           projectIds: [projectId],
           receivedViaRequestProjectId: projectId,
+          replaceUploadToken: newReplaceUploadToken(),
         });
         const doc = (Array.isArray(created) ? created[0] : created) as typeof created;
         docId = (doc as unknown as { _id?: Types.ObjectId })._id ?? null;

@@ -137,7 +137,7 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   const avatarFallback = useMemo(() => initials(displayName), []);
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className={isTopbar ? "relative" : "relative group"}>
       <button
         type="button"
         disabled={navLocked}
@@ -145,7 +145,7 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         className={
           isTopbar
             ? "inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
-            : "flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-[var(--sidebar-hover)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+            : "flex w-full items-center gap-3 rounded-xl px-2 py-2 pr-9 text-left hover:bg-[var(--sidebar-hover)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
         }
         onClick={() => {
           if (navLocked) return;
@@ -176,6 +176,28 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           </div>
         ) : null}
       </button>
+
+      {!isTopbar ? (
+        <Link
+          href="/dashboard"
+          aria-label="Dashboard"
+          title="Dashboard"
+          onClick={(e) => {
+            // Keep existing behavior: clicking the account section opens the menu,
+            // but clicking the gear should navigate instead.
+            e.stopPropagation();
+          }}
+          className={[
+            "absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1",
+            "text-[var(--muted-2)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]",
+            navLocked
+              ? "opacity-0 group-hover:opacity-50 pointer-events-none"
+              : "opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto",
+          ].join(" ")}
+        >
+          <Cog6ToothIcon className="h-4 w-4" />
+        </Link>
+      ) : null}
 
       {open && !navLocked ? (
         <div
@@ -528,7 +550,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   }, [session?.user, loginBusy]);
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef} className={isTopbar ? "relative" : "relative group"}>
       <button
         type="button"
         disabled={navLocked}
@@ -536,7 +558,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         className={
           isTopbar
             ? "inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
-            : "flex w-full items-center gap-3 rounded-xl px-2 py-2 text-left hover:bg-[var(--sidebar-hover)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
+            : "flex w-full items-center gap-3 rounded-xl px-2 py-2 pr-9 text-left hover:bg-[var(--sidebar-hover)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
         }
         onClick={() => {
           if (navLocked) return;
@@ -559,6 +581,29 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           </div>
         ) : null}
       </button>
+
+      {!isTopbar ? (
+        <Link
+          href="/dashboard"
+          aria-label="Dashboard"
+          title="Dashboard"
+          onClick={(e) => {
+            // Keep existing behavior: clicking the account section opens the menu,
+            // but clicking the gear should navigate instead.
+            e.stopPropagation();
+            setOpen(false);
+          }}
+          className={[
+            "absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1",
+            "text-[var(--muted-2)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]",
+            navLocked
+              ? "opacity-0 group-hover:opacity-50 pointer-events-none"
+              : "opacity-0 group-hover:opacity-100 pointer-events-none group-hover:pointer-events-auto",
+          ].join(" ")}
+        >
+          <Cog6ToothIcon className="h-4 w-4" />
+        </Link>
+      ) : null}
 
       {open && !navLocked ? (
         <div

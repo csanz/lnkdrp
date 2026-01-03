@@ -10,6 +10,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
+import { UserModel } from "@/lib/models/User";
 import { debugEnabled, debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
@@ -50,6 +51,15 @@ function isObjectId(id: string) {
 function newShareId() {
   // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
   return randomBase62(12);
+}
+
+/**
+ * Generate a secret token for a public "replace upload" link for a doc.
+ *
+ * This is a capability token (treat as secret) and should be long enough to be unguessable.
+ */
+function newReplaceUploadToken() {
+  return randomBase62(24);
 }
 /**
  * Handle GET requests.
@@ -149,6 +159,42 @@ export async function GET(
       }
     }
 
+    // Ensure request-received docs have a replacement upload token (best-effort).
+    // This lets the owner share a public replacement upload link for inbound request docs.
+    const receivedViaRequestProjectIdRaw = (doc as unknown as { receivedViaRequestProjectId?: unknown })
+      .receivedViaRequestProjectId;
+    const isReceivedViaRequest = Boolean(receivedViaRequestProjectIdRaw);
+    const replaceUploadTokenRaw = (doc as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
+    const hasReplaceUploadToken = typeof replaceUploadTokenRaw === "string" && replaceUploadTokenRaw.trim().length > 0;
+    if (isReceivedViaRequest && !hasReplaceUploadToken) {
+      for (let i = 0; i < 5; i++) {
+        const candidate = newReplaceUploadToken();
+        try {
+          const updated = await DocModel.findOneAndUpdate(
+            {
+              ...docMatch,
+              receivedViaRequestProjectId: { $exists: true, $ne: null },
+              $or: [{ replaceUploadToken: { $exists: false } }, { replaceUploadToken: null }, { replaceUploadToken: "" }],
+            },
+            { $set: { replaceUploadToken: candidate } },
+            { new: true },
+          );
+          if (updated) {
+            doc = updated;
+            break;
+          }
+          // Another request beat us to it; re-fetch and stop if present.
+          doc = await DocModel.findOne({ ...docMatch });
+          const tokenNow = (doc as unknown as { replaceUploadToken?: unknown })?.replaceUploadToken;
+          if (typeof tokenNow === "string" && tokenNow.trim()) break;
+        } catch (e) {
+          // Duplicate token; retry.
+          if (e && typeof e === "object" && "code" in e && (e as { code?: number }).code === 11000) continue;
+          throw e;
+        }
+      }
+    }
+
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const docLean = doc.toObject();
 
@@ -157,6 +203,27 @@ export async function GET(
     const upload = currentUploadId
       ? await UploadModel.findById(currentUploadId).lean()
       : null;
+
+    // Best-effort: resolve who uploaded the current version.
+    const lastUpload = (function () {
+      if (!upload || typeof upload !== "object") return null;
+      const v = Number.isFinite((upload as any).version) ? Number((upload as any).version) : null;
+      const createdDate = (upload as any).createdDate instanceof Date ? (upload as any).createdDate : null;
+      const uploaderIdRaw = (upload as any).userId ? String((upload as any).userId) : "";
+      const uploaderId = uploaderIdRaw && Types.ObjectId.isValid(uploaderIdRaw) ? uploaderIdRaw : null;
+      return {
+        version: v,
+        uploadedAt: createdDate ? createdDate.toISOString() : null,
+        uploadedByUserId: uploaderId,
+      };
+    })();
+
+    const lastUploadedBy =
+      lastUpload?.uploadedByUserId
+        ? await UserModel.findById(new Types.ObjectId(lastUpload.uploadedByUserId))
+            .select({ _id: 1, name: 1, email: 1, isTemp: 1 })
+            .lean()
+        : null;
 
     const projectIdsRaw = (docLean as unknown as { projectIds?: unknown }).projectIds;
     const projectIds = Array.isArray(projectIdsRaw)
@@ -323,6 +390,10 @@ export async function GET(
           const raw = (docLean as unknown as { receivedViaRequestProjectId?: unknown }).receivedViaRequestProjectId;
           return raw ? String(raw) : null;
         })(),
+        replaceUploadToken: (function () {
+          const raw = (docLean as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
+          return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+        })(),
         guideForRequestProjectId,
         metricsSnapshot: (function () {
           const ms = (docLean as unknown as { metricsSnapshot?: unknown }).metricsSnapshot;
@@ -351,6 +422,17 @@ export async function GET(
               typeof m.downloadsTotal === "number" && Number.isFinite(m.downloadsTotal) ? m.downloadsTotal : 0,
           };
         })(),
+        lastUpdate: {
+          version: lastUpload?.version ?? null,
+          uploadedAt: lastUpload?.uploadedAt ?? null,
+          uploadedBy: lastUploadedBy
+            ? {
+                id: String((lastUploadedBy as any)._id),
+                name: typeof (lastUploadedBy as any).name === "string" ? (lastUploadedBy as any).name : null,
+                email: typeof (lastUploadedBy as any).email === "string" ? (lastUploadedBy as any).email : null,
+              }
+            : null,
+        },
       },
       upload: upload
         ? {

@@ -224,6 +224,7 @@ export function PdfJsViewer({
   const [zoom, setZoom] = useState(1); // multiplier on top of "fit-to-screen"
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"single" | "all">("single");
   const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
   const askText = useMemo(() => {
@@ -438,11 +439,15 @@ export function PdfJsViewer({
       if (target?.isContentEditable) return;
 
       if (e.key === "ArrowLeft") {
-        if (canPrev) goPrev();
-        e.preventDefault();
+        if (viewMode === "single") {
+          if (canPrev) goPrev();
+          e.preventDefault();
+        }
       } else if (e.key === "ArrowRight") {
-        if (canNext) goNext();
-        e.preventDefault();
+        if (viewMode === "single") {
+          if (canNext) goNext();
+          e.preventDefault();
+        }
       } else if (e.key === "=" || e.key === "+") {
         if (canZoomIn) zoomIn();
         e.preventDefault();
@@ -471,6 +476,7 @@ export function PdfJsViewer({
     goPrev,
     resetZoom,
     toggleFullscreen,
+    viewMode,
     zoomIn,
     zoomOut,
   ]);
@@ -521,6 +527,7 @@ export function PdfJsViewer({
 
 
     async function render() {
+      if (viewMode !== "single") return;
       const pdf = pdfRef.current;
       const canvas = canvasRef.current;
       if (!pdf || !canvas) return;
@@ -565,7 +572,7 @@ export function PdfJsViewer({
     return () => {
       cancelled = true;
     };
-  }, [pageNumber, pdfVersion, viewportSize.h, viewportSize.w, zoom]);
+  }, [pageNumber, pdfVersion, viewportSize.h, viewportSize.w, viewMode, zoom]);
 
   useEffect(() => {
     if (!shareIdSafe) return;

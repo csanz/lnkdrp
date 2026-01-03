@@ -1239,7 +1239,11 @@ export default function LeftSidebar({
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
             <Image src={logoSrc} alt="LinkDrop" width={32} height={32} />
           </Link>
-          <ActiveWorkspacePill maxWidthClassName="max-w-[240px]" />
+          <ActiveWorkspacePill
+            maxWidthClassName="max-w-[240px]"
+            // TODO: wire to real subscription plan; temporary UI stub.
+            planBadgeText="PRO"
+          />
         </div>
 
         <div className="px-3 pb-3">
@@ -1681,7 +1685,7 @@ export default function LeftSidebar({
                                 setDeleteDocOpen(true);
                               }}
                             >
-                              <span>Delete document</span>
+                              <span>Delete document…</span>
                             </button>
                           </div>
                         ) : null}

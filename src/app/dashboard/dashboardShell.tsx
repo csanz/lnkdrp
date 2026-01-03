@@ -44,7 +44,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       <header className="sticky top-0 z-10 bg-[var(--bg)]">
         {/* Full-width header: logo pinned left, account menu pinned right. */}
         {/* Keep the logo + workspace pill identical to the app shell (desktop sidebar + mobile top bar). */}
-        <div className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:h-auto md:border-b-0 md:px-4 md:pb-7 md:pt-6">
+        <div className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:h-auto md:items-start md:border-b-0 md:px-4 md:pb-7 md:pt-6">
           <div className="flex min-w-0 items-center gap-2">
             <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
               <Image src={logoSrc} alt="LinkDrop" width={32} height={32} priority />
@@ -52,6 +52,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             <ActiveWorkspacePill
               className="hidden sm:inline-flex"
               maxWidthClassName="max-w-[160px] md:max-w-[240px]"
+              // TODO: wire to real subscription plan; temporary UI stub.
+              planBadgeText="PRO"
               textClassName="text-[11px] md:text-[12px]"
             />
           </div>

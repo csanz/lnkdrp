@@ -25,11 +25,14 @@ function initials(name: string) {
 export default function ActiveWorkspacePill({
   className,
   maxWidthClassName = "max-w-[240px]",
+  planBadgeText,
   textClassName,
 }: {
   className?: string;
   /** Tailwind max-width class for truncation control (defaults to max-w-[240px]). */
   maxWidthClassName?: string;
+  /** Optional plan badge (e.g. "PRO") rendered to the right of the workspace name. */
+  planBadgeText?: string;
   /** Tailwind text sizing overrides (defaults to text-[12px]). */
   textClassName?: string;
 }) {
@@ -84,7 +87,7 @@ export default function ActiveWorkspacePill({
   return (
     <div
       className={clsx(
-        "inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1 font-semibold text-[var(--fg)]",
+        "inline-flex min-w-0 items-center rounded-full border border-[color-mix(in_srgb,var(--border)_55%,transparent)] bg-[var(--panel-2)] px-2.5 py-1.5 font-semibold text-[var(--fg)]",
         maxWidthClassName,
         textClassName ?? "text-[12px]",
         className,
@@ -108,7 +111,16 @@ export default function ActiveWorkspacePill({
           <span aria-hidden="true">{initials(activeWorkspaceName)}</span>
         )}
       </span>
-      <span className="truncate">{activeWorkspaceName}</span>
+      <span className="min-w-0 truncate">{activeWorkspaceName}</span>
+      {planBadgeText ? (
+        <span
+          className="ml-2 inline-flex shrink-0 items-center rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-medium tracking-[0.07em] text-amber-700/80 dark:bg-amber-300/8 dark:text-amber-200/75"
+          aria-label={`${planBadgeText} plan`}
+          title={`${planBadgeText} plan`}
+        >
+          {planBadgeText}
+        </span>
+      ) : null}
     </div>
   );
 }

@@ -44,8 +44,8 @@ export default function DeleteDocModal({
     >
       <div className="text-base font-semibold text-zinc-900">Delete document?</div>
       <div className="mt-2 text-sm text-zinc-700">
-        This will permanently delete <span className="font-semibold text-zinc-900">{displayTitle}</span>. You can’t
-        undo this.
+        This will permanently delete <span className="font-semibold text-zinc-900">{displayTitle}</span>. This can’t be
+        undone.
       </div>
 
       <div className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">
@@ -64,12 +64,12 @@ export default function DeleteDocModal({
             ))}
           </ul>
         ) : folders ? (
-          <div className="mt-1 text-zinc-700">Not in any folders.</div>
+          <div className="mt-1 text-zinc-700">Not in any folders</div>
         ) : (
-          <div className="mt-1 text-zinc-700">Folders will be shown here.</div>
+          <div className="mt-1 text-zinc-700">Folders will appear here.</div>
         )}
         <div className="mt-2 text-xs text-zinc-600">
-          Deleting a document removes it from your docs list and any folders it’s in.
+          Deleting a document removes it from your documents list and any folders it’s in.
         </div>
       </div>
 

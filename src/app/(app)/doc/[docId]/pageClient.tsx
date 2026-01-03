@@ -56,6 +56,17 @@ type DocDTO = {
     lastDaysDownloads: number;
     downloadsTotal: number;
   };
+  lastUpdate?: null | {
+    version: number | null;
+    uploadedAt: string | null;
+    uploadedBy:
+      | null
+      | {
+          id: string;
+          name: string | null;
+          email: string | null;
+        };
+  };
 };
 
 type UploadDTO = {
@@ -109,6 +120,30 @@ function pickDocSummary(aiOutput: unknown): {
         .slice(0, 12)
     : [];
   return { companyOrProjectName, oneLiner, summary, ask, tags: tags.length ? tags : null };
+}
+
+function formatRelativeAge(iso: string): string | null {
+  const d = new Date(iso);
+  const ms = d.getTime();
+  if (!Number.isFinite(ms)) return null;
+  const diffMs = Date.now() - ms;
+  if (!Number.isFinite(diffMs)) return null;
+  if (diffMs < 30_000) return "just now";
+
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+
+  const hours = Math.floor(diffMs / 3_600_000);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+
+  const days = Math.floor(diffMs / 86_400_000);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} month${months === 1 ? "" : "s"} ago`;
+
+  const years = Math.floor(months / 12);
+  return `${years} year${years === 1 ? "" : "s"} ago`;
 }
 /**
  * Build Cached Pdf Iframe Url (uses isFinite, encodeURIComponent, String).
@@ -1343,13 +1378,24 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         <span className="min-w-0 truncate">{displayDocName}</span>
                       )}
                       {displayVersion != null ? (
-                        <span
-                          className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
-                          aria-label={`Document version ${displayVersion}`}
-                          title={`Version ${displayVersion}`}
-                        >
-                          v{displayVersion}
-                        </span>
+                        navLockActive ? (
+                          <span
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
+                            aria-label={`Document version ${displayVersion}`}
+                            title={`Version ${displayVersion}`}
+                          >
+                            v{displayVersion}
+                          </span>
+                        ) : (
+                          <Link
+                            href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)] hover:underline underline-offset-4"
+                            aria-label={`Document version ${displayVersion} (view history)`}
+                            title={`Version ${displayVersion} (view history)`}
+                          >
+                            v{displayVersion}
+                          </Link>
+                        )
                       ) : null}
                     </div>
                   ) : (
@@ -1367,7 +1413,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           setEditingTitle(true);
                         }}
                         className={[
-                          "block w-full min-w-0 truncate text-left text-sm font-semibold text-[var(--fg)]",
+                          "block min-w-0 truncate text-left text-sm font-semibold text-[var(--fg)]",
                           navLockActive ? "cursor-not-allowed opacity-70" : "hover:underline",
                         ].join(" ")}
                       >
@@ -1381,16 +1427,68 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         )}
                       </button>
                       {displayVersion != null ? (
-                        <span
-                          className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
-                          aria-label={`Document version ${displayVersion}`}
-                          title={`Version ${displayVersion}`}
-                        >
-                          v{displayVersion}
-                        </span>
+                        navLockActive ? (
+                          <span
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
+                            aria-label={`Document version ${displayVersion}`}
+                            title={`Version ${displayVersion}`}
+                          >
+                            v{displayVersion}
+                          </span>
+                        ) : (
+                          <Link
+                            href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)] hover:underline underline-offset-4"
+                            aria-label={`Document version ${displayVersion} (view history)`}
+                            title={`Version ${displayVersion} (view history)`}
+                          >
+                            v{displayVersion}
+                          </Link>
+                        )
                       ) : null}
                     </div>
                   )}
+                  {doc.lastUpdate?.uploadedAt ? (
+                    <div className="mt-1 flex items-center gap-2 text-xs text-[var(--muted)]">
+                      <ArrowPathIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
+                      <span>
+                        {(() => {
+                          const iso = doc.lastUpdate?.uploadedAt ?? "";
+                          const relative = iso ? formatRelativeAge(iso) : null;
+                          const absolute = (() => {
+                            try {
+                              return new Date(iso).toLocaleString();
+                            } catch {
+                              return iso;
+                            }
+                          })();
+                          return (
+                            <>
+                              Last updated{" "}
+                              {relative ? (
+                                <span className="font-medium text-[var(--fg)]" title={absolute}>
+                                  {relative}
+                                </span>
+                              ) : (
+                                <span className="font-medium text-[var(--fg)]">{absolute}</span>
+                              )}
+                            </>
+                          );
+                        })()}
+                        {doc.lastUpdate?.uploadedBy ? (
+                          <>
+                            {" "}
+                            by{" "}
+                            <span className="font-medium text-[var(--fg)]">
+                              {doc.lastUpdate.uploadedBy.name ??
+                                doc.lastUpdate.uploadedBy.email ??
+                                "Unknown"}
+                            </span>
+                          </>
+                        ) : null}
+                      </span>
+                    </div>
+                  ) : null}
                   {isReceivedViaRequest ? (
                     <div className="mt-1 flex items-center gap-2 text-xs text-[var(--muted)]">
                       <InboxArrowDownIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
