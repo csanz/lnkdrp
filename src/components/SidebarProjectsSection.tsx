@@ -2,6 +2,7 @@
 
 import { EllipsisHorizontalIcon, FolderIcon, InboxArrowDownIcon, MinusIcon, PlusSmallIcon } from "@heroicons/react/24/outline";
 import type { Dispatch, SetStateAction } from "react";
+import IconButton from "@/components/ui/IconButton";
 
 type ProjectListItem = {
   id: string;
@@ -59,13 +60,14 @@ export default function SidebarProjectsSection({
     <section>
       <div className="group flex items-center justify-between gap-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
         <span>Projects</span>
-        <button
-          type="button"
+        <IconButton
+          ariaLabel={(projectsCollapsedLoaded ? projectsCollapsed : true) ? "Expand projects" : "Collapse projects"}
+          variant="ghost"
+          size="sm"
           className={[
-            "rounded-md p-0.5 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+            "rounded-md p-0.5 text-[var(--muted-2)]",
             "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
           ].join(" ")}
-          aria-label={(projectsCollapsedLoaded ? projectsCollapsed : true) ? "Expand projects" : "Collapse projects"}
           onClick={() => {
             setProjectsCollapsedLoaded(true);
             setProjectsCollapsed((v) => !v);
@@ -76,7 +78,7 @@ export default function SidebarProjectsSection({
           ) : (
             <MinusIcon className="h-4 w-4" />
           )}
-        </button>
+        </IconButton>
       </div>
 
       {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
@@ -138,13 +140,14 @@ export default function SidebarProjectsSection({
                       <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">{title}</span>
                     </div>
 
-                    <button
-                      type="button"
+                    <IconButton
+                      ariaLabel="Project actions"
+                      variant="ghost"
+                      size="sm"
                       className={[
-                        "shrink-0 rounded-lg p-1 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                        "shrink-0 rounded-lg p-1 text-[var(--muted-2)]",
                         "opacity-70 transition-opacity hover:opacity-100 focus:opacity-100",
                       ].join(" ")}
-                      aria-label="Project actions"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.preventDefault();
@@ -154,7 +157,7 @@ export default function SidebarProjectsSection({
                       }}
                     >
                       <EllipsisHorizontalIcon className="h-4 w-4" />
-                    </button>
+                    </IconButton>
                   </div>
 
                   {openProjectMenuId === p.id ? (

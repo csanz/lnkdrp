@@ -152,8 +152,33 @@ export async function PATCH(
 
     const uploadSecret = header(request, "x-upload-secret");
     if (typeof uploadSecret === "string" && uploadSecret.trim()) {
+      const trimmed = uploadSecret.trim();
+      debugLog(2, "[api/uploads/:uploadId] PATCH secret-auth", {
+        uploadId,
+        hasSecret: true,
+        secretLen: trimmed.length,
+      });
+
+      // Debug-friendly behavior: distinguish between missing upload vs secret mismatch.
+      // (This route is used by capability flows; returning a clearer error helps diagnose issues.)
+      const exists = await UploadModel.findOne({
+        _id: new Types.ObjectId(uploadId),
+        isDeleted: { $ne: true },
+      })
+        .select({ _id: 1, uploadSecret: 1 })
+        .lean();
+      if (!exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+      const stored = typeof (exists as any).uploadSecret === "string" ? String((exists as any).uploadSecret).trim() : "";
+      if (!stored) {
+        return NextResponse.json({ error: "UPLOAD_SECRET_NOT_ENABLED" }, { status: 403 });
+      }
+      if (stored !== trimmed) {
+        return NextResponse.json({ error: "UPLOAD_SECRET_MISMATCH" }, { status: 403 });
+      }
+
       const upload = await UploadModel.findOneAndUpdate(
-        { _id: new Types.ObjectId(uploadId), uploadSecret: uploadSecret.trim(), isDeleted: { $ne: true } },
+        { _id: new Types.ObjectId(uploadId), uploadSecret: trimmed, isDeleted: { $ne: true } },
         update,
         { new: true },
       ).lean();

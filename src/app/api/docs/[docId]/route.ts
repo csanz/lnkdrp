@@ -160,35 +160,33 @@ export async function GET(
     }
 
     // Ensure request-received docs have a replacement upload token (best-effort).
-    // This lets the owner share a public replacement upload link for inbound request docs.
+    // Keep this extremely light-weight since `/api/docs/:id` is polled by the doc page.
     const receivedViaRequestProjectIdRaw = (doc as unknown as { receivedViaRequestProjectId?: unknown })
       .receivedViaRequestProjectId;
     const isReceivedViaRequest = Boolean(receivedViaRequestProjectIdRaw);
     const replaceUploadTokenRaw = (doc as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
     const hasReplaceUploadToken = typeof replaceUploadTokenRaw === "string" && replaceUploadTokenRaw.trim().length > 0;
     if (isReceivedViaRequest && !hasReplaceUploadToken) {
-      for (let i = 0; i < 5; i++) {
+      // Very low collision probability, but handle duplicate-key errors defensively.
+      for (let i = 0; i < 2; i++) {
         const candidate = newReplaceUploadToken();
         try {
-          const updated = await DocModel.findOneAndUpdate(
+          const result = await DocModel.updateOne(
             {
-              ...docMatch,
+              _id: docObjectId,
               receivedViaRequestProjectId: { $exists: true, $ne: null },
               $or: [{ replaceUploadToken: { $exists: false } }, { replaceUploadToken: null }, { replaceUploadToken: "" }],
             },
             { $set: { replaceUploadToken: candidate } },
-            { new: true },
           );
-          if (updated) {
-            doc = updated;
-            break;
+          // If we updated, mirror it into the in-memory doc instance so the response includes it
+          // without requiring an extra re-fetch.
+          if ((result as unknown as { modifiedCount?: unknown }).modifiedCount) {
+            (doc as unknown as { replaceUploadToken?: string }).replaceUploadToken = candidate;
           }
-          // Another request beat us to it; re-fetch and stop if present.
-          doc = await DocModel.findOne({ ...docMatch });
-          const tokenNow = (doc as unknown as { replaceUploadToken?: unknown })?.replaceUploadToken;
-          if (typeof tokenNow === "string" && tokenNow.trim()) break;
+          break;
         } catch (e) {
-          // Duplicate token; retry.
+          // Duplicate token; retry once.
           if (e && typeof e === "object" && "code" in e && (e as { code?: number }).code === 11000) continue;
           throw e;
         }

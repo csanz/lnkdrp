@@ -11,6 +11,8 @@ import { useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } from "@/lib/orgsCache";
 import Modal from "@/components/modals/Modal";
+import Alert from "@/components/ui/Alert";
+import IconButton from "@/components/ui/IconButton";
 import {
   BanknotesIcon,
   ChartBarIcon,
@@ -219,33 +221,20 @@ export default function DashboardPage() {
           <div className="px-1 pb-4 pt-1">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0 truncate text-[14px] font-semibold text-[var(--fg)]">{name}</div>
-              <button
-                type="button"
-                className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-1.5 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+              <IconButton
+                ariaLabel="Edit your name"
+                title="Edit name"
+                size="sm"
+                className="shrink-0"
                 onClick={() => {
                   setNameError(null);
                   setEditNameOpen(true);
                 }}
-                aria-label="Edit your name"
-                title="Edit name"
               >
                 <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
-              </button>
+              </IconButton>
             </div>
             {email ? <div className="mt-0.5 truncate text-[12px] text-[var(--muted-2)]">{email}</div> : null}
-            {activeWorkspaceName ? (
-              <div className="mt-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                  Active workspace
-                </div>
-                <div
-                  className="mt-1 inline-flex max-w-full items-center px-0 py-0 text-[12px] font-semibold text-[var(--fg)]"
-                  title={activeWorkspaceName}
-                >
-                  <span className="truncate">{activeWorkspaceName}</span>
-                </div>
-              </div>
-            ) : null}
           </div>
           <div className="my-3 h-px bg-[var(--border)]" />
           <nav className="grid gap-2">
@@ -319,9 +308,9 @@ export default function DashboardPage() {
                 </div>
 
                 {statsError ? (
-                  <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-[12px] text-red-700">
+                  <Alert variant="error" className="mt-4 text-[12px]">
                     {statsError}
-                  </div>
+                  </Alert>
                 ) : null}
 
                 <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -516,9 +505,9 @@ export default function DashboardPage() {
           </div>
 
           {nameError ? (
-            <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-[12px] text-red-700">
+            <Alert variant="error" className="px-3 py-2 text-[12px]">
               {nameError}
-            </div>
+            </Alert>
           ) : null}
 
           <div className="mt-2 flex items-center justify-end gap-2">

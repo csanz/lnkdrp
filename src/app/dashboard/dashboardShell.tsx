@@ -51,10 +51,10 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             </Link>
             <ActiveWorkspacePill
               className="hidden sm:inline-flex"
-              maxWidthClassName="max-w-[160px] md:max-w-[240px]"
+              maxWidthClassName="max-w-[160px]"
               // TODO: wire to real subscription plan; temporary UI stub.
               planBadgeText="PRO"
-              textClassName="text-[11px] md:text-[12px]"
+              textClassName="text-[11px]"
             />
           </div>
 

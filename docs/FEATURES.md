@@ -36,11 +36,13 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Dashboard page**: `/dashboard`
   - Cursor-like standalone settings/analytics hub with a left mini-nav.
+  - Left mini-nav shows the signed-in user name/email and a compact section list (Overview/Account/etc). The active workspace pill is shown in the top-left header.
   - Includes an **Overview** tab (default) that shows high-level workspace stats (e.g. new docs, pages viewed, share views) plus a **30-day activity graph** aggregated across all docs in the active workspace.
   - Overview includes a **Subscription** card at the top:
-    - Shows current plan (Free vs paid status) for the active workspace.
-    - Free plan includes a **Subscribe** button (Stripe checkout link).
-    - Paid workspaces include a **Manage subscription** button (Stripe billing portal session).
+    - Shows current plan (Free vs Pro) and Stripe status (when available).
+    - Free plan includes an **Upgrade** button that creates a Stripe **Checkout Session** server-side (`POST /api/stripe/checkout`) and redirects to Stripe.
+    - After Checkout, the user lands on `/billing/success` which shows **“Processing…”** and polls `/api/billing/status` until **Stripe webhooks** update MongoDB (access is webhook-driven; we do not trust the redirect).
+    - Pro plan includes a **Manage subscription** button that opens a Stripe **billing portal** session (`POST /api/stripe/portal`).
     - Includes a quick link to **Usage** (placeholder for now).
   - Includes a **Contact Us** item in the left menu that opens a modal with the support email (`hi@lnkdrp.com`).
   - Account tab includes an **Edit name** modal (updates the signed-in user's display name).
@@ -116,6 +118,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Public share page**:
   - Renders a PDF viewer when the PDF is available; otherwise shows a “preparing” fallback with an image preview (if present).
+  - The viewer includes an **All pages** mode (scroll the full document) and a **Grid** mode (thumbnail overview of all pages, click to open).
 - **Password gate** (optional):
   - If a share password is configured, the share page requires a successful unlock cookie before rendering.
   - The password screen includes a quick **preview thumbnail** (when available) to help recipients confirm they're unlocking the right doc.
@@ -163,6 +166,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Request-received docs use a distinct doc template:
     - The title shows a secondary line: “uploaded into <request repo>” (tray icon).
     - No share link UI / no download toggle / no metrics (to avoid confusion with owner docs).
+    - Includes a **Replace link** control that copies a per-doc update link (`/doc/update/:code`) so the owner can let someone upload a new version of that specific received doc.
   - Docs lists show request context indicators:
     - Request-received docs show an inbound/tray icon that links back to the originating request repo.
     - Guide docs show a guide/lightbulb icon that links back to the request repo using that guide.

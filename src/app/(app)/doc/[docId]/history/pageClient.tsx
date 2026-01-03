@@ -30,6 +30,7 @@ function formatRelativeAge(iso: string): string | null {
   if (diffMs < 30_000) return "just now";
 
   const minutes = Math.floor(diffMs / 60_000);
+  if (minutes <= 0) return "just now";
   if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
 
   const hours = Math.floor(diffMs / 3_600_000);
@@ -191,6 +192,21 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
       .filter((ms) => Number.isFinite(ms));
     const firstMs = times.length ? Math.min(...times) : null;
     const lastMs = times.length ? Math.max(...times) : null;
+    const mostRecent = (function () {
+      if (!times.length) return null;
+      let best: DocChangeItem | null = null;
+      let bestMs = -1;
+      for (const it of items) {
+        const ms = typeof it.createdDate === "string" ? Date.parse(it.createdDate) : NaN;
+        if (!Number.isFinite(ms)) continue;
+        if (ms > bestMs) {
+          bestMs = ms;
+          best = it;
+        }
+      }
+      if (!best || bestMs < 0) return null;
+      return { item: best, ms: bestMs };
+    })();
 
     // Avg time between versions (best-effort).
     const sorted = items
@@ -249,6 +265,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
       currentVersion,
       firstMs,
       lastMs,
+      mostRecent,
       avgDeltaMs,
       topEditors,
       impactCounts,
@@ -331,6 +348,17 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                       const anchorId = toV ? `v-${toV}` : it.id;
                       const impact = inferImpactLevel({ summary: it.summary, changes: it.changes });
                       const tags = inferTags({ summary: it.summary, changes: it.changes });
+                      const uploaderLabel = it.createdBy?.name ?? it.createdBy?.email ?? null;
+                      const timeLabel = it.createdDate ? formatRelativeAge(it.createdDate) : null;
+                      const absoluteLabel = it.createdDate
+                        ? (() => {
+                            try {
+                              return new Date(it.createdDate ?? "").toLocaleString();
+                            } catch {
+                              return it.createdDate ?? "";
+                            }
+                          })()
+                        : null;
                       return (
                         <div key={it.id} id={anchorId} className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
                           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
@@ -359,139 +387,89 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-1 gap-4 px-4 py-3 md:grid-cols-[1fr_320px]">
-                            {/* Main content */}
-                            <div>
-                              <div className="text-sm text-[var(--fg)]">
-                                {it.summary?.trim() ? it.summary.trim() : "Change summary unavailable."}
-                              </div>
-
-                              {Array.isArray(it.changes) && it.changes.length ? (
-                                <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--muted)]">
-                                  {it.changes.map((c, idx) => (
-                                    <li key={idx}>
-                                      <span className="font-medium text-[var(--fg)]">{(c?.title ?? "").toString()}</span>
-                                      {c?.detail ? (
-                                        <span className="text-[var(--muted)]"> — {String(c.detail)}</span>
-                                      ) : null}
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : null}
-
-                              <details className="mt-3">
-                                <summary className="cursor-pointer select-none text-xs font-medium text-[var(--muted)] hover:text-[var(--fg)]">
-                                  View extracted text (previous vs new)
-                                </summary>
-                                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                                  <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
-                                    <div className="text-xs font-semibold text-[var(--fg)]">Previous</div>
-                                    <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--muted)]">
-                                      {it.previousText || "(empty)"}
-                                    </pre>
-                                  </div>
-                                  <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
-                                    <div className="text-xs font-semibold text-[var(--fg)]">New</div>
-                                    <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--muted)]">
-                                      {it.newText || "(empty)"}
-                                    </pre>
-                                  </div>
-                                </div>
-                              </details>
-                            </div>
-
-                            {/* Per-entry right rail (kept) */}
-                            <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
-                              <div className="text-xs font-semibold text-[var(--fg)]">Details</div>
-
-                              <div className="mt-2 space-y-2 text-xs text-[var(--muted)]">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span>Version</span>
-                                  <span className="font-medium text-[var(--fg)]">{toV ? `v${toV}` : "—"}</span>
-                                </div>
-                                {fromV && toV ? (
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span>Change</span>
+                          <div className="px-4 py-4">
+                            {(uploaderLabel || timeLabel) ? (
+                              <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--muted)]">
+                                {uploaderLabel ? (
+                                  <span>
+                                    by{" "}
                                     <span className="font-medium text-[var(--fg)]">
-                                      v{fromV} → v{toV}
+                                      {uploaderLabel}
                                     </span>
-                                  </div>
+                                  </span>
                                 ) : null}
-                                <div className="flex items-center justify-between gap-2">
-                                  <span>Impact</span>
-                                  <span className="font-medium text-[var(--fg)]">{impact.label}</span>
-                                </div>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span>Items</span>
-                                  <span className="font-medium text-[var(--fg)]">{it.changes?.length ?? 0}</span>
-                                </div>
-                                {it.createdBy ? (
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span>Uploader</span>
-                                    <span
-                                      className="truncate font-medium text-[var(--fg)]"
-                                      title={it.createdBy.email ?? undefined}
-                                    >
-                                      {it.createdBy.name ?? it.createdBy.email ?? "Unknown"}
-                                    </span>
-                                  </div>
+                                {timeLabel ? (
+                                  <span title={absoluteLabel ?? undefined}>
+                                    updated{" "}
+                                    <span className="font-medium text-[var(--fg)]">{timeLabel}</span>
+                                  </span>
                                 ) : null}
-                                {it.createdDate ? (
-                                  <div className="pt-1 text-[var(--muted)]">
-                                    {(() => {
-                                      const iso = it.createdDate ?? "";
-                                      const relative = iso ? formatRelativeAge(iso) : null;
-                                      const absolute = (() => {
-                                        try {
-                                          return new Date(iso).toLocaleString();
-                                        } catch {
-                                          return iso;
-                                        }
-                                      })();
-                                      return (
-                                        <>
-                                          <span className="font-medium text-[var(--fg)]">
-                                            {relative ?? "updated"}
-                                          </span>{" "}
-                                          on <span className="font-medium text-[var(--fg)]">{absolute}</span>
-                                        </>
-                                      );
-                                    })()}
-                                  </div>
-                                ) : null}
-
                                 {tags.length ? (
-                                  <div className="pt-2">
-                                    <div className="text-[11px] font-medium text-[var(--muted-2)]">Signals</div>
-                                    <div className="mt-1 flex flex-wrap gap-1.5">
-                                      {tags.map((t) => (
-                                        <span
-                                          key={t}
-                                          className="rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
-                                        >
-                                          {t}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </div>
+                                  <span className="flex flex-wrap items-center gap-1.5">
+                                    {tags.map((t) => (
+                                      <span
+                                        key={t}
+                                        className="rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
+                                      >
+                                        {t}
+                                      </span>
+                                    ))}
+                                  </span>
                                 ) : null}
                               </div>
+                            ) : null}
 
-                              <div className="mt-3 flex flex-wrap gap-2">
-                                <button
-                                  type="button"
-                                  className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                                  onClick={() => {
-                                    const text = (it.summary ?? "").toString().trim();
-                                    if (!text) return;
-                                    void navigator.clipboard?.writeText(text);
-                                  }}
-                                  title="Copy summary"
-                                >
-                                  Copy summary
-                                </button>
-                              </div>
+                            <div className="text-sm leading-relaxed text-[var(--fg)]">
+                              {it.summary?.trim() ? it.summary.trim() : "Change summary unavailable."}
                             </div>
+
+                            {Array.isArray(it.changes) && it.changes.length ? (
+                              <ul className="mt-4 list-disc space-y-1.5 pl-5 text-sm text-[var(--muted)]">
+                                {it.changes.map((c, idx) => (
+                                  <li key={idx}>
+                                    <span className="font-medium text-[var(--fg)]">{(c?.title ?? "").toString()}</span>
+                                    {c?.detail ? (
+                                      <span className="text-[var(--muted)]"> — {String(c.detail)}</span>
+                                    ) : null}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+
+                            <div className="mt-4 flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                                onClick={() => {
+                                  const text = (it.summary ?? "").toString().trim();
+                                  if (!text) return;
+                                  void navigator.clipboard?.writeText(text);
+                                }}
+                                title="Copy summary"
+                              >
+                                Copy summary
+                              </button>
+                            </div>
+
+                            <details className="mt-4">
+                              <summary className="cursor-pointer select-none text-xs font-medium text-[var(--muted)] hover:text-[var(--fg)]">
+                                View extracted text (previous vs new)
+                              </summary>
+                              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                                <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+                                  <div className="text-xs font-semibold text-[var(--fg)]">Previous</div>
+                                  <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--muted)]">
+                                    {it.previousText || "(empty)"}
+                                  </pre>
+                                </div>
+                                <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+                                  <div className="text-xs font-semibold text-[var(--fg)]">New</div>
+                                  <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--muted)]">
+                                    {it.newText || "(empty)"}
+                                  </pre>
+                                </div>
+                              </div>
+                            </details>
                           </div>
                         </div>
                       );
@@ -518,6 +496,16 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                     <span>Replacements</span>
                     <span className="font-medium text-[var(--fg)]">{overview.replacements}</span>
                   </div>
+                  {overview.mostRecent?.item?.createdBy ? (
+                    <div className="flex items-center justify-between gap-2">
+                      <span>Most recent editor</span>
+                      <span className="min-w-0 truncate font-medium text-[var(--fg)]">
+                        {overview.mostRecent.item.createdBy?.name ??
+                          overview.mostRecent.item.createdBy?.email ??
+                          "Unknown"}
+                      </span>
+                    </div>
+                  ) : null}
                   <div className="flex items-center justify-between gap-2">
                     <span>First change</span>
                     <span className="font-medium text-[var(--fg)]">
@@ -533,7 +521,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   <div className="flex items-center justify-between gap-2">
                     <span>Avg cadence</span>
                     <span className="font-medium text-[var(--fg)]">
-                      {overview.avgDeltaMs ? formatDuration(overview.avgDeltaMs) : "—"}
+                      {overview.avgDeltaMs ? formatDuration(overview.avgDeltaMs) : "— (needs 2+ changes)"}
                     </span>
                   </div>
                 </div>

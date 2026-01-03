@@ -224,7 +224,7 @@ export function PdfJsViewer({
   const [zoom, setZoom] = useState(1); // multiplier on top of "fit-to-screen"
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"single" | "all">("single");
+  const [viewMode, setViewMode] = useState<"single" | "all" | "grid">("single");
   const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
   const askText = useMemo(() => {
@@ -574,6 +574,243 @@ export function PdfJsViewer({
     };
   }, [pageNumber, pdfVersion, viewportSize.h, viewportSize.w, viewMode, zoom]);
 
+  // "All pages" mode: lazily render visible pages (and neighbors) into canvases as you scroll.
+  const allCanvasesRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const allRenderedKeyRef = useRef<Map<number, string>>(new Map());
+  const visiblePageRatiosRef = useRef<Map<number, number>>(new Map());
+  const [visiblePages, setVisiblePages] = useState<number[]>([]);
+
+  useEffect(() => {
+    if (viewMode !== "all") return;
+    if (!numPages || numPages <= 0) return;
+    const root = viewportRef.current;
+    if (!root) return;
+
+    visiblePageRatiosRef.current = new Map();
+    setVisiblePages([]);
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        let changed = false;
+        for (const entry of entries) {
+          const pageStr = (entry.target as HTMLElement).dataset.pageNumber;
+          const page = typeof pageStr === "string" ? Number(pageStr) : NaN;
+          if (!Number.isFinite(page) || page < 1) continue;
+          if (entry.isIntersecting) {
+            const prev = visiblePageRatiosRef.current.get(page);
+            if (prev !== entry.intersectionRatio) changed = true;
+            visiblePageRatiosRef.current.set(page, entry.intersectionRatio);
+          } else {
+            if (visiblePageRatiosRef.current.has(page)) changed = true;
+            visiblePageRatiosRef.current.delete(page);
+          }
+        }
+        if (!changed) return;
+
+        const nextVisible = Array.from(visiblePageRatiosRef.current.keys()).sort((a, b) => a - b);
+        setVisiblePages(nextVisible);
+
+        // Choose the "current" page as the most-visible intersecting page.
+        let bestPage: number | null = null;
+        let bestRatio = -1;
+        for (const [p, r] of visiblePageRatiosRef.current.entries()) {
+          if (r > bestRatio || (r === bestRatio && (bestPage === null || p < bestPage))) {
+            bestRatio = r;
+            bestPage = p;
+          }
+        }
+        if (bestPage !== null) setPageNumber(bestPage);
+      },
+      { root, threshold: [0, 0.05, 0.15, 0.35, 0.6, 0.85] },
+    );
+
+    const pageEls = root.querySelectorAll<HTMLElement>("[data-page-number]");
+    pageEls.forEach((p) => obs.observe(p));
+
+    return () => obs.disconnect();
+  }, [numPages, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "all") return;
+    const pdf = pdfRef.current;
+    if (!pdf) return;
+    if (!numPages || numPages <= 0) return;
+    if (viewportSize.w <= 0) return;
+
+    const toRender = new Set<number>();
+    for (const p of visiblePages) {
+      toRender.add(p);
+      toRender.add(p - 1);
+      toRender.add(p + 1);
+    }
+    if (toRender.size === 0) toRender.add(Math.min(Math.max(1, pageNumber), numPages));
+
+    const targetWidth = Math.max(1, viewportSize.w - 48); // account for px-6 on the all-pages container
+    let cancelled = false;
+
+    async function renderPage(p: number) {
+      if (p < 1 || p > numPages) return;
+      const canvas = allCanvasesRef.current.get(p);
+      if (!canvas) return;
+
+      const key = `${targetWidth}:${zoom}:${pdfVersion}`;
+      const prevKey = allRenderedKeyRef.current.get(p);
+      if (prevKey === key) return;
+
+      try {
+        const page = await pdf.getPage(p);
+        if (cancelled) return;
+
+        const base = page.getViewport({ scale: 1 });
+        const fitScale = targetWidth / base.width;
+        const viewport = page.getViewport({ scale: Math.max(0.1, fitScale * zoom) });
+        const context = canvas.getContext("2d");
+        if (!context) return;
+
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+
+        const renderTask = page.render({ canvasContext: context, viewport });
+        await renderTask.promise;
+        if (cancelled) return;
+
+        allRenderedKeyRef.current.set(p, key);
+      } catch {
+        // ignore per-page rendering failures
+      }
+    }
+
+    for (const p of toRender) void renderPage(p);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [numPages, pageNumber, pdfVersion, viewMode, visiblePages, viewportSize.w, zoom]);
+
+  // "Grid" mode: render thumbnail tiles (lazy, visible + neighbors).
+  const gridContainerRef = useRef<HTMLDivElement | null>(null);
+  const [gridWidth, setGridWidth] = useState(0);
+  const gridCanvasesRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
+  const gridRenderedKeyRef = useRef<Map<number, string>>(new Map());
+  const gridVisibleRatiosRef = useRef<Map<number, number>>(new Map());
+  const [gridVisiblePages, setGridVisiblePages] = useState<number[]>([]);
+
+  const gridTileWidth = useMemo(() => {
+    const w = gridWidth > 0 ? gridWidth : viewportSize.w;
+    if (w <= 0) return 0;
+    const MIN = 160;
+    const GAP = 12;
+    const cols = Math.max(1, Math.floor((w + GAP) / (MIN + GAP)));
+    const tile = Math.floor((w - GAP * (cols - 1)) / cols);
+    return Math.max(110, tile);
+  }, [gridWidth, viewportSize.w]);
+
+  useEffect(() => {
+    if (viewMode !== "grid") return;
+    const el = gridContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const rect = el.getBoundingClientRect();
+      setGridWidth(Math.floor(rect.width));
+    });
+    ro.observe(el);
+    const rect = el.getBoundingClientRect();
+    setGridWidth(Math.floor(rect.width));
+    return () => ro.disconnect();
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "grid") return;
+    if (!numPages || numPages <= 0) return;
+    const root = viewportRef.current;
+    if (!root) return;
+
+    gridVisibleRatiosRef.current = new Map();
+    setGridVisiblePages([]);
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        let changed = false;
+        for (const entry of entries) {
+          const pageStr = (entry.target as HTMLElement).dataset.gridPageNumber;
+          const page = typeof pageStr === "string" ? Number(pageStr) : NaN;
+          if (!Number.isFinite(page) || page < 1) continue;
+          if (entry.isIntersecting) {
+            const prev = gridVisibleRatiosRef.current.get(page);
+            if (prev !== entry.intersectionRatio) changed = true;
+            gridVisibleRatiosRef.current.set(page, entry.intersectionRatio);
+          } else {
+            if (gridVisibleRatiosRef.current.has(page)) changed = true;
+            gridVisibleRatiosRef.current.delete(page);
+          }
+        }
+        if (!changed) return;
+        const nextVisible = Array.from(gridVisibleRatiosRef.current.keys()).sort((a, b) => a - b);
+        setGridVisiblePages(nextVisible);
+      },
+      { root, threshold: [0, 0.05, 0.15, 0.35, 0.6] },
+    );
+
+    const tiles = root.querySelectorAll<HTMLElement>("[data-grid-page-number]");
+    tiles.forEach((t) => obs.observe(t));
+    return () => obs.disconnect();
+  }, [numPages, viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "grid") return;
+    const pdf = pdfRef.current;
+    if (!pdf) return;
+    if (!numPages || numPages <= 0) return;
+    if (gridTileWidth <= 0) return;
+
+    const toRender = new Set<number>();
+    for (const p of gridVisiblePages) {
+      toRender.add(p);
+      toRender.add(p - 1);
+      toRender.add(p + 1);
+    }
+    if (toRender.size === 0) {
+      // Render the first few thumbnails to avoid an empty grid on load.
+      for (let p = 1; p <= Math.min(12, numPages); p++) toRender.add(p);
+    }
+
+    let cancelled = false;
+
+    async function renderThumb(p: number) {
+      if (p < 1 || p > numPages) return;
+      const canvas = gridCanvasesRef.current.get(p);
+      if (!canvas) return;
+
+      const key = `${gridTileWidth}:${zoom}:${pdfVersion}`;
+      const prevKey = gridRenderedKeyRef.current.get(p);
+      if (prevKey === key) return;
+
+      try {
+        const page = await pdf.getPage(p);
+        if (cancelled) return;
+        const base = page.getViewport({ scale: 1 });
+        const fitScale = gridTileWidth / base.width;
+        const viewport = page.getViewport({ scale: Math.max(0.1, fitScale * zoom) });
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        const renderTask = page.render({ canvasContext: context, viewport });
+        await renderTask.promise;
+        if (cancelled) return;
+        gridRenderedKeyRef.current.set(p, key);
+      } catch {
+        // ignore
+      }
+    }
+
+    for (const p of toRender) void renderThumb(p);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [gridTileWidth, gridVisiblePages, numPages, pdfVersion, viewMode, zoom]);
+
   useEffect(() => {
     if (!shareIdSafe) return;
     const shareId = shareIdSafe;
@@ -747,7 +984,62 @@ export function PdfJsViewer({
                   )}
                 </div>
 
-                <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+                {shareIdSafe ? (
+                  <>
+                    <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+                    <div
+                      className="inline-flex h-8 items-center rounded-xl border border-white/10 bg-white/5 p-0.5"
+                      role="group"
+                      aria-label="View mode"
+                    >
+                      <button
+                        type="button"
+                        aria-label="Single page view"
+                        aria-pressed={viewMode === "single"}
+                        onClick={() => setViewMode("single")}
+                        className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
+                          viewMode === "single"
+                            ? "bg-white/15 text-white"
+                            : "text-white/75 hover:bg-white/10 hover:text-white/90"
+                        }`}
+                        title="Single page"
+                      >
+                        Single
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="All pages view"
+                        aria-pressed={viewMode === "all"}
+                        onClick={() => setViewMode("all")}
+                        className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
+                          viewMode === "all"
+                            ? "bg-white/15 text-white"
+                            : "text-white/75 hover:bg-white/10 hover:text-white/90"
+                        }`}
+                        title="All pages"
+                      >
+                        All
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Grid overview"
+                        aria-pressed={viewMode === "grid"}
+                        onClick={() => setViewMode("grid")}
+                        className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
+                          viewMode === "grid"
+                            ? "bg-white/15 text-white"
+                            : "text-white/75 hover:bg-white/10 hover:text-white/90"
+                        }`}
+                        title="Grid overview"
+                      >
+                        Grid
+                      </button>
+                    </div>
+                    <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+                  </>
+                ) : (
+                  <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+                )}
 
                 <button
                   type="button"
@@ -987,9 +1279,11 @@ export function PdfJsViewer({
       {/* Page */}
       <div
         ref={viewportRef}
-        className={`relative flex-1 bg-black ${zoom === 1 ? "overflow-hidden" : "overflow-auto"}`}
+        className={`relative flex-1 bg-black ${
+          viewMode !== "single" ? "overflow-auto" : zoom === 1 ? "overflow-hidden" : "overflow-auto"
+        }`}
       >
-        {(status.kind === "loading" || status.kind === "rendering") ? (
+        {(status.kind === "loading" || (viewMode === "single" && status.kind === "rendering")) ? (
           <div
             aria-live="polite"
             aria-busy="true"
@@ -1007,62 +1301,150 @@ export function PdfJsViewer({
           </div>
         ) : null}
 
-        <div className="grid min-h-full min-w-full place-items-center">
-          {/* When zoomed in, allow the canvas to exceed viewport and scroll */}
-          <canvas ref={canvasRef} className="block max-h-none max-w-none" />
-        </div>
+        {viewMode === "single" ? (
+          <div className="grid min-h-full min-w-full place-items-center">
+            {/* When zoomed in, allow the canvas to exceed viewport and scroll */}
+            <canvas ref={canvasRef} className="block max-h-none max-w-none" />
+          </div>
+        ) : viewMode === "all" ? (
+          <div className="min-h-full w-full px-6 py-6">
+            <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+              {numPages
+                ? Array.from({ length: numPages }, (_, i) => i + 1).map((p) => (
+                    <div
+                      key={`page:${p}`}
+                      data-page-number={p}
+                      className="rounded-2xl border border-white/10 bg-black/40 p-3"
+                    >
+                      <div className="mb-2 flex items-center justify-between text-xs text-white/70">
+                        <span className="tabular-nums">Page {p}</span>
+                        <span className="text-white/50">Scroll</span>
+                      </div>
+                      <div className="grid place-items-center overflow-auto">
+                        <canvas
+                          ref={(el) => {
+                            const m = allCanvasesRef.current;
+                            if (!el) {
+                              m.delete(p);
+                              allRenderedKeyRef.current.delete(p);
+                              return;
+                            }
+                            m.set(p, el);
+                          }}
+                          className="block max-h-none max-w-none rounded-xl bg-black"
+                        />
+                      </div>
+                    </div>
+                  ))
+                : null}
+            </div>
+          </div>
+        ) : (
+          <div className="min-h-full w-full px-6 py-6">
+            <div ref={gridContainerRef} className="mx-auto w-full max-w-6xl">
+              <div
+                className="grid gap-3"
+                style={{
+                  gridTemplateColumns:
+                    gridTileWidth > 0
+                      ? `repeat(auto-fill, minmax(${gridTileWidth}px, 1fr))`
+                      : "repeat(auto-fill, minmax(160px, 1fr))",
+                }}
+              >
+                {numPages
+                  ? Array.from({ length: numPages }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={`grid:${p}`}
+                        type="button"
+                        data-grid-page-number={p}
+                        onClick={() => {
+                          setPageNumber(p);
+                          setViewMode("single");
+                        }}
+                        className="group relative overflow-hidden rounded-2xl border border-white/10 bg-black/40 p-2 text-left hover:bg-black/35"
+                        title={`Open page ${p}`}
+                      >
+                        <div className="grid place-items-center overflow-hidden rounded-xl bg-black">
+                          <canvas
+                            ref={(el) => {
+                              const m = gridCanvasesRef.current;
+                              if (!el) {
+                                m.delete(p);
+                                gridRenderedKeyRef.current.delete(p);
+                                return;
+                              }
+                              m.set(p, el);
+                            }}
+                            className="block max-h-none max-w-none"
+                          />
+                        </div>
+                        <div className="pointer-events-none absolute left-2 top-2 inline-flex items-center rounded-md border border-white/10 bg-black/60 px-2 py-1 text-[11px] font-semibold text-white/85">
+                          {p}
+                        </div>
+                        <div className="pointer-events-none absolute inset-0 ring-1 ring-white/0 transition group-hover:ring-white/10" />
+                      </button>
+                    ))
+                  : null}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Hover arrows (centered within PDF viewport) */}
-        <button
-          type="button"
-          aria-label="Previous page"
-          onClick={goPrev}
-          disabled={!canPrev || status.kind === "loading"}
-          className="pointer-events-auto absolute left-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100"
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
+        {viewMode === "single" ? (
+          <button
+            type="button"
+            aria-label="Previous page"
+            onClick={goPrev}
+            disabled={!canPrev || status.kind === "loading"}
+            className="pointer-events-auto absolute left-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100"
           >
-            <path
-              d="M15 6L9 12L15 18"
-              stroke="currentColor"
-              strokeWidth="2.25"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M15 6L9 12L15 18"
+                stroke="currentColor"
+                strokeWidth="2.25"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        ) : null}
 
-        <button
-          type="button"
-          aria-label="Next page"
-          onClick={goNext}
-          disabled={!canNext || status.kind === "loading"}
-          className="pointer-events-auto absolute right-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100"
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
+        {viewMode === "single" ? (
+          <button
+            type="button"
+            aria-label="Next page"
+            onClick={goNext}
+            disabled={!canNext || status.kind === "loading"}
+            className="pointer-events-auto absolute right-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100"
           >
-            <path
-              d="M9 6L15 12L9 18"
-              stroke="currentColor"
-              strokeWidth="2.25"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M9 6L15 12L9 18"
+                stroke="currentColor"
+                strokeWidth="2.25"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        ) : null}
 
         {/* Subtle zoom reset overlay (only when zoomed) */}
-        {zoom !== 1 ? (
+        {viewMode === "single" && zoom !== 1 ? (
           <button
             type="button"
             onClick={resetZoom}
@@ -1200,6 +1582,37 @@ function FullscreenIcon({ isFullscreen }: { isFullscreen: boolean }) {
         strokeWidth="2.2"
         strokeLinecap="round"
         strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function LayoutIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 5.5C4 4.67 4.67 4 5.5 4h13C19.33 4 20 4.67 20 5.5v13c0 .83-.67 1.5-1.5 1.5h-13C4.67 20 4 19.33 4 18.5v-13Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path
+        d="M4 10h16"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10 10v10"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
       />
     </svg>
   );

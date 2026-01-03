@@ -376,7 +376,7 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
         title="Paperplane animation"
         src="/paperplane/index.html"
         className="pointer-events-none absolute inset-0 h-full w-full border-0"
-        loading="lazy"
+        loading="eager"
         referrerPolicy="no-referrer"
       />
 

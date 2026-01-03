@@ -14,10 +14,11 @@ import DocProjectsModal, { type DocProjectListItem } from "@/components/modals/D
 import { useAuthEnabled, useNavigationLockWhile } from "@/app/providers";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
-import { buildPublicShareUrl } from "@/lib/urls";
+import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
+import { CopyButton } from "@/components/CopyButton";
 import {
   isDocStarred,
   STARRED_DOCS_CHANGED_EVENT,
@@ -48,6 +49,7 @@ type DocDTO = {
   shareAllowPdfDownload?: boolean;
   sharePasswordEnabled?: boolean;
   receivedViaRequestProjectId?: string | null;
+  replaceUploadToken?: string | null;
   guideForRequestProjectId?: string | null;
   metricsSnapshot?: null | {
     updatedAt: string | null;
@@ -131,6 +133,7 @@ function formatRelativeAge(iso: string): string | null {
   if (diffMs < 30_000) return "just now";
 
   const minutes = Math.floor(diffMs / 60_000);
+  if (minutes <= 0) return "just now";
   if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
 
   const hours = Math.floor(diffMs / 3_600_000);
@@ -190,6 +193,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [localPreviewUploadId, setLocalPreviewUploadId] = useState<string | null>(null);
   const [isCopying, setIsCopying] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
+  const [replaceIsCopying, setReplaceIsCopying] = useState(false);
+  const [replaceCopyDone, setReplaceCopyDone] = useState(false);
   const [preparingTick, setPreparingTick] = useState(0);
   const [hasHydratedFromServer, setHasHydratedFromServer] = useState(false);
   const [hydrateError, setHydrateError] = useState<string | null>(null);
@@ -198,6 +203,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [showStarAuthModal, setShowStarAuthModal] = useState(false);
   const [tempGateOpen, setTempGateOpen] = useState(false);
   const shareInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
   const [showProjectsModal, setShowProjectsModal] = useState(false);
   const isInRequestRepo = useMemo(() => {
     if (Boolean(doc.project?.isRequest)) return true;
@@ -631,6 +637,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return buildPublicShareUrl(doc.shareId);
   }, [doc.shareId]);
 
+  const replaceUrl = useMemo(() => {
+    return buildPublicReplaceUrl(doc.replaceUploadToken ?? null);
+  }, [doc.replaceUploadToken]);
+
   const isTempUser = useMemo(() => {
     if (!authEnabled) return false;
     return isSignedIn === false;
@@ -838,6 +848,24 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       // ignore
     } finally {
       setIsCopying(false);
+    }
+  }
+
+  /**
+   * Copy the replacement upload URL to the clipboard (best-effort).
+   */
+  async function copyReplaceLink() {
+    if (!replaceUrl) return;
+    setReplaceIsCopying(true);
+    setReplaceCopyDone(false);
+    try {
+      await navigator.clipboard.writeText(replaceUrl);
+      setReplaceCopyDone(true);
+      window.setTimeout(() => setReplaceCopyDone(false), 1000);
+    } catch {
+      // ignore
+    } finally {
+      setReplaceIsCopying(false);
     }
   }
 /**
@@ -1329,6 +1357,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                   RECEIVED
                 </div>
               ) : null}
+
+              {/* Replacement upload link is shown in the right-side panel for received docs. */}
               <div className="flex min-w-0 items-center gap-2">
                 <div className="min-w-0 flex-1">
                   {!isReceivedViaRequest && editingTitle ? (
@@ -1696,8 +1726,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                   <div className="h-full w-full bg-[var(--panel-2)]">
                     {isReceivedViaRequest &&
                     (!hasHydratedFromServer ||
-                      doc.status === "preparing" ||
-                      doc.status === "draft") ? (
+                      ((doc.status === "preparing" || doc.status === "draft") && !doc.blobUrl)) ? (
                       <div className="grid h-full place-items-center px-6 text-center">
                         <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-6 py-4">
                           <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
@@ -1765,7 +1794,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                   {/* overlay */}
                   {(!hasHydratedFromServer ||
                     doc.status === "preparing" ||
-                    doc.status === "draft") && (
+                    doc.status === "draft") &&
+                    !localPreviewUrl &&
+                    !doc.blobUrl && (
                     <div className="absolute inset-0 z-10 grid place-items-center bg-[var(--bg)]/35 backdrop-blur-xl backdrop-saturate-150">
                       <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/90 px-6 py-4 text-sm font-medium text-[var(--fg)] shadow-[0_2px_10px_rgba(0,0,0,0.18)]">
                         {overlayText}
@@ -1852,6 +1883,37 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     <div className="mt-2 text-sm text-[var(--muted)]">
                       Review-agent intel extracted from the received document.
                     </div>
+
+                    {hasHydratedFromServer && replaceUrl ? (
+                      <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                          Replace upload link
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            ref={replaceInputRef}
+                            readOnly
+                            value={replaceUrl}
+                            className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] text-[var(--fg)]"
+                            aria-label="Replacement upload link"
+                            onFocus={(e) => e.currentTarget.select()}
+                          />
+                          <CopyButton
+                            copyDone={replaceCopyDone}
+                            isCopying={replaceIsCopying}
+                            onCopy={() => void copyReplaceLink()}
+                            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                            iconClassName="h-4 w-4"
+                            label="Copy"
+                            copiedLabel="Copied"
+                            copyAriaLabel="Copy replacement upload link"
+                          />
+                        </div>
+                        <div className="mt-2 text-[12px] text-[var(--muted)]">
+                          Anyone with this link can upload a new version to replace the current file.
+                        </div>
+                      </div>
+                    ) : null}
 
                     <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
                       <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
@@ -2152,6 +2214,37 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     <div className="mt-2 text-sm text-[var(--muted)]">
                       Auto summary extracted from the uploaded document.
                     </div>
+
+                    {hasHydratedFromServer && replaceUrl ? (
+                      <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                          Replace upload link
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <input
+                            ref={replaceInputRef}
+                            readOnly
+                            value={replaceUrl}
+                            className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] text-[var(--fg)]"
+                            aria-label="Replacement upload link"
+                            onFocus={(e) => e.currentTarget.select()}
+                          />
+                          <CopyButton
+                            copyDone={replaceCopyDone}
+                            isCopying={replaceIsCopying}
+                            onCopy={() => void copyReplaceLink()}
+                            className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                            iconClassName="h-4 w-4"
+                            label="Copy"
+                            copiedLabel="Copied"
+                            copyAriaLabel="Copy replacement upload link"
+                          />
+                        </div>
+                        <div className="mt-2 text-[12px] text-[var(--muted)]">
+                          Anyone with this link can upload a new version to replace the current file.
+                        </div>
+                      </div>
+                    ) : null}
 
                     {docSummary.companyOrProjectName ? (
                       <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">

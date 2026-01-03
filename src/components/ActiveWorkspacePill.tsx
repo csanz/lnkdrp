@@ -87,16 +87,16 @@ export default function ActiveWorkspacePill({
   return (
     <div
       className={clsx(
-        "inline-flex min-w-0 items-center rounded-full border border-[color-mix(in_srgb,var(--border)_55%,transparent)] bg-[var(--panel-2)] px-2.5 py-1.5 font-semibold text-[var(--fg)]",
+        "inline-flex min-w-0 items-center rounded-full border border-[color-mix(in_srgb,var(--border)_55%,transparent)] bg-[var(--panel-2)] px-[10px] py-[6px] font-semibold text-[var(--fg)]",
         maxWidthClassName,
-        textClassName ?? "text-[12px]",
+        textClassName ?? "text-[11.5px]",
         className,
       )}
       title={activeWorkspaceName}
       aria-label={`Active workspace: ${activeWorkspaceName}`}
     >
       <span
-        className="mr-1.5 grid h-4 w-4 shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-[9px] font-semibold text-[var(--fg)]"
+        className="mr-1.5 grid h-[15px] w-[15px] shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-[8.5px] font-semibold text-[var(--fg)]"
         aria-hidden="true"
       >
         {activeWorkspaceAvatarUrl && !avatarErrored ? (
@@ -104,7 +104,7 @@ export default function ActiveWorkspacePill({
           <img
             src={activeWorkspaceAvatarUrl}
             alt=""
-            className="h-4 w-4 object-cover"
+            className="h-[15px] w-[15px] object-cover"
             onError={() => setAvatarErrored(true)}
           />
         ) : (
@@ -114,7 +114,7 @@ export default function ActiveWorkspacePill({
       <span className="min-w-0 truncate">{activeWorkspaceName}</span>
       {planBadgeText ? (
         <span
-          className="ml-2 inline-flex shrink-0 items-center rounded-full bg-amber-400/10 px-1.5 py-0.5 text-[9px] font-medium tracking-[0.07em] text-amber-700/80 dark:bg-amber-300/8 dark:text-amber-200/75"
+          className="ml-2 inline-flex shrink-0 items-center rounded-full bg-sky-400/10 px-1.5 py-0.5 text-[8.5px] font-medium tracking-[0.07em] text-sky-700/80 dark:bg-sky-300/8 dark:text-sky-200/75"
           aria-label={`${planBadgeText} plan`}
           title={`${planBadgeText} plan`}
         >

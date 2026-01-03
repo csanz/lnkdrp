@@ -58,6 +58,24 @@ const userSchema = new Schema(
     isActive: { type: Boolean, default: true, index: true },
     role: { type: String, default: "user", trim: true, index: true },
 
+    /**
+     * Billing plan for this user.
+     *
+     * IMPORTANT: This is only flipped to "pro" by Stripe webhooks. We do NOT grant access
+     * based on the Checkout success redirect.
+     */
+    plan: { type: String, enum: ["free", "pro"], default: "free", index: true },
+
+    /**
+     * Stripe identifiers (persisted so we can reconcile webhooks + open the billing portal).
+     *
+     * These are optional because most users will start as "free".
+     */
+    stripeCustomerId: { type: String, trim: true, default: null, index: true },
+    stripeSubscriptionId: { type: String, trim: true, default: null, index: true },
+    stripeSubscriptionStatus: { type: String, trim: true, default: null },
+    stripeCurrentPeriodEnd: { type: Date, default: null },
+
     onboardingCompleted: { type: Boolean, default: false },
     metadata: { type: Schema.Types.Mixed, default: {} },
   },

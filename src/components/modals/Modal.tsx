@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import IconButton from "@/components/ui/IconButton";
 
 type Props = {
   open: boolean;
@@ -70,14 +71,13 @@ export default function Modal({
         ].join(" ")}
       >
         <div className="relative">
-          <button
-            type="button"
-            className="absolute right-4 top-4 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-2 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-            aria-label="Close modal"
+          <IconButton
+            ariaLabel="Close modal"
+            className="absolute right-4 top-4"
             onClick={onClose}
           >
             <XIcon />
-          </button>
+          </IconButton>
 
           <div
             className={[

@@ -109,7 +109,18 @@ const uploadSchema = new Schema(
 
 export type Upload = InferSchemaType<typeof uploadSchema>;
 
+const ExistingUploadModel = mongoose.models.Upload as Model<Upload> | undefined;
+
 export const UploadModel: Model<Upload> =
-  (mongoose.models.Upload as Model<Upload> | undefined) ??
-  mongoose.model<Upload>("Upload", uploadSchema);
+  ExistingUploadModel ?? mongoose.model<Upload>("Upload", uploadSchema);
+
+// Dev safety: Next.js hot reload can reuse an already-compiled Mongoose model, which means
+// schema additions made during development may not take effect until a server restart.
+// If the cached model is missing newer fields (like `uploadSecret`), patch them in so
+// capability flows (/doc/update, /r/:token uploads) don't silently drop secrets.
+if (ExistingUploadModel && !ExistingUploadModel.schema.path("uploadSecret")) {
+  ExistingUploadModel.schema.add({
+    uploadSecret: { type: String, trim: true, default: null },
+  });
+}
 

@@ -29,6 +29,7 @@ import SidebarStarredModal from "@/components/modals/SidebarStarredModal";
 import AccountMenu from "@/components/AccountMenu";
 import SidebarProjectsSection from "@/components/SidebarProjectsSection";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
+import IconButton from "@/components/ui/IconButton";
 import { buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getPublicSiteBase } from "@/lib/urls";
 import { getStarredDocs, moveStarredDoc, STARRED_DOCS_CHANGED_EVENT, type StarredDoc } from "@/lib/starredDocs";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -1355,13 +1356,14 @@ export default function LeftSidebar({
                   <span>Starred</span>
                 </span>
 
-                <button
-                  type="button"
+                <IconButton
+                  ariaLabel={(starredCollapsedLoaded ? starredCollapsed : true) ? "Expand starred" : "Collapse starred"}
+                  variant="ghost"
+                  size="sm"
                   className={[
-                    "rounded-md p-0.5 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                    "rounded-md p-0.5 text-[var(--muted-2)]",
                     "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
                   ].join(" ")}
-                  aria-label={(starredCollapsedLoaded ? starredCollapsed : true) ? "Expand starred" : "Collapse starred"}
                   onClick={() => {
                     setStarredCollapsedLoaded(true);
                     setStarredCollapsed((v) => !v);
@@ -1372,7 +1374,7 @@ export default function LeftSidebar({
                   ) : (
                     <MinusIcon className="h-4 w-4" />
                   )}
-                </button>
+                </IconButton>
               </div>
 
               {(starredCollapsedLoaded ? starredCollapsed : true) ? (
@@ -1517,13 +1519,14 @@ export default function LeftSidebar({
             <section>
               <div className="group flex items-center justify-between gap-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
                 <span>Docs</span>
-                <button
-                  type="button"
+                <IconButton
+                  ariaLabel={(docsCollapsedLoaded ? docsCollapsed : true) ? "Expand docs" : "Collapse docs"}
+                  variant="ghost"
+                  size="sm"
                   className={[
-                    "rounded-md p-0.5 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                    "rounded-md p-0.5 text-[var(--muted-2)]",
                     "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
                   ].join(" ")}
-                  aria-label={(docsCollapsedLoaded ? docsCollapsed : true) ? "Expand docs" : "Collapse docs"}
                   onClick={() => {
                     setDocsCollapsedLoaded(true);
                     setDocsCollapsed((v) => !v);
@@ -1534,7 +1537,7 @@ export default function LeftSidebar({
                   ) : (
                     <MinusIcon className="h-4 w-4" />
                   )}
-                </button>
+                </IconButton>
               </div>
 
               {(docsCollapsedLoaded ? docsCollapsed : true) ? (

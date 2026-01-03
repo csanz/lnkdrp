@@ -1,31 +1,22 @@
 /**
  * Subscription summary card for `/dashboard?tab=overview`.
  *
- * Shows current plan status and links to subscribe (Stripe Checkout link) or manage an existing subscription
- * (Stripe customer portal session).
+ * Shows current plan status and lets a signed-in user upgrade via Stripe Checkout (server-created session),
+ * then manage billing via Stripe's customer portal.
  */
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Modal from "@/components/modals/Modal";
+import Alert from "@/components/ui/Alert";
 
-type SubscriptionStatusResponse = {
-  ok: true;
-  subscription: {
-    status: string;
-    planName: string;
-    currentPeriodEnd: string | null;
-    cancelAtPeriodEnd: boolean;
-    canManage: boolean;
-  };
-  checkoutUrl: string;
+type BillingStatusResponse = {
+  plan?: string;
+  stripeSubscriptionStatus?: string | null;
+  stripeCurrentPeriodEnd?: string | null;
+  error?: string;
 };
-
-function isSubscribed(status: string): boolean {
-  const s = (status ?? "").trim().toLowerCase();
-  return s === "active" || s === "trialing" || s === "past_due" || s === "unpaid" || s === "paused" || s === "canceled";
-}
 
 function formatShortDate(iso: string): string {
   const d = new Date(iso);
@@ -43,10 +34,11 @@ export default function SubscriptionCard() {
   const tab = (searchParams?.get("tab") ?? "").trim();
 
   const [busy, setBusy] = useState(false);
+  const [upgradeBusy, setUpgradeBusy] = useState(false);
   const [manageBusy, setManageBusy] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<SubscriptionStatusResponse | null>(null);
+  const [data, setData] = useState<BillingStatusResponse | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,11 +46,11 @@ export default function SubscriptionCard() {
     setError(null);
     void (async () => {
       try {
-        const res = await fetch("/api/billing/subscription", { method: "GET" });
-        const json = (await res.json().catch(() => null)) as SubscriptionStatusResponse | { error?: string } | null;
+        const res = await fetch("/api/billing/status", { method: "GET" });
+        const json = (await res.json().catch(() => null)) as BillingStatusResponse | null;
         if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
-        if (!json || (json as any).ok !== true) throw new Error("Invalid response");
-        if (!cancelled) setData(json as SubscriptionStatusResponse);
+        if (!json) throw new Error("Invalid response");
+        if (!cancelled) setData(json);
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load subscription";
         if (!cancelled) setError(msg);
@@ -71,36 +63,51 @@ export default function SubscriptionCard() {
     };
   }, []);
 
-  const status = (data?.subscription?.status ?? "free").trim() || "free";
-  const planName = (data?.subscription?.planName ?? (status === "free" ? "Free" : "Paid")).trim() || "Free";
-  const canManage = Boolean(data?.subscription?.canManage);
-  const checkoutUrl = (data?.checkoutUrl ?? "").trim();
+  const plan = (data?.plan ?? "free").trim() || "free";
+  const status = (data?.stripeSubscriptionStatus ?? "").trim() || (plan === "pro" ? "active" : "free");
+  const planName = plan === "pro" ? "Pro" : "Free";
+  const canManage = plan === "pro";
   const isCurrentPlan = true;
 
   const secondary = useMemo(() => {
     if (busy) return "Loading billing details…";
     if (error) return error;
 
-    const end = data?.subscription?.currentPeriodEnd;
-    if (end && data?.subscription?.cancelAtPeriodEnd) {
-      const date = formatShortDate(end);
-      return date ? `Cancels on ${date}.` : "Cancels at period end.";
-    }
-    if (end && isSubscribed(status)) {
+    const end = data?.stripeCurrentPeriodEnd;
+    if (end && plan === "pro") {
       const date = formatShortDate(end);
       return date ? `Renews on ${date}.` : "Renews at period end.";
     }
-    if (status === "free") return "Upgrade to unlock higher limits and advanced features.";
+    if (plan === "free") return "Upgrade to unlock higher limits and advanced features.";
     return "Manage billing, invoices, and payment method.";
-  }, [busy, error, data, status]);
+  }, [busy, error, data, status, plan]);
+
+  async function startCheckout() {
+    if (upgradeBusy) return;
+    setUpgradeBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/stripe/checkout", { method: "POST" });
+      const json = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
+      if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+      const url = typeof json?.url === "string" ? json.url : "";
+      if (!url) throw new Error("Invalid response");
+      // Redirect to Stripe Checkout.
+      window.location.assign(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to start checkout");
+    } finally {
+      setUpgradeBusy(false);
+    }
+  }
 
   async function openManageSubscription() {
     if (manageBusy) return;
     setManageBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/billing/subscription/manage", { method: "POST" });
-      const json = (await res.json().catch(() => null)) as { ok?: boolean; url?: string; error?: string } | null;
+      const res = await fetch("/api/stripe/portal", { method: "POST" });
+      const json = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
       if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
       const url = typeof json?.url === "string" ? json.url : "";
       if (!url) throw new Error("Invalid response");
@@ -135,7 +142,7 @@ export default function SubscriptionCard() {
                 Current plan
               </span>
             ) : null}
-            {status !== "free" ? (
+            {plan !== "free" ? (
               <span className="rounded-full bg-[var(--panel-2)] px-2.5 py-1 text-[12px] font-semibold text-[var(--muted-2)]">
                 Status: {status}
               </span>
@@ -145,15 +152,15 @@ export default function SubscriptionCard() {
 
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {status === "free" && checkoutUrl ? (
-              <a
-                className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)]"
-                href={checkoutUrl}
-                target="_blank"
-                rel="noreferrer"
+            {plan === "free" ? (
+              <button
+                type="button"
+                className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
+                disabled={busy || upgradeBusy}
+                onClick={() => void startCheckout()}
               >
-                Subscribe
-              </a>
+                {upgradeBusy ? "Opening…" : "Upgrade"}
+              </button>
             ) : canManage ? (
               <button
                 type="button"
@@ -185,15 +192,15 @@ export default function SubscriptionCard() {
             ) : null}
           </div>
           <div className="mt-2 text-right text-[11px] text-[var(--muted-2)]">
-            {status === "free" ? "Checkout opens in Stripe." : "Billing portal opens in Stripe."}
+            {plan === "free" ? "Checkout opens in Stripe." : "Billing portal opens in Stripe."}
           </div>
         </div>
       </div>
 
       {error ? (
-        <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-[12px] text-red-700">
+        <Alert variant="error" className="mt-4 text-[12px]">
           {error}
-        </div>
+        </Alert>
       ) : null}
 
       <Modal open={detailsOpen} onClose={() => setDetailsOpen(false)} ariaLabel="Plan details">

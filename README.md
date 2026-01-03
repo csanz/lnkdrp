@@ -40,6 +40,34 @@ This implements the “client upload” flow described in the Vercel docs ([Clie
 
 Run your dev server and open `/test/client-upload` to upload either a local file or the two bundled samples.
 
+## Stripe subscriptions (Checkout + webhooks)
+
+This repo uses **Stripe Checkout** for subscriptions and **webhooks** as the source of truth for granting Pro access.
+
+### Local webhook testing
+
+1. Install the Stripe CLI.
+2. Login:
+
+```bash
+stripe login
+```
+
+3. Forward webhooks to the app:
+
+```bash
+stripe listen --forward-to localhost:3001/api/stripe/webhook
+```
+
+4. Copy the printed signing secret into `STRIPE_WEBHOOK_SECRET` in `.env.local`.
+5. Ensure `.env.local` also has:
+   - `STRIPE_SECRET_KEY`
+   - `STRIPE_PRICE_ID`
+   - `NEXT_PUBLIC_APP_URL` (e.g. `http://localhost:3001`)
+6. Start the app and click **Upgrade** in `/dashboard?tab=overview`.
+7. Use test card `4242 4242 4242 4242` in Stripe Checkout.
+8. Confirm the user document updates in MongoDB and `/billing/success` flips to **Pro active** after the webhook runs.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:

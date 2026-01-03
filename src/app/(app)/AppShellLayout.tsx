@@ -9,6 +9,7 @@ import { useTheme } from "next-themes";
 import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import LeftSidebar from "@/components/LeftSidebar";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
+import IconButton from "@/components/ui/IconButton";
 import { useAuthEnabled } from "@/app/providers";
 import { usePendingUpload } from "@/lib/pendingUpload";
 
@@ -101,15 +102,14 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
             textClassName="text-[11px]"
           />
         </div>
-        <button
-          type="button"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] hover:bg-[var(--panel-hover)]"
-          aria-label={mobileSidebarOpen ? "Close menu" : "Open menu"}
+        <IconButton
+          ariaLabel={mobileSidebarOpen ? "Close menu" : "Open menu"}
           aria-expanded={mobileSidebarOpen}
+          className="h-10 w-10 bg-[var(--panel)] p-0 text-[var(--fg)]"
           onClick={() => setMobileSidebarOpen((v) => !v)}
         >
           {mobileSidebarOpen ? <XMarkIcon className="h-5 w-5" /> : <Bars3Icon className="h-5 w-5" />}
-        </button>
+        </IconButton>
       </header>
 
       {/* Desktop sidebar */}

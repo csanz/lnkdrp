@@ -83,6 +83,23 @@ export function buildPublicRequestViewUrl(viewToken: string | null): string {
   }
 }
 
+/**
+ * Build a public doc replacement-upload URL for a replacement token.
+ *
+ * Returns an empty string when we cannot build a stable absolute URL.
+ */
+export function buildPublicReplaceUrl(replaceToken: string | null): string {
+  const token = typeof replaceToken === "string" ? replaceToken.trim() : "";
+  if (!token) return "";
+  const base = getPublicSiteBase();
+  if (!base) return "";
+  try {
+    return new URL(`/doc/update/${encodeURIComponent(token)}`, base).toString();
+  } catch {
+    return "";
+  }
+}
+
 
 
 

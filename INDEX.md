@@ -1,7 +1,7 @@
 # Components
 - `src/components/AboutCopy.tsx` — exports: AboutCopy
 - `src/components/AccountMenu.tsx` — exports: AccountMenu
-- `src/components/ActiveWorkspacePill.tsx` — exports: ActiveWorkspacePill (default)
+- `src/components/ActiveWorkspacePill.tsx` — exports: ActiveWorkspacePill (default). Props: `planBadgeText?` to optionally show a small plan badge (e.g. “PRO”).
 - `src/components/BlobClientUploadTest.tsx` — exports: BlobClientUploadTest
 - `src/components/CopyButton.tsx` — exports: CopyButton
 - `src/components/DocActionsMenu.tsx` — exports: DocActionsMenu
@@ -30,6 +30,8 @@
 - `src/components/RelevanceChecklist.tsx` — exports: RelevanceChecklist
 - `src/components/UploadButton.tsx` — exports: UploadButton, UploadIcon
 - `src/components/UploadCompletionPanel.tsx` — exports: UploadCompletionPanel
+- `src/components/ui/Alert.tsx` — exports: Alert (default)
+- `src/components/ui/IconButton.tsx` — exports: IconButton (default)
 
 # Lib
 - `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
@@ -50,10 +52,14 @@
 - `src/app/preferences/page.tsx` — Page for \`/preferences\` (preferences hub).
 - `src/app/preferences/[tab]/page.tsx` — Page for \`/preferences/:tab\` (redirects to query-param tab).
 - `src/app/dashboard/page.tsx` — Page for \`/dashboard\` (standalone dashboard hub; includes Overview/Account/Workspace/Teams/Usage/Spending/Billing tabs).
+- `src/app/billing/success/page.tsx` — Page for \`/billing/success\` (post-Checkout redirect; polls server until webhooks activate Pro).
+- `src/app/billing/cancel/page.tsx` — Page for \`/billing/cancel\` (Checkout canceled).
 - `src/app/p/[shareId]/page.tsx` — Page for \`/p/:shareId\`.
 - `src/app/r/[token]/page.tsx` — Page for \`/r/:token\` (request upload link).
 - `src/app/request/[token]/page.tsx` — Page for \`/request/:token\` (request upload link).
 - `src/app/request-view/[token]/page.tsx` — Page for \`/request-view/:token\` (request repo viewer; read-only capability link).
+- `src/app/doc/update/[code]/page.tsx` — Page for \`/doc/update/:code\` (public doc update/upload link).
+- `src/app/replace/[token]/page.tsx` — Page for \`/replace/:token\` (legacy alias → \`/doc/update/:code\`).
 - `src/app/a/invitecodes/page.tsx` — Page for \`/a/invitecodes\`.
 - `src/app/a/cron-health/page.tsx` — Page for \`/a/cron-health\`.
 - `src/app/a/ai-runs/page.tsx` — Page for \`/a/ai-runs\`.
@@ -126,6 +132,18 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/billing/subscription/manage/route.ts` — API route for \`/api/billing/subscription/manage\`.
   - POST (function) — Create Stripe billing portal session URL for the current org customer.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/billing/status/route.ts` — API route for \`/api/billing/status\`.
+  - GET (function) — Return current user's plan + Stripe subscription fields (used for success-page polling).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/stripe/checkout/route.ts` — API route for \`/api/stripe/checkout\`.
+  - POST (function) — Create a Stripe Checkout Session (subscription mode) for the signed-in user.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/stripe/webhook/route.ts` — API route for \`/api/stripe/webhook\`.
+  - POST (function) — Stripe webhook handler (signature-verified; webhook-driven access control).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/stripe/portal/route.ts` — API route for \`/api/stripe/portal\`.
+  - POST (function) — Create Stripe billing portal session URL for the signed-in user.
   - runtime (const) — Next.js route configuration.
 - `src/app/api/blob/upload/route.ts` — Vercel Blob client-upload route (App Router).
   - POST (function) — Handle POST requests.
@@ -260,6 +278,15 @@
   - Note: POST also sets/clears a doc-level backlink (\`Doc.guideForRequestProjectId\`) so guide docs can be related back to the request repo in list/detail UIs.
 - `src/app/api/requests/[token]/uploads/route.ts` — API route for \`/api/requests/:token/uploads\`.
   - POST (function) — Start an upload for a request link (creates doc+upload under the owner).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/doc/update/[code]/route.ts` — API route for \`/api/doc/update/:code\`.
+  - GET (function) — Resolve a doc update code to doc metadata (title/preview/share/version).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/doc/update/[code]/uploads/route.ts` — API route for \`/api/doc/update/:code/uploads\`.
+  - POST (function) — Start a replacement upload for a specific doc using `Doc.replaceUploadToken`.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/replace/[token]/uploads/route.ts` — API route for \`/api/replace/:token/uploads\` (legacy alias → \`/api/doc/update/:code/uploads\`).
+  - POST (function) — Legacy alias handler.
   - runtime (const) — Next.js route configuration.
 - `src/app/api/share/[shareId]/stats/route.ts` — API route for \`/api/share/:shareId/stats\`.
   - GET (function) — Handle GET requests.
@@ -449,6 +476,9 @@
 - `src/lib/models/Subscription.ts` — Data model for org subscriptions (Stripe customer/subscription pointers).
   - Subscription (type) — Mongoose document type for subscriptions collection.
   - SubscriptionModel (const) — Mongoose model for subscriptions collection.
+- `src/lib/models/StripeEvent.ts` — Minimal Stripe webhook idempotency ledger.
+  - StripeEvent (type) — Mongoose document type for Stripe webhook events (dedupe).
+  - StripeEventModel (const) — Mongoose model for Stripe webhook events.
 - `src/lib/models/Upload.ts` — Data model for the uploads collection.
   - Upload (type) — Mongoose document type for the uploads collection.
   - UploadModel (const) — Mongoose model for the uploads collection.
@@ -501,6 +531,7 @@
   - buildPublicShareUrl (function) — URL helpers shared by client components.
   - buildPublicRequestUrl (function) — Build a public `/request/:token` URL.
   - buildPublicRequestViewUrl (function) — Build a public `/request-view/:token` URL.
+  - buildPublicReplaceUrl (function) — Build a public `/doc/update/:code` URL.
 
 # Files
 - Excludes: `node_modules`, `.git`, `.next`, build outputs, dot-dirs, `.env*`, `.DS_Store`

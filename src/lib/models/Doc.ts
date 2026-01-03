@@ -145,7 +145,10 @@ const docSchema = new Schema(
      * This is intended for docs received via request links, so the owner can share a
      * replacement upload link that creates a new Upload version for the existing doc.
      */
-    replaceUploadToken: { type: String, trim: true, default: null, index: true, unique: true, sparse: true },
+    // Indexed for fast lookup on the public update flow (`/doc/update/:code`).
+    // Not unique: collisions are already vanishingly unlikely, and avoiding unique indexes
+    // reduces the chance of slow index builds on large collections.
+    replaceUploadToken: { type: String, trim: true, default: null, index: true, sparse: true },
 
     /**
      * If set, this doc is being used as a "Guide" (thesis/RFP/JD) for a request repo.
