@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { signIn } from "next-auth/react";
@@ -390,31 +391,35 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
       />
 
       {/* Overlay (real HTML text + buttons) */}
-      <div className="relative z-10 mx-auto h-full w-full max-w-6xl px-8 sm:px-10 lg:px-12">
-        <header className="flex items-center justify-between py-5">
-          <a href="/" className="flex items-center gap-2.5">
-            <Image src="/icon-white.svg?v=3" alt="LinkDrop" width={26} height={26} priority />
-            <span className="text-sm font-semibold tracking-tight">LinkDrop</span>
-          </a>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-              onClick={() => setAboutModalOpen(true)}
-            >
-              About
-            </button>
-            <button
-              type="button"
-              className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-              onClick={() => void startAuthFlow()}
-            >
-              Log In
-            </button>
+      <div className="relative z-10 h-full w-full">
+        {/* Full-width header: logo pinned left, auth links pinned right (match dashboard placement). */}
+        <header className="w-full">
+          <div className="flex h-14 items-center justify-between gap-3 px-3 md:px-4">
+            <div className="flex min-w-0 items-center gap-2">
+              <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
+                <Image src="/icon-white.svg?v=3" alt="LinkDrop" width={32} height={32} priority />
+              </Link>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
+                onClick={() => setAboutModalOpen(true)}
+              >
+                About
+              </button>
+              <button
+                type="button"
+                className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
+                onClick={() => void startAuthFlow()}
+              >
+                Log In
+              </button>
+            </div>
           </div>
         </header>
 
-        <section className="pt-12 md:pt-16">
+        <section className="mx-auto w-full max-w-6xl px-8 pt-12 sm:px-10 md:pt-16 lg:px-12">
           <div className="w-full md:w-[min(560px,54%)]">
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[64px]">
               Sending docs should feel effortless to share

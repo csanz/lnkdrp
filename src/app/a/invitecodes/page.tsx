@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { signIn, useSession } from "next-auth/react";
+import Alert from "@/components/ui/Alert";
+import Button from "@/components/ui/Button";
+import { fetchJson } from "@/lib/http/fetchJson";
+import { fmtDate } from "@/lib/admin/format";
 
 type InviteRequestItem = {
   _id: string;
@@ -20,17 +24,6 @@ type InviteCodeItem = {
   isActive?: boolean | null;
   createdDate?: string | null;
 };
-/**
- * Fmt Date (uses isNaN, valueOf, toLocaleString).
- */
-
-
-function fmtDate(v: string | null | undefined) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.valueOf())) return v;
-  return d.toLocaleString();
-}
 /**
  * Render the InviteCodesAdminPage UI (uses effects, memoized values, local state).
  */
@@ -68,34 +61,16 @@ export default function InviteCodesAdminPage() {
     void (async () => {
       try {
         if (menu === "requests") {
-          const res = await fetch(`/api/invites/requests?status=${requestsTab}`, { method: "GET" });
-          const data = (await res.json().catch(() => ({}))) as {
-            ok?: unknown;
-            error?: unknown;
-            items?: unknown;
-          };
-          if (!res.ok) {
-            setError(typeof data.error === "string" ? data.error : "Failed to load requests");
-            setRequestItems([]);
-            return;
-          }
+          const data = await fetchJson<{ items?: unknown }>(`/api/invites/requests?status=${requestsTab}`, {
+            method: "GET",
+          });
           setRequestItems(Array.isArray(data.items) ? (data.items as InviteRequestItem[]) : []);
         } else {
-          const res = await fetch(`/api/invites/codes?status=all`, { method: "GET" });
-          const data = (await res.json().catch(() => ({}))) as {
-            ok?: unknown;
-            error?: unknown;
-            items?: unknown;
-          };
-          if (!res.ok) {
-            setError(typeof data.error === "string" ? data.error : "Failed to load codes");
-            setCodeItems([]);
-            return;
-          }
+          const data = await fetchJson<{ items?: unknown }>(`/api/invites/codes?status=all`, { method: "GET" });
           setCodeItems(Array.isArray(data.items) ? (data.items as InviteCodeItem[]) : []);
         }
-      } catch {
-        setError(menu === "requests" ? "Failed to load requests" : "Failed to load codes");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : menu === "requests" ? "Failed to load requests" : "Failed to load codes");
         setRequestItems([]);
         setCodeItems([]);
       } finally {
@@ -117,13 +92,13 @@ export default function InviteCodesAdminPage() {
             You must be signed in to view this page.
           </p>
           <div className="mt-5">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-5 py-2.5 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               onClick={() => void signIn("google", { callbackUrl: "/a/invitecodes" })}
             >
               Sign in
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -156,9 +131,9 @@ export default function InviteCodesAdminPage() {
         </div>
 
         {error ? (
-          <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm text-red-700">
+          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
             {error}
-          </div>
+          </Alert>
         ) : null}
 
         <div className="mt-6 grid gap-5 md:grid-cols-[220px_1fr]">
@@ -255,9 +230,9 @@ export default function InviteCodesAdminPage() {
                           </div>
 
                           {requestsTab === "pending" ? (
-                            <button
-                              type="button"
-                              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)] disabled:cursor-not-allowed disabled:opacity-70"
+                            <Button
+                              variant="solid"
+                              className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-70"
                               disabled={approvingId === r._id}
                               aria-busy={approvingId === r._id}
                               onClick={() => {
@@ -266,20 +241,10 @@ export default function InviteCodesAdminPage() {
                                 setError(null);
                                 void (async () => {
                                   try {
-                                    const res = await fetch(`/api/invites/requests/${r._id}/approve`, {
-                                      method: "POST",
-                                    });
-                                    const data = (await res.json().catch(() => ({}))) as {
-                                      ok?: unknown;
-                                      error?: unknown;
-                                    };
-                                    if (!res.ok) {
-                                      setError(typeof data.error === "string" ? data.error : "Failed to approve");
-                                      return;
-                                    }
+                                    await fetchJson(`/api/invites/requests/${r._id}/approve`, { method: "POST" });
                                     setRequestItems((prev) => prev.filter((x) => x._id !== r._id));
-                                  } catch {
-                                    setError("Failed to approve");
+                                  } catch (e) {
+                                    setError(e instanceof Error ? e.message : "Failed to approve");
                                   } finally {
                                     setApprovingId(null);
                                   }
@@ -287,7 +252,7 @@ export default function InviteCodesAdminPage() {
                               }}
                             >
                               {approvingId === r._id ? "Approving…" : "Approve + email"}
-                            </button>
+                            </Button>
                           ) : (
                             <div className="text-right text-xs text-[var(--muted-2)]">
                               <div>Approved: {fmtDate(r.approvedDate ?? null)}</div>
@@ -320,9 +285,9 @@ export default function InviteCodesAdminPage() {
               <>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="text-sm font-semibold text-[var(--fg)]">Invite codes</div>
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)] disabled:cursor-not-allowed disabled:opacity-70"
+                  <Button
+                    variant="solid"
+                    className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-70"
                     disabled={creatingCode}
                     aria-busy={creatingCode}
                     onClick={() => {
@@ -331,17 +296,9 @@ export default function InviteCodesAdminPage() {
                       setError(null);
                       void (async () => {
                         try {
-                          const res = await fetch("/api/invites/codes", { method: "POST" });
-                          const data = (await res.json().catch(() => ({}))) as {
-                            ok?: unknown;
-                            error?: unknown;
-                            inviteId?: unknown;
-                            inviteCode?: unknown;
-                          };
-                          if (!res.ok) {
-                            setError(typeof data.error === "string" ? data.error : "Failed to create code");
-                            return;
-                          }
+                          const data = await fetchJson<{ inviteId?: unknown; inviteCode?: unknown }>("/api/invites/codes", {
+                            method: "POST",
+                          });
                           const inviteId = typeof data.inviteId === "string" ? data.inviteId : null;
                           const inviteCode = typeof data.inviteCode === "string" ? data.inviteCode : null;
                           if (inviteId && inviteCode) {
@@ -355,8 +312,8 @@ export default function InviteCodesAdminPage() {
                               ...prev,
                             ]);
                           }
-                        } catch {
-                          setError("Failed to create code");
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : "Failed to create code");
                         } finally {
                           setCreatingCode(false);
                         }
@@ -364,7 +321,7 @@ export default function InviteCodesAdminPage() {
                     }}
                   >
                     {creatingCode ? "Creating…" : "Create code"}
-                  </button>
+                  </Button>
                 </div>
 
                 {loading ? (
@@ -396,9 +353,9 @@ export default function InviteCodesAdminPage() {
                             <span className="rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1 text-xs text-[var(--muted)]">
                               {active ? "Active" : "Inactive"}
                             </span>
-                            <button
-                              type="button"
-                              className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-70"
+                            <Button
+                              variant="outline"
+                              className="bg-[var(--panel-2)] disabled:opacity-70"
                               disabled={togglingCodeId === c._id}
                               aria-busy={togglingCodeId === c._id}
                               onClick={() => {
@@ -407,21 +364,16 @@ export default function InviteCodesAdminPage() {
                                 setError(null);
                                 void (async () => {
                                   try {
-                                    const res = await fetch(`/api/invites/codes/${c._id}/toggle-active`, {
+                                    await fetchJson(`/api/invites/codes/${c._id}/toggle-active`, {
                                       method: "POST",
                                       headers: { "Content-Type": "application/json" },
                                       body: JSON.stringify({ isActive: !active }),
                                     });
-                                    const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-                                    if (!res.ok) {
-                                      setError(typeof data.error === "string" ? data.error : "Failed to update code");
-                                      return;
-                                    }
                                     setCodeItems((prev) =>
                                       prev.map((x) => (x._id === c._id ? { ...x, isActive: !active } : x)),
                                     );
-                                  } catch {
-                                    setError("Failed to update code");
+                                  } catch (e) {
+                                    setError(e instanceof Error ? e.message : "Failed to update code");
                                   } finally {
                                     setTogglingCodeId(null);
                                   }
@@ -429,7 +381,7 @@ export default function InviteCodesAdminPage() {
                               }}
                             >
                               {togglingCodeId === c._id ? "Saving…" : active ? "Deactivate" : "Activate"}
-                            </button>
+                            </Button>
                           </div>
                         </div>
                       );

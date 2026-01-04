@@ -9,6 +9,11 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
+import Alert from "@/components/ui/Alert";
+import Button from "@/components/ui/Button";
+import CopyTextButton from "@/components/ui/CopyTextButton";
+import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import { fetchJson } from "@/lib/http/fetchJson";
 
 type DetailDoc = {
   id: string;
@@ -103,74 +108,12 @@ type AiRunDetail = {
   createdDate: string | null;
 };
 
-function fmtDate(v: string | null | undefined) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.valueOf())) return v;
-  return d.toLocaleString();
-}
-
-function fmtDuration(ms: number | null | undefined) {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  const r = s - m * 60;
-  return `${m}m ${Math.round(r)}s`;
-}
-
 function prettyJson(v: unknown) {
   try {
     return JSON.stringify(v, null, 2);
   } catch {
     return String(v);
   }
-}
-
-async function copyTextToClipboard(text: string) {
-  // Best-effort copy for admin tooling.
-  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  // Fallback for older browsers.
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.setAttribute("readonly", "true");
-  ta.style.position = "fixed";
-  ta.style.left = "-9999px";
-  document.body.appendChild(ta);
-  ta.select();
-  document.execCommand("copy");
-  document.body.removeChild(ta);
-}
-
-function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
-  const [state, setState] = useState<"idle" | "copied" | "error">("idle");
-  return (
-    <button
-      type="button"
-      className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)] disabled:opacity-60"
-      disabled={!text}
-      onClick={() => {
-        setState("idle");
-        void (async () => {
-          try {
-            await copyTextToClipboard(text);
-            setState("copied");
-            window.setTimeout(() => setState("idle"), 1200);
-          } catch {
-            setState("error");
-            window.setTimeout(() => setState("idle"), 2000);
-          }
-        })();
-      }}
-      title={state === "copied" ? "Copied" : state === "error" ? "Copy failed" : "Copy to clipboard"}
-    >
-      {state === "copied" ? "Copied" : state === "error" ? "Copy failed" : label}
-    </button>
-  );
 }
 
 function extractAiOutput(raw: Record<string, unknown> | null | undefined) {
@@ -243,13 +186,9 @@ export default function AdminDataRequestDetailPage() {
     setError(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/admin/data/requests/${encodeURIComponent(requestId)}`, { method: "GET" });
-        const body = (await res.json().catch(() => ({}))) as DetailResponse;
-        if (!res.ok) {
-          setError(typeof body.error === "string" ? body.error : "Failed to load request");
-          setData({ requestRaw: null, docs: [], uploads: [], reviews: [] });
-          return;
-        }
+        const body = await fetchJson<DetailResponse>(`/api/admin/data/requests/${encodeURIComponent(requestId)}`, {
+          method: "GET",
+        });
         const raw =
           body.request && typeof body.request === "object" && "raw" in body.request
             ? (body.request as { raw?: unknown }).raw
@@ -260,8 +199,8 @@ export default function AdminDataRequestDetailPage() {
           uploads: Array.isArray(body.uploads) ? (body.uploads as DetailUpload[]) : [],
           reviews: Array.isArray(body.reviews) ? (body.reviews as any[]) : [],
         });
-      } catch {
-        setError("Failed to load request");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load request");
         setData({ requestRaw: null, docs: [], uploads: [], reviews: [] });
       } finally {
         setLoading(false);
@@ -285,17 +224,11 @@ export default function AdminDataRequestDetailPage() {
         qs.set("limit", "100");
         qs.set("page", "1");
         qs.set("projectId", requestId);
-        const res = await fetch(`/api/admin/ai-runs?${qs.toString()}`, { method: "GET" });
-        const body = (await res.json().catch(() => ({}))) as { error?: unknown; items?: unknown };
-        if (!res.ok) {
-          setAiRuns([]);
-          setAiRunsError(typeof body.error === "string" ? body.error : "Failed to load AI runs");
-          return;
-        }
+        const body = await fetchJson<{ items?: unknown }>(`/api/admin/ai-runs?${qs.toString()}`, { method: "GET" });
         setAiRuns(Array.isArray(body.items) ? (body.items as AiRunRow[]) : []);
-      } catch {
+      } catch (e) {
         setAiRuns([]);
-        setAiRunsError("Failed to load AI runs");
+        setAiRunsError(e instanceof Error ? e.message : "Failed to load AI runs");
       } finally {
         setAiRunsLoading(false);
       }
@@ -315,17 +248,13 @@ export default function AdminDataRequestDetailPage() {
     setAiRunDetailError(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/admin/ai-runs/${encodeURIComponent(selectedAiRunId)}`, { method: "GET" });
-        const body = (await res.json().catch(() => ({}))) as { error?: unknown; run?: unknown };
-        if (!res.ok) {
-          setAiRunDetail(null);
-          setAiRunDetailError(typeof body.error === "string" ? body.error : "Failed to load AI run detail");
-          return;
-        }
+        const body = await fetchJson<{ run?: unknown }>(`/api/admin/ai-runs/${encodeURIComponent(selectedAiRunId)}`, {
+          method: "GET",
+        });
         setAiRunDetail((body.run ?? null) as AiRunDetail | null);
-      } catch {
+      } catch (e) {
         setAiRunDetail(null);
-        setAiRunDetailError("Failed to load AI run detail");
+        setAiRunDetailError(e instanceof Error ? e.message : "Failed to load AI run detail");
       } finally {
         setAiRunDetailLoading(false);
       }
@@ -343,9 +272,9 @@ export default function AdminDataRequestDetailPage() {
           <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Requests</div>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
           <div className="mt-5">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-5 py-2.5 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               onClick={() =>
                 void signIn("google", {
                   callbackUrl: requestId ? `/a/data/requests/${encodeURIComponent(requestId)}` : "/a/data/requests",
@@ -353,7 +282,7 @@ export default function AdminDataRequestDetailPage() {
               }
             >
               Sign in
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -388,13 +317,13 @@ export default function AdminDataRequestDetailPage() {
               {header.slug ? (
                 <span className="inline-flex items-center gap-2">
                   <span>Slug: {header.slug}</span>
-                  <CopyButton text={header.slug} label="Copy slug" />
+                  <CopyTextButton text={header.slug} label="Copy slug" />
                 </span>
               ) : null}
               {header.token ? (
                 <span className="inline-flex items-center gap-2">
                   <span>{header.slug ? " • " : ""}Token: {header.token.slice(0, 10)}…</span>
-                  <CopyButton text={header.token} label="Copy token" />
+                  <CopyTextButton text={header.token} label="Copy token" />
                 </span>
               ) : null}
             </div>
@@ -410,9 +339,9 @@ export default function AdminDataRequestDetailPage() {
                 Open upload page
               </a>
             ) : null}
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)] disabled:opacity-60"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               disabled={loading}
               onClick={() => {
                 // trigger reload by toggling state
@@ -422,14 +351,10 @@ export default function AdminDataRequestDetailPage() {
                 setError(null);
                 void (async () => {
                   try {
-                    const res = await fetch(`/api/admin/data/requests/${encodeURIComponent(requestId)}`, {
-                      method: "GET",
-                    });
-                    const body = (await res.json().catch(() => ({}))) as DetailResponse;
-                    if (!res.ok) {
-                      setError(typeof body.error === "string" ? body.error : "Failed to load request");
-                      return;
-                    }
+                    const body = await fetchJson<DetailResponse>(
+                      `/api/admin/data/requests/${encodeURIComponent(requestId)}`,
+                      { method: "GET" },
+                    );
                     const raw =
                       body.request && typeof body.request === "object" && "raw" in body.request
                         ? (body.request as { raw?: unknown }).raw
@@ -440,8 +365,8 @@ export default function AdminDataRequestDetailPage() {
                       uploads: Array.isArray(body.uploads) ? (body.uploads as DetailUpload[]) : [],
                       reviews: Array.isArray(body.reviews) ? (body.reviews as any[]) : [],
                     });
-                  } catch {
-                    setError("Failed to load request");
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : "Failed to load request");
                   } finally {
                     setLoading(false);
                   }
@@ -449,15 +374,15 @@ export default function AdminDataRequestDetailPage() {
               }}
             >
               Refresh
-            </button>
-            <CopyButton text={copyAllLoadedText} label="Copy all (loaded)" />
+            </Button>
+            <CopyTextButton text={copyAllLoadedText} label="Copy all (loaded)" />
           </div>
         </div>
 
         {error ? (
-          <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm text-red-700">
+          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
             {error}
-          </div>
+          </Alert>
         ) : null}
 
         <div className="mt-6 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-2">
@@ -492,7 +417,7 @@ export default function AdminDataRequestDetailPage() {
           <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-semibold text-[var(--fg)]">Raw request repo document</div>
-              <CopyButton text={prettyJson(data.requestRaw)} />
+              <CopyTextButton text={prettyJson(data.requestRaw)} />
             </div>
             <div className="mt-3 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
               <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
@@ -516,7 +441,7 @@ export default function AdminDataRequestDetailPage() {
                     ) : null}
                     <div className="mt-1 inline-flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
                       <span>Doc ID: {d.id}</span>
-                      <CopyButton text={d.id} label="Copy ID" />
+                      <CopyTextButton text={d.id} label="Copy ID" />
                     </div>
                     {d.shareId ? (
                       <div className="mt-1 inline-flex flex-wrap items-center gap-2">
@@ -528,7 +453,7 @@ export default function AdminDataRequestDetailPage() {
                         >
                           /s/{d.shareId}
                         </a>
-                        <CopyButton text={d.shareId} label="Copy shareId" />
+                        <CopyTextButton text={d.shareId} label="Copy shareId" />
                       </div>
                     ) : null}
                   </div>
@@ -548,7 +473,7 @@ export default function AdminDataRequestDetailPage() {
                   </summary>
                   <div className="mt-2 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
                     <div className="mb-2 flex justify-end">
-                      <CopyButton text={prettyJson(d.raw)} />
+                      <CopyTextButton text={prettyJson(d.raw)} />
                     </div>
                     <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">{prettyJson(d.raw)}</pre>
                   </div>
@@ -560,7 +485,7 @@ export default function AdminDataRequestDetailPage() {
                     </summary>
                     <div className="mt-2 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
                       <div className="mb-2 flex justify-end">
-                        <CopyButton text={prettyJson(extractAiOutput(d.raw))} />
+                        <CopyTextButton text={prettyJson(extractAiOutput(d.raw))} />
                       </div>
                       <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                         {prettyJson(extractAiOutput(d.raw))}
@@ -590,7 +515,7 @@ export default function AdminDataRequestDetailPage() {
                             {r.outputMarkdown ? (
                               <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
                                 <div className="mb-2 flex justify-end">
-                                  <CopyButton text={r.outputMarkdown} label="Copy markdown" />
+                                  <CopyTextButton text={r.outputMarkdown} label="Copy markdown" />
                                 </div>
                                 <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                                   {r.outputMarkdown}
@@ -604,7 +529,7 @@ export default function AdminDataRequestDetailPage() {
                                 </summary>
                                 <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
                                   <div className="mb-2 flex justify-end">
-                                    <CopyButton text={prettyJson(r.intel)} label="Copy intel" />
+                                    <CopyTextButton text={prettyJson(r.intel)} label="Copy intel" />
                                   </div>
                                   <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                                     {prettyJson(r.intel)}
@@ -619,7 +544,7 @@ export default function AdminDataRequestDetailPage() {
                                 </summary>
                                 <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
                                   <div className="mb-2 flex justify-end">
-                                    <CopyButton text={prettyJson(r.agentOutput)} label="Copy agent output" />
+                                    <CopyTextButton text={prettyJson(r.agentOutput)} label="Copy agent output" />
                                   </div>
                                   <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                                     {prettyJson(r.agentOutput)}
@@ -634,7 +559,7 @@ export default function AdminDataRequestDetailPage() {
                                 </summary>
                                 <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
                                   <div className="mb-2 flex justify-end">
-                                    <CopyButton text={r.agentRawOutputText} label="Copy raw output" />
+                                    <CopyTextButton text={r.agentRawOutputText} label="Copy raw output" />
                                   </div>
                                   <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                                     {r.agentRawOutputText}
@@ -652,7 +577,7 @@ export default function AdminDataRequestDetailPage() {
                                     <div>
                                       <div className="mb-1 flex items-center justify-between">
                                         <div className="text-[10px] font-semibold text-[var(--muted-2)]">System</div>
-                                        <CopyButton text={r.agentSystemPrompt} label="Copy system" />
+                                        <CopyTextButton text={r.agentSystemPrompt} label="Copy system" />
                                       </div>
                                       <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                                         {r.agentSystemPrompt}
@@ -663,7 +588,7 @@ export default function AdminDataRequestDetailPage() {
                                     <div>
                                       <div className="mb-1 flex items-center justify-between">
                                         <div className="text-[10px] font-semibold text-[var(--muted-2)]">User</div>
-                                        <CopyButton text={r.agentUserPrompt} label="Copy user" />
+                                        <CopyTextButton text={r.agentUserPrompt} label="Copy user" />
                                       </div>
                                       <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                                         {r.agentUserPrompt}
@@ -679,7 +604,7 @@ export default function AdminDataRequestDetailPage() {
                               </summary>
                               <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
                                 <div className="mb-2 flex justify-end">
-                                  <CopyButton text={prettyJson(r.raw)} />
+                                  <CopyTextButton text={prettyJson(r.raw)} />
                                 </div>
                                 <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                                   {prettyJson(r.raw)}
@@ -716,7 +641,7 @@ export default function AdminDataRequestDetailPage() {
                     </div>
                     <div className="mt-1 inline-flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
                       <span>Upload ID: {u.id}</span>
-                      <CopyButton text={u.id} label="Copy ID" />
+                      <CopyTextButton text={u.id} label="Copy ID" />
                     </div>
                     <div className="mt-1 text-xs text-[var(--muted)]">Doc ID: {u.docId ?? "—"}</div>
                   </div>
@@ -727,7 +652,7 @@ export default function AdminDataRequestDetailPage() {
                   </summary>
                   <div className="mt-2 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
                     <div className="mb-2 flex justify-end">
-                      <CopyButton text={prettyJson(u.raw)} />
+                      <CopyTextButton text={prettyJson(u.raw)} />
                     </div>
                     <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">{prettyJson(u.raw)}</pre>
                   </div>
@@ -739,7 +664,7 @@ export default function AdminDataRequestDetailPage() {
                     </summary>
                     <div className="mt-2 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
                       <div className="mb-2 flex justify-end">
-                        <CopyButton text={prettyJson(extractAiOutput(u.raw))} />
+                        <CopyTextButton text={prettyJson(extractAiOutput(u.raw))} />
                       </div>
                       <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
                         {prettyJson(extractAiOutput(u.raw))}
@@ -828,13 +753,14 @@ export default function AdminDataRequestDetailPage() {
               <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-semibold text-[var(--fg)]">Run detail</div>
                 {selectedAiRunId ? (
-                  <button
-                    type="button"
-                    className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] font-semibold hover:bg-[var(--panel-hover)]"
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="bg-[var(--panel-2)] text-[12px]"
                     onClick={() => setSelectedAiRunId(null)}
                   >
                     Clear
-                  </button>
+                  </Button>
                 ) : null}
               </div>
               <div className="mt-2 text-sm text-[var(--muted)]">
@@ -849,7 +775,7 @@ export default function AdminDataRequestDetailPage() {
                   <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
                     <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Summary</div>
                     <div className="mt-2 flex justify-end">
-                      <CopyButton text={prettyJson(aiRunDetail)} label="Copy run JSON" />
+                      <CopyTextButton text={prettyJson(aiRunDetail)} label="Copy run JSON" />
                     </div>
                     <div className="mt-2 grid gap-2 text-[12px] text-[var(--fg)]">
                       <div className="grid grid-cols-[110px_1fr] gap-2">
@@ -894,7 +820,7 @@ export default function AdminDataRequestDetailPage() {
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">System prompt</div>
-                      <CopyButton text={aiRunDetail.systemPrompt ?? ""} label="Copy" />
+                      <CopyTextButton text={aiRunDetail.systemPrompt ?? ""} label="Copy" />
                     </div>
                     <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--fg)]">
                       {aiRunDetail.systemPrompt ?? "—"}
@@ -904,7 +830,7 @@ export default function AdminDataRequestDetailPage() {
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">User prompt</div>
-                      <CopyButton text={aiRunDetail.userPrompt ?? ""} label="Copy" />
+                      <CopyTextButton text={aiRunDetail.userPrompt ?? ""} label="Copy" />
                     </div>
                     <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--fg)]">
                       {aiRunDetail.userPrompt ?? "—"}
@@ -914,7 +840,7 @@ export default function AdminDataRequestDetailPage() {
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Output</div>
-                      <CopyButton
+                      <CopyTextButton
                         text={
                           aiRunDetail.outputText ??
                           (aiRunDetail.outputObject ? prettyJson(aiRunDetail.outputObject) : "")
@@ -930,7 +856,7 @@ export default function AdminDataRequestDetailPage() {
                   <div>
                     <div className="flex items-center justify-between gap-3">
                       <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Error</div>
-                      <CopyButton text={aiRunDetail.error ? prettyJson(aiRunDetail.error) : ""} label="Copy" />
+                      <CopyTextButton text={aiRunDetail.error ? prettyJson(aiRunDetail.error) : ""} label="Copy" />
                     </div>
                     <pre className="mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--fg)]">
                       {aiRunDetail.error ? prettyJson(aiRunDetail.error) : "—"}

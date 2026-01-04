@@ -3,7 +3,7 @@
  *
  * Security:
  * - Requires an authenticated user.
- * - Uses persisted `user.stripeCustomerId`; does not trust client input.
+ * - Workspace-bound: uses the active org's `Subscription.stripeCustomerId`; does not trust client input.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -11,7 +11,7 @@ import Stripe from "stripe";
 
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor } from "@/lib/gating/actor";
-import { UserModel } from "@/lib/models/User";
+import { SubscriptionModel } from "@/lib/models/Subscription";
 
 export const runtime = "nodejs";
 
@@ -33,22 +33,20 @@ export async function POST(request: Request) {
     if (actor.kind !== "user") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    if (!Types.ObjectId.isValid(actor.userId)) {
-      return NextResponse.json({ error: "Invalid user" }, { status: 400 });
-    }
+    if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
 
     const stripeKey = mustGetEnv("STRIPE_SECRET_KEY");
     const stripe = new Stripe(stripeKey);
-    const userId = new Types.ObjectId(actor.userId);
+    const orgId = new Types.ObjectId(actor.orgId);
 
     await connectMongo();
-    const user = await UserModel.findOne({ _id: userId })
+    const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
       .select({ stripeCustomerId: 1 })
       .lean();
     const customerId =
-      typeof (user as any)?.stripeCustomerId === "string" ? String((user as any).stripeCustomerId).trim() : "";
+      typeof (sub as any)?.stripeCustomerId === "string" ? String((sub as any).stripeCustomerId).trim() : "";
     if (!customerId) {
-      return NextResponse.json({ error: "No Stripe customer found for user." }, { status: 400 });
+      return NextResponse.json({ error: "No Stripe customer found for this workspace." }, { status: 400 });
     }
 
     const appUrl = appUrlFromRequest(request);

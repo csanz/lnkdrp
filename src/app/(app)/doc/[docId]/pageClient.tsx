@@ -1281,12 +1281,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
   return (
     <>
-        <div
-          className={[
-            "flex h-full flex-col",
-            isReceivedViaRequest ? "bg-gradient-to-b from-sky-950/5 to-transparent" : "",
-          ].join(" ")}
-        >
+        <div className="flex h-full flex-col">
         {shouldShowReviewRunOverlay ? (
           <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--bg)]/35 backdrop-blur-xl backdrop-saturate-150">
             <div className="max-w-[460px] rounded-2xl border border-[var(--border)] bg-[var(--panel)]/90 px-6 py-4 text-center shadow-[0_2px_10px_rgba(0,0,0,0.18)]">
@@ -1304,12 +1299,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           </div>
         ) : null}
         {/* Top bar */}
-        <div
-          className={[
-            "flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-3 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:px-6 md:py-4",
-            isReceivedViaRequest ? "ring-1 ring-inset ring-sky-400/15" : "",
-          ].join(" ")}
-        >
+        <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-3 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:px-6 md:py-4">
             <div className="flex w-full min-w-0 items-center gap-3 md:w-auto">
               <button
                 type="button"

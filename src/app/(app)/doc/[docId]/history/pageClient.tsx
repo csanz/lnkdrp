@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import Modal from "@/components/modals/Modal";
 
 type DocChangeItem = {
   id: string;
@@ -20,6 +21,8 @@ type DocChangeItem = {
   createdBy: null | { id: string | null; name: string | null; email: string | null };
   createdDate: string | null;
 };
+
+type RecipientRow = { userId: string; name: string | null; email: string | null; opened: boolean };
 
 function formatRelativeAge(iso: string): string | null {
   const d = new Date(iso);
@@ -107,6 +110,12 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [docCurrentVersion, setDocCurrentVersion] = useState<number | null>(null);
   const [items, setItems] = useState<DocChangeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [recipientsByVersion, setRecipientsByVersion] = useState<Record<string, RecipientRow[]>>({});
+  const [recipientsLoadingByVersion, setRecipientsLoadingByVersion] = useState<Record<string, boolean>>({});
+  const [viewerStatsOpen, setViewerStatsOpen] = useState<null | { version: number; userId: string; name: string | null; email: string | null }>(null);
+  const [viewerStats, setViewerStats] = useState<any>(null);
+  const [viewerStatsLoading, setViewerStatsLoading] = useState(false);
+  const [viewerStatsError, setViewerStatsError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -284,6 +293,55 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     if (months < 24) return `${months} month${months === 1 ? "" : "s"}`;
     const years = Math.floor(months / 12);
     return `${years} year${years === 1 ? "" : "s"}`;
+  }
+
+  async function ensureRecipients(version: number) {
+    const key = String(version);
+    if (recipientsByVersion[key]) return;
+    if (recipientsLoadingByVersion[key]) return;
+    setRecipientsLoadingByVersion((m) => ({ ...m, [key]: true }));
+    try {
+      const res = await fetchWithTempUser(
+        `/api/docs/${encodeURIComponent(docId)}/history/${encodeURIComponent(String(version))}/recipients`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) throw new Error("Failed to load recipients");
+      const json = (await res.json()) as any;
+      const rows = Array.isArray(json?.recipients) ? (json.recipients as any[]) : [];
+      const parsed: RecipientRow[] = rows
+        .map((r) => ({
+          userId: typeof r?.userId === "string" ? r.userId : "",
+          name: typeof r?.name === "string" ? r.name : null,
+          email: typeof r?.email === "string" ? r.email : null,
+          opened: Boolean(r?.opened),
+        }))
+        .filter((r) => Boolean(r.userId));
+      setRecipientsByVersion((m) => ({ ...m, [key]: parsed }));
+    } catch {
+      // ignore; best-effort
+    } finally {
+      setRecipientsLoadingByVersion((m) => ({ ...m, [key]: false }));
+    }
+  }
+
+  async function openViewerStats(params: { version: number; userId: string; name: string | null; email: string | null }) {
+    setViewerStatsOpen(params);
+    setViewerStats(null);
+    setViewerStatsError(null);
+    setViewerStatsLoading(true);
+    try {
+      const res = await fetchWithTempUser(
+        `/api/docs/${encodeURIComponent(docId)}/history/${encodeURIComponent(String(params.version))}/viewer/${encodeURIComponent(params.userId)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) throw new Error("Failed to load viewer stats");
+      const json = (await res.json()) as any;
+      setViewerStats(json);
+    } catch (e) {
+      setViewerStatsError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      setViewerStatsLoading(false);
+    }
   }
 
   return (
@@ -470,6 +528,83 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                 </div>
                               </div>
                             </details>
+
+                            {/* Notification recipients (preview) */}
+                            {toV ? (
+                              <div className="mt-5 rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+                                <div className="flex items-center justify-between gap-3">
+                                  <div className="text-xs font-semibold text-[var(--fg)]">Recipients</div>
+                                  <button
+                                    type="button"
+                                    className="text-[11px] font-semibold text-[var(--muted)] hover:text-[var(--fg)]"
+                                    onClick={() => void ensureRecipients(toV)}
+                                    title="Refresh recipients"
+                                  >
+                                    {recipientsLoadingByVersion[String(toV)] ? "Loading…" : "Load"}
+                                  </button>
+                                </div>
+
+                                {(() => {
+                                  const rows = recipientsByVersion[String(toV)] ?? [];
+                                  const shown = rows.slice(0, 5);
+                                  const more = rows.length > 5 ? rows.length - 5 : 0;
+                                  if (!rows.length) {
+                                    return (
+                                      <div className="mt-2 text-xs text-[var(--muted)]">
+                                        {recipientsLoadingByVersion[String(toV)]
+                                          ? "Loading recipients…"
+                                          : "Load to see who will be notified and who opened this version."}
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <>
+                                      <div className="mt-2 divide-y divide-[var(--border)] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                                        {shown.map((r) => (
+                                          <div key={r.userId} className="flex items-center justify-between gap-3 px-3 py-2">
+                                            <div className="min-w-0">
+                                              <div className="truncate text-xs font-medium text-[var(--fg)]">
+                                                {r.name ?? r.email ?? "Unknown"}
+                                              </div>
+                                              {r.name && r.email ? (
+                                                <div className="truncate text-[11px] text-[var(--muted)]">{r.email}</div>
+                                              ) : null}
+                                            </div>
+                                            <div className="flex shrink-0 items-center gap-2">
+                                              <span
+                                                className={[
+                                                  "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold",
+                                                  r.opened
+                                                    ? "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-0"
+                                                    : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
+                                                ].join(" ")}
+                                                title={r.opened ? "Opened (viewed any page)" : "Not opened yet"}
+                                              >
+                                                {r.opened ? "Opened ✓" : "Not opened"}
+                                              </span>
+                                              <button
+                                                type="button"
+                                                className="text-[11px] font-semibold text-[var(--muted)] hover:text-[var(--fg)]"
+                                                onClick={() =>
+                                                  void openViewerStats({ version: toV, userId: r.userId, name: r.name, email: r.email })
+                                                }
+                                              >
+                                                Stats
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {more ? (
+                                        <div className="mt-2 text-xs text-[var(--muted)]">
+                                          +{more} more (See more coming next)
+                                        </div>
+                                      ) : null}
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -579,6 +714,69 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
           </div>
         </div>
       </div>
+
+      {viewerStatsOpen ? (
+        <Modal
+          title="Viewer stats"
+          isOpen={Boolean(viewerStatsOpen)}
+          onClose={() => {
+            setViewerStatsOpen(null);
+            setViewerStats(null);
+            setViewerStatsError(null);
+          }}
+        >
+          <div className="space-y-3">
+            <div className="text-sm font-semibold text-[var(--fg)]">
+              {viewerStatsOpen.name ?? viewerStatsOpen.email ?? "Viewer"} — v{viewerStatsOpen.version}
+            </div>
+
+            {viewerStatsLoading ? (
+              <div className="text-sm text-[var(--muted)]">Loading…</div>
+            ) : viewerStatsError ? (
+              <div className="text-sm font-medium text-red-700">{viewerStatsError}</div>
+            ) : viewerStats ? (
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
+                <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
+                  <span>
+                    Viewed page 1:{" "}
+                    <span className="font-medium text-[var(--fg)]">
+                      {viewerStats.viewedPage1 ? "Yes" : "No"}
+                    </span>
+                  </span>
+                  <span aria-hidden="true">•</span>
+                  <span>
+                    Total time:{" "}
+                    <span className="font-medium text-[var(--fg)]">
+                      {formatDuration(typeof viewerStats.totalDurationMs === "number" ? viewerStats.totalDurationMs : 0)}
+                    </span>
+                  </span>
+                </div>
+
+                <div className="mt-3 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]">
+                  <div className="grid grid-cols-[80px_1fr] gap-2 border-b border-[var(--border)] px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)]">
+                    <div>Slide</div>
+                    <div>Time</div>
+                  </div>
+                  {(Array.isArray(viewerStats.pages) ? viewerStats.pages : []).map((p: any) => (
+                    <div
+                      key={String(p.pageNumber)}
+                      className="grid grid-cols-[80px_1fr] gap-2 px-3 py-2 text-xs text-[var(--fg)]"
+                    >
+                      <div className="tabular-nums">#{p.pageNumber}</div>
+                      <div className="text-[var(--muted)]">
+                        {formatDuration(typeof p.durationMs === "number" ? p.durationMs : 0)}
+                      </div>
+                    </div>
+                  ))}
+                  {Array.isArray(viewerStats.pages) && viewerStats.pages.length === 0 ? (
+                    <div className="px-3 py-3 text-xs text-[var(--muted)]">No slide timing recorded yet.</div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

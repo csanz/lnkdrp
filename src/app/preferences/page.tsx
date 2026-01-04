@@ -5,7 +5,9 @@
 "use client";
 
 import WorkspaceManager from "./WorkspaceManager";
+import NotificationPreferences from "./NotificationPreferences";
 import { useRouter, useSearchParams } from "next/navigation";
+import { cn } from "@/lib/cn";
 import {
   BanknotesIcon,
   ChartBarIcon,
@@ -13,10 +15,6 @@ import {
   CreditCardIcon,
   UserCircleIcon,
 } from "@heroicons/react/24/outline";
-
-function clsx(...parts: Array<string | false | null | undefined>) {
-  return parts.filter(Boolean).join(" ");
-}
 
 function Section({
   title,
@@ -95,7 +93,7 @@ export default function PreferencesPage() {
                 <button
                   key={t.id}
                   type="button"
-                  className={clsx(
+                  className={cn(
                     "flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-[13px] font-semibold",
                     active
                       ? "border border-[var(--border)] bg-[var(--panel-hover)] text-[var(--fg)]"
@@ -108,7 +106,7 @@ export default function PreferencesPage() {
                 >
                   <span className="flex min-w-0 items-center gap-2">
                     <span
-                      className={clsx(
+                      className={cn(
                         "shrink-0",
                         active ? "text-[var(--fg)]" : "text-[var(--muted-2)]",
                       )}
@@ -159,6 +157,9 @@ export default function PreferencesPage() {
         {tab === "workspace" ? (
           <Section title="Workspace" description="Organization and membership management.">
             <WorkspaceManager />
+            <div className="mt-4">
+              <NotificationPreferences />
+            </div>
           </Section>
         ) : null}
 

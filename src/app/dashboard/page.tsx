@@ -13,6 +13,7 @@ import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } fro
 import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
 import IconButton from "@/components/ui/IconButton";
+import { cn } from "@/lib/cn";
 import {
   BanknotesIcon,
   ChartBarIcon,
@@ -23,10 +24,7 @@ import {
   UserCircleIcon,
   UsersIcon,
 } from "@heroicons/react/24/outline";
-
-function clsx(...parts: Array<string | false | null | undefined>) {
-  return parts.filter(Boolean).join(" ");
-}
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 function Section({
   title,
@@ -247,7 +245,7 @@ export default function DashboardPage() {
                       <button
                         key={t.id}
                         type="button"
-                        className={clsx(
+                        className={cn(
                           "flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold",
                           active
                             ? "bg-[var(--panel-hover)] text-[var(--fg)]"
@@ -259,10 +257,7 @@ export default function DashboardPage() {
                         }}
                       >
                         <span className="flex min-w-0 items-center gap-2">
-                          <span
-                            className={clsx("shrink-0", active ? "text-[var(--fg)]" : "text-[var(--muted-2)]")}
-                            aria-hidden="true"
-                          >
+                          <span className={cn("shrink-0", active ? "text-[var(--fg)]" : "text-[var(--muted-2)]")} aria-hidden="true">
                             {TAB_ICON[t.id]}
                           </span>
                           <span className="min-w-0 truncate">{t.label}</span>
@@ -612,55 +607,33 @@ function MultiLineChart30d({
   series: Array<{ day: string; docsCreated: number; uploadsCreated: number; shareUniqueViews: number; shareDownloads: number }>;
 }) {
   const safe = Array.isArray(series) ? series : [];
-  const labels = safe.map((s) => s.day);
-  const docs = safe.map((s) => (typeof s.docsCreated === "number" ? s.docsCreated : 0));
-  const uploads = safe.map((s) => (typeof s.uploadsCreated === "number" ? s.uploadsCreated : 0));
-  const views = safe.map((s) => (typeof s.shareUniqueViews === "number" ? s.shareUniqueViews : 0));
-  const downloads = safe.map((s) => (typeof s.shareDownloads === "number" ? s.shareDownloads : 0));
-
-  const max = Math.max(1, ...docs, ...uploads, ...views, ...downloads);
-  const n = Math.max(2, safe.length);
-
-  const BASELINE_Y = 29;
-  const TOP_Y = 1;
-  const RANGE_Y = BASELINE_Y - TOP_Y;
-
-  const pointsFor = (values: number[]) =>
-    values.map((v, i) => {
-      const x = (i * 100) / (n - 1);
-      const y = BASELINE_Y - (Math.max(0, v) / max) * RANGE_Y;
-      return { x, y };
-    });
-
-  function smoothPath(pts: Array<{ x: number; y: number }>) {
-    if (!pts.length) return "";
-    if (pts.length === 1) return `M ${pts[0]!.x.toFixed(2)} ${pts[0]!.y.toFixed(2)}`;
-    const clampY = (y: number) => Math.min(BASELINE_Y, Math.max(TOP_Y, y));
-    let d = `M ${pts[0]!.x.toFixed(2)} ${pts[0]!.y.toFixed(2)}`;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[i - 1] ?? pts[i]!;
-      const p1 = pts[i]!;
-      const p2 = pts[i + 1]!;
-      const p3 = pts[i + 2] ?? p2;
-      const c1x = p1.x + (p2.x - p0.x) / 6;
-      const c1y = clampY(p1.y + (p2.y - p0.y) / 6);
-      const c2x = p2.x - (p3.x - p1.x) / 6;
-      const c2y = clampY(p2.y - (p3.y - p1.y) / 6);
-      d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
-    }
-    return d;
-  }
+  const data = safe.map((s) => ({
+    day: s.day,
+    uploads: typeof s.uploadsCreated === "number" && Number.isFinite(s.uploadsCreated) ? Math.max(0, s.uploadsCreated) : 0,
+    docs: typeof s.docsCreated === "number" && Number.isFinite(s.docsCreated) ? Math.max(0, s.docsCreated) : 0,
+    views: typeof s.shareUniqueViews === "number" && Number.isFinite(s.shareUniqueViews) ? Math.max(0, s.shareUniqueViews) : 0,
+    downloads: typeof s.shareDownloads === "number" && Number.isFinite(s.shareDownloads) ? Math.max(0, s.shareDownloads) : 0,
+  }));
 
   const lines: Array<{ key: string; label: string; stroke: string; values: number[] }> = [
-    { key: "uploads", label: "Uploads", stroke: "rgb(59 130 246)", values: uploads },
-    { key: "docs", label: "Docs created", stroke: "rgb(16 185 129)", values: docs },
-    { key: "views", label: "Unique share views", stroke: "rgb(168 85 247)", values: views },
-    { key: "downloads", label: "Share downloads", stroke: "rgb(34 197 94)", values: downloads },
+    { key: "uploads", label: "Uploads", stroke: "rgb(59 130 246)", values: data.map((d) => d.uploads) },
+    { key: "docs", label: "Docs created", stroke: "rgb(16 185 129)", values: data.map((d) => d.docs) },
+    { key: "views", label: "Unique share views", stroke: "rgb(168 85 247)", values: data.map((d) => d.views) },
+    { key: "downloads", label: "Share downloads", stroke: "rgb(34 197 94)", values: data.map((d) => d.downloads) },
   ];
 
+  const labels = data.map((d) => d.day);
   const left = labels[0] ?? "";
   const mid = labels[Math.floor(labels.length / 2)] ?? "";
   const right = labels[labels.length - 1] ?? "";
+
+  const max = Math.max(
+    1,
+    ...data.map((d) => d.uploads),
+    ...data.map((d) => d.docs),
+    ...data.map((d) => d.views),
+    ...data.map((d) => d.downloads),
+  );
 
   return (
     <div className="w-full">
@@ -674,33 +647,39 @@ function MultiLineChart30d({
         <div className="ml-auto text-[11px] text-[var(--muted-2)]">Max: {max.toLocaleString()}</div>
       </div>
 
-      <svg viewBox="0 0 100 30" className="h-56 w-full">
-        <path d={`M 0 ${BASELINE_Y} L 100 ${BASELINE_Y}`} stroke="currentColor" strokeOpacity="0.35" strokeWidth="0.75" fill="none" />
-        <path d={`M 0 ${TOP_Y} L 100 ${TOP_Y}`} stroke="currentColor" strokeOpacity="0.15" strokeWidth="0.5" fill="none" />
-        <path d={`M 0 ${(TOP_Y + BASELINE_Y) / 2} L 100 ${(TOP_Y + BASELINE_Y) / 2}`} stroke="currentColor" strokeOpacity="0.15" strokeWidth="0.5" fill="none" />
-
-        {lines.map((l) => {
-          const pts = pointsFor(l.values);
-          const d = pts.length ? smoothPath(pts) : `M 0 ${BASELINE_Y} L 100 ${BASELINE_Y}`;
-          return (
-            <path
-              key={l.key}
-              d={d}
-              stroke={l.stroke}
-              strokeWidth="0.9"
-              fill="none"
-              strokeLinejoin="round"
-              strokeLinecap="round"
-              shapeRendering="geometricPrecision"
+      <div className="h-56 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 6, right: 10, bottom: 6, left: 6 }}>
+            <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
+            <XAxis
+              dataKey="day"
+              ticks={[left, mid, right].filter(Boolean)}
+              tick={{ fontSize: 10, fill: "var(--muted-2)" }}
+              axisLine={false}
+              tickLine={false}
+              interval={0}
+              height={24}
             />
-          );
-        })}
-      </svg>
-
-      <div className="mt-2 flex justify-between px-1 text-[10px] text-[var(--muted-2)] tabular-nums">
-        <span>{left}</span>
-        <span>{mid}</span>
-        <span>{right}</span>
+            <YAxis hide domain={[0, "dataMax"]} />
+            <Tooltip
+              cursor={{ stroke: "var(--border)", strokeOpacity: 0.25 }}
+              contentStyle={{
+                background: "var(--panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                padding: "8px 10px",
+                fontSize: 12,
+                color: "var(--fg)",
+              }}
+              labelStyle={{ color: "var(--muted-2)" }}
+              formatter={(v: any, name: any) => [typeof v === "number" ? v.toLocaleString() : String(v), String(name ?? "")]}
+            />
+            <Line type="monotone" dataKey="uploads" stroke="rgb(59 130 246)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="docs" stroke="rgb(16 185 129)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="views" stroke="rgb(168 85 247)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="downloads" stroke="rgb(34 197 94)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
+          </LineChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );

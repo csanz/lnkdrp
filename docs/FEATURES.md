@@ -29,8 +29,9 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 ## Preferences
 
 - **Preferences page**: `/preferences`
-  - A settings hub for account/workspace/usage/spending/billing (currently a shell UI; actions like account deletion and billing portal are not yet wired up).
+  - A settings hub for account/workspace/usage/spending/billing (some areas are still a shell UI).
   - Supports deep links via `/preferences?tab=billing` (and pretty URLs like `/preferences/billing`).
+  - Workspace tab includes **Notification preferences** for doc update emails (off / daily digest / immediately), stored per workspace member.
 
 ## Dashboard (account + workspace hub)
 
@@ -39,11 +40,12 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Left mini-nav shows the signed-in user name/email and a compact section list (Overview/Account/etc). The active workspace pill is shown in the top-left header.
   - Includes an **Overview** tab (default) that shows high-level workspace stats (e.g. new docs, pages viewed, share views) plus a **30-day activity graph** aggregated across all docs in the active workspace.
   - Overview includes a **Subscription** card at the top:
-    - Shows current plan (Free vs Pro) and Stripe status (when available).
+    - Renders **Free** and **Pro** tier cards with a **Current** badge on the active tier.
+    - Uses `GET /api/billing/status` to show user billing state (plan + Stripe status + renewal date when available).
     - Free plan includes an **Upgrade** button that creates a Stripe **Checkout Session** server-side (`POST /api/stripe/checkout`) and redirects to Stripe.
     - After Checkout, the user lands on `/billing/success` which shows **“Processing…”** and polls `/api/billing/status` until **Stripe webhooks** update MongoDB (access is webhook-driven; we do not trust the redirect).
-    - Pro plan includes a **Manage subscription** button that opens a Stripe **billing portal** session (`POST /api/stripe/portal`).
-    - Includes a quick link to **Usage** (placeholder for now).
+    - Pro plan includes a **Manage Subscription** button that opens a Stripe **billing portal** session (`POST /api/stripe/portal`).
+    - When on Pro, the Pro card also shows a small **Usage this month** module (currently a placeholder) with a **View usage** link to the Usage tab.
   - Includes a **Contact Us** item in the left menu that opens a modal with the support email (`hi@lnkdrp.com`).
   - Account tab includes an **Edit name** modal (updates the signed-in user's display name).
   - User avatar UI uses **initials** (we do not display the Google profile image).
@@ -57,7 +59,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Active org**:
   - The app tracks an “active org” in the signed-in session (JWT claim) and uses it to scope core data APIs (projects/docs/requests).
   - Workspace switching/management is available in **Preferences** (`/preferences`).
-  - The active workspace indicator is shown in the UI near the top-left brand/logo area (best-effort, client-side indicator). If the workspace has an icon (org avatar), it’s shown next to the workspace name. The indicator can optionally include a small plan badge (e.g. “PRO”).
+  - The active workspace indicator is shown in the UI near the top-left brand/logo area (best-effort, client-side indicator). If the workspace has an icon (org avatar), it’s shown next to the workspace name. If the user is on the Pro plan, the indicator also shows a small “PRO” plan badge.
   - The account menu workspace quick switch list also shows the workspace icon when available.
 - **Switching mechanism**:
   - Org switching is performed via a server redirect route (`/org/switch`) which validates membership, sets an httpOnly active-org cookie, shows a brief “Switching workspace…” transition, and then redirects back to the current page (`returnTo`) so the app rehydrates in the new org context.
@@ -96,6 +98,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Changes are only accessible to users who have access to the doc (API: `/api/docs/:docId/changes`).
   - History UI: `/doc/:docId/history` (version badge links here).
   - History includes who uploaded each version (best-effort from user record).
+  - History includes a best-effort **Recipients** preview for each version (workspace members + whether they opened that version), plus per-viewer **page timing** aggregates (internal-only; uses doc page timing events).
   - History UI includes a right-side overview panel with aggregate stats (replacements count, top editors, cadence, and best-effort impact/signals).
 - **Starred docs**:
   - Client-side “star” state with a local cache and change events.
@@ -151,6 +154,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - You can share the link with multiple people; each upload becomes a new doc in that request folder.
   - Public recipient upload page: `/request/:token` (legacy: `/r/:token`)
   - The request repo page shows both the **Request link** (uploads enabled) and a **Request view** link (read-only).
+  - Request repo list page (owner): `/requests` (lists request repositories/inboxes; matches the “Received” sidebar section).
 - **View-only link (recipient)**:
   - Public recipient viewer page: `/request-view/:token`
   - Allows viewing docs inside a request repo **without enabling uploads** and without requiring sign-in.
@@ -216,6 +220,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Data → Users**: `/a/data/users`
   - API: `/api/admin/data/users`
   - Includes an org picker for viewing users/memberships for any org (API: `/api/admin/data/orgs` + `/api/admin/data/orgs/:orgId/members`).
+  - Can admin-override a user’s billing `plan` (Free/Pro) for testing via `/api/admin/users/:userId/plan` (Stripe remains the source of truth in production).
 - **Data → Projects**: `/a/data/projects`
   - API: `/api/admin/data/projects`
   - Drilldown/editor: `/a/data/projects/:projectId` (API: `/api/admin/data/projects/:projectId`)

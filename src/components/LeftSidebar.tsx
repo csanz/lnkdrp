@@ -20,11 +20,13 @@ import {
   Square2StackIcon,
 } from "@heroicons/react/24/outline";
 import DeleteProjectModal from "@/components/modals/DeleteProjectModal";
+import DeleteRequestRepoModal, { type RequestRepoDeleteMode } from "@/components/modals/DeleteRequestRepoModal";
 import CreateLinkRequestRepositoryModal from "@/components/modals/CreateLinkRequestRepositoryModal";
 import DeleteDocModal from "@/components/modals/DeleteDocModal";
 import ReviewPerspectiveModal from "@/components/modals/ReviewPerspectiveModal";
 import SidebarDocsModal from "@/components/modals/SidebarDocsModal";
 import SidebarProjectsModal from "@/components/modals/SidebarProjectsModal";
+import SidebarRequestsModal from "@/components/modals/SidebarRequestsModal";
 import SidebarStarredModal from "@/components/modals/SidebarStarredModal";
 import AccountMenu from "@/components/AccountMenu";
 import SidebarProjectsSection from "@/components/SidebarProjectsSection";
@@ -73,9 +75,10 @@ const STARRED_META_CACHE_KEY_LEGACY = "lnkdrp.starredMetaCache.v1";
 const STARRED_COLLAPSED_KEY = "lnkdrp.sidebar.starredCollapsed.v1";
 const PROJECTS_COLLAPSED_KEY = "lnkdrp.sidebar.projectsCollapsed.v1";
 const DOCS_COLLAPSED_KEY = "lnkdrp.sidebar.docsCollapsed.v1";
+const REQUESTS_COLLAPSED_KEY = "lnkdrp.sidebar.requestsCollapsed.v1";
 const STARRED_SIDEBAR_LIMIT = 3;
 const PROJECTS_SIDEBAR_LIMIT = 4;
-const REQUESTS_SIDEBAR_LIMIT = 2;
+const REQUESTS_SIDEBAR_LIMIT = 3;
 const DOCS_SIDEBAR_LIMIT = 5;
 
 type DocFolder = { id: string; name: string; slug: string };
@@ -264,6 +267,8 @@ export default function LeftSidebar({
   const [starredCollapsedLoaded, setStarredCollapsedLoaded] = useState(false);
   const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [projectsCollapsedLoaded, setProjectsCollapsedLoaded] = useState(false);
+  const [requestsCollapsed, setRequestsCollapsed] = useState(false);
+  const [requestsCollapsedLoaded, setRequestsCollapsedLoaded] = useState(false);
   const [docsCollapsed, setDocsCollapsed] = useState(false);
   const [docsCollapsedLoaded, setDocsCollapsedLoaded] = useState(false);
   // Cached meta used ONLY for sorting to avoid a brief reorder flash on refresh.
@@ -300,6 +305,8 @@ export default function LeftSidebar({
   const [starredModalPage, setStarredModalPage] = useState(1);
   const [showProjectsModal, setShowProjectsModal] = useState(false);
   const [projectsQuery, setProjectsQuery] = useState("");
+  const [showRequestsModal, setShowRequestsModal] = useState(false);
+  const [requestsQuery, setRequestsQuery] = useState("");
   const starredMetaRef = useRef(starredMetaById);
   const starredDetailsRef = useRef(starredDetailsById);
   const [copiedShareId, setCopiedShareId] = useState<string | null>(null);
@@ -307,10 +314,15 @@ export default function LeftSidebar({
   const [docsThumbAspectById, setDocsThumbAspectById] = useState<Record<string, number>>({});
   const [openProjectMenuId, setOpenProjectMenuId] = useState<string | null>(null);
   const [openDocMenuId, setOpenDocMenuId] = useState<string | null>(null);
+  const [openRequestMenuId, setOpenRequestMenuId] = useState<string | null>(null);
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [deleteProjectBusy, setDeleteProjectBusy] = useState(false);
   const [deleteProjectError, setDeleteProjectError] = useState<string | null>(null);
   const [deleteProjectTarget, setDeleteProjectTarget] = useState<ProjectListItem | null>(null);
+  const [deleteRequestRepoOpen, setDeleteRequestRepoOpen] = useState(false);
+  const [deleteRequestRepoBusy, setDeleteRequestRepoBusy] = useState(false);
+  const [deleteRequestRepoError, setDeleteRequestRepoError] = useState<string | null>(null);
+  const [deleteRequestRepoTarget, setDeleteRequestRepoTarget] = useState<ProjectListItem | null>(null);
   const [deleteDocOpen, setDeleteDocOpen] = useState(false);
   const [deleteDocBusy, setDeleteDocBusy] = useState(false);
   const [deleteDocError, setDeleteDocError] = useState<string | null>(null);
@@ -325,6 +337,13 @@ export default function LeftSidebar({
   });
 
   const [projectsModal, setProjectsModal] = useState<Paged<ProjectListItem>>({
+    items: [],
+    total: 0,
+    page: 1,
+    limit: 20,
+  });
+
+  const [requestsModal, setRequestsModal] = useState<Paged<ProjectListItem>>({
     items: [],
     total: 0,
     page: 1,
@@ -465,6 +484,27 @@ export default function LeftSidebar({
           page: typeof json.page === "number" ? json.page : projectsModal.page,
           limit: typeof json.limit === "number" ? json.limit : projectsModal.limit,
         });
+
+        if (!showRequestsModal) return;
+        const rq = requestsQuery.trim() ? `&q=${encodeURIComponent(requestsQuery.trim())}` : "";
+        const rRes = await fetchWithTempUser(
+          `/api/requests?limit=${requestsModal.limit}&page=${requestsModal.page}${rq}`,
+          { cache: "no-store" },
+        );
+        if (!rRes.ok) return;
+        const rJson = (await rRes.json()) as {
+          items?: ProjectListItem[];
+          total?: number;
+          page?: number;
+          limit?: number;
+        };
+        if (cancelled) return;
+        setRequestsModal({
+          items: Array.isArray(rJson.items) ? rJson.items : [],
+          total: typeof rJson.total === "number" ? rJson.total : 0,
+          page: typeof rJson.page === "number" ? rJson.page : requestsModal.page,
+          limit: typeof rJson.limit === "number" ? rJson.limit : requestsModal.limit,
+        });
       } catch {
         // ignore
       }
@@ -483,7 +523,16 @@ export default function LeftSidebar({
       cancelled = true;
       window.removeEventListener(PROJECTS_CHANGED_EVENT, onProjectsChanged);
     };
-  }, [projectsModal.limit, projectsModal.page, projectsQuery, showProjectsModal]);
+  }, [
+    projectsModal.limit,
+    projectsModal.page,
+    projectsQuery,
+    showProjectsModal,
+    requestsModal.limit,
+    requestsModal.page,
+    requestsQuery,
+    showRequestsModal,
+  ]);
 
   useEffect(() => {
     // Refresh docs immediately when another part of the UI changes them.
@@ -612,6 +661,27 @@ export default function LeftSidebar({
       // ignore (quota / private mode)
     }
   }, [mounted, docsCollapsed, docsCollapsedLoaded]);
+
+  useEffect(() => {
+    if (!mounted) return;
+    try {
+      const raw = window.localStorage.getItem(REQUESTS_COLLAPSED_KEY);
+      setRequestsCollapsed(raw === "1");
+    } catch {
+      // ignore
+    } finally {
+      setRequestsCollapsedLoaded(true);
+    }
+  }, [mounted]);
+
+  useEffect(() => {
+    if (!mounted || !requestsCollapsedLoaded) return;
+    try {
+      window.localStorage.setItem(REQUESTS_COLLAPSED_KEY, requestsCollapsed ? "1" : "0");
+    } catch {
+      // ignore (quota / private mode)
+    }
+  }, [mounted, requestsCollapsed, requestsCollapsedLoaded]);
 
   useEffect(() => {
     starredMetaRef.current = starredMetaById;
@@ -794,6 +864,44 @@ export default function LeftSidebar({
       cancelled = true;
     };
   }, [showProjectsModal, projectsModal.page, projectsModal.limit, projectsQuery]);
+
+  useEffect(() => {
+    if (!showRequestsModal) return;
+    let cancelled = false;
+/**
+ * Load (updates state (setRequestsModal); uses trim, encodeURIComponent, fetchWithTempUser).
+ */
+
+    async function load() {
+      try {
+        const q = requestsQuery.trim() ? `&q=${encodeURIComponent(requestsQuery.trim())}` : "";
+        const res = await fetchWithTempUser(
+          `/api/requests?limit=${requestsModal.limit}&page=${requestsModal.page}${q}`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const json = (await res.json()) as {
+          items?: ProjectListItem[];
+          total?: number;
+          page?: number;
+          limit?: number;
+        };
+        if (cancelled) return;
+        setRequestsModal({
+          items: Array.isArray(json.items) ? json.items : [],
+          total: typeof json.total === "number" ? json.total : 0,
+          page: typeof json.page === "number" ? json.page : requestsModal.page,
+          limit: typeof json.limit === "number" ? json.limit : requestsModal.limit,
+        });
+      } catch {
+        // ignore
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [showRequestsModal, requestsModal.page, requestsModal.limit, requestsQuery]);
 
   const docsForSidebar = useMemo(() => docs.items.slice(0, DOCS_SIDEBAR_LIMIT), [docs.items]);
 
@@ -1149,6 +1257,31 @@ export default function LeftSidebar({
       setDeleteProjectBusy(false);
     }
   }
+
+  async function deleteRequestRepoById(projectId: string, mode: RequestRepoDeleteMode) {
+    setDeleteRequestRepoBusy(true);
+    setDeleteRequestRepoError(null);
+    try {
+      const res = await fetchWithTempUser(`/api/projects/${encodeURIComponent(projectId)}`, {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ requestDocsMode: mode }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setDeleteRequestRepoError(json?.error || "Failed to delete request repository");
+        return;
+      }
+      setDeleteRequestRepoOpen(false);
+      setDeleteRequestRepoTarget(null);
+      notifyProjectsChanged();
+      void refreshSidebarCache({ reason: "request-repo-deleted", force: true });
+    } catch {
+      setDeleteRequestRepoError("Failed to delete request repository");
+    } finally {
+      setDeleteRequestRepoBusy(false);
+    }
+  }
 /**
  * Delete Doc By Id (updates state (setDeleteDocBusy, setDeleteDocError, setDeleteDocOpen); uses setDeleteDocBusy, setDeleteDocError, fetchWithTempUser).
  */
@@ -1236,25 +1369,22 @@ export default function LeftSidebar({
   return (
     <aside className="h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
-        <div className="flex min-w-0 items-center gap-2 px-4 pb-7 pt-6">
+        <div className="flex min-w-0 items-center gap-2 px-4 pb-8 pt-7">
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
             <Image src={logoSrc} alt="LinkDrop" width={32} height={32} />
           </Link>
           <ActiveWorkspacePill
             maxWidthClassName="max-w-[240px]"
-            // TODO: wire to real subscription plan; temporary UI stub.
-            planBadgeText="PRO"
           />
         </div>
 
         <div className="px-3 pb-3">
-          <div className="flex overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--panel)]">
+          <div className="flex gap-2">
             <div
               role="button"
               tabIndex={navLocked ? -1 : 0}
               className={[
-                "group relative flex-1 cursor-pointer overflow-hidden px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
-                "border-r border-[var(--border)]",
+                "group relative flex-1 cursor-pointer overflow-hidden rounded-lg bg-[var(--panel)] px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
                 navLocked ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
                 isAddNewDropActive
                   ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
@@ -1307,10 +1437,8 @@ export default function LeftSidebar({
                   isAddNewDropActive ? "opacity-25" : "opacity-100",
                 ].join(" ")}
               >
-                <div className="flex items-center gap-2 text-[13px] font-semibold">
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-[3px] border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)]">
-                    <PlusIcon className="h-3 w-3" />
-                  </span>
+                <div className="flex items-center gap-2 text-[12px] font-semibold">
+                  <PlusIcon className="h-4 w-4 text-[var(--muted)]" />
                   <span>Add new</span>
                 </div>
               </div>
@@ -1328,7 +1456,7 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group flex-1 px-2 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group flex-1 rounded-lg bg-[var(--panel)] px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
                 navLocked ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -1339,7 +1467,7 @@ export default function LeftSidebar({
                 setCreatedRequestProjectId(null);
               }}
             >
-              <div className="flex items-center gap-2 text-[13px] font-semibold">
+              <div className="flex items-center gap-2 text-[12px] font-semibold">
                 <InboxArrowDownIcon className="h-4 w-4 text-[var(--muted)]" />
                 <span>Request</span>
               </div>
@@ -1453,14 +1581,60 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+              <div className="group flex items-center justify-between gap-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
                 <span className="inline-flex items-center gap-1.5">
                   <InboxArrowDownIcon className="h-3.5 w-3.5" />
                   <span>Received</span>
                 </span>
+
+                <IconButton
+                  ariaLabel={(requestsCollapsedLoaded ? requestsCollapsed : true) ? "Expand received" : "Collapse received"}
+                  variant="ghost"
+                  size="sm"
+                  className={[
+                    "rounded-md p-0.5 text-[var(--muted-2)]",
+                    "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+                  ].join(" ")}
+                  onClick={() => {
+                    setRequestsCollapsedLoaded(true);
+                    setRequestsCollapsed((v) => !v);
+                  }}
+                >
+                  {(requestsCollapsedLoaded ? requestsCollapsed : true) ? (
+                    <PlusSmallIcon className="h-4 w-4" />
+                  ) : (
+                    <MinusIcon className="h-4 w-4" />
+                  )}
+                </IconButton>
               </div>
 
-              {!requestsLoaded ? (
+              {(requestsCollapsedLoaded ? requestsCollapsed : true) ? (
+                !requestsLoaded ? (
+                  <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
+                ) : !requests.total && !requests.items.length ? (
+                  <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
+                ) : (
+                  <div className="mt-2 flex items-center justify-between gap-3 px-2 py-1.5">
+                    <div className="text-[13px] font-medium text-[var(--muted-2)]">
+                      {requests.total || requests.items.length} inbox{(requests.total || requests.items.length) === 1 ? "" : "es"}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={navLocked}
+                      className={[
+                        "rounded-lg px-2 py-1 text-[13px] font-medium text-[var(--muted)]",
+                        navLocked ? "cursor-not-allowed opacity-60" : "hover:bg-[var(--sidebar-hover)]",
+                      ].join(" ")}
+                      onClick={() => {
+                        if (navLocked) return;
+                        setShowRequestsModal(true);
+                      }}
+                    >
+                      See more
+                    </button>
+                  </div>
+                )
+              ) : !requestsLoaded ? (
                 <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
               ) : !requestFoldersForSidebar.length ? (
                 <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
@@ -1468,27 +1642,96 @@ export default function LeftSidebar({
                 <ul className="mt-2 space-y-1">
                   {requestFoldersForSidebar.map((p) => (
                     <li key={p.id}>
-                      <div
-                        role="link"
-                        tabIndex={0}
-                        className="w-full cursor-pointer overflow-hidden rounded-xl px-2 py-2 text-left text-[14px] hover:bg-[var(--sidebar-hover)]"
-                        onClick={() => router.push(`/project/${p.id}`)}
-                        onKeyDown={(e) => {
-                          if (e.key !== "Enter" && e.key !== " ") return;
-                          e.preventDefault();
-                          router.push(`/project/${p.id}`);
-                        }}
-                        title={p.description || undefined}
-                      >
-                        <div className="flex min-w-0 items-center gap-1.5">
-                          <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted)]" />
-                          <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">
-                            {truncateEnd(p.name || "Request", 27)}
-                          </span>
+                      <div className="group relative">
+                        <div
+                          role="link"
+                          tabIndex={0}
+                          className="w-full cursor-pointer overflow-hidden rounded-xl px-2 py-2 text-left text-[14px] hover:bg-[var(--sidebar-hover)]"
+                          onClick={() => {
+                            setOpenProjectMenuId(null);
+                            setOpenDocMenuId(null);
+                            setOpenRequestMenuId(null);
+                            router.push(`/project/${p.id}`);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter" && e.key !== " ") return;
+                            e.preventDefault();
+                            setOpenProjectMenuId(null);
+                            setOpenDocMenuId(null);
+                            setOpenRequestMenuId(null);
+                            router.push(`/project/${p.id}`);
+                          }}
+                          title={p.description || undefined}
+                        >
+                          <div className="flex min-w-0 items-center justify-between gap-2">
+                            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                              <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted)]" />
+                              <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">
+                                {truncateEnd(p.name || "Request", 27)}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              className={[
+                                "shrink-0 rounded-md p-0.5 text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                                "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+                              ].join(" ")}
+                              aria-label="Request repository actions"
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setOpenProjectMenuId(null);
+                                setOpenDocMenuId(null);
+                                setOpenRequestMenuId((prev) => (prev === p.id ? null : p.id));
+                              }}
+                            >
+                              <EllipsisHorizontalIcon className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
+
+                        {openRequestMenuId === p.id ? (
+                          <div
+                            className="absolute right-2 top-[calc(100%+6px)] z-50 w-[210px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+                            onPointerDown={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] font-medium text-red-700 hover:bg-red-50"
+                              onClick={() => {
+                                setOpenRequestMenuId(null);
+                                setDeleteRequestRepoTarget(p);
+                                setDeleteRequestRepoError(null);
+                                setDeleteRequestRepoOpen(true);
+                              }}
+                            >
+                              <span>Delete repository…</span>
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     </li>
                   ))}
+
+                  {requests.total > REQUESTS_SIDEBAR_LIMIT ? (
+                    <li>
+                      <button
+                        type="button"
+                        disabled={navLocked}
+                        className={[
+                          "w-full rounded-xl px-2 py-2 text-left text-[14px] font-medium text-[var(--muted)]",
+                          navLocked ? "cursor-not-allowed opacity-60" : "hover:bg-[var(--sidebar-hover)]",
+                        ].join(" ")}
+                        onClick={() => {
+                          if (navLocked) return;
+                          setShowRequestsModal(true);
+                        }}
+                      >
+                        See more
+                      </button>
+                    </li>
+                  ) : null}
                 </ul>
               )}
             </section>
@@ -1629,16 +1872,17 @@ export default function LeftSidebar({
 
                             <div className="flex shrink-0 items-center gap-1">
                               {d.shareId ? (
-                                <button
-                                  type="button"
+                                <IconButton
+                                  ariaLabel="Copy doc link"
+                                  title={copiedShareId === d.shareId ? "Copied" : "Copy"}
+                                  variant="ghost"
+                                  size="sm"
                                   className={[
                                     "shrink-0 rounded-md p-0.5 text-[var(--muted)] hover:bg-[var(--panel-hover)]",
                                     hideCopyIconShareId === d.shareId && copiedShareId !== d.shareId
                                       ? "opacity-0"
                                       : "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
                                   ].join(" ")}
-                                  aria-label="Copy doc link"
-                                  title={copiedShareId === d.shareId ? "Copied" : "Copy"}
                                   onClick={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
@@ -1650,15 +1894,16 @@ export default function LeftSidebar({
                                   ) : (
                                     <ClipboardCopyIcon />
                                   )}
-                                </button>
+                                </IconButton>
                               ) : null}
-                              <button
-                                type="button"
+                              <IconButton
+                                ariaLabel="Document actions"
+                                variant="ghost"
+                                size="sm"
                                 className={[
                                   "shrink-0 rounded-md p-0.5 text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
                                   "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
                                 ].join(" ")}
-                                aria-label="Document actions"
                                 onPointerDown={(e) => e.stopPropagation()}
                                 onClick={(e) => {
                                   e.preventDefault();
@@ -1668,7 +1913,7 @@ export default function LeftSidebar({
                                 }}
                               >
                                 <EllipsisHorizontalIcon className="h-4 w-4" />
-                              </button>
+                              </IconButton>
                             </div>
                           </div>
                         </div>
@@ -1810,6 +2055,24 @@ export default function LeftSidebar({
         }}
       />
 
+      <DeleteRequestRepoModal
+        open={deleteRequestRepoOpen}
+        repoName={deleteRequestRepoTarget?.name ?? "this repository"}
+        busy={deleteRequestRepoBusy}
+        error={deleteRequestRepoError}
+        onClose={() => {
+          if (deleteRequestRepoBusy) return;
+          setDeleteRequestRepoOpen(false);
+          setDeleteRequestRepoTarget(null);
+          setDeleteRequestRepoError(null);
+        }}
+        onConfirm={(mode) => {
+          const id = deleteRequestRepoTarget?.id ?? "";
+          if (!id) return;
+          void deleteRequestRepoById(id, mode);
+        }}
+      />
+
       <DeleteDocModal
         open={deleteDocOpen}
         busy={Boolean(deleteDocBusy)}
@@ -1874,6 +2137,18 @@ export default function LeftSidebar({
         setDeleteProjectTarget={(p) => setDeleteProjectTarget(p)}
         setDeleteProjectError={setDeleteProjectError}
         setDeleteProjectOpen={setDeleteProjectOpen}
+        formatRelative={formatRelative}
+      />
+
+      {/* Requests modal */}
+      <SidebarRequestsModal
+        open={showRequestsModal}
+        onClose={() => setShowRequestsModal(false)}
+        routerPush={(href) => router.push(href)}
+        requestsQuery={requestsQuery}
+        setRequestsQuery={setRequestsQuery}
+        requestsModal={requestsModal}
+        setRequestsModal={setRequestsModal}
         formatRelative={formatRelative}
       />
     </aside>

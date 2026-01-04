@@ -9,6 +9,7 @@ import { notFound } from "next/navigation";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
+import { StandaloneBrandedHeader } from "@/components/StandaloneBrandedHeader";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,7 +38,9 @@ export default async function RequestViewPage(props: { params: Promise<{ token: 
     typeof project.description === "string" && project.description.trim() ? project.description.trim() : "";
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-10">
+    <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
+      <StandaloneBrandedHeader kicker="Request repository" />
+      <div className="mx-auto w-full max-w-3xl px-4 py-10">
       <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Request repository</div>
       <h1 className="mt-2 text-2xl font-semibold text-[var(--fg)]">{title}</h1>
       {description ? <div className="mt-2 text-sm text-[var(--muted)]">{description}</div> : null}
@@ -96,7 +99,8 @@ export default async function RequestViewPage(props: { params: Promise<{ token: 
           <div className="px-4 py-10 text-center text-sm text-[var(--muted)]">No documents yet.</div>
         )}
       </div>
-    </div>
+      </div>
+    </main>
   );
 }
 

@@ -7,12 +7,18 @@
 
 import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
+import Alert from "@/components/ui/Alert";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import { fmtDate } from "@/lib/admin/format";
+import { fetchJson } from "@/lib/http/fetchJson";
 
 type UserRow = {
   id: string;
   email: string | null;
   name: string | null;
   role: string | null;
+  plan: string | null;
   isTemp: boolean;
   isActive: boolean;
   createdAt: string | null;
@@ -39,13 +45,6 @@ type OrgMemberRow = {
   lastLoginAt: string | null;
 };
 
-function fmtDate(v: string | null | undefined) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.valueOf())) return v;
-  return d.toLocaleString();
-}
-
 export default function AdminDataUsersPage() {
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? null;
@@ -63,6 +62,8 @@ export default function AdminDataUsersPage() {
   const [items, setItems] = useState<UserRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [planBusyUserId, setPlanBusyUserId] = useState<string>("");
+  const [planError, setPlanError] = useState<string | null>(null);
 
   const [orgs, setOrgs] = useState<OrgRow[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
@@ -85,22 +86,13 @@ export default function AdminDataUsersPage() {
         qs.set("limit", String(limit));
         qs.set("page", String(page));
         if (q.trim()) qs.set("q", q.trim());
-        const res = await fetch(`/api/admin/data/users?${qs.toString()}`, { method: "GET" });
-        const data = (await res.json().catch(() => ({}))) as {
-          error?: unknown;
-          users?: unknown;
-          total?: unknown;
-        };
-        if (!res.ok) {
-          setError(typeof data.error === "string" ? data.error : "Failed to load users");
-          setItems([]);
-          setTotal(0);
-          return;
-        }
+        const data = await fetchJson<{ users?: unknown; total?: unknown }>(`/api/admin/data/users?${qs.toString()}`, {
+          method: "GET",
+        });
         setItems(Array.isArray(data.users) ? (data.users as UserRow[]) : []);
         setTotal(typeof data.total === "number" ? data.total : Number(data.total ?? 0) || 0);
-      } catch {
-        setError("Failed to load users");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load users");
         setItems([]);
         setTotal(0);
       } finally {
@@ -109,6 +101,34 @@ export default function AdminDataUsersPage() {
     })();
   }, [canUseAdmin, limit, page, q]);
 
+  async function setUserPlan(userId: string, plan: "free" | "pro") {
+    if (!userId) return;
+    if (planBusyUserId) return;
+    setPlanBusyUserId(userId);
+    setPlanError(null);
+    try {
+      const json = await fetchJson<{ ok?: boolean; plan?: string; error?: string }>(`/api/admin/users/${encodeURIComponent(userId)}/plan`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+      if (!json || json.ok !== true) throw new Error(json?.error || "Failed to update plan");
+
+      // Update the row optimistically so the admin table reflects the override immediately.
+      setItems((prev) => prev.map((u) => (u.id === userId ? { ...u, plan: (json.plan ?? plan) as any } : u)));
+
+      // Clear cached plan used by the workspace pill (best-effort).
+      if (typeof window !== "undefined") {
+        const userKey = (session?.user?.email ?? "").trim();
+        if (userKey) window.sessionStorage.removeItem(`lnkdrp_billing_plan_${userKey}`);
+      }
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : "Failed to update plan");
+    } finally {
+      setPlanBusyUserId("");
+    }
+  }
+
   // Load org list once (used by org member viewer).
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -116,20 +136,14 @@ export default function AdminDataUsersPage() {
     setOrgsError(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/admin/data/orgs?limit=500`, { method: "GET" });
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown; orgs?: unknown };
-        if (!res.ok) {
-          setOrgsError(typeof data.error === "string" ? data.error : "Failed to load orgs");
-          setOrgs([]);
-          return;
-        }
+        const data = await fetchJson<{ orgs?: unknown }>(`/api/admin/data/orgs?limit=500`, { method: "GET" });
         const list = Array.isArray(data.orgs) ? (data.orgs as OrgRow[]) : [];
         setOrgs(list);
         // Default to the signed-in active org if present and list contains it.
         const preferred = session?.activeOrgId ?? "";
         if (preferred && list.some((o) => o.id === preferred)) setSelectedOrgId(preferred);
-      } catch {
-        setOrgsError("Failed to load orgs");
+      } catch (e) {
+        setOrgsError(e instanceof Error ? e.message : "Failed to load orgs");
         setOrgs([]);
       } finally {
         setOrgsLoading(false);
@@ -150,16 +164,13 @@ export default function AdminDataUsersPage() {
     setMembersError(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/admin/data/orgs/${encodeURIComponent(selectedOrgId)}/members`, { method: "GET" });
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown; members?: unknown };
-        if (!res.ok) {
-          setMembersError(typeof data.error === "string" ? data.error : "Failed to load members");
-          setMembers([]);
-          return;
-        }
+        const data = await fetchJson<{ members?: unknown }>(
+          `/api/admin/data/orgs/${encodeURIComponent(selectedOrgId)}/members`,
+          { method: "GET" },
+        );
         setMembers(Array.isArray(data.members) ? (data.members as OrgMemberRow[]) : []);
-      } catch {
-        setMembersError("Failed to load members");
+      } catch (e) {
+        setMembersError(e instanceof Error ? e.message : "Failed to load members");
         setMembers([]);
       } finally {
         setMembersLoading(false);
@@ -178,13 +189,13 @@ export default function AdminDataUsersPage() {
           <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Users</div>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
           <div className="mt-5">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-5 py-2.5 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               onClick={() => void signIn("google", { callbackUrl: "/a/data/users" })}
             >
               Sign in
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -211,8 +222,8 @@ export default function AdminDataUsersPage() {
             <p className="mt-1 text-sm text-[var(--muted)]">Paged list of users.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <input
-              className="w-[260px] max-w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--fg)]"
+            <Input
+              className="w-[260px] max-w-full"
               placeholder="Search email or name…"
               value={q}
               onChange={(e) => {
@@ -223,22 +234,20 @@ export default function AdminDataUsersPage() {
             <div className="text-xs text-[var(--muted-2)]">
               Page {page} / {totalPages} • {total} total
             </div>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)] disabled:opacity-60"
+            <Button
+              variant="outline"
               disabled={page <= 1}
               onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
               Prev
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)] disabled:opacity-60"
+            </Button>
+            <Button
+              variant="outline"
               disabled={page >= totalPages}
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             >
               Next
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -265,16 +274,16 @@ export default function AdminDataUsersPage() {
                   );
                 })}
               </select>
-              <button
-                type="button"
-                className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)] disabled:opacity-60"
+              <Button
+                variant="outline"
+                className="bg-[var(--panel-2)]"
                 disabled={!selectedOrgId || membersLoading}
                 onClick={() => {
                   setMembersReloadKey((v) => v + 1);
                 }}
               >
                 {membersLoading ? "Loading…" : "Refresh"}
-              </button>
+              </Button>
               <div className="text-xs text-[var(--muted-2)]">{members.length ? `${members.length} members` : ""}</div>
             </div>
           </div>
@@ -330,9 +339,14 @@ export default function AdminDataUsersPage() {
         </div>
 
         {error ? (
-          <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm text-red-700">
+          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
             {error}
-          </div>
+          </Alert>
+        ) : null}
+        {planError ? (
+          <Alert variant="info" className="mt-3 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+            {planError}
+          </Alert>
         ) : null}
 
         {loading ? (
@@ -348,6 +362,7 @@ export default function AdminDataUsersPage() {
                     <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Name</th>
                     <th className="px-4 py-3">Role</th>
+                    <th className="px-4 py-3">Plan</th>
                     <th className="px-4 py-3">Active</th>
                     <th className="px-4 py-3">Temp</th>
                     <th className="px-4 py-3">Created</th>
@@ -361,6 +376,31 @@ export default function AdminDataUsersPage() {
                       <td className="px-4 py-3">{u.email ?? "—"}</td>
                       <td className="px-4 py-3">{u.name ?? "—"}</td>
                       <td className="px-4 py-3">{u.role ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-[var(--panel-hover)] px-2 py-1 text-xs font-semibold text-[var(--fg)]">
+                            {(u.plan ?? "free").toLowerCase() === "pro" ? "Pro" : "Free"}
+                          </span>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
+                            disabled={Boolean(planBusyUserId) && planBusyUserId !== u.id}
+                            onClick={() => void setUserPlan(u.id, "pro")}
+                            title="Admin override: set plan to Pro"
+                          >
+                            {planBusyUserId === u.id ? "Saving…" : "Set Pro"}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
+                            disabled={Boolean(planBusyUserId) && planBusyUserId !== u.id}
+                            onClick={() => void setUserPlan(u.id, "free")}
+                            title="Admin override: set plan to Free"
+                          >
+                            {planBusyUserId === u.id ? "Saving…" : "Set Free"}
+                          </button>
+                        </div>
+                      </td>
                       <td className="px-4 py-3">{u.isActive ? "Yes" : "No"}</td>
                       <td className="px-4 py-3">{u.isTemp ? "Yes" : "No"}</td>
                       <td className="px-4 py-3">{fmtDate(u.createdAt) || "—"}</td>
@@ -370,7 +410,7 @@ export default function AdminDataUsersPage() {
                   ))}
                   {items.length === 0 ? (
                     <tr>
-                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
+                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
                         No users.
                       </td>
                     </tr>

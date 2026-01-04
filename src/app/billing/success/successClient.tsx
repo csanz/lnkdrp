@@ -4,8 +4,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 
 type BillingStatus = {
+  org?: { id: string; name: string | null; avatarUrl?: string | null };
   plan?: string;
   stripeSubscriptionStatus?: string | null;
   stripeCurrentPeriodEnd?: string | null;
@@ -22,8 +24,9 @@ function formatShortDate(iso: string): string {
   }
 }
 
-export default function SuccessClient(props: { sessionId?: string }) {
-  const sessionId = (props.sessionId ?? "").trim();
+export default function SuccessClient(props: { sessionId?: string; demo?: string }) {
+  // `sessionId` is accepted for optional debugging, but we don't display it in the UI.
+  const demo = (props.demo ?? "").trim();
 
   const [state, setState] = useState<{
     phase: "processing" | "active" | "timeout" | "error";
@@ -32,6 +35,40 @@ export default function SuccessClient(props: { sessionId?: string }) {
   }>({ phase: "processing", status: null });
 
   useEffect(() => {
+    // Demo mode for UI preview without auth/Stripe. Does not affect real access control.
+    // Try:
+    // - /billing/success?demo=auto (processing → active)
+    // - /billing/success?demo=active
+    // - /billing/success?demo=timeout
+    // - /billing/success?demo=error
+    if (demo) {
+      const d = demo.toLowerCase();
+      if (d === "active") {
+        setState({
+          phase: "active",
+          status: { plan: "pro", stripeSubscriptionStatus: "active", stripeCurrentPeriodEnd: new Date(Date.now() + 30 * 864e5).toISOString() },
+        });
+        return;
+      }
+      if (d === "timeout") {
+        setState({ phase: "timeout", status: { plan: "free" } });
+        return;
+      }
+      if (d === "error") {
+        setState({ phase: "error", status: null, message: "Demo error: failed to confirm your subscription." });
+        return;
+      }
+      // default: auto
+      setState({ phase: "processing", status: { plan: "free" } });
+      const t = setTimeout(() => {
+        setState({
+          phase: "active",
+          status: { plan: "pro", stripeSubscriptionStatus: "active", stripeCurrentPeriodEnd: new Date(Date.now() + 30 * 864e5).toISOString() },
+        });
+      }, 1800);
+      return () => clearTimeout(t);
+    }
+
     let cancelled = false;
     let attempts = 0;
     const maxAttempts = 30; // ~30s
@@ -71,7 +108,7 @@ export default function SuccessClient(props: { sessionId?: string }) {
       cancelled = true;
       clearInterval(timer);
     };
-  }, []);
+  }, [demo]);
 
   const headline = useMemo(() => {
     if (state.phase === "active") return "Pro active";
@@ -85,8 +122,10 @@ export default function SuccessClient(props: { sessionId?: string }) {
       const end = state.status?.stripeCurrentPeriodEnd;
       const status = (state.status?.stripeSubscriptionStatus ?? "").trim();
       const endText = end ? ` Renews on ${formatShortDate(end)}.` : "";
-      const statusText = status ? ` Status: ${status}.` : "";
-      return `Your account is now Pro.${statusText}${endText}`;
+      // Avoid redundant copy: headline already communicates "Pro active".
+      // Only mention the status if it's something other than "active" (e.g. trialing).
+      const statusText = status && status.toLowerCase() !== "active" ? ` Status: ${status}.` : "";
+      return `Pro is enabled for this workspace.${statusText}${endText}`;
     }
     if (state.phase === "timeout") {
       return "Stripe is still processing. This page will update automatically once the webhook updates your account.";
@@ -98,14 +137,17 @@ export default function SuccessClient(props: { sessionId?: string }) {
   }, [state.phase, state.status, state.message]);
 
   return (
-    <div className="mx-auto max-w-xl px-6 py-16">
-      <div className="rounded-2xl bg-[var(--panel)] p-8">
+    <div className="rounded-2xl bg-[var(--panel)] p-10">
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">{headline}</div>
-        <div className="mt-2 text-[13px] leading-6 text-[var(--muted-2)]">{detail}</div>
+        {/* Extra breathing room around the workspace pill (not around the page header branding). */}
+        <div className="mt-5 mb-5">
+          <ActiveWorkspacePill maxWidthClassName="max-w-[360px]" textClassName="text-[12px]" />
+        </div>
+        <div className="text-[13px] leading-6 text-[var(--muted-2)]">{detail}</div>
 
-        {sessionId ? (
+        {demo ? (
           <div className="mt-4 rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
-            Checkout session: <span className="font-mono">{sessionId}</span>
+            Demo mode: <span className="font-mono">{demo}</span> (no polling, no auth required)
           </div>
         ) : null}
 
@@ -122,7 +164,6 @@ export default function SuccessClient(props: { sessionId?: string }) {
             </a>
           ) : null}
         </div>
-      </div>
     </div>
   );
 }

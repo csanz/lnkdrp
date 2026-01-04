@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { getOrCreateBotId } from "@/lib/botId";
 
 const CATEGORY_LABELS: Record<string, string> = {
   fundraising_pitch: "Fundraising Pitch",
@@ -107,7 +108,6 @@ type PdfPage = {
   }) => { promise: Promise<unknown> };
 };
 
-const BOT_ID_STORAGE_KEY = "lnkdrp_botid_v1";
 const SHARE_LOCAL_STATS_PREFIX = "lnkdrp_share_local_stats_v1:";
 const SHARE_OWNER_STATS_PREFIX = "lnkdrp_share_owner_stats_v1:";
 
@@ -121,28 +121,6 @@ type ShareContext = { isOwner: boolean; stats?: OwnerStats };
 function isBrowser() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
-/**
- * Get or create bot id.
- */
-
-
-function getOrCreateBotId(): string | null {
-  if (!isBrowser()) return null;
-  try {
-    const existing = window.localStorage.getItem(BOT_ID_STORAGE_KEY);
-    if (existing && existing.trim()) return existing.trim();
-    const created =
-      // Prefer a stable UUID when available.
-      (typeof crypto !== "undefined" && "randomUUID" in crypto && typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`);
-    window.localStorage.setItem(BOT_ID_STORAGE_KEY, created);
-    return created;
-  } catch {
-    return null;
-  }
-}
-
 type LocalShareStats = { viewedAt?: number; pagesSeen?: number[] };
 /**
  * Read Local Share Stats (uses isBrowser, getItem, parse).

@@ -4,6 +4,7 @@
  * Update/delete a project. For request repos, also supports updating request review settings.
  */
 import { NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
@@ -14,6 +15,85 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 export const runtime = "nodejs";
 
 const MAX_PROJECT_NAME_LENGTH = 80;
+
+const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+function randomBase62(length: number): string {
+  let out = "";
+  while (out.length < length) {
+    const remaining = length - out.length;
+    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
+    for (const b of buf) {
+      // 62 * 4 = 248, so values 0..247 map evenly to base62.
+      if (b < 248) out += BASE62_ALPHABET[b % 62];
+      if (out.length >= length) break;
+    }
+  }
+  return out;
+}
+
+function slugify(input: string) {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/['"]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+async function ensureUniqueSlug(opts: { orgId: Types.ObjectId; legacyUserId?: Types.ObjectId; base: string }) {
+  const base = opts.base || "project";
+  for (let i = 0; i < 50; i++) {
+    const candidate = i === 0 ? base : `${base}-${i + 1}`;
+    const exists = await ProjectModel.exists({
+      $or: [
+        { orgId: opts.orgId, slug: candidate },
+        ...(opts.legacyUserId
+          ? [
+              {
+                userId: opts.legacyUserId,
+                slug: candidate,
+                $or: [{ orgId: { $exists: false } }, { orgId: null }],
+              },
+            ]
+          : []),
+      ],
+    });
+    if (!exists) return candidate;
+  }
+  return `${base}-${Date.now().toString(36)}`;
+}
+
+async function ensureUniqueProjectName(opts: { orgId: Types.ObjectId; legacyUserId?: Types.ObjectId; base: string }) {
+  const base = (opts.base || "Project").trim().slice(0, MAX_PROJECT_NAME_LENGTH) || "Project";
+  for (let i = 0; i < 50; i++) {
+    const suffix = i === 0 ? "" : ` (${i + 1})`;
+    const candidate = (base + suffix).slice(0, MAX_PROJECT_NAME_LENGTH);
+    const exists = await ProjectModel.exists({
+      $or: [
+        { orgId: opts.orgId, name: candidate },
+        ...(opts.legacyUserId
+          ? [
+              {
+                userId: opts.legacyUserId,
+                name: candidate,
+                $or: [{ orgId: { $exists: false } }, { orgId: null }],
+              },
+            ]
+          : []),
+      ],
+    });
+    if (!exists) return candidate;
+  }
+  return `${base.slice(0, Math.max(1, MAX_PROJECT_NAME_LENGTH - 10))} ${Date.now().toString(36)}`.slice(
+    0,
+    MAX_PROJECT_NAME_LENGTH,
+  );
+}
+
+function newProjectShareId() {
+  return randomBase62(12);
+}
 /**
  * Escape Regex (uses replace).
  */
@@ -202,6 +282,20 @@ export async function DELETE(
         }
       : { orgId };
 
+    const body = (await request.json().catch(() => null)) as
+      | null
+      | undefined
+      | {
+          requestDocsMode?: unknown;
+        };
+    const requestDocsModeRaw = body && typeof body === "object" ? body.requestDocsMode : null;
+    const requestDocsMode =
+      typeof requestDocsModeRaw === "string" ? requestDocsModeRaw.trim().toLowerCase() : "";
+    const requestDeleteMode =
+      requestDocsMode === "delete_docs" || requestDocsMode === "orphan" || requestDocsMode === "copy_to_new_project"
+        ? (requestDocsMode as "delete_docs" | "orphan" | "copy_to_new_project")
+        : null;
+
     if (!Types.ObjectId.isValid(projectIdParam)) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
@@ -224,6 +318,119 @@ export async function DELETE(
     }
 
     const projectId = new Types.ObjectId(String(project._id));
+    const tokenRaw = (project as unknown as { requestUploadToken?: unknown }).requestUploadToken;
+    const token = typeof tokenRaw === "string" && tokenRaw.trim() ? tokenRaw.trim() : "";
+    const isRequest = Boolean((project as unknown as { isRequest?: unknown }).isRequest) || Boolean(token);
+
+    // For request repos, optionally allow controlling what happens to docs.
+    if (isRequest && requestDeleteMode) {
+      debugLog(1, "[api/projects/:id] DELETE request repo mode", { projectId: projectIdParam, requestDeleteMode });
+
+      // All docs that were uploaded into this request repo (durable pointer) and any attached guide doc.
+      const requestDocs = await DocModel.find({
+        ...docTenant,
+        isDeleted: { $ne: true },
+        $or: [
+          { receivedViaRequestProjectId: projectId },
+          { guideForRequestProjectId: projectId },
+          { projectId },
+          { projectIds: projectId },
+        ],
+      })
+        .select({ _id: 1, projectId: 1 })
+        .lean();
+
+      if (requestDeleteMode === "copy_to_new_project") {
+        const baseName = `${project.name ?? "Request"} (imported)`;
+        const name = await ensureUniqueProjectName({
+          orgId,
+          legacyUserId: allowLegacyByUserId ? legacyUserId : undefined,
+          base: baseName,
+        });
+        const slug = await ensureUniqueSlug({
+          orgId,
+          legacyUserId: allowLegacyByUserId ? legacyUserId : undefined,
+          base: slugify(name),
+        });
+        const created = await ProjectModel.create({
+          orgId,
+          userId: legacyUserId,
+          shareId: newProjectShareId(),
+          name,
+          slug,
+          description: "",
+          autoAddFiles: false,
+          isRequest: false,
+          requestUploadToken: null,
+          requestViewToken: null,
+          requestRequireAuthToUpload: false,
+          requestReviewEnabled: false,
+          requestReviewPrompt: "",
+          requestReviewGuideDocId: null,
+          isDeleted: false,
+        });
+        const newProjectId = new Types.ObjectId(String((created as unknown as { _id: Types.ObjectId })._id));
+
+        // Best-effort: update each doc with updateOne so Project.docCount stays in sync.
+        for (const d of requestDocs) {
+          const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
+          if (!docId) continue;
+
+          const currentPrimary = (d as unknown as { projectId?: unknown }).projectId;
+          const primaryIsRequest = currentPrimary ? String(currentPrimary) === String(projectId) : false;
+          const nextPrimary = primaryIsRequest || !currentPrimary ? newProjectId : currentPrimary;
+
+          await DocModel.updateOne(
+            { _id: docId, ...docTenant, isDeleted: { $ne: true } },
+            {
+              $set: {
+                projectId: nextPrimary,
+                receivedViaRequestProjectId: null,
+                guideForRequestProjectId: null,
+              },
+              $addToSet: { projectIds: newProjectId },
+              $pull: { projectIds: projectId },
+            },
+          );
+        }
+      } else if (requestDeleteMode === "orphan") {
+        for (const d of requestDocs) {
+          const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
+          if (!docId) continue;
+          await DocModel.updateOne(
+            { _id: docId, ...docTenant, isDeleted: { $ne: true } },
+            {
+              $set: {
+                projectId: null,
+                projectIds: [],
+                receivedViaRequestProjectId: null,
+                guideForRequestProjectId: null,
+              },
+            },
+          );
+        }
+      } else if (requestDeleteMode === "delete_docs") {
+        const now = new Date();
+        for (const d of requestDocs) {
+          const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
+          if (!docId) continue;
+          await DocModel.updateOne(
+            { _id: docId, ...docTenant, isDeleted: { $ne: true } },
+            {
+              $set: {
+                isDeleted: true,
+                deletedDate: now,
+                isDeletedDate: now,
+                projectId: null,
+                projectIds: [],
+                receivedViaRequestProjectId: null,
+                guideForRequestProjectId: null,
+              },
+            },
+          );
+        }
+      }
+    }
 
     // Remove project membership from docs (best-effort).
     await DocModel.updateMany(

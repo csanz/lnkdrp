@@ -3,10 +3,7 @@
 import { useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } from "@/lib/orgsCache";
-
-function clsx(...parts: Array<string | false | null | undefined>) {
-  return parts.filter(Boolean).join(" ");
-}
+import { cn } from "@/lib/cn";
 
 function initials(name: string) {
   const s = name.trim();
@@ -41,6 +38,7 @@ export default function ActiveWorkspacePill({
   const [activeWorkspaceName, setActiveWorkspaceName] = useState<string>("");
   const [activeWorkspaceAvatarUrl, setActiveWorkspaceAvatarUrl] = useState<string | null>(null);
   const [avatarErrored, setAvatarErrored] = useState(false);
+  const [isPro, setIsPro] = useState<boolean>(false);
 
   useEffect(() => {
     setAvatarErrored(false);
@@ -82,12 +80,42 @@ export default function ActiveWorkspacePill({
     };
   }, [userKey]);
 
+  useEffect(() => {
+    if (!userKey) return;
+    let cancelled = false;
+
+    const cacheKey = `lnkdrp_billing_plan_${userKey}`;
+    const cachedPlan = typeof window !== "undefined" ? window.sessionStorage.getItem(cacheKey) : null;
+    if (cachedPlan === "pro") setIsPro(true);
+    if (cachedPlan === "free") setIsPro(false);
+
+    void (async () => {
+      try {
+        const res = await fetch("/api/billing/status", { method: "GET" });
+        const json = (await res.json().catch(() => null)) as { plan?: string } | { error?: string } | null;
+        if (!res.ok) return;
+        const plan = typeof (json as any)?.plan === "string" ? String((json as any).plan).trim() : "";
+        const nextIsPro = plan === "pro";
+        if (typeof window !== "undefined") window.sessionStorage.setItem(cacheKey, nextIsPro ? "pro" : "free");
+        if (!cancelled) setIsPro(nextIsPro);
+      } catch {
+        // ignore (best-effort)
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userKey]);
+
   if (!activeWorkspaceName) return null;
+
+  const badgeText = (planBadgeText ?? "PRO").trim();
 
   return (
     <div
-      className={clsx(
-        "inline-flex min-w-0 items-center rounded-full border border-[color-mix(in_srgb,var(--border)_55%,transparent)] bg-[var(--panel-2)] px-[10px] py-[6px] font-semibold text-[var(--fg)]",
+      className={cn(
+        "inline-flex min-w-0 items-center rounded-lg border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[10px] py-[6px] font-semibold text-[var(--fg)]",
         maxWidthClassName,
         textClassName ?? "text-[11.5px]",
         className,
@@ -112,13 +140,13 @@ export default function ActiveWorkspacePill({
         )}
       </span>
       <span className="min-w-0 truncate">{activeWorkspaceName}</span>
-      {planBadgeText ? (
+      {isPro && badgeText ? (
         <span
           className="ml-2 inline-flex shrink-0 items-center rounded-full bg-sky-400/10 px-1.5 py-0.5 text-[8.5px] font-medium tracking-[0.07em] text-sky-700/80 dark:bg-sky-300/8 dark:text-sky-200/75"
-          aria-label={`${planBadgeText} plan`}
-          title={`${planBadgeText} plan`}
+          aria-label={`${badgeText} plan`}
+          title={`${badgeText} plan`}
         >
-          {planBadgeText}
+          {badgeText}
         </span>
       ) : null}
     </div>

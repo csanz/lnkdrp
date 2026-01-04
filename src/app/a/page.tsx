@@ -7,6 +7,10 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import Alert from "@/components/ui/Alert";
+import Button from "@/components/ui/Button";
+import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import { fetchJson } from "@/lib/http/fetchJson";
 
 type CronHealthItem = {
   jobKey: string;
@@ -15,31 +19,6 @@ type CronHealthItem = {
   lastDurationMs?: number | null;
   lastError?: string | null;
 };
-/**
- * Fmt Date (uses isNaN, valueOf, toLocaleString).
- */
-
-
-function fmtDate(v: string | null | undefined) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.valueOf())) return v;
-  return d.toLocaleString();
-}
-/**
- * Fmt Duration (uses isFinite, round, toFixed).
- */
-
-
-function fmtDuration(ms: number | null | undefined) {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  const r = s - m * 60;
-  return `${m}m ${Math.round(r)}s`;
-}
 /**
  * Status Pill.
  */
@@ -67,16 +46,10 @@ export default function AdminHomePage() {
     setHealthError(null);
     void (async () => {
       try {
-        const res = await fetch("/api/admin/cron-health?limit=20", { method: "GET" });
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown; items?: unknown };
-        if (!res.ok) {
-          setHealthError(typeof data.error === "string" ? data.error : "Failed to load cron health");
-          setHealth([]);
-          return;
-        }
+        const data = await fetchJson<{ items?: unknown }>("/api/admin/cron-health?limit=20", { method: "GET" });
         setHealth(Array.isArray(data.items) ? (data.items as CronHealthItem[]) : []);
-      } catch {
-        setHealthError("Failed to load cron health");
+      } catch (e) {
+        setHealthError(e instanceof Error ? e.message : "Failed to load cron health");
         setHealth([]);
       } finally {
         setHealthLoading(false);
@@ -124,25 +97,19 @@ export default function AdminHomePage() {
               <div className="text-sm font-semibold text-[var(--fg)]">Cron health</div>
               <div className="mt-1 text-sm text-[var(--muted)]">Latest heartbeat from background jobs.</div>
             </div>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)]"
+            <Button
+              variant="outline"
               onClick={() => {
                 // simple refresh
                 setHealthLoading(true);
                 setHealthError(null);
                 void (async () => {
                   try {
-                    const res = await fetch("/api/admin/cron-health?limit=20", { method: "GET" });
-                    const data = (await res.json().catch(() => ({}))) as { error?: unknown; items?: unknown };
-                    if (!res.ok) {
-                      setHealthError(typeof data.error === "string" ? data.error : "Failed to load cron health");
-                      setHealth([]);
-                      return;
-                    }
+                    const data = await fetchJson<{ items?: unknown }>("/api/admin/cron-health?limit=20", { method: "GET" });
                     setHealth(Array.isArray(data.items) ? (data.items as CronHealthItem[]) : []);
-                  } catch {
-                    setHealthError("Failed to load cron health");
+                    setHealthError(null);
+                  } catch (e) {
+                    setHealthError(e instanceof Error ? e.message : "Failed to load cron health");
                     setHealth([]);
                   } finally {
                     setHealthLoading(false);
@@ -151,13 +118,13 @@ export default function AdminHomePage() {
               }}
             >
               Refresh
-            </button>
+            </Button>
           </div>
 
           {healthError ? (
-            <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm text-red-700">
+            <Alert variant="info" className="mt-4 border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
               {healthError}
-            </div>
+            </Alert>
           ) : null}
 
           {healthLoading ? (

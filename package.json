@@ -38,6 +38,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-markdown": "^10.1.0",
+    "recharts": "^3.6.0",
     "remark-gfm": "^4.0.1",
     "sharp": "^0.34.4",
     "stripe": "^20.1.0",

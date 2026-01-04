@@ -8,6 +8,10 @@
 import Link from "next/link";
 import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
+import Alert from "@/components/ui/Alert";
+import Button from "@/components/ui/Button";
+import { fmtDate } from "@/lib/admin/format";
+import { fetchJson } from "@/lib/http/fetchJson";
 
 type RecentShareViewItem = {
   _id: string;
@@ -24,17 +28,6 @@ type RecentShareViewItem = {
 };
 
 type SeriesPoint = { key: string; label: string; value: number };
-/**
- * Fmt Date (uses isNaN, valueOf, toLocaleString).
- */
-
-
-function fmtDate(v: string | null | undefined) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.valueOf())) return v;
-  return d.toLocaleString();
-}
 /**
  * To Utc Day Key (uses slice, toISOString).
  */
@@ -314,16 +307,10 @@ export default function ShareViewsAdminPage() {
     setError(null);
     void (async () => {
       try {
-        const res = await fetch("/api/admin/shareviews/recent?limit=200", { method: "GET" });
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown; items?: unknown };
-        if (!res.ok) {
-          setError(typeof data.error === "string" ? data.error : "Failed to load share views");
-          setItems([]);
-          return;
-        }
+        const data = await fetchJson<{ items?: unknown }>("/api/admin/shareviews/recent?limit=200", { method: "GET" });
         setItems(Array.isArray(data.items) ? (data.items as RecentShareViewItem[]) : []);
-      } catch {
-        setError("Failed to load share views");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load share views");
         setItems([]);
       } finally {
         setLoading(false);
@@ -342,13 +329,13 @@ export default function ShareViewsAdminPage() {
           <div className="text-base font-semibold text-[var(--fg)]">Admin / Share views</div>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
           <div className="mt-5">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-5 py-2.5 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               onClick={() => void signIn("google", { callbackUrl: "/a/shareviews" })}
             >
               Sign in
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -460,9 +447,9 @@ export default function ShareViewsAdminPage() {
         ) : null}
 
         {error ? (
-          <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm text-red-700">
+          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
             {error}
-          </div>
+          </Alert>
         ) : null}
 
         {loading ? (

@@ -1,9 +1,11 @@
 /**
  * Page for `/billing/cancel` — shown when a user cancels out of Stripe Checkout.
  */
+import { StandaloneBrandedShell } from "@/components/StandaloneBrandedShell";
+
 export default function BillingCancelPage() {
   return (
-    <div className="mx-auto max-w-xl px-6 py-16">
+    <StandaloneBrandedShell kicker="Billing">
       <div className="rounded-2xl bg-[var(--panel)] p-8">
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Checkout canceled</div>
         <div className="mt-2 text-[13px] leading-6 text-[var(--muted-2)]">
@@ -15,7 +17,7 @@ export default function BillingCancelPage() {
           </a>
         </div>
       </div>
-    </div>
+    </StandaloneBrandedShell>
   );
 }
 

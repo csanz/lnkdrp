@@ -8,6 +8,10 @@
 import { signIn, useSession } from "next-auth/react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import Alert from "@/components/ui/Alert";
+import Button from "@/components/ui/Button";
+import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import { fetchJson } from "@/lib/http/fetchJson";
 
 type CronHealthItem = {
   jobKey: string;
@@ -16,31 +20,6 @@ type CronHealthItem = {
   lastDurationMs?: number | null;
   lastError?: string | null;
 };
-/**
- * Fmt Date (uses isNaN, valueOf, toLocaleString).
- */
-
-
-function fmtDate(v: string | null | undefined) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.valueOf())) return v;
-  return d.toLocaleString();
-}
-/**
- * Fmt Duration (uses isFinite, round, toFixed).
- */
-
-
-function fmtDuration(ms: number | null | undefined) {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  const r = s - m * 60;
-  return `${m}m ${Math.round(r)}s`;
-}
 /**
  * Status Pill.
  */
@@ -80,16 +59,10 @@ export default function CronHealthAdminPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/cron-health?limit=50", { method: "GET" });
-      const data = (await res.json().catch(() => ({}))) as { error?: unknown; items?: unknown };
-      if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "Failed to load cron health");
-        setHealth([]);
-        return;
-      }
+      const data = await fetchJson<{ items?: unknown }>("/api/admin/cron-health?limit=50", { method: "GET" });
       setHealth(Array.isArray(data.items) ? (data.items as CronHealthItem[]) : []);
-    } catch {
-      setError("Failed to load cron health");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load cron health");
       setHealth([]);
     } finally {
       setLoading(false);
@@ -113,13 +86,13 @@ export default function CronHealthAdminPage() {
           <div className="text-base font-semibold text-[var(--fg)]">Admin / Cron health</div>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
           <div className="mt-5">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-5 py-2.5 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               onClick={() => void signIn("google", { callbackUrl: "/a/cron-health" })}
             >
               Sign in
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -152,21 +125,21 @@ export default function CronHealthAdminPage() {
             >
               Admin home
             </Link>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               onClick={() => void load()}
               disabled={loading}
             >
               Refresh
-            </button>
+            </Button>
           </div>
         </div>
 
         {error ? (
-          <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm text-red-700">
+          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
             {error}
-          </div>
+          </Alert>
         ) : null}
 
         {loading ? (

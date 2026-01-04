@@ -8,6 +8,7 @@ import { ArrowUpTrayIcon, DocumentTextIcon } from "@heroicons/react/24/outline";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import { extractErrorMessage, fetchJson } from "@/lib/http/fetchJson";
+import { StandaloneBrandedHeader } from "@/components/StandaloneBrandedHeader";
 
 type DocMeta = {
   id: string;
@@ -222,19 +223,9 @@ export default function DocUpdatePageClient(props: { code: string }) {
   }, [doc?.shareId]);
 
   return (
-    <div className="mx-auto w-full max-w-[820px] px-4 py-10">
-      <div className="mb-6 flex items-center justify-center">
-        <Link
-          href="/"
-          className="inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
-          aria-label="Lnkdrp home"
-          title="Lnkdrp"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/icon-white.svg" alt="" className="h-5 w-5" />
-          <span className="tracking-tight">lnkdrp</span>
-        </Link>
-      </div>
+    <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
+      <StandaloneBrandedHeader kicker="Document update" />
+      <div className="mx-auto w-full max-w-[820px] px-4 py-10">
       <div className="rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-sm">
         <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Document update</div>
         <div className="mt-2 text-xl font-semibold text-[var(--fg)]">Update this document with a new version</div>
@@ -357,7 +348,8 @@ export default function DocUpdatePageClient(props: { code: string }) {
           </div>
         ) : null}
       </div>
-    </div>
+      </div>
+    </main>
   );
 }
 

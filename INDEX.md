@@ -7,7 +7,11 @@
 - `src/components/DocActionsMenu.tsx` — exports: DocActionsMenu
 - `src/components/DocDebugModal.tsx` — exports: DocDebugModal
 - `src/components/DocSharePanel.tsx` — exports: DocSharePanel
+- `src/components/StripePricingTable.tsx` — exports: StripePricingTable. Renders Stripe pricing table embed (requires NEXT_PUBLIC_STRIPE_* env vars).
+- `src/components/StandaloneBrandedHeader.tsx` — exports: StandaloneBrandedHeader. Shared top branding for standalone flow pages.
+- `src/components/StandaloneBrandedShell.tsx` — exports: StandaloneBrandedShell. Branded standalone shell for public-ish pages (billing redirects, request links).
 - `src/app/(app)/AppShellLayout.tsx` — exports: AppShellLayout
+- `src/app/preferences/NotificationPreferences.tsx` — exports: NotificationPreferences (default). Workspace-level notification preferences UI (doc update emails).
 - `src/app/dashboard/SubscriptionCard.tsx` — exports: SubscriptionCard (default)
 - `src/admin/components/CacheToolsClient.tsx` — exports: CacheToolsClient
 - `src/components/LeftSidebar.tsx` — exports: LeftSidebar
@@ -24,6 +28,7 @@
 - `src/components/modals/ReviewPerspectiveModal.tsx` — exports: ReviewPerspectiveModal
 - `src/components/modals/SidebarDocsModal.tsx` — exports: SidebarDocsModal
 - `src/components/modals/SidebarProjectsModal.tsx` — exports: SidebarProjectsModal
+- `src/components/modals/SidebarRequestsModal.tsx` — exports: SidebarRequestsModal
 - `src/components/modals/SidebarStarredModal.tsx` — exports: SidebarStarredModal
 - `src/components/modals/TempUserGateModal.tsx` — exports: TempUserGateModal
 - `src/components/PdfJsViewer.tsx` — exports: PdfJsViewer
@@ -32,9 +37,14 @@
 - `src/components/UploadCompletionPanel.tsx` — exports: UploadCompletionPanel
 - `src/components/ui/Alert.tsx` — exports: Alert (default)
 - `src/components/ui/IconButton.tsx` — exports: IconButton (default)
+- `src/components/ui/IconLink.tsx` — exports: IconLink (default)
+- `src/components/ui/Button.tsx` — exports: Button (default), ButtonProps (type)
+- `src/components/ui/Input.tsx` — exports: Input (default), InputProps (type)
+- `src/components/ui/CopyTextButton.tsx` — exports: CopyTextButton (default)
 
 # Lib
 - `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
+- `src/lib/admin/format.ts` — exports: fmtDate, fmtDuration
 - `src/lib/orgsCache.ts` — exports: OrgsCacheOrg, OrgsCacheSnapshot, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, writeOrgsCacheSnapshot, refreshOrgsCache, setCachedActiveOrgId
 - `src/lib/metrics/rollupDocMetrics.ts` — exports: rollupDocMetrics
 - `src/lib/models/CronHealth.ts` — exports: CronHealthModel, (type) CronHealth
@@ -48,6 +58,7 @@
 - `src/app/(app)/doc/[docId]/review/page.tsx` — Page for \`/doc/:docId/review\`.
 - `src/app/(app)/layout.tsx` — Layout for \`/\`.
 - `src/app/(app)/project/[projectSlug]/page.tsx` — Page for \`/project/:projectId\`.
+- `src/app/(app)/requests/page.tsx` — Page for \`/requests\` (list request repositories).
 - `src/app/preferences/layout.tsx` — Layout for \`/preferences\` (standalone; no app sidebar).
 - `src/app/preferences/page.tsx` — Page for \`/preferences\` (preferences hub).
 - `src/app/preferences/[tab]/page.tsx` — Page for \`/preferences/:tab\` (redirects to query-param tab).
@@ -91,6 +102,9 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/users/route.ts` — API route for \`/api/admin/data/users\`.
   - GET (function) — List users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/users/[userId]/plan/route.ts` — API route for \`/api/admin/users/:userId/plan\`.
+  - POST (function) — Admin override: set `User.plan` to `free` or `pro`.
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/orgs/route.ts` — API route for \`/api/admin/data/orgs\`.
   - GET (function) — List orgs for admin inspection (and org member tooling).
@@ -165,6 +179,13 @@
   - GET (function) — Get current active org id for the signed-in user.
   - POST (function) — Set active org id (membership validated; persisted in httpOnly cookie).
   - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/active/members/route.ts` — API route for \`/api/orgs/active/members\`.
+  - GET (function) — List members of the active org (any member; internal-only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/orgs/active/notification-preferences/route.ts` — API route for \`/api/orgs/active/notification-preferences\`.
+  - GET (function) — Read current user's notification preferences for the active org.
+  - POST (function) — Update current user's notification preferences for the active org.
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/orgs/[orgId]/avatar/route.ts` — API route for \`/api/orgs/:orgId/avatar\`.
   - POST (function) — Update org avatar URL (owner/admin only).
   - runtime (const) — Next.js route configuration.
@@ -221,6 +242,12 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/docs/[docId]/changes/route.ts` — API route for \`/api/docs/:docId/changes\`.
   - GET (function) — List replacement change history records for a doc (access-gated).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/history/[version]/recipients/route.ts` — API route for \`/api/docs/:docId/history/:version/recipients\`.
+  - GET (function) — List org members and whether each opened the given doc version.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/history/[version]/viewer/[userId]/route.ts` — API route for \`/api/docs/:docId/history/:version/viewer/:userId\`.
+  - GET (function) — Per-page timing aggregates for a viewer on a specific doc version.
   - runtime (const) — Next.js route configuration.
 - `src/app/api/docs/route.ts` — API route for \`/api/docs\`.
   - GET (function) — List docs (paged; supports `q` search; supports `ids` for direct lookup).
@@ -427,6 +454,8 @@
 - `src/lib/http/fetchJson.ts`
   - ApiErrorShape (type) — Type: API error shape.
   - extractErrorMessage (function) — Extract error message.
+- `src/lib/cn.ts`
+  - cn (function) — Tiny className join helper (no dependency).
 - `src/lib/metrics/client.ts`
   - getSessionId (function) — Get/create per-tab session ID (stored in sessionStorage).
   - trackProjectView (function) — Track a project view (deduped server-side per session).
@@ -460,6 +489,9 @@
 - `src/lib/models/PageTiming.ts` — Data model for per-session page timing records.
   - PageTiming (type) — Mongoose document type for the pagetimings collection.
   - PageTimingModel (const) — Mongoose model for the pagetimings collection.
+- `src/lib/models/DocPageTiming.ts` — Data model for per-page timing on internal doc versions.
+  - DocPageTiming (type) — Mongoose document type for the docpagetimings collection.
+  - DocPageTimingModel (const) — Mongoose model for the docpagetimings collection.
 - `src/lib/models/ProjectClick.ts` — Data model for project navigation click events.
   - ProjectClick (type) — Mongoose document type for the projectclicks collection.
   - ProjectClickModel (const) — Mongoose model for the projectclicks collection.

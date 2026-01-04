@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 
 type MetricsResponse = {
   ok: true;
@@ -59,81 +60,51 @@ function MiniLineChartSingle({
   fillId: string;
   fillStops: { topOpacity: number; bottomOpacity: number };
 }) {
-  const safeValues = values.map((v) => (typeof v === "number" && Number.isFinite(v) ? v : 0));
-  const max = Math.max(1, ...safeValues);
-  const n = Math.max(2, series.length);
-
-  // Keep baseline inside viewBox.
-  const BASELINE_Y = 29;
-  const TOP_Y = 1;
-  const RANGE_Y = BASELINE_Y - TOP_Y;
-
-  const points = safeValues.map((v, i) => {
-    const x = (i * 100) / (n - 1);
-    const y = BASELINE_Y - (v / max) * RANGE_Y;
-    return { x, y };
-  });
-/**
- * Smooth Path (uses toFixed, min, max).
- */
-
-
-  function smoothPath(pts: Array<{ x: number; y: number }>) {
-    if (!pts.length) return "";
-    if (pts.length === 1) return `M ${pts[0]!.x.toFixed(2)} ${pts[0]!.y.toFixed(2)}`;
-/**
- * Clamp Y (uses max).
- */
-
-    const clampY = (y: number) => Math.min(BASELINE_Y, Math.max(TOP_Y, y));
-    let d = `M ${pts[0]!.x.toFixed(2)} ${pts[0]!.y.toFixed(2)}`;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[i - 1] ?? pts[i]!;
-      const p1 = pts[i]!;
-      const p2 = pts[i + 1]!;
-      const p3 = pts[i + 2] ?? p2;
-      const c1x = p1.x + (p2.x - p0.x) / 6;
-      const c1y = clampY(p1.y + (p2.y - p0.y) / 6);
-      const c2x = p2.x - (p3.x - p1.x) / 6;
-      const c2y = clampY(p2.y - (p3.y - p1.y) / 6);
-      d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)} ${c2x.toFixed(2)} ${c2y.toFixed(2)} ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
-    }
-    return d;
-  }
-
-  const path = points.length ? smoothPath(points) : `M 0 ${BASELINE_Y} L 100 ${BASELINE_Y}`;
-  const hasArea = typeof path === "string" && path.trim().startsWith("M") && points.length >= 2;
-  const area = hasArea ? `${path} L 100 ${BASELINE_Y} L 0 ${BASELINE_Y} Z` : null;
+  const safeValues = values.map((v) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0));
+  const data = series.map((s, idx) => ({ date: s.date, value: safeValues[idx] ?? 0 }));
 
   return (
     <div className="w-full">
-      <svg viewBox="0 0 100 30" className="h-56 w-full text-[var(--border)]">
-        <defs>
-          <linearGradient id={fillId} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={stroke} stopOpacity={fillStops.topOpacity} />
-            <stop offset="100%" stopColor={stroke} stopOpacity={fillStops.bottomOpacity} />
-          </linearGradient>
-        </defs>
+      <div className="h-56 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 6, right: 6, bottom: 4, left: 6 }}>
+            <defs>
+              <linearGradient id={fillId} x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor={stroke} stopOpacity={fillStops.topOpacity} />
+                <stop offset="100%" stopColor={stroke} stopOpacity={fillStops.bottomOpacity} />
+              </linearGradient>
+            </defs>
 
-        <path
-          d={`M 0 ${BASELINE_Y} L 100 ${BASELINE_Y}`}
-          stroke="currentColor"
-          strokeOpacity="0.55"
-          strokeWidth="0.75"
-          fill="none"
-        />
-
-        {area ? <path d={area} fill={`url(#${fillId})`} stroke="none" /> : null}
-        <path
-          d={path}
-          stroke={stroke}
-          strokeWidth="0.9"
-          fill="none"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          shapeRendering="geometricPrecision"
-        />
-      </svg>
+            <YAxis hide domain={[0, "dataMax"]} />
+            <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
+            <Tooltip
+              cursor={{ stroke: "var(--border)", strokeOpacity: 0.25 }}
+              contentStyle={{
+                background: "var(--panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 12,
+                padding: "8px 10px",
+                fontSize: 12,
+                color: "var(--fg)",
+              }}
+              labelStyle={{ color: "var(--muted-2)" }}
+              formatter={(v: any) => [typeof v === "number" ? v.toLocaleString() : String(v), ""]}
+              labelFormatter={(label: any) => String(label ?? "")}
+            />
+            <Area
+              type="monotone"
+              dataKey="value"
+              stroke={stroke}
+              strokeWidth={1.15}
+              fill={`url(#${fillId})`}
+              fillOpacity={1}
+              dot={false}
+              activeDot={{ r: 2.25, strokeWidth: 1.15 }}
+              isAnimationActive={false}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
 
       <div
         className="mt-3 grid gap-0 text-[10px] text-[var(--muted)]"

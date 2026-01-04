@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clearSidebarCache } from "@/lib/sidebarCache";
+import Button from "@/components/ui/Button";
 import {
   clearLocalStorageKeysByPrefix,
   readLocalStorageSnapshot,
@@ -79,9 +80,9 @@ export default function CacheToolsClient() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+          <Button
+            variant="outline"
+            className="text-[13px]"
             disabled={busy}
             onClick={() => {
               setLastAction("Refreshed.");
@@ -89,11 +90,11 @@ export default function CacheToolsClient() {
             }}
           >
             Refresh
-          </button>
+          </Button>
 
-          <button
-            type="button"
-            className="rounded-xl bg-black px-3 py-2 text-[13px] font-semibold text-white hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-60"
+          <Button
+            variant="solid"
+            className="bg-black text-[13px] text-white hover:bg-black/90 disabled:hover:bg-black"
             disabled={busy}
             onClick={() => {
               if (!pendingClearAll) {
@@ -122,11 +123,11 @@ export default function CacheToolsClient() {
             }}
           >
             {pendingClearAll ? "Confirm clear app cache" : "Clear app cache"}
-          </button>
+          </Button>
 
-          <button
-            type="button"
-            className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+          <Button
+            variant="outline"
+            className="text-[13px]"
             disabled={busy}
             onClick={() => {
               setBusy(true);
@@ -139,7 +140,7 @@ export default function CacheToolsClient() {
             }}
           >
             Clear + reload
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -171,20 +172,22 @@ export default function CacheToolsClient() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-[var(--panel-2)] text-[12px]"
                         disabled={busy}
                         onClick={() =>
                           setRevealedKeys((prev) => ({ ...prev, [r.key]: !Boolean(prev[r.key]) }))
                         }
                       >
                         {revealed ? "Hide" : "Show"}
-                      </button>
+                      </Button>
 
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="bg-[var(--panel-2)] text-[12px]"
                         disabled={busy}
                         onClick={() => {
                           if (!isPendingClear) {
@@ -210,7 +213,7 @@ export default function CacheToolsClient() {
                         }}
                       >
                         {isPendingClear ? "Confirm" : "Clear"}
-                      </button>
+                      </Button>
                     </div>
                   </div>
 

@@ -7,6 +7,7 @@ import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import { useTheme } from "next-themes";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
+import IconButton from "@/components/ui/IconButton";
 /**
  * Render the AdminShellLayout UI (uses effects, local state).
  */
@@ -63,15 +64,14 @@ export default function AdminShellLayout({ children }: { children: React.ReactNo
         <Link href="/a" className="inline-flex items-center gap-2" aria-label="Admin home">
           <Image src={logoSrc} alt="LinkDrop" width={28} height={28} priority />
         </Link>
-        <button
-          type="button"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] hover:bg-[var(--panel-hover)]"
-          aria-label={mobileSidebarOpen ? "Close menu" : "Open menu"}
+        <IconButton
+          ariaLabel={mobileSidebarOpen ? "Close menu" : "Open menu"}
           aria-expanded={mobileSidebarOpen}
+          className="h-10 w-10 bg-[var(--panel)] p-0 text-[var(--fg)]"
           onClick={() => setMobileSidebarOpen((v) => !v)}
         >
           {mobileSidebarOpen ? <XMarkIcon className="h-5 w-5" /> : <Bars3Icon className="h-5 w-5" />}
-        </button>
+        </IconButton>
       </header>
 
       {/* Desktop sidebar */}

@@ -52,8 +52,6 @@ export default function PreferencesShell({ children }: { children: React.ReactNo
             <ActiveWorkspacePill
               className="hidden sm:inline-flex"
               maxWidthClassName="max-w-[320px]"
-              // TODO: wire to real subscription plan; temporary UI stub.
-              planBadgeText="PRO"
             />
           </div>
 

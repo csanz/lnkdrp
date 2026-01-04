@@ -6,6 +6,8 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { PageTimingModel } from "@/lib/models/PageTiming";
 import { ProjectClickModel } from "@/lib/models/ProjectClick";
 import { ProjectViewModel } from "@/lib/models/ProjectView";
+import { DocModel } from "@/lib/models/Doc";
+import { DocPageTimingModel } from "@/lib/models/DocPageTiming";
 
 export const runtime = "nodejs";
 /**
@@ -45,6 +47,15 @@ type MetricsEvent =
       sessionId: string;
       path: string;
       referrer?: string | null;
+      enteredAtMs: number;
+      leftAtMs: number;
+    }
+  | {
+      type: "doc_page_timing";
+      sessionId: string;
+      docId: string;
+      version: number;
+      pageNumber: number;
       enteredAtMs: number;
       leftAtMs: number;
     }
@@ -106,6 +117,74 @@ export async function POST(request: Request) {
         sessionIdHash,
         path,
         referrer: referrer ?? null,
+        enteredAt: new Date(enteredAtMs),
+        leftAt: new Date(leftAtMs),
+        durationMs,
+      });
+      return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
+    }
+
+    if (type === "doc_page_timing") {
+      const docIdRaw = asNonEmptyString((body as { docId?: unknown })?.docId, 64);
+      const version = asFiniteNumber((body as { version?: unknown })?.version);
+      const pageNumber = asFiniteNumber((body as { pageNumber?: unknown })?.pageNumber);
+      const enteredAtMs = asFiniteNumber((body as { enteredAtMs?: unknown })?.enteredAtMs);
+      const leftAtMs = asFiniteNumber((body as { leftAtMs?: unknown })?.leftAtMs);
+      if (!docIdRaw || !Types.ObjectId.isValid(docIdRaw)) {
+        return applyTempUserHeaders(NextResponse.json({ error: "Invalid docId" }, { status: 400 }), actor);
+      }
+      if (
+        version === null ||
+        !Number.isFinite(version) ||
+        Math.floor(version) < 1 ||
+        pageNumber === null ||
+        !Number.isFinite(pageNumber) ||
+        Math.floor(pageNumber) < 1 ||
+        enteredAtMs === null ||
+        leftAtMs === null
+      ) {
+        return applyTempUserHeaders(
+          NextResponse.json({ error: "Invalid doc_page_timing payload" }, { status: 400 }),
+          actor,
+        );
+      }
+      if (leftAtMs < enteredAtMs) {
+        return applyTempUserHeaders(NextResponse.json({ error: "Invalid timing range" }, { status: 400 }), actor);
+      }
+
+      // Ensure the doc is visible in the actor's active org (with legacy personal-org fallback).
+      const orgId = new Types.ObjectId(actor.orgId);
+      const legacyUserId = new Types.ObjectId(actor.userId);
+      const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+      const docObjectId = new Types.ObjectId(docIdRaw);
+      const ok = await DocModel.exists({
+        ...(allowLegacyByUserId
+          ? {
+              $or: [
+                { _id: docObjectId, orgId, isDeleted: { $ne: true } },
+                {
+                  _id: docObjectId,
+                  userId: legacyUserId,
+                  isDeleted: { $ne: true },
+                  $or: [{ orgId: { $exists: false } }, { orgId: null }],
+                },
+              ],
+            }
+          : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
+      });
+      if (!ok) {
+        // Mirror other doc APIs: 404 for "not found / not authorized".
+        return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+      }
+
+      const durationMs = Math.max(0, Math.min(24 * 60 * 60 * 1000, Math.round(leftAtMs - enteredAtMs)));
+      await DocPageTimingModel.create({
+        orgId,
+        docId: docObjectId,
+        version: Math.floor(version),
+        viewerUserId,
+        sessionIdHash,
+        pageNumber: Math.floor(pageNumber),
         enteredAt: new Date(enteredAtMs),
         leftAt: new Date(leftAtMs),
         durationMs,

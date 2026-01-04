@@ -8,6 +8,11 @@
 import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import Alert from "@/components/ui/Alert";
+import Button from "@/components/ui/Button";
+import Input from "@/components/ui/Input";
+import { fetchJson } from "@/lib/http/fetchJson";
+import { fmtDate, fmtDuration } from "@/lib/admin/format";
 
 type AiRunRow = {
   id: string;
@@ -54,23 +59,6 @@ type AiRunDetail = {
   createdDate: string | null;
 };
 
-function fmtDate(v: string | null | undefined) {
-  if (!v) return "";
-  const d = new Date(v);
-  if (Number.isNaN(d.valueOf())) return v;
-  return d.toLocaleString();
-}
-
-function fmtDuration(ms: number | null | undefined) {
-  if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  const r = s - m * 60;
-  return `${m}m ${Math.round(r)}s`;
-}
-
 export default function AdminAiRunsPage() {
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? null;
@@ -110,22 +98,13 @@ export default function AdminAiRunsPage() {
         if (kind.trim()) qs.set("kind", kind.trim());
         if (runStatus.trim()) qs.set("status", runStatus.trim());
         if (docId.trim()) qs.set("docId", docId.trim());
-        const res = await fetch(`/api/admin/ai-runs?${qs.toString()}`, { method: "GET" });
-        const data = (await res.json().catch(() => ({}))) as {
-          error?: unknown;
-          items?: unknown;
-          total?: unknown;
-        };
-        if (!res.ok) {
-          setError(typeof data.error === "string" ? data.error : "Failed to load AI runs");
-          setItems([]);
-          setTotal(0);
-          return;
-        }
+        const data = await fetchJson<{ items?: unknown; total?: unknown }>(`/api/admin/ai-runs?${qs.toString()}`, {
+          method: "GET",
+        });
         setItems(Array.isArray(data.items) ? (data.items as AiRunRow[]) : []);
         setTotal(typeof data.total === "number" ? data.total : Number(data.total ?? 0) || 0);
-      } catch {
-        setError("Failed to load AI runs");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load AI runs");
         setItems([]);
         setTotal(0);
       } finally {
@@ -146,17 +125,13 @@ export default function AdminAiRunsPage() {
     setDetailError(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/admin/ai-runs/${encodeURIComponent(selectedId)}`, { method: "GET" });
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown; run?: unknown };
-        if (!res.ok) {
-          setDetail(null);
-          setDetailError(typeof data.error === "string" ? data.error : "Failed to load run detail");
-          return;
-        }
+        const data = await fetchJson<{ run?: unknown }>(`/api/admin/ai-runs/${encodeURIComponent(selectedId)}`, {
+          method: "GET",
+        });
         setDetail((data.run ?? null) as AiRunDetail | null);
-      } catch {
+      } catch (e) {
         setDetail(null);
-        setDetailError("Failed to load run detail");
+        setDetailError(e instanceof Error ? e.message : "Failed to load run detail");
       } finally {
         setDetailLoading(false);
       }
@@ -174,13 +149,13 @@ export default function AdminAiRunsPage() {
           <div className="text-base font-semibold text-[var(--fg)]">Admin / AI runs</div>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
           <div className="mt-5">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-5 py-2.5 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               onClick={() => void signIn("google", { callbackUrl: "/a/ai-runs" })}
             >
               Sign in
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -251,19 +226,24 @@ export default function AdminAiRunsPage() {
               </div>
               <div className="min-w-[280px] flex-1">
                 <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Doc ID (optional)</div>
-                <input
+                <Input
                   value={docId}
                   onChange={(e) => {
                     setPage(1);
                     setDocId(e.target.value);
                   }}
                   placeholder="Mongo ObjectId"
-                  className="mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm"
+                  variant="panel2"
+                  className="mt-1 w-full"
                 />
               </div>
             </div>
 
-            {error ? <div className="mt-3 text-sm text-red-600">{error}</div> : null}
+            {error ? (
+              <Alert variant="info" className="mt-3 border border-[var(--border)] bg-[var(--panel-2)] text-sm text-red-600">
+                {error}
+              </Alert>
+            ) : null}
 
             <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)]">
               <table className="w-full border-collapse text-sm">
@@ -315,22 +295,22 @@ export default function AdminAiRunsPage() {
                 {loading ? "Loading…" : `${total} total`} • Page {page} / {totalPages}
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-50"
+                <Button
+                  variant="outline"
+                  className="bg-[var(--panel-2)] disabled:opacity-50"
                   disabled={page <= 1 || loading}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                 >
                   Prev
-                </button>
-                <button
-                  type="button"
-                  className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-50"
+                </Button>
+                <Button
+                  variant="outline"
+                  className="bg-[var(--panel-2)] disabled:opacity-50"
                   disabled={page >= totalPages || loading}
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 >
                   Next
-                </button>
+                </Button>
               </div>
             </div>
           </div>
@@ -339,20 +319,25 @@ export default function AdminAiRunsPage() {
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-semibold">Run detail</div>
               {selectedId ? (
-                <button
-                  type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[12px] font-semibold hover:bg-[var(--panel-hover)]"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-[var(--panel-2)] text-[12px]"
                   onClick={() => setSelectedId(null)}
                 >
                   Clear
-                </button>
+                </Button>
               ) : null}
             </div>
             <div className="mt-2 text-sm text-[var(--muted)]">
               {selectedId ? "Shows full system/user prompts and raw output." : "Select a run from the table."}
             </div>
 
-            {detailError ? <div className="mt-3 text-sm text-red-600">{detailError}</div> : null}
+            {detailError ? (
+              <Alert variant="info" className="mt-3 border border-[var(--border)] bg-[var(--panel-2)] text-sm text-red-600">
+                {detailError}
+              </Alert>
+            ) : null}
             {detailLoading ? <div className="mt-3 text-sm text-[var(--muted)]">Loading detail…</div> : null}
 
             {detail ? (

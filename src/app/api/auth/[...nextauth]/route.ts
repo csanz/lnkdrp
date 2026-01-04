@@ -25,6 +25,9 @@ function hasNextAuthSessionCookie(req: NextRequest) {
 
 
 function canUseAuth(req: NextRequest) {
+  // In development, allow auth flows without invite gating.
+  // This prevents NextAuth (Google OAuth) from failing behind ngrok/local when the invite cookie isn't set.
+  if (process.env.NODE_ENV !== "production") return true;
   if (req.cookies.get(INVITE_COOKIE_NAME)?.value) return true;
   // Allow already-authenticated users (session cookie present) to access auth endpoints.
   if (hasNextAuthSessionCookie(req)) return true;

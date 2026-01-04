@@ -7,8 +7,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import Modal from "@/components/modals/Modal";
+import { useRouter } from "next/navigation";
 import Alert from "@/components/ui/Alert";
 
 type BillingStatusResponse = {
@@ -28,15 +27,17 @@ function formatShortDate(iso: string): string {
   }
 }
 
+function normalizePlan(raw: string): "free" | "pro" {
+  const v = raw.trim().toLowerCase();
+  return v === "pro" ? "pro" : "free";
+}
+
 export default function SubscriptionCard() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const tab = (searchParams?.get("tab") ?? "").trim();
 
   const [busy, setBusy] = useState(false);
   const [upgradeBusy, setUpgradeBusy] = useState(false);
   const [manageBusy, setManageBusy] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BillingStatusResponse | null>(null);
 
@@ -63,24 +64,21 @@ export default function SubscriptionCard() {
     };
   }, []);
 
-  const plan = (data?.plan ?? "free").trim() || "free";
+  const plan = normalizePlan(String(data?.plan ?? "free"));
   const status = (data?.stripeSubscriptionStatus ?? "").trim() || (plan === "pro" ? "active" : "free");
-  const planName = plan === "pro" ? "Pro" : "Free";
-  const canManage = plan === "pro";
-  const isCurrentPlan = true;
+  const renewsOn = useMemo(() => {
+    const end = data?.stripeCurrentPeriodEnd;
+    if (!end || plan !== "pro") return "";
+    const date = formatShortDate(end);
+    return date ? `Renews on ${date}.` : "Renews at period end.";
+  }, [data?.stripeCurrentPeriodEnd, plan]);
 
-  const secondary = useMemo(() => {
+  const topHint = useMemo(() => {
     if (busy) return "Loading billing details…";
     if (error) return error;
-
-    const end = data?.stripeCurrentPeriodEnd;
-    if (end && plan === "pro") {
-      const date = formatShortDate(end);
-      return date ? `Renews on ${date}.` : "Renews at period end.";
-    }
-    if (plan === "free") return "Upgrade to unlock higher limits and advanced features.";
-    return "Manage billing, invoices, and payment method.";
-  }, [busy, error, data, status, plan]);
+    if (plan === "pro") return "Manage billing, invoices, and payment method.";
+    return "Upgrade to unlock higher limits and advanced features.";
+  }, [busy, error, plan]);
 
   async function startCheckout() {
     if (upgradeBusy) return;
@@ -119,40 +117,59 @@ export default function SubscriptionCard() {
     }
   }
 
+  function PlanCard({
+    title,
+    subtitle,
+    current,
+    cta,
+    rightSlot,
+  }: {
+    title: string;
+    subtitle: string;
+    current?: boolean;
+    cta: React.ReactNode;
+    rightSlot?: React.ReactNode;
+  }) {
+    return (
+      <div className="rounded-2xl bg-[var(--panel-2)] p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="text-[16px] font-semibold text-[var(--fg)]">{title}</div>
+              {current ? (
+                <span className="rounded-full bg-[var(--panel-hover)] px-2.5 py-1 text-[12px] font-semibold text-[var(--fg)]">
+                  Current
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-1 text-[12px] text-[var(--muted-2)]">{subtitle}</div>
+            <div className="mt-4 flex flex-wrap items-center gap-2">{cta}</div>
+          </div>
+          {rightSlot ? <div className="shrink-0">{rightSlot}</div> : null}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl bg-[var(--panel)] p-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Subscription</div>
-          <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-            {secondary}{" "}
-            <button
-              type="button"
-              className="font-semibold text-[var(--fg)] underline underline-offset-2"
-              onClick={() => setDetailsOpen(true)}
-            >
-              See plan details
-            </button>
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <div className="text-[16px] font-semibold text-[var(--fg)]">{planName}</div>
-            {isCurrentPlan ? (
-              <span className="rounded-full bg-[var(--panel-hover)] px-2.5 py-1 text-[12px] font-semibold text-[var(--fg)]">
-                Current plan
-              </span>
-            ) : null}
-            {plan !== "free" ? (
-              <span className="rounded-full bg-[var(--panel-2)] px-2.5 py-1 text-[12px] font-semibold text-[var(--muted-2)]">
-                Status: {status}
-              </span>
-            ) : null}
-          </div>
+          <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">{topHint}</div>
         </div>
+        {plan === "pro" ? (
+          <div className="text-[11px] font-semibold text-[var(--muted-2)]">Status: {status}</div>
+        ) : null}
+      </div>
 
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            {plan === "free" ? (
+      <div className="mt-5 grid gap-3">
+        <PlanCard
+          title="Free"
+          subtitle="A solid baseline for individual use."
+          current={plan === "free"}
+          cta={
+            plan === "free" ? (
               <button
                 type="button"
                 className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
@@ -161,40 +178,59 @@ export default function SubscriptionCard() {
               >
                 {upgradeBusy ? "Opening…" : "Upgrade"}
               </button>
-            ) : canManage ? (
+            ) : (
+              <div className="text-[12px] text-[var(--muted-2)]">Included with your account.</div>
+            )
+          }
+        />
+
+        <PlanCard
+          title="Pro"
+          subtitle={plan === "pro" ? (renewsOn ? renewsOn : "Your subscription is active.") : "Unlock higher limits and advanced features."}
+          current={plan === "pro"}
+          cta={
+            plan === "pro" ? (
               <button
                 type="button"
                 className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
                 disabled={busy || manageBusy}
                 onClick={() => void openManageSubscription()}
               >
-                {manageBusy ? "Opening…" : "Manage subscription"}
+                {manageBusy ? "Opening…" : "Manage Subscription"}
               </button>
             ) : (
-              <button
-                type="button"
-                className="rounded-lg bg-[var(--panel-hover)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] opacity-60"
-                disabled
-                title="Not available"
-              >
-                Manage subscription
-              </button>
-            )}
-
-            {tab !== "usage" ? (
-              <button
-                type="button"
-                className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                onClick={() => router.push("/dashboard?tab=usage", { scroll: false })}
-              >
-                Usage
-              </button>
-            ) : null}
-          </div>
-          <div className="mt-2 text-right text-[11px] text-[var(--muted-2)]">
-            {plan === "free" ? "Checkout opens in Stripe." : "Billing portal opens in Stripe."}
-          </div>
-        </div>
+              <div className="text-[12px] text-[var(--muted-2)]">Upgrade from Free to access Pro.</div>
+            )
+          }
+          rightSlot={
+            plan === "pro" ? (
+              <div className="w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 md:w-[340px]">
+                <div className="text-[12px] font-semibold text-[var(--fg)]">Usage this month</div>
+                <div className="mt-1 text-[11px] text-[var(--muted-2)]">Coming soon.</div>
+                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]" aria-hidden="true">
+                  <div className="h-2 w-1/2 rounded-full bg-[var(--muted-2)] opacity-60" />
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                    onClick={() => router.push("/dashboard?tab=usage", { scroll: false })}
+                  >
+                    View usage
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-[var(--panel-hover)] px-3 py-2 text-[12px] font-semibold text-[var(--muted-2)] opacity-60"
+                    disabled
+                    title="Not implemented yet"
+                  >
+                    Edit limit
+                  </button>
+                </div>
+              </div>
+            ) : null
+          }
+        />
       </div>
 
       {error ? (
@@ -202,26 +238,6 @@ export default function SubscriptionCard() {
           {error}
         </Alert>
       ) : null}
-
-      <Modal open={detailsOpen} onClose={() => setDetailsOpen(false)} ariaLabel="Plan details">
-        <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Plan details</div>
-        <div className="mt-3 text-[13px] leading-6 text-[var(--muted-2)]">
-          This modal is where we’ll describe what’s included in the <span className="font-semibold text-[var(--fg)]">{planName}</span>{" "}
-          plan.
-        </div>
-        <div className="mt-5 rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
-          Not finalized yet — tell me the exact inclusions/limits you want for Free vs paid, and I’ll populate this list.
-        </div>
-        <div className="mt-5 flex justify-end">
-          <button
-            type="button"
-            className="rounded-xl bg-[var(--fg)] px-4 py-2 text-[13px] font-semibold text-[var(--bg)]"
-            onClick={() => setDetailsOpen(false)}
-          >
-            Close
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }

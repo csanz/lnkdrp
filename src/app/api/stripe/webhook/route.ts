@@ -10,8 +10,8 @@ import { Types } from "mongoose";
 import Stripe from "stripe";
 
 import { connectMongo } from "@/lib/mongodb";
-import { UserModel } from "@/lib/models/User";
 import { StripeEventModel } from "@/lib/models/StripeEvent";
+import { SubscriptionModel } from "@/lib/models/Subscription";
 
 export const runtime = "nodejs";
 
@@ -36,8 +36,19 @@ function asIdString(v: unknown): string {
 function userIdFromSession(session: Stripe.Checkout.Session): string {
   const metaId = typeof session?.metadata?.userId === "string" ? session.metadata.userId.trim() : "";
   if (metaId) return metaId;
+  return "";
+}
+
+function orgIdFromSession(session: Stripe.Checkout.Session): string {
+  const metaId = typeof session?.metadata?.orgId === "string" ? session.metadata.orgId.trim() : "";
+  if (metaId) return metaId;
   const ref = typeof session?.client_reference_id === "string" ? session.client_reference_id.trim() : "";
   return ref;
+}
+
+function orgIdFromSubscription(sub: Stripe.Subscription): string {
+  const metaId = typeof (sub as any)?.metadata?.orgId === "string" ? String((sub as any).metadata.orgId).trim() : "";
+  return metaId;
 }
 
 function isProStatus(status: string): boolean {
@@ -78,23 +89,26 @@ export async function POST(request: Request) {
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
-      const userIdRaw = userIdFromSession(session);
-      if (!userIdRaw || !Types.ObjectId.isValid(userIdRaw)) {
+      const orgIdRaw = orgIdFromSession(session);
+      if (!orgIdRaw || !Types.ObjectId.isValid(orgIdRaw)) {
         return NextResponse.json({ received: true });
       }
-      const userId = new Types.ObjectId(userIdRaw);
+      const orgId = new Types.ObjectId(orgIdRaw);
       const customerId = asIdString(session.customer);
       const subscriptionId = asIdString(session.subscription);
 
-      // NOTE: We do NOT grant plan=pro here. Access is based on subscription status webhooks.
-      await UserModel.updateOne(
-        { _id: userId },
+      // Workspace-bound: persist identifiers on the org subscription row.
+      // NOTE: We do NOT grant access here; access is based on subscription status webhooks.
+      await SubscriptionModel.updateOne(
+        { orgId, isDeleted: { $ne: true } },
         {
+          $setOnInsert: { orgId, isDeleted: false },
           $set: {
             ...(customerId ? { stripeCustomerId: customerId } : {}),
             ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
           },
         },
+        { upsert: true },
       );
 
       return NextResponse.json({ received: true });
@@ -111,26 +125,34 @@ export async function POST(request: Request) {
           : null;
       const cancelAtPeriodEnd = Boolean((sub as any)?.cancel_at_period_end);
 
-      // Prefer subscriptionId match (strong), fallback to customerId (weak but practical).
-      const query =
-        subscriptionId
-          ? { stripeSubscriptionId: subscriptionId }
+      // Prefer orgId from subscription metadata (best), then subscriptionId, then customerId.
+      const orgIdRaw = orgIdFromSubscription(sub);
+      const orgId = orgIdRaw && Types.ObjectId.isValid(orgIdRaw) ? new Types.ObjectId(orgIdRaw) : null;
+      const query = orgId
+        ? { orgId, isDeleted: { $ne: true } }
+        : subscriptionId
+          ? { stripeSubscriptionId: subscriptionId, isDeleted: { $ne: true } }
           : customerId
-            ? { stripeCustomerId: customerId }
+            ? { stripeCustomerId: customerId, isDeleted: { $ne: true } }
             : null;
       if (!query) return NextResponse.json({ received: true });
 
-      await UserModel.updateOne(query, {
-        $set: {
-          plan: isProStatus(status) ? "pro" : "free",
-          stripeSubscriptionStatus: status || null,
-          stripeCurrentPeriodEnd: currentPeriodEnd,
-          ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
-          ...(customerId ? { stripeCustomerId: customerId } : {}),
-          // We don't currently store cancelAtPeriodEnd on the user; add later if needed.
-          ...(cancelAtPeriodEnd ? {} : {}),
+      const pro = isProStatus(status);
+      await SubscriptionModel.updateOne(
+        query,
+        {
+          $setOnInsert: orgId ? { orgId, isDeleted: false } : {},
+          $set: {
+            status: status || "free",
+            planName: pro ? "Pro" : "Free",
+            currentPeriodEnd,
+            cancelAtPeriodEnd,
+            ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
+            ...(customerId ? { stripeCustomerId: customerId } : {}),
+          },
         },
-      });
+        { upsert: Boolean(orgId) },
+      );
 
       return NextResponse.json({ received: true });
     }
@@ -140,13 +162,14 @@ export async function POST(request: Request) {
       const subscriptionId = asIdString(sub.id);
       if (!subscriptionId) return NextResponse.json({ received: true });
 
-      await UserModel.updateOne(
-        { stripeSubscriptionId: subscriptionId },
+      await SubscriptionModel.updateOne(
+        { stripeSubscriptionId: subscriptionId, isDeleted: { $ne: true } },
         {
           $set: {
-            plan: "free",
-            stripeSubscriptionStatus: "canceled",
-            stripeCurrentPeriodEnd: null,
+            status: "free",
+            planName: "Free",
+            currentPeriodEnd: null,
+            cancelAtPeriodEnd: false,
           },
         },
       );

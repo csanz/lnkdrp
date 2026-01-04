@@ -17,6 +17,7 @@ import { useTheme } from "next-themes";
 import { useAuthEnabled, useNavigationLocked } from "@/app/providers";
 import AboutCopy from "@/components/AboutCopy";
 import Modal from "@/components/modals/Modal";
+import IconLink from "@/components/ui/IconLink";
 import {
   ORGS_CACHE_UPDATED_EVENT,
   readOrgsCacheSnapshot,
@@ -178,10 +179,12 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
       </button>
 
       {!isTopbar ? (
-        <Link
+        <IconLink
           href="/dashboard"
-          aria-label="Dashboard"
+          ariaLabel="Dashboard"
           title="Dashboard"
+          variant="ghost"
+          size="sm"
           onClick={(e) => {
             // Keep existing behavior: clicking the account section opens the menu,
             // but clicking the gear should navigate instead.
@@ -196,7 +199,7 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           ].join(" ")}
         >
           <Cog6ToothIcon className="h-4 w-4" />
-        </Link>
+        </IconLink>
       ) : null}
 
       {open && !navLocked ? (
@@ -583,10 +586,12 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
       </button>
 
       {!isTopbar ? (
-        <Link
+        <IconLink
           href="/dashboard"
-          aria-label="Dashboard"
+          ariaLabel="Dashboard"
           title="Dashboard"
+          variant="ghost"
+          size="sm"
           onClick={(e) => {
             // Keep existing behavior: clicking the account section opens the menu,
             // but clicking the gear should navigate instead.
@@ -602,7 +607,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           ].join(" ")}
         >
           <Cog6ToothIcon className="h-4 w-4" />
-        </Link>
+        </IconLink>
       ) : null}
 
       {open && !navLocked ? (

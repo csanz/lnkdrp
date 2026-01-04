@@ -9,6 +9,9 @@ import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import Alert from "@/components/ui/Alert";
+import Button from "@/components/ui/Button";
+import { fetchJson } from "@/lib/http/fetchJson";
 
 type ProjectRaw = Record<string, unknown>;
 
@@ -51,17 +54,14 @@ export default function AdminProjectEditorPage() {
     setOkMessage(null);
     void (async () => {
       try {
-        const res = await fetch(`/api/admin/data/projects/${encodeURIComponent(projectId)}`, { method: "GET" });
-        const data = (await res.json().catch(() => ({}))) as { error?: unknown; project?: { raw?: unknown } };
-        if (!res.ok) {
-          setError(typeof data.error === "string" ? data.error : "Failed to load project");
-          setRaw(null);
-          return;
-        }
+        const data = await fetchJson<{ project?: { raw?: unknown } }>(
+          `/api/admin/data/projects/${encodeURIComponent(projectId)}`,
+          { method: "GET" },
+        );
         const r = data.project?.raw;
         setRaw(r && typeof r === "object" ? (r as ProjectRaw) : null);
-      } catch {
-        setError("Failed to load project");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load project");
         setRaw(null);
       } finally {
         setLoading(false);
@@ -75,22 +75,21 @@ export default function AdminProjectEditorPage() {
     if (!projectId) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/admin/data/projects/${encodeURIComponent(projectId)}`, {
+      await fetchJson(`/api/admin/data/projects/${encodeURIComponent(projectId)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ isRequest: draftIsRequest }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: unknown; ok?: unknown };
-      if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "Failed to update project");
-        return;
-      }
       setOkMessage("Saved.");
       // Refresh raw so admin sees persisted truth.
-      const again = await fetch(`/api/admin/data/projects/${encodeURIComponent(projectId)}`, { method: "GET" });
-      const againJson = (await again.json().catch(() => ({}))) as { project?: { raw?: unknown } };
+      const againJson = await fetchJson<{ project?: { raw?: unknown } }>(
+        `/api/admin/data/projects/${encodeURIComponent(projectId)}`,
+        { method: "GET" },
+      );
       const r = againJson.project?.raw;
       setRaw(r && typeof r === "object" ? (r as ProjectRaw) : null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to update project");
     } finally {
       setSaving(false);
     }
@@ -104,21 +103,20 @@ export default function AdminProjectEditorPage() {
     if (!ok) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/admin/data/projects/${encodeURIComponent(projectId)}`, {
+      await fetchJson(`/api/admin/data/projects/${encodeURIComponent(projectId)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ convertToRequest: true }),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: unknown };
-      if (!res.ok) {
-        setError(typeof data.error === "string" ? data.error : "Failed to convert project");
-        return;
-      }
       setOkMessage("Converted to request repository.");
-      const again = await fetch(`/api/admin/data/projects/${encodeURIComponent(projectId)}`, { method: "GET" });
-      const againJson = (await again.json().catch(() => ({}))) as { project?: { raw?: unknown } };
+      const againJson = await fetchJson<{ project?: { raw?: unknown } }>(
+        `/api/admin/data/projects/${encodeURIComponent(projectId)}`,
+        { method: "GET" },
+      );
       const r = againJson.project?.raw;
       setRaw(r && typeof r === "object" ? (r as ProjectRaw) : null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to convert project");
     } finally {
       setSaving(false);
     }
@@ -135,13 +133,13 @@ export default function AdminProjectEditorPage() {
           <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Projects</div>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
           <div className="mt-5">
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-5 py-2.5 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+            <Button
+              variant="solid"
+              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
               onClick={() => void signIn("google", { callbackUrl: `/a/data/projects/${encodeURIComponent(projectId)}` })}
             >
               Sign in
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -179,7 +177,9 @@ export default function AdminProjectEditorPage() {
           {loading ? (
             <div className="text-sm text-[var(--muted)]">Loading…</div>
           ) : error ? (
-            <div className="text-sm text-red-700">{error}</div>
+            <Alert variant="info" className="border border-[var(--border)] bg-[var(--panel-2)] text-sm text-red-700">
+              {error}
+            </Alert>
           ) : raw ? (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
