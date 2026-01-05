@@ -23,7 +23,7 @@ export default function HelpTooltip({
     <span className="group relative inline-flex">
       <button
         type="button"
-        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
+        className="inline-flex items-center justify-center rounded-md p-1 text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--border)]"
         aria-label={label}
       >
         <QuestionMarkCircleIcon className="h-5 w-5" aria-hidden="true" />

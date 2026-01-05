@@ -101,7 +101,8 @@ type PdfDoc = {
 };
 
 type PdfPage = {
-  getViewport: (opts: { scale: number }) => { width: number; height: number };
+  rotate?: number;
+  getViewport: (opts: { scale: number; rotation?: number }) => { width: number; height: number };
   render: (opts: {
     canvasContext: CanvasRenderingContext2D;
     viewport: { width: number; height: number };
@@ -113,6 +114,13 @@ const SHARE_OWNER_STATS_PREFIX = "lnkdrp_share_owner_stats_v1:";
 
 type OwnerStats = { views: number; pagesViewed: number };
 type ShareContext = { isOwner: boolean; stats?: OwnerStats };
+
+function normalizePdfRotation(page: { rotate?: number } | null | undefined): number {
+  const raw = typeof page?.rotate === "number" && Number.isFinite(page.rotate) ? page.rotate : 0;
+  // Normalize to 0/90/180/270 range; PDF rotation is specified in degrees.
+  const snapped = Math.round(raw / 90) * 90;
+  return ((snapped % 360) + 360) % 360;
+}
 /**
  * Return whether browser.
  */
@@ -517,10 +525,12 @@ export function PdfJsViewer({
         if (cancelled) return;
 
         // Fit-to-viewport (contain): ensure the page fits without scrolling at zoom=1.
-        const base = page.getViewport({ scale: 1 });
+        const rotation = normalizePdfRotation(page);
+        const base = page.getViewport({ scale: 1, rotation });
         const fitScale = Math.min(viewportSize.w / base.width, viewportSize.h / base.height);
         const viewport = page.getViewport({
           scale: Math.max(0.1, fitScale * zoom),
+          rotation,
         });
         const context = canvas.getContext("2d");
         if (!context) throw new Error("Canvas 2D context not available");
@@ -555,8 +565,13 @@ export function PdfJsViewer({
   // "All pages" mode: lazily render visible pages (and neighbors) into canvases as you scroll.
   const allCanvasesRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const allRenderedKeyRef = useRef<Map<number, string>>(new Map());
+  const allRenderTasksRef = useRef<Map<number, { key: string; task: { cancel?: () => void; promise: Promise<unknown> } }>>(
+    new Map(),
+  );
   const visiblePageRatiosRef = useRef<Map<number, number>>(new Map());
   const [visiblePages, setVisiblePages] = useState<number[]>([]);
+  const allPagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const [allPagesWidth, setAllPagesWidth] = useState(0);
 
   useEffect(() => {
     if (viewMode !== "all") return;
@@ -610,10 +625,25 @@ export function PdfJsViewer({
 
   useEffect(() => {
     if (viewMode !== "all") return;
+    const el = allPagesContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      const rect = el.getBoundingClientRect();
+      setAllPagesWidth(Math.floor(rect.width));
+    });
+    ro.observe(el);
+    const rect = el.getBoundingClientRect();
+    setAllPagesWidth(Math.floor(rect.width));
+    return () => ro.disconnect();
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "all") return;
     const pdf = pdfRef.current;
     if (!pdf) return;
     if (!numPages || numPages <= 0) return;
-    if (viewportSize.w <= 0) return;
+    const width = allPagesWidth > 0 ? allPagesWidth : viewportSize.w;
+    if (width <= 0) return;
 
     const toRender = new Set<number>();
     for (const p of visiblePages) {
@@ -623,7 +653,9 @@ export function PdfJsViewer({
     }
     if (toRender.size === 0) toRender.add(Math.min(Math.max(1, pageNumber), numPages));
 
-    const targetWidth = Math.max(1, viewportSize.w - 48); // account for px-6 on the all-pages container
+    // Fit pages to the actual all-pages column width (not the full viewport),
+    // and account for per-page card padding (p-3).
+    const targetWidth = Math.max(1, width - 24);
     let cancelled = false;
 
     async function renderPage(p: number) {
@@ -631,28 +663,49 @@ export function PdfJsViewer({
       const canvas = allCanvasesRef.current.get(p);
       if (!canvas) return;
 
-      const key = `${targetWidth}:${zoom}:${pdfVersion}`;
-      const prevKey = allRenderedKeyRef.current.get(p);
-      if (prevKey === key) return;
-
       try {
         const page = await pdf.getPage(p);
         if (cancelled) return;
 
-        const base = page.getViewport({ scale: 1 });
+        const rotation = normalizePdfRotation(page);
+        const key = `${targetWidth}:${zoom}:${pdfVersion}:${rotation}`;
+        const prevKey = allRenderedKeyRef.current.get(p);
+        if (prevKey === key) return;
+
+        // Cancel any in-flight render for this page (prevents stale paints when switching modes / resizing).
+        const prevTask = allRenderTasksRef.current.get(p);
+        if (prevTask) {
+          try {
+            prevTask.task.cancel?.();
+          } catch {
+            // ignore
+          }
+          allRenderTasksRef.current.delete(p);
+        }
+
+        const base = page.getViewport({ scale: 1, rotation });
         const fitScale = targetWidth / base.width;
-        const viewport = page.getViewport({ scale: Math.max(0.1, fitScale * zoom) });
+        const viewport = page.getViewport({ scale: Math.max(0.1, fitScale * zoom), rotation });
         const context = canvas.getContext("2d");
         if (!context) return;
 
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
+        // Make rendering deterministic even if a canvas was previously painted.
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.clearRect(0, 0, canvas.width, canvas.height);
 
-        const renderTask = page.render({ canvasContext: context, viewport });
+        const renderTask = page.render({ canvasContext: context, viewport }) as unknown as {
+          cancel?: () => void;
+          promise: Promise<unknown>;
+        };
+        allRenderTasksRef.current.set(p, { key, task: renderTask });
         await renderTask.promise;
         if (cancelled) return;
 
         allRenderedKeyRef.current.set(p, key);
+        const latest = allRenderTasksRef.current.get(p);
+        if (latest?.key === key) allRenderTasksRef.current.delete(p);
       } catch {
         // ignore per-page rendering failures
       }
@@ -662,23 +715,37 @@ export function PdfJsViewer({
 
     return () => {
       cancelled = true;
+      // Best-effort: cancel any in-flight renders started by this effect.
+      for (const { task } of allRenderTasksRef.current.values()) {
+        try {
+          task.cancel?.();
+        } catch {
+          // ignore
+        }
+      }
+      allRenderTasksRef.current.clear();
     };
-  }, [numPages, pageNumber, pdfVersion, viewMode, visiblePages, viewportSize.w, zoom]);
+  }, [allPagesWidth, numPages, pageNumber, pdfVersion, viewMode, visiblePages, viewportSize.w, zoom]);
 
   // "Grid" mode: render thumbnail tiles (lazy, visible + neighbors).
   const gridContainerRef = useRef<HTMLDivElement | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
   const gridCanvasesRef = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const gridRenderedKeyRef = useRef<Map<number, string>>(new Map());
+  const gridRenderTasksRef = useRef<Map<number, { key: string; task: { cancel?: () => void; promise: Promise<unknown> } }>>(
+    new Map(),
+  );
   const gridVisibleRatiosRef = useRef<Map<number, number>>(new Map());
   const [gridVisiblePages, setGridVisiblePages] = useState<number[]>([]);
 
   const gridTileWidth = useMemo(() => {
     const w = gridWidth > 0 ? gridWidth : viewportSize.w;
     if (w <= 0) return 0;
-    const MIN = 160;
+    // Prefer larger thumbnails when space allows (cap columns on wide screens).
+    const MIN = 240;
     const GAP = 12;
-    const cols = Math.max(1, Math.floor((w + GAP) / (MIN + GAP)));
+    const MAX_COLS = 4;
+    const cols = Math.min(MAX_COLS, Math.max(1, Math.floor((w + GAP) / (MIN + GAP))));
     const tile = Math.floor((w - GAP * (cols - 1)) / cols);
     return Math.max(110, tile);
   }, [gridWidth, viewportSize.w]);
@@ -759,24 +826,44 @@ export function PdfJsViewer({
       const canvas = gridCanvasesRef.current.get(p);
       if (!canvas) return;
 
-      const key = `${gridTileWidth}:${zoom}:${pdfVersion}`;
-      const prevKey = gridRenderedKeyRef.current.get(p);
-      if (prevKey === key) return;
-
       try {
         const page = await pdf.getPage(p);
         if (cancelled) return;
-        const base = page.getViewport({ scale: 1 });
+        const rotation = normalizePdfRotation(page);
+        const key = `${gridTileWidth}:${zoom}:${pdfVersion}:${rotation}`;
+        const prevKey = gridRenderedKeyRef.current.get(p);
+        if (prevKey === key) return;
+
+        // Cancel any in-flight render for this thumbnail.
+        const prevTask = gridRenderTasksRef.current.get(p);
+        if (prevTask) {
+          try {
+            prevTask.task.cancel?.();
+          } catch {
+            // ignore
+          }
+          gridRenderTasksRef.current.delete(p);
+        }
+
+        const base = page.getViewport({ scale: 1, rotation });
         const fitScale = gridTileWidth / base.width;
-        const viewport = page.getViewport({ scale: Math.max(0.1, fitScale * zoom) });
+        const viewport = page.getViewport({ scale: Math.max(0.1, fitScale * zoom), rotation });
         const context = canvas.getContext("2d");
         if (!context) return;
         canvas.width = Math.floor(viewport.width);
         canvas.height = Math.floor(viewport.height);
-        const renderTask = page.render({ canvasContext: context, viewport });
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        const renderTask = page.render({ canvasContext: context, viewport }) as unknown as {
+          cancel?: () => void;
+          promise: Promise<unknown>;
+        };
+        gridRenderTasksRef.current.set(p, { key, task: renderTask });
         await renderTask.promise;
         if (cancelled) return;
         gridRenderedKeyRef.current.set(p, key);
+        const latest = gridRenderTasksRef.current.get(p);
+        if (latest?.key === key) gridRenderTasksRef.current.delete(p);
       } catch {
         // ignore
       }
@@ -786,6 +873,14 @@ export function PdfJsViewer({
 
     return () => {
       cancelled = true;
+      for (const { task } of gridRenderTasksRef.current.values()) {
+        try {
+          task.cancel?.();
+        } catch {
+          // ignore
+        }
+      }
+      gridRenderTasksRef.current.clear();
     };
   }, [gridTileWidth, gridVisiblePages, numPages, pdfVersion, viewMode, zoom]);
 
@@ -1286,7 +1381,7 @@ export function PdfJsViewer({
           </div>
         ) : viewMode === "all" ? (
           <div className="min-h-full w-full px-6 py-6">
-            <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+            <div ref={allPagesContainerRef} className="mx-auto flex w-full max-w-5xl flex-col gap-6">
               {numPages
                 ? Array.from({ length: numPages }, (_, i) => i + 1).map((p) => (
                     <div
@@ -1319,7 +1414,7 @@ export function PdfJsViewer({
           </div>
         ) : (
           <div className="min-h-full w-full px-6 py-6">
-            <div ref={gridContainerRef} className="mx-auto w-full max-w-6xl">
+            <div ref={gridContainerRef} className="w-full">
               <div
                 className="grid gap-3"
                 style={{

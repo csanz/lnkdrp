@@ -5,6 +5,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -59,7 +60,7 @@ function MiniLineChartSingle({
   return (
     <div className="w-full">
       <div className="h-56 w-full">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={1}>
           <AreaChart data={data} margin={{ top: 6, right: 6, bottom: 4, left: 6 }}>
             <defs>
               <linearGradient id={fillId} x1="0" x2="0" y1="0" y2="1">
@@ -134,6 +135,7 @@ function Check() {
 
 
 export default function MetricsPageClient({ docId }: { docId: string }) {
+  const router = useRouter();
   const [docTitle, setDocTitle] = useState<string>("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(false);
@@ -152,6 +154,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     async function load() {
       try {
         const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, { cache: "no-store" });
+        if (res.status === 404) {
+          if (!cancelled) router.replace("/dashboard");
+          return;
+        }
         if (!res.ok) return;
         const json = (await res.json()) as unknown;
         const t =
@@ -202,6 +208,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
           `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}`,
           { cache: "no-store" },
         );
+        if (res.status === 404) {
+          if (!cancelled) router.replace("/dashboard");
+          return;
+        }
         if (!res.ok) {
           const text = await res.text().catch(() => "");
           throw new Error(text || `Request failed (${res.status})`);

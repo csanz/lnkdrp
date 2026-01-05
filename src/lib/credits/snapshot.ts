@@ -60,7 +60,7 @@ export async function getCreditsSnapshot(params: { workspaceId: string }): Promi
 
   const now = new Date();
   const t0 = Date.now();
-  const [sub, bal] = await Promise.all([
+  const [sub, balRaw] = await Promise.all([
     SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
       .select({ status: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
       .lean(),
@@ -79,6 +79,47 @@ export async function getCreditsSnapshot(params: { workspaceId: string }): Promi
   debugLog(2, "[credits:snapshot] base queries", { ms: Date.now() - t0, ops: 2 });
 
   const pro = isProStatus((sub as any)?.status);
+
+  // Ensure a balance record exists so the dashboard can show Personal one-time credits
+  // even before the first AI run triggers reservation initialization.
+  let bal = balRaw as any;
+  if (!bal) {
+    const initTrialCredits = pro ? 0 : 50;
+    const init: Partial<{
+      trialCreditsRemaining: number;
+      subscriptionCreditsRemaining: number;
+      purchasedCreditsRemaining: number;
+      onDemandEnabled: boolean;
+      onDemandMonthlyLimitCents: number;
+      dailyCreditCap: number | null;
+      monthlyCreditCap: number | null;
+      perRunCreditCapBasic: number;
+      perRunCreditCapStandard: number;
+      perRunCreditCapAdvanced: number;
+      currentPeriodStart: Date | null;
+      currentPeriodEnd: Date | null;
+    }> = {
+      trialCreditsRemaining: initTrialCredits,
+      subscriptionCreditsRemaining: 0,
+      purchasedCreditsRemaining: 0,
+      onDemandEnabled: false,
+      onDemandMonthlyLimitCents: 0,
+      dailyCreditCap: null,
+      monthlyCreditCap: null,
+      perRunCreditCapBasic: 20,
+      perRunCreditCapStandard: 60,
+      perRunCreditCapAdvanced: 150,
+      currentPeriodStart: null,
+      currentPeriodEnd: null,
+    };
+    try {
+      await WorkspaceCreditBalanceModel.updateOne({ workspaceId: orgId }, { $setOnInsert: init }, { upsert: true });
+      bal = init;
+    } catch {
+      // best-effort; fall through with bal as null-ish
+      bal = init;
+    }
+  }
   const subStart = (sub as any)?.currentPeriodStart instanceof Date ? (sub as any).currentPeriodStart : null;
   const subEnd = (sub as any)?.currentPeriodEnd instanceof Date ? (sub as any).currentPeriodEnd : null;
   const balStart = (bal as any)?.currentPeriodStart instanceof Date ? (bal as any).currentPeriodStart : null;

@@ -17,6 +17,7 @@ async function defaultInitBalanceIfMissing(params: { workspaceId: string }): Pro
   const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean();
   const isPro = isProSubscriptionStatus((sub as any)?.status);
   return {
+    // Free "trial" credits are one-time starter credits.
     trialCreditsRemaining: isPro ? 0 : 50,
     subscriptionCreditsRemaining: 0,
     purchasedCreditsRemaining: 0,

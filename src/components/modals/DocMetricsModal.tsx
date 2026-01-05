@@ -66,7 +66,7 @@ function MiniLineChartSingle({
   return (
     <div className="w-full">
       <div className="h-56 w-full">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={1}>
           <AreaChart data={data} margin={{ top: 6, right: 6, bottom: 4, left: 6 }}>
             <defs>
               <linearGradient id={fillId} x1="0" x2="0" y1="0" y2="1">

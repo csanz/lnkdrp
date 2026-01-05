@@ -27,25 +27,8 @@ type UserRow = {
   lastLoginAt: string | null;
 };
 
-type OrgRow = {
-  id: string;
-  type: string | null;
-  name: string | null;
-  slug: string | null;
-  personalForUserId: string | null;
-  createdDate: string | null;
-};
-
-type OrgMemberRow = {
-  userId: string;
-  memberRole: string | null;
-  email: string | null;
-  name: string | null;
-  userRole: string | null;
-  isActive: boolean;
-  isTemp: boolean;
-  lastLoginAt: string | null;
-};
+type SortField = "createdAt" | "lastLoginAt";
+type SortOrder = "desc" | "asc";
 
 export default function AdminDataUsersPage() {
   const { data: session, status } = useSession();
@@ -58,6 +41,9 @@ export default function AdminDataUsersPage() {
   const canUseAdmin = isAdmin || isLocalhost;
 
   const [q, setQ] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string>("");
+  const [sortField, setSortField] = useState<SortField>("createdAt");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
   const [limit] = useState(50);
   const [total, setTotal] = useState(0);
@@ -66,15 +52,6 @@ export default function AdminDataUsersPage() {
   const [error, setError] = useState<string | null>(null);
   const [planBusyUserId, setPlanBusyUserId] = useState<string>("");
   const [planError, setPlanError] = useState<string | null>(null);
-
-  const [orgs, setOrgs] = useState<OrgRow[]>([]);
-  const [orgsLoading, setOrgsLoading] = useState(false);
-  const [orgsError, setOrgsError] = useState<string | null>(null);
-  const [selectedOrgId, setSelectedOrgId] = useState<string>("");
-  const [members, setMembers] = useState<OrgMemberRow[]>([]);
-  const [membersLoading, setMembersLoading] = useState(false);
-  const [membersError, setMembersError] = useState<string | null>(null);
-  const [membersReloadKey, setMembersReloadKey] = useState(0);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
 
@@ -88,6 +65,9 @@ export default function AdminDataUsersPage() {
         qs.set("limit", String(limit));
         qs.set("page", String(page));
         if (q.trim()) qs.set("q", q.trim());
+        if (roleFilter) qs.set("role", roleFilter);
+        qs.set("sort", sortField);
+        qs.set("order", sortOrder);
         const data = await fetchJson<{ users?: unknown; total?: unknown }>(`/api/admin/data/users?${qs.toString()}`, {
           method: "GET",
         });
@@ -101,7 +81,7 @@ export default function AdminDataUsersPage() {
         setLoading(false);
       }
     })();
-  }, [canUseAdmin, limit, page, q]);
+  }, [canUseAdmin, limit, page, q, roleFilter, sortField, sortOrder]);
 
   async function setUserPlan(userId: string, plan: "free" | "pro") {
     if (!userId) return;
@@ -130,55 +110,6 @@ export default function AdminDataUsersPage() {
       setPlanBusyUserId("");
     }
   }
-
-  // Load org list once (used by org member viewer).
-  useEffect(() => {
-    if (!canUseAdmin) return;
-    setOrgsLoading(true);
-    setOrgsError(null);
-    void (async () => {
-      try {
-        const data = await fetchJson<{ orgs?: unknown }>(`/api/admin/data/orgs?limit=500`, { method: "GET" });
-        const list = Array.isArray(data.orgs) ? (data.orgs as OrgRow[]) : [];
-        setOrgs(list);
-        // Default to the signed-in active org if present and list contains it.
-        const preferred = session?.activeOrgId ?? "";
-        if (preferred && list.some((o) => o.id === preferred)) setSelectedOrgId(preferred);
-      } catch (e) {
-        setOrgsError(e instanceof Error ? e.message : "Failed to load orgs");
-        setOrgs([]);
-      } finally {
-        setOrgsLoading(false);
-      }
-    })();
-  }, [canUseAdmin, session?.activeOrgId]);
-
-  // Load members for selected org.
-  useEffect(() => {
-    if (!canUseAdmin) return;
-    if (!selectedOrgId) {
-      setMembers([]);
-      setMembersError(null);
-      setMembersLoading(false);
-      return;
-    }
-    setMembersLoading(true);
-    setMembersError(null);
-    void (async () => {
-      try {
-        const data = await fetchJson<{ members?: unknown }>(
-          `/api/admin/data/orgs/${encodeURIComponent(selectedOrgId)}/members`,
-          { method: "GET" },
-        );
-        setMembers(Array.isArray(data.members) ? (data.members as OrgMemberRow[]) : []);
-      } catch (e) {
-        setMembersError(e instanceof Error ? e.message : "Failed to load members");
-        setMembers([]);
-      } finally {
-        setMembersLoading(false);
-      }
-    })();
-  }, [canUseAdmin, selectedOrgId, membersReloadKey]);
 
   if (status === "loading") {
     return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
@@ -233,6 +164,39 @@ export default function AdminDataUsersPage() {
                 setQ(e.target.value);
               }}
             />
+            <Select
+              className="w-[160px] max-w-full"
+              value={roleFilter}
+              onChange={(e) => {
+                setPage(1);
+                setRoleFilter(e.target.value);
+              }}
+              title="Filter by role"
+            >
+              <option value="">All roles</option>
+              <option value="admin">admin</option>
+              <option value="user">user</option>
+              <option value="temp">temp</option>
+            </Select>
+            <Select
+              className="w-[170px] max-w-full"
+              value={`${sortField}:${sortOrder}`}
+              onChange={(e) => {
+                const raw = e.target.value || "createdAt:desc";
+                const [f, o] = raw.split(":");
+                const nextField = (f === "lastLoginAt" ? "lastLoginAt" : "createdAt") as SortField;
+                const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
+                setPage(1);
+                setSortField(nextField);
+                setSortOrder(nextOrder);
+              }}
+              title="Sort"
+            >
+              <option value="createdAt:desc">Created (newest)</option>
+              <option value="createdAt:asc">Created (oldest)</option>
+              <option value="lastLoginAt:desc">Last login (newest)</option>
+              <option value="lastLoginAt:asc">Last login (oldest)</option>
+            </Select>
             <div className="text-xs text-[var(--muted-2)]">
               Page {page} / {totalPages} • {total} total
             </div>
@@ -251,89 +215,6 @@ export default function AdminDataUsersPage() {
               Next
             </Button>
           </div>
-        </div>
-
-        <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-          <div className="flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <div className="text-base font-semibold text-[var(--fg)]">Organization members</div>
-              <div className="mt-1 text-sm text-[var(--muted)]">Select an org to view its users.</div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Select
-                className="w-[340px] max-w-full disabled:opacity-60"
-                value={selectedOrgId}
-                disabled={orgsLoading || Boolean(orgsError)}
-                onChange={(e) => setSelectedOrgId(e.target.value)}
-              >
-                <option value="">{orgsLoading ? "Loading orgs…" : "Select an org…"}</option>
-                {orgs.map((o) => {
-                  const label = `${o.name ?? "Untitled"}${o.type ? ` (${o.type})` : ""}${o.slug ? ` · ${o.slug}` : ""}`;
-                  return (
-                    <option key={o.id} value={o.id}>
-                      {label}
-                    </option>
-                  );
-                })}
-              </Select>
-              <Button
-                variant="outline"
-                className="bg-[var(--panel-2)]"
-                disabled={!selectedOrgId || membersLoading}
-                onClick={() => {
-                  setMembersReloadKey((v) => v + 1);
-                }}
-              >
-                {membersLoading ? "Loading…" : "Refresh"}
-              </Button>
-              <div className="text-xs text-[var(--muted-2)]">{members.length ? `${members.length} members` : ""}</div>
-            </div>
-          </div>
-
-          {orgsError ? <div className="mt-3 text-sm text-red-700">{orgsError}</div> : null}
-          {membersError ? <div className="mt-3 text-sm text-red-700">{membersError}</div> : null}
-
-          {!selectedOrgId ? (
-            <div className="mt-4 text-sm text-[var(--muted)]">Pick an org above to view members.</div>
-          ) : membersLoading ? (
-            <div className="mt-4 text-sm text-[var(--muted)]">Loading members…</div>
-          ) : (
-            <DataTable containerClassName="mt-4 rounded-xl bg-[var(--panel-2)]">
-              <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-                <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                  <th className="px-4 py-3">Email</th>
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Member role</th>
-                  <th className="px-4 py-3">User role</th>
-                  <th className="px-4 py-3">Active</th>
-                  <th className="px-4 py-3">Temp</th>
-                  <th className="px-4 py-3">Last login</th>
-                  <th className="px-4 py-3">User ID</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {members.map((m) => (
-                  <tr key={m.userId}>
-                    <td className="px-4 py-3">{m.email ?? "—"}</td>
-                    <td className="px-4 py-3">{m.name ?? "—"}</td>
-                    <td className="px-4 py-3">{m.memberRole ?? "—"}</td>
-                    <td className="px-4 py-3">{m.userRole ?? "—"}</td>
-                    <td className="px-4 py-3">{m.isActive ? "Yes" : "No"}</td>
-                    <td className="px-4 py-3">{m.isTemp ? "Yes" : "No"}</td>
-                    <td className="px-4 py-3">{fmtDate(m.lastLoginAt) || "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{m.userId}</td>
-                  </tr>
-                ))}
-                {members.length === 0 ? (
-                  <tr>
-                    <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
-                      No members.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </DataTable>
-          )}
         </div>
 
         {error ? (

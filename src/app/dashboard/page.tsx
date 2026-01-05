@@ -541,20 +541,9 @@ export default function DashboardPage() {
             title="Limits"
             description="On-demand controls and credit caps."
             helper={
-              limitsOnDemandEnabled === false
-                ? "On-demand usage is disabled. Set a limit to enable usage beyond your plan credits."
-                : null
+              "On-demand limits are Pro-only."
             }
           >
-            {limitsOnDemandEnabled === false ? (
-              <Alert
-                variant="info"
-                className="mb-3 border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200"
-              >
-                AI tools are currently unavailable because on-demand is disabled. Click{" "}
-                <span className="font-semibold">Enable on-demand</span> to set a limit and continue.
-              </Alert>
-            ) : null}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <OnDemandUsageCard />
               <div className="rounded-2xl bg-[var(--panel)] p-6">

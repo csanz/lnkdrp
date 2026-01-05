@@ -12,6 +12,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { getCreditsSnapshot } from "@/lib/credits/snapshot";
 import { ALLOWED_LIMITS, UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
@@ -36,15 +37,34 @@ function normalizeLimitCents(v: unknown): number | null {
   return Math.min(n, UNLIMITED_LIMIT_CENTS);
 }
 
+function isProStatus(status: unknown): boolean {
+  const s = typeof status === "string" ? status.trim().toLowerCase() : "";
+  return s === "active" || s === "trialing";
+}
+
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
     const actor = await resolveActor(request);
     try {
       if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
       if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
 
       await connectMongo();
       const orgId = new Types.ObjectId(actor.orgId);
+      const userId = new Types.ObjectId(actor.userId);
+
+      // Editing limits is restricted to owners/admins AND requires an active subscription (Pro).
+      const [sub, membership] = await Promise.all([
+        SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean(),
+        OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
+      ]);
+      const isPro = isProStatus((sub as any)?.status);
+      const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
+      const roleAllowsEdit = role === "owner" || role === "admin";
+      const canEdit = isPro && roleAllowsEdit;
+      const editDisabledReason = !isPro ? "On-demand limits require an active Pro subscription." : !roleAllowsEdit ? "Only workspace owners/admins can edit limits." : null;
+
       const bal = await WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
         .select({ onDemandEnabled: 1, onDemandMonthlyLimitCents: 1 })
         .lean();
@@ -65,6 +85,8 @@ export async function GET(request: Request) {
           onDemandEnabled: enabled,
           onDemandMonthlyLimitCents: enabled ? limitCents : 0,
           onDemandUsedCentsThisCycle: usedCents,
+          canEdit,
+          editDisabledReason,
         },
         { headers: { "cache-control": "no-store" } },
       );
@@ -98,6 +120,13 @@ export async function POST(request: Request) {
       await connectMongo();
       const orgId = new Types.ObjectId(actor.orgId);
       const userId = new Types.ObjectId(actor.userId);
+
+      // On-demand limits require an active subscription (Pro).
+      const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean();
+      if (!isProStatus((sub as any)?.status)) {
+        return NextResponse.json({ error: "On-demand limits require an active Pro subscription." }, { status: 403 });
+      }
+
       const membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } })
         .select({ role: 1 })
         .lean();

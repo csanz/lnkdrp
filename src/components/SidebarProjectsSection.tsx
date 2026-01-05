@@ -1,6 +1,13 @@
 "use client";
 
-import { EllipsisHorizontalIcon, FolderIcon, InboxArrowDownIcon, MinusIcon, PlusSmallIcon } from "@heroicons/react/24/outline";
+import {
+  EllipsisHorizontalIcon,
+  FolderIcon,
+  InboxArrowDownIcon,
+  MinusIcon,
+  PlusIcon,
+  PlusSmallIcon,
+} from "@heroicons/react/24/outline";
 import type { Dispatch, SetStateAction } from "react";
 import IconButton from "@/components/ui/IconButton";
 
@@ -28,6 +35,7 @@ export default function SidebarProjectsSection({
   setProjectsCollapsedLoaded,
   setProjectsCollapsed,
   setShowProjectsModal,
+  onClickNewProject,
   routerPush,
   openProjectMenuId,
   setOpenProjectMenuId,
@@ -47,6 +55,7 @@ export default function SidebarProjectsSection({
   setProjectsCollapsedLoaded: Dispatch<SetStateAction<boolean>>;
   setProjectsCollapsed: Dispatch<SetStateAction<boolean>>;
   setShowProjectsModal: Dispatch<SetStateAction<boolean>>;
+  onClickNewProject: () => void;
   routerPush: (href: string) => void;
   openProjectMenuId: string | null;
   setOpenProjectMenuId: Dispatch<SetStateAction<string | null>>;
@@ -60,25 +69,42 @@ export default function SidebarProjectsSection({
     <section>
       <div className="group flex items-center justify-between gap-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
         <span>Projects</span>
-        <IconButton
-          ariaLabel={(projectsCollapsedLoaded ? projectsCollapsed : true) ? "Expand projects" : "Collapse projects"}
-          variant="ghost"
-          size="sm"
-          className={[
-            "rounded-md p-0.5 text-[var(--muted-2)]",
-            "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
-          ].join(" ")}
-          onClick={() => {
-            setProjectsCollapsedLoaded(true);
-            setProjectsCollapsed((v) => !v);
-          }}
-        >
-          {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
-            <PlusSmallIcon className="h-4 w-4" />
-          ) : (
-            <MinusIcon className="h-4 w-4" />
-          )}
-        </IconButton>
+        <div className="flex items-center gap-1">
+          <IconButton
+            ariaLabel="New project"
+            variant="ghost"
+            size="sm"
+            className={[
+              "rounded-md p-0.5 text-[var(--muted-2)]",
+              navLocked ? "cursor-not-allowed opacity-40" : "opacity-80 hover:opacity-100",
+            ].join(" ")}
+            onClick={() => {
+              if (navLocked) return;
+              onClickNewProject();
+            }}
+          >
+            <PlusIcon className="h-4 w-4" />
+          </IconButton>
+          <IconButton
+            ariaLabel={(projectsCollapsedLoaded ? projectsCollapsed : true) ? "Expand projects" : "Collapse projects"}
+            variant="ghost"
+            size="sm"
+            className={[
+              "rounded-md p-0.5 text-[var(--muted-2)]",
+              "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+            ].join(" ")}
+            onClick={() => {
+              setProjectsCollapsedLoaded(true);
+              setProjectsCollapsed((v) => !v);
+            }}
+          >
+            {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
+              <PlusSmallIcon className="h-4 w-4" />
+            ) : (
+              <MinusIcon className="h-4 w-4" />
+            )}
+          </IconButton>
+        </div>
       </div>
 
       {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (

@@ -43,6 +43,10 @@ function asPositiveInt(v: unknown): number | null {
   return i >= 1 ? i : null;
 }
 
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -52,18 +56,32 @@ export async function GET(request: Request) {
   const page = Math.max(asPositiveInt(url.searchParams.get("page")) ?? 1, 1);
   const qRaw = url.searchParams.get("q") ?? "";
   const q = qRaw.trim();
+  const sortRaw = (url.searchParams.get("sort") ?? "").trim();
+  const orderRaw = (url.searchParams.get("order") ?? "").trim().toLowerCase();
+  const roleRaw = (url.searchParams.get("role") ?? "").trim();
 
   await connectMongo();
 
   const filter: Record<string, unknown> = {};
   if (q) {
-    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const rx = new RegExp(escapeRegex(q), "i");
     filter.$or = [{ email: rx }, { name: rx }];
   }
+  if (roleRaw) {
+    // Keep this strict so "filter by role" is predictable (and avoids weird partial matches).
+    const allowed = new Set(["admin", "user", "temp"]);
+    if (!allowed.has(roleRaw)) {
+      return NextResponse.json({ error: "role must be one of: admin | user | temp" }, { status: 400 });
+    }
+    filter.role = roleRaw;
+  }
+
+  const sortField = sortRaw === "lastLoginAt" ? "lastLoginAt" : "createdAt";
+  const sortDir = orderRaw === "asc" ? 1 : -1;
 
   const total = await UserModel.countDocuments(filter);
   const items = await UserModel.find(filter)
-    .sort({ createdAt: -1 })
+    .sort({ [sortField]: sortDir, _id: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
     .select({
@@ -83,6 +101,9 @@ export async function GET(request: Request) {
     total,
     page,
     limit,
+    sort: sortField,
+    order: sortDir === 1 ? "asc" : "desc",
+    role: roleRaw || null,
     users: items.map((u) => ({
       id: String(u._id),
       email: typeof u.email === "string" ? u.email : null,

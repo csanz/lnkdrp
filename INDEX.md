@@ -29,6 +29,7 @@
 - `src/components/ProjectSharePanel.tsx` — exports: ProjectSharePanel
 - `src/components/SwitchingOverlay.tsx` — exports: SWITCHING_OVERLAY_ID, SWITCHING_OVERLAY_Y_KEY, SWITCHING_OVERLAY_STARTED_AT_KEY, DEFAULT_SWITCHING_OVERLAY_MIN_MS, showSwitchingOverlay, waitForNextPaint, waitForMinOverlayTime, fetchOrgSwitchRedirectTo, switchWorkspaceWithOverlay
 - `src/components/modals/CreateLinkRequestRepositoryModal.tsx` — exports: CreateLinkRequestRepositoryModal
+- `src/components/modals/CreateProjectModal.tsx` — exports: CreateProjectModal
 - `src/components/modals/DeleteDocModal.tsx` — exports: DeleteDocModal
 - `src/components/modals/DeleteProjectModal.tsx` — exports: DeleteProjectModal
 - `src/components/modals/DocProjectsModal.tsx` — exports: DocProjectsModal
@@ -101,6 +102,8 @@
 - `src/app/a/credits/page.tsx` — Page for \`/a/credits\` (admin credits tools).
 - `src/app/a/shareviews/[docId]/page.tsx` — Page for \`/a/shareviews/:docId\`.
 - `src/app/a/shareviews/page.tsx` — Page for \`/a/shareviews\`.
+- `src/app/a/data/workspaces/page.tsx` — Page for \`/a/data/workspaces\`.
+- `src/app/a/data/workspaces/[workspaceId]/page.tsx` — Page for \`/a/data/workspaces/:workspaceId\`.
 - `src/app/a/data/users/page.tsx` — Page for \`/a/data/users\`.
 - `src/app/a/data/docs/page.tsx` — Page for \`/a/data/docs\`.
 - `src/app/a/data/projects/page.tsx` — Page for \`/a/data/projects\`.
@@ -153,6 +156,12 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/orgs/[orgId]/members/route.ts` — API route for \`/api/admin/data/orgs/:orgId/members\`.
   - GET (function) — List org members (user + membership role) for admin inspection.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/workspaces/route.ts` — API route for \`/api/admin/data/workspaces\`.
+  - GET (function) — List workspaces (team orgs) for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/workspaces/[workspaceId]/members/route.ts` — API route for \`/api/admin/data/workspaces/:workspaceId/members\`.
+  - GET (function) — List workspace members (user + membership role) for admin inspection.
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/docs/route.ts` — API route for \`/api/admin/data/docs\`.
   - GET (function) — List docs across all users for admin inspection (paged).
@@ -745,6 +754,8 @@
 - `scripts/doc-received-via-request-backfill.mjs`
 - `scripts/request-docs-projectids-backfill.mjs`
 - `scripts/review-intel-backfill.mjs`
+- `scripts/orphan-data-report.ts`
+- `scripts/orphan-data-cleanup.ts`
 - `scripts/test-ai-extract.mjs`
 - `scripts/test-ai-extract.ts`
 - `scripts/test-vercel-blob.mjs`

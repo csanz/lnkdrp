@@ -492,16 +492,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         if (cancelled) return false;
 
         if (!res.ok) {
-          // If the doc isn't visible to this actor (wrong org / not signed in / temp mismatch),
-          // the route returns 404. Back off to avoid spamming and eventually surface an error.
           if (res.status === 404) {
-            consecutiveNotFound += 1;
-            // ~ (0.9 + 1.8 + 3.6 + 5 + 5 + ...) ~= 20s before surfacing.
-            delayMs = Math.min(5_000, delayMs * 2);
-            if (consecutiveNotFound >= 6) {
-              setHydrateError("Document not found. You may be in the wrong workspace or not signed in.");
-              return false;
-            }
+            if (!cancelled) router.replace("/dashboard");
+            return false;
           } else {
             // Other transient errors: keep polling slowly.
             delayMs = Math.min(5_000, Math.max(delayMs, 1_200));

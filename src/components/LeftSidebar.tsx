@@ -32,6 +32,7 @@ import AccountMenu from "@/components/AccountMenu";
 import SidebarProjectsSection from "@/components/SidebarProjectsSection";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
+import CreateProjectModal from "@/components/modals/CreateProjectModal";
 import { buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getPublicSiteBase } from "@/lib/urls";
 import { getStarredDocs, moveStarredDoc, STARRED_DOCS_CHANGED_EVENT, type StarredDoc } from "@/lib/starredDocs";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -68,7 +69,13 @@ type Paged<T> = { items: T[]; total: number; page: number; limit: number };
 
 type StarredMeta = { updatedDate: string | null; createdDate: string | null };
 type StarredMetaById = Record<string, StarredMeta>;
-type StarredDetails = { previewImageUrl: string | null; one_liner: string | null; title: string | null };
+type StarredDetails = {
+  previewImageUrl: string | null;
+  one_liner: string | null;
+  title: string | null;
+  version: number | null;
+  status: string | null;
+};
 type StarredDetailsById = Record<string, StarredDetails>;
 
 const STARRED_META_CACHE_KEY_BASE = "lnkdrp-starred-meta-cache-v2";
@@ -277,6 +284,12 @@ export default function LeftSidebar({
   const [starredMetaCacheById, setStarredMetaCacheById] = useState<StarredMetaById>(() =>
     typeof window === "undefined" ? {} : readStarredMetaCache(),
   );
+
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDescription, setNewProjectDescription] = useState("");
+  const [newProjectBusy, setNewProjectBusy] = useState(false);
+  const [newProjectError, setNewProjectError] = useState<string | null>(null);
   const [docs, setDocs] = useState<Paged<DocListItem>>({
     items: [],
     total: 0,
@@ -750,6 +763,8 @@ export default function LeftSidebar({
                 previewImageUrl: typeof doc.previewImageUrl === "string" ? doc.previewImageUrl : null,
                 one_liner: typeof doc.one_liner === "string" ? doc.one_liner : null,
                 title: typeof doc.title === "string" ? doc.title : null,
+                version: typeof doc.version === "number" && Number.isFinite(doc.version) ? doc.version : null,
+                status: typeof doc.status === "string" ? doc.status : null,
               };
             }
           }
@@ -1311,6 +1326,55 @@ export default function LeftSidebar({
     }
   }
 
+  async function createProject() {
+    if (navLocked) return;
+    setNewProjectBusy(true);
+    setNewProjectError(null);
+    try {
+      const name = newProjectName.trim();
+      const description = newProjectDescription.trim();
+      if (!name) {
+        setNewProjectError("Project name is required.");
+        return;
+      }
+
+      const res = await fetchWithTempUser("/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name,
+          description,
+          autoAddFiles: false,
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        project?: { id?: string; slug?: string };
+      };
+      if (!res.ok) {
+        setNewProjectError(json?.error || "Failed to create project");
+        return;
+      }
+      const id = typeof json?.project?.id === "string" ? json.project.id : "";
+      if (!id) {
+        setNewProjectError("Failed to create project");
+        return;
+      }
+
+      setShowCreateProjectModal(false);
+      setNewProjectName("");
+      setNewProjectDescription("");
+      setNewProjectError(null);
+      notifyProjectsChanged();
+      void refreshSidebarCache({ reason: "project-created", force: true });
+      router.push(`/project/${encodeURIComponent(id)}`);
+    } catch {
+      setNewProjectError("Failed to create project");
+    } finally {
+      setNewProjectBusy(false);
+    }
+  }
+
   // When opening delete confirmation, fetch the folders/projects this doc belongs to
   // so the user understands what they’re deleting.
   useEffect(() => {
@@ -1537,7 +1601,8 @@ export default function LeftSidebar({
                 <ul className="mt-2 space-y-1">
                   {starredForSidebar.map((d) => {
                     const href = `/doc/${d.id}`;
-                    const title = truncateEnd(d.title, 27);
+                    const details = starredDetailsById[d.id] ?? null;
+                    const title = truncateEnd(d.title, 22);
                     return (
                       <li key={d.id}>
                         <div
@@ -1553,9 +1618,18 @@ export default function LeftSidebar({
                         >
                           <div className="flex min-w-0 items-center gap-1.5">
                             <StarIcon className="h-4 w-4 shrink-0 text-amber-400" filled />
-                            <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">
+                            <span className="block max-w-[170px] truncate font-medium text-[var(--fg)]">
                               {title}
                             </span>
+                            {typeof details?.version === "number" && Number.isFinite(details.version) ? (
+                              <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
+                                v{details.version}
+                              </span>
+                            ) : (details?.status ?? "").toLowerCase() === "preparing" ? (
+                              <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
+                                v…
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                       </li>
@@ -1752,6 +1826,11 @@ export default function LeftSidebar({
                 setProjectsCollapsedLoaded={setProjectsCollapsedLoaded}
                 setProjectsCollapsed={setProjectsCollapsed}
                 setShowProjectsModal={setShowProjectsModal}
+                onClickNewProject={() => {
+                  if (navLocked) return;
+                  setNewProjectError(null);
+                  setShowCreateProjectModal(true);
+                }}
                 routerPush={(href) => router.push(href)}
                 openProjectMenuId={openProjectMenuId}
                 setOpenProjectMenuId={setOpenProjectMenuId}
@@ -1858,7 +1937,7 @@ export default function LeftSidebar({
                                 ) : (
                                   <DocFileIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" />
                                 )}
-                                <span className="block min-w-0 flex-1 truncate">{title}</span>
+                                <span className="block max-w-[170px] truncate">{title}</span>
                                 {typeof d.version === "number" && Number.isFinite(d.version) ? (
                                   <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
                                     v{d.version}
@@ -2154,6 +2233,22 @@ export default function LeftSidebar({
         requestsModal={requestsModal}
         setRequestsModal={setRequestsModal}
         formatRelative={formatRelative}
+      />
+
+      <CreateProjectModal
+        open={showCreateProjectModal}
+        busy={newProjectBusy}
+        error={newProjectError}
+        name={newProjectName}
+        setName={setNewProjectName}
+        description={newProjectDescription}
+        setDescription={setNewProjectDescription}
+        onClose={() => {
+          if (newProjectBusy) return;
+          setShowCreateProjectModal(false);
+          setNewProjectError(null);
+        }}
+        onCreate={() => void createProject()}
       />
     </aside>
   );

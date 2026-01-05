@@ -7,6 +7,25 @@ import { UserModel } from "@/lib/models/User";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 
+function ensureDevNextAuthUrl() {
+  if (process.env.NEXTAUTH_URL) return;
+  // This avoids noisy dev warnings; production should always set NEXTAUTH_URL explicitly.
+  const raw =
+    (process.env.NEXT_PUBLIC_SITE_URL || "").trim() ||
+    (process.env.NEXT_PUBLIC_APP_URL || "").trim() ||
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
+    (process.env.NODE_ENV === "development" ? "http://localhost:3001" : "");
+  if (!raw) return;
+  try {
+    // Also accept scheme-less values like "localhost:3001".
+    const url = raw.includes("://") ? raw : raw.startsWith("localhost") ? `http://${raw}` : `https://${raw}`;
+    process.env.NEXTAUTH_URL = new URL(url).toString();
+  } catch {
+    // ignore
+  }
+}
+ensureDevNextAuthUrl();
+
 /**
  * NextAuth configuration for the app.
  *

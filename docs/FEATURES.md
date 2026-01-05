@@ -144,6 +144,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Public share page**:
   - Renders a PDF viewer when the PDF is available; otherwise shows a “preparing” fallback with an image preview (if present).
   - The viewer includes an **All pages** mode (scroll the full document) and a **Grid** mode (thumbnail overview of all pages, click to open).
+  - Grid and All-pages views are responsive and fit to the available viewport width by default.
 - **Password gate** (optional):
   - If a share password is configured, the share page requires a successful unlock cookie before rendering.
   - The password screen includes a quick **preview thumbnail** (when available) to help recipients confirm they're unlocking the right doc.
@@ -171,6 +172,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Credits (billing-cycle-based)**:
   - Pro includes **300 credits per Stripe billing cycle** (subscription anniversary, not calendar month).
   - Included credits **reset to 300** on renewal (no rollover). Purchased credits (if present) do not expire.
+  - Free workspaces include a **one-time 50 credits** starter grant (no reset).
   - Customer UI exposes **credits and quality tiers only** (no tokens or provider raw costs).
 - **Limits (credits-first)**:
   - Dashboard includes a **Limits** page (`/dashboard/limits`) for workspace owners/admins to manage on-demand usage caps (credits-first; dollars are secondary).
@@ -180,7 +182,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
     - **Review** default: **Basic**, **Standard**, or **Advanced**
     - **History** default: **Basic**, **Standard**, or **Advanced**
   - Limits page includes a **Deep Research** section (early access): currently being tested with a small set of users; email `hi@lnkdrp.com` to join the waiting list.
-  - Workspace owners/admins can set an **on-demand spend limit per billing cycle** (Cursor-style presets + custom).
+  - On-demand limits are **Pro-only**. Workspace owners/admins can set an **on-demand spend limit per billing cycle** (Cursor-style presets + custom).
   - If the limit is `0`, on-demand usage is disabled (hard-blocked).
   - The **Usage** tab (`/dashboard?tab=usage`) is **operational truth**:
     - Includes the same **Plan** status card as Overview (manage subscription / upgrade + on-demand module when applicable).
@@ -242,6 +244,8 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Project CRUD**:
   - `/api/projects` (list/create) and `/api/projects/:projectSlug` (update/delete).
+- **Create from left sidebar**:
+  - The left sidebar **Projects** section includes a **+** icon to create a new project without leaving the current page.
 - **List docs for a project**:
   - `/api/projects/:projectSlug/docs`.
 - **Project page**:
@@ -264,8 +268,13 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Captures and displays a best-effort `viewerIp` for each share view (from proxy headers like `x-forwarded-for`).
 - **Data → Users**: `/a/data/users`
   - API: `/api/admin/data/users`
-  - Includes an org picker for viewing users/memberships for any org (API: `/api/admin/data/orgs` + `/api/admin/data/orgs/:orgId/members`).
+  - Supports filtering by role and sorting by created/last login (admin UI convenience).
   - Can admin-override a user’s billing `plan` (Free/Pro) for testing via `/api/admin/users/:userId/plan` (Stripe remains the source of truth in production).
+- **Data → Workspaces**: `/a/data/workspaces`
+  - API: `/api/admin/data/workspaces` (paged)
+  - Drilldown: `/a/data/workspaces/:workspaceId` (API: `/api/admin/data/workspaces/:workspaceId/members`)
+  - Supports filtering by type (personal/team) and sorting by created/updated.
+  - Lists workspaces (orgs) and shows their members (org membership roles + user metadata).
 - **Data → Projects**: `/a/data/projects`
   - API: `/api/admin/data/projects`
   - Drilldown/editor: `/a/data/projects/:projectId` (API: `/api/admin/data/projects/:projectId`)

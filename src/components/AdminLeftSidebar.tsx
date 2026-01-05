@@ -39,6 +39,7 @@ export default function AdminLeftSidebar() {
       {
         label: "Data",
         items: [
+          { label: "Workspaces", href: "/a/data/workspaces", exact: true },
           { label: "Users", href: "/a/data/users", exact: true },
           { label: "Docs", href: "/a/data/docs", exact: true },
           { label: "Projects", href: "/a/data/projects", exact: true },

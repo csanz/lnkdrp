@@ -21,6 +21,8 @@ type SpendStatus = {
   onDemandEnabled: boolean;
   onDemandMonthlyLimitCents: number;
   onDemandUsedCentsThisCycle: number;
+  canEdit?: boolean;
+  editDisabledReason?: string | null;
 };
 
 export const SPEND_LIMIT_UPDATED_EVENT = "lnkdrp:spend-limit-updated";
@@ -94,6 +96,8 @@ export default function SpendLimitModule({
 
   const spendLimitCents = typeof data?.onDemandMonthlyLimitCents === "number" ? data.onDemandMonthlyLimitCents : 0;
   const spendUsedCents = typeof data?.onDemandUsedCentsThisCycle === "number" ? data.onDemandUsedCentsThisCycle : 0;
+  const serverCanEdit = typeof data?.canEdit === "boolean" ? data.canEdit : true;
+  const editDisabledReason = typeof data?.editDisabledReason === "string" ? data.editDisabledReason : null;
 
   const isUnlimited = spendLimitCents >= UNLIMITED_LIMIT_CENTS;
   const limitLabel = spendLimitCents === 0 ? "Disabled" : isUnlimited ? "Unlimited" : formatUsdFromCents(spendLimitCents);
@@ -111,9 +115,10 @@ export default function SpendLimitModule({
     return Math.max(0, Math.min(1, spendUsedCents / spendLimitCents));
   }, [spendLimitCents, spendUsedCents, isUnlimited]);
 
-  const canEdit = !busy && !saveBusy;
+  const canEdit = !busy && !saveBusy && serverCanEdit;
 
   function openEditor() {
+    if (!serverCanEdit) return;
     setSaveError(null);
     setSelectedLimitCents(spendLimitCents);
     if (spendLimitCents > 0 && !isPreset(spendLimitCents) && spendLimitCents < UNLIMITED_LIMIT_CENTS) {
@@ -200,7 +205,13 @@ export default function SpendLimitModule({
             />
           </div>
           <div className="mt-1 min-h-[16px] text-[11px] text-[var(--muted-2)]">
-            {busy && !data ? "Loading…" : onDemandDisabled ? "Set a spend limit to enable on-demand usage." : "\u00A0"}
+            {busy && !data
+              ? "Loading…"
+              : !serverCanEdit
+                ? editDisabledReason || "You don’t have permission to edit this limit."
+                : onDemandDisabled
+                  ? "Set a spend limit to enable on-demand usage."
+                  : "\u00A0"}
           </div>
         </div>
         <button
@@ -210,13 +221,13 @@ export default function SpendLimitModule({
             !canEdit
               ? "bg-[var(--panel-hover)] text-[var(--muted-2)] opacity-60"
               : onDemandDisabled
-                ? "bg-[var(--fg)] text-[var(--bg)] hover:opacity-90"
+                ? "bg-[var(--panel-hover)] text-[var(--fg)] hover:opacity-90"
                 : "bg-[var(--panel-hover)] text-[var(--fg)] hover:opacity-90",
           )}
           disabled={!canEdit}
           onClick={openEditor}
         >
-          {onDemandDisabled ? "Enable on-demand" : "Edit limit"}
+          {onDemandDisabled ? "Set limit" : "Edit limit"}
         </button>
       </div>
 

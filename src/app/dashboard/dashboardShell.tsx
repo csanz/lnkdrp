@@ -239,7 +239,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     // Avoid flicker: don't render until dismissal status is known.
     if (bannerDismissed !== false) return null;
     const onDemandConfigured = credits.onDemandMonthlyLimitCents > 0;
-    const ctaLabel = onDemandConfigured ? "Increase limit" : "Enable on-demand";
+    const ctaLabel = onDemandConfigured ? "Increase limit" : "View limits";
     return (
       <div className="bg-amber-500/[0.08] px-3 py-2 text-[12px] text-amber-900 dark:text-amber-200">
         <div className="mx-auto flex w-full max-w-[1280px] items-center justify-between gap-3 px-0 md:px-2">
