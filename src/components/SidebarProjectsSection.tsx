@@ -67,9 +67,9 @@ export default function SidebarProjectsSection({
 }) {
   return (
     <section>
-      <div className="group flex items-center justify-between gap-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+      <div className="group relative flex items-center gap-2 px-2 pr-20 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
         <span>Projects</span>
-        <div className="flex items-center gap-1">
+        <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
           <IconButton
             ariaLabel="New project"
             variant="ghost"
@@ -90,8 +90,10 @@ export default function SidebarProjectsSection({
             variant="ghost"
             size="sm"
             className={[
-              "rounded-md p-0.5 text-[var(--muted-2)]",
-              "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+              // Fixed-size square so the button doesn't "wiggle" when the icon glyph changes.
+              "h-7 w-7 rounded-md p-0 text-[var(--muted-2)]",
+              // Always visible (easy to lose under overlay scrollbars).
+              "opacity-100",
             ].join(" ")}
             onClick={() => {
               setProjectsCollapsedLoaded(true);
@@ -99,7 +101,7 @@ export default function SidebarProjectsSection({
             }}
           >
             {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
-              <PlusSmallIcon className="h-4 w-4" />
+              <PlusIcon className="h-4 w-4" />
             ) : (
               <MinusIcon className="h-4 w-4" />
             )}

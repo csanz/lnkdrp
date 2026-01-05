@@ -257,6 +257,9 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Tools → Cache**: `/a/tools/cache`
   - Inspect browser localStorage keys/values and clear app caches (useful for debugging navigation/data state during development).
   - Clear actions use a quick click-to-confirm UI (avoids relying on browser confirm dialogs).
+- **Tools → Billing**: `/a/tools/billing`
+  - Refresh and inspect billing UI config stored in MongoDB (e.g. Pro price label).
+  - Uses `POST /api/admin/billing/pro-price` to refresh from Stripe; dashboard reads do not call Stripe.
 - **AI runs**: `/a/ai-runs`
   - API: `/api/admin/ai-runs` and `/api/admin/ai-runs/:runId`
   - Lists prompt + output logs for AI features (review agent and PDF analysis) to aid debugging.
@@ -268,22 +271,27 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Captures and displays a best-effort `viewerIp` for each share view (from proxy headers like `x-forwarded-for`).
 - **Data → Users**: `/a/data/users`
   - API: `/api/admin/data/users`
+  - Drilldown: `/a/data/users/:userId` (API: `/api/admin/data/users/:userId`)
   - Supports filtering by role and sorting by created/last login (admin UI convenience).
+  - Supports deactivating users (sets `isActive=false`).
   - Can admin-override a user’s billing `plan` (Free/Pro) for testing via `/api/admin/users/:userId/plan` (Stripe remains the source of truth in production).
 - **Data → Workspaces**: `/a/data/workspaces`
   - API: `/api/admin/data/workspaces` (paged)
   - Drilldown: `/a/data/workspaces/:workspaceId` (API: `/api/admin/data/workspaces/:workspaceId/members`)
   - Supports filtering by type (personal/team) and sorting by created/updated.
-  - Lists workspaces (orgs) and shows their members (org membership roles + user metadata).
+  - Drilldown shows workspace metadata (type/slug/created/updated/ids) and members (org membership roles + user metadata).
 - **Data → Projects**: `/a/data/projects`
   - API: `/api/admin/data/projects`
   - Drilldown/editor: `/a/data/projects/:projectId` (API: `/api/admin/data/projects/:projectId`)
   - Supports manual updates (e.g. setting `isRequest=true` for request repos that have a `requestUploadToken`).
+  - Supports soft-delete (admin action).
 - **Data → Docs**: `/a/data/docs`
   - API: `/api/admin/data/docs`
+  - Supports filtering by status/archived, sorting by created/updated, and soft-delete (admin action).
 - **Data → Requests**: `/a/data/requests`
   - API: `/api/admin/data/requests`
   - Drilldown: `/a/data/requests/:requestId` (API: `/api/admin/data/requests/:requestId`)
+  - Supports soft-delete (admin action).
   - Drilldown includes raw request/project JSON plus related docs/uploads and reviews:
     - Shows `aiOutput` when present (doc + upload).
     - Shows review output (`Review.outputMarkdown`) plus structured agent output (`Review.agentOutput`) when present.
@@ -292,6 +300,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
     - Shows an **AI runs** tab (filtered to this request repo) for quickly locating the exact prompts/outputs used.
 - **Data → Uploads**: `/a/data/uploads`
   - API: `/api/admin/data/uploads`
+  - Supports soft-delete (admin action).
 - **System → Cron health**: `/a/cron-health`
   - API: `/api/admin/cron-health`
   - Shows latest heartbeat snapshots written by cron endpoints (status/duration/last error).

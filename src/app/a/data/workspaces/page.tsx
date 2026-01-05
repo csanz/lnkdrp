@@ -49,6 +49,7 @@ export default function AdminDataWorkspacesPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [deleteBusyWorkspaceId, setDeleteBusyWorkspaceId] = useState<string>("");
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
 
@@ -79,6 +80,26 @@ export default function AdminDataWorkspacesPage() {
       }
     })();
   }, [canUseAdmin, limit, page, q, typeFilter, sortField, sortOrder, reloadKey]);
+
+  async function deleteWorkspace(workspaceId: string) {
+    if (!workspaceId) return;
+    if (deleteBusyWorkspaceId) return;
+    const ok = window.confirm(
+      `Soft-delete workspace ${workspaceId}?\n\nThis does NOT cascade-delete related records. Use with care.`,
+    );
+    if (!ok) return;
+    setDeleteBusyWorkspaceId(workspaceId);
+    setError(null);
+    try {
+      await fetchJson(`/api/admin/data/workspaces/${encodeURIComponent(workspaceId)}`, { method: "DELETE" });
+      setItems((prev) => prev.filter((w) => w.workspaceId !== workspaceId));
+      setTotal((t) => Math.max(0, t - 1));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete workspace");
+    } finally {
+      setDeleteBusyWorkspaceId("");
+    }
+  }
 
   if (status === "loading") {
     return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
@@ -210,6 +231,7 @@ export default function AdminDataWorkspacesPage() {
                 <th className="px-4 py-3">Created</th>
                 <th className="px-4 py-3">Updated</th>
                 <th className="px-4 py-3">Workspace ID</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
@@ -229,11 +251,22 @@ export default function AdminDataWorkspacesPage() {
                   <td className="px-4 py-3">{fmtDate(w.createdDate) || "—"}</td>
                   <td className="px-4 py-3">{fmtDate(w.updatedDate ?? null) || "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{w.workspaceId}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      disabled={Boolean(deleteBusyWorkspaceId) && deleteBusyWorkspaceId !== w.workspaceId}
+                      onClick={() => void deleteWorkspace(w.workspaceId)}
+                      title="Soft delete workspace"
+                    >
+                      {deleteBusyWorkspaceId === w.workspaceId ? "Deleting…" : "Delete"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={6}>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
                     No workspaces.
                   </td>
                 </tr>

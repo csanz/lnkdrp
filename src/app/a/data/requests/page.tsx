@@ -47,6 +47,8 @@ export default function AdminDataRequestsPage() {
   const [items, setItems] = useState<RequestRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteBusyRequestId, setDeleteBusyRequestId] = useState<string>("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
 
@@ -74,7 +76,25 @@ export default function AdminDataRequestsPage() {
         setLoading(false);
       }
     })();
-  }, [canUseAdmin, limit, page, q]);
+  }, [canUseAdmin, limit, page, q, reloadKey]);
+
+  async function deleteRequest(requestId: string) {
+    if (!requestId) return;
+    if (deleteBusyRequestId) return;
+    const ok = window.confirm(`Soft-delete request repo ${requestId}?\n\nThis will hide it from normal views.`);
+    if (!ok) return;
+    setDeleteBusyRequestId(requestId);
+    setError(null);
+    try {
+      await fetchJson(`/api/admin/data/requests/${encodeURIComponent(requestId)}`, { method: "DELETE" });
+      setItems((prev) => prev.filter((r) => r.id !== requestId));
+      setTotal((t) => Math.max(0, t - 1));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete request");
+    } finally {
+      setDeleteBusyRequestId("");
+    }
+  }
 
   if (status === "loading") {
     return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
@@ -146,6 +166,9 @@ export default function AdminDataRequestsPage() {
             >
               Next
             </Button>
+            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+              {loading ? "Loading…" : "Refresh"}
+            </Button>
           </div>
         </div>
 
@@ -171,6 +194,7 @@ export default function AdminDataRequestsPage() {
                 <th className="px-4 py-3">Updated</th>
                 <th className="px-4 py-3">User ID</th>
                 <th className="px-4 py-3">Project ID</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
@@ -209,11 +233,22 @@ export default function AdminDataRequestsPage() {
                   <td className="px-4 py-3">{fmtDate(r.updatedDate) || fmtDate(r.createdDate) || "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{r.userId ?? "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{r.id}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      disabled={Boolean(deleteBusyRequestId) && deleteBusyRequestId !== r.id}
+                      onClick={() => void deleteRequest(r.id)}
+                      title="Soft delete request repo"
+                    >
+                      {deleteBusyRequestId === r.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
                     No requests.
                   </td>
                 </tr>

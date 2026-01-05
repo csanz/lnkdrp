@@ -251,7 +251,7 @@ export default function CreateLinkRequestRepositoryModal({
         ) : (
           <>
             <div className="mt-5 min-h-0 flex-1">
-              <div ref={scrollRef} className="h-full space-y-3 overflow-y-auto pr-1">
+              <div ref={scrollRef} className="h-full space-y-3 overflow-x-hidden overflow-y-auto pr-1">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Name</div>
                   <input
@@ -464,6 +464,7 @@ export default function CreateLinkRequestRepositoryModal({
                             aria-describedby="evaluation-guide-help"
                             disabled={requestBusy}
                             className={[
+                              "min-w-0 flex-1",
                               "cursor-pointer text-[13px] text-[var(--muted)]",
                               "focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10",
                               "disabled:cursor-not-allowed disabled:opacity-60",

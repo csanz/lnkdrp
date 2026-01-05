@@ -37,6 +37,18 @@ declare module "pdfjs-dist/webpack.mjs" {
   export default _default;
 }
 
+declare module "/pdfjs/pdf.min.mjs" {
+  // Runtime-imported from `/public/pdfjs/pdf.min.mjs` (see `PdfJsViewer.tsx`).
+  // We only need a tiny surface for `getDocument` + `GlobalWorkerOptions`.
+  export type PDFLoadingTask = { promise: Promise<unknown> };
+  export function getDocument(src: unknown): PDFLoadingTask;
+  export const GlobalWorkerOptions: { workerSrc?: string; workerPort?: unknown };
+  export const version: string;
+  const _default: unknown;
+  export default _default;
+}
+
+
 
 
 

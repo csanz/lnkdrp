@@ -25,6 +25,18 @@ type MemberRow = {
   lastLoginAt: string | null;
 };
 
+type WorkspaceInfo = {
+  id: string;
+  type: string | null;
+  name: string | null;
+  slug: string | null;
+  avatarUrl: string | null;
+  personalForUserId: string | null;
+  createdByUserId: string | null;
+  createdDate: string | null;
+  updatedDate: string | null;
+};
+
 export default function AdminWorkspaceDetailPage() {
   const params = useParams<{ workspaceId?: string }>();
   const workspaceId = typeof params?.workspaceId === "string" ? params.workspaceId : "";
@@ -38,6 +50,7 @@ export default function AdminWorkspaceDetailPage() {
     (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   const canUseAdmin = isAdmin || isLocalhost;
 
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,13 +63,15 @@ export default function AdminWorkspaceDetailPage() {
     setError(null);
     void (async () => {
       try {
-        const data = await fetchJson<{ members?: unknown }>(
+        const data = await fetchJson<{ workspace?: unknown; members?: unknown }>(
           `/api/admin/data/workspaces/${encodeURIComponent(workspaceId)}/members`,
           { method: "GET" },
         );
+        setWorkspace((data.workspace as WorkspaceInfo) ?? null);
         setMembers(Array.isArray(data.members) ? (data.members as MemberRow[]) : []);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load members");
+        setWorkspace(null);
         setMembers([]);
       } finally {
         setLoading(false);
@@ -112,7 +127,9 @@ export default function AdminWorkspaceDetailPage() {
               </Link>{" "}
               / {workspaceId}
             </div>
-            <h1 className="mt-1 text-xl font-semibold tracking-tight text-[var(--fg)]">Workspace members</h1>
+            <h1 className="mt-1 text-xl font-semibold tracking-tight text-[var(--fg)]">
+              {workspace?.name ?? "Workspace"}
+            </h1>
             <p className="mt-1 text-sm text-[var(--muted)]">Members (and roles) for this workspace.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -124,6 +141,46 @@ export default function AdminWorkspaceDetailPage() {
         </div>
 
         {error ? <div className="mt-4 text-sm text-red-700">{error}</div> : null}
+
+        <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+          <div className="text-sm font-semibold text-[var(--fg)]">Workspace details</div>
+          <div className="mt-3 grid gap-2 text-sm text-[var(--muted)]">
+            <div>
+              <span className="font-semibold text-[var(--fg)]">Type:</span> {workspace?.type ?? "—"}
+            </div>
+            <div>
+              <span className="font-semibold text-[var(--fg)]">Slug:</span> {workspace?.slug ?? "—"}
+            </div>
+            <div>
+              <span className="font-semibold text-[var(--fg)]">Created:</span> {fmtDate(workspace?.createdDate ?? null) || "—"}
+            </div>
+            <div>
+              <span className="font-semibold text-[var(--fg)]">Updated:</span> {fmtDate(workspace?.updatedDate ?? null) || "—"}
+            </div>
+            <div>
+              <span className="font-semibold text-[var(--fg)]">Workspace ID:</span>{" "}
+              <span className="font-mono text-xs text-[var(--muted)]">{workspaceId}</span>
+            </div>
+            <div>
+              <span className="font-semibold text-[var(--fg)]">Created by userId:</span>{" "}
+              <span className="font-mono text-xs text-[var(--muted)]">{workspace?.createdByUserId ?? "—"}</span>
+            </div>
+            <div>
+              <span className="font-semibold text-[var(--fg)]">Personal for userId:</span>{" "}
+              <span className="font-mono text-xs text-[var(--muted)]">{workspace?.personalForUserId ?? "—"}</span>
+            </div>
+            <div>
+              <span className="font-semibold text-[var(--fg)]">Avatar URL:</span>{" "}
+              {workspace?.avatarUrl ? (
+                <a className="break-all text-[var(--fg)] underline" href={workspace.avatarUrl} target="_blank" rel="noreferrer">
+                  {workspace.avatarUrl}
+                </a>
+              ) : (
+                "—"
+              )}
+            </div>
+          </div>
+        </div>
 
         {loading ? (
           <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">

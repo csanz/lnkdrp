@@ -43,6 +43,8 @@ export default function AdminDataUploadsPage() {
   const [items, setItems] = useState<UploadRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteBusyUploadId, setDeleteBusyUploadId] = useState<string>("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
 
@@ -69,7 +71,25 @@ export default function AdminDataUploadsPage() {
         setLoading(false);
       }
     })();
-  }, [canUseAdmin, limit, page, q]);
+  }, [canUseAdmin, limit, page, q, reloadKey]);
+
+  async function deleteUpload(uploadId: string) {
+    if (!uploadId) return;
+    if (deleteBusyUploadId) return;
+    const ok = window.confirm(`Soft-delete upload ${uploadId}?\n\nThis can break doc history; use with care.`);
+    if (!ok) return;
+    setDeleteBusyUploadId(uploadId);
+    setError(null);
+    try {
+      await fetchJson(`/api/admin/data/uploads/${encodeURIComponent(uploadId)}`, { method: "DELETE" });
+      setItems((prev) => prev.filter((u) => u.id !== uploadId));
+      setTotal((t) => Math.max(0, t - 1));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete upload");
+    } finally {
+      setDeleteBusyUploadId("");
+    }
+  }
 
   if (status === "loading") {
     return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
@@ -141,6 +161,9 @@ export default function AdminDataUploadsPage() {
             >
               Next
             </Button>
+            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+              {loading ? "Loading…" : "Refresh"}
+            </Button>
           </div>
         </div>
 
@@ -165,6 +188,7 @@ export default function AdminDataUploadsPage() {
                 <th className="px-4 py-3">Created</th>
                 <th className="px-4 py-3">User ID</th>
                 <th className="px-4 py-3">Upload ID</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
@@ -191,11 +215,21 @@ export default function AdminDataUploadsPage() {
                   <td className="px-4 py-3">{fmtDate(u.createdDate) || "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.userId ?? "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      disabled={Boolean(deleteBusyUploadId) && deleteBusyUploadId !== u.id}
+                      onClick={() => void deleteUpload(u.id)}
+                    >
+                      {deleteBusyUploadId === u.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
                     No uploads.
                   </td>
                 </tr>

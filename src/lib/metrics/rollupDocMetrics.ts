@@ -38,6 +38,9 @@ export async function rollupDocMetrics(opts?: {
   processed: number;
   days: number;
   docIds: string[];
+  viewsLastDaysTotal: number;
+  downloadsLastDaysTotal: number;
+  downloadsTotalTotal: number;
 }> {
   const days = Math.min(60, asPositiveInt(opts?.days) ?? 15);
   const limit = Math.min(500, asPositiveInt(opts?.limit) ?? 50);
@@ -64,6 +67,9 @@ export async function rollupDocMetrics(opts?: {
   const now = new Date();
 
   const processedIds: string[] = [];
+  let viewsLastDaysTotal = 0;
+  let downloadsLastDaysTotal = 0;
+  let downloadsTotalTotal = 0;
 
   for (const doc of docs) {
     const docId = new Types.ObjectId(String(doc._id));
@@ -94,6 +100,10 @@ export async function rollupDocMetrics(opts?: {
         ? downloadsTotalAgg[0].downloads
         : 0;
 
+    viewsLastDaysTotal += lastDaysViews;
+    downloadsLastDaysTotal += lastDaysDownloads;
+    downloadsTotalTotal += downloadsTotal;
+
     await DocModel.updateOne(
       { _id: docId },
       {
@@ -112,5 +122,13 @@ export async function rollupDocMetrics(opts?: {
     processedIds.push(String(docId));
   }
 
-  return { ok: true, processed: processedIds.length, days, docIds: processedIds };
+  return {
+    ok: true,
+    processed: processedIds.length,
+    days,
+    docIds: processedIds,
+    viewsLastDaysTotal,
+    downloadsLastDaysTotal,
+    downloadsTotalTotal,
+  };
 }

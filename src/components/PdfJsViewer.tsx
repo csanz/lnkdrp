@@ -205,6 +205,10 @@ export function PdfJsViewer({
   const [pageNumber, setPageNumber] = useState(initialPage);
   const [numPages, setNumPages] = useState<number | null>(null);
   const [pdfVersion, setPdfVersion] = useState(0);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [useNativePdf, setUseNativePdf] = useState(false);
+  const [nativePdfLoaded, setNativePdfLoaded] = useState(false);
+  const [nativePdfError, setNativePdfError] = useState<string | null>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
   const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 });
   const [zoom, setZoom] = useState(1); // multiplier on top of "fit-to-screen"
@@ -273,6 +277,20 @@ export function PdfJsViewer({
   );
   const goNext = useMemo(() => () => setPageNumber((p) => p + 1), []);
 
+  // When we're using the browser's native PDF viewer, force the "single page" slideshow experience.
+  // (All/Grid are PDF.js-only features.)
+  useEffect(() => {
+    if (!useNativePdf) return;
+    setViewMode("single");
+  }, [useNativePdf]);
+
+  const nativePdfSrc = useMemo(() => {
+    // Chrome's built-in viewer respects these hash params.
+    const hash = `page=${pageNumber}&zoom=page-fit&pagemode=none`;
+    const base = url.includes("#") ? url.split("#")[0] : url;
+    return `${base}#${hash}`;
+  }, [pageNumber, url]);
+
   const canZoomOut = zoom > 0.5;
   const canZoomIn = zoom < 4;
 
@@ -319,33 +337,72 @@ export function PdfJsViewer({
     const el = viewportRef.current;
     if (!el) return;
 
-    const ro = new ResizeObserver(() => {
-      const rect = el.getBoundingClientRect();
+    let rafs: number[] = [];
+    function measure() {
+      // `el` is captured by a closure; TS won't keep the null-narrowing. We already early-returned above.
+      const rect = el!.getBoundingClientRect();
       setViewportSize({ w: Math.floor(rect.width), h: Math.floor(rect.height) });
+      return rect;
+    }
+
+    const ro = new ResizeObserver(() => {
+      measure();
     });
     ro.observe(el);
 
     // Kick once synchronously.
-    const rect = el.getBoundingClientRect();
-    setViewportSize({ w: Math.floor(rect.width), h: Math.floor(rect.height) });
+    const first = measure();
+    // Safari / some layout cases can report 0x0 on first paint; re-measure for a few frames.
+    if (first.width <= 0 || first.height <= 0) {
+      let tries = 0;
+      const tick = () => {
+        tries += 1;
+        const r = measure();
+        if ((r.width > 0 && r.height > 0) || tries >= 12) return;
+        rafs.push(window.requestAnimationFrame(tick));
+      };
+      rafs.push(window.requestAnimationFrame(tick));
+    }
 
-    return () => ro.disconnect();
+    return () => {
+      for (const id of rafs) window.cancelAnimationFrame(id);
+      ro.disconnect();
+    };
   }, []);
 
   useEffect(() => {
     const el = headerRef.current;
     if (!el) return;
 
-    const ro = new ResizeObserver(() => {
-      const rect = el.getBoundingClientRect();
+    let rafs: number[] = [];
+    function measure() {
+      // `el` is captured by a closure; TS won't keep the null-narrowing. We already early-returned above.
+      const rect = el!.getBoundingClientRect();
       setHeaderHeight(Math.floor(rect.height));
+      return rect;
+    }
+
+    const ro = new ResizeObserver(() => {
+      measure();
     });
     ro.observe(el);
 
-    const rect = el.getBoundingClientRect();
-    setHeaderHeight(Math.floor(rect.height));
+    const first = measure();
+    if (first.height <= 0) {
+      let tries = 0;
+      const tick = () => {
+        tries += 1;
+        const r = measure();
+        if (r.height > 0 || tries >= 12) return;
+        rafs.push(window.requestAnimationFrame(tick));
+      };
+      rafs.push(window.requestAnimationFrame(tick));
+    }
 
-    return () => ro.disconnect();
+    return () => {
+      for (const id of rafs) window.cancelAnimationFrame(id);
+      ro.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -477,12 +534,259 @@ export function PdfJsViewer({
     async function load() {
       setStatus({ kind: "loading" });
       try {
-        // Use the bundler-specific entry to avoid PDF.js thinking it's running in Node
-        // (Next injects a `process` polyfill in the browser).
-        const pdfjs = await import("pdfjs-dist/webpack.mjs");
-        const loadingTask = pdfjs.getDocument({ url });
-        const pdf = (await loadingTask.promise) as PdfDoc;
+        const withBrowserPdfJsEnv = async <T,>(fn: () => Promise<T>): Promise<T> => {
+          // PDF.js uses a heuristic (`process + "" === "[object process]"`) to detect Node.
+          // Next injects a `process` polyfill in the browser, which can trip that heuristic and
+          // send PDF.js down a Node-only codepath (breaking share viewer). Temporarily hide it
+          // during module evaluation so PDF.js correctly treats this as a browser env.
+          if (typeof window === "undefined") return await fn();
+          const g = globalThis as any;
+          const p = g.process;
+          // If we can't access process, just proceed.
+          if (!p || typeof p !== "object") return await fn();
+
+          // First attempt: temporarily replace `globalThis.process` with a "safe" object whose
+          // stringification cannot be mistaken for real Node.js. This is more robust than
+          // patching Symbol.toStringTag/toString when those fields are non-writable.
+          let restoredGlobalProcess = false;
+          const hadOwnProcess = Object.prototype.hasOwnProperty.call(g, "process");
+          let prevProcessDesc: PropertyDescriptor | undefined;
+          try {
+            prevProcessDesc = Object.getOwnPropertyDescriptor(g, "process");
+          } catch {
+            prevProcessDesc = undefined;
+          }
+          const safeProcess: any = (() => {
+            const sp: any = {};
+            // Preserve env (NextAuth and other libs may read it on the client).
+            if (p.env && typeof p.env === "object") sp.env = p.env;
+            if (p.versions && typeof p.versions === "object") sp.versions = p.versions;
+            try {
+              if (typeof Symbol !== "undefined" && (Symbol as any).toStringTag) {
+                sp[(Symbol as any).toStringTag] = "Object";
+              }
+            } catch {
+              // ignore
+            }
+            try {
+              if (typeof Symbol !== "undefined" && (Symbol as any).toPrimitive) {
+                sp[(Symbol as any).toPrimitive] = () => "[object Object]";
+              }
+            } catch {
+              // ignore
+            }
+            sp.toString = () => "[object Object]";
+            return sp;
+          })();
+
+          const restoreGlobalProcess = () => {
+            if (restoredGlobalProcess) return;
+            restoredGlobalProcess = true;
+            try {
+              if (prevProcessDesc && prevProcessDesc.configurable) {
+                Object.defineProperty(g, "process", prevProcessDesc);
+                return;
+              }
+            } catch {
+              // ignore
+            }
+            try {
+              // Best-effort restore by assignment.
+              g.process = p;
+              return;
+            } catch {
+              // ignore
+            }
+            try {
+              // If it wasn't an own prop before, try to remove any temporary one we created.
+              if (!hadOwnProcess) delete g.process;
+            } catch {
+              // ignore
+            }
+          };
+
+          let replacedGlobalProcess = false;
+          try {
+            // If writable (or setter-backed), assignment is the least invasive path.
+            g.process = safeProcess;
+            replacedGlobalProcess = true;
+          } catch {
+            // ignore
+          }
+          if (!replacedGlobalProcess && prevProcessDesc?.configurable) {
+            try {
+              Object.defineProperty(g, "process", {
+                value: safeProcess,
+                configurable: true,
+                writable: true,
+                enumerable: prevProcessDesc.enumerable ?? false,
+              });
+              replacedGlobalProcess = true;
+            } catch {
+              // ignore
+            }
+          }
+          if (replacedGlobalProcess) {
+            try {
+              return await fn();
+            } finally {
+              restoreGlobalProcess();
+            }
+          }
+
+          const symToStringTag = typeof Symbol !== "undefined" ? (Symbol as any).toStringTag : null;
+          const symToPrimitive = typeof Symbol !== "undefined" ? (Symbol as any).toPrimitive : null;
+
+          const hadOwnTag = symToStringTag ? Object.prototype.hasOwnProperty.call(p, symToStringTag) : false;
+          const prevTag = symToStringTag ? p[symToStringTag] : undefined;
+
+          const hadOwnToPrimitive = symToPrimitive ? Object.prototype.hasOwnProperty.call(p, symToPrimitive) : false;
+          const prevToPrimitive = symToPrimitive ? p[symToPrimitive] : undefined;
+
+          const hadOwnToString = Object.prototype.hasOwnProperty.call(p, "toString");
+          const prevToString = p.toString;
+
+          let patched = false;
+          try {
+            try {
+              // Make `process + ""` NOT equal "[object process]" during import.
+              // This preserves process.env for NextAuth while preventing PDF.js from taking a Node path.
+              if (symToStringTag) {
+                try {
+                  p[symToStringTag] = "Object";
+                  patched = true;
+                } catch {
+                  // ignore
+                }
+              }
+              if (symToPrimitive) {
+                try {
+                  // Ensure ToPrimitive doesn't return "[object process]" via a custom @@toPrimitive.
+                  p[symToPrimitive] = () => "[object Object]";
+                  patched = true;
+                } catch {
+                  // ignore
+                }
+              }
+              try {
+                // Avoid binding Object.prototype.toString (some polyfills mark toString non-writable);
+                // just provide a simple string primitive.
+                p.toString = () => "[object Object]";
+                patched = true;
+              } catch {
+                // ignore
+              }
+            } catch {
+              // ignore (non-writable)
+            }
+            return await fn();
+          } finally {
+            if (patched) {
+              try {
+                if (symToStringTag) {
+                  try {
+                    if (hadOwnTag) p[symToStringTag] = prevTag;
+                    else delete p[symToStringTag];
+                  } catch {
+                    // ignore
+                  }
+                }
+                if (symToPrimitive) {
+                  try {
+                    if (hadOwnToPrimitive) p[symToPrimitive] = prevToPrimitive;
+                    else delete p[symToPrimitive];
+                  } catch {
+                    // ignore
+                  }
+                }
+                try {
+                  if (hadOwnToString) p.toString = prevToString;
+                  else delete p.toString;
+                } catch {
+                  // ignore
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }
+        };
+
+        // Prefer the bundler entry (it wires up the worker automatically),
+        // In Next/Webpack dev we've seen `pdfjs-dist`'s ESM bundles blow up during import with
+        // `Object.defineProperty called on non-object`. To avoid bundler transforms entirely,
+        // we vendor the official ESM bundles into `/public/pdfjs/*` and import them at runtime.
+        //
+        // This restores the in-app viewer modes ("All pages" slide scrolling) instead of falling
+        // back to the browser's native PDF viewer.
+        const tryLoad = async (mode: "public-esm" | "public-esm-no-worker") => {
+          const pdfJsModuleUrl = "/pdfjs/pdf.min.mjs";
+          const pdfjs = await withBrowserPdfJsEnv(
+            () => import(/* webpackIgnore: true */ pdfJsModuleUrl) as Promise<any>,
+          );
+
+          // Wire up the module worker (once) so rendering stays fast.
+          if (mode === "public-esm" && typeof window !== "undefined" && "Worker" in window) {
+            try {
+              const g = globalThis as any;
+              if (!g.__lnkdrpPdfJsWorkerPort) {
+                g.__lnkdrpPdfJsWorkerPort = new Worker("/pdfjs/pdf.worker.min.mjs", {
+                  type: "module",
+                });
+              }
+              if ((pdfjs as any).GlobalWorkerOptions) {
+                (pdfjs as any).GlobalWorkerOptions.workerPort = g.__lnkdrpPdfJsWorkerPort;
+              }
+            } catch {
+              // If worker setup fails, we can still try a worker-less load below.
+            }
+          }
+
+          const loadingTask =
+            mode === "public-esm"
+              ? (pdfjs as any).getDocument({ url })
+              : (pdfjs as any).getDocument({ url, disableWorker: true } as any);
+          return (await loadingTask.promise) as PdfDoc;
+        };
+
+        let pdf: PdfDoc;
+        try {
+          pdf = await tryLoad("public-esm");
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e ?? "");
+          const stack = e instanceof Error ? e.stack : null;
+          // eslint-disable-next-line no-console
+          console.warn("[lnkdrp][pdf] pdf.js load failed (public-esm)", { msg, stack });
+          // Known dev-time failure mode where the bundler entry can throw.
+          if (/defineProperty/i.test(msg) || /non-?object/i.test(msg)) {
+            try {
+              pdf = await tryLoad("public-esm-no-worker");
+            } catch (e2) {
+              const msg2 = e2 instanceof Error ? e2.message : String(e2 ?? "");
+              const stack2 = e2 instanceof Error ? e2.stack : null;
+              // eslint-disable-next-line no-console
+              console.warn("[lnkdrp][pdf] pdf.js load failed (public-esm-no-worker)", {
+                msg: msg2,
+                stack: stack2,
+              });
+              // eslint-disable-next-line no-console
+              console.warn("[lnkdrp][pdf] pdf.js failed; falling back to native PDF viewer", { msg, msg2 });
+              setUseNativePdf(true);
+              setNativePdfLoaded(false);
+              setNativePdfError(null);
+              setNumPages(null);
+              setStatus({ kind: "idle" });
+              return;
+            }
+          } else {
+            // If it's a network/range/authorization issue, surface the original error.
+            throw e;
+          }
+        }
         if (cancelled) return;
+        setUseNativePdf(false);
+        setNativePdfLoaded(false);
+        setNativePdfError(null);
         pdfRef.current = pdf;
         setNumPages(pdf.numPages ?? null);
         setPageNumber((p) => Math.min(Math.max(1, p), pdf.numPages || p));
@@ -503,7 +807,13 @@ export function PdfJsViewer({
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [url, reloadKey]);
+
+  useEffect(() => {
+    if (!useNativePdf) return;
+    setNativePdfLoaded(false);
+    setNativePdfError(null);
+  }, [useNativePdf, url, reloadKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -640,8 +950,9 @@ export function PdfJsViewer({
   useEffect(() => {
     if (viewMode !== "all") return;
     const pdf = pdfRef.current;
+    const totalPages = numPages;
     if (!pdf) return;
-    if (!numPages || numPages <= 0) return;
+    if (!totalPages || totalPages <= 0) return;
     const width = allPagesWidth > 0 ? allPagesWidth : viewportSize.w;
     if (width <= 0) return;
 
@@ -651,20 +962,20 @@ export function PdfJsViewer({
       toRender.add(p - 1);
       toRender.add(p + 1);
     }
-    if (toRender.size === 0) toRender.add(Math.min(Math.max(1, pageNumber), numPages));
+    if (toRender.size === 0) toRender.add(Math.min(Math.max(1, pageNumber), totalPages));
 
     // Fit pages to the actual all-pages column width (not the full viewport),
     // and account for per-page card padding (p-3).
     const targetWidth = Math.max(1, width - 24);
     let cancelled = false;
 
-    async function renderPage(p: number) {
-      if (p < 1 || p > numPages) return;
+    async function renderPage(p: number, doc: PdfDoc, pages: number) {
+      if (p < 1 || p > pages) return;
       const canvas = allCanvasesRef.current.get(p);
       if (!canvas) return;
 
       try {
-        const page = await pdf.getPage(p);
+        const page = await doc.getPage(p);
         if (cancelled) return;
 
         const rotation = normalizePdfRotation(page);
@@ -711,7 +1022,7 @@ export function PdfJsViewer({
       }
     }
 
-    for (const p of toRender) void renderPage(p);
+    for (const p of toRender) void renderPage(p, pdf, totalPages);
 
     return () => {
       cancelled = true;
@@ -804,8 +1115,9 @@ export function PdfJsViewer({
   useEffect(() => {
     if (viewMode !== "grid") return;
     const pdf = pdfRef.current;
+    const totalPages = numPages;
     if (!pdf) return;
-    if (!numPages || numPages <= 0) return;
+    if (!totalPages || totalPages <= 0) return;
     if (gridTileWidth <= 0) return;
 
     const toRender = new Set<number>();
@@ -816,18 +1128,18 @@ export function PdfJsViewer({
     }
     if (toRender.size === 0) {
       // Render the first few thumbnails to avoid an empty grid on load.
-      for (let p = 1; p <= Math.min(12, numPages); p++) toRender.add(p);
+      for (let p = 1; p <= Math.min(12, totalPages); p++) toRender.add(p);
     }
 
     let cancelled = false;
 
-    async function renderThumb(p: number) {
-      if (p < 1 || p > numPages) return;
+    async function renderThumb(p: number, doc: PdfDoc, pages: number) {
+      if (p < 1 || p > pages) return;
       const canvas = gridCanvasesRef.current.get(p);
       if (!canvas) return;
 
       try {
-        const page = await pdf.getPage(p);
+        const page = await doc.getPage(p);
         if (cancelled) return;
         const rotation = normalizePdfRotation(page);
         const key = `${gridTileWidth}:${zoom}:${pdfVersion}:${rotation}`;
@@ -869,7 +1181,7 @@ export function PdfJsViewer({
       }
     }
 
-    for (const p of toRender) void renderThumb(p);
+    for (const p of toRender) void renderThumb(p, pdf, totalPages);
 
     return () => {
       cancelled = true;
@@ -1057,7 +1369,7 @@ export function PdfJsViewer({
                   )}
                 </div>
 
-                {shareIdSafe ? (
+                {shareIdSafe && !useNativePdf ? (
                   <>
                     <div className="h-8 w-px bg-white/10" aria-hidden="true" />
                     <div
@@ -1356,6 +1668,121 @@ export function PdfJsViewer({
           viewMode !== "single" ? "overflow-auto" : zoom === 1 ? "overflow-hidden" : "overflow-auto"
         }`}
       >
+        {useNativePdf ? (
+          <div className="absolute inset-0 z-10">
+            <iframe
+              title="PDF"
+              src={nativePdfSrc}
+              className="block h-full w-full border-0"
+              allow="fullscreen"
+              // Key forces a full reload when toggling fallback / retrying.
+              key={`native:${reloadKey}:${nativePdfSrc}`}
+              onLoad={() => setNativePdfLoaded(true)}
+              onError={() => setNativePdfError("Failed to load PDF in native viewer.")}
+            />
+            <div className="pointer-events-none absolute left-0 right-0 bottom-0 z-20 p-4">
+              <div className="inline-flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/80 backdrop-blur-sm">
+                <span className="font-semibold text-white/90">Viewer fallback</span>
+                <span>Using the browser’s native PDF viewer (pdf.js failed in dev).</span>
+                <a
+                  className="pointer-events-auto ml-1 rounded-lg border border-white/15 bg-black/40 px-2.5 py-1 font-semibold text-white/90 hover:bg-black/30"
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open PDF directly
+                </a>
+                <button
+                  type="button"
+                  className="pointer-events-auto ml-1 rounded-lg bg-white/10 px-2.5 py-1 font-semibold text-white/90 hover:bg-white/15"
+                  onClick={() => {
+                    setUseNativePdf(false);
+                    setReloadKey((k) => k + 1);
+                  }}
+                >
+                  Try pdf.js again
+                </button>
+              </div>
+            </div>
+            {!nativePdfLoaded && !nativePdfError ? (
+              <div className="absolute inset-0 z-20 grid place-items-center">
+                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/70 px-4 py-3 text-sm text-white/90 shadow-xl backdrop-blur-sm">
+                  <div
+                    className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white/90"
+                    aria-hidden="true"
+                  />
+                  <div className="font-medium">Loading PDF…</div>
+                </div>
+              </div>
+            ) : null}
+            {nativePdfError ? (
+              <div className="absolute inset-0 z-30 grid place-items-center px-6">
+                <div className="w-full max-w-xl rounded-2xl border border-white/15 bg-black/85 p-6 text-white shadow-2xl backdrop-blur-sm">
+                  <div className="text-sm font-semibold">Native viewer failed</div>
+                  <div className="mt-2 whitespace-pre-wrap text-sm text-white/80">{nativePdfError}</div>
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <a
+                      className="inline-flex items-center justify-center rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Open PDF directly
+                    </a>
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center rounded-xl border border-white/15 bg-black/40 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-black/30"
+                      onClick={() => setReloadKey((k) => k + 1)}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {status.kind === "error" ? (
+          <div className="absolute inset-0 z-30 grid place-items-center px-6">
+            <div className="w-full max-w-xl rounded-2xl border border-white/15 bg-black/85 p-6 text-white shadow-2xl backdrop-blur-sm">
+              <div className="text-sm font-semibold">Failed to load PDF</div>
+              <div className="mt-2 whitespace-pre-wrap text-sm text-white/80">{status.message}</div>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15"
+                  onClick={() => setReloadKey((k) => k + 1)}
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-xl border border-white/15 bg-black/40 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-black/30"
+                  onClick={() => window.location.reload()}
+                >
+                  Reload page
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-xl border border-white/15 bg-black/40 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-black/30"
+                  onClick={() => {
+                    setUseNativePdf(true);
+                    setStatus({ kind: "idle" });
+                  }}
+                >
+                  Use native viewer
+                </button>
+                {viewportSize.w <= 0 || viewportSize.h <= 0 ? (
+                  <div className="ml-auto text-xs text-white/55">
+                    Viewer size: {viewportSize.w}×{viewportSize.h}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         {(status.kind === "loading" || (viewMode === "single" && status.kind === "rendering")) ? (
           <div
             aria-live="polite"
@@ -1374,12 +1801,12 @@ export function PdfJsViewer({
           </div>
         ) : null}
 
-        {viewMode === "single" ? (
+        {viewMode === "single" && !useNativePdf ? (
           <div className="grid min-h-full min-w-full place-items-center">
             {/* When zoomed in, allow the canvas to exceed viewport and scroll */}
             <canvas ref={canvasRef} className="block max-h-none max-w-none" />
           </div>
-        ) : viewMode === "all" ? (
+        ) : viewMode === "all" && !useNativePdf ? (
           <div className="min-h-full w-full px-6 py-6">
             <div ref={allPagesContainerRef} className="mx-auto flex w-full max-w-5xl flex-col gap-6">
               {numPages
@@ -1412,7 +1839,7 @@ export function PdfJsViewer({
                 : null}
             </div>
           </div>
-        ) : (
+        ) : !useNativePdf ? (
           <div className="min-h-full w-full px-6 py-6">
             <div ref={gridContainerRef} className="w-full">
               <div
@@ -1461,6 +1888,8 @@ export function PdfJsViewer({
               </div>
             </div>
           </div>
+        ) : (
+          <div className="min-h-full" />
         )}
 
         {/* Hover arrows (centered within PDF viewport) */}

@@ -129,4 +129,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   return NextResponse.json({ ok: true, project: { id: projectId, isRequest } });
 }
 
+export async function DELETE(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  const { projectId } = await params;
+  if (!Types.ObjectId.isValid(projectId)) {
+    return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
+  }
+
+  await connectMongo();
+  const res = await ProjectModel.updateOne({ _id: new Types.ObjectId(projectId) }, { $set: { isDeleted: true } });
+  if (!res.matchedCount) return NextResponse.json({ error: "Project not found" }, { status: 404 });
+
+  return NextResponse.json({ ok: true, projectId });
+}
+
 

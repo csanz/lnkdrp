@@ -12,6 +12,7 @@ import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
 import DataTable from "@/components/ui/DataTable";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 import { fmtDate } from "@/lib/admin/format";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -26,6 +27,9 @@ type DocRow = {
   createdDate: string | null;
 };
 
+type SortField = "updatedDate" | "createdDate";
+type SortOrder = "desc" | "asc";
+
 export default function AdminDataDocsPage() {
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? null;
@@ -37,12 +41,18 @@ export default function AdminDataDocsPage() {
   const canUseAdmin = isAdmin || isLocalhost;
 
   const [q, setQ] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [archivedFilter, setArchivedFilter] = useState<string>("");
+  const [sortField, setSortField] = useState<SortField>("updatedDate");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [page, setPage] = useState(1);
   const [limit] = useState(50);
   const [total, setTotal] = useState(0);
   const [items, setItems] = useState<DocRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [deleteBusyDocId, setDeleteBusyDocId] = useState<string>("");
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
 
@@ -56,6 +66,10 @@ export default function AdminDataDocsPage() {
         qs.set("limit", String(limit));
         qs.set("page", String(page));
         if (q.trim()) qs.set("q", q.trim());
+        if (statusFilter) qs.set("status", statusFilter);
+        if (archivedFilter) qs.set("archived", archivedFilter);
+        qs.set("sort", sortField);
+        qs.set("order", sortOrder);
         const data = await fetchJson<{ docs?: unknown; total?: unknown }>(`/api/admin/data/docs?${qs.toString()}`, {
           method: "GET",
         });
@@ -69,7 +83,26 @@ export default function AdminDataDocsPage() {
         setLoading(false);
       }
     })();
-  }, [canUseAdmin, limit, page, q]);
+  }, [canUseAdmin, limit, page, q, statusFilter, archivedFilter, sortField, sortOrder, reloadKey]);
+
+  async function deleteDoc(docId: string) {
+    if (!docId) return;
+    if (deleteBusyDocId) return;
+    const ok = window.confirm(`Soft-delete doc ${docId}?\n\nThis will hide it from normal views.`);
+    if (!ok) return;
+    setDeleteBusyDocId(docId);
+    setError(null);
+    try {
+      await fetchJson(`/api/admin/data/docs/${encodeURIComponent(docId)}`, { method: "DELETE" });
+      // Optimistic removal.
+      setItems((prev) => prev.filter((d) => d.id !== docId));
+      setTotal((t) => Math.max(0, t - 1));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete doc");
+    } finally {
+      setDeleteBusyDocId("");
+    }
+  }
 
   if (status === "loading") {
     return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
@@ -124,6 +157,53 @@ export default function AdminDataDocsPage() {
                 setQ(e.target.value);
               }}
             />
+            <Select
+              className="w-[160px] max-w-full"
+              value={statusFilter}
+              onChange={(e) => {
+                setPage(1);
+                setStatusFilter(e.target.value);
+              }}
+              title="Filter by status"
+            >
+              <option value="">All statuses</option>
+              <option value="draft">draft</option>
+              <option value="preparing">preparing</option>
+              <option value="ready">ready</option>
+              <option value="failed">failed</option>
+            </Select>
+            <Select
+              className="w-[150px] max-w-full"
+              value={archivedFilter}
+              onChange={(e) => {
+                setPage(1);
+                setArchivedFilter(e.target.value);
+              }}
+              title="Filter by archived"
+            >
+              <option value="">All</option>
+              <option value="no">Not archived</option>
+              <option value="yes">Archived</option>
+            </Select>
+            <Select
+              className="w-[180px] max-w-full"
+              value={`${sortField}:${sortOrder}`}
+              onChange={(e) => {
+                const raw = e.target.value || "updatedDate:desc";
+                const [f, o] = raw.split(":");
+                const nextField = (f === "createdDate" ? "createdDate" : "updatedDate") as SortField;
+                const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
+                setPage(1);
+                setSortField(nextField);
+                setSortOrder(nextOrder);
+              }}
+              title="Sort"
+            >
+              <option value="updatedDate:desc">Updated (newest)</option>
+              <option value="updatedDate:asc">Updated (oldest)</option>
+              <option value="createdDate:desc">Created (newest)</option>
+              <option value="createdDate:asc">Created (oldest)</option>
+            </Select>
             <div className="text-xs text-[var(--muted-2)]">
               Page {page} / {totalPages} • {total} total
             </div>
@@ -140,6 +220,9 @@ export default function AdminDataDocsPage() {
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             >
               Next
+            </Button>
+            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+              {loading ? "Loading…" : "Refresh"}
             </Button>
           </div>
         </div>
@@ -165,6 +248,7 @@ export default function AdminDataDocsPage() {
                 <th className="px-4 py-3">Updated</th>
                 <th className="px-4 py-3">User ID</th>
                 <th className="px-4 py-3">Doc ID</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
@@ -198,11 +282,22 @@ export default function AdminDataDocsPage() {
                       {d.id}
                     </Link>
                   </td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      disabled={Boolean(deleteBusyDocId) && deleteBusyDocId !== d.id}
+                      onClick={() => void deleteDoc(d.id)}
+                      title="Soft delete doc"
+                    >
+                      {deleteBusyDocId === d.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
                     No docs.
                   </td>
                 </tr>

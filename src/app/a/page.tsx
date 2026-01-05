@@ -19,6 +19,7 @@ type CronHealthItem = {
   lastRunAt?: string | null;
   lastDurationMs?: number | null;
   lastError?: string | null;
+  lastResult?: unknown;
 };
 /**
  * Status Pill.
@@ -29,6 +30,48 @@ function statusPill(status: CronHealthItem["status"]) {
   if (status === "running") return "bg-blue-100 text-blue-800";
   if (status === "error") return "bg-red-100 text-red-800";
   return "bg-emerald-100 text-emerald-800";
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function asFiniteNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function formatStatsLine(item: CronHealthItem): string | null {
+  if (!isPlainObject(item.lastResult)) return null;
+  const r = item.lastResult;
+
+  if (item.jobKey === "doc-metrics") {
+    const processed = asFiniteNumber(r.processed);
+    const days = asFiniteNumber(r.days);
+    const views = asFiniteNumber(r.viewsLastDaysTotal);
+    const downloads = asFiniteNumber(r.downloadsLastDaysTotal);
+    const downloadsTotal = asFiniteNumber(r.downloadsTotalTotal);
+
+    const parts: string[] = [];
+    if (processed !== null) parts.push(`docs: ${processed}`);
+    if (views !== null && days !== null) parts.push(`views (${days}d): ${views}`);
+    else if (views !== null) parts.push(`views: ${views}`);
+    if (downloads !== null && days !== null) parts.push(`downloads (${days}d): ${downloads}`);
+    else if (downloads !== null) parts.push(`downloads: ${downloads}`);
+    if (downloadsTotal !== null) parts.push(`downloads total: ${downloadsTotal}`);
+
+    return parts.length ? `Stats: ${parts.join(" • ")}` : null;
+  }
+
+  const omitKeys = new Set(["docIds"]);
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(r)) {
+    if (omitKeys.has(k)) continue;
+    if (typeof v === "number" && Number.isFinite(v)) parts.push(`${k}: ${v}`);
+    else if (typeof v === "boolean") parts.push(`${k}: ${v ? "true" : "false"}`);
+    else if (typeof v === "string" && v.trim()) parts.push(`${k}: ${v.trim()}`);
+    if (parts.length >= 6) break;
+  }
+  return parts.length ? `Stats: ${parts.join(" • ")}` : null;
 }
 /**
  * Render the AdminHomePage UI (uses effects, memoized values, local state).
@@ -89,6 +132,14 @@ export default function AdminHomePage() {
           >
             <div className="text-sm font-semibold text-[var(--fg)]">AI runs</div>
             <div className="mt-1 text-sm text-[var(--muted)]">Inspect prompts + outputs for AI features.</div>
+          </Link>
+
+          <Link
+            href="/a/tools/billing"
+            className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 transition hover:bg-[var(--panel-hover)]"
+          >
+            <div className="text-sm font-semibold text-[var(--fg)]">Billing tools</div>
+            <div className="mt-1 text-sm text-[var(--muted)]">Refresh Pro price label from Stripe (cached in Mongo).</div>
           </Link>
         </div>
 
@@ -158,6 +209,10 @@ export default function AdminHomePage() {
                           Last run: {fmtDate(item.lastRunAt ?? null) || "—"}
                           {item.lastDurationMs ? ` • Duration: ${fmtDuration(item.lastDurationMs)}` : ""}
                         </div>
+                        {(() => {
+                          const stats = formatStatsLine(item);
+                          return stats ? <div className="mt-1 text-xs text-[var(--muted-2)]">{stats}</div> : null;
+                        })()}
                         {item.status === "error" && item.lastError ? (
                           <div className="mt-2 text-xs text-red-700">{item.lastError}</div>
                         ) : null}

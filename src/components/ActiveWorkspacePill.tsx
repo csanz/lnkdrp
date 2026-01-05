@@ -116,17 +116,17 @@ export default function ActiveWorkspacePill({
   return (
     <div
       className={cn(
-        "inline-flex min-w-0 items-stretch overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] font-semibold text-[var(--fg)] dark:border-[color-mix(in_srgb,var(--border)_30%,transparent)]",
+        "inline-flex min-w-0 items-stretch overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] font-semibold text-[var(--fg)] dark:border-[color-mix(in_srgb,var(--border)_30%,transparent)]",
         maxWidthClassName,
-        textClassName ?? "text-[11.5px]",
+        textClassName ?? "text-[12px]",
         className,
       )}
       title={activeWorkspaceName}
       aria-label={`Active workspace: ${activeWorkspaceName}`}
     >
-      <div className="flex min-w-0 items-center px-[10px] py-[6px]">
+      <div className="flex min-w-0 items-center px-[11px] py-[7px]">
         <span
-          className="mr-1.5 grid h-[15px] w-[15px] shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-[8.5px] font-semibold text-[var(--fg)]"
+          className="mr-1.5 grid h-[16px] w-[16px] shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-[9px] font-semibold text-[var(--fg)]"
           aria-hidden="true"
         >
           {activeWorkspaceAvatarUrl && !avatarErrored ? (
@@ -134,7 +134,7 @@ export default function ActiveWorkspacePill({
             <img
               src={activeWorkspaceAvatarUrl}
               alt=""
-              className="h-[15px] w-[15px] object-cover"
+              className="h-[16px] w-[16px] object-cover"
               onError={() => setAvatarErrored(true)}
             />
           ) : (
@@ -145,7 +145,7 @@ export default function ActiveWorkspacePill({
       </div>
       {showProSegment ? (
         <div
-          className="inline-flex shrink-0 items-center border-l border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-[6px] text-[8.5px] font-medium tracking-[0.07em] text-[var(--muted-2)] dark:border-[color-mix(in_srgb,var(--border)_30%,transparent)] dark:bg-[color-mix(in_srgb,var(--panel)_85%,black)] dark:text-[color-mix(in_srgb,var(--fg)_70%,var(--bg))]"
+          className="inline-flex shrink-0 items-center border-l border-[var(--border)] bg-[var(--panel-2)] px-3 py-[7px] text-[9px] font-medium tracking-[0.07em] text-[var(--muted-2)] dark:border-[color-mix(in_srgb,var(--border)_30%,transparent)] dark:bg-[color-mix(in_srgb,var(--panel)_85%,black)] dark:text-[color-mix(in_srgb,var(--fg)_70%,var(--bg))]"
           aria-label={`${badgeText} plan`}
           title={`${badgeText} plan`}
         >

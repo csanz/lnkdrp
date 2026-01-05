@@ -223,4 +223,20 @@ export async function GET(request: Request, { params }: { params: Promise<{ requ
   });
 }
 
+export async function DELETE(request: Request, { params }: { params: Promise<{ requestId: string }> }) {
+  const auth = await requireAdmin(request);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+
+  const { requestId } = await params;
+  if (!Types.ObjectId.isValid(requestId)) {
+    return NextResponse.json({ error: "Invalid requestId" }, { status: 400 });
+  }
+
+  await connectMongo();
+  const res = await ProjectModel.updateOne({ _id: new Types.ObjectId(requestId) }, { $set: { isDeleted: true } });
+  if (!res.matchedCount) return NextResponse.json({ error: "Request not found" }, { status: 404 });
+
+  return NextResponse.json({ ok: true, requestId });
+}
+
 

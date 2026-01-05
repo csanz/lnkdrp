@@ -14,7 +14,8 @@ import { resolveActor } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
-import { getCreditsSnapshot } from "@/lib/credits/snapshot";
+import { CreditLedgerModel } from "@/lib/models/CreditLedger";
+import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
 import { ALLOWED_LIMITS, UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
@@ -42,6 +43,14 @@ function isProStatus(status: unknown): boolean {
   return s === "active" || s === "trialing";
 }
 
+function startOfUtcMonth(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
+}
+
+function startOfNextUtcMonth(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
+}
+
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
     const actor = await resolveActor(request);
@@ -56,7 +65,9 @@ export async function GET(request: Request) {
 
       // Editing limits is restricted to owners/admins AND requires an active subscription (Pro).
       const [sub, membership] = await Promise.all([
-        SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean(),
+        SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
+          .select({ status: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
+          .lean(),
         OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
       ]);
       const isPro = isProStatus((sub as any)?.status);
@@ -66,7 +77,7 @@ export async function GET(request: Request) {
       const editDisabledReason = !isPro ? "On-demand limits require an active Pro subscription." : !roleAllowsEdit ? "Only workspace owners/admins can edit limits." : null;
 
       const bal = await WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
-        .select({ onDemandEnabled: 1, onDemandMonthlyLimitCents: 1 })
+        .select({ onDemandEnabled: 1, onDemandMonthlyLimitCents: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
         .lean();
       const limitCents =
         typeof (bal as any)?.onDemandMonthlyLimitCents === "number" && Number.isFinite((bal as any).onDemandMonthlyLimitCents)
@@ -74,10 +85,49 @@ export async function GET(request: Request) {
           : 0;
       const enabled = Boolean((bal as any)?.onDemandEnabled) && limitCents > 0;
 
-      // Usage is derived from the credit ledger within the current billing cycle window.
-      const snap = await getCreditsSnapshot({ workspaceId: actor.orgId });
+      // Usage is derived from pre-aggregated cycle usage when available (fast path), with a
+      // narrow ledger aggregate fallback (avoid calling the full credits snapshot on this hot path).
+      let usedCreditsThisCycle = 0;
+      if (enabled) {
+        const subStart = (sub as any)?.currentPeriodStart instanceof Date ? (sub as any).currentPeriodStart : null;
+        const subEnd = (sub as any)?.currentPeriodEnd instanceof Date ? (sub as any).currentPeriodEnd : null;
+        const balStart = (bal as any)?.currentPeriodStart instanceof Date ? (bal as any).currentPeriodStart : null;
+        const balEnd = (bal as any)?.currentPeriodEnd instanceof Date ? (bal as any).currentPeriodEnd : null;
+        const now = new Date();
+        const cycleStart = subStart && subEnd ? subStart : balStart && balEnd ? balStart : startOfUtcMonth(now);
+        const cycleEnd = subStart && subEnd ? subEnd : balStart && balEnd ? balEnd : startOfNextUtcMonth(now);
+        const cycleKey = `${actor.orgId}:${cycleStart.toISOString()}`;
+
+        const agg = await UsageAggCycleModel.findOne({ workspaceId: orgId, cycleKey })
+          .select({ onDemandUsedCredits: 1 })
+          .lean();
+        if (agg) {
+          usedCreditsThisCycle =
+            typeof (agg as any)?.onDemandUsedCredits === "number" && Number.isFinite((agg as any).onDemandUsedCredits)
+              ? Math.max(0, Math.floor((agg as any).onDemandUsedCredits))
+              : 0;
+        } else {
+          const rows = await CreditLedgerModel.aggregate([
+            {
+              $match: {
+                workspaceId: orgId,
+                status: "charged",
+                eventType: "ai_run",
+                createdDate: { $gte: cycleStart, $lt: cycleEnd },
+                creditsFromOnDemand: { $gt: 0 },
+              },
+            },
+            { $group: { _id: null, sum: { $sum: "$creditsFromOnDemand" } } },
+          ]);
+          usedCreditsThisCycle =
+            typeof (rows as any)?.[0]?.sum === "number" && Number.isFinite((rows as any)[0].sum)
+              ? Math.max(0, Math.floor((rows as any)[0].sum))
+              : 0;
+        }
+      }
+
       const centsPerCredit = USD_CENTS_PER_CREDIT;
-      const usedCents = Math.max(0, Math.floor(snap.onDemandUsedCreditsThisCycle)) * centsPerCredit;
+      const usedCents = Math.max(0, usedCreditsThisCycle) * centsPerCredit;
 
       return NextResponse.json(
         {

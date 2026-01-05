@@ -1434,7 +1434,7 @@ export default function LeftSidebar({
   }, [deleteDocOpen, deleteDocTarget?.id]);
 
   return (
-    <aside className="h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
+    <aside className="relative z-50 h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
         <div className="flex min-w-0 items-center gap-2 px-4 pb-7 pt-6">
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
@@ -1543,10 +1543,15 @@ export default function LeftSidebar({
           </div>
         </div>
 
-        <nav className="mt-6 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4">
+        <nav
+          // Force a stable scrollbar presence to avoid horizontal layout shift when sections collapse/expand.
+          // (Some browsers ignore `scrollbar-gutter`, so `overflow-y-scroll` is the reliable backstop.)
+          className="mt-6 flex-1 overflow-y-scroll overflow-x-hidden pl-3 pr-6 pb-4"
+          style={{ scrollbarGutter: "stable" }}
+        >
           <div className="grid gap-5">
             <section>
-              <div className="group flex items-center justify-between gap-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+              <div className="group relative flex items-center gap-2 px-2 pr-9 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
                 <span className="inline-flex items-center gap-1.5">
                   <StarIcon className="h-3.5 w-3.5 text-amber-400" />
                   <span>Starred</span>
@@ -1557,8 +1562,10 @@ export default function LeftSidebar({
                   variant="ghost"
                   size="sm"
                   className={[
-                    "rounded-md p-0.5 text-[var(--muted-2)]",
-                    "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+                    // Fixed-size square so the button doesn't "wiggle" when the icon glyph changes.
+                    "absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md p-0 text-[var(--muted-2)]",
+                    // Always visible (easy to lose under overlay scrollbars).
+                    "opacity-100",
                   ].join(" ")}
                   onClick={() => {
                     setStarredCollapsedLoaded(true);
@@ -1566,7 +1573,7 @@ export default function LeftSidebar({
                   }}
                 >
                   {(starredCollapsedLoaded ? starredCollapsed : true) ? (
-                    <PlusSmallIcon className="h-4 w-4" />
+                    <PlusIcon className="h-4 w-4" />
                   ) : (
                     <MinusIcon className="h-4 w-4" />
                   )}
@@ -1659,7 +1666,7 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="group flex items-center justify-between gap-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+              <div className="group relative flex items-center gap-2 px-2 pr-9 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
                 <span className="inline-flex items-center gap-1.5">
                   <InboxArrowDownIcon className="h-3.5 w-3.5" />
                   <span>Received</span>
@@ -1670,8 +1677,10 @@ export default function LeftSidebar({
                   variant="ghost"
                   size="sm"
                   className={[
-                    "rounded-md p-0.5 text-[var(--muted-2)]",
-                    "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+                    // Fixed-size square so the button doesn't "wiggle" when the icon glyph changes.
+                    "absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md p-0 text-[var(--muted-2)]",
+                    // Always visible (easy to lose under overlay scrollbars).
+                    "opacity-100",
                   ].join(" ")}
                   onClick={() => {
                     setRequestsCollapsedLoaded(true);
@@ -1679,7 +1688,7 @@ export default function LeftSidebar({
                   }}
                 >
                   {(requestsCollapsedLoaded ? requestsCollapsed : true) ? (
-                    <PlusSmallIcon className="h-4 w-4" />
+                    <PlusIcon className="h-4 w-4" />
                   ) : (
                     <MinusIcon className="h-4 w-4" />
                   )}
@@ -1692,7 +1701,7 @@ export default function LeftSidebar({
                 ) : !requests.total && !requests.items.length ? (
                   <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
                 ) : (
-                  <div className="mt-2 flex items-center justify-between gap-3 px-2 py-1.5">
+                  <div className="mt-2 flex items-center gap-3 px-2 py-1.5">
                     <div className="text-[13px] font-medium text-[var(--muted-2)]">
                       {requests.total || requests.items.length} inbox{(requests.total || requests.items.length) === 1 ? "" : "es"}
                     </div>
@@ -1843,15 +1852,17 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="group flex items-center justify-between gap-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+              <div className="group relative flex items-center gap-2 px-2 pr-9 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
                 <span>Docs</span>
                 <IconButton
                   ariaLabel={(docsCollapsedLoaded ? docsCollapsed : true) ? "Expand docs" : "Collapse docs"}
                   variant="ghost"
                   size="sm"
                   className={[
-                    "rounded-md p-0.5 text-[var(--muted-2)]",
-                    "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+                    // Fixed-size square so the button doesn't "wiggle" when the icon glyph changes.
+                    "absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md p-0 text-[var(--muted-2)]",
+                    // Always visible (easy to lose under overlay scrollbars).
+                    "opacity-100",
                   ].join(" ")}
                   onClick={() => {
                     setDocsCollapsedLoaded(true);
@@ -1859,7 +1870,7 @@ export default function LeftSidebar({
                   }}
                 >
                   {(docsCollapsedLoaded ? docsCollapsed : true) ? (
-                    <PlusSmallIcon className="h-4 w-4" />
+                    <PlusIcon className="h-4 w-4" />
                   ) : (
                     <MinusIcon className="h-4 w-4" />
                   )}

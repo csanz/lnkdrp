@@ -19,6 +19,7 @@ type CronHealthItem = {
   lastRunAt?: string | null;
   lastDurationMs?: number | null;
   lastError?: string | null;
+  lastResult?: unknown;
 };
 /**
  * Status Pill.
@@ -29,6 +30,50 @@ function statusPill(status: CronHealthItem["status"]) {
   if (status === "running") return "bg-blue-100 text-blue-800";
   if (status === "error") return "bg-red-100 text-red-800";
   return "bg-emerald-100 text-emerald-800";
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function asFiniteNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function formatStatsLine(item: CronHealthItem): string | null {
+  if (!isPlainObject(item.lastResult)) return null;
+  const r = item.lastResult;
+
+  // Special case: doc metrics rollup
+  if (item.jobKey === "doc-metrics") {
+    const processed = asFiniteNumber(r.processed);
+    const days = asFiniteNumber(r.days);
+    const views = asFiniteNumber(r.viewsLastDaysTotal);
+    const downloads = asFiniteNumber(r.downloadsLastDaysTotal);
+    const downloadsTotal = asFiniteNumber(r.downloadsTotalTotal);
+
+    const parts: string[] = [];
+    if (processed !== null) parts.push(`docs: ${processed}`);
+    if (views !== null && days !== null) parts.push(`views (${days}d): ${views}`);
+    else if (views !== null) parts.push(`views: ${views}`);
+    if (downloads !== null && days !== null) parts.push(`downloads (${days}d): ${downloads}`);
+    else if (downloads !== null) parts.push(`downloads: ${downloads}`);
+    if (downloadsTotal !== null) parts.push(`downloads total: ${downloadsTotal}`);
+
+    return parts.length ? `Stats: ${parts.join(" • ")}` : null;
+  }
+
+  // Generic: show a few primitive values from lastResult (avoid huge fields).
+  const omitKeys = new Set(["docIds"]);
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(r)) {
+    if (omitKeys.has(k)) continue;
+    if (typeof v === "number" && Number.isFinite(v)) parts.push(`${k}: ${v}`);
+    else if (typeof v === "boolean") parts.push(`${k}: ${v ? "true" : "false"}`);
+    else if (typeof v === "string" && v.trim()) parts.push(`${k}: ${v.trim()}`);
+    if (parts.length >= 6) break;
+  }
+  return parts.length ? `Stats: ${parts.join(" • ")}` : null;
 }
 /**
  * Render the CronHealthAdminPage UI (uses effects, memoized values, local state).
@@ -172,6 +217,10 @@ export default function CronHealthAdminPage() {
                         Last run: {fmtDate(item.lastRunAt ?? null) || "—"}
                         {item.lastDurationMs ? ` • Duration: ${fmtDuration(item.lastDurationMs)}` : ""}
                       </div>
+                      {(() => {
+                        const stats = formatStatsLine(item);
+                        return stats ? <div className="mt-1 text-xs text-[var(--muted-2)]">{stats}</div> : null;
+                      })()}
                       {item.status === "error" && item.lastError ? (
                         <div className="mt-2 text-xs text-red-700">{item.lastError}</div>
                       ) : null}

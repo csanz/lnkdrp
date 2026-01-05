@@ -44,6 +44,10 @@ function asPositiveInt(v: unknown): number | null {
   return i >= 1 ? i : null;
 }
 
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -53,6 +57,10 @@ export async function GET(request: Request) {
   const page = Math.max(asPositiveInt(url.searchParams.get("page")) ?? 1, 1);
   const qRaw = url.searchParams.get("q") ?? "";
   const q = qRaw.trim();
+  const statusRaw = (url.searchParams.get("status") ?? "").trim(); // draft|preparing|ready|failed|""
+  const archivedRaw = (url.searchParams.get("archived") ?? "").trim(); // "yes"|"no"|""
+  const sortRaw = (url.searchParams.get("sort") ?? "").trim(); // updatedDate|createdDate
+  const orderRaw = (url.searchParams.get("order") ?? "").trim().toLowerCase(); // asc|desc
 
   await connectMongo();
 
@@ -60,13 +68,29 @@ export async function GET(request: Request) {
     isDeleted: { $ne: true },
   };
   if (q) {
-    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const rx = new RegExp(escapeRegex(q), "i");
     filter.$or = [{ title: rx }, { shareId: rx }];
   }
+  if (statusRaw) {
+    const allowed = new Set(["draft", "preparing", "ready", "failed"]);
+    if (!allowed.has(statusRaw)) {
+      return NextResponse.json({ error: "status must be one of: draft | preparing | ready | failed" }, { status: 400 });
+    }
+    filter.status = statusRaw;
+  }
+  if (archivedRaw) {
+    if (archivedRaw !== "yes" && archivedRaw !== "no") {
+      return NextResponse.json({ error: "archived must be one of: yes | no" }, { status: 400 });
+    }
+    filter.isArchived = archivedRaw === "yes";
+  }
+
+  const sortField = sortRaw === "createdDate" ? "createdDate" : "updatedDate";
+  const sortDir = orderRaw === "asc" ? 1 : -1;
 
   const total = await DocModel.countDocuments(filter);
   const items = await DocModel.find(filter)
-    .sort({ updatedDate: -1 })
+    .sort({ [sortField]: sortDir, _id: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
     .select({
@@ -85,6 +109,10 @@ export async function GET(request: Request) {
     total,
     page,
     limit,
+    status: statusRaw || null,
+    archived: archivedRaw || null,
+    sort: sortField,
+    order: sortDir === 1 ? "asc" : "desc",
     docs: items.map((d) => ({
       id: String(d._id),
       userId: d.userId ? String(d.userId) : null,

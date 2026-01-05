@@ -48,7 +48,13 @@ export default function AdminLeftSidebar() {
         ],
       },
       { label: "System", items: [{ label: "Cron health", href: "/a/cron-health", exact: true }] },
-      { label: "Tools", items: [{ label: "Cache", href: "/a/tools/cache", exact: true }] },
+      {
+        label: "Tools",
+        items: [
+          { label: "Cache", href: "/a/tools/cache", exact: true },
+          { label: "Billing", href: "/a/tools/billing", exact: true },
+        ],
+      },
     ],
     [],
   );

@@ -111,6 +111,24 @@ export default function Providers({
   children: React.ReactNode;
   enableAuth?: boolean;
 }) {
+  // Dev-only: suppress noisy HMR status logs that fire on route compilation.
+  // (These show up as repeated "[Fast Refresh] rebuilding/done" in the browser console.)
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const original = console.log;
+    console.log = (...args: unknown[]) => {
+      const first = args[0];
+      if (typeof first === "string") {
+        if (first.startsWith("[Fast Refresh] rebuilding")) return;
+        if (first.startsWith("[Fast Refresh] done in")) return;
+      }
+      original(...args as []);
+    };
+    return () => {
+      console.log = original;
+    };
+  }, []);
+
   if (!enableAuth) {
     return (
       <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>

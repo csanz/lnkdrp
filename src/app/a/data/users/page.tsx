@@ -12,6 +12,7 @@ import Button from "@/components/ui/Button";
 import DataTable from "@/components/ui/DataTable";
 import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
+import Link from "next/link";
 import { fmtDate } from "@/lib/admin/format";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -52,6 +53,7 @@ export default function AdminDataUsersPage() {
   const [error, setError] = useState<string | null>(null);
   const [planBusyUserId, setPlanBusyUserId] = useState<string>("");
   const [planError, setPlanError] = useState<string | null>(null);
+  const [deactivateBusyUserId, setDeactivateBusyUserId] = useState<string>("");
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
 
@@ -108,6 +110,23 @@ export default function AdminDataUsersPage() {
       setPlanError(e instanceof Error ? e.message : "Failed to update plan");
     } finally {
       setPlanBusyUserId("");
+    }
+  }
+
+  async function deactivateUser(userId: string) {
+    if (!userId) return;
+    if (deactivateBusyUserId) return;
+    const ok = window.confirm(`Deactivate user ${userId}?\n\nThis sets isActive=false (soft disable).`);
+    if (!ok) return;
+    setDeactivateBusyUserId(userId);
+    setPlanError(null);
+    try {
+      await fetchJson(`/api/admin/data/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+      setItems((prev) => prev.map((u) => (u.id === userId ? { ...u, isActive: false } : u)));
+    } catch (e) {
+      setPlanError(e instanceof Error ? e.message : "Failed to deactivate user");
+    } finally {
+      setDeactivateBusyUserId("");
     }
   }
 
@@ -245,12 +264,21 @@ export default function AdminDataUsersPage() {
                 <th className="px-4 py-3">Created</th>
                 <th className="px-4 py-3">Last login</th>
                 <th className="px-4 py-3">ID</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
               {items.map((u) => (
                 <tr key={u.id}>
-                  <td className="px-4 py-3">{u.email ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    <Link
+                      href={`/a/data/users/${encodeURIComponent(u.id)}`}
+                      className="font-semibold text-[var(--fg)] hover:underline"
+                      title="View user details"
+                    >
+                      {u.email ?? "—"}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3">{u.name ?? "—"}</td>
                   <td className="px-4 py-3">{u.role ?? "—"}</td>
                   <td className="px-4 py-3">
@@ -283,11 +311,22 @@ export default function AdminDataUsersPage() {
                   <td className="px-4 py-3">{fmtDate(u.createdAt) || "—"}</td>
                   <td className="px-4 py-3">{fmtDate(u.lastLoginAt) || "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      disabled={(Boolean(deactivateBusyUserId) && deactivateBusyUserId !== u.id) || u.isActive === false}
+                      onClick={() => void deactivateUser(u.id)}
+                      title="Deactivate user (sets isActive=false)"
+                    >
+                      {u.isActive === false ? "Deactivated" : deactivateBusyUserId === u.id ? "Deactivating…" : "Deactivate"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={10}>
                     No users.
                   </td>
                 </tr>

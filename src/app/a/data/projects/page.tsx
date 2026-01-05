@@ -46,6 +46,8 @@ export default function AdminDataProjectsPage() {
   const [items, setItems] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteBusyProjectId, setDeleteBusyProjectId] = useState<string>("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
 
@@ -72,7 +74,25 @@ export default function AdminDataProjectsPage() {
         setLoading(false);
       }
     })();
-  }, [canUseAdmin, limit, page, q]);
+  }, [canUseAdmin, limit, page, q, reloadKey]);
+
+  async function deleteProject(projectId: string) {
+    if (!projectId) return;
+    if (deleteBusyProjectId) return;
+    const ok = window.confirm(`Soft-delete project ${projectId}?\n\nThis will hide it from normal views.`);
+    if (!ok) return;
+    setDeleteBusyProjectId(projectId);
+    setError(null);
+    try {
+      await fetchJson(`/api/admin/data/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+      setItems((prev) => prev.filter((p) => p.id !== projectId));
+      setTotal((t) => Math.max(0, t - 1));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete project");
+    } finally {
+      setDeleteBusyProjectId("");
+    }
+  }
 
   if (status === "loading") {
     return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
@@ -144,6 +164,9 @@ export default function AdminDataProjectsPage() {
             >
               Next
             </Button>
+            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+              {loading ? "Loading…" : "Refresh"}
+            </Button>
           </div>
         </div>
 
@@ -169,6 +192,7 @@ export default function AdminDataProjectsPage() {
                 <th className="px-4 py-3">Updated</th>
                 <th className="px-4 py-3">User ID</th>
                 <th className="px-4 py-3">Project ID</th>
+                <th className="px-4 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
@@ -195,11 +219,22 @@ export default function AdminDataProjectsPage() {
                   <td className="px-4 py-3">{fmtDate(p.updatedDate) || fmtDate(p.createdDate) || "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{p.userId ?? "—"}</td>
                   <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{p.id}</td>
+                  <td className="px-4 py-3">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      disabled={Boolean(deleteBusyProjectId) && deleteBusyProjectId !== p.id}
+                      onClick={() => void deleteProject(p.id)}
+                      title="Soft delete project"
+                    >
+                      {deleteBusyProjectId === p.id ? "Deleting…" : "Delete"}
+                    </button>
+                  </td>
                 </tr>
               ))}
               {items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
                     No projects.
                   </td>
                 </tr>

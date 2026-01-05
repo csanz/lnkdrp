@@ -70,6 +70,7 @@
 - `src/lib/credits/stripeReporting.ts` — exports: StripeReportableLedger (type), batchIdempotencyKey, groupOnDemandLedgersForStripe
 - `src/lib/billing/pricing.ts` — exports: USD_CENTS_PER_CREDIT
 - `src/lib/billing/usageAggregation.ts` — exports: BillingLedgerRow (type), aggregateBillingUsage, onDemandCostCentsOrNull
+- `src/lib/billing/proPriceLabel.ts` — exports: getBillingProPriceLabel, revalidateBillingProPriceLabel
 - `src/lib/metrics/rollupDocMetrics.ts` — exports: rollupDocMetrics
 - `src/lib/models/CronHealth.ts` — exports: CronHealthModel, (type) CronHealth
 - `src/lib/models/AiRun.ts` — exports: AiRunModel, (type) AiRun
@@ -105,6 +106,7 @@
 - `src/app/a/data/workspaces/page.tsx` — Page for \`/a/data/workspaces\`.
 - `src/app/a/data/workspaces/[workspaceId]/page.tsx` — Page for \`/a/data/workspaces/:workspaceId\`.
 - `src/app/a/data/users/page.tsx` — Page for \`/a/data/users\`.
+- `src/app/a/data/users/[userId]/page.tsx` — Page for \`/a/data/users/:userId\`.
 - `src/app/a/data/docs/page.tsx` — Page for \`/a/data/docs\`.
 - `src/app/a/data/projects/page.tsx` — Page for \`/a/data/projects\`.
 - `src/app/a/data/projects/[projectId]/page.tsx` — Page for \`/a/data/projects/:projectId\`.
@@ -112,6 +114,7 @@
 - `src/app/a/data/requests/[requestId]/page.tsx` — Page for \`/a/data/requests/:requestId\`.
 - `src/app/a/data/uploads/page.tsx` — Page for \`/a/data/uploads\`.
 - `src/app/a/tools/cache/page.tsx` — Page for \`/a/tools/cache\` (admin cache inspector).
+- `src/app/a/tools/billing/page.tsx` — Page for \`/a/tools/billing\` (admin billing config tools).
 - `src/app/about/page.tsx` — About page.
 - `src/app/tos/page.tsx` — Terms of Service page.
 - `src/app/privacy/page.tsx` — Privacy Policy page.
@@ -145,8 +148,16 @@
 - `src/app/api/admin/credits/simulate-cycle/route.ts` — Admin API route for \`/api/admin/credits/simulate-cycle\`.
   - POST (function) — Simulate a new billing cycle (updates stored period boundaries; idempotent cycle grant; admin-only).
   - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/billing/pro-price/route.ts` — Admin API route for \`/api/admin/billing/pro-price\`.
+  - GET (function) — Read current Pro price label (Mongo).
+  - POST (function) — Refresh Pro price label from Stripe and persist to Mongo (invalidates cache).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/users/route.ts` — API route for \`/api/admin/data/users\`.
   - GET (function) — List users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/users/[userId]/route.ts` — API route for \`/api/admin/data/users/:userId\`.
+  - GET (function) — Fetch a user record plus org memberships for admin inspection.
+  - DELETE (function) — Deactivate a user (sets `isActive=false`).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/users/[userId]/plan/route.ts` — API route for \`/api/admin/users/:userId/plan\`.
   - POST (function) — Admin override: set `User.plan` to `free` or `pro`.
@@ -163,8 +174,14 @@
 - `src/app/api/admin/data/workspaces/[workspaceId]/members/route.ts` — API route for \`/api/admin/data/workspaces/:workspaceId/members\`.
   - GET (function) — List workspace members (user + membership role) for admin inspection.
   - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/workspaces/[workspaceId]/route.ts` — API route for \`/api/admin/data/workspaces/:workspaceId\`.
+  - DELETE (function) — Soft-delete a workspace (sets `isDeleted=true`).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/docs/route.ts` — API route for \`/api/admin/data/docs\`.
   - GET (function) — List docs across all users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/docs/[docId]/route.ts` — API route for \`/api/admin/data/docs/:docId\`.
+  - DELETE (function) — Soft-delete a doc (sets `isDeleted=true` and `deletedDate`).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/projects/route.ts` — API route for \`/api/admin/data/projects\`.
   - GET (function) — List projects across all users for admin inspection (paged).
@@ -174,13 +191,18 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/requests/[requestId]/route.ts` — API route for \`/api/admin/data/requests/:requestId\`.
   - GET (function) — Return a request repo (Project) plus related docs/uploads for admin inspection.
+  - DELETE (function) — Soft-delete a request repo (sets `isDeleted=true`).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/projects/[projectId]/route.ts` — API route for \`/api/admin/data/projects/:projectId\`.
   - GET (function) — Return a project (raw) for admin inspection.
   - POST (function) — Update a project (admin tool; e.g. set `isRequest=true`).
+  - DELETE (function) — Soft-delete a project (sets `isDeleted=true`).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/uploads/route.ts` — API route for \`/api/admin/data/uploads\`.
   - GET (function) — List uploads across all users for admin inspection (paged).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/data/uploads/[uploadId]/route.ts` — API route for \`/api/admin/data/uploads/:uploadId\`.
+  - DELETE (function) — Soft-delete an upload (sets `isDeleted=true` and `deletedDate`).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/auth/[...nextauth]/route.ts` — API route for \`/api/auth/:nextauth*\`.
   - GET (function) — Handle GET requests.
@@ -624,6 +646,7 @@
 - `src/lib/models/UsageAggCycle.ts` — Data model for pre-aggregated per-cycle usage totals (derived from CreditLedger).
   - UsageAggCycle (type) — Mongoose document type for cycle usage aggregates.
   - UsageAggCycleModel (const) — Mongoose model for cycle usage aggregates.
+- `src/lib/models/BillingConfig.ts` — Data model for singleton billing UI config (e.g. Pro price label).
 - `src/lib/models/Subscription.ts` — Data model for org subscriptions (Stripe customer/subscription pointers).
   - Subscription (type) — Mongoose document type for subscriptions collection.
   - SubscriptionModel (const) — Mongoose model for subscriptions collection.
@@ -724,6 +747,8 @@
 - `public/paperplane/land-110m.json`
 - `public/paperplane/main.js`
 - `public/paperplane/overlay.js`
+- `public/pdfjs/pdf.min.mjs` — PDF.js ESM bundle (served as static asset; used by `PdfJsViewer` to avoid Next bundling issues).
+- `public/pdfjs/pdf.worker.min.mjs` — PDF.js module worker (served as static asset; used by `PdfJsViewer`).
 - `public/sample/sample-ai-output.json`
 - `public/sample/skycatch.jpg`
 - `public/sample/usavx_op.pdf`

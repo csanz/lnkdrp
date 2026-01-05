@@ -55,19 +55,28 @@ export default function SubscriptionCard() {
     setCreditsBlocked(null);
     void (async () => {
       try {
-        const [billingRes, creditsRes] = await Promise.all([
-          fetch("/api/billing/status", { method: "GET" }),
-          fetch("/api/credits/snapshot", { method: "GET" }),
-        ]);
-
+        // Fast-path: render the plan UI as soon as billing status returns.
+        const billingRes = await fetch("/api/billing/status", { method: "GET" });
         const billingJson = (await billingRes.json().catch(() => null)) as BillingStatusResponse | null;
         if (!billingRes.ok) throw new Error((billingJson as any)?.error || `Request failed (${billingRes.status})`);
         if (!billingJson) throw new Error("Invalid response");
         if (!cancelled) setData(billingJson);
 
-        const creditsJson = (await creditsRes.json().catch(() => null)) as CreditsSnapshotResponse | null;
-        if (creditsRes.ok && creditsJson && (creditsJson as any).ok === true) {
-          if (!cancelled) setCreditsBlocked(Boolean((creditsJson as any).blocked));
+        // Only fetch credits snapshot when needed (Free plan uses it to show the "blocked" hint).
+        const planRaw = typeof billingJson?.plan === "string" ? billingJson.plan.trim().toLowerCase() : "";
+        const isFree = !planRaw || planRaw === "free";
+        if (isFree) {
+          try {
+            const creditsRes = await fetch("/api/credits/snapshot", { method: "GET" });
+            const creditsJson = (await creditsRes.json().catch(() => null)) as CreditsSnapshotResponse | null;
+            if (creditsRes.ok && creditsJson && (creditsJson as any).ok === true) {
+              if (!cancelled) setCreditsBlocked(Boolean((creditsJson as any).blocked));
+            }
+          } catch {
+            // ignore (best-effort)
+          }
+        } else {
+          if (!cancelled) setCreditsBlocked(false);
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load subscription";
