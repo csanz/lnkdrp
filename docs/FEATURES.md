@@ -13,6 +13,13 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Project**: A container that groups docs; docs can belong to multiple projects (`projectIds`) with a backward-compatible “primary” `projectId`.
 - **Invite gating**: The unauthenticated experience is gated behind an invite cookie (invite code verification + request flow).
 
+## Public pages (logged-out)
+
+- **Home page**: `/` — Marketing/invite landing page with paperplane animation, invite code entry, and login flow.
+- **About page**: `/about` — Static page explaining what LinkDrop is and how it works.
+- **Terms of Service**: `/tos` — Terms of Service page accessible from the logged-out homepage header.
+- **Privacy Policy**: `/privacy` — Privacy Policy page accessible from the logged-out homepage header.
+
 ## Authentication & invite gating
 
 - **Invite required to proceed** (pre-auth):
@@ -39,17 +46,26 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Cursor-like standalone settings/analytics hub with a left mini-nav.
   - Left mini-nav shows the signed-in user name/email and a compact section list (Overview/Account/etc). The active workspace pill is shown in the top-left header.
   - Includes an **Overview** tab (default) that shows high-level workspace stats (e.g. new docs, pages viewed, share views) plus a **30-day activity graph** aggregated across all docs in the active workspace.
-  - Overview includes a **Subscription** card at the top:
-    - Renders **Free** and **Pro** tier cards with a **Current** badge on the active tier.
+  - Overview includes a **Plan** card at the top:
+    - Renders a **single** plan status card (no Free-vs-Pro comparison cards).
     - Uses `GET /api/billing/status` to show user billing state (plan + Stripe status + renewal date when available).
-    - Free plan includes an **Upgrade** button that creates a Stripe **Checkout Session** server-side (`POST /api/stripe/checkout`) and redirects to Stripe.
+    - Uses `GET /api/credits/snapshot` to determine whether AI tools are currently blocked due to credits.
+    - Free plan shows a calm status line and a **single** **Upgrade** CTA (Stripe Checkout via `POST /api/stripe/checkout`), plus a **View plan details** action.
     - After Checkout, the user lands on `/billing/success` which shows **“Processing…”** and polls `/api/billing/status` until **Stripe webhooks** update MongoDB (access is webhook-driven; we do not trust the redirect).
-    - Pro plan includes a **Manage Subscription** button that opens a Stripe **billing portal** session (`POST /api/stripe/portal`).
-    - When on Pro, the Pro card also shows a small **Usage this month** module (currently a placeholder) with a **View usage** link to the Usage tab.
+    - Pro plan includes a **Manage Subscription** button that opens a Stripe **billing portal** session (`POST /api/stripe/portal`) and a Billing shortcut.
+    - When on Pro, the card also shows a small **On-demand usage this cycle** module with a **hard spend limit** editor (Cursor-style presets + custom).
+  - Dashboard header (top-right) shows a **Credits: X** indicator (Dashboard-only) that opens a small breakdown modal (included vs extra, used this cycle, reset date).
+  - When credits are exhausted (and on-demand is disabled / has no headroom), the dashboard shows a persistent banner:
+    - “AI tools are currently unavailable. You’ve used all credits for this billing cycle.”
   - Includes a **Contact Us** item in the left menu that opens a modal with the support email (`hi@lnkdrp.com`).
   - Account tab includes an **Edit name** modal (updates the signed-in user's display name).
   - User avatar UI uses **initials** (we do not display the Google profile image).
   - Workspaces can have an optional **workspace icon** (org avatar); recommended requirements: **square (1:1), at least 120×120**, and ≤ 2MB.
+  - Includes a **Billing & Invoices** tab (`/dashboard?tab=billing` or `/dashboard/billing`) with:
+    - **Included Usage** for the current billing cycle (credits-first; cost shown as Included).
+    - **On-Demand Usage** for the current billing cycle (shows dollars used vs limit and line items).
+    - **Invoices** list with month filter and a **View** link (Stripe hosted invoice URL when available).
+    - **Manage subscription** button that opens the Stripe billing portal (`POST /api/stripe/portal`).
 
 ## Organizations & org switching
 
@@ -143,6 +159,22 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - `/api/docs/:docId/report` API for generating/saving a report (review-like artifact).
 - **Tags**:
   - `/api/tags/:tag/docs` lists docs that contain a specific AI-derived tag (paged).
+
+## Usage & limits
+
+- **Credits (billing-cycle-based)**:
+  - Pro includes **300 credits per Stripe billing cycle** (subscription anniversary, not calendar month).
+  - Included credits **reset to 300** on renewal (no rollover). Purchased credits (if present) do not expire.
+  - Customer UI exposes **credits and quality tiers only** (no model names, tokens, or raw costs).
+- **Limits (credits-first)**:
+  - Dashboard includes a **Limits** page (`/dashboard/limits`) for workspace owners/admins to manage on-demand usage caps (credits-first; dollars are secondary).
+  - Legacy `/dashboard/spending` redirects to the Limits page.
+  - Workspace owners/admins can set an **on-demand spend limit per billing cycle** (Cursor-style presets + custom).
+  - If the limit is `0`, on-demand usage is disabled (hard-blocked).
+  - The **Usage** tab (`/dashboard?tab=usage`) is **operational truth**:
+    - Shows a **Credits** summary (remaining, included/extra breakdown, cycle reset date) and a **Usage** log table (even when empty).
+    - Does **not** show Free-vs-Pro plan comparison cards.
+    - Free plan shows at most one **Upgrade** CTA; full subscription upsell/plan comparison lives on the **Overview** tab.
 
 ## Requests (document link request repositories)
 
@@ -241,6 +273,8 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **System → Cron health**: `/a/cron-health`
   - API: `/api/admin/cron-health`
   - Shows latest heartbeat snapshots written by cron endpoints (status/duration/last error).
+- **System → Error events (Mongo ErrorEvent)**
+  - API: `/api/admin/errors` (filters + cursor pagination)
 
 ## Revision history (in progress)
 
