@@ -9,6 +9,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { OrgModel } from "@/lib/models/Org";
 import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor } from "@/lib/gating/actor";
 
@@ -47,6 +48,15 @@ export async function POST(request: Request) {
     const orgId = String((invite as unknown as { orgId?: unknown }).orgId ?? "");
     if (!orgId || !Types.ObjectId.isValid(orgId)) {
       return NextResponse.json({ error: "Invalid invite" }, { status: 404 });
+    }
+
+    // Personal workspaces are single-user; joining via invite is never allowed.
+    const org = await OrgModel.findOne({ _id: new Types.ObjectId(orgId), isDeleted: { $ne: true } })
+      .select({ type: 1 })
+      .lean();
+    const orgType = org ? String((org as { type?: unknown }).type ?? "") : "";
+    if (orgType !== "team") {
+      return NextResponse.json({ error: "Invalid or expired invite" }, { status: 404 });
     }
 
     const roleRaw = String((invite as unknown as { role?: unknown }).role ?? "member");

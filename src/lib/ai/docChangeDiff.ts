@@ -47,13 +47,12 @@ async function loadPrompts(): Promise<{ system: string; user: string }> {
 }
 
 /** Trim and cap prompt text to keep token usage bounded (preserves head + tail). */
-function trimForPrompt(input: string): string {
+function trimForPrompt(input: string, max: number): string {
   const text = (input ?? "").trim();
   if (!text) return "";
-  const max = 50_000;
   if (text.length <= max) return text;
-  const head = text.slice(0, 32_000);
-  const tail = text.slice(-18_000);
+  const head = text.slice(0, Math.floor(max * 0.64));
+  const tail = text.slice(-Math.floor(max * 0.36));
   return `${head}\n\n...[truncated]...\n\n${tail}`;
 }
 
@@ -73,11 +72,14 @@ function fillUserPrompt(template: string, params: { previousText: string; newTex
 export async function runDocChangeDiff(input: {
   previousText: string;
   newText: string;
+  qualityTier?: "basic" | "standard" | "advanced";
 }): Promise<DocChangeDiff | null> {
   if (!process.env.OPENAI_API_KEY) return null;
 
-  const previousText = trimForPrompt(input.previousText);
-  const newText = trimForPrompt(input.newText);
+  const qualityTier = input.qualityTier ?? "standard";
+  const max = qualityTier === "advanced" ? 50_000 : qualityTier === "basic" ? 20_000 : 35_000;
+  const previousText = trimForPrompt(input.previousText, max);
+  const newText = trimForPrompt(input.newText, max);
   if (!previousText || !newText) return null;
 
   const prompts = await loadPrompts();
@@ -91,7 +93,7 @@ export async function runDocChangeDiff(input: {
     prompt,
     schema: DocChangeDiffSchema,
     temperature: 0,
-    maxRetries: 2,
+    maxRetries: qualityTier === "advanced" ? 2 : qualityTier === "standard" ? 1 : 0,
   });
 
   // Extra guardrail: ensure summary is always <= MAX_SUMMARY_CHARS.

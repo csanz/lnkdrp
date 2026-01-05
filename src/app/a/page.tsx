@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
+import Panel from "@/components/ui/Panel";
 import { fmtDate, fmtDuration } from "@/lib/admin/format";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -136,7 +137,7 @@ export default function AdminHomePage() {
               No health snapshots yet (cron may not have run).
             </div>
           ) : (
-            <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+            <Panel padding="none" className="mt-4 overflow-hidden">
               <div className="divide-y divide-[var(--border)]">
                 {normalized.map((item) => (
                   <div key={item.jobKey} className="px-5 py-4">
@@ -165,7 +166,7 @@ export default function AdminHomePage() {
                   </div>
                 ))}
               </div>
-            </div>
+            </Panel>
           )}
         </div>
       </div>

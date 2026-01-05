@@ -92,7 +92,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:hidden">
         <div className="flex min-w-0 items-center gap-2">
           <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
-            <Image src={logoSrc} alt="LinkDrop" width={32} height={32} priority />
+            <Image src={logoSrc} alt="LinkDrop" width={31} height={31} priority className="block" />
           </Link>
           <ActiveWorkspacePill
             className="hidden sm:inline-flex"

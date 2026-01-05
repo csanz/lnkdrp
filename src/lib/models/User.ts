@@ -76,6 +76,15 @@ const userSchema = new Schema(
     stripeSubscriptionStatus: { type: String, trim: true, default: null },
     stripeCurrentPeriodEnd: { type: Date, default: null },
 
+    /**
+     * Usage-based billing (cents).
+     *
+     * - spendLimitCents: hard spend limit for the current billing period (0 disables usage).
+     * - spendUsedCentsThisPeriod: tracked usage spend for the current billing period.
+     */
+    spendLimitCents: { type: Number, default: 0, min: 0 },
+    spendUsedCentsThisPeriod: { type: Number, default: 0, min: 0 },
+
     onboardingCompleted: { type: Boolean, default: false },
     metadata: { type: Schema.Types.Mixed, default: {} },
   },

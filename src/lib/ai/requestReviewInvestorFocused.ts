@@ -56,13 +56,12 @@ async function loadPrompts(): Promise<{ system: string; userTemplate: string }> 
 }
 
 /** Trim and cap prompt text to keep token usage bounded (preserves head + tail). */
-function trimForPrompt(input: string): string {
+function trimForPrompt(input: string, max: number): string {
   const text = (input ?? "").trim();
   if (!text) return "";
-  const max = 60_000;
   if (text.length <= max) return text;
-  const head = text.slice(0, 40_000);
-  const tail = text.slice(-20_000);
+  const head = text.slice(0, Math.floor(max * 0.66));
+  const tail = text.slice(-Math.floor(max * 0.34));
   return `${head}\n\n...[truncated]...\n\n${tail}`;
 }
 
@@ -142,6 +141,7 @@ export async function runRequestReviewInvestorFocused(input: {
   deckText: string;
   stageHint?: string | null;
   requesterInstructions?: string | null;
+  qualityTier?: "basic" | "standard" | "advanced";
   meta?: AiRunMeta | null;
 }): Promise<{
   model: string;
@@ -150,8 +150,10 @@ export async function runRequestReviewInvestorFocused(input: {
   rawOutputText: string;
   output: RequestReviewInvestorFocusedOutput;
 }> {
-  const guideText = trimForPrompt((input.guideText ?? "").toString());
-  const deckText = trimForPrompt((input.deckText ?? "").toString());
+  const qualityTier = input.qualityTier ?? "standard";
+  const max = qualityTier === "advanced" ? 60_000 : qualityTier === "basic" ? 25_000 : 45_000;
+  const guideText = trimForPrompt((input.guideText ?? "").toString(), max);
+  const deckText = trimForPrompt((input.deckText ?? "").toString(), max);
   if (!deckText) throw new Error("Missing deckText");
 
   const { system: systemBase, userTemplate } = await loadPrompts();
@@ -181,7 +183,7 @@ export async function runRequestReviewInvestorFocused(input: {
 
   const modelName = "gpt-4o-mini";
   const temperature = 0;
-  const maxRetries = 2;
+  const maxRetries = qualityTier === "advanced" ? 2 : qualityTier === "standard" ? 1 : 0;
 
   const startedAt = Date.now();
   const aiRunId = await startAiRun({

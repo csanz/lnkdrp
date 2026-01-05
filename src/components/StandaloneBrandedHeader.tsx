@@ -11,7 +11,7 @@ export function StandaloneBrandedHeader(props: { kicker?: string; className?: st
   const kicker = (props.kicker ?? "").trim();
   return (
     <header className={props.className ?? ""}>
-      <div className="flex h-14 items-center justify-between gap-3 px-3 md:px-4">
+      <div className="flex h-14 items-center justify-between gap-3 px-3 md:h-auto md:items-start md:px-4 md:pb-7 md:pt-6">
         <div className="flex min-w-0 items-center gap-2">
           <Link href="/" className="inline-flex items-center gap-2" aria-label="Home" title="LinkDrop">
             <Image src="/icon-white.svg?v=3" alt="LinkDrop" width={32} height={32} priority />

@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { rollupDocMetrics } from "@/lib/metrics/rollupDocMetrics";
 import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
+import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 
 export const runtime = "nodejs";
 /**
@@ -99,6 +100,16 @@ export async function POST(request: Request) {
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
     const message = err instanceof Error ? err.message : String(err);
+
+    void logErrorEvent({
+      severity: "error",
+      category: "cron",
+      code: ERROR_CODE_CRON_JOB_FAILED,
+      err,
+      request,
+      statusCode: 500,
+      meta: { jobKey: "doc-metrics", params, durationMs },
+    });
 
     try {
       await connectMongo();

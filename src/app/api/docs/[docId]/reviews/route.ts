@@ -91,7 +91,8 @@ export async function GET(
           uploadId: r.uploadId ? String(r.uploadId) : null,
           version: Number.isFinite(r.version) ? r.version : null,
           status: r.status ?? null,
-          model: r.model ?? null,
+          // Customer-facing API: never return vendor model names.
+          model: null,
           priorReviewVersion: Number.isFinite(r.priorReviewVersion)
             ? r.priorReviewVersion
             : null,

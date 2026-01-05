@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
+import { withApiErrorLogging } from "@/lib/errors/withApiErrorLogging";
 
 export const runtime = "nodejs";
 
@@ -17,7 +18,7 @@ function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withApiErrorLogging(async (request: NextRequest) => {
   const token = request.nextUrl.searchParams.get("token")?.trim() ?? "";
   if (!token) return NextResponse.json({ ok: false, error: "Missing token" }, { status: 400 });
 
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
     maxAge: 60 * 60 * 24 * 3, // 3 days
   });
   return res;
-}
+});
 
 
 

@@ -15,7 +15,12 @@ export const runtime = "nodejs";
 type Mode = "off" | "daily" | "immediate";
 
 function isMode(v: unknown): v is Mode {
-  return v === "off" || v === "daily" || v === "immediate";
+  // Accept legacy/canonical `immediate` and tolerate `immediately` as an alias from clients.
+  return v === "off" || v === "daily" || v === "immediate" || v === "immediately";
+}
+
+function normalizeMode(v: Mode | "immediately"): Mode {
+  return v === "immediately" ? "immediate" : v;
 }
 
 export async function GET(request: Request) {
@@ -28,7 +33,7 @@ export async function GET(request: Request) {
     userId: new Types.ObjectId(actor.userId),
     isDeleted: { $ne: true },
   })
-    .select({ docUpdateEmailMode: 1, docUpdateDigestTimezone: 1, docUpdateDigestTimeLocal: 1 })
+    .select({ docUpdateEmailMode: 1, repoLinkRequestEmailMode: 1, docUpdateDigestTimezone: 1, docUpdateDigestTimeLocal: 1 })
     .lean();
   if (!membership) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -38,6 +43,10 @@ export async function GET(request: Request) {
     userId: actor.userId,
     docUpdateEmailMode:
       typeof (membership as any).docUpdateEmailMode === "string" ? (membership as any).docUpdateEmailMode : "daily",
+    repoLinkRequestEmailMode:
+      typeof (membership as any).repoLinkRequestEmailMode === "string"
+        ? (membership as any).repoLinkRequestEmailMode
+        : "daily",
     docUpdateDigestTimezone:
       typeof (membership as any).docUpdateDigestTimezone === "string" ? (membership as any).docUpdateDigestTimezone : null,
     docUpdateDigestTimeLocal:
@@ -51,9 +60,21 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => ({}))) as Partial<{
     docUpdateEmailMode: Mode;
+    repoLinkRequestEmailMode: Mode;
   }>;
-  if (!isMode(body.docUpdateEmailMode)) {
-    return NextResponse.json({ error: "Invalid docUpdateEmailMode" }, { status: 400 });
+  const set: Record<string, unknown> = {};
+  if (typeof body.docUpdateEmailMode !== "undefined") {
+    if (!isMode(body.docUpdateEmailMode)) return NextResponse.json({ error: "Invalid docUpdateEmailMode" }, { status: 400 });
+    set.docUpdateEmailMode = normalizeMode(body.docUpdateEmailMode);
+  }
+  if (typeof body.repoLinkRequestEmailMode !== "undefined") {
+    if (!isMode(body.repoLinkRequestEmailMode)) {
+      return NextResponse.json({ error: "Invalid repoLinkRequestEmailMode" }, { status: 400 });
+    }
+    set.repoLinkRequestEmailMode = normalizeMode(body.repoLinkRequestEmailMode);
+  }
+  if (!Object.keys(set).length) {
+    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
 
   await connectMongo();
@@ -63,10 +84,10 @@ export async function POST(request: Request) {
       userId: new Types.ObjectId(actor.userId),
       isDeleted: { $ne: true },
     },
-    { $set: { docUpdateEmailMode: body.docUpdateEmailMode, updatedDate: new Date() } },
+    { $set: { ...set, updatedDate: new Date() } },
   );
   if (!res.matchedCount) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ ok: true, docUpdateEmailMode: body.docUpdateEmailMode });
+  return NextResponse.json({ ok: true, ...set });
 }
 
 

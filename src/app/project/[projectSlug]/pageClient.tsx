@@ -8,7 +8,7 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { usePendingUpload } from "@/lib/pendingUpload";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import { isDocStarred, STARRED_DOCS_CHANGED_EVENT } from "@/lib/starredDocs";
-import { notifyProjectsChanged, refreshSidebarCache } from "@/lib/sidebarCache";
+import { ACTIVE_ORG_CHANGED_EVENT, notifyProjectsChanged, refreshSidebarCache } from "@/lib/sidebarCache";
 
 type DocListItem = {
   id: string;
@@ -127,9 +127,11 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
       onChanged();
     }
     window.addEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
+    window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
     window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
+      window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
       window.removeEventListener("storage", onStorage);
     };
   }, []);

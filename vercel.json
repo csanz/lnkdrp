@@ -1,0 +1,26 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/doc-metrics",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/stripe-credits-reconcile",
+      "schedule": "15 */6 * * *"
+    },
+    {
+      "path": "/api/cron/stripe-credits-report",
+      "schedule": "30 * * * *"
+    },
+    {
+      "path": "/api/cron/credits-cycle-reconcile",
+      "schedule": "10 * * * *"
+    },
+    {
+      "path": "/api/cron/usage-agg-reconcile",
+      "schedule": "20 * * * *"
+    }
+  ]
+}
+
+

@@ -17,7 +17,6 @@ export function StandaloneBrandedShell(props: { kicker?: string; children: React
     <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
       <StandaloneBrandedHeader kicker={kicker} />
       <div className="mx-auto w-full max-w-2xl px-6 py-10">{props.children}</div>
-      </div>
     </main>
   );
 }

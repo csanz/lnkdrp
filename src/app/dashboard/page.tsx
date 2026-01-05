@@ -1,11 +1,19 @@
 /**
- * Page for `/dashboard` — standalone dashboard hub (overview/account/workspace/teams/usage/spending/billing).
+ * Page for `/dashboard` — standalone dashboard hub (overview/account/workspace/teams/usage/limits/billing).
  */
 "use client";
 
 import WorkspaceManager from "./WorkspaceManager";
 import TeamsManager from "./TeamsManager";
 import SubscriptionCard from "./SubscriptionCard";
+import UsageTable from "./UsageTable";
+import CreditsSummaryCard from "./CreditsSummaryCard";
+import SpendLimitModule from "./SpendLimitModule";
+import OnDemandUsageCard from "./OnDemandUsageCard";
+import AiQualityDefaultsCard from "./AiQualityDefaultsCard";
+import BillingInvoicesTab from "./BillingInvoicesTab";
+import DailyUsageChart from "./DailyUsageChart";
+import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
@@ -13,6 +21,7 @@ import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } fro
 import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
 import IconButton from "@/components/ui/IconButton";
+import HelpTooltip from "@/components/ui/HelpTooltip";
 import { cn } from "@/lib/cn";
 import {
   BanknotesIcon,
@@ -29,22 +38,28 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 function Section({
   title,
   description,
+  helper,
   children,
 }: {
   title: string;
   description: string;
+  helper?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <section>
       <div className="text-[24px] font-semibold tracking-tight text-[var(--fg)]">{title}</div>
       <div className="mt-1.5 text-[13px] text-[var(--muted-2)]">{description}</div>
+      {helper ? (
+        <div className="mt-2 text-[12px] font-medium leading-5 text-[var(--muted)]">{helper}</div>
+      ) : null}
       <div className="mt-7">{children}</div>
     </section>
   );
 }
 
-type DashTab = "overview" | "account" | "workspace" | "teams" | "usage" | "spending" | "billing";
+type DashTab = "overview" | "account" | "workspace" | "teams" | "usage" | "limits" | "billing";
+type DashTabParam = DashTab | "spending";
 
 const TAB_GROUPS: Array<{ items: Array<{ id: DashTab; label: string }> }> = [
   {
@@ -62,7 +77,7 @@ const TAB_GROUPS: Array<{ items: Array<{ id: DashTab; label: string }> }> = [
   {
     items: [
       { id: "usage", label: "Usage" },
-      { id: "spending", label: "Spending" },
+      { id: "limits", label: "Limits" },
       { id: "billing", label: "Billing & Invoices" },
     ],
   },
@@ -74,17 +89,18 @@ const TAB_ICON: Record<DashTab, React.ReactNode> = {
   workspace: <Cog6ToothIcon className="h-4 w-4" />,
   teams: <UsersIcon className="h-4 w-4" />,
   usage: <ChartBarIcon className="h-4 w-4" />,
-  spending: <BanknotesIcon className="h-4 w-4" />,
+  limits: <BanknotesIcon className="h-4 w-4" />,
   billing: <CreditCardIcon className="h-4 w-4" />,
 };
 
-function isDashTab(v: unknown): v is DashTab {
+function isDashTab(v: unknown): v is DashTabParam {
   return (
     v === "overview" ||
     v === "account" ||
     v === "workspace" ||
     v === "teams" ||
     v === "usage" ||
+    v === "limits" ||
     v === "spending" ||
     v === "billing"
   );
@@ -92,8 +108,16 @@ function isDashTab(v: unknown): v is DashTab {
 
 function tabFromSearchParams(searchParams: URLSearchParams | null): DashTab {
   const raw = searchParams?.get("tab") ?? "";
-  return isDashTab(raw) ? raw : "overview";
+  if (!isDashTab(raw)) return "overview";
+  return raw === "spending" ? "limits" : raw;
 }
+
+type SpendStatusResponse = {
+  ok: true;
+  onDemandEnabled: boolean;
+  onDemandMonthlyLimitCents: number;
+  error?: string;
+};
 
 function PlaceholderTile({ title, body }: { title: string; body: string }) {
   return (
@@ -110,6 +134,7 @@ export default function DashboardPage() {
   const searchParams = useSearchParams();
   const tab = tabFromSearchParams(searchParams);
   const { data: session, update: updateSession } = useSession();
+  const [limitsAttention, setLimitsAttention] = useState(false);
 
   const name = (session?.user?.name ?? "").trim() || "Account";
   const email = (session?.user?.email ?? "").trim();
@@ -141,8 +166,21 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [statsBusy, setStatsBusy] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [usageDays, setUsageDays] = useState<1 | 7 | 30>(30);
+  const [limitsOnDemandEnabled, setLimitsOnDemandEnabled] = useState<boolean | null>(null);
 
   const userKey = useMemo(() => (session?.user?.email ?? "").trim(), [session?.user?.email]);
+
+  useEffect(() => {
+    const onBanner = (e: Event) => {
+      const ev = e as CustomEvent<{ blocked: boolean; dismissed: boolean }>;
+      const blocked = Boolean(ev?.detail?.blocked);
+      const dismissed = Boolean(ev?.detail?.dismissed);
+      setLimitsAttention(blocked && dismissed);
+    };
+    window.addEventListener("lnkdrp:credits-blocked-banner", onBanner as any);
+    return () => window.removeEventListener("lnkdrp:credits-blocked-banner", onBanner as any);
+  }, []);
 
   useEffect(() => {
     if (!userKey) return;
@@ -209,6 +247,27 @@ export default function DashboardPage() {
     };
   }, [tab]);
 
+  useEffect(() => {
+    if (tab !== "limits") return;
+    let cancelled = false;
+    setLimitsOnDemandEnabled(null);
+    void (async () => {
+      try {
+        const res = await fetch("/api/billing/spend", { method: "GET" });
+        const json = (await res.json().catch(() => null)) as SpendStatusResponse | { error?: string } | null;
+        if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
+        if (!json || (json as any).ok !== true) throw new Error("Invalid response");
+        const enabled = Boolean((json as any).onDemandEnabled) && Number((json as any).onDemandMonthlyLimitCents ?? 0) > 0;
+        if (!cancelled) setLimitsOnDemandEnabled(enabled);
+      } catch {
+        if (!cancelled) setLimitsOnDemandEnabled(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab]);
+
   return (
     <div className="grid grid-cols-1 gap-10 md:grid-cols-[280px_1fr]">
       <h1 className="sr-only">Dashboard</h1>
@@ -233,6 +292,9 @@ export default function DashboardPage() {
               </IconButton>
             </div>
             {email ? <div className="mt-0.5 truncate text-[12px] text-[var(--muted-2)]">{email}</div> : null}
+            {activeWorkspaceName ? (
+              <div className="mt-0.5 truncate text-[12px] text-[var(--muted-2)]">{activeWorkspaceName}</div>
+            ) : null}
           </div>
           <div className="my-3 h-px bg-[var(--border)]" />
           <nav className="grid gap-2">
@@ -241,6 +303,7 @@ export default function DashboardPage() {
                 <div className="grid">
                   {g.items.map((t) => {
                     const active = t.id === tab;
+                    const showLimitsAttention = t.id === "limits" && !active && limitsAttention;
                     return (
                       <button
                         key={t.id}
@@ -250,17 +313,28 @@ export default function DashboardPage() {
                           active
                             ? "bg-[var(--panel-hover)] text-[var(--fg)]"
                             : "text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                          showLimitsAttention ? "text-amber-900/80 dark:text-amber-200/80" : null,
                         )}
+                        title={showLimitsAttention ? "Credits exhausted. Enable on-demand to continue." : undefined}
                         onClick={() => {
-                          const href = `/dashboard?tab=${encodeURIComponent(t.id)}`;
-                          router.push(href, { scroll: false });
+                          if (t.id === "account") {
+                            router.push("/dashboard/account", { scroll: false });
+                          } else {
+                            const href = `/dashboard?tab=${encodeURIComponent(t.id)}`;
+                            router.push(href, { scroll: false });
+                          }
                         }}
                       >
                         <span className="flex min-w-0 items-center gap-2">
                           <span className={cn("shrink-0", active ? "text-[var(--fg)]" : "text-[var(--muted-2)]")} aria-hidden="true">
                             {TAB_ICON[t.id]}
                           </span>
-                          <span className="min-w-0 truncate">{t.label}</span>
+                          <span className="flex min-w-0 items-center gap-2 truncate">
+                            <span className="min-w-0 truncate">{t.label}</span>
+                            {showLimitsAttention ? (
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/65 dark:bg-amber-300/65" aria-hidden="true" />
+                            ) : null}
+                          </span>
                         </span>
                       </button>
                     );
@@ -362,9 +436,9 @@ export default function DashboardPage() {
                     A few helpful ideas to get more leverage from LinkDrop.
                   </div>
                   <ul className="mt-4 grid gap-2 text-[13px] text-[var(--muted-2)]">
-                    <li>• Share a doc with a short password to track engagement.</li>
-                    <li>• Create a request inbox to collect decks into one place.</li>
-                    <li>• Add a project description to help auto-organize uploads.</li>
+                    <li>• Share a doc and set a short password to track engagement.</li>
+                    <li>• Enable “Allow download” only when needed to reduce uncontrolled forwarding.</li>
+                    <li>• Create a request inbox to collect decks/docs into one place.</li>
                   </ul>
                 </div>
               </div>
@@ -375,6 +449,14 @@ export default function DashboardPage() {
         {tab === "account" ? (
           <Section title="Account" description="Account-level settings and actions.">
             <div className="grid gap-3">
+              <div className="rounded-2xl bg-[var(--panel)] p-6">
+                <div className="text-[13px] font-semibold text-[var(--fg)]">Email notifications</div>
+                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Applies to the currently selected workspace.</div>
+                <div className="mt-4">
+                  <NotificationPreferences />
+                </div>
+              </div>
+
               <div className="rounded-2xl bg-[var(--panel)] p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -414,50 +496,102 @@ export default function DashboardPage() {
         ) : null}
 
         {tab === "usage" ? (
-          <Section title="Usage" description="Tokens and usage breakdown.">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <PlaceholderTile title="By model" body="Daily usage chart + per-model totals." />
-              <PlaceholderTile title="Included usage" body="Plan allowance + breakdown by product." />
+          <Section title="Usage" description="Credits and quality breakdown.">
+            <div className="grid gap-3">
+              <SubscriptionCard />
+              <CreditsSummaryCard />
+              <div className="rounded-2xl bg-[var(--panel)] p-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] font-semibold text-[var(--muted-2)]">
+                      Date range
+                    </div>
+                    <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--panel)] p-1">
+                      {([1, 7, 30] as const).map((d) => {
+                        const active = usageDays === d;
+                        return (
+                          <button
+                            key={d}
+                            type="button"
+                            className={cn(
+                              "rounded-md px-3 py-1.5 text-[12px] font-semibold",
+                              active
+                                ? "bg-[var(--panel-hover)] text-[var(--fg)]"
+                                : "text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                            )}
+                            onClick={() => setUsageDays(d)}
+                          >
+                            {d}d
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <DailyUsageChart days={usageDays} />
+              <UsageTable days={usageDays} />
             </div>
           </Section>
         ) : null}
 
-        {tab === "spending" ? (
-          <Section title="Spending" description="Spend limits and on-demand tracking.">
+        {tab === "limits" ? (
+          <Section
+            title="Limits"
+            description="On-demand controls and credit caps."
+            helper={
+              limitsOnDemandEnabled === false
+                ? "On-demand usage is disabled. Set a limit to enable usage beyond your plan credits."
+                : null
+            }
+          >
+            {limitsOnDemandEnabled === false ? (
+              <Alert
+                variant="info"
+                className="mb-3 border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200"
+              >
+                AI tools are currently unavailable because on-demand is disabled. Click{" "}
+                <span className="font-semibold">Enable on-demand</span> to set a limit and continue.
+              </Alert>
+            ) : null}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <PlaceholderTile title="On-demand usage" body="Month-to-date + progress towards limit." />
-              <PlaceholderTile title="Spend limit" body="Set a monthly cap for on-demand usage." />
+              <OnDemandUsageCard />
+              <div className="rounded-2xl bg-[var(--panel)] p-6">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand limit</div>
+                  <HelpTooltip
+                    label="What is the on-demand limit?"
+                    body="This is your monthly cap for on-demand usage (extra credits). It resets each billing cycle and prevents unexpected overage."
+                  />
+                </div>
+                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Enable on-demand usage and set a cap.</div>
+                <div className="mt-4">
+                  <SpendLimitModule />
+                </div>
+              </div>
+            </div>
+
+            <AiQualityDefaultsCard className="mt-3" />
+
+            <div className="mt-3 rounded-2xl bg-[var(--panel)] p-6">
+              <div className="text-[13px] font-semibold text-[var(--fg)]">Deep Research</div>
+              <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
+                Deep Research is currently being tested with only a few users. It’s very early access.
+              </div>
+              <div className="mt-3 text-[13px] leading-6 text-[var(--muted-2)]">
+                If you’re interested in joining the waiting list to test it out, email us at{" "}
+                <a className="font-semibold text-[var(--fg)] underline underline-offset-2" href="mailto:hi@lnkdrp.com">
+                  hi@lnkdrp.com
+                </a>
+                .
+              </div>
             </div>
           </Section>
         ) : null}
 
         {tab === "billing" ? (
-          <Section title="Billing & Invoices" description="Invoices and subscription.">
-            <div className="grid gap-3">
-              <div className="rounded-2xl bg-[var(--panel)] p-6">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <div className="text-[13px] font-semibold text-[var(--fg)]">Manage subscription</div>
-                    <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-                      Open billing portal to view invoices and update payment method.
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    disabled
-                    className="rounded-lg bg-[var(--panel-hover)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] opacity-60"
-                    title="Not implemented yet"
-                  >
-                    Manage billing
-                  </button>
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-[var(--panel-2)] px-5 py-4 text-[12px] text-[var(--muted-2)]">
-                We’ll wire this up to Stripe (or your billing system) when ready.
-              </div>
-            </div>
-          </Section>
+          <BillingInvoicesTab />
         ) : null}
       </div>
 

@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Modal from "@/components/modals/Modal";
+import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
 
 type DocChangeItem = {
   id: string;
@@ -116,66 +117,93 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [viewerStats, setViewerStats] = useState<any>(null);
   const [viewerStatsLoading, setViewerStatsLoading] = useState(false);
   const [viewerStatsError, setViewerStatsError] = useState<string | null>(null);
+  const [rerunTierById, setRerunTierById] = useState<Record<string, "basic" | "standard" | "advanced">>({});
+  const [defaultHistoryTier, setDefaultHistoryTier] = useState<"basic" | "standard" | "advanced">("standard");
+  const [rerunBusyById, setRerunBusyById] = useState<Record<string, boolean>>({});
+  const [rerunErrorById, setRerunErrorById] = useState<Record<string, string>>({});
+
+  // Load workspace defaults (best-effort). Falls back to "standard".
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/credits/quality-defaults", { method: "GET" });
+        const json = (await res.json().catch(() => null)) as any;
+        if (!res.ok) return;
+        if (!json || json.ok !== true) return;
+        const t = typeof json.history === "string" ? json.history : "";
+        if (!cancelled && (t === "basic" || t === "standard" || t === "advanced")) setDefaultHistoryTier(t);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function refresh() {
+    const [docRes, changesRes] = await Promise.all([
+      fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, { cache: "no-store" }),
+      fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/changes`, { cache: "no-store" }),
+    ]);
+
+    if (docRes.ok) {
+      const json = (await docRes.json()) as unknown;
+      const t =
+        json &&
+        typeof json === "object" &&
+        (json as { doc?: unknown }).doc &&
+        typeof (json as { doc: { title?: unknown } }).doc.title === "string"
+          ? String((json as { doc: { title: string } }).doc.title).trim()
+          : "";
+      setDocTitle(t);
+      const v =
+        json &&
+        typeof json === "object" &&
+        (json as { doc?: any }).doc &&
+        typeof (json as { doc: { currentUploadVersion?: unknown } }).doc.currentUploadVersion === "number" &&
+        Number.isFinite((json as { doc: { currentUploadVersion: number } }).doc.currentUploadVersion)
+          ? Number((json as { doc: { currentUploadVersion: number } }).doc.currentUploadVersion)
+          : null;
+      setDocCurrentVersion(v);
+    }
+
+    if (changesRes.ok) {
+      const json = (await changesRes.json()) as unknown;
+      const arr = json && typeof json === "object" && Array.isArray((json as any).changes) ? ((json as any).changes as any[]) : [];
+      const next: DocChangeItem[] = arr
+        .map((c) => ({
+          id: typeof c?.id === "string" ? c.id : "",
+          fromVersion: typeof c?.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
+          toVersion: typeof c?.toVersion === "number" && Number.isFinite(c.toVersion) ? c.toVersion : null,
+          summary: typeof c?.summary === "string" ? c.summary : "",
+          changes: Array.isArray(c?.changes) ? c.changes : [],
+          previousText: typeof c?.previousText === "string" ? c.previousText : "",
+          newText: typeof c?.newText === "string" ? c.newText : "",
+          createdBy:
+            c?.createdBy && typeof c.createdBy === "object"
+              ? {
+                  id: typeof c.createdBy.id === "string" ? c.createdBy.id : null,
+                  name: typeof c.createdBy.name === "string" ? c.createdBy.name : null,
+                  email: typeof c.createdBy.email === "string" ? c.createdBy.email : null,
+                }
+              : null,
+          createdDate: typeof c?.createdDate === "string" ? c.createdDate : null,
+        }))
+        .filter((c) => Boolean(c.id));
+      setItems(next);
+    } else {
+      setItems([]);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoading(true);
       try {
-        const [docRes, changesRes] = await Promise.all([
-          fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, { cache: "no-store" }),
-          fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/changes`, { cache: "no-store" }),
-        ]);
-
-        if (docRes.ok) {
-          const json = (await docRes.json()) as unknown;
-          const t =
-            json &&
-            typeof json === "object" &&
-            (json as { doc?: unknown }).doc &&
-            typeof (json as { doc: { title?: unknown } }).doc.title === "string"
-              ? String((json as { doc: { title: string } }).doc.title).trim()
-              : "";
-          if (!cancelled) setDocTitle(t);
-          const v =
-            json &&
-            typeof json === "object" &&
-            (json as { doc?: any }).doc &&
-            typeof (json as { doc: { currentUploadVersion?: unknown } }).doc.currentUploadVersion === "number" &&
-            Number.isFinite((json as { doc: { currentUploadVersion: number } }).doc.currentUploadVersion)
-              ? Number((json as { doc: { currentUploadVersion: number } }).doc.currentUploadVersion)
-              : null;
-          if (!cancelled) setDocCurrentVersion(v);
-        }
-
-        if (changesRes.ok) {
-          const json = (await changesRes.json()) as unknown;
-          const arr =
-            json && typeof json === "object" && Array.isArray((json as any).changes) ? ((json as any).changes as any[]) : [];
-          const next: DocChangeItem[] = arr
-            .map((c) => ({
-              id: typeof c?.id === "string" ? c.id : "",
-              fromVersion: typeof c?.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
-              toVersion: typeof c?.toVersion === "number" && Number.isFinite(c.toVersion) ? c.toVersion : null,
-              summary: typeof c?.summary === "string" ? c.summary : "",
-              changes: Array.isArray(c?.changes) ? c.changes : [],
-              previousText: typeof c?.previousText === "string" ? c.previousText : "",
-              newText: typeof c?.newText === "string" ? c.newText : "",
-              createdBy:
-                c?.createdBy && typeof c.createdBy === "object"
-                  ? {
-                      id: typeof c.createdBy.id === "string" ? c.createdBy.id : null,
-                      name: typeof c.createdBy.name === "string" ? c.createdBy.name : null,
-                      email: typeof c.createdBy.email === "string" ? c.createdBy.email : null,
-                    }
-                  : null,
-              createdDate: typeof c?.createdDate === "string" ? c.createdDate : null,
-            }))
-            .filter((c) => Boolean(c.id));
-          if (!cancelled) setItems(next);
-        } else {
-          if (!cancelled) setItems([]);
-        }
+        await refresh();
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -507,7 +535,64 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                               >
                                 Copy summary
                               </button>
+
+                              <select
+                                className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                                value={rerunTierById[it.id] ?? defaultHistoryTier}
+                                onChange={(e) =>
+                                  setRerunTierById((m) => ({ ...m, [it.id]: e.target.value as any }))
+                                }
+                                aria-label="History quality"
+                                title="Choose quality for history regeneration"
+                              >
+                                <option value="basic">Basic (2 credits)</option>
+                                <option value="standard">Standard (5 credits)</option>
+                                <option value="advanced">Advanced (12 credits)</option>
+                              </select>
+                              <button
+                                type="button"
+                                className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
+                                disabled={Boolean(rerunBusyById[it.id])}
+                                onClick={() => {
+                                  void (async () => {
+                                    const tier = rerunTierById[it.id] ?? "standard";
+                                    const idKey =
+                                      typeof crypto !== "undefined" && "randomUUID" in crypto
+                                        ? (crypto as any).randomUUID()
+                                        : String(Date.now());
+                                    setRerunBusyById((m) => ({ ...m, [it.id]: true }));
+                                    setRerunErrorById((m) => ({ ...m, [it.id]: "" }));
+                                    try {
+                                      const res = await fetchWithTempUser(
+                                        `/api/docs/${encodeURIComponent(docId)}/changes/${encodeURIComponent(it.id)}/rerun`,
+                                        {
+                                          method: "POST",
+                                          headers: { "content-type": "application/json", "x-idempotency-key": idKey },
+                                          body: JSON.stringify({ qualityTier: tier }),
+                                        },
+                                      );
+                                      if (res.status === 402) {
+                                        dispatchOutOfCredits();
+                                        return;
+                                      }
+                                      const json = (await res.json().catch(() => null)) as any;
+                                      if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+                                      await refresh();
+                                    } catch (e) {
+                                      setRerunErrorById((m) => ({ ...m, [it.id]: e instanceof Error ? e.message : "Failed" }));
+                                    } finally {
+                                      setRerunBusyById((m) => ({ ...m, [it.id]: false }));
+                                    }
+                                  })();
+                                }}
+                                title="Regenerate this change summary"
+                              >
+                                {rerunBusyById[it.id] ? "Regenerating…" : "Regenerate"}
+                              </button>
                             </div>
+                            {rerunErrorById[it.id] ? (
+                              <div className="mt-2 text-xs font-medium text-red-700">{rerunErrorById[it.id]}</div>
+                            ) : null}
 
                             <details className="mt-4">
                               <summary className="cursor-pointer select-none text-xs font-medium text-[var(--muted)] hover:text-[var(--fg)]">

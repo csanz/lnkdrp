@@ -3,7 +3,8 @@
  */
 import { redirect } from "next/navigation";
 
-const ALLOWED = new Set(["account", "workspace", "usage", "spending", "billing"]);
+// Keep legacy `spending` for backwards compatibility (redirects to `limits`).
+const ALLOWED = new Set(["overview", "account", "workspace", "teams", "usage", "limits", "spending", "billing"]);
 
 export default async function DashboardTabPage({
   params,
@@ -12,7 +13,8 @@ export default async function DashboardTabPage({
 }) {
   const { tab } = await params;
   const next = typeof tab === "string" ? tab : "";
-  redirect(`/dashboard?tab=${encodeURIComponent(ALLOWED.has(next) ? next : "account")}`);
+  const normalized = next === "spending" ? "limits" : next;
+  redirect(`/dashboard?tab=${encodeURIComponent(ALLOWED.has(normalized) ? normalized : "account")}`);
 }
 
 

@@ -24,6 +24,18 @@ const orgMembershipSchema = new Schema(
       default: "daily",
       index: true,
     },
+    /**
+     * Notification preferences (workspace-scoped).
+     *
+     * Used for "repo link request" notification emails (daily digest vs immediate vs off).
+     */
+    repoLinkRequestEmailMode: {
+      type: String,
+      trim: true,
+      enum: ["off", "daily", "immediate"],
+      default: "daily",
+      index: true,
+    },
     // Optional: future expansion for per-user digest scheduling.
     docUpdateDigestTimezone: { type: String, trim: true, default: null },
     docUpdateDigestTimeLocal: { type: String, trim: true, default: null }, // e.g. "17:00"

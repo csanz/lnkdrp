@@ -9,6 +9,7 @@ import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
+import DataTable from "@/components/ui/DataTable";
 import Input from "@/components/ui/Input";
 import { fmtDate } from "@/lib/admin/format";
 import { fetchJson } from "@/lib/http/fetchJson";
@@ -154,57 +155,53 @@ export default function AdminDataUploadsPage() {
             Loading…
           </div>
         ) : (
-          <div className="mt-6 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                    <th className="px-4 py-3">File</th>
-                    <th className="px-4 py-3">Doc</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Version</th>
-                    <th className="px-4 py-3">Created</th>
-                    <th className="px-4 py-3">User ID</th>
-                    <th className="px-4 py-3">Upload ID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {items.map((u) => (
-                    <tr key={u.id}>
-                      <td className="px-4 py-3">{u.originalFileName ?? "—"}</td>
-                      <td className="px-4 py-3">
-                        <div className="min-w-0">
-                          <div className="truncate">{u.docTitle ?? u.docId ?? "—"}</div>
-                          {u.shareId ? (
-                            <a
-                              className="mt-1 inline-block text-xs text-[var(--muted)] hover:underline"
-                              href={`/s/${encodeURIComponent(u.shareId)}`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              /s/{u.shareId}
-                            </a>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">{u.status ?? "—"}</td>
-                      <td className="px-4 py-3">{typeof u.version === "number" ? u.version : "—"}</td>
-                      <td className="px-4 py-3">{fmtDate(u.createdDate) || "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.userId ?? "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
-                    </tr>
-                  ))}
-                  {items.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
-                        No uploads.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DataTable containerClassName="mt-6">
+            <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
+              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                <th className="px-4 py-3">File</th>
+                <th className="px-4 py-3">Doc</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Version</th>
+                <th className="px-4 py-3">Created</th>
+                <th className="px-4 py-3">User ID</th>
+                <th className="px-4 py-3">Upload ID</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {items.map((u) => (
+                <tr key={u.id}>
+                  <td className="px-4 py-3">{u.originalFileName ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="truncate">{u.docTitle ?? u.docId ?? "—"}</div>
+                      {u.shareId ? (
+                        <a
+                          className="mt-1 inline-block text-xs text-[var(--muted)] hover:underline"
+                          href={`/s/${encodeURIComponent(u.shareId)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          /s/{u.shareId}
+                        </a>
+                      ) : null}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">{u.status ?? "—"}</td>
+                  <td className="px-4 py-3">{typeof u.version === "number" ? u.version : "—"}</td>
+                  <td className="px-4 py-3">{fmtDate(u.createdDate) || "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.userId ?? "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
+                </tr>
+              ))}
+              {items.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
+                    No uploads.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </DataTable>
         )}
       </div>
     </div>

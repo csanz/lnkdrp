@@ -16,6 +16,8 @@ import path from "node:path";
 import { rollupDocMetrics } from "../src/lib/metrics/rollupDocMetrics";
 import { connectMongo } from "../src/lib/mongodb";
 import { CronHealthModel } from "../src/lib/models/CronHealth";
+import { runTaskWithErrorLogging } from "../src/lib/errors/runTaskWithErrorLogging";
+import { ERROR_CODE_WORKER_TASK_FAILED } from "../src/lib/errors/logger";
 
 // Load env the same way Next does for local dev scripts.
 dotenv.config({ path: path.resolve(process.cwd(), ".env.local") });
@@ -164,7 +166,10 @@ async function runOnce() {
  */
 async function main() {
   if (hasFlag("once")) {
-    await runOnce();
+    await runTaskWithErrorLogging(
+      { taskName: "rollup-doc-metrics:once", category: "worker", code: ERROR_CODE_WORKER_TASK_FAILED, meta: { jobKey: "doc-metrics" } },
+      () => runOnce(),
+    );
     return;
   }
 
@@ -174,7 +179,15 @@ async function main() {
   // eslint-disable-next-line no-constant-condition
   while (true) {
     // eslint-disable-next-line no-await-in-loop
-    await runOnce();
+    await runTaskWithErrorLogging(
+      {
+        taskName: "rollup-doc-metrics:loop",
+        category: "worker",
+        code: ERROR_CODE_WORKER_TASK_FAILED,
+        meta: { jobKey: "doc-metrics", intervalMs },
+      },
+      () => runOnce(),
+    );
     // eslint-disable-next-line no-await-in-loop
     await new Promise((r) => setTimeout(r, intervalMs));
   }

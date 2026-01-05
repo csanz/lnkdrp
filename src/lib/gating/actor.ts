@@ -6,6 +6,8 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER } from "@/lib/gating/tempUserHeaders";
 import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
 
+const ACTOR_CACHE = new WeakMap<Request, Promise<Actor>>();
+
 /**
  * Server-side "actor" resolution for API routes.
  *
@@ -183,6 +185,9 @@ export async function tryResolveUserActor(request: Request): Promise<Actor | nul
  * - create a new temp user.
  */
 export async function resolveActor(request: Request): Promise<Actor> {
+  const cached = ACTOR_CACHE.get(request);
+  if (cached) return await cached;
+  const p = (async () => {
   // 1) Authenticated user (preferred)
   const userActor = await tryResolveUserActor(request);
   if (userActor) return userActor;
@@ -237,6 +242,57 @@ export async function resolveActor(request: Request): Promise<Actor> {
     temp: { id: created.id, secret: created.secret },
     isNew: true,
   };
+  })();
+  ACTOR_CACHE.set(request, p);
+  return await p;
+}
+
+/**
+ * Faster actor resolution for stats/analytics endpoints.
+ *
+ * Goal: avoid repeated DB work on hot read paths. This prefers already-server-issued org context:
+ * - active-org cookie (set only after membership validation)
+ * - NextAuth JWT claim `activeOrgId`
+ *
+ * Falls back to full `resolveActor()` when we can't safely determine org context.
+ */
+export async function resolveActorForStats(request: Request): Promise<Actor> {
+  const cached = ACTOR_CACHE.get(request);
+  if (cached) return await cached;
+
+  const p = (async () => {
+    const session = await tryGetSessionClaims(request);
+    if (!session?.userId) return await resolveActor(request);
+
+    const cookieHeader = request.headers.get("cookie") ?? "";
+    const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
+    const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
+    const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
+
+    // Prefer server-issued active-org cookie when present; otherwise fall back to JWT claim.
+    const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
+    if (!orgId || !Types.ObjectId.isValid(orgId)) {
+      // If org context is missing, fall back to the full resolver (ensures personal org exists).
+      return await resolveActor(request);
+    }
+
+    // Security: membership can change after a cookie is minted. Validate membership once (1 query).
+    // (We intentionally avoid the heavier `tryResolveUserActor` flow that also ensures personal org.)
+    await connectMongo();
+    const ok = await OrgMembershipModel.exists({
+      orgId: new Types.ObjectId(orgId),
+      userId: new Types.ObjectId(session.userId),
+      isDeleted: { $ne: true },
+    });
+    if (!ok) return await resolveActor(request);
+
+    // For stats endpoints we don't need personalOrgId for legacy access checks.
+    // Keep it stable without extra DB reads.
+    return { kind: "user", userId: session.userId, orgId, personalOrgId: orgId };
+  })();
+
+  ACTOR_CACHE.set(request, p);
+  return await p;
 }
 
 

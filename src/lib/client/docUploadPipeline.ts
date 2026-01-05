@@ -17,6 +17,9 @@ import { debugError, debugLog } from "@/lib/debug";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { notifyDocsChanged } from "@/lib/sidebarCache";
+import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
+import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
+import { dispatchCreditsSnapshotRefresh } from "@/lib/client/creditsSnapshotRefresh";
 
 export type CreateDocResponse = { doc: { id: string } };
 export type CreateUploadResponse = { upload: { id: string } };
@@ -97,7 +100,25 @@ export function startBlobUploadAndProcess(params: {
       });
 
       debugLog(1, "[docUploadPipeline] trigger processing", { uploadId });
-      await fetchWithTempUser(`/api/uploads/${uploadId}/process`, { method: "POST" });
+      const res = await fetchWithTempUser(`/api/uploads/${uploadId}/process`, { method: "POST" });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as any;
+        if (res.status === 402 && (json?.code === OUT_OF_CREDITS_CODE || json?.error === "Out of credits")) {
+          dispatchOutOfCredits();
+          throw new Error("Out of credits");
+        }
+        throw new Error(json?.error || `Request failed (${res.status})`);
+      }
+
+      // Best-effort: refresh credits + usage UI after triggering processing and again shortly after.
+      // The server-side work runs in the background, so we can't know exact completion timing here.
+      try {
+        dispatchCreditsSnapshotRefresh();
+        window.setTimeout(() => dispatchCreditsSnapshotRefresh(), 5_000);
+        window.setTimeout(() => dispatchCreditsSnapshotRefresh(), 20_000);
+      } catch {
+        // ignore
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : "Upload failed";
       debugError(1, "[docUploadPipeline] failed", { docId, uploadId, message });

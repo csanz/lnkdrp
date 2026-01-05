@@ -394,10 +394,17 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
       <div className="relative z-10 h-full w-full">
         {/* Full-width header: logo pinned left, auth links pinned right (match dashboard placement). */}
         <header className="w-full">
-          <div className="flex h-14 items-center justify-between gap-3 px-3 md:px-4">
+          <div className="flex h-14 items-center justify-between gap-3 px-3 md:h-auto md:items-start md:px-4 md:pb-7 md:pt-6">
             <div className="flex min-w-0 items-center gap-2">
               <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
-                <Image src="/icon-white.svg?v=3" alt="LinkDrop" width={32} height={32} priority />
+                <Image
+                  src="/icon-white.svg?v=3"
+                  alt="LinkDrop"
+                  width={31}
+                  height={31}
+                  priority
+                  className="block"
+                />
               </Link>
             </div>
             <div className="flex items-center gap-2">
@@ -408,6 +415,18 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
               >
                 About
               </button>
+              <Link
+                href="/tos"
+                className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
+              >
+                Terms
+              </Link>
+              <Link
+                href="/privacy"
+                className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
+              >
+                Privacy
+              </Link>
               <button
                 type="button"
                 className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"

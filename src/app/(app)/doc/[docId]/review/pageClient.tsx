@@ -4,6 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Markdown from "@/components/Markdown";
+import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
+
+type QualityDefaults = {
+  ok: true;
+  review: "basic" | "standard" | "advanced";
+  history: "basic" | "standard" | "advanced";
+};
 
 type ReviewDTO = {
   id: string;
@@ -11,7 +18,6 @@ type ReviewDTO = {
   uploadId: string | null;
   version: number | null;
   status: string | null;
-  model: string | null;
   priorReviewVersion: number | null;
   outputMarkdown: string | null;
   createdDate: string | null;
@@ -33,6 +39,31 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
   const [loading, setLoading] = useState(true);
   const [review, setReview] = useState<ReviewDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const [quality, setQuality] = useState<"basic" | "standard" | "advanced">("standard");
+
+  // Load workspace defaults (best-effort). Falls back to "standard".
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/credits/quality-defaults", { method: "GET" });
+        const json = (await res.json().catch(() => null)) as QualityDefaults | { error?: string } | null;
+        if (!res.ok) return;
+        if (!json || (json as any).ok !== true) return;
+        const t = (json as any).review;
+        if (!cancelled && (t === "basic" || t === "standard" || t === "advanced")) setQuality(t);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  type DocMeta = { currentUploadId: string | null; currentUploadVersion: number | null };
+  const [docMeta, setDocMeta] = useState<DocMeta>({ currentUploadId: null, currentUploadVersion: null });
 /**
  * Refresh (updates state (setLoading, setError, setReview); uses setLoading, setError, fetchWithTempUser).
  */
@@ -42,7 +73,21 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchWithTempUser(`/api/docs/${docId}/reviews?latest=1`, { cache: "no-store" });
+      const [docRes, reviewRes] = await Promise.all([
+        fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, { cache: "no-store" }),
+        fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/reviews?latest=1`, { cache: "no-store" }),
+      ]);
+
+      if (docRes.ok) {
+        const json = (await docRes.json().catch(() => null)) as any;
+        const u = json && typeof json === "object" ? (json as any).doc : null;
+        const currentUploadId = typeof u?.currentUploadId === "string" ? u.currentUploadId : null;
+        const currentUploadVersion =
+          typeof u?.currentUploadVersion === "number" && Number.isFinite(u.currentUploadVersion) ? u.currentUploadVersion : null;
+        setDocMeta({ currentUploadId, currentUploadVersion });
+      }
+
+      const res = reviewRes;
       if (res.status === 404) {
         setReview(null);
         return;
@@ -95,6 +140,61 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
             >
               Back to doc
             </Link>
+            <div className="flex items-center gap-2">
+              <select
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-800"
+                value={quality}
+                onChange={(e) => setQuality(e.target.value as any)}
+                aria-label="Review quality"
+              >
+                <option value="basic">Basic (2 credits)</option>
+                <option value="standard">Standard (5 credits)</option>
+                <option value="advanced">Advanced (12 credits)</option>
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  const uploadId = docMeta.currentUploadId;
+                  if (!uploadId) {
+                    setError("Missing current upload id for this doc.");
+                    return;
+                  }
+                  const idKey =
+                    typeof crypto !== "undefined" && "randomUUID" in crypto ? (crypto as any).randomUUID() : String(Date.now());
+                  void (async () => {
+                    try {
+                      setRunBusy(true);
+                      setError(null);
+                      const qs = new URLSearchParams();
+                      qs.set("forceReview", "1");
+                      qs.set("quality", quality);
+                      const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}/process?${qs.toString()}`, {
+                        method: "POST",
+                        headers: { "x-idempotency-key": idKey },
+                      });
+                      if (res.status === 402) {
+                        dispatchOutOfCredits();
+                        return;
+                      }
+                      if (!res.ok) {
+                        const j = (await res.json().catch(() => null)) as any;
+                        throw new Error(j?.error || `Request failed (${res.status})`);
+                      }
+                      await refresh();
+                    } catch (e) {
+                      setError(e instanceof Error ? e.message : "Failed to run review");
+                    } finally {
+                      setRunBusy(false);
+                    }
+                  })();
+                }}
+                className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={loading || runBusy}
+                title="Run a new review for the current version"
+              >
+                {runBusy ? "Running…" : "Run review"}
+              </button>
+            </div>
             <button
               type="button"
               onClick={() => void refresh()}
@@ -121,12 +221,6 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
                 </div>
                 <div className="text-xs font-medium text-zinc-500">
                   Status: <span className="text-zinc-700">{review.status ?? "-"}</span>
-                  {review.model ? (
-                    <>
-                      {" "}
-                      · Model: <span className="text-zinc-700">{review.model}</span>
-                    </>
-                  ) : null}
                 </div>
               </div>
 

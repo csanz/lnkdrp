@@ -25,7 +25,7 @@ import {
   toggleStarredDoc,
   upsertStarredDocTitle,
 } from "@/lib/starredDocs";
-import { getSidebarCacheSnapshot, notifyDocsChanged, setSidebarCacheSnapshot } from "@/lib/sidebarCache";
+import { ACTIVE_ORG_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocsChanged, setSidebarCacheSnapshot } from "@/lib/sidebarCache";
 
 type DocStatus = "draft" | "preparing" | "ready" | "failed";
 
@@ -373,9 +373,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     }
 
     window.addEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
+    window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
     window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
+      window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
       window.removeEventListener("storage", onStorage);
     };
   }, [doc.id]);

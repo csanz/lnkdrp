@@ -35,6 +35,9 @@ type GoogleProfileShape = {
 };
 
 export const authOptions: NextAuthOptions = {
+  // Allow NextAuth to derive the canonical host from the incoming request headers.
+  // This makes local/ngrok/dev setups work without constantly flipping NEXTAUTH_URL.
+  trustHost: true,
   providers: [
     GoogleProvider({
       clientId: mustGetEnv("GOOGLE_CLIENT_ID"),

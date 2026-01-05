@@ -341,32 +341,34 @@ function fillUserPrompt(template: string, pdfText: string): string {
   return `${t}\n\n${pdfText}`.trim();
 }
 /** Trim and cap prompt text to keep token usage bounded (preserves head + tail). */
-function trimForPrompt(input: string): string {
+function trimForPrompt(input: string, max: number): string {
   const text = (input ?? "").trim();
   if (!text) return "";
   // Keep cost bounded; preserve both beginning + end (often where the ask is).
-  const max = 50_000;
   if (text.length <= max) return text;
-  const head = text.slice(0, 35_000);
-  const tail = text.slice(-15_000);
+  const head = text.slice(0, Math.floor(max * 0.7));
+  const tail = text.slice(-Math.floor(max * 0.3));
   return `${head}\n\n...[truncated]...\n\n${tail}`;
 }
 /** Build the analysis input text from per-page extracts (preferred) or fullText. */
 function buildPrompt(input: {
   fullText?: string | null;
   pages?: Array<{ page_number: number; text: string }>;
+  qualityTier: "basic" | "standard" | "advanced";
 }): string {
+  const max =
+    input.qualityTier === "advanced" ? 50_000 : input.qualityTier === "standard" ? 35_000 : 20_000;
   const pages = (input.pages ?? []).filter((p) => p && typeof p.text === "string");
   if (pages.length) {
     const lines: string[] = [];
     for (const p of pages) {
       lines.push(`--- PAGE ${p.page_number} ---`);
-      lines.push(trimForPrompt(p.text));
+      lines.push(trimForPrompt(p.text, max));
       lines.push("");
     }
-    return trimForPrompt(lines.join("\n"));
+    return trimForPrompt(lines.join("\n"), max);
   }
-  return trimForPrompt(input.fullText ?? "");
+  return trimForPrompt(input.fullText ?? "", max);
 }
 
 type ProjectPromptContext = {
@@ -436,6 +438,7 @@ export async function analyzePdfText(input: {
   projects?: ProjectPromptContext[] | null;
   existingProjectIds?: string[] | null;
   isReplacement?: boolean;
+  qualityTier?: "basic" | "standard" | "advanced";
   meta?: {
     userId?: string | null;
     projectId?: string | null;
@@ -448,7 +451,8 @@ export async function analyzePdfText(input: {
   // If key isn't configured, treat as "AI disabled" rather than failing uploads.
   if (!process.env.OPENAI_API_KEY) return null;
 
-  const pdfText = buildPrompt(input);
+  const qualityTier = input.qualityTier ?? "basic";
+  const pdfText = buildPrompt({ ...input, qualityTier });
   if (!pdfText) return null;
 
   const [prompts, cfg] = await Promise.all([loadPrompts(), loadConfig()]);
@@ -473,7 +477,12 @@ export async function analyzePdfText(input: {
     provider: "openai",
     model: cfg.model,
     temperature: typeof cfg.temperature === "number" ? cfg.temperature : 0,
-    maxRetries: typeof cfg.maxRetries === "number" ? cfg.maxRetries : 2,
+    maxRetries:
+      qualityTier === "advanced"
+        ? 2
+        : qualityTier === "standard"
+          ? 1
+          : 0,
     maxTokens: typeof maxTokensCfg === "number" ? maxTokensCfg : null,
     systemPrompt: system,
     userPrompt,
@@ -486,7 +495,12 @@ export async function analyzePdfText(input: {
       model: openai(cfg.model),
       schema: AiDocAnalysisGenerationSchema,
       temperature: typeof cfg.temperature === "number" ? cfg.temperature : 0,
-      maxRetries: typeof cfg.maxRetries === "number" ? cfg.maxRetries : 2,
+      maxRetries:
+        qualityTier === "advanced"
+          ? 2
+          : qualityTier === "standard"
+            ? 1
+            : 0,
       system,
       prompt: userPrompt,
       ...(typeof maxTokensCfg === "number" ? { maxTokens: maxTokensCfg } : {}),

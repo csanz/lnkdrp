@@ -23,14 +23,13 @@ async function loadReviewSystemPrompt(): Promise<string> {
   return text;
 }
 /** Trim and cap prompt text to keep token usage bounded (preserves head + tail). */
-function trimForPrompt(input: string): string {
+function trimForPrompt(input: string, max: number): string {
   const text = (input ?? "").trim();
   if (!text) return "";
   // Keep cost bounded; preserve both beginning + end.
-  const max = 60_000;
   if (text.length <= max) return text;
-  const head = text.slice(0, 40_000);
-  const tail = text.slice(-20_000);
+  const head = text.slice(0, Math.floor(max * 0.66));
+  const tail = text.slice(-Math.floor(max * 0.34));
   return `${head}\n\n...[truncated]...\n\n${tail}`;
 }
 
@@ -169,6 +168,7 @@ export function buildReviewPrompt(input: {
   priorReviewMarkdown?: string | null;
   priorReviewVersion?: number | null;
   instructions?: string | null;
+  qualityTier?: "basic" | "standard" | "advanced";
 }): string {
   const prior = (input.priorReviewMarkdown ?? "").trim();
   const instructions = (input.instructions ?? "").trim();
@@ -179,7 +179,9 @@ export function buildReviewPrompt(input: {
         ? `\n\nTHIS IS THE LAST REVIEW:\n\n${prior}\n`
         : "";
 
-  const docText = trimForPrompt(input.docText);
+  const qualityTier = input.qualityTier ?? "standard";
+  const max = qualityTier === "advanced" ? 60_000 : qualityTier === "basic" ? 25_000 : 45_000;
+  const docText = trimForPrompt(input.docText, max);
   const instructionsHeader = instructions
     ? `\n\nREQUEST REVIEW INSTRUCTIONS:\n\n${instructions}\n`
     : "";
@@ -196,6 +198,7 @@ export async function reviewDocText(input: {
   priorReviewMarkdown?: string | null;
   priorReviewVersion?: number | null;
   instructions?: string | null;
+  qualityTier?: "basic" | "standard" | "advanced";
   meta?: {
     userId?: string | null;
     projectId?: string | null;
@@ -211,12 +214,13 @@ export async function reviewDocText(input: {
 
   const systemPrompt = await loadReviewSystemPrompt();
 
-  const prompt = buildReviewPrompt(input);
+  const qualityTier = input.qualityTier ?? "standard";
+  const prompt = buildReviewPrompt({ ...input, qualityTier });
   if (!prompt.trim()) return null;
 
   const modelName = "gpt-4o-mini";
   const temperature = 0.2;
-  const maxRetries = 2;
+  const maxRetries = qualityTier === "advanced" ? 2 : qualityTier === "standard" ? 1 : 0;
 
   const startedAt = Date.now();
   const meta = input.meta ?? null;

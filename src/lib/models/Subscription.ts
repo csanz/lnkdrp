@@ -17,6 +17,12 @@ const subscriptionSchema = new Schema(
      */
     stripeCustomerId: { type: String, trim: true, default: null },
     stripeSubscriptionId: { type: String, trim: true, default: null },
+    /**
+     * Metered subscription item id for reporting ai_credits usage.
+     *
+     * Identified by matching `STRIPE_AI_CREDITS_PRICE_ID` against subscription items.
+     */
+    stripeSubscriptionItemId: { type: String, trim: true, default: null },
 
     /**
      * Stripe-like status values.
@@ -28,6 +34,12 @@ const subscriptionSchema = new Schema(
     /** Human-readable plan label shown in the UI. */
     planName: { type: String, trim: true, default: "Free" },
 
+    /**
+     * Stripe billing period boundaries (source of truth for the billing cycle).
+     *
+     * NOTE: Credits reset should be keyed off (stripeSubscriptionId + currentPeriodStart).
+     */
+    currentPeriodStart: { type: Date, default: null },
     currentPeriodEnd: { type: Date, default: null },
     cancelAtPeriodEnd: { type: Boolean, default: false },
 
@@ -47,5 +59,18 @@ export type Subscription = InferSchemaType<typeof subscriptionSchema> & { orgId:
 export const SubscriptionModel: Model<Subscription> =
   (mongoose.models.Subscription as Model<Subscription> | undefined) ??
   mongoose.model<Subscription>("Subscription", subscriptionSchema);
+
+// Dev safety: patch in new fields during hot reload (mongoose model caching).
+const ExistingSubscriptionModel = mongoose.models.Subscription as Model<Subscription> | undefined;
+if (ExistingSubscriptionModel && !ExistingSubscriptionModel.schema.path("stripeSubscriptionItemId")) {
+  ExistingSubscriptionModel.schema.add({
+    stripeSubscriptionItemId: { type: String, trim: true, default: null },
+  });
+}
+if (ExistingSubscriptionModel && !ExistingSubscriptionModel.schema.path("currentPeriodStart")) {
+  ExistingSubscriptionModel.schema.add({
+    currentPeriodStart: { type: Date, default: null },
+  });
+}
 
 

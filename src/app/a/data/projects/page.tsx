@@ -11,6 +11,7 @@ import Link from "next/link";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
 import Input from "@/components/ui/Input";
+import DataTable from "@/components/ui/DataTable";
 import { fmtDate } from "@/lib/admin/format";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -157,60 +158,54 @@ export default function AdminDataProjectsPage() {
             Loading…
           </div>
         ) : (
-          <div className="mt-6 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                    <th className="px-4 py-3">Name</th>
-                    <th className="px-4 py-3">Slug</th>
-                    <th className="px-4 py-3">Type</th>
-                    <th className="px-4 py-3">Docs</th>
-                    <th className="px-4 py-3">Token</th>
-                    <th className="px-4 py-3">Updated</th>
-                    <th className="px-4 py-3">User ID</th>
-                    <th className="px-4 py-3">Project ID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {items.map((p) => (
-                    <tr key={p.id}>
-                      <td className="px-4 py-3">
-                        <div className="min-w-0">
-                          <Link
-                            href={`/a/data/projects/${encodeURIComponent(p.id)}`}
-                            className="truncate font-semibold text-[var(--fg)] hover:underline"
-                            title="Open project editor"
-                          >
-                            {p.name ?? "—"}
-                          </Link>
-                          {p.description ? (
-                            <div className="mt-1 truncate text-xs text-[var(--muted)]">{p.description}</div>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">{p.slug ?? "—"}</td>
-                      <td className="px-4 py-3">{p.isRequest || p.requestUploadToken ? "Request" : "Project"}</td>
-                      <td className="px-4 py-3">{typeof p.docCount === "number" ? p.docCount : "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">
-                        {p.requestUploadToken ? `${p.requestUploadToken.slice(0, 8)}…` : "—"}
-                      </td>
-                      <td className="px-4 py-3">{fmtDate(p.updatedDate) || fmtDate(p.createdDate) || "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{p.userId ?? "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{p.id}</td>
-                    </tr>
-                  ))}
-                  {items.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
-                        No projects.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DataTable containerClassName="mt-6">
+            <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
+              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">Slug</th>
+                <th className="px-4 py-3">Type</th>
+                <th className="px-4 py-3">Docs</th>
+                <th className="px-4 py-3">Token</th>
+                <th className="px-4 py-3">Updated</th>
+                <th className="px-4 py-3">User ID</th>
+                <th className="px-4 py-3">Project ID</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {items.map((p) => (
+                <tr key={p.id}>
+                  <td className="px-4 py-3">
+                    <div className="min-w-0">
+                      <Link
+                        href={`/a/data/projects/${encodeURIComponent(p.id)}`}
+                        className="truncate font-semibold text-[var(--fg)] hover:underline"
+                        title="Open project editor"
+                      >
+                        {p.name ?? "—"}
+                      </Link>
+                      {p.description ? <div className="mt-1 truncate text-xs text-[var(--muted)]">{p.description}</div> : null}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">{p.slug ?? "—"}</td>
+                  <td className="px-4 py-3">{p.isRequest || p.requestUploadToken ? "Request" : "Project"}</td>
+                  <td className="px-4 py-3">{typeof p.docCount === "number" ? p.docCount : "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">
+                    {p.requestUploadToken ? `${p.requestUploadToken.slice(0, 8)}…` : "—"}
+                  </td>
+                  <td className="px-4 py-3">{fmtDate(p.updatedDate) || fmtDate(p.createdDate) || "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{p.userId ?? "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{p.id}</td>
+                </tr>
+              ))}
+              {items.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
+                    No projects.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </DataTable>
         )}
       </div>
     </div>

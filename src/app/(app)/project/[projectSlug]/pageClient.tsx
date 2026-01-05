@@ -21,7 +21,7 @@ import DocActionsMenu from "@/components/DocActionsMenu";
 import ProjectSharePanel from "@/components/ProjectSharePanel";
 import { CopyButton } from "@/components/CopyButton";
 import { isDocStarred, STARRED_DOCS_CHANGED_EVENT, toggleStarredDoc } from "@/lib/starredDocs";
-import { DOCS_CHANGED_EVENT, PROJECTS_CHANGED_EVENT } from "@/lib/sidebarCache";
+import { ACTIVE_ORG_CHANGED_EVENT, DOCS_CHANGED_EVENT, PROJECTS_CHANGED_EVENT } from "@/lib/sidebarCache";
 import Modal from "@/components/modals/Modal";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
@@ -340,9 +340,11 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
       onChanged();
     }
     window.addEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
+    window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
     window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
+      window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
       window.removeEventListener("storage", onStorage);
     };
   }, []);

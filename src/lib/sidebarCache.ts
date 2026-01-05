@@ -55,6 +55,7 @@ export type SidebarCacheSnapshot = {
 
 const STORAGE_KEY_BASE = "lnkdrp-sidebar-cache-v3";
 export const ACTIVE_ORG_STORAGE_KEY = "lnkdrp-active-org-id";
+export const ACTIVE_ORG_CHANGED_EVENT = "lnkdrp-active-org-changed";
 const MIN_REFRESH_MS = 1500;
 
 let memByKey = new Map<string, SidebarCacheSnapshot>();
@@ -87,8 +88,11 @@ function getActiveOrgIdForCaches(): string | null {
 export function setActiveOrgIdForCaches(orgId: string | null): void {
   if (!isBrowser()) return;
   try {
-    if (orgId && normalizeOrgId(orgId)) window.localStorage.setItem(ACTIVE_ORG_STORAGE_KEY, orgId);
+    const prev = normalizeOrgId(window.localStorage.getItem(ACTIVE_ORG_STORAGE_KEY));
+    const next = normalizeOrgId(orgId);
+    if (next) window.localStorage.setItem(ACTIVE_ORG_STORAGE_KEY, next);
     else window.localStorage.removeItem(ACTIVE_ORG_STORAGE_KEY);
+    if (prev !== next) window.dispatchEvent(new Event(ACTIVE_ORG_CHANGED_EVENT));
   } catch {
     // ignore
   }

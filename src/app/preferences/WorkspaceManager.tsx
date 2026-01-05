@@ -100,7 +100,9 @@ export default function WorkspaceManager() {
     const found = stableOrgs.find((o) => o.id === activeOrgId);
     return found?.role ?? null;
   }, [activeOrgId, stableOrgs]);
-  const canInvite = activeOrgRole === "owner" || activeOrgRole === "admin";
+  const isPersonalOrg = currentOrg?.type === "personal";
+  // Personal workspaces are single-user; invites are not allowed.
+  const canInvite = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
 
   useEffect(() => {
     if (!session?.user) return;

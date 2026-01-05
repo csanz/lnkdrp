@@ -10,6 +10,7 @@ import { resolveActor } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { UserModel } from "@/lib/models/User";
+import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
 /**
@@ -54,35 +55,64 @@ export async function GET(
   request: Request,
   ctx: { params: Promise<{ docId: string }> },
 ) {
-  const auth = await requireAdmin(request);
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  return withMongoRequestLogging(request, async () => {
+    const auth = await requireAdmin(request);
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const { docId } = await ctx.params;
-  if (!Types.ObjectId.isValid(docId)) {
-    return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
-  }
+    const { docId } = await ctx.params;
+    if (!Types.ObjectId.isValid(docId)) {
+      return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
+    }
 
-  await connectMongo();
+    await connectMongo();
 
-  const items = await ShareViewModel.find({ docId: new Types.ObjectId(docId) })
-    .sort({ updatedDate: -1 })
-    .select({
-      shareId: 1,
-      docId: 1,
-      pagesSeen: 1,
-      downloads: 1,
-      downloadsByDay: 1,
-      createdDate: 1,
-      updatedDate: 1,
-      viewerUserId: 1,
-      viewerEmail: 1,
-      viewerIp: 1,
-    })
-    .populate({ path: "docId", select: { title: 1, shareId: 1 } })
-    .populate({ path: "viewerUserId", select: { email: 1, name: 1 } })
-    .lean();
+    const items = await ShareViewModel.aggregate([
+      { $match: { docId: new Types.ObjectId(docId) } },
+      { $sort: { updatedDate: -1 } },
+      {
+        $lookup: {
+          from: "docs",
+          localField: "docId",
+          foreignField: "_id",
+          as: "doc",
+        },
+      },
+      { $unwind: { path: "$doc", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "viewerUserId",
+          foreignField: "_id",
+          as: "viewerUser",
+        },
+      },
+      { $unwind: { path: "$viewerUser", preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          shareId: 1,
+          pagesSeen: 1,
+          downloads: 1,
+          downloadsByDay: 1,
+          createdDate: 1,
+          updatedDate: 1,
+          viewerEmail: 1,
+          viewerIp: 1,
+          docId: {
+            _id: "$doc._id",
+            title: "$doc.title",
+            shareId: "$doc.shareId",
+          },
+          viewerUserId: {
+            _id: "$viewerUser._id",
+            email: "$viewerUser.email",
+            name: "$viewerUser.name",
+          },
+        },
+      },
+    ]);
 
-  return NextResponse.json({ ok: true, items });
+    return NextResponse.json({ ok: true, items });
+  });
 }
 
 

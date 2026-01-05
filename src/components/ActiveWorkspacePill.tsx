@@ -28,7 +28,7 @@ export default function ActiveWorkspacePill({
   className?: string;
   /** Tailwind max-width class for truncation control (defaults to max-w-[240px]). */
   maxWidthClassName?: string;
-  /** Optional plan badge (e.g. "PRO") rendered to the right of the workspace name. */
+  /** Optional plan badge (e.g. "PRO") rendered as a right-side segment of the pill. */
   planBadgeText?: string;
   /** Tailwind text sizing overrides (defaults to text-[12px]). */
   textClassName?: string;
@@ -111,11 +111,12 @@ export default function ActiveWorkspacePill({
   if (!activeWorkspaceName) return null;
 
   const badgeText = (planBadgeText ?? "PRO").trim();
+  const showProSegment = isPro && !!badgeText;
 
   return (
     <div
       className={cn(
-        "inline-flex min-w-0 items-center rounded-lg border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[10px] py-[6px] font-semibold text-[var(--fg)]",
+        "inline-flex min-w-0 items-stretch overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] font-semibold text-[var(--fg)] dark:border-[color-mix(in_srgb,var(--border)_30%,transparent)]",
         maxWidthClassName,
         textClassName ?? "text-[11.5px]",
         className,
@@ -123,31 +124,33 @@ export default function ActiveWorkspacePill({
       title={activeWorkspaceName}
       aria-label={`Active workspace: ${activeWorkspaceName}`}
     >
-      <span
-        className="mr-1.5 grid h-[15px] w-[15px] shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-[8.5px] font-semibold text-[var(--fg)]"
-        aria-hidden="true"
-      >
-        {activeWorkspaceAvatarUrl && !avatarErrored ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={activeWorkspaceAvatarUrl}
-            alt=""
-            className="h-[15px] w-[15px] object-cover"
-            onError={() => setAvatarErrored(true)}
-          />
-        ) : (
-          <span aria-hidden="true">{initials(activeWorkspaceName)}</span>
-        )}
-      </span>
-      <span className="min-w-0 truncate">{activeWorkspaceName}</span>
-      {isPro && badgeText ? (
+      <div className="flex min-w-0 items-center px-[10px] py-[6px]">
         <span
-          className="ml-2 inline-flex shrink-0 items-center rounded-full bg-sky-400/10 px-1.5 py-0.5 text-[8.5px] font-medium tracking-[0.07em] text-sky-700/80 dark:bg-sky-300/8 dark:text-sky-200/75"
+          className="mr-1.5 grid h-[15px] w-[15px] shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-[8.5px] font-semibold text-[var(--fg)]"
+          aria-hidden="true"
+        >
+          {activeWorkspaceAvatarUrl && !avatarErrored ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={activeWorkspaceAvatarUrl}
+              alt=""
+              className="h-[15px] w-[15px] object-cover"
+              onError={() => setAvatarErrored(true)}
+            />
+          ) : (
+            <span aria-hidden="true">{initials(activeWorkspaceName)}</span>
+          )}
+        </span>
+        <span className="min-w-0 truncate">{activeWorkspaceName}</span>
+      </div>
+      {showProSegment ? (
+        <div
+          className="inline-flex shrink-0 items-center border-l border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-[6px] text-[8.5px] font-medium tracking-[0.07em] text-[var(--muted-2)] dark:border-[color-mix(in_srgb,var(--border)_30%,transparent)] dark:bg-[color-mix(in_srgb,var(--panel)_85%,black)] dark:text-[color-mix(in_srgb,var(--fg)_70%,var(--bg))]"
           aria-label={`${badgeText} plan`}
           title={`${badgeText} plan`}
         >
           {badgeText}
-        </span>
+        </div>
       ) : null}
     </div>
   );

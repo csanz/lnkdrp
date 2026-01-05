@@ -38,7 +38,10 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Preferences page**: `/preferences`
   - A settings hub for account/workspace/usage/spending/billing (some areas are still a shell UI).
   - Supports deep links via `/preferences?tab=billing` (and pretty URLs like `/preferences/billing`).
-  - Workspace tab includes **Notification preferences** for doc update emails (off / daily digest / immediately), stored per workspace member.
+  - Workspace tab includes **Notification preferences**:
+    - Doc update emails (off / daily digest / immediately), stored per workspace member.
+    - Repo link request emails (off / daily digest / immediately), stored per workspace member.
+  - Note: these settings are also surfaced in **Dashboard → Account**.
 
 ## Dashboard (account + workspace hub)
 
@@ -54,11 +57,14 @@ This document is a **product-oriented** breakdown of the main user-facing featur
     - After Checkout, the user lands on `/billing/success` which shows **“Processing…”** and polls `/api/billing/status` until **Stripe webhooks** update MongoDB (access is webhook-driven; we do not trust the redirect).
     - Pro plan includes a **Manage Subscription** button that opens a Stripe **billing portal** session (`POST /api/stripe/portal`) and a Billing shortcut.
     - When on Pro, the card also shows a small **On-demand usage this cycle** module with a **hard spend limit** editor (Cursor-style presets + custom).
-  - Dashboard header (top-right) shows a **Credits: X** indicator (Dashboard-only) that opens a small breakdown modal (included vs extra, used this cycle, reset date).
+  - Dashboard header (top-right) shows a **Credits: X** indicator (Dashboard-only) that links to the **Usage** tab (`/dashboard?tab=usage`) for the full breakdown. When the workspace is set to an unlimited on-demand cap, it shows **Credits: Unlimited**.
+  - When the on-demand cap is set to **Unlimited**, the dashboard surfaces **Unlimited** (not a large sentinel number) anywhere an on-demand credit limit/headroom is displayed (header, Usage summary, Limits cards, Billing & Invoices on-demand section).
   - When credits are exhausted (and on-demand is disabled / has no headroom), the dashboard shows a persistent banner:
     - “AI tools are currently unavailable. You’ve used all credits for this billing cycle.”
+    - The banner can be **dismissed** (per workspace + billing cycle). After dismissal, the banner stays hidden for the rest of the cycle and the **Limits** nav item shows a subtle doesn’t-miss indicator (tooltip: “Credits exhausted. Enable on-demand to continue.”).
   - Includes a **Contact Us** item in the left menu that opens a modal with the support email (`hi@lnkdrp.com`).
   - Account tab includes an **Edit name** modal (updates the signed-in user's display name).
+  - Account tab includes **Email notifications** for the currently selected workspace (doc update + repo link request cadence).
   - User avatar UI uses **initials** (we do not display the Google profile image).
   - Workspaces can have an optional **workspace icon** (org avatar); recommended requirements: **square (1:1), at least 120×120**, and ≤ 2MB.
   - Includes a **Billing & Invoices** tab (`/dashboard?tab=billing` or `/dashboard/billing`) with:
@@ -165,14 +171,21 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Credits (billing-cycle-based)**:
   - Pro includes **300 credits per Stripe billing cycle** (subscription anniversary, not calendar month).
   - Included credits **reset to 300** on renewal (no rollover). Purchased credits (if present) do not expire.
-  - Customer UI exposes **credits and quality tiers only** (no model names, tokens, or raw costs).
+  - Customer UI exposes **credits and quality tiers only** (no tokens or provider raw costs).
 - **Limits (credits-first)**:
   - Dashboard includes a **Limits** page (`/dashboard/limits`) for workspace owners/admins to manage on-demand usage caps (credits-first; dollars are secondary).
   - Legacy `/dashboard/spending` redirects to the Limits page.
+  - Limits page includes **AI Quality Defaults** (workspace-level):
+    - **Summary** defaults to **Basic** (automatic; not configurable)
+    - **Review** default: **Basic**, **Standard**, or **Advanced**
+    - **History** default: **Basic**, **Standard**, or **Advanced**
+  - Limits page includes a **Deep Research** section (early access): currently being tested with a small set of users; email `hi@lnkdrp.com` to join the waiting list.
   - Workspace owners/admins can set an **on-demand spend limit per billing cycle** (Cursor-style presets + custom).
   - If the limit is `0`, on-demand usage is disabled (hard-blocked).
   - The **Usage** tab (`/dashboard?tab=usage`) is **operational truth**:
-    - Shows a **Credits** summary (remaining, included/extra breakdown, cycle reset date) and a **Usage** log table (even when empty).
+    - Includes the same **Plan** status card as Overview (manage subscription / upgrade + on-demand module when applicable).
+    - Shows a **Credits** summary (remaining, included/extra breakdown, cycle reset date), a **Daily usage** chart (by model route), and a **Usage** log table (even when empty).
+    - Credits “Used” also shows an **estimated USD equivalent** at the canonical on-demand rate ($0.10/credit) for quick intuition (not an invoice amount).
     - Does **not** show Free-vs-Pro plan comparison cards.
     - Free plan shows at most one **Upgrade** CTA; full subscription upsell/plan comparison lives on the **Overview** tab.
 

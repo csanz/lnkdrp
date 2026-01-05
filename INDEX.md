@@ -12,7 +12,15 @@
 - `src/components/StandaloneBrandedShell.tsx` — exports: StandaloneBrandedShell. Branded standalone shell for public-ish pages (billing redirects, request links).
 - `src/app/(app)/AppShellLayout.tsx` — exports: AppShellLayout
 - `src/app/preferences/NotificationPreferences.tsx` — exports: NotificationPreferences (default). Workspace-level notification preferences UI (doc update emails).
+- `src/components/notifications/NotificationPreferences.tsx` — exports: NotificationPreferences (default). Workspace-level notification preferences UI (doc update emails; used by dashboard + preferences).
 - `src/app/dashboard/SubscriptionCard.tsx` — exports: SubscriptionCard (default)
+- `src/app/dashboard/SpendLimitModule.tsx` — exports: SpendLimitModule (default), SPEND_LIMIT_UPDATED_EVENT
+- `src/app/dashboard/CreditsSummaryCard.tsx` — exports: CreditsSummaryCard (default)
+- `src/app/dashboard/OnDemandUsageCard.tsx` — exports: OnDemandUsageCard (default)
+- `src/app/dashboard/AiQualityDefaultsCard.tsx` — exports: AiQualityDefaultsCard (default)
+- `src/app/dashboard/UsageTable.tsx` — exports: UsageTable (default), (type) UsageRow
+- `src/app/dashboard/DailyUsageChart.tsx` — exports: DailyUsageChart (default)
+- `src/app/dashboard/BillingInvoicesTab.tsx` — exports: BillingInvoicesTab (default). Billing & Invoices tab content (3 cards: Included Usage, On-Demand Usage, Invoices).
 - `src/admin/components/CacheToolsClient.tsx` — exports: CacheToolsClient
 - `src/components/LeftSidebar.tsx` — exports: LeftSidebar
 - `src/components/SidebarProjectsSection.tsx` — exports: SidebarProjectsSection
@@ -33,6 +41,8 @@
 - `src/components/modals/TempUserGateModal.tsx` — exports: TempUserGateModal
 - `src/components/PdfJsViewer.tsx` — exports: PdfJsViewer
 - `src/components/RelevanceChecklist.tsx` — exports: RelevanceChecklist
+- `src/components/OutOfCreditsModal.tsx` — exports: OutOfCreditsModal (default)
+- `src/components/OutOfCreditsListener.tsx` — exports: OutOfCreditsListener (default)
 - `src/components/UploadButton.tsx` — exports: UploadButton, UploadIcon
 - `src/components/UploadCompletionPanel.tsx` — exports: UploadCompletionPanel
 - `src/components/ui/Alert.tsx` — exports: Alert (default)
@@ -40,15 +50,29 @@
 - `src/components/ui/IconLink.tsx` — exports: IconLink (default)
 - `src/components/ui/Button.tsx` — exports: Button (default), ButtonProps (type)
 - `src/components/ui/Input.tsx` — exports: Input (default), InputProps (type)
+- `src/components/ui/Select.tsx` — exports: Select (default), SelectProps (type)
+- `src/components/ui/Panel.tsx` — exports: Panel (default), PanelProps (type)
+- `src/components/ui/HelpTooltip.tsx` — exports: HelpTooltip (default)
+- `src/components/ui/DataTable.tsx` — exports: DataTable (default), DataTableProps (type)
 - `src/components/ui/CopyTextButton.tsx` — exports: CopyTextButton (default)
 
 # Lib
 - `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
 - `src/lib/admin/format.ts` — exports: fmtDate, fmtDuration
 - `src/lib/orgsCache.ts` — exports: OrgsCacheOrg, OrgsCacheSnapshot, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, writeOrgsCacheSnapshot, refreshOrgsCache, setCachedActiveOrgId
+- `src/lib/client/outOfCredits.ts` — exports: OUT_OF_CREDITS_EVENT, dispatchOutOfCredits
+- `src/lib/client/creditsSnapshotRefresh.ts` — exports: CREDITS_SNAPSHOT_REFRESH_EVENT, dispatchCreditsSnapshotRefresh
+- `src/lib/credits/grants.ts` — exports: INCLUDED_CREDITS_PER_CYCLE, buildCycleKey, grantCycleIncludedCredits
+- `src/lib/credits/adminMutations.ts` — exports: AdminCreditMutationAction (type), adminMutateCredits, adminSimulateNewBillingCycle
+- `src/lib/credits/errors.ts` — exports: OUT_OF_CREDITS_CODE, isOutOfCreditsError
+- `src/lib/credits/snapshot.ts` — exports: CreditsSnapshot (type), getCreditsSnapshot
+- `src/lib/credits/stripeReporting.ts` — exports: StripeReportableLedger (type), batchIdempotencyKey, groupOnDemandLedgersForStripe
+- `src/lib/billing/pricing.ts` — exports: USD_CENTS_PER_CREDIT
+- `src/lib/billing/usageAggregation.ts` — exports: BillingLedgerRow (type), aggregateBillingUsage, onDemandCostCentsOrNull
 - `src/lib/metrics/rollupDocMetrics.ts` — exports: rollupDocMetrics
 - `src/lib/models/CronHealth.ts` — exports: CronHealthModel, (type) CronHealth
 - `src/lib/models/AiRun.ts` — exports: AiRunModel, (type) AiRun
+- `src/lib/models/ErrorEvent.ts` — exports: ErrorEventModel, (type) ErrorEvent
 
 # Pages
 - `src/app/(app)/doc/[docId]/ai/page.tsx` — Page for \`/doc/:docId/ai\`.
@@ -74,6 +98,7 @@
 - `src/app/a/invitecodes/page.tsx` — Page for \`/a/invitecodes\`.
 - `src/app/a/cron-health/page.tsx` — Page for \`/a/cron-health\`.
 - `src/app/a/ai-runs/page.tsx` — Page for \`/a/ai-runs\`.
+- `src/app/a/credits/page.tsx` — Page for \`/a/credits\` (admin credits tools).
 - `src/app/a/shareviews/[docId]/page.tsx` — Page for \`/a/shareviews/:docId\`.
 - `src/app/a/shareviews/page.tsx` — Page for \`/a/shareviews\`.
 - `src/app/a/data/users/page.tsx` — Page for \`/a/data/users\`.
@@ -85,6 +110,11 @@
 - `src/app/a/data/uploads/page.tsx` — Page for \`/a/data/uploads\`.
 - `src/app/a/tools/cache/page.tsx` — Page for \`/a/tools/cache\` (admin cache inspector).
 - `src/app/about/page.tsx` — About page.
+- `src/app/tos/page.tsx` — Terms of Service page.
+- `src/app/privacy/page.tsx` — Privacy Policy page.
+
+# Deployment
+- `vercel.json` — Vercel project configuration (includes `"crons"` schedules for production cron jobs).
 - `src/app/api/admin/shareviews/doc/[docId]/route.ts` — API route for \`/api/admin/shareviews/doc/:docId\`.
   - GET (function) — Handle GET requests.
   - runtime (const) — Next.js route configuration.
@@ -94,11 +124,23 @@
 - `src/app/api/admin/cron-health/route.ts` — API route for \`/api/admin/cron-health\`.
   - GET (function) — Return cron health snapshots for admin UI.
   - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/errors/route.ts` — Admin API route for \`/api/admin/errors\`.
+  - GET (function) — Query ErrorEvent logs with filters + cursor pagination (admin-only).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/ai-runs/route.ts` — API route for \`/api/admin/ai-runs\`.
   - GET (function) — List AI run logs for admin inspection (paged).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/ai-runs/[runId]/route.ts` — API route for \`/api/admin/ai-runs/:runId\`.
   - GET (function) — Fetch a single AI run log record (prompt + output).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/credits/snapshot/route.ts` — Admin API route for \`/api/admin/credits/snapshot\`.
+  - GET (function) — Return a credits snapshot for a workspace (admin-only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/credits/mutate/route.ts` — Admin API route for \`/api/admin/credits/mutate\`.
+  - POST (function) — Ledger-based credit mutation tools (grant/burn) for a workspace (admin-only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/admin/credits/simulate-cycle/route.ts` — Admin API route for \`/api/admin/credits/simulate-cycle\`.
+  - POST (function) — Simulate a new billing cycle (updates stored period boundaries; idempotent cycle grant; admin-only).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/users/route.ts` — API route for \`/api/admin/data/users\`.
   - GET (function) — List users for admin inspection (paged).
@@ -141,6 +183,12 @@
 - `src/app/api/dashboard/stats/route.ts` — API route for \`/api/dashboard/stats\`.
   - GET (function) — Dashboard Overview stats (counts + share view aggregates).
   - runtime (const) — Next.js route configuration.
+- `src/app/api/dashboard/usage/route.ts` — API route for \`/api/dashboard/usage\`.
+  - GET (function) — Usage rows for the dashboard Usage tab (scaffold; returns empty list until usage tracking is wired).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/dashboard/usage-daily/route.ts` — API route for \`/api/dashboard/usage-daily\`.
+  - GET (function) — Daily usage series for the dashboard Usage tab chart.
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/billing/subscription/route.ts` — API route for \`/api/billing/subscription\`.
   - GET (function) — Return current org subscription status for dashboard UI.
   - runtime (const) — Next.js route configuration.
@@ -149,6 +197,26 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/billing/status/route.ts` — API route for \`/api/billing/status\`.
   - GET (function) — Return current user's plan + Stripe subscription fields (used for success-page polling).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/billing/spend/route.ts` — API route for \`/api/billing/spend\` (workspace on-demand spend limit).
+  - GET (function) — Return on-demand limit + used spend for the current billing cycle.
+  - POST (function) — Update on-demand limit for the active workspace (owner/admin only).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/billing/summary/route.ts` — API route for \`/api/billing/summary\`.
+  - GET (function) — Billing summary for Billing & Invoices page (cycle, plan, on-demand, balances).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/billing/usage/route.ts` — API route for \`/api/billing/usage\`.
+  - GET (function) — Included + on-demand usage tables for a selected billing cycle.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/billing/invoices/route.ts` — API route for \`/api/billing/invoices\`.
+  - GET (function) — List recent invoices for a selected month (Stripe; customer id never returned).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/credits/snapshot/route.ts` — API route for \`/api/credits/snapshot\`.
+  - GET (function) — Return a single credits snapshot for the active workspace (customer-facing; no telemetry).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/credits/quality-defaults/route.ts` — API route for \`/api/credits/quality-defaults\`.
+  - GET (function) — Read workspace default quality tiers for Review/History (owner/admin only).
+  - POST (function) — Update workspace default quality tiers for Review/History (owner/admin only).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/stripe/checkout/route.ts` — API route for \`/api/stripe/checkout\`.
   - POST (function) — Create a Stripe Checkout Session (subscription mode) for the signed-in user.
@@ -164,6 +232,18 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/cron/doc-metrics/route.ts` — Cron route for rolling up cached doc metrics.
   - POST (function) — Roll up per-doc metrics into `Doc.metricsSnapshot`.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/cron/credits-cycle-reconcile/route.ts` — Cron route for hourly credit-cycle grant backstop.
+  - POST (function) — Ensure included credits grant exists for current billing cycle (idempotent).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/cron/stripe-credits-reconcile/route.ts` — Cron route for Stripe billing-cycle backstop + included credit resets.
+  - POST (function) — Sync subscription period boundaries and idempotently grant cycle credits.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/cron/stripe-credits-report/route.ts` — Cron route for reporting metered AI credits usage to Stripe.
+  - POST (function) — Report aggregated credits and mark ledger rows as reported (idempotent).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/cron/usage-agg-reconcile/route.ts` — Cron route for recomputing usage aggregates from CreditLedger.
+  - POST (function) — Recompute daily/cycle usage aggregates for a date range (idempotent).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/debug/route.ts` — API route for \`/api/debug\`.
   - GET (function) — Debug endpoint to confirm server-side env wiring.
@@ -425,11 +505,31 @@
   - startBlobUploadAndProcess (function) — Client-side helpers for starting the "upload → process" pipeline.
 - `src/lib/db/mongoose.ts`
   - connectMongoose (function) — Connect to Mongoose.
+- `src/lib/db/mongoRequestLogger.ts`
+  - withMongoRequestLogging (function) — Dev-only: log Mongo command count + time per request (request-scoped via AsyncLocalStorage).
 - `src/lib/debug.ts`
   - debugEnabled (function) — Check if debug logging is enabled.
   - debugLog (function) — Log a debug message.
   - debugWarn (function) — Log a debug warning.
   - debugError (function) — Log a debug error.
+- `src/lib/errors/types.ts`
+  - ErrorSeverity (type) — `"error" | "warn" | "info"`.
+  - ErrorCategory (type) — Error categories (api/cron/worker/stripe/db/auth/ai/credits/unknown).
+- `src/lib/errors/classifyError.ts`
+  - classifyErrorSource (function) — Deterministic mapping from source → category.
+  - classifyErrorCode (function) — Deterministic mapping from error → code (`VALIDATION_ERROR`, `AUTH_ERROR`, fallback `UNHANDLED_EXCEPTION`).
+- `src/lib/errors/logger.ts`
+  - isErrorLoggingEnabled (function) — Check whether MongoDB ErrorEvent logging is enabled (safe-by-default).
+  - shouldLogErrorEvent (function) — Severity threshold + sampling decision.
+  - sanitizeMeta (function) — Sanitize meta payloads (redact secrets/JWTs; truncate).
+  - logErrorEvent (function) — Best-effort persist a sanitized ErrorEvent (never throws).
+  - ERROR_CODE_* (consts) — Stable error codes for common cases.
+- `src/lib/errors/serializeErrorEvent.ts`
+  - serializeErrorEventForAdmin (function) — Defense-in-depth serializer for admin ErrorEvent responses.
+- `src/lib/errors/withApiErrorLogging.ts`
+  - withApiErrorLogging (function) — Wrap Next.js App Router route handlers to capture unhandled exceptions.
+- `src/lib/errors/runTaskWithErrorLogging.ts`
+  - runTaskWithErrorLogging (function) — Wrap cron/worker execution to capture thrown errors.
 - `src/lib/email/sendInviteApprovalEmail.ts`
   - sendInviteApprovalEmail (function) — Send invite approval email.
 - `src/lib/gating/actor.ts`
@@ -437,6 +537,7 @@
   - applyTempUserHeaders (function) — Apply temp user headers.
   - tryResolveUserActor (function) — Best-effort resolve authenticated user actor without creating temp users.
   - resolveActor (function) — Resolve actor.
+  - resolveActorForStats (function) — Faster actor resolution for stats endpoints (single membership check + request cache).
   - TEMP_USER_ID_HEADER (const) — HTTP header name constant.
   - TEMP_USER_SECRET_HEADER (const) — HTTP header name constant.
 - `src/lib/gating/tempUserHeaders.ts`
@@ -461,6 +562,8 @@
   - trackProjectView (function) — Track a project view (deduped server-side per session).
   - trackProjectClick (function) — Track a click from within a project.
   - trackPageTiming (function) — Track time spent on a route within a session.
+- `src/lib/usage/reconcile.ts`
+  - reconcileUsageAggsFromLedger (function) — Recompute deterministic usage aggregates from CreditLedger for a UTC date range.
 - `src/lib/models/Doc.ts` — Data model for the docs collection.
   - Doc (type) — Mongoose document type for the docs collection.
   - DocModel (function) — Doc model.
@@ -480,6 +583,7 @@
 - `src/lib/models/OrgMembership.ts` — Data model for the orgmemberships collection.
   - OrgMembership (type) — Mongoose document type for the orgmemberships collection.
   - OrgMembershipModel (const) — Mongoose model for the orgmemberships collection.
+  - Note: includes workspace-scoped notification preferences (`docUpdateEmailMode`, `repoLinkRequestEmailMode`).
 - `src/lib/models/OrgInvite.ts` — Data model for org invite links (token-based membership grants).
   - OrgInvite (type) — Mongoose document type for org invites.
   - OrgInviteModel (const) — Mongoose model for org invites.
@@ -505,6 +609,12 @@
   - ShareView (type) — Mongoose document type for the shareviews collection.
   - ShareViewModel (const) — Mongoose model for the shareviews collection.
   - Note: includes best-effort `viewerIp` captured from request proxy headers.
+- `src/lib/models/UsageAggDaily.ts` — Data model for pre-aggregated daily usage totals (derived from CreditLedger).
+  - UsageAggDaily (type) — Mongoose document type for daily usage aggregates.
+  - UsageAggDailyModel (const) — Mongoose model for daily usage aggregates.
+- `src/lib/models/UsageAggCycle.ts` — Data model for pre-aggregated per-cycle usage totals (derived from CreditLedger).
+  - UsageAggCycle (type) — Mongoose document type for cycle usage aggregates.
+  - UsageAggCycleModel (const) — Mongoose model for cycle usage aggregates.
 - `src/lib/models/Subscription.ts` — Data model for org subscriptions (Stripe customer/subscription pointers).
   - Subscription (type) — Mongoose document type for subscriptions collection.
   - SubscriptionModel (const) — Mongoose model for subscriptions collection.
@@ -550,6 +660,7 @@
   - PROJECTS_CHANGED_EVENT (const) — Constant: projects changed event.
   - DOCS_CHANGED_EVENT (const) — Constant: docs changed event.
   - SIDEBAR_CACHE_UPDATED_EVENT (const) — Constant: sidebar cache updated event.
+  - ACTIVE_ORG_CHANGED_EVENT (const) — Constant: active org changed event (client caches should re-key).
 - `src/lib/starredDocs.ts`
   - StarredDoc (type) — Type: starred doc.
   - getStarredDocs (function) — Get starred docs.
@@ -578,6 +689,14 @@
 - `tests/agent/vitest.config.ts`
 - `tests/agent/vitest.reporter.concise.ts`
 - `tests/agent/vitest.setup.ts`
+- `tests/credits/vitest.config.ts`
+- `tests/credits/errors.test.ts`
+- `tests/credits/grants.test.ts`
+- `tests/credits/serviceCore.test.ts`
+- `tests/credits/statsMongoOps.test.ts`
+- `tests/credits/stripeReporting.test.ts`
+- `tests/credits/billingUsageAggregation.test.ts`
+- `tests/credits/billingInvoicesRoute.test.ts`
 - `tests/upload/vitest.config.ts`
 - `tests/upload/clientUpload.test.ts`
 - `tests/upload/serverClientUploadRoute.test.ts`
@@ -601,6 +720,8 @@
 - `public/sample/usavx_op.pdf`
 - `public/sample/usavx.pdf`
 - `docs/FEATURES.md`
+- `docs/SUBSCRIPTION.md`
+- `docs/ERROR_LOGGING.md`
 - `README.md`
 - `docs/CRON.md`
 - `docs/REQUEST.md`
@@ -610,12 +731,15 @@
 - `db/migration/20251229_0003_dedupe_personal_orgs.mjs`
 - `db/migration/20251229_0004_backfill_orgId_to_personal_org.mjs`
 - `db/migration/20251229_0005_create_org_invite_indexes.mjs`
+- `db/migration/20260105_0001_usage_aggs_and_indexes.mjs`
 - `scripts/lib/time.mjs`
 - `scripts/mongo-clear.mjs`
 - `scripts/mongo-clear-ai-runs-and-requests.mjs`
 - `scripts/pdf-first-page-to-png.mjs`
 - `scripts/pdf-to-text.mjs`
 - `scripts/rollup-doc-metrics.ts`
+- `scripts/usage-agg-reconcile.ts`
+- `scripts/recreate-error-ttl-index.ts`
 - `scripts/project-doc-count-recount.mjs`
 - `scripts/project-shareid-backfill.mjs`
 - `scripts/doc-received-via-request-backfill.mjs`

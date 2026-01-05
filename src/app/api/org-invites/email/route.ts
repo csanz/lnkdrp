@@ -86,6 +86,13 @@ export async function POST(request: Request) {
 
   await connectMongo();
 
+  // Personal orgs are single-user; invites are not supported.
+  const orgTypeCheck = await OrgModel.findOne({ _id: new Types.ObjectId(orgIdRaw), isDeleted: { $ne: true } })
+    .select({ type: 1 })
+    .lean();
+  const orgType = orgTypeCheck ? String((orgTypeCheck as { type?: unknown }).type ?? "") : "";
+  if (orgType !== "team") return NextResponse.json({ error: "Not found" }, { status: 404 });
+
   const membership = await OrgMembershipModel.findOne({
     orgId: new Types.ObjectId(orgIdRaw),
     userId: new Types.ObjectId(actor.userId),

@@ -10,7 +10,9 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
+import Panel from "@/components/ui/Panel";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { fmtDate, fmtDuration } from "@/lib/admin/format";
 
@@ -190,39 +192,41 @@ export default function AdminAiRunsPage() {
         </div>
 
         <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+          <Panel className="min-w-0">
             <div className="flex flex-wrap items-end gap-3">
               <div className="min-w-[180px]">
                 <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Kind</div>
-                <select
+                <Select
                   value={kind}
                   onChange={(e) => {
                     setPage(1);
                     setKind(e.target.value);
                   }}
-                  className="mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm"
+                  variant="panel2"
+                  className="mt-1 w-full"
                 >
                   <option value="">All</option>
                   <option value="reviewDocText">reviewDocText</option>
                   <option value="analyzePdfText">analyzePdfText</option>
                   <option value="requestReviewInvestorFocused">requestReviewInvestorFocused</option>
-                </select>
+                </Select>
               </div>
               <div className="min-w-[180px]">
                 <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Status</div>
-                <select
+                <Select
                   value={runStatus}
                   onChange={(e) => {
                     setPage(1);
                     setRunStatus(e.target.value);
                   }}
-                  className="mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm"
+                  variant="panel2"
+                  className="mt-1 w-full"
                 >
                   <option value="">All</option>
                   <option value="started">started</option>
                   <option value="completed">completed</option>
                   <option value="failed">failed</option>
-                </select>
+                </Select>
               </div>
               <div className="min-w-[280px] flex-1">
                 <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Doc ID (optional)</div>
@@ -313,9 +317,9 @@ export default function AdminAiRunsPage() {
                 </Button>
               </div>
             </div>
-          </div>
+          </Panel>
 
-          <div className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+          <Panel className="min-w-0">
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-semibold">Run detail</div>
               {selectedId ? (
@@ -413,7 +417,7 @@ export default function AdminAiRunsPage() {
                 </div>
               </div>
             ) : null}
-          </div>
+          </Panel>
         </div>
       </div>
     </div>

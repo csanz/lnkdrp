@@ -10,6 +10,7 @@ import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
+import Select from "@/components/ui/Select";
 import { fmtDate } from "@/lib/admin/format";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -367,15 +368,14 @@ export default function ShareViewsAdminPage() {
               <div className="text-sm font-semibold text-[var(--fg)]">Overview</div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-[var(--muted-2)]">Range</span>
-                <select
-                  className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--fg)]"
+                <Select
                   value={rangeDays}
                   onChange={(e) => setRangeDays((Number(e.target.value) as 7 | 14 | 30) || 14)}
                 >
                   <option value={7}>Last 7 days</option>
                   <option value={14}>Last 14 days</option>
                   <option value={30}>Last 30 days</option>
-                </select>
+                </Select>
               </div>
             </div>
 

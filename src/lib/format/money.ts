@@ -1,0 +1,27 @@
+/**
+ * Shared money formatting helpers (UI-safe).
+ *
+ * IMPORTANT: Keep behavior consistent with existing dashboard UI helpers:
+ * - Treat cents as a non-negative integer (floor + clamp).
+ * - Format as USD using the runtime locale.
+ * - Use "Not available" exactly (do not change the string).
+ */
+
+import { clampNonNegInt } from "@/lib/format/number";
+
+export function formatUsdFromCents(cents: number): string {
+  const dollars = clampNonNegInt(cents) / 100;
+  try {
+    // Keep this consistent with existing billing UI: always show 2 decimals.
+    return dollars.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2 });
+  } catch {
+    return `$${dollars.toFixed(2)}`;
+  }
+}
+
+export function formatUsdOrNotAvailable(cents: number | null | undefined): string {
+  if (typeof cents !== "number" || !Number.isFinite(cents)) return "Not available";
+  return formatUsdFromCents(cents);
+}
+
+

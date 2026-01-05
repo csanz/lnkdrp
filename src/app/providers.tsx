@@ -10,6 +10,7 @@ import { fetchJson } from "@/lib/http/fetchJson";
 import { trackPageTiming } from "@/lib/metrics/client";
 import { clearSidebarCache, refreshSidebarCache, setActiveOrgIdForCaches } from "@/lib/sidebarCache";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
+import OutOfCreditsListener from "@/components/OutOfCreditsListener";
 
 const AuthEnabledContext = createContext(false);
 export function useAuthEnabled() {
@@ -118,7 +119,10 @@ export default function Providers({
             <SessionPageTimingTracker />
           </Suspense>
           <PendingUploadProvider>
-            <NavigationLockProvider>{children}</NavigationLockProvider>
+            <NavigationLockProvider>
+              {children}
+              <OutOfCreditsListener />
+            </NavigationLockProvider>
           </PendingUploadProvider>
         </AuthEnabledContext.Provider>
       </ThemeProvider>
@@ -136,7 +140,10 @@ export default function Providers({
             <SessionPageTimingTracker />
           </Suspense>
           <PendingUploadProvider>
-            <NavigationLockProvider>{children}</NavigationLockProvider>
+            <NavigationLockProvider>
+              {children}
+              <OutOfCreditsListener />
+            </NavigationLockProvider>
           </PendingUploadProvider>
         </SessionProvider>
       </AuthEnabledContext.Provider>

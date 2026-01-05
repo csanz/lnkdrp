@@ -5,9 +5,10 @@
 "use client";
 
 import WorkspaceManager from "./WorkspaceManager";
-import NotificationPreferences from "./NotificationPreferences";
+import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
+import Link from "next/link";
 import {
   BanknotesIcon,
   ChartBarIcon,
@@ -158,7 +159,18 @@ export default function PreferencesPage() {
           <Section title="Workspace" description="Organization and membership management.">
             <WorkspaceManager />
             <div className="mt-4">
-              <NotificationPreferences />
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
+                <div className="text-[12px] text-[var(--muted-2)]">
+                  These settings now live in Dashboard.{" "}
+                  <Link href="/dashboard/account" className="font-semibold text-[var(--fg)] underline">
+                    Go to Dashboard → Account
+                  </Link>
+                  .
+                </div>
+              </div>
+              <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
+                <NotificationPreferences />
+              </div>
             </div>
           </Section>
         ) : null}

@@ -22,6 +22,11 @@ import { analyzePdfText } from "@/lib/ai/analyzePdfText";
 import { runDocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
 import { runRequestReviewInvestorFocused } from "@/lib/ai/requestReviewInvestorFocused";
+import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger } from "@/lib/credits/creditService";
+import { creditsForRun } from "@/lib/credits/schedule";
+import { idempotencyKeyFromRequest, generateIdempotencyKey } from "@/lib/credits/idempotency";
+import { getCreditsSnapshot } from "@/lib/credits/snapshot";
+import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
@@ -451,6 +456,7 @@ async function ensureReviewForUpload(params: {
   uploadId: string;
   version: number;
   extractedText: string;
+  qualityTier?: "standard" | "advanced";
   instructions?: string | null;
   guideText?: string | null;
   stageHint?: string | null;
@@ -463,6 +469,7 @@ async function ensureReviewForUpload(params: {
   } | null;
 }) {
   const { docId, uploadId, version, extractedText, instructions, force } = params;
+  const qualityTier = params.qualityTier === "advanced" ? "advanced" : "standard";
   const agentKind = params.agentKind ?? "reviewDocText";
   const guideText = params.guideText ?? null;
   const stageHint = params.stageHint ?? null;
@@ -581,6 +588,7 @@ async function ensureReviewForUpload(params: {
             deckText: extractedText,
             stageHint: typeof stageHint === "string" ? stageHint : null,
             requesterInstructions: typeof instructions === "string" ? instructions : null,
+            qualityTier,
             meta: {
               userId: params.meta?.userId ?? null,
               projectId: params.meta?.projectId ?? null,
@@ -604,6 +612,7 @@ async function ensureReviewForUpload(params: {
               ? Number((prior as { version: number }).version)
               : null,
           instructions: typeof instructions === "string" ? instructions : null,
+          qualityTier,
           meta: {
             userId: params.meta?.userId ?? null,
             projectId: params.meta?.projectId ?? null,
@@ -848,6 +857,10 @@ export async function POST(
 
   const url = new URL(request.url);
   const forceReviewRequested = url.searchParams.get("forceReview") === "1";
+  const qualityRaw = (url.searchParams.get("quality") ?? "").trim().toLowerCase();
+  const forceReviewQualityTier =
+    qualityRaw === "advanced" ? ("advanced" as const) : qualityRaw === "basic" ? ("basic" as const) : ("standard" as const);
+  const requestIdempotencyKey = idempotencyKeyFromRequest(request);
 
   debugLog(1, "[process] queued", { uploadId });
 
@@ -880,6 +893,23 @@ export async function POST(
     });
     if (!allowed) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+    }
+  }
+
+  // Server-side enforcement: if AI tools are blocked for this workspace, reject before scheduling work.
+  // Note: this route always runs in the background via `after()`, so we must preflight here.
+  const needsAi = forceReviewRequested || Boolean(process.env.OPENAI_API_KEY);
+  if (needsAi) {
+    try {
+      const snap = await getCreditsSnapshot({ workspaceId: actor.orgId });
+      if (snap.blocked) {
+        return applyTempUserHeaders(
+          NextResponse.json({ error: "Out of credits", code: OUT_OF_CREDITS_CODE }, { status: 402 }),
+          actor,
+        );
+      }
+    } catch {
+      // Best-effort: if snapshot fails, fall back to per-action reservation enforcement inside the job.
     }
   }
 
@@ -1052,7 +1082,40 @@ export async function POST(
                 .lean();
               const previousText = (prev?.rawExtractedText ?? (prev as any)?.pdfText ?? "").toString();
               const newText = (upload.rawExtractedText ?? upload.pdfText ?? "").toString();
-              const diff = await runDocChangeDiff({ previousText, newText }).catch(() => null);
+            // Credits: history (automatic on replacement) defaults to Standard.
+            const historyTier = "standard" as const;
+            const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
+            const historyIdempotencyKey = `history:auto:${String(docId)}:to:${toVersion}:${historyTier}`;
+            let historyLedgerId: string | null = null;
+            try {
+              const reserved = await reserveCreditsOrThrow({
+                workspaceId: actor.orgId,
+                userId: actor.userId,
+                docId: String(docId),
+                actionType: "history",
+                qualityTier: historyTier,
+                idempotencyKey: historyIdempotencyKey,
+              });
+              historyLedgerId = reserved.ledgerId;
+            } catch {
+              historyLedgerId = null;
+            }
+
+            let diff = null as any;
+            if (historyLedgerId) {
+              try {
+                diff = await runDocChangeDiff({ previousText, newText, qualityTier: historyTier });
+                if (!diff) {
+                  await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
+                  diff = null;
+                } else {
+                  await markLedgerCharged({ workspaceId: actor.orgId, ledgerId: historyLedgerId, creditsCharged: historyCredits });
+                }
+              } catch {
+                await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
+                diff = null;
+              }
+            }
               await DocChangeModel.updateOne(
                 { docId, toUploadId: upload._id },
                 {
@@ -1093,6 +1156,12 @@ export async function POST(
             projectIds: existingProjectIds.length,
           });
           if (uploadVersion && extractedText && !skipReview) {
+            // Credits: review is user-initiated only (forceReview=1). Default = Standard, optional Advanced.
+            const reviewTier = forceReviewQualityTier;
+            const reviewCredits = creditsForRun({ actionType: "review", qualityTier: reviewTier });
+            const reviewIdempotencyKey =
+              requestIdempotencyKey ?? `review:manual:${uploadId}:v${uploadVersion}:${reviewTier}`;
+
             // Request review settings (if this doc belongs to a request repo).
             const finalProjectIdsForReview = existingProjectIds
               .filter((id) => typeof id === "string" && Types.ObjectId.isValid(id))
@@ -1158,19 +1227,46 @@ export async function POST(
             const isRequestDoc = Boolean(requestProjectId);
             if (!isRequestDoc) {
               // Non-request docs: rerun the legacy review agent.
-              await ensureReviewForUpload({
-                docId,
-                uploadId,
-                version: uploadVersion,
-                extractedText,
-                instructions: null,
-                force: true,
-                meta: {
+              let ledgerId: string | null = null;
+              try {
+                const reserved = await reserveCreditsOrThrow({
+                  workspaceId: actor.orgId,
                   userId: actor.userId,
-                  projectId: null,
-                  projectIds: existingProjectIds,
-                },
-              });
+                  docId: String(docId),
+                  actionType: "review",
+                  qualityTier: reviewTier,
+                  idempotencyKey: reviewIdempotencyKey,
+                });
+                ledgerId = reserved.ledgerId;
+              } catch (e) {
+                debugLog(1, "[process] forceReview=1; insufficient credits (skipping)", {
+                  uploadId,
+                  docId: String(docId),
+                  version: uploadVersion,
+                  message: e instanceof Error ? e.message : String(e),
+                });
+                return;
+              }
+              try {
+                await ensureReviewForUpload({
+                  docId,
+                  uploadId,
+                  version: uploadVersion,
+                  extractedText,
+                  qualityTier: reviewTier,
+                  instructions: null,
+                  force: true,
+                  meta: {
+                    userId: actor.userId,
+                    projectId: null,
+                    projectIds: existingProjectIds,
+                  },
+                });
+                await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
+              } catch (e) {
+                await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
+                throw e;
+              }
             } else if (requestReviewEnabled === true && Boolean(requestGuideDocId)) {
               const stageHint =
                 isRecord(upload.aiOutput) && typeof (upload.aiOutput as { stage?: unknown }).stage === "string"
@@ -1182,22 +1278,49 @@ export async function POST(
                 docId: String(docId),
                 version: uploadVersion,
               });
-              await ensureReviewForUpload({
-                docId,
-                uploadId,
-                version: uploadVersion,
-                extractedText,
-                agentKind: "requestReviewInvestorFocused",
-                instructions: null,
-                guideText: requestGuideDocText,
-                stageHint,
-                force: true,
-                meta: {
+              let ledgerId: string | null = null;
+              try {
+                const reserved = await reserveCreditsOrThrow({
+                  workspaceId: actor.orgId,
                   userId: actor.userId,
-                  projectId: requestProjectId,
-                  projectIds: existingProjectIds,
-                },
-              });
+                  docId: String(docId),
+                  actionType: "review",
+                  qualityTier: reviewTier,
+                  idempotencyKey: reviewIdempotencyKey,
+                });
+                ledgerId = reserved.ledgerId;
+              } catch (e) {
+                debugLog(1, "[process] forceReview=1; insufficient credits (skipping)", {
+                  uploadId,
+                  docId: String(docId),
+                  version: uploadVersion,
+                  message: e instanceof Error ? e.message : String(e),
+                });
+                return;
+              }
+              try {
+                await ensureReviewForUpload({
+                  docId,
+                  uploadId,
+                  version: uploadVersion,
+                  extractedText,
+                  qualityTier: reviewTier,
+                  agentKind: "requestReviewInvestorFocused",
+                  instructions: null,
+                  guideText: requestGuideDocText,
+                  stageHint,
+                  force: true,
+                  meta: {
+                    userId: actor.userId,
+                    projectId: requestProjectId,
+                    projectIds: existingProjectIds,
+                  },
+                });
+                await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
+              } catch (e) {
+                await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
+                throw e;
+              }
 
               // Read back the latest status so we can see what happened without digging into Mongo.
               const latest = await ReviewModel.findOne({ docId, version: uploadVersion })
@@ -1404,7 +1527,46 @@ export async function POST(
           const previousText = priorExtractedTextRaw.toString();
           const newText = (extractedText ?? "").toString();
           if (previousText.trim() && newText.trim()) {
-            const diff = await runDocChangeDiff({ previousText, newText }).catch(() => null);
+            // Credits: history (automatic on replacement) defaults to Standard.
+            const historyTier = "standard" as const;
+            const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
+            const historyIdempotencyKey = `history:auto:${String(docId)}:to:${uploadVersion}:${historyTier}`;
+            let historyLedgerId: string | null = null;
+            try {
+              const reserved = await reserveCreditsOrThrow({
+                workspaceId: String(existingDocOrgId),
+                userId: actor.userId,
+                docId: String(docId),
+                actionType: "history",
+                qualityTier: historyTier,
+                idempotencyKey: historyIdempotencyKey,
+              });
+              historyLedgerId = reserved.ledgerId;
+            } catch (e) {
+              warningDetails.historyCredits = e instanceof Error ? e.message : String(e);
+              // Skip history diff generation if we can't reserve credits.
+              historyLedgerId = null;
+            }
+
+            let diff = null as any;
+            if (historyLedgerId) {
+              try {
+                diff = await runDocChangeDiff({ previousText, newText, qualityTier: historyTier });
+                if (!diff) {
+                  await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
+                  diff = null;
+                } else {
+                  await markLedgerCharged({
+                    workspaceId: String(existingDocOrgId),
+                    ledgerId: historyLedgerId,
+                    creditsCharged: historyCredits,
+                  });
+                }
+              } catch {
+                await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
+                diff = null;
+              }
+            }
             await DocChangeModel.updateOne(
               { docId, toUploadId: upload._id },
               {
@@ -1474,27 +1636,69 @@ export async function POST(
           } else {
             debugLog(1, "[process] analyzing with AI", { uploadId });
             const pages = await extractPdfTextByPage(pdfBytes).catch(() => []);
-            const analyzed = await analyzePdfText({
-              fullText: extractedText,
-              pages,
-              projects: projectsContext,
-              existingProjectIds,
-              isReplacement,
-              meta: {
+            // Credits: summary is automatic and defaults to Basic.
+            const summaryTier = "basic" as const;
+            const summaryCredits = creditsForRun({ actionType: "summary", qualityTier: summaryTier });
+            const summaryIdempotencyKey = `summary:auto:${uploadId}:v${uploadVersion ?? "?"}:${summaryTier}`;
+            let summaryLedgerId: string | null = null;
+            try {
+              const reserved = await reserveCreditsOrThrow({
+                workspaceId: String(existingDocOrgId),
                 userId: actor.userId,
-                projectIds: existingProjectIds,
                 docId: String(docId),
-                uploadId,
-                uploadVersion: Number.isFinite(upload.version) ? Number(upload.version) : null,
-              },
-            });
-            if (!analyzed) {
-              const message = "AI analysis returned null (likely missing OPENAI_API_KEY at runtime)";
-              warningDetails.ai = warningDetails.ai ?? message;
-              jobError = jobError ?? new Error(`AI analysis skipped: ${message}`);
-              debugLog(1, "[process] AI analysis skipped (returned null)", { uploadId });
+                actionType: "summary",
+                qualityTier: summaryTier,
+                idempotencyKey: summaryIdempotencyKey,
+              });
+              summaryLedgerId = reserved.ledgerId;
+            } catch (e) {
+              warningDetails.summaryCredits = e instanceof Error ? e.message : String(e);
+              debugLog(1, "[process] AI analysis skipped (insufficient credits)", { uploadId });
+              // Skip AI analysis if we can't reserve credits.
+              summaryLedgerId = null;
             }
-            aiOutput = analyzed;
+
+            if (summaryLedgerId) {
+              try {
+                const analyzed = await analyzePdfText({
+                  fullText: extractedText,
+                  pages,
+                  projects: projectsContext,
+                  existingProjectIds,
+                  isReplacement,
+                  qualityTier: summaryTier,
+                  meta: {
+                    userId: actor.userId,
+                    projectIds: existingProjectIds,
+                    docId: String(docId),
+                    uploadId,
+                    uploadVersion: Number.isFinite(upload.version) ? Number(upload.version) : null,
+                  },
+                });
+                if (!analyzed) {
+                  await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: summaryLedgerId });
+                  debugLog(1, "[process] AI analysis skipped (returned null)", { uploadId });
+                  aiOutput = null;
+                } else {
+                  aiOutput = analyzed;
+                  await markLedgerCharged({
+                    workspaceId: String(existingDocOrgId),
+                    ledgerId: summaryLedgerId,
+                    creditsCharged: summaryCredits,
+                  });
+                }
+              } catch (e) {
+                await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: summaryLedgerId });
+                const message = e instanceof Error ? e.message : String(e);
+                warningDetails.ai = warningDetails.ai ?? message;
+                jobError = jobError ?? new Error(`AI analysis failed: ${message}`);
+                debugError(1, "[process] AI analysis failed (will continue without aiOutput)", {
+                  uploadId,
+                  message,
+                });
+                aiOutput = null;
+              }
+            }
 
             if (isRecord(aiOutput)) {
               // Work on a local typed copy; reassigning the `aiOutput: unknown` variable
@@ -1569,7 +1773,7 @@ export async function POST(
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
-        warningDetails.ai = message;
+        warningDetails.ai = warningDetails.ai ?? message;
         // Keep the job non-fatal, but persist the warning for debugging.
         jobError = jobError ?? new Error(`AI analysis failed: ${message}`);
         debugError(1, "[process] AI analysis failed (will continue without aiOutput)", {
@@ -1685,15 +1889,6 @@ export async function POST(
         uploadVersion,
       });
 
-      // For request docs with review enabled, keep the doc "preparing" until review finishes.
-      const shouldGateReadyForRequestReview =
-        !failed &&
-        !skipReview &&
-        Boolean(extractedText) &&
-        Boolean(uploadVersion) &&
-        requestReviewEnabled === true &&
-        Boolean(requestGuideDocId);
-
       debugLog(1, "[process] persisting results", { uploadId, failed });
       await UploadModel.findByIdAndUpdate(uploadId, {
         status: failed ? "failed" : "completed",
@@ -1723,7 +1918,7 @@ export async function POST(
       const finalPageSlugs =
         pageSlugs ?? (isReplacement && priorPageSlugs ? (priorPageSlugs as unknown[]) : []);
       const docUpdate: Record<string, unknown> = {
-        status: failed ? "failed" : shouldGateReadyForRequestReview ? "preparing" : "ready",
+        status: failed ? "failed" : "ready",
         blobUrl,
         currentUploadId: upload._id,
         uploadId: upload._id, // backward compat
@@ -1789,116 +1984,6 @@ export async function POST(
       }
 
       // Project.docCount is maintained at the model level (Doc middleware).
-
-      // One-time review per version (best-effort, non-fatal).
-      if (!failed && extractedText && uploadVersion) {
-        if (skipReview) {
-          debugLog(2, "[process] skipReview=true; skipping review", { uploadId });
-          debugLog(1, "[process] done", { uploadId, ms: Date.now() - startedAt });
-          return;
-        }
-
-        const isRequestDoc = Boolean(requestProjectId);
-        if (isRequestDoc && requestReviewEnabled !== true) {
-          // Skip: request link exists, but review agent disabled.
-          debugLog(1, "[process] request review skipped (disabled)", {
-            uploadId,
-            docId: String(docId),
-            requestProjectId,
-            requestReviewEnabled,
-          });
-        } else if (isRequestDoc && !requestGuideDocId) {
-          // Skip: request review enabled, but no evaluation guide attached.
-          debugLog(1, "[process] request review skipped (no guide attached)", {
-            uploadId,
-            docId: String(docId),
-            requestProjectId,
-            requestReviewEnabled,
-          });
-        } else if (isRequestDoc) {
-        const stageHint =
-          isRecord(aiOutput) && typeof (aiOutput as { stage?: unknown }).stage === "string"
-            ? String((aiOutput as { stage: string }).stage)
-            : null;
-        // Temp-user limit: only 1 review total per doc.
-        if (actor.kind === "temp") {
-          const existingReviews = await ReviewModel.countDocuments({ docId });
-          if (existingReviews < 1) {
-            try {
-              await ensureReviewForUpload({
-                docId,
-                uploadId,
-                version: uploadVersion,
-                extractedText,
-                agentKind: "requestReviewInvestorFocused",
-                instructions: null,
-                guideText: requestGuideDocText,
-                stageHint,
-                force: forceReview,
-                meta: {
-                  userId: actor.userId,
-                  projectId: requestProjectId,
-                  projectIds: nextProjectIds,
-                },
-              });
-            } catch (e) {
-              debugError(1, "[process] request review crashed (non-fatal)", {
-                uploadId,
-                docId: String(docId),
-                requestProjectId,
-                message: e instanceof Error ? e.message : String(e),
-              });
-            }
-          }
-        } else {
-          try {
-            await ensureReviewForUpload({
-              docId,
-              uploadId,
-              version: uploadVersion,
-              extractedText,
-              agentKind: "requestReviewInvestorFocused",
-              instructions: null,
-              guideText: requestGuideDocText,
-              stageHint,
-              force: forceReview,
-              meta: {
-                userId: actor.userId,
-                projectId: requestProjectId,
-                projectIds: nextProjectIds,
-              },
-            });
-          } catch (e) {
-            debugError(1, "[process] request review crashed (non-fatal)", {
-              uploadId,
-              docId: String(docId),
-              requestProjectId,
-              message: e instanceof Error ? e.message : String(e),
-            });
-          }
-        }
-        } else {
-          // Non-request docs: run the legacy review agent.
-          await ensureReviewForUpload({
-            docId,
-            uploadId,
-            version: uploadVersion,
-            extractedText,
-            instructions: null,
-            force: forceReview,
-            meta: {
-              userId: actor.userId,
-              projectId: null,
-              projectIds: nextProjectIds,
-            },
-          });
-        }
-      }
-
-      // For request docs, only mark as ready after the review attempt finishes.
-      if (shouldGateReadyForRequestReview) {
-        await DocModel.findByIdAndUpdate(docId, { status: "ready" });
-      }
 
       debugLog(1, "[process] done", { uploadId, ms: Date.now() - startedAt });
     } catch (err) {

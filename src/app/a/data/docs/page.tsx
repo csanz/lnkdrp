@@ -10,6 +10,7 @@ import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
+import DataTable from "@/components/ui/DataTable";
 import Input from "@/components/ui/Input";
 import { fmtDate } from "@/lib/admin/format";
 import { fetchJson } from "@/lib/http/fetchJson";
@@ -154,64 +155,60 @@ export default function AdminDataDocsPage() {
             Loading…
           </div>
         ) : (
-          <div className="mt-6 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                    <th className="px-4 py-3">Title</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Archived</th>
-                    <th className="px-4 py-3">Share</th>
-                    <th className="px-4 py-3">Updated</th>
-                    <th className="px-4 py-3">User ID</th>
-                    <th className="px-4 py-3">Doc ID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {items.map((d) => (
-                    <tr key={d.id}>
-                      <td className="px-4 py-3">{d.title ?? "—"}</td>
-                      <td className="px-4 py-3">{d.status ?? "—"}</td>
-                      <td className="px-4 py-3">{d.isArchived ? "Yes" : "No"}</td>
-                      <td className="px-4 py-3">
-                        {d.shareId ? (
-                          <a
-                            className="text-[var(--fg)] underline decoration-[var(--border)] underline-offset-2 hover:decoration-[var(--muted)]"
-                            href={`/s/${encodeURIComponent(d.shareId)}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            /s/{d.shareId}
-                          </a>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-4 py-3">{fmtDate(d.updatedDate) || "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{d.userId ?? "—"}</td>
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/a/shareviews/${encodeURIComponent(d.id)}`}
-                          className="font-mono text-xs text-[var(--muted)] hover:underline"
-                          title="Open Share Views drilldown for this doc"
-                        >
-                          {d.id}
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                  {items.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
-                        No docs.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DataTable containerClassName="mt-6">
+            <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
+              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                <th className="px-4 py-3">Title</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Archived</th>
+                <th className="px-4 py-3">Share</th>
+                <th className="px-4 py-3">Updated</th>
+                <th className="px-4 py-3">User ID</th>
+                <th className="px-4 py-3">Doc ID</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {items.map((d) => (
+                <tr key={d.id}>
+                  <td className="px-4 py-3">{d.title ?? "—"}</td>
+                  <td className="px-4 py-3">{d.status ?? "—"}</td>
+                  <td className="px-4 py-3">{d.isArchived ? "Yes" : "No"}</td>
+                  <td className="px-4 py-3">
+                    {d.shareId ? (
+                      <a
+                        className="text-[var(--fg)] underline decoration-[var(--border)] underline-offset-2 hover:decoration-[var(--muted)]"
+                        href={`/s/${encodeURIComponent(d.shareId)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        /s/{d.shareId}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="px-4 py-3">{fmtDate(d.updatedDate) || "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{d.userId ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    <Link
+                      href={`/a/shareviews/${encodeURIComponent(d.id)}`}
+                      className="font-mono text-xs text-[var(--muted)] hover:underline"
+                      title="Open Share Views drilldown for this doc"
+                    >
+                      {d.id}
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+              {items.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
+                    No docs.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </DataTable>
         )}
       </div>
     </div>

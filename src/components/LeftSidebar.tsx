@@ -39,6 +39,7 @@ import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import {
   ACTIVE_ORG_STORAGE_KEY,
+  ACTIVE_ORG_CHANGED_EVENT,
   DOCS_CHANGED_EVENT,
   getSidebarCacheSnapshot,
   PROJECTS_CHANGED_EVENT,
@@ -592,9 +593,11 @@ export default function LeftSidebar({
     }
     refreshStarred();
     window.addEventListener(STARRED_DOCS_CHANGED_EVENT, refreshStarred);
+    window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, refreshStarred);
     window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, refreshStarred);
+      window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, refreshStarred);
       window.removeEventListener("storage", onStorage);
     };
   }, []);
@@ -1369,12 +1372,13 @@ export default function LeftSidebar({
   return (
     <aside className="h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
-        <div className="flex min-w-0 items-center gap-2 px-4 pb-8 pt-7">
+        <div className="flex min-w-0 items-center gap-2 px-4 pb-7 pt-6">
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
-            <Image src={logoSrc} alt="LinkDrop" width={32} height={32} />
+            <Image src={logoSrc} alt="LinkDrop" width={31} height={31} className="block" />
           </Link>
           <ActiveWorkspacePill
             maxWidthClassName="max-w-[240px]"
+            textClassName="text-[11px]"
           />
         </div>
 

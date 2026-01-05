@@ -19,6 +19,7 @@
     "tests:agent:cli": "tsx tests/agent/agent.cli.ts",
     "tests:agent:vitest": "vitest run --config tests/agent/vitest.config.ts",
     "tests:upload:vitest": "vitest run --config tests/upload/vitest.config.ts",
+    "tests:credits:vitest": "vitest run --config tests/credits/vitest.config.ts",
     "tests:routes": "node scripts/tests-routes.mjs"
   },
   "dependencies": {

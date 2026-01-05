@@ -45,6 +45,11 @@ const shareViewSchema = new Schema(
 // Uniquely identify a "viewer" (botId) per shareId so we can count unique views.
 shareViewSchema.index({ shareId: 1, botIdHash: 1 }, { unique: true });
 
+// Support admin endpoints and rollups that sort/filter by recency.
+shareViewSchema.index({ updatedDate: -1 });
+shareViewSchema.index({ docId: 1, updatedDate: -1 });
+shareViewSchema.index({ docId: 1, createdDate: -1 });
+
 export type ShareView = InferSchemaType<typeof shareViewSchema>;
 
 export const ShareViewModel: Model<ShareView> =

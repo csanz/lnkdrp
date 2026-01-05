@@ -9,7 +9,9 @@ import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
+import DataTable from "@/components/ui/DataTable";
 import Input from "@/components/ui/Input";
+import Select from "@/components/ui/Select";
 import { fmtDate } from "@/lib/admin/format";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -258,8 +260,8 @@ export default function AdminDataUsersPage() {
               <div className="mt-1 text-sm text-[var(--muted)]">Select an org to view its users.</div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                className="w-[340px] max-w-full rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm text-[var(--fg)] disabled:opacity-60"
+              <Select
+                className="w-[340px] max-w-full disabled:opacity-60"
                 value={selectedOrgId}
                 disabled={orgsLoading || Boolean(orgsError)}
                 onChange={(e) => setSelectedOrgId(e.target.value)}
@@ -273,7 +275,7 @@ export default function AdminDataUsersPage() {
                     </option>
                   );
                 })}
-              </select>
+              </Select>
               <Button
                 variant="outline"
                 className="bg-[var(--panel-2)]"
@@ -296,45 +298,41 @@ export default function AdminDataUsersPage() {
           ) : membersLoading ? (
             <div className="mt-4 text-sm text-[var(--muted)]">Loading members…</div>
           ) : (
-            <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel-2)]">
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-                    <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                      <th className="px-4 py-3">Email</th>
-                      <th className="px-4 py-3">Name</th>
-                      <th className="px-4 py-3">Member role</th>
-                      <th className="px-4 py-3">User role</th>
-                      <th className="px-4 py-3">Active</th>
-                      <th className="px-4 py-3">Temp</th>
-                      <th className="px-4 py-3">Last login</th>
-                      <th className="px-4 py-3">User ID</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border)]">
-                    {members.map((m) => (
-                      <tr key={m.userId}>
-                        <td className="px-4 py-3">{m.email ?? "—"}</td>
-                        <td className="px-4 py-3">{m.name ?? "—"}</td>
-                        <td className="px-4 py-3">{m.memberRole ?? "—"}</td>
-                        <td className="px-4 py-3">{m.userRole ?? "—"}</td>
-                        <td className="px-4 py-3">{m.isActive ? "Yes" : "No"}</td>
-                        <td className="px-4 py-3">{m.isTemp ? "Yes" : "No"}</td>
-                        <td className="px-4 py-3">{fmtDate(m.lastLoginAt) || "—"}</td>
-                        <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{m.userId}</td>
-                      </tr>
-                    ))}
-                    {members.length === 0 ? (
-                      <tr>
-                        <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
-                          No members.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <DataTable containerClassName="mt-4 rounded-xl bg-[var(--panel-2)]">
+              <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
+                <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Name</th>
+                  <th className="px-4 py-3">Member role</th>
+                  <th className="px-4 py-3">User role</th>
+                  <th className="px-4 py-3">Active</th>
+                  <th className="px-4 py-3">Temp</th>
+                  <th className="px-4 py-3">Last login</th>
+                  <th className="px-4 py-3">User ID</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {members.map((m) => (
+                  <tr key={m.userId}>
+                    <td className="px-4 py-3">{m.email ?? "—"}</td>
+                    <td className="px-4 py-3">{m.name ?? "—"}</td>
+                    <td className="px-4 py-3">{m.memberRole ?? "—"}</td>
+                    <td className="px-4 py-3">{m.userRole ?? "—"}</td>
+                    <td className="px-4 py-3">{m.isActive ? "Yes" : "No"}</td>
+                    <td className="px-4 py-3">{m.isTemp ? "Yes" : "No"}</td>
+                    <td className="px-4 py-3">{fmtDate(m.lastLoginAt) || "—"}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{m.userId}</td>
+                  </tr>
+                ))}
+                {members.length === 0 ? (
+                  <tr>
+                    <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
+                      No members.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </DataTable>
           )}
         </div>
 
@@ -354,71 +352,67 @@ export default function AdminDataUsersPage() {
             Loading…
           </div>
         ) : (
-          <div className="mt-6 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-sm">
-                <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                    <th className="px-4 py-3">Email</th>
-                    <th className="px-4 py-3">Name</th>
-                    <th className="px-4 py-3">Role</th>
-                    <th className="px-4 py-3">Plan</th>
-                    <th className="px-4 py-3">Active</th>
-                    <th className="px-4 py-3">Temp</th>
-                    <th className="px-4 py-3">Created</th>
-                    <th className="px-4 py-3">Last login</th>
-                    <th className="px-4 py-3">ID</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {items.map((u) => (
-                    <tr key={u.id}>
-                      <td className="px-4 py-3">{u.email ?? "—"}</td>
-                      <td className="px-4 py-3">{u.name ?? "—"}</td>
-                      <td className="px-4 py-3">{u.role ?? "—"}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded-full bg-[var(--panel-hover)] px-2 py-1 text-xs font-semibold text-[var(--fg)]">
-                            {(u.plan ?? "free").toLowerCase() === "pro" ? "Pro" : "Free"}
-                          </span>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
-                            disabled={Boolean(planBusyUserId) && planBusyUserId !== u.id}
-                            onClick={() => void setUserPlan(u.id, "pro")}
-                            title="Admin override: set plan to Pro"
-                          >
-                            {planBusyUserId === u.id ? "Saving…" : "Set Pro"}
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
-                            disabled={Boolean(planBusyUserId) && planBusyUserId !== u.id}
-                            onClick={() => void setUserPlan(u.id, "free")}
-                            title="Admin override: set plan to Free"
-                          >
-                            {planBusyUserId === u.id ? "Saving…" : "Set Free"}
-                          </button>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">{u.isActive ? "Yes" : "No"}</td>
-                      <td className="px-4 py-3">{u.isTemp ? "Yes" : "No"}</td>
-                      <td className="px-4 py-3">{fmtDate(u.createdAt) || "—"}</td>
-                      <td className="px-4 py-3">{fmtDate(u.lastLoginAt) || "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
-                    </tr>
-                  ))}
-                  {items.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
-                        No users.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DataTable containerClassName="mt-6">
+            <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
+              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                <th className="px-4 py-3">Email</th>
+                <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">Role</th>
+                <th className="px-4 py-3">Plan</th>
+                <th className="px-4 py-3">Active</th>
+                <th className="px-4 py-3">Temp</th>
+                <th className="px-4 py-3">Created</th>
+                <th className="px-4 py-3">Last login</th>
+                <th className="px-4 py-3">ID</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {items.map((u) => (
+                <tr key={u.id}>
+                  <td className="px-4 py-3">{u.email ?? "—"}</td>
+                  <td className="px-4 py-3">{u.name ?? "—"}</td>
+                  <td className="px-4 py-3">{u.role ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-[var(--panel-hover)] px-2 py-1 text-xs font-semibold text-[var(--fg)]">
+                        {(u.plan ?? "free").toLowerCase() === "pro" ? "Pro" : "Free"}
+                      </span>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
+                        disabled={Boolean(planBusyUserId) && planBusyUserId !== u.id}
+                        onClick={() => void setUserPlan(u.id, "pro")}
+                        title="Admin override: set plan to Pro"
+                      >
+                        {planBusyUserId === u.id ? "Saving…" : "Set Pro"}
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
+                        disabled={Boolean(planBusyUserId) && planBusyUserId !== u.id}
+                        onClick={() => void setUserPlan(u.id, "free")}
+                        title="Admin override: set plan to Free"
+                      >
+                        {planBusyUserId === u.id ? "Saving…" : "Set Free"}
+                      </button>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">{u.isActive ? "Yes" : "No"}</td>
+                  <td className="px-4 py-3">{u.isTemp ? "Yes" : "No"}</td>
+                  <td className="px-4 py-3">{fmtDate(u.createdAt) || "—"}</td>
+                  <td className="px-4 py-3">{fmtDate(u.lastLoginAt) || "—"}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
+                </tr>
+              ))}
+              {items.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
+                    No users.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </DataTable>
         )}
       </div>
     </div>

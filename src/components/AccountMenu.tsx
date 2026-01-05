@@ -207,8 +207,8 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           role="menu"
           className={
             isTopbar
-              ? "absolute right-0 top-[calc(100%+10px)] w-[min(240px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]"
-              : "absolute bottom-[calc(100%+18px)] left-0 w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]"
+              ? "absolute right-0 top-[calc(100%+10px)] z-[200] w-[min(240px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]"
+              : "absolute bottom-[calc(100%+18px)] left-0 z-[200] w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]"
           }
         >
           <div className="px-3 py-2">
@@ -615,8 +615,8 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           role="menu"
           className={
             isTopbar
-              ? "absolute right-0 top-[calc(100%+10px)] w-[min(240px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]"
-              : "absolute bottom-[calc(100%+18px)] left-0 w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]"
+              ? "absolute right-0 top-[calc(100%+10px)] z-[200] w-[min(240px,calc(100vw-24px))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]"
+              : "absolute bottom-[calc(100%+18px)] left-0 z-[200] w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]"
           }
         >
           {/* Workspace quick switch (keep lightweight; full management lives in Dashboard). */}

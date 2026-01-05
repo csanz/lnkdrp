@@ -35,6 +35,7 @@ export default function AdminLeftSidebar() {
       { label: "Users", items: [{ label: "Invites", href: "/a/invitecodes", exact: true }] },
       { label: "Metrics", items: [{ label: "Share views", href: "/a/shareviews", exact: false }] },
       { label: "AI", items: [{ label: "Runs", href: "/a/ai-runs", exact: true }] },
+      { label: "Billing", items: [{ label: "Credits", href: "/a/credits", exact: true }] },
       {
         label: "Data",
         items: [
@@ -70,15 +71,15 @@ export default function AdminLeftSidebar() {
           </Link>
         </div>
 
-        <nav className="mt-1 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-3">
-          <div className="grid gap-3">
+        <nav className="mt-1 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4">
+          <div className="grid gap-4">
             {sections.map((section) => (
               <section key={section.label}>
                 <div className="px-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
                   {section.label}
                 </div>
                 {section.items.length ? (
-                  <ul className="mt-1 space-y-0">
+                  <ul className="mt-1 space-y-1">
                     {section.items.map((item) => {
                       const active = isActive(item);
                       return (
@@ -86,7 +87,7 @@ export default function AdminLeftSidebar() {
                           <Link
                             href={item.href}
                             className={[
-                              "block rounded-lg py-1 pl-5 pr-2 text-left text-[13px] font-medium transition-colors",
+                              "block rounded-lg py-1.5 pl-5 pr-2 text-left text-[13px] font-medium transition-colors",
                               active
                                 ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
                                 : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]",

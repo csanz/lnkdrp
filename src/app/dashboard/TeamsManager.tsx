@@ -159,8 +159,29 @@ export default function TeamsManager() {
     return found?.role ?? null;
   }, [activeOrgId, stableOrgs]);
 
-  const canAdminTeams = activeOrgRole === "owner" || activeOrgRole === "admin";
+  const isPersonalOrg = currentOrg?.type === "personal";
+  // Personal workspaces are single-user; teams + invites are not allowed.
+  const canAdminTeams = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
   const canInvite = canAdminTeams;
+
+  const setPersonalMembers = useCallback(() => {
+    const email = (session?.user?.email ?? "").trim() || null;
+    const name = (session?.user?.name ?? "").trim() || null;
+    setMembersError(null);
+    setMembersBusy(false);
+    setMembers([
+      {
+        userId: "me",
+        memberRole: "owner",
+        email,
+        name,
+        joinedAt: null,
+        lastLoginAt: null,
+        isTemp: false,
+        isActive: true,
+      },
+    ]);
+  }, [session?.user?.email, session?.user?.name]);
 
   useEffect(() => {
     if (!session?.user) return;
@@ -221,6 +242,10 @@ export default function TeamsManager() {
   const loadMembers = useCallback(async () => {
     if (!session?.user) return;
     if (!activeOrgId) return;
+    if (isPersonalOrg) {
+      setPersonalMembers();
+      return;
+    }
     if (!canAdminTeams) return;
     if (navLocked) return;
 
@@ -237,7 +262,7 @@ export default function TeamsManager() {
     } finally {
       setMembersBusy(false);
     }
-  }, [session?.user, activeOrgId, canAdminTeams, navLocked]);
+  }, [session?.user, activeOrgId, isPersonalOrg, canAdminTeams, navLocked, setPersonalMembers]);
 
   const loadExistingInvites = useCallback(
     async (opts?: { force?: boolean }) => {
@@ -265,6 +290,12 @@ export default function TeamsManager() {
   );
 
   useEffect(() => {
+    // Important: when switching workspaces, clear the previous workspace's rows immediately
+    // so we never show "members/invites from workspace A" under "active workspace B".
+    setMembersError(null);
+    setMembers([]);
+    setExistingInvitesError(null);
+    setExistingInvites([]);
     setInviteError(null);
     setInviteLink("");
     setInviteEmailError(null);
@@ -272,9 +303,9 @@ export default function TeamsManager() {
     if (tab === "members") void loadMembers();
     if (tab === "invites") {
       setInviteFilter("not_used");
-      void loadExistingInvites();
+      if (!isPersonalOrg) void loadExistingInvites();
     }
-  }, [tab, loadMembers, loadExistingInvites]);
+  }, [tab, loadMembers, loadExistingInvites, isPersonalOrg]);
 
   const inviteCounts = useMemo(() => {
     const now = Date.now();
@@ -460,13 +491,50 @@ export default function TeamsManager() {
 
       {currentOrg?.type === "personal" ? (
         <div className="rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
-          Teams are only available for org workspaces. Switch to an org workspace to manage members and invites.
+          Personal workspaces are single-user (no members to manage, no invites). Switch to an org workspace to manage members and invites.
         </div>
       ) : null}
 
       {tab === "members" ? (
         <div className="space-y-3">
-          {!canAdminTeams ? (
+          {isPersonalOrg ? (
+            <div className="overflow-hidden rounded-xl bg-[var(--panel)]">
+              <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-4">
+                <div className="text-[12px] font-semibold text-[var(--muted-2)]">
+                  {(currentOrg?.name ?? "").trim() ? `${String(currentOrg?.name).trim()} Members` : "Members"}
+                </div>
+              </div>
+              <div className="h-px bg-[var(--border)]" />
+              {members.length ? (
+                <div className="divide-y divide-[var(--border)]">
+                  {members.map((m) => {
+                    const label = (m.name ?? "").trim() || (m.email ?? "").trim() || "You";
+                    return (
+                      <div key={m.userId} className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--panel-2)] text-[11px] font-semibold text-[var(--fg)]">
+                            {initials(label)}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{label}</div>
+                            <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--muted-2)]">
+                              <span>{m.email ?? "—"}</span>
+                              <span>{m.memberRole ?? "owner"}</span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="shrink-0">
+                          <span className="text-[12px] text-[var(--muted-2)]">You</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">—</div>
+              )}
+            </div>
+          ) : !canAdminTeams ? (
             <div className="rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
               You don’t have permission to view members in this workspace.
             </div>
@@ -541,211 +609,219 @@ export default function TeamsManager() {
       ) : null}
 
       {tab === "invites" ? (
-        <div className="space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0">
-              <div className="text-[13px] font-semibold text-[var(--fg)]">Invite links</div>
-              <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-                Invite someone to the active workspace. Links expire after 14 days.
-              </div>
+        isPersonalOrg ? (
+          <div className="space-y-4">
+            <div className="rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
+              Personal workspaces can’t generate invite links. Switch to an org workspace to invite members.
             </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-[13px] font-semibold text-[var(--fg)]">Invite links</div>
+                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
+                  Invite someone to the active workspace. Links expire after 14 days.
+                </div>
+              </div>
+
+              {canInvite ? (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                  <label className="sr-only" htmlFor="invite-role">
+                    Invite role
+                  </label>
+                  <select
+                    id="invite-role"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)] sm:w-[180px]"
+                    value={inviteRole}
+                    onChange={(e) => setInviteRole(e.target.value as "member" | "viewer" | "admin")}
+                    disabled={inviteBusy || inviteEmailBusy}
+                  >
+                    <option value="member">Member</option>
+                    <option value="viewer">Viewer</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
+                    disabled={inviteBusy || inviteEmailBusy}
+                    onClick={() => void createInvite()}
+                  >
+                    {inviteBusy ? "Generating…" : inviteLink ? "Generate new link" : "Generate link"}
+                  </button>
+                </div>
+              ) : (
+                <div className="text-[12px] text-[var(--muted-2)]">Only owners/admins can invite members.</div>
+              )}
+            </div>
+
+            {inviteError ? <div className="text-[12px] text-red-500">{inviteError}</div> : null}
 
             {canInvite ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                <label className="sr-only" htmlFor="invite-role">
-                  Invite role
-                </label>
-                <select
-                  id="invite-role"
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)] sm:w-[180px]"
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as "member" | "viewer" | "admin")}
-                  disabled={inviteBusy || inviteEmailBusy}
-                >
-                  <option value="member">Member</option>
-                  <option value="viewer">Viewer</option>
-                  <option value="admin">Admin</option>
-                </select>
-                <button
-                  type="button"
-                  className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
-                  disabled={inviteBusy || inviteEmailBusy}
-                  onClick={() => void createInvite()}
-                >
-                  {inviteBusy ? "Generating…" : inviteLink ? "Generate new link" : "Generate link"}
-                </button>
+              <div className="rounded-xl bg-[var(--panel-2)] p-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                  <div>
+                    <label className="block text-[12px] font-semibold text-[var(--muted-2)]">Invite by email</label>
+                    <input
+                      className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)]"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder="name@company.com"
+                      disabled={inviteEmailBusy}
+                    />
+                    {inviteEmailError ? <div className="mt-1 text-[12px] text-red-500">{inviteEmailError}</div> : null}
+                    {inviteEmailSentTo ? (
+                      <div className="mt-1 text-[12px] text-[var(--muted-2)]">Invite email sent to {inviteEmailSentTo}.</div>
+                    ) : null}
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                    disabled={inviteEmailBusy || !isValidEmail(inviteEmail)}
+                    onClick={() => void sendInviteEmail()}
+                  >
+                    {inviteEmailBusy ? "Sending…" : "Send invite"}
+                  </button>
+                </div>
               </div>
-            ) : (
-              <div className="text-[12px] text-[var(--muted-2)]">Only owners/admins can invite members.</div>
-            )}
-          </div>
+            ) : null}
 
-          {inviteError ? <div className="text-[12px] text-red-500">{inviteError}</div> : null}
-
-          {canInvite ? (
-            <div className="rounded-xl bg-[var(--panel-2)] p-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-                <div>
-                  <label className="block text-[12px] font-semibold text-[var(--muted-2)]">Invite by email</label>
+            {inviteLink ? (
+              <div className="rounded-xl bg-[var(--panel-2)] p-3">
+                <div className="min-w-0">
+                  <div className="text-[12px] font-semibold text-[var(--fg)]">
+                    {inviteEmailSentTo ? `Invite link (emailed to ${inviteEmailSentTo})` : "New invite link"}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-[var(--muted-2)]" aria-live="polite">
+                    {inviteLinkCopied ? "Copied." : "Select to copy. Anyone with the link can join until it expires."}
+                  </div>
+                </div>
+                <div className="mt-2">
                   <input
-                    className="mt-1 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)]"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="name@company.com"
-                    disabled={inviteEmailBusy}
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)]"
+                    value={inviteLink}
+                    readOnly
+                    onFocus={(e) => e.currentTarget.select()}
                   />
-                  {inviteEmailError ? <div className="mt-1 text-[12px] text-red-500">{inviteEmailError}</div> : null}
-                  {inviteEmailSentTo ? (
-                    <div className="mt-1 text-[12px] text-[var(--muted-2)]">Invite email sent to {inviteEmailSentTo}.</div>
-                  ) : null}
-                </div>
-                <button
-                  type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                  disabled={inviteEmailBusy || !isValidEmail(inviteEmail)}
-                  onClick={() => void sendInviteEmail()}
-                >
-                  {inviteEmailBusy ? "Sending…" : "Send invite"}
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {inviteLink ? (
-            <div className="rounded-xl bg-[var(--panel-2)] p-3">
-              <div className="min-w-0">
-                <div className="text-[12px] font-semibold text-[var(--fg)]">
-                  {inviteEmailSentTo ? `Invite link (emailed to ${inviteEmailSentTo})` : "New invite link"}
-                </div>
-                <div className="mt-0.5 text-[11px] text-[var(--muted-2)]" aria-live="polite">
-                  {inviteLinkCopied ? "Copied." : "Select to copy. Anyone with the link can join until it expires."}
                 </div>
               </div>
-              <div className="mt-2">
-                <input
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)]"
-                  value={inviteLink}
-                  readOnly
-                  onFocus={(e) => e.currentTarget.select()}
-                />
+            ) : null}
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-1">
+                {(
+                  [
+                    ["not_used", `Not used (${inviteCounts.notUsed})`],
+                    ["used", `Used (${inviteCounts.used})`],
+                    ["expired", `Expired (${inviteCounts.expired})`],
+                    ["all", `All (${inviteCounts.all})`],
+                  ] as const
+                ).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    className={[
+                      "rounded-lg px-2 py-1 text-[12px] font-semibold",
+                      inviteFilter === k
+                        ? "bg-[var(--panel-hover)] text-[var(--fg)]"
+                        : "text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                    ].join(" ")}
+                    onClick={() => setInviteFilter(k)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-            </div>
-          ) : null}
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-1">
-              {(
-                [
-                  ["not_used", `Not used (${inviteCounts.notUsed})`],
-                  ["used", `Used (${inviteCounts.used})`],
-                  ["expired", `Expired (${inviteCounts.expired})`],
-                  ["all", `All (${inviteCounts.all})`],
-                ] as const
-              ).map(([k, label]) => (
-                <button
-                  key={k}
-                  type="button"
-                  className={[
-                    "rounded-lg px-2 py-1 text-[12px] font-semibold",
-                    inviteFilter === k
-                      ? "bg-[var(--panel-hover)] text-[var(--fg)]"
-                      : "text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                  ].join(" ")}
-                  onClick={() => setInviteFilter(k)}
-                >
-                  {label}
-                </button>
-              ))}
+              <button
+                type="button"
+                className="rounded-lg px-2 py-1 text-[12px] text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                disabled={existingInvitesBusy || !canInvite || !activeOrgId}
+                onClick={() => void loadExistingInvites({ force: true })}
+              >
+                {existingInvitesBusy ? "Refreshing…" : "Refresh"}
+              </button>
             </div>
 
-            <button
-              type="button"
-              className="rounded-lg px-2 py-1 text-[12px] text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-              disabled={existingInvitesBusy || !canInvite || !activeOrgId}
-              onClick={() => void loadExistingInvites({ force: true })}
-            >
-              {existingInvitesBusy ? "Refreshing…" : "Refresh"}
-            </button>
-          </div>
+            {existingInvitesError ? <div className="text-[12px] text-red-500">{existingInvitesError}</div> : null}
 
-          {existingInvitesError ? <div className="text-[12px] text-red-500">{existingInvitesError}</div> : null}
+            <div className="overflow-hidden rounded-xl bg-[var(--panel)]">
+              <div className="grid grid-cols-[1fr_90px_90px_90px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
+                <div>Link</div>
+                <div>Role</div>
+                <div>Status</div>
+                <div>Expires</div>
+              </div>
+              <div className="h-px bg-[var(--border)]" />
 
-          <div className="overflow-hidden rounded-xl bg-[var(--panel)]">
-            <div className="grid grid-cols-[1fr_90px_90px_90px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
-              <div>Link</div>
-              <div>Role</div>
-              <div>Status</div>
-              <div>Expires</div>
-            </div>
-            <div className="h-px bg-[var(--border)]" />
-
-            {existingInvitesBusy ? (
-              <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
-            ) : filteredInvites.length ? (
-              <div className="max-h-[420px] overflow-auto">
-                <div className="divide-y divide-[var(--border)]">
-                  {filteredInvites.map((inv, idx) => {
-                    const url = typeof inv.inviteUrl === "string" ? inv.inviteUrl : "";
-                    const email = typeof inv.email === "string" ? inv.email : "";
-                    const redeemedByLabel = (() => {
-                      const rb = inv.redeemedBy;
-                      if (!rb) return "";
-                      const name = (rb.name ?? "").trim();
-                      const em = (rb.email ?? "").trim();
-                      return name || em;
-                    })();
-                    const { status, expiresLabel } = inviteRowMeta({
-                      expiresAt: inv.expiresAt,
-                      redeemedAt: inv.redeemedAt,
-                    });
-                    return (
-                      <div
-                        key={`${inv.id ?? inv.createdDate ?? "x"}:${idx}`}
-                        className="grid grid-cols-[1fr_90px_90px_90px] items-center gap-3 px-3 py-2 text-[12px] text-[var(--fg)] hover:bg-[var(--panel-hover)] sm:px-4"
-                      >
-                        <div className="min-w-0">
-                          {email ? (
-                            <div className="truncate text-[12px] font-semibold text-[var(--fg)]" title={email}>
-                              {email}
-                            </div>
-                          ) : null}
-                          {status === "Used" && redeemedByLabel ? (
-                            <div className="truncate text-[11px] text-[var(--muted-2)]" title={redeemedByLabel}>
-                              Used by {redeemedByLabel}
-                            </div>
-                          ) : null}
-                          {url ? (
-                            <button
-                              type="button"
-                              className="w-full truncate text-left text-[12px] text-[var(--muted-2)] hover:text-[var(--fg)]"
-                              title={url}
-                              onClick={() => void navigator.clipboard?.writeText?.(url)}
-                            >
-                              {url}
-                            </button>
-                          ) : (
-                            <div className="truncate text-[12px] text-[var(--muted-2)]">Legacy invite (no link saved)</div>
-                          )}
+              {existingInvitesBusy ? (
+                <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
+              ) : filteredInvites.length ? (
+                <div className="max-h-[420px] overflow-auto">
+                  <div className="divide-y divide-[var(--border)]">
+                    {filteredInvites.map((inv, idx) => {
+                      const url = typeof inv.inviteUrl === "string" ? inv.inviteUrl : "";
+                      const email = typeof inv.email === "string" ? inv.email : "";
+                      const redeemedByLabel = (() => {
+                        const rb = inv.redeemedBy;
+                        if (!rb) return "";
+                        const name = (rb.name ?? "").trim();
+                        const em = (rb.email ?? "").trim();
+                        return name || em;
+                      })();
+                      const { status, expiresLabel } = inviteRowMeta({
+                        expiresAt: inv.expiresAt,
+                        redeemedAt: inv.redeemedAt,
+                      });
+                      return (
+                        <div
+                          key={`${inv.id ?? inv.createdDate ?? "x"}:${idx}`}
+                          className="grid grid-cols-[1fr_90px_90px_90px] items-center gap-3 px-3 py-2 text-[12px] text-[var(--fg)] hover:bg-[var(--panel-hover)] sm:px-4"
+                        >
+                          <div className="min-w-0">
+                            {email ? (
+                              <div className="truncate text-[12px] font-semibold text-[var(--fg)]" title={email}>
+                                {email}
+                              </div>
+                            ) : null}
+                            {status === "Used" && redeemedByLabel ? (
+                              <div className="truncate text-[11px] text-[var(--muted-2)]" title={redeemedByLabel}>
+                                Used by {redeemedByLabel}
+                              </div>
+                            ) : null}
+                            {url ? (
+                              <button
+                                type="button"
+                                className="w-full truncate text-left text-[12px] text-[var(--muted-2)] hover:text-[var(--fg)]"
+                                title={url}
+                                onClick={() => void navigator.clipboard?.writeText?.(url)}
+                              >
+                                {url}
+                              </button>
+                            ) : (
+                              <div className="truncate text-[12px] text-[var(--muted-2)]">Legacy invite (no link saved)</div>
+                            )}
+                          </div>
+                          <div className="truncate text-[12px] text-[var(--fg)]">{inv.role || "member"}</div>
+                          <div>
+                            <span className="inline-flex items-center rounded-full bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]">
+                              {status}
+                            </span>
+                          </div>
+                          <div className="text-[12px] text-[var(--muted-2)]">{expiresLabel}</div>
                         </div>
-                        <div className="truncate text-[12px] text-[var(--fg)]">{inv.role || "member"}</div>
-                        <div>
-                          <span className="inline-flex items-center rounded-full bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]">
-                            {status}
-                          </span>
-                        </div>
-                        <div className="text-[12px] text-[var(--muted-2)]">{expiresLabel}</div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">
-                {inviteCounts.all === 0 ? "No invite links yet." : "No invite links in this view."}
-              </div>
-            )}
+              ) : (
+                <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">
+                  {inviteCounts.all === 0 ? "No invite links yet." : "No invite links in this view."}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )
       ) : null}
     </div>
   );

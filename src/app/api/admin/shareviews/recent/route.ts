@@ -10,6 +10,7 @@ import { resolveActor } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { UserModel } from "@/lib/models/User";
+import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
 /**
@@ -62,34 +63,62 @@ function asPositiveInt(v: unknown): number | null {
 
 
 export async function GET(request: Request) {
-  const auth = await requireAdmin(request);
-  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
+  return withMongoRequestLogging(request, async () => {
+    const auth = await requireAdmin(request);
+    if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
-  const url = new URL(request.url);
-  const limit = asPositiveInt(url.searchParams.get("limit")) ?? 200;
+    const url = new URL(request.url);
+    const limit = asPositiveInt(url.searchParams.get("limit")) ?? 200;
 
-  await connectMongo();
+    await connectMongo();
 
-  const items = await ShareViewModel.find({})
-    .sort({ updatedDate: -1 })
-    .limit(Math.min(limit, 500))
-    .select({
-      shareId: 1,
-      docId: 1,
-      pagesSeen: 1,
-      downloads: 1,
-      downloadsByDay: 1,
-      createdDate: 1,
-      updatedDate: 1,
-      viewerUserId: 1,
-      viewerEmail: 1,
-      viewerIp: 1,
-    })
-    .populate({ path: "docId", select: { title: 1, shareId: 1 } })
-    .populate({ path: "viewerUserId", select: { email: 1, name: 1 } })
-    .lean();
+    const items = await ShareViewModel.aggregate([
+      { $sort: { updatedDate: -1 } },
+      { $limit: Math.min(limit, 500) },
+      {
+        $lookup: {
+          from: "docs",
+          localField: "docId",
+          foreignField: "_id",
+          as: "doc",
+        },
+      },
+      { $unwind: { path: "$doc", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "viewerUserId",
+          foreignField: "_id",
+          as: "viewerUser",
+        },
+      },
+      { $unwind: { path: "$viewerUser", preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          shareId: 1,
+          pagesSeen: 1,
+          downloads: 1,
+          downloadsByDay: 1,
+          createdDate: 1,
+          updatedDate: 1,
+          viewerEmail: 1,
+          viewerIp: 1,
+          docId: {
+            _id: "$doc._id",
+            title: "$doc.title",
+            shareId: "$doc.shareId",
+          },
+          viewerUserId: {
+            _id: "$viewerUser._id",
+            email: "$viewerUser.email",
+            name: "$viewerUser.name",
+          },
+        },
+      },
+    ]);
 
-  return NextResponse.json({ ok: true, items });
+    return NextResponse.json({ ok: true, items });
+  });
 }
 
 
