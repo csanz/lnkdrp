@@ -87,6 +87,16 @@ async function tryGetSessionClaims(
   }
 }
 
+/**
+ * Fast path: resolve authenticated user id (and JWT activeOrgId claim) without any DB access.
+ *
+ * Use this for auth-required endpoints that already validate permissions via their own
+ * org-scoped membership checks and don't need the full "active org" resolution logic.
+ */
+export async function tryResolveAuthUserId(request: Request): Promise<{ userId: string; activeOrgId: string | null } | null> {
+  return await tryGetSessionClaims(request);
+}
+
 /** Read a request header, tolerating different casing. */
 function header(request: Request, name: string): string | null {
   return request.headers.get(name) ?? request.headers.get(name.toLowerCase());

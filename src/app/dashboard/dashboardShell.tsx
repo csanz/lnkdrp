@@ -305,10 +305,10 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             <div className="flex items-center gap-2">
               <Link
                 href="/dashboard?tab=usage"
-                className={`inline-flex items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[11px] py-[7px] text-[11px] font-semibold leading-[16.5px] hover:bg-[var(--panel-hover)] ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
+                className={`inline-flex h-[34px] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
                 title="View usage"
               >
-                Credits:
+                AI Credits:
                 {credits ? (
                   creditsUnlimited ? (
                     <span className="inline-flex items-baseline">

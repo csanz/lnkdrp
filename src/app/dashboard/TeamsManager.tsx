@@ -200,7 +200,8 @@ export default function TeamsManager() {
 
     void (async () => {
       try {
-        const snap = await refreshOrgsCache({ userKey, force: true });
+        // Avoid forced refresh on Teams tab load; rely on cache TTL for snappy UX.
+        const snap = await refreshOrgsCache({ userKey, force: false });
         if (cancelled) return;
         if (snap) {
           setOrgs(Array.isArray(snap.orgs) ? (snap.orgs as OrgRow[]) : []);

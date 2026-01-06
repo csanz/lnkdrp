@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
-import { OrgModel, ensurePersonalOrgForUserId } from "@/lib/models/Org";
+import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor } from "@/lib/gating/actor";
@@ -44,8 +44,7 @@ export async function GET(request: Request) {
     await connectMongo();
     const userId = new Types.ObjectId(actor.userId);
 
-    // Ensure personal org exists so the list is always non-empty.
-    await ensurePersonalOrgForUserId({ userId });
+    // Note: `resolveActor()` already ensures the user has a personal org + membership (best-effort).
 
     const memberships = await OrgMembershipModel.find({ userId, isDeleted: { $ne: true } })
       .select({ orgId: 1, role: 1 })

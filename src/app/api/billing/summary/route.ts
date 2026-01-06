@@ -106,8 +106,9 @@ export async function GET(request: Request) {
       const onDemandMonthlyLimitCents = clampNonNegInt((bal as any)?.onDemandMonthlyLimitCents ?? 0);
       const onDemandEnabled = Boolean((bal as any)?.onDemandEnabled) && onDemandMonthlyLimitCents > 0;
 
-      // Derive on-demand dollars used this cycle from ledger.
+      // Derive on-demand dollars + credits used this cycle from the ledger in a single aggregate.
       let usedCentsThisCycle = 0;
+      let onDemandUsedCreditsThisCycle = 0;
       if (window.start && window.end) {
         const agg = await CreditLedgerModel.aggregate([
           {
@@ -117,7 +118,8 @@ export async function GET(request: Request) {
               status: { $in: ["charged", "refunded"] },
               createdDate: { $gte: window.start, $lt: window.end },
               // Only count Stripe-backed dollars when available; do not fabricate costs.
-              costUsdActual: { $ne: null },
+              // Also include on-demand credits to compute remaining headroom.
+              $or: [{ costUsdActual: { $ne: null } }, { creditsFromOnDemand: { $gt: 0 } }],
             },
           },
           {
@@ -141,15 +143,21 @@ export async function GET(request: Request) {
                   ],
                 },
               },
+              onDemandChargedCredits: {
+                $sum: {
+                  $cond: [{ $and: [{ $eq: ["$status", "charged"] }, { $gt: ["$creditsFromOnDemand", 0] }] }, "$creditsFromOnDemand", 0],
+                },
+              },
             },
           },
         ]);
 
         const chargedUsd = typeof (agg as any)?.[0]?.chargedUsd === "number" ? (agg as any)[0].chargedUsd : 0;
         const refundedUsd = typeof (agg as any)?.[0]?.refundedUsd === "number" ? (agg as any)[0].refundedUsd : 0;
-
         const usdNet = Math.max(0, chargedUsd - refundedUsd);
         usedCentsThisCycle = Math.max(0, Math.round(usdNet * 100));
+
+        onDemandUsedCreditsThisCycle = clampNonNegInt((agg as any)?.[0]?.onDemandChargedCredits ?? 0);
       }
 
       const includedRemaining = clampNonNegInt((bal as any)?.subscriptionCreditsRemaining ?? 0);
@@ -157,22 +165,7 @@ export async function GET(request: Request) {
       const trialRemaining = clampNonNegInt((bal as any)?.trialCreditsRemaining ?? 0);
 
       // On-demand credits headroom is credits-first; compute from on-demand credits used, not invoice dollars.
-      let onDemandUsedCreditsThisCycle = 0;
-      if (onDemandEnabled && window.start && window.end) {
-        const agg = await CreditLedgerModel.aggregate([
-          {
-            $match: {
-              workspaceId: orgId,
-              eventType: "ai_run",
-              status: "charged",
-              createdDate: { $gte: window.start, $lt: window.end },
-              creditsFromOnDemand: { $gt: 0 },
-            },
-          },
-          { $group: { _id: null, sum: { $sum: "$creditsFromOnDemand" } } },
-        ]);
-        onDemandUsedCreditsThisCycle = clampNonNegInt((agg as any)?.[0]?.sum ?? 0);
-      }
+      if (!onDemandEnabled) onDemandUsedCreditsThisCycle = 0;
 
       const onDemandRemainingCreditsThisCycle = onDemandEnabled
         ? Math.max(0, Math.floor(onDemandMonthlyLimitCents / USD_CENTS_PER_CREDIT) - onDemandUsedCreditsThisCycle)

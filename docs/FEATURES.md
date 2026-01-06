@@ -245,7 +245,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Project CRUD**:
   - `/api/projects` (list/create) and `/api/projects/:projectSlug` (update/delete).
 - **Create from left sidebar**:
-  - The left sidebar **Projects** section includes a **+** icon to create a new project without leaving the current page.
+  - The left sidebar **Projects** section includes a **New project** row to create a new project without leaving the current page.
 - **List docs for a project**:
   - `/api/projects/:projectSlug/docs`.
 - **Project page**:

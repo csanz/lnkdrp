@@ -41,6 +41,16 @@ function normalizeMonth(raw: string | null): string | null {
   return v;
 }
 
+function monthRangeUtc(month: string): { gte: number; lt: number } | null {
+  const m = normalizeMonth(month);
+  if (!m) return null;
+  const [yy, mm] = m.split("-").map((x) => Number(x));
+  if (!Number.isFinite(yy) || !Number.isFinite(mm) || mm < 1 || mm > 12) return null;
+  const start = Date.UTC(yy, mm - 1, 1, 0, 0, 0, 0);
+  const end = Date.UTC(yy, mm, 1, 0, 0, 0, 0);
+  return { gte: Math.floor(start / 1000), lt: Math.floor(end / 1000) };
+}
+
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
     const actor = await resolveActor(request);
@@ -68,7 +78,14 @@ export async function GET(request: Request) {
       }
 
       const stripe = new Stripe(mustGetEnv("STRIPE_SECRET_KEY"));
-      const list = await stripe.invoices.list({ customer: stripeCustomerId, limit: 100 });
+      // If a month is requested, ask Stripe for that month only (dramatically reduces data and latency).
+      // For the initial load (no month param), we still list recent invoices to populate the month selector.
+      const createdRange = monthParam ? monthRangeUtc(monthParam) : null;
+      const list = await stripe.invoices.list({
+        customer: stripeCustomerId,
+        limit: 100,
+        ...(createdRange ? { created: createdRange as any } : null),
+      });
       const invoices = Array.isArray(list?.data) ? list.data : [];
 
       const months = Array.from(

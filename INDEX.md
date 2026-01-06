@@ -784,6 +784,7 @@
 - `scripts/test-ai-extract.mjs`
 - `scripts/test-ai-extract.ts`
 - `scripts/test-vercel-blob.mjs`
+- `scripts/tests-benchmark.ts`
 - `src/app/(app)/doc/[docId]/ai/page.tsx`
 - `src/app/(app)/doc/[docId]/page.tsx`
 - `src/app/(app)/doc/[docId]/pageClient.tsx`

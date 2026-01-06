@@ -55,6 +55,33 @@ type BillingInvoices = {
   }>;
 };
 
+// Small in-memory cache to avoid re-fetching when navigating between dashboard tabs.
+// Billing is relatively expensive (Stripe + large ledger scans), so this keeps the UI snappy.
+const BILLING_CACHE_TTL_MS = 30_000;
+type BillingCache = {
+  at: number;
+  summary: BillingSummary | null;
+  usageByCycleStart: Record<string, BillingUsage>;
+  invoicesByMonth: Record<string, BillingInvoices>;
+};
+let billingCache: BillingCache | null = null;
+
+function billingCacheFresh(now = Date.now()): BillingCache | null {
+  if (!billingCache) return null;
+  if (now - billingCache.at > BILLING_CACHE_TTL_MS) return null;
+  return billingCache;
+}
+
+function writeBillingCache(update: Partial<BillingCache>) {
+  const prev = billingCache ?? { at: 0, summary: null, usageByCycleStart: {}, invoicesByMonth: {} };
+  billingCache = {
+    at: Date.now(),
+    summary: update.summary ?? prev.summary,
+    usageByCycleStart: update.usageByCycleStart ?? prev.usageByCycleStart,
+    invoicesByMonth: update.invoicesByMonth ?? prev.invoicesByMonth,
+  };
+}
+
 function SkeletonLines({ lines = 3 }: { lines?: number }) {
   return (
     <div className="grid gap-2" aria-hidden="true">
@@ -84,20 +111,29 @@ function CreditsInfo({ className }: { className?: string }) {
 }
 
 export default function BillingInvoicesTab() {
+  const cached = billingCacheFresh();
+
   const [summaryBusy, setSummaryBusy] = useState(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<BillingSummary | null>(null);
+  const [summary, setSummary] = useState<BillingSummary | null>(() => cached?.summary ?? null);
 
   const [usageBusy, setUsageBusy] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
-  const [usage, setUsage] = useState<BillingUsage | null>(null);
+  const [usage, setUsage] = useState<BillingUsage | null>(() => {
+    const start = cached?.summary?.cycle?.start;
+    if (!start) return null;
+    return cached?.usageByCycleStart?.[start] ?? null;
+  });
 
   const [invoicesBusy, setInvoicesBusy] = useState(false);
   const [invoicesError, setInvoicesError] = useState<string | null>(null);
-  const [invoices, setInvoices] = useState<BillingInvoices | null>(null);
+  const [invoices, setInvoices] = useState<BillingInvoices | null>(() => {
+    const key = cached?.invoicesByMonth?.["__default__"] ? "__default__" : "";
+    return key ? cached!.invoicesByMonth[key] : null;
+  });
 
-  const [cycleStartIso, setCycleStartIso] = useState<string | null>(null);
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [cycleStartIso, setCycleStartIso] = useState<string | null>(() => cached?.summary?.cycle?.start ?? null);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(() => cached?.invoicesByMonth?.["__default__"]?.selectedMonth ?? null);
   const [manageBusy, setManageBusy] = useState(false);
   const [manageError, setManageError] = useState<string | null>(null);
   const [creditsInfoOpen, setCreditsInfoOpen] = useState(false);
@@ -123,10 +159,19 @@ export default function BillingInvoicesTab() {
 
   useEffect(() => {
     let cancelled = false;
-    setSummaryBusy(true);
+    const snap = billingCacheFresh();
+    const hasCached = Boolean(snap?.summary);
+    setSummaryBusy(!hasCached);
     setSummaryError(null);
     void (async () => {
       try {
+        if (hasCached && snap?.summary) {
+          if (!cancelled) {
+            setSummary(snap.summary);
+            setCycleStartIso(snap.summary.cycle?.start ?? null);
+          }
+          return;
+        }
         const res = await fetch("/api/billing/summary", { method: "GET" });
         const json = (await res.json().catch(() => null)) as BillingSummary | { error?: string } | null;
         if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
@@ -135,6 +180,7 @@ export default function BillingInvoicesTab() {
           setSummary(json as BillingSummary);
           setCycleStartIso((json as any).cycle?.start ?? null);
         }
+        writeBillingCache({ summary: json as BillingSummary });
       } catch (e) {
         if (!cancelled) setSummaryError(e instanceof Error ? e.message : "Failed to load billing summary");
       } finally {
@@ -150,6 +196,14 @@ export default function BillingInvoicesTab() {
     let cancelled = false;
     const start = cycleStartIso;
     if (!start) return;
+    const snap = billingCacheFresh();
+    const cachedUsage = snap?.usageByCycleStart?.[start] ?? null;
+    if (cachedUsage) {
+      setUsageError(null);
+      setUsageBusy(false);
+      setUsage(cachedUsage);
+      return;
+    }
     setUsageBusy(true);
     setUsageError(null);
     void (async () => {
@@ -161,6 +215,9 @@ export default function BillingInvoicesTab() {
         if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
         if (!json || !(json as any).cycle) throw new Error("Invalid response");
         if (!cancelled) setUsage(json as BillingUsage);
+        writeBillingCache({
+          usageByCycleStart: { ...(billingCache?.usageByCycleStart ?? {}), [start]: json as BillingUsage },
+        });
       } catch (e) {
         if (!cancelled) setUsageError(e instanceof Error ? e.message : "Failed to load billing usage");
         if (!cancelled) setUsage(null);
@@ -175,6 +232,21 @@ export default function BillingInvoicesTab() {
 
   useEffect(() => {
     let cancelled = false;
+    // Prevent a redundant second request on initial load:
+    // first request returns `selectedMonth`, we set it, which re-triggers the effect.
+    if (invoices && selectedMonth && invoices.selectedMonth === selectedMonth) return;
+
+    const snap = billingCacheFresh();
+    const cacheKey = selectedMonth ? selectedMonth : "__default__";
+    const cachedInvoices = snap?.invoicesByMonth?.[cacheKey] ?? null;
+    if (cachedInvoices) {
+      setInvoicesError(null);
+      setInvoicesBusy(false);
+      setInvoices(cachedInvoices);
+      if (!selectedMonth) setSelectedMonth(cachedInvoices.selectedMonth ?? null);
+      return;
+    }
+
     setInvoicesBusy(true);
     setInvoicesError(null);
     void (async () => {
@@ -189,6 +261,14 @@ export default function BillingInvoicesTab() {
           setInvoices(json as BillingInvoices);
           if (!selectedMonth) setSelectedMonth((json as any).selectedMonth ?? null);
         }
+        const monthKey = typeof (json as any)?.selectedMonth === "string" ? String((json as any).selectedMonth).trim() : "";
+        writeBillingCache({
+          invoicesByMonth: {
+            ...(billingCache?.invoicesByMonth ?? {}),
+            [cacheKey]: json as BillingInvoices,
+            ...(monthKey ? { [monthKey]: json as BillingInvoices } : null),
+          },
+        });
       } catch (e) {
         if (!cancelled) setInvoicesError(e instanceof Error ? e.message : "Failed to load invoices");
         if (!cancelled) setInvoices(null);
@@ -199,7 +279,8 @@ export default function BillingInvoicesTab() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMonth]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMonth, invoices]);
 
   async function openPortal() {
     setManageBusy(true);

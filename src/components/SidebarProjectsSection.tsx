@@ -4,9 +4,7 @@ import {
   EllipsisHorizontalIcon,
   FolderIcon,
   InboxArrowDownIcon,
-  MinusIcon,
   PlusIcon,
-  PlusSmallIcon,
 } from "@heroicons/react/24/outline";
 import type { Dispatch, SetStateAction } from "react";
 import IconButton from "@/components/ui/IconButton";
@@ -67,46 +65,32 @@ export default function SidebarProjectsSection({
 }) {
   return (
     <section>
-      <div className="group relative flex items-center gap-2 px-2 pr-20 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-        <span>Projects</span>
-        <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1">
-          <IconButton
-            ariaLabel="New project"
-            variant="ghost"
-            size="sm"
-            className={[
-              "rounded-md p-0.5 text-[var(--muted-2)]",
-              navLocked ? "cursor-not-allowed opacity-40" : "opacity-80 hover:opacity-100",
-            ].join(" ")}
-            onClick={() => {
-              if (navLocked) return;
-              onClickNewProject();
-            }}
-          >
-            <PlusIcon className="h-4 w-4" />
-          </IconButton>
-          <IconButton
-            ariaLabel={(projectsCollapsedLoaded ? projectsCollapsed : true) ? "Expand projects" : "Collapse projects"}
-            variant="ghost"
-            size="sm"
-            className={[
-              // Fixed-size square so the button doesn't "wiggle" when the icon glyph changes.
-              "h-7 w-7 rounded-md p-0 text-[var(--muted-2)]",
-              // Always visible (easy to lose under overlay scrollbars).
-              "opacity-100",
-            ].join(" ")}
-            onClick={() => {
-              setProjectsCollapsedLoaded(true);
-              setProjectsCollapsed((v) => !v);
-            }}
-          >
-            {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
-              <PlusIcon className="h-4 w-4" />
-            ) : (
-              <MinusIcon className="h-4 w-4" />
-            )}
-          </IconButton>
-        </div>
+      <div className="flex items-center gap-1.5 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+        <button
+          type="button"
+          className="rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
+          onClick={() => {
+            setProjectsCollapsedLoaded(true);
+            setProjectsCollapsed((v) => !v);
+          }}
+        >
+          Projects
+        </button>
+        <IconButton
+          ariaLabel={(projectsCollapsedLoaded ? projectsCollapsed : true) ? "Expand projects" : "Collapse projects"}
+          variant="ghost"
+          size="sm"
+          className={[
+            "h-6 w-6 rounded-md p-0 text-[var(--muted-2)]",
+            "opacity-100",
+          ].join(" ")}
+          onClick={() => {
+            setProjectsCollapsedLoaded(true);
+            setProjectsCollapsed((v) => !v);
+          }}
+        >
+          <StablePlusMinusIcon expanded={!(projectsCollapsedLoaded ? projectsCollapsed : true)} />
+        </IconButton>
       </div>
 
       {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
@@ -135,10 +119,30 @@ export default function SidebarProjectsSection({
         )
       ) : !projectsLoaded ? (
         <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
-      ) : !projectsForSidebar.length ? (
-        <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</div>
       ) : (
         <ul className="mt-2 space-y-0.5">
+          <li>
+            <button
+              type="button"
+              disabled={navLocked}
+              className={[
+                "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[13px] font-medium text-[var(--muted)]",
+                navLocked ? "cursor-not-allowed opacity-60" : "hover:bg-[var(--sidebar-hover)]",
+              ].join(" ")}
+              onClick={() => {
+                if (navLocked) return;
+                onClickNewProject();
+              }}
+            >
+              <PlusIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+              <span>New project</span>
+            </button>
+          </li>
+
+          {!projectsForSidebar.length ? (
+            <li className="px-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</li>
+          ) : null}
+
           {projectsForSidebar.map((p) => {
             const title = truncateEnd(p.name, 22);
             return (
@@ -226,6 +230,31 @@ export default function SidebarProjectsSection({
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * Stable centered +/- icon.
+ *
+ * Heroicons Plus/Minus can appear to "shift" slightly because their stroke extents differ.
+ * This icon keeps a consistent viewBox and toggles only the vertical stroke.
+ */
+function StablePlusMinusIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="h-4 w-4"
+    >
+      <path d="M6 12h12" />
+      {!expanded ? <path d="M12 6v12" /> : null}
+    </svg>
   );
 }
 

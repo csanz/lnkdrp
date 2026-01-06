@@ -90,28 +90,67 @@ export async function GET(request: Request) {
       const onDemandMonthlyLimitCents = clampNonNegInt((bal as any)?.onDemandMonthlyLimitCents ?? 0);
       const onDemandEnabled = Boolean((bal as any)?.onDemandEnabled) && onDemandMonthlyLimitCents > 0;
 
-      const ledgers = (await CreditLedgerModel.find({
-        workspaceId: orgId,
-        eventType: "ai_run",
-        status: { $in: ["charged", "refunded"] },
-        createdDate: { $gte: cycleStart, $lt: cycleEnd },
-      })
-        .select({
-          actionType: 1,
-          qualityTier: 1,
-          modelRoute: 1,
-          status: 1,
-          creditsCharged: 1,
-          creditsFromTrial: 1,
-          creditsFromSubscription: 1,
-          creditsFromPurchased: 1,
-          creditsFromOnDemand: 1,
-          costUsdActual: 1,
-        })
-        .lean()) as Array<Partial<BillingLedgerRow>> as unknown as BillingLedgerRow[];
+      // Speed: aggregate in MongoDB instead of fetching all per-run ledger rows.
+      // This keeps response time stable even when a workspace has many runs in a cycle.
+      const grouped = (await CreditLedgerModel.aggregate([
+        {
+          $match: {
+            workspaceId: orgId,
+            eventType: "ai_run",
+            status: { $in: ["charged", "refunded"] },
+            createdDate: { $gte: cycleStart, $lt: cycleEnd },
+          },
+        },
+        {
+          $group: {
+            _id: {
+              actionType: "$actionType",
+              qualityTier: "$qualityTier",
+              modelRoute: "$modelRoute",
+              status: "$status",
+            },
+            qty: { $sum: 1 },
+            creditsCharged: { $sum: "$creditsCharged" },
+            creditsFromTrial: { $sum: "$creditsFromTrial" },
+            creditsFromSubscription: { $sum: "$creditsFromSubscription" },
+            creditsFromPurchased: { $sum: "$creditsFromPurchased" },
+            creditsFromOnDemand: { $sum: "$creditsFromOnDemand" },
+            costUsdKnownSum: {
+              $sum: {
+                $cond: [{ $ne: ["$costUsdActual", null] }, "$costUsdActual", 0],
+              },
+            },
+            costUsdUnknownCount: {
+              $sum: {
+                $cond: [{ $eq: ["$costUsdActual", null] }, 1, 0],
+              },
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            actionType: "$_id.actionType",
+            qualityTier: "$_id.qualityTier",
+            modelRoute: "$_id.modelRoute",
+            status: "$_id.status",
+            qty: 1,
+            creditsCharged: 1,
+            creditsFromTrial: 1,
+            creditsFromSubscription: 1,
+            creditsFromPurchased: 1,
+            creditsFromOnDemand: 1,
+            // Preserve existing semantics: if any ledger row in this bucket has unknown cost,
+            // treat the whole bucket as unknown (the UI shows "Not available").
+            costUsdActual: {
+              $cond: [{ $gt: ["$costUsdUnknownCount", 0] }, null, "$costUsdKnownSum"],
+            },
+          },
+        },
+      ])) as Array<Partial<BillingLedgerRow>> as unknown as BillingLedgerRow[];
 
       const agg = aggregateBillingUsage({
-        ledgers: Array.isArray(ledgers) ? ledgers : [],
+        ledgers: Array.isArray(grouped) ? (grouped as BillingLedgerRow[]) : [],
         onDemandLimitCents: onDemandEnabled ? onDemandMonthlyLimitCents : 0,
       });
 

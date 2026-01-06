@@ -10,6 +10,13 @@ export type BillingLedgerRow = {
   qualityTier: "basic" | "standard" | "advanced";
   modelRoute: string | null;
   status: "charged" | "refunded";
+  /**
+   * Optional pre-aggregated count for this row.
+   *
+   * When present, aggregation will treat this row as representing `qty` ledger entries.
+   * When absent, defaults to 1 (normal per-ledger rows).
+   */
+  qty?: number;
   creditsCharged: number;
   creditsFromTrial: number;
   creditsFromSubscription: number;
@@ -91,6 +98,7 @@ export function aggregateBillingUsage(params: {
 
   for (const raw of params.ledgers) {
     const status = raw.status;
+    const qty = clampNonNegInt(raw.qty ?? 1);
 
     // Included usage (credits-first): charged only. (Refunds are handled as on-demand adjustments below.)
     if (status === "charged") {
@@ -123,7 +131,7 @@ export function aggregateBillingUsage(params: {
     bucket.credits += onDemandCredits;
     if (cents === null) bucket.unknownCost = true;
     else bucket.totalCents += cents;
-    bucket.qty += 1;
+    bucket.qty += qty;
     onDemandMap.set(key, bucket);
   }
 

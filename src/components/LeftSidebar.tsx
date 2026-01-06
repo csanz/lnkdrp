@@ -15,7 +15,6 @@ import {
   LightBulbIcon,
   MinusIcon,
   PlusIcon,
-  PlusSmallIcon,
   SparklesIcon,
   Square2StackIcon,
 } from "@heroicons/react/24/outline";
@@ -1436,7 +1435,7 @@ export default function LeftSidebar({
   return (
     <aside className="relative z-50 h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
-        <div className="flex min-w-0 items-center gap-2 px-4 pb-7 pt-6">
+        <div className="flex min-w-0 items-center gap-2 px-4 pb-9 pt-6">
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
             <Image src={logoSrc} alt="LinkDrop" width={31} height={31} className="block" />
           </Link>
@@ -1546,25 +1545,30 @@ export default function LeftSidebar({
         <nav
           // Force a stable scrollbar presence to avoid horizontal layout shift when sections collapse/expand.
           // (Some browsers ignore `scrollbar-gutter`, so `overflow-y-scroll` is the reliable backstop.)
-          className="mt-6 flex-1 overflow-y-scroll overflow-x-hidden pl-3 pr-6 pb-4"
+          className="mt-6 flex-1 overflow-y-scroll overflow-x-hidden pl-3 pr-12 pb-4"
           style={{ scrollbarGutter: "stable" }}
         >
           <div className="grid gap-5">
             <section>
-              <div className="group relative flex items-center gap-2 px-2 pr-9 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <span className="inline-flex items-center gap-1.5">
-                  <StarIcon className="h-3.5 w-3.5 text-amber-400" />
+              <div className="flex items-center gap-1.5 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
+                  onClick={() => {
+                    setStarredCollapsedLoaded(true);
+                    setStarredCollapsed((v) => !v);
+                  }}
+                >
+                  <StarIcon className="h-4 w-4 text-amber-400" />
                   <span>Starred</span>
-                </span>
-
+                </button>
                 <IconButton
                   ariaLabel={(starredCollapsedLoaded ? starredCollapsed : true) ? "Expand starred" : "Collapse starred"}
                   variant="ghost"
                   size="sm"
                   className={[
-                    // Fixed-size square so the button doesn't "wiggle" when the icon glyph changes.
-                    "absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md p-0 text-[var(--muted-2)]",
-                    // Always visible (easy to lose under overlay scrollbars).
+                    // Keep inline next to the title (avoids overlay scrollbar issues).
+                    "h-6 w-6 rounded-md p-0 text-[var(--muted-2)]",
                     "opacity-100",
                   ].join(" ")}
                   onClick={() => {
@@ -1572,11 +1576,7 @@ export default function LeftSidebar({
                     setStarredCollapsed((v) => !v);
                   }}
                 >
-                  {(starredCollapsedLoaded ? starredCollapsed : true) ? (
-                    <PlusIcon className="h-4 w-4" />
-                  ) : (
-                    <MinusIcon className="h-4 w-4" />
-                  )}
+                  <StablePlusMinusIcon expanded={!(starredCollapsedLoaded ? starredCollapsed : true)} />
                 </IconButton>
               </div>
 
@@ -1666,20 +1666,25 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="group relative flex items-center gap-2 px-2 pr-9 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <span className="inline-flex items-center gap-1.5">
-                  <InboxArrowDownIcon className="h-3.5 w-3.5" />
+              <div className="flex items-center gap-1.5 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
+                  onClick={() => {
+                    setRequestsCollapsedLoaded(true);
+                    setRequestsCollapsed((v) => !v);
+                  }}
+                >
+                  <InboxArrowDownIcon className="h-4 w-4" />
                   <span>Received</span>
-                </span>
-
+                </button>
                 <IconButton
                   ariaLabel={(requestsCollapsedLoaded ? requestsCollapsed : true) ? "Expand received" : "Collapse received"}
                   variant="ghost"
                   size="sm"
                   className={[
-                    // Fixed-size square so the button doesn't "wiggle" when the icon glyph changes.
-                    "absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md p-0 text-[var(--muted-2)]",
-                    // Always visible (easy to lose under overlay scrollbars).
+                    // Keep inline next to the title (avoids overlay scrollbar issues).
+                    "h-6 w-6 rounded-md p-0 text-[var(--muted-2)]",
                     "opacity-100",
                   ].join(" ")}
                   onClick={() => {
@@ -1687,11 +1692,7 @@ export default function LeftSidebar({
                     setRequestsCollapsed((v) => !v);
                   }}
                 >
-                  {(requestsCollapsedLoaded ? requestsCollapsed : true) ? (
-                    <PlusIcon className="h-4 w-4" />
-                  ) : (
-                    <MinusIcon className="h-4 w-4" />
-                  )}
+                  <StablePlusMinusIcon expanded={!(requestsCollapsedLoaded ? requestsCollapsed : true)} />
                 </IconButton>
               </div>
 
@@ -1852,16 +1853,24 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="group relative flex items-center gap-2 px-2 pr-9 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <span>Docs</span>
+              <div className="flex items-center gap-1.5 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+                <button
+                  type="button"
+                  className="rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
+                  onClick={() => {
+                    setDocsCollapsedLoaded(true);
+                    setDocsCollapsed((v) => !v);
+                  }}
+                >
+                  Docs
+                </button>
                 <IconButton
                   ariaLabel={(docsCollapsedLoaded ? docsCollapsed : true) ? "Expand docs" : "Collapse docs"}
                   variant="ghost"
                   size="sm"
                   className={[
-                    // Fixed-size square so the button doesn't "wiggle" when the icon glyph changes.
-                    "absolute right-2 top-1/2 h-7 w-7 -translate-y-1/2 rounded-md p-0 text-[var(--muted-2)]",
-                    // Always visible (easy to lose under overlay scrollbars).
+                    // Keep this control right next to the title so overlay scrollbars can't cover it.
+                    "h-6 w-6 rounded-md p-0 text-[var(--muted-2)]",
                     "opacity-100",
                   ].join(" ")}
                   onClick={() => {
@@ -1869,11 +1878,7 @@ export default function LeftSidebar({
                     setDocsCollapsed((v) => !v);
                   }}
                 >
-                  {(docsCollapsedLoaded ? docsCollapsed : true) ? (
-                    <PlusIcon className="h-4 w-4" />
-                  ) : (
-                    <MinusIcon className="h-4 w-4" />
-                  )}
+                  <StablePlusMinusIcon expanded={!(docsCollapsedLoaded ? docsCollapsed : true)} />
                 </IconButton>
               </div>
 
@@ -2053,6 +2058,7 @@ export default function LeftSidebar({
                 ) : null}
                 </ul>
               )}
+
             </section>
           </div>
         </nav>
@@ -2360,6 +2366,31 @@ function DocFileIcon({ className }: { className?: string }) {
         strokeLinejoin="round"
         d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"
       />
+    </svg>
+  );
+}
+
+/**
+ * Stable centered +/- icon.
+ *
+ * Heroicons Plus/Minus can appear to "shift" slightly because their stroke extents differ.
+ * This icon keeps a consistent viewBox and toggles only the vertical stroke.
+ */
+function StablePlusMinusIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="h-4 w-4"
+    >
+      <path d="M6 12h12" />
+      {!expanded ? <path d="M12 6v12" /> : null}
     </svg>
   );
 }

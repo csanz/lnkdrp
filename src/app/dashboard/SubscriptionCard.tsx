@@ -30,6 +30,12 @@ type CreditsSnapshotResponse = {
   error?: string;
 };
 
+// Small in-memory caches to avoid visible "loading" states on first render and
+// when navigating between dashboard tabs (tab switches can unmount/remount cards).
+const BILLING_STATUS_CACHE_TTL_MS = 30_000;
+let billingStatusCache: { data: BillingStatusResponse; at: number } | null = null;
+let creditsBlockedCache: { blocked: boolean; at: number } | null = null;
+
 function normalizePlan(raw: string): "free" | "pro" {
   const v = raw.trim().toLowerCase();
   return v === "pro" ? "pro" : "free";
@@ -43,16 +49,17 @@ export default function SubscriptionCard() {
   const [manageBusy, setManageBusy] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<BillingStatusResponse | null>(null);
-  const [creditsBlocked, setCreditsBlocked] = useState<boolean | null>(null);
+  const [data, setData] = useState<BillingStatusResponse | null>(() => billingStatusCache?.data ?? null);
+  const [creditsBlocked, setCreditsBlocked] = useState<boolean | null>(() => creditsBlockedCache?.blocked ?? null);
 
   useEffect(() => {
     let cancelled = false;
-    setBusy(true);
+    const cachedAt = billingStatusCache?.at ?? 0;
+    const cachedFresh = Boolean(billingStatusCache?.data) && Date.now() - cachedAt < BILLING_STATUS_CACHE_TTL_MS;
+    // If we have a cached value, render immediately and refresh silently to avoid
+    // visible flicker/loading states.
+    setBusy(!cachedFresh);
     setError(null);
-    // Avoid rendering stale plan UI while we fetch the latest billing state.
-    setData(null);
-    setCreditsBlocked(null);
     void (async () => {
       try {
         // Fast-path: render the plan UI as soon as billing status returns.
@@ -61,16 +68,25 @@ export default function SubscriptionCard() {
         if (!billingRes.ok) throw new Error((billingJson as any)?.error || `Request failed (${billingRes.status})`);
         if (!billingJson) throw new Error("Invalid response");
         if (!cancelled) setData(billingJson);
+        billingStatusCache = { data: billingJson, at: Date.now() };
 
         // Only fetch credits snapshot when needed (Free plan uses it to show the "blocked" hint).
         const planRaw = typeof billingJson?.plan === "string" ? billingJson.plan.trim().toLowerCase() : "";
         const isFree = !planRaw || planRaw === "free";
         if (isFree) {
+          const cachedBlockedAt = creditsBlockedCache?.at ?? 0;
+          const cachedBlockedFresh =
+            typeof creditsBlockedCache?.blocked === "boolean" && Date.now() - cachedBlockedAt < BILLING_STATUS_CACHE_TTL_MS;
+          if (cachedBlockedFresh && !cancelled) {
+            setCreditsBlocked(Boolean(creditsBlockedCache?.blocked));
+          }
           try {
             const creditsRes = await fetch("/api/credits/snapshot", { method: "GET" });
             const creditsJson = (await creditsRes.json().catch(() => null)) as CreditsSnapshotResponse | null;
             if (creditsRes.ok && creditsJson && (creditsJson as any).ok === true) {
-              if (!cancelled) setCreditsBlocked(Boolean((creditsJson as any).blocked));
+              const blocked = Boolean((creditsJson as any).blocked);
+              creditsBlockedCache = { blocked, at: Date.now() };
+              if (!cancelled) setCreditsBlocked(blocked);
             }
           } catch {
             // ignore (best-effort)
@@ -80,7 +96,8 @@ export default function SubscriptionCard() {
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load subscription";
-        if (!cancelled) setError(msg);
+        // If we already have cached data rendered, keep it and avoid surfacing a transient error.
+        if (!cancelled && !billingStatusCache?.data) setError(msg);
       } finally {
         if (!cancelled) setBusy(false);
       }

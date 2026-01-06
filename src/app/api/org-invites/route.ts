@@ -15,7 +15,7 @@ import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
 import { OrgModel } from "@/lib/models/Org";
-import { resolveActor } from "@/lib/gating/actor";
+import { tryResolveAuthUserId } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
@@ -76,11 +76,11 @@ function originFromRequest(request: Request): string {
 }
 
 export async function GET(request: Request) {
-  const actor = await resolveActor(request);
-  if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  const session = await tryResolveAuthUserId(request);
+  if (!session?.userId) return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const url = new URL(request.url);
-  const orgIdRaw = (url.searchParams.get("orgId") ?? "").trim() || actor.orgId;
+  const orgIdRaw = (url.searchParams.get("orgId") ?? "").trim() || session.activeOrgId || "";
   if (!orgIdRaw || !Types.ObjectId.isValid(orgIdRaw)) {
     return NextResponse.json({ error: "Invalid orgId" }, { status: 400 });
   }
@@ -96,7 +96,7 @@ export async function GET(request: Request) {
 
   const membership = await OrgMembershipModel.findOne({
     orgId: new Types.ObjectId(orgIdRaw),
-    userId: new Types.ObjectId(actor.userId),
+    userId: new Types.ObjectId(session.userId),
     isDeleted: { $ne: true },
   })
     .select({ role: 1 })
@@ -188,8 +188,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const actor = await resolveActor(request);
-  if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  const session = await tryResolveAuthUserId(request);
+  if (!session?.userId) return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const body = (await request.json().catch(() => ({}))) as Partial<{
     orgId: string;
@@ -197,7 +197,7 @@ export async function POST(request: Request) {
     ttlDays: number;
   }>;
 
-  const orgIdRaw = typeof body.orgId === "string" ? body.orgId.trim() : actor.orgId;
+  const orgIdRaw = typeof body.orgId === "string" ? body.orgId.trim() : session.activeOrgId || "";
   const role = body.role === "admin" || body.role === "viewer" ? body.role : "member";
   const ttlDaysRaw = typeof body.ttlDays === "number" ? body.ttlDays : 7;
   const ttlDays = Math.max(1, Math.min(30, Math.floor(ttlDaysRaw)));
@@ -217,7 +217,7 @@ export async function POST(request: Request) {
 
   const membership = await OrgMembershipModel.findOne({
     orgId: new Types.ObjectId(orgIdRaw),
-    userId: new Types.ObjectId(actor.userId),
+    userId: new Types.ObjectId(session.userId),
     isDeleted: { $ne: true },
   })
     .select({ role: 1 })
@@ -233,7 +233,7 @@ export async function POST(request: Request) {
 
   const created = await OrgInviteModel.create({
     orgId: new Types.ObjectId(orgIdRaw),
-    createdByUserId: new Types.ObjectId(actor.userId),
+    createdByUserId: new Types.ObjectId(session.userId),
     tokenHash,
     tokenEnc: tokenEncrypted.enc,
     tokenEncIv: tokenEncrypted.iv,

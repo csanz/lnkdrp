@@ -8,13 +8,13 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
-import { resolveActor } from "@/lib/gating/actor";
+import { tryResolveAuthUserId } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
 export async function GET(request: Request, ctx: { params: Promise<{ orgId: string }> }) {
-  const actor = await resolveActor(request);
-  if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  const session = await tryResolveAuthUserId(request);
+  if (!session?.userId) return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const { orgId: orgIdRaw } = await ctx.params;
   const orgId = (orgIdRaw ?? "").trim();
@@ -22,7 +22,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ orgId: stri
 
   await connectMongo();
   const orgObjectId = new Types.ObjectId(orgId);
-  const userObjectId = new Types.ObjectId(actor.userId);
+  const userObjectId = new Types.ObjectId(session.userId);
 
   const membership = await OrgMembershipModel.findOne({ orgId: orgObjectId, userId: userObjectId, isDeleted: { $ne: true } })
     .select({ role: 1 })

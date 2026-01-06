@@ -119,6 +119,11 @@ type SpendStatusResponse = {
   error?: string;
 };
 
+// Small in-memory cache to avoid visible "loading" states on initial render and when
+// navigating between dashboard tabs (tab switches are client-side and can re-run effects).
+const DASHBOARD_STATS_CACHE_TTL_MS = 30_000;
+let dashboardStatsCache: { data: any; at: number } | null = null;
+
 function PlaceholderTile({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-xl bg-[var(--panel-2)] p-4">
@@ -163,7 +168,7 @@ export default function DashboardPage() {
       shareDownloads: number;
     }>;
   };
-  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [stats, setStats] = useState<DashboardStats | null>(() => (dashboardStatsCache?.data as DashboardStats | null) ?? null);
   const [statsBusy, setStatsBusy] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [usageDays, setUsageDays] = useState<1 | 7 | 30>(30);
@@ -226,18 +231,28 @@ export default function DashboardPage() {
   useEffect(() => {
     if (tab !== "overview") return;
     let cancelled = false;
-    setStatsBusy(true);
+    const cachedAt = dashboardStatsCache?.at ?? 0;
+    const cachedFresh = Boolean(dashboardStatsCache?.data) && Date.now() - cachedAt < DASHBOARD_STATS_CACHE_TTL_MS;
+    // If cached data exists, render immediately and avoid flipping into a "Loading…" state.
+    setStatsBusy(!cachedFresh && !stats);
     setStatsError(null);
     void (async () => {
       try {
+        if (cachedFresh && dashboardStatsCache?.data) {
+          // Avoid refetching within the cache window (reduces concurrent startup load).
+          if (!cancelled) setStats(dashboardStatsCache.data as DashboardStats);
+          return;
+        }
         const res = await fetch("/api/dashboard/stats", { method: "GET" });
         const data = (await res.json().catch(() => null)) as DashboardStats | { error?: string } | null;
         if (!res.ok) throw new Error((data as any)?.error || `Request failed (${res.status})`);
         if (!data || (data as any).ok !== true) throw new Error("Invalid response");
         if (!cancelled) setStats(data as DashboardStats);
+        dashboardStatsCache = { data: data as DashboardStats, at: Date.now() };
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load stats";
-        if (!cancelled) setStatsError(msg);
+        // If we already have cached stats, keep them and avoid surfacing a transient error.
+        if (!cancelled && !dashboardStatsCache?.data) setStatsError(msg);
       } finally {
         if (!cancelled) setStatsBusy(false);
       }
@@ -564,11 +579,12 @@ export default function DashboardPage() {
             <AiQualityDefaultsCard className="mt-3" />
 
             <div className="mt-3 rounded-2xl bg-[var(--panel)] p-6">
-              <div className="text-[13px] font-semibold text-[var(--fg)]">Deep Research</div>
+              <div className="text-[13px] font-semibold text-[var(--fg)]">Deep Search Agent</div>
               <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-                Deep Research is currently being tested with only a few users. It’s very early access.
+                Deep-searches your document for companies, people, products, and potential risks.
               </div>
               <div className="mt-3 text-[13px] leading-6 text-[var(--muted-2)]">
+                Deep Search Agent is currently being tested with only a few users. It’s very early access.{" "}
                 If you’re interested in joining the waiting list to test it out, email us at{" "}
                 <a className="font-semibold text-[var(--fg)] underline underline-offset-2" href="mailto:hi@lnkdrp.com">
                   hi@lnkdrp.com

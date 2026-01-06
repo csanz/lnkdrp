@@ -89,7 +89,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">AI Quality Defaults</div>
           <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-            Defaults for new runs. You can still override quality when you run Review/History.
+            Defaults for new runs. You can still override quality when you run Review Agent/History Agent.
           </div>
         </div>
         <Button
@@ -121,9 +121,9 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
       <div className="mt-5 grid gap-3 sm:grid-cols-3">
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Summary</div>
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Summary Agent</div>
             <HelpTooltip
-              label="What is Summary?"
+              label="What is Summary Agent?"
               body="Creates a quick overview after upload. Basic is lowest cost, short context, and no retries."
             />
           </div>
@@ -133,9 +133,9 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
 
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Review</div>
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Review Agent</div>
             <HelpTooltip
-              label="What is Review?"
+              label="What is Review Agent?"
               body="A deeper quality assessment you run on-demand. Basic is fastest/cheapest. Standard is balanced. Advanced uses more context and retries."
             />
           </div>
@@ -179,9 +179,9 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
 
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">History</div>
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">History Agent</div>
             <HelpTooltip
-              label="What is History?"
+              label="What is History Agent?"
               body="Compares two versions and summarizes changes. Basic is fastest/cheapest. Standard is balanced. Advanced is most thorough."
             />
           </div>
