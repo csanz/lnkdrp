@@ -7,10 +7,10 @@ import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { Types } from "mongoose";
 import { put } from "@vercel/blob";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import pdfParse from "pdf-parse";
 import { createRequire } from "module";
 import { pathToFileURL } from "url";
+import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { UploadModel } from "@/lib/models/Upload";
 import { DocModel } from "@/lib/models/Doc";
@@ -41,23 +41,46 @@ function header(request: Request, name: string) {
   return request.headers.get(name) ?? request.headers.get(name.toLowerCase());
 }
 
-// pdfjs-dist on Node uses a "fake worker" implementation that still needs access to the worker module.
-// In Next dev, the default worker resolution can point at a non-existent `.next/.../pdf.worker.mjs` chunk.
-// Resolve the worker from node_modules explicitly to make preview rendering reliable in local dev.
-try {
-  const require = createRequire(import.meta.url);
-  require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  // IMPORTANT: ESM module namespace exports are read-only, but the exported
-  // `GlobalWorkerOptions` object is mutable; only mutate its properties.
-  const gwo = (pdfjsLib as unknown as { GlobalWorkerOptions?: { workerSrc?: string } })
-    .GlobalWorkerOptions;
-  if (gwo) {
-    // Prefer a normal module specifier on Next dev (file:// URLs get rewritten into
-    // annotated ids like "...[app-route] (ecmascript)" and become unresolvable).
-    gwo.workerSrc = "pdfjs-dist/legacy/build/pdf.worker.mjs";
-  }
-} catch {
-  // Best-effort: if this fails for any reason, preview generation will fall back to the existing try/catch.
+type PdfJsLib = {
+  getDocument: (opts: { data: Uint8Array }) => { promise: Promise<unknown> };
+  GlobalWorkerOptions?: { workerSrc?: string };
+};
+
+let _cachedPdfJsLibPromise: Promise<PdfJsLib> | null = null;
+/**
+ * Lazy-load PDF.js at runtime.
+ *
+ * Next's App Router bundling can choke on the ESM `pdf.mjs` entrypoint in certain dev builds
+ * (seen as `Object.defineProperty called on non-object`). Using `createRequire` keeps this
+ * as a Node-side runtime dependency instead of a webpack-bundled module.
+ */
+async function getPdfJsLib(): Promise<PdfJsLib> {
+  if (_cachedPdfJsLibPromise) return _cachedPdfJsLibPromise;
+
+  _cachedPdfJsLibPromise = (async () => {
+    const require = createRequire(import.meta.url);
+    // Resolve to a concrete file path, then import via file:// so Next doesn't try to bundle it.
+    const pdfPath = require.resolve("pdfjs-dist/legacy/build/pdf.mjs");
+    const pdfjs = (await import(pathToFileURL(pdfPath).href)) as unknown as PdfJsLib;
+
+    // pdfjs-dist on Node uses a "fake worker" implementation that still needs access to the worker module.
+    // In Next dev, the default worker resolution can point at a non-existent `.next/.../pdf.worker.mjs` chunk.
+    // Resolve the worker from node_modules explicitly to make preview rendering reliable in local dev.
+    try {
+      require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+      if (pdfjs.GlobalWorkerOptions) {
+        // Prefer a normal module specifier on Next dev (file:// URLs get rewritten into
+        // annotated ids like "...[app-route] (ecmascript)" and become unresolvable).
+        pdfjs.GlobalWorkerOptions.workerSrc = "pdfjs-dist/legacy/build/pdf.worker.mjs";
+      }
+    } catch {
+      // Best-effort: if this fails for any reason, preview generation will fall back to the existing try/catch.
+    }
+
+    return pdfjs;
+  })();
+
+  return _cachedPdfJsLibPromise;
 }
 /**
  * Return whether record.
@@ -82,6 +105,25 @@ function asString(v: unknown): string | null {
 
 function asNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function normalizeForPageHash(input: string): string {
+  return (input ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function pageTextHash(input: string): string {
+  const normalized = normalizeForPageHash(input);
+  return crypto.createHash("sha256").update(normalized).digest("hex");
+}
+
+async function fetchPdfBytes(url: string): Promise<Uint8Array> {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to fetch PDF (${res.status})`);
+  const ab = await res.arrayBuffer();
+  return new Uint8Array(ab);
 }
 /**
  * Unique Lower Tags (uses isArray, toLowerCase, trim).
@@ -743,6 +785,7 @@ async function ensureReviewForUpload(params: {
 async function extractPdfTextByPage(pdfBytes: Uint8Array): Promise<
   Array<{ page_number: number; text: string }>
 > {
+  const pdfjsLib = await getPdfJsLib();
   // NOTE: pdfjs transfers `data.buffer` to its (fake) worker even on Node, which detaches it.
   // Always pass a copy so callers can safely reuse their original `pdfBytes`.
   const data = new Uint8Array(pdfBytes);
@@ -785,6 +828,7 @@ async function renderPdfFirstPagePng(params: {
   maxWidth?: number;
   page?: number;
 }): Promise<{ png: Buffer; width: number; height: number }> {
+  const pdfjsLib = await getPdfJsLib();
   /**
    * NOTE: `@napi-rs/canvas` ships native bindings per-platform.
    * In some local dev setups, optionalDependencies can fail to install the correct
@@ -951,6 +995,8 @@ export async function POST(
           isDeleted: 1,
           currentUploadId: 1,
           uploadId: 1,
+          previewImageUrl: 1,
+          firstPagePngUrl: 1,
           extractedText: 1,
           pdfText: 1,
           aiOutput: 1,
@@ -986,6 +1032,12 @@ export async function POST(
         existingDocObj && typeof existingDocObj.docName === "string" ? existingDocObj.docName : null;
       const priorPageSlugs =
         existingDocObj && Array.isArray(existingDocObj.pageSlugs) ? existingDocObj.pageSlugs : null;
+      const priorPreviewUrl =
+        existingDocObj && typeof (existingDocObj as { previewImageUrl?: unknown }).previewImageUrl === "string"
+          ? String((existingDocObj as { previewImageUrl: string }).previewImageUrl ?? "").trim() || null
+          : existingDocObj && typeof (existingDocObj as { firstPagePngUrl?: unknown }).firstPagePngUrl === "string"
+            ? String((existingDocObj as { firstPagePngUrl: string }).firstPagePngUrl ?? "").trim() || null
+            : null;
       const existingProjectIdsRaw = existingDoc
         ? [
             ...(existingDoc.projectId ? [String(existingDoc.projectId)] : []),
@@ -1028,7 +1080,11 @@ export async function POST(
           status: "failed",
           error: { message: "Missing blobUrl" },
         });
-        await DocModel.findByIdAndUpdate(docId, { status: "failed" });
+        // IMPORTANT: for replacement uploads, do not mark the existing doc as failed.
+        // A failed replacement must not overwrite the last good version.
+        if (!isReplacement) {
+          await DocModel.findByIdAndUpdate(docId, { status: "failed" });
+        }
         return;
       }
 
@@ -1104,7 +1160,7 @@ export async function POST(
             let diff = null as any;
             if (historyLedgerId) {
               try {
-                diff = await runDocChangeDiff({ previousText, newText, qualityTier: historyTier });
+                diff = await runDocChangeDiff({ previousText, newText, changedPages: [], qualityTier: historyTier });
                 if (!diff) {
                   await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
                   diff = null;
@@ -1129,7 +1185,7 @@ export async function POST(
                     toVersion,
                     previousText,
                     newText,
-                    diff: diff ?? { summary: "", changes: [] },
+                    diff: diff ?? { summary: "", changes: [], pagesThatChanged: [] },
                   },
                 },
                 { upsert: true },
@@ -1411,19 +1467,20 @@ export async function POST(
 
       debugLog(1, "[process] set status=processing", { uploadId });
       await UploadModel.findByIdAndUpdate(uploadId, { status: "processing" });
-      await DocModel.findByIdAndUpdate(docId, {
-        status: "preparing",
-        currentUploadId: upload._id,
-        uploadId: upload._id,
-      });
+      // IMPORTANT: for replacement uploads, keep the Doc pointing at the last good version
+      // until processing succeeds. The client tracks replacement progress via the Upload.
+      if (!isReplacement) {
+        await DocModel.findByIdAndUpdate(docId, {
+          status: "preparing",
+          currentUploadId: upload._id,
+          uploadId: upload._id,
+        });
+      }
 
       let pdfBytes: Uint8Array;
       try {
         debugLog(1, "[process] fetching pdf", { uploadId });
-        const res = await fetch(blobUrl);
-        if (!res.ok) throw new Error(`Failed to fetch PDF (${res.status})`);
-        const ab = await res.arrayBuffer();
-        pdfBytes = new Uint8Array(ab);
+        pdfBytes = await fetchPdfBytes(blobUrl);
         debugLog(1, "[process] fetched pdf", { uploadId, bytes: pdfBytes.length });
       } catch (e) {
         const message = e instanceof Error ? e.message : "Failed to fetch PDF";
@@ -1432,7 +1489,9 @@ export async function POST(
           status: "failed",
           error: { message },
         });
-        await DocModel.findByIdAndUpdate(docId, { status: "failed" });
+        if (!isReplacement) {
+          await DocModel.findByIdAndUpdate(docId, { status: "failed" });
+        }
         return;
       }
 
@@ -1527,6 +1586,57 @@ export async function POST(
           const previousText = priorExtractedTextRaw.toString();
           const newText = (extractedText ?? "").toString();
           if (previousText.trim() && newText.trim()) {
+            // Best-effort: compute changed pages for richer diff output (page-numbered links).
+            let changedPages: Array<{ pageNumber: number; previousText: string; newText: string }> = [];
+            try {
+              // New version: extract per-page text from the PDF we already fetched.
+              const newPages = await extractPdfTextByPage(pdfBytes).catch(() => []);
+              const newByPage = new Map<number, string>(
+                newPages
+                  .map((p) => ({ n: Math.floor(Number(p.page_number)), t: String(p.text ?? "") }))
+                  .filter((p) => Number.isFinite(p.n) && p.n >= 1)
+                  .map((p) => [p.n, p.t]),
+              );
+
+              // Previous version: fetch the previous upload PDF and extract per-page text.
+              const prevUpload =
+                priorUploadId
+                  ? await UploadModel.findById(priorUploadId).select({ blobUrl: 1 }).lean()
+                  : null;
+              const prevBlobUrl = prevUpload && typeof (prevUpload as any).blobUrl === "string" ? (prevUpload as any).blobUrl : "";
+              if (prevBlobUrl) {
+                const prevPdfBytes = await fetchPdfBytes(prevBlobUrl);
+                const prevPages = await extractPdfTextByPage(prevPdfBytes).catch(() => []);
+                const prevByPage = new Map<number, string>(
+                  prevPages
+                    .map((p) => ({ n: Math.floor(Number(p.page_number)), t: String(p.text ?? "") }))
+                    .filter((p) => Number.isFinite(p.n) && p.n >= 1)
+                    .map((p) => [p.n, p.t]),
+                );
+
+                const maxPages = Math.max(
+                  ...[...prevByPage.keys(), ...newByPage.keys(), 0],
+                );
+                const changedNums: number[] = [];
+                for (let p = 1; p <= maxPages; p++) {
+                  const prevText = prevByPage.get(p) ?? "";
+                  const nextText = newByPage.get(p) ?? "";
+                  if (pageTextHash(prevText) !== pageTextHash(nextText)) changedNums.push(p);
+                }
+
+                // Cap page-level AI context to keep costs bounded.
+                const MAX_PAGE_CONTEXT = 12;
+                changedPages = changedNums.slice(0, MAX_PAGE_CONTEXT).map((p) => ({
+                  pageNumber: p,
+                  previousText: prevByPage.get(p) ?? "",
+                  newText: newByPage.get(p) ?? "",
+                }));
+              }
+            } catch (e) {
+              warningDetails.historyPages = e instanceof Error ? e.message : String(e);
+              changedPages = [];
+            }
+
             // Credits: history (automatic on replacement) defaults to Standard.
             const historyTier = "standard" as const;
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
@@ -1551,7 +1661,7 @@ export async function POST(
             let diff = null as any;
             if (historyLedgerId) {
               try {
-                diff = await runDocChangeDiff({ previousText, newText, qualityTier: historyTier });
+                diff = await runDocChangeDiff({ previousText, newText, changedPages, qualityTier: historyTier });
                 if (!diff) {
                   await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
                   diff = null;
@@ -1580,7 +1690,7 @@ export async function POST(
                   toVersion: uploadVersion,
                   previousText,
                   newText,
-                  diff: diff ?? { summary: "", changes: [] },
+                  diff: diff ?? { summary: "", changes: [], pagesThatChanged: [] },
                 },
               },
               { upsert: true },
@@ -1922,8 +2032,10 @@ export async function POST(
         blobUrl,
         currentUploadId: upload._id,
         uploadId: upload._id, // backward compat
-        previewImageUrl: previewUrl,
-        firstPagePngUrl: previewUrl, // compat
+        // IMPORTANT: for replacement uploads, never wipe the doc's prior preview image
+        // if preview generation failed for this version.
+        previewImageUrl: previewUrl ?? (isReplacement ? priorPreviewUrl : null),
+        firstPagePngUrl: previewUrl ?? (isReplacement ? priorPreviewUrl : null), // compat
         extractedText: extractedText,
         pdfText: extractedText, // compat
         aiOutput: finalDocAiOutput,
@@ -1962,7 +2074,11 @@ export async function POST(
       if (nextPrimaryProjectId && Types.ObjectId.isValid(nextPrimaryProjectId)) {
         docUpdate.projectId = new Types.ObjectId(nextPrimaryProjectId);
       }
-      await DocModel.findByIdAndUpdate(docId, docUpdate);
+      // IMPORTANT: for replacement uploads, never overwrite the existing doc on failures.
+      // Only flip the doc over once we have enough artifacts to consider the replacement successful.
+      if (!isReplacement || !failed) {
+        await DocModel.findByIdAndUpdate(docId, docUpdate);
+      }
 
       // Debug breadcrumb: confirm the doc record actually flipped and points at this upload.
       // This log is intentionally level 1 so it's visible in dev when debugging "stuck preparing".

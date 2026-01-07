@@ -9,9 +9,10 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 /**
@@ -94,6 +95,7 @@ export async function GET(request: Request) {
     const limitRaw = url.searchParams.get("limit");
     const pageRaw = url.searchParams.get("page");
     const qRaw = url.searchParams.get("q") ?? "";
+    const lite = url.searchParams.get("lite") === "1";
     const limit = Math.max(
       1,
       Math.min(50, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 25),
@@ -101,8 +103,8 @@ export async function GET(request: Request) {
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
     const q = qRaw.trim();
 
-    debugLog(2, "[api/projects] GET", { limit, page, q: q ? "[redacted]" : "" });
-    const actor = await resolveActor(request);
+    debugLog(2, "[api/projects] GET", { limit, page, lite, q: q ? "[redacted]" : "" });
+    const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
     await connectMongo();
 
     const orgId = new Types.ObjectId(actor.orgId);
@@ -130,7 +132,7 @@ export async function GET(request: Request) {
       (filter.$and as Array<Record<string, unknown>>).push({ $or: [{ name: rx }, { description: rx }] });
     }
 
-    const total = await ProjectModel.countDocuments(filter);
+    const total = lite ? null : await ProjectModel.countDocuments(filter);
     // Stable ordering: when `updatedDate` ties (or is null), add a deterministic tiebreaker.
     // Without this, MongoDB is free to return ties in arbitrary order, causing UI "flip" on refresh.
     const projects = await ProjectModel.find(filter)
@@ -140,68 +142,75 @@ export async function GET(request: Request) {
       .lean();
 
     // Best-effort: backfill slug for older projects.
-    for (const p of projects) {
-      // Best-effort: backfill orgId for legacy personal projects so org scoping works.
-      const pOrgId = (p as unknown as { orgId?: unknown }).orgId;
-      if (allowLegacyByUserId && !pOrgId) {
-        try {
-          await ProjectModel.updateOne(
-            { _id: p._id, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-            { $set: { orgId } },
-            // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
-            { timestamps: false },
-          );
-          (p as unknown as { orgId?: Types.ObjectId }).orgId = orgId;
-        } catch {
-          // ignore; best-effort
+    // IMPORTANT: skip this work for `lite=1` callers (used by doc page menus), so opening
+    // the project picker never pays a migration/backfill tax.
+    if (!lite) {
+      for (const p of projects) {
+        // Best-effort: backfill orgId for legacy personal projects so org scoping works.
+        const pOrgId = (p as unknown as { orgId?: unknown }).orgId;
+        if (allowLegacyByUserId && !pOrgId) {
+          try {
+            await ProjectModel.updateOne(
+              { _id: p._id, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+              { $set: { orgId } },
+              // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
+              { timestamps: false },
+            );
+            (p as unknown as { orgId?: Types.ObjectId }).orgId = orgId;
+          } catch {
+            // ignore; best-effort
+          }
         }
-      }
 
-      const s = (p as unknown as { slug?: unknown }).slug;
-      if (typeof s === "string" && s.trim()) continue;
-      const base = slugify((p as unknown as { name?: unknown }).name ? String((p as { name?: unknown }).name) : "");
-      const slug = await ensureUniqueSlug({ orgId, legacyUserId: allowLegacyByUserId ? legacyUserId : undefined, base });
-      await ProjectModel.updateOne(
-        {
-          _id: p._id,
-          ...(allowLegacyByUserId
-            ? {
-                $or: [
-                  { orgId },
-                  { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-                ],
-              }
-            : { orgId }),
-          $or: [{ slug: { $exists: false } }, { slug: null }, { slug: "" }],
-        },
-        { $set: { slug } },
-        // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
-        { timestamps: false },
-      );
-      (p as unknown as { slug?: string }).slug = slug;
+        const s = (p as unknown as { slug?: unknown }).slug;
+        if (typeof s === "string" && s.trim()) continue;
+        const base = slugify((p as unknown as { name?: unknown }).name ? String((p as { name?: unknown }).name) : "");
+        const slug = await ensureUniqueSlug({ orgId, legacyUserId: allowLegacyByUserId ? legacyUserId : undefined, base });
+        await ProjectModel.updateOne(
+          {
+            _id: p._id,
+            ...(allowLegacyByUserId
+              ? {
+                  $or: [
+                    { orgId },
+                    { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+                  ],
+                }
+              : { orgId }),
+            $or: [{ slug: { $exists: false } }, { slug: null }, { slug: "" }],
+          },
+          { $set: { slug } },
+          // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
+          { timestamps: false },
+        );
+        (p as unknown as { slug?: string }).slug = slug;
+      }
     }
 
     return applyTempUserHeaders(
-      NextResponse.json({
-        total,
-        page,
-        limit,
-        projects: projects.map((p) => ({
-          id: String(p._id),
-          shareId: (p as unknown as { shareId?: unknown }).shareId ?? null,
-          name: p.name ?? "",
-          slug: (p as unknown as { slug?: string }).slug ?? "",
-          description: p.description ?? "",
-          isRequest: false,
-          docCount: (function () {
-            const raw = (p as unknown as { docCount?: unknown }).docCount;
-            return Number.isFinite(raw) ? Number(raw) : 0;
-          })(),
-          autoAddFiles: Boolean((p as unknown as { autoAddFiles?: unknown }).autoAddFiles),
-          updatedDate: p.updatedDate ? new Date(p.updatedDate).toISOString() : null,
-          createdDate: p.createdDate ? new Date(p.createdDate).toISOString() : null,
-        })),
-      }),
+      NextResponse.json(
+        {
+          total,
+          page,
+          limit,
+          projects: projects.map((p) => ({
+            id: String(p._id),
+            shareId: (p as unknown as { shareId?: unknown }).shareId ?? null,
+            name: p.name ?? "",
+            slug: (p as unknown as { slug?: string }).slug ?? "",
+            description: p.description ?? "",
+            isRequest: false,
+            docCount: (function () {
+              const raw = (p as unknown as { docCount?: unknown }).docCount;
+              return Number.isFinite(raw) ? Number(raw) : 0;
+            })(),
+            autoAddFiles: Boolean((p as unknown as { autoAddFiles?: unknown }).autoAddFiles),
+            updatedDate: p.updatedDate ? new Date(p.updatedDate).toISOString() : null,
+            createdDate: p.createdDate ? new Date(p.createdDate).toISOString() : null,
+          })),
+        },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {

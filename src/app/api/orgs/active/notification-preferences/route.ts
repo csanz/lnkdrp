@@ -11,6 +11,7 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type Mode = "off" | "daily" | "immediate";
 
@@ -37,21 +38,24 @@ export async function GET(request: Request) {
     .lean();
   if (!membership) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  return NextResponse.json({
-    ok: true,
-    orgId: actor.orgId,
-    userId: actor.userId,
-    docUpdateEmailMode:
-      typeof (membership as any).docUpdateEmailMode === "string" ? (membership as any).docUpdateEmailMode : "daily",
-    repoLinkRequestEmailMode:
-      typeof (membership as any).repoLinkRequestEmailMode === "string"
-        ? (membership as any).repoLinkRequestEmailMode
-        : "daily",
-    docUpdateDigestTimezone:
-      typeof (membership as any).docUpdateDigestTimezone === "string" ? (membership as any).docUpdateDigestTimezone : null,
-    docUpdateDigestTimeLocal:
-      typeof (membership as any).docUpdateDigestTimeLocal === "string" ? (membership as any).docUpdateDigestTimeLocal : null,
-  });
+  return NextResponse.json(
+    {
+      ok: true,
+      orgId: actor.orgId,
+      userId: actor.userId,
+      docUpdateEmailMode:
+        typeof (membership as any).docUpdateEmailMode === "string" ? (membership as any).docUpdateEmailMode : "daily",
+      repoLinkRequestEmailMode:
+        typeof (membership as any).repoLinkRequestEmailMode === "string"
+          ? (membership as any).repoLinkRequestEmailMode
+          : "daily",
+      docUpdateDigestTimezone:
+        typeof (membership as any).docUpdateDigestTimezone === "string" ? (membership as any).docUpdateDigestTimezone : null,
+      docUpdateDigestTimeLocal:
+        typeof (membership as any).docUpdateDigestTimeLocal === "string" ? (membership as any).docUpdateDigestTimeLocal : null,
+    },
+    { headers: { "cache-control": "no-store" } },
+  );
 }
 
 export async function POST(request: Request) {
@@ -87,7 +91,7 @@ export async function POST(request: Request) {
     { $set: { ...set, updatedDate: new Date() } },
   );
   if (!res.matchedCount) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  return NextResponse.json({ ok: true, ...set });
+  return NextResponse.json({ ok: true, ...set }, { headers: { "cache-control": "no-store" } });
 }
 
 

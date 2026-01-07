@@ -7,6 +7,9 @@ PREVIOUS (PDF-extracted text):
 NEW (PDF-extracted text):
 {{NEW_TEXT}}
 
+CHANGED PAGES (page-level context, when available):
+{{CHANGED_PAGES}}
+
 Return ONLY the JSON output described in the system prompt.
 
 

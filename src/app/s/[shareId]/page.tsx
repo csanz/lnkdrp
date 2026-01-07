@@ -188,6 +188,7 @@ export default async function SharePage(props: {
   const pdfUrl = doc.blobUrl ? `/s/${encodeURIComponent(shareId)}/pdf` : null;
   const ai = pickReceiverAi(doc.aiOutput ?? null);
   const allowDownload = Boolean((doc as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload);
+  const allowRevisionHistory = Boolean((doc as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory);
 
   if (pdfUrl) {
     // PdfJsViewer is a client component; pass the AI output as JSON (or null).
@@ -200,6 +201,10 @@ export default async function SharePage(props: {
         relevancyEnabled={Boolean(doc.receiverRelevanceChecklist)}
         allowDownload={allowDownload}
         downloadUrl={allowDownload ? `/s/${encodeURIComponent(shareId)}/pdf?download=1` : null}
+        revisionHistoryEnabled={allowRevisionHistory}
+        revisionHistoryUrl={
+          allowRevisionHistory ? `/s/${encodeURIComponent(shareId)}/changes` : null
+        }
       />
     );
   }

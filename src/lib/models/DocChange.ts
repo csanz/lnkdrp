@@ -44,6 +44,19 @@ const docChangeSchema = new Schema(
         ],
         default: [],
       },
+      /**
+       * Optional per-page change hints for linking from history UIs.
+       * Each entry should include a 1-based page number and a short, receiver-safe summary.
+       */
+      pagesThatChanged: {
+        type: [
+          {
+            pageNumber: { type: Number, min: 1, default: null },
+            summary: { type: String, trim: true, default: "" },
+          },
+        ],
+        default: [],
+      },
     },
   },
   {

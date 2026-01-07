@@ -14,6 +14,7 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 /**
@@ -230,42 +231,42 @@ export async function GET(request: Request) {
     }
 
     return applyTempUserHeaders(
-      NextResponse.json({
-      total: totalEffective,
-      page: useIds ? 1 : page,
-      limit: useIds ? ids.length : limit,
-      docs: docs.map((d) => {
-        const currentUploadId =
-          d.currentUploadId ?? (d as unknown as { uploadId?: unknown }).uploadId ?? null;
-        const ai = (d as unknown as { aiOutput?: unknown }).aiOutput;
-        const oneLinerRaw =
-          ai && typeof ai === "object" && "one_liner" in ai ? (ai as { one_liner?: unknown }).one_liner : null;
-        const one_liner = typeof oneLinerRaw === "string" ? oneLinerRaw.trim() : "";
-        const receivedViaRequestProjectIdRaw = (d as unknown as { receivedViaRequestProjectId?: unknown })
-          .receivedViaRequestProjectId;
-        const guideForRequestProjectIdRaw = (d as unknown as { guideForRequestProjectId?: unknown })
-          .guideForRequestProjectId;
-        const docId = String(d._id);
-        return {
-          id: String(d._id),
-          shareId: d.shareId ?? null,
-          title: d.title ?? "Untitled document",
-          status: d.status ?? "draft",
-          currentUploadId: currentUploadId ? String(currentUploadId) : null,
-          version: currentUploadId ? uploadsById.get(String(currentUploadId)) ?? null : null,
-          previewImageUrl: d.previewImageUrl ?? (d as unknown as { firstPagePngUrl?: unknown }).firstPagePngUrl ?? null,
-          one_liner: one_liner || null,
-          receiverRelevanceChecklist: Boolean(d.receiverRelevanceChecklist),
-          receivedViaRequestProjectId: receivedViaRequestProjectIdRaw ? String(receivedViaRequestProjectIdRaw) : null,
-          guideForRequestProjectId: (function () {
-            if (guideForRequestProjectIdRaw) return String(guideForRequestProjectIdRaw);
-            return guideProjectIdByDocId.get(docId) ?? null;
-          })(),
-          updatedDate: d.updatedDate ? new Date(d.updatedDate).toISOString() : null,
-          createdDate: d.createdDate ? new Date(d.createdDate).toISOString() : null,
-        };
-      }),
-      }),
+      NextResponse.json(
+        {
+          total: totalEffective,
+          page: useIds ? 1 : page,
+          limit: useIds ? ids.length : limit,
+          docs: docs.map((d) => {
+            const currentUploadId = d.currentUploadId ?? (d as unknown as { uploadId?: unknown }).uploadId ?? null;
+            const ai = (d as unknown as { aiOutput?: unknown }).aiOutput;
+            const oneLinerRaw =
+              ai && typeof ai === "object" && "one_liner" in ai ? (ai as { one_liner?: unknown }).one_liner : null;
+            const one_liner = typeof oneLinerRaw === "string" ? oneLinerRaw.trim() : "";
+            const receivedViaRequestProjectIdRaw = (d as unknown as { receivedViaRequestProjectId?: unknown }).receivedViaRequestProjectId;
+            const guideForRequestProjectIdRaw = (d as unknown as { guideForRequestProjectId?: unknown }).guideForRequestProjectId;
+            const docId = String(d._id);
+            return {
+              id: String(d._id),
+              shareId: d.shareId ?? null,
+              title: d.title ?? "Untitled document",
+              status: d.status ?? "draft",
+              currentUploadId: currentUploadId ? String(currentUploadId) : null,
+              version: currentUploadId ? uploadsById.get(String(currentUploadId)) ?? null : null,
+              previewImageUrl: d.previewImageUrl ?? (d as unknown as { firstPagePngUrl?: unknown }).firstPagePngUrl ?? null,
+              one_liner: one_liner || null,
+              receiverRelevanceChecklist: Boolean(d.receiverRelevanceChecklist),
+              receivedViaRequestProjectId: receivedViaRequestProjectIdRaw ? String(receivedViaRequestProjectIdRaw) : null,
+              guideForRequestProjectId: (function () {
+                if (guideForRequestProjectIdRaw) return String(guideForRequestProjectIdRaw);
+                return guideProjectIdByDocId.get(docId) ?? null;
+              })(),
+              updatedDate: d.updatedDate ? new Date(d.updatedDate).toISOString() : null,
+              createdDate: d.createdDate ? new Date(d.createdDate).toISOString() : null,
+            };
+          }),
+        },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {

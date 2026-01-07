@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
 import {
@@ -230,8 +230,20 @@ export default function LeftSidebar({
   onAddNewFile: (file: File) => void;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { resolvedTheme } = useTheme();
   const navLocked = useNavigationLocked();
+
+  const activeProjectId = useMemo(() => {
+    const p = typeof pathname === "string" ? pathname : "";
+    const m = p.match(/^\/project\/([^/]+)/);
+    if (!m?.[1]) return null;
+    try {
+      return decodeURIComponent(m[1]);
+    } catch {
+      return m[1];
+    }
+  }, [pathname]);
   // Avoid hydration mismatches from client-only sources (localStorage, Date.now()).
   // This returns `false` on the server and `true` on the client without a setState-in-effect.
   const mounted = useSyncExternalStore(
@@ -289,6 +301,7 @@ export default function LeftSidebar({
   const [newProjectDescription, setNewProjectDescription] = useState("");
   const [newProjectBusy, setNewProjectBusy] = useState(false);
   const [newProjectError, setNewProjectError] = useState<string | null>(null);
+  const [pendingNewProjectNavId, setPendingNewProjectNavId] = useState<string | null>(null);
   const [docs, setDocs] = useState<Paged<DocListItem>>({
     items: [],
     total: 0,
@@ -1329,6 +1342,7 @@ export default function LeftSidebar({
     if (navLocked) return;
     setNewProjectBusy(true);
     setNewProjectError(null);
+    let createdId: string | null = null;
     try {
       const name = newProjectName.trim();
       const description = newProjectDescription.trim();
@@ -1360,19 +1374,32 @@ export default function LeftSidebar({
         return;
       }
 
-      setShowCreateProjectModal(false);
-      setNewProjectName("");
-      setNewProjectDescription("");
-      setNewProjectError(null);
+      createdId = id;
+      setPendingNewProjectNavId(id);
       notifyProjectsChanged();
       void refreshSidebarCache({ reason: "project-created", force: true });
       router.push(`/project/${encodeURIComponent(id)}`);
     } catch {
       setNewProjectError("Failed to create project");
     } finally {
-      setNewProjectBusy(false);
+      // If project creation succeeded, keep the modal open + busy until navigation completes.
+      if (!createdId) setNewProjectBusy(false);
     }
   }
+
+  // Close the Create Project modal only after we've actually navigated to the new project.
+  useEffect(() => {
+    if (!pendingNewProjectNavId) return;
+    const target = `/project/${pendingNewProjectNavId}`;
+    if (pathname === target || pathname.startsWith(`${target}/`)) {
+      setShowCreateProjectModal(false);
+      setNewProjectName("");
+      setNewProjectDescription("");
+      setNewProjectError(null);
+      setPendingNewProjectNavId(null);
+      setNewProjectBusy(false);
+    }
+  }, [pathname, pendingNewProjectNavId]);
 
   // When opening delete confirmation, fetch the folders/projects this doc belongs to
   // so the user understands what they’re deleting.
@@ -1827,6 +1854,7 @@ export default function LeftSidebar({
             <section>
               <SidebarProjectsSection
                 navLocked={navLocked}
+                activeProjectId={activeProjectId}
                 projectsLoaded={projectsLoaded}
                 projects={projects}
                 projectsForSidebar={projectsForSidebar}
@@ -2264,6 +2292,7 @@ export default function LeftSidebar({
           if (newProjectBusy) return;
           setShowCreateProjectModal(false);
           setNewProjectError(null);
+          setPendingNewProjectNavId(null);
         }}
         onCreate={() => void createProject()}
       />

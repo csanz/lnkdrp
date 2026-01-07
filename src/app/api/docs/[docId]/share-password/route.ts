@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 /**
  * Return whether object id.
  */
@@ -63,7 +64,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }
       return applyTempUserHeaders(
-        NextResponse.json({ sharePasswordEnabled: Boolean((updated as { sharePasswordHash?: unknown }).sharePasswordHash) }),
+        NextResponse.json(
+          { sharePasswordEnabled: Boolean((updated as { sharePasswordHash?: unknown }).sharePasswordHash) },
+          { headers: { "cache-control": "no-store" } },
+        ),
         actor,
       );
     }
@@ -104,7 +108,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     }
 
     return applyTempUserHeaders(
-      NextResponse.json({ sharePasswordEnabled: Boolean((updated as { sharePasswordHash?: unknown }).sharePasswordHash) }),
+      NextResponse.json(
+        { sharePasswordEnabled: Boolean((updated as { sharePasswordHash?: unknown }).sharePasswordHash) },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {
@@ -118,7 +125,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
 
 
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
-  const actor = await resolveActor(request);
+  const url = new URL(request.url);
+  const lite = url.searchParams.get("lite") === "1";
+  const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
   try {
     const { docId } = await ctx.params;
     if (!isObjectId(docId)) {
@@ -159,7 +168,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     });
 
     return applyTempUserHeaders(
-      NextResponse.json({ sharePasswordEnabled: enabled, password: enabled ? password : null }),
+      NextResponse.json(
+        { sharePasswordEnabled: enabled, password: enabled ? password : null },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {

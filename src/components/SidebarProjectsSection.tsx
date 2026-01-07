@@ -2,7 +2,6 @@
 
 import {
   EllipsisHorizontalIcon,
-  FolderIcon,
   InboxArrowDownIcon,
   PlusIcon,
 } from "@heroicons/react/24/outline";
@@ -24,6 +23,7 @@ type Paged<T> = { items: T[]; total: number; page: number; limit: number };
 
 export default function SidebarProjectsSection({
   navLocked,
+  activeProjectId,
   projectsLoaded,
   projects,
   projectsForSidebar,
@@ -44,6 +44,7 @@ export default function SidebarProjectsSection({
   truncateEnd,
 }: {
   navLocked: boolean;
+  activeProjectId: string | null;
   projectsLoaded: boolean;
   projects: Paged<ProjectListItem>;
   projectsForSidebar: ProjectListItem[];
@@ -134,7 +135,7 @@ export default function SidebarProjectsSection({
                 onClickNewProject();
               }}
             >
-              <PlusIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+              <FolderPlusSvg className="h-4 w-4 shrink-0 text-[var(--muted-2)]" />
               <span>New project</span>
             </button>
           </li>
@@ -145,6 +146,7 @@ export default function SidebarProjectsSection({
 
           {projectsForSidebar.map((p) => {
             const title = truncateEnd(p.name, 22);
+            const isActive = Boolean(activeProjectId && activeProjectId === p.id);
             return (
               <li key={p.id}>
                 <div className="group relative">
@@ -167,7 +169,9 @@ export default function SidebarProjectsSection({
                       {p.isRequest ? (
                         <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                       ) : (
-                        <FolderIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                        <span className="text-[var(--muted-2)]">
+                          {isActive ? <FolderOpenSvg className="h-4 w-4" /> : <FolderClosedSvg className="h-4 w-4" />}
+                        </span>
                       )}
                       <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">{title}</span>
                     </div>
@@ -254,6 +258,66 @@ function StablePlusMinusIcon({ expanded }: { expanded: boolean }) {
     >
       <path d="M6 12h12" />
       {!expanded ? <path d="M12 6v12" /> : null}
+    </svg>
+  );
+}
+
+function FolderClosedSvg({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth="1.5"
+      stroke="currentColor"
+      className={className ?? "h-4 w-4"}
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"
+      />
+    </svg>
+  );
+}
+
+function FolderOpenSvg({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth="1.5"
+      stroke="currentColor"
+      className={className ?? "h-4 w-4"}
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 0 0-1.883 2.542l.857 6a2.25 2.25 0 0 0 2.227 1.932H19.05a2.25 2.25 0 0 0 2.227-1.932l.857-6a2.25 2.25 0 0 0-1.883-2.542m-16.5 0V6A2.25 2.25 0 0 1 6 3.75h3.879a1.5 1.5 0 0 1 1.06.44l2.122 2.12a1.5 1.5 0 0 0 1.06.44H18A2.25 2.25 0 0 1 20.25 9v.776"
+      />
+    </svg>
+  );
+}
+
+function FolderPlusSvg({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      strokeWidth="1.5"
+      stroke="currentColor"
+      className={className ?? "h-4 w-4"}
+      aria-hidden="true"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 10.5v6m3-3H9m4.06-7.19-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"
+      />
     </svg>
   );
 }

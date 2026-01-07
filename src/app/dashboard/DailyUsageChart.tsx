@@ -6,12 +6,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import dynamic from "next/dynamic";
 
 import Alert from "@/components/ui/Alert";
 import { cn } from "@/lib/cn";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
+import type { DailyUsageChartRow } from "./DailyUsageChartRenderer";
 
 type UsageDailyResponse = {
   ok: true;
@@ -39,6 +40,8 @@ const COLORS = [
   "rgb(203 213 225)", // slate light
 ];
 
+const DailyUsageChartRenderer = dynamic(() => import("./DailyUsageChartRenderer"), { ssr: false });
+
 function niceNumber(v: unknown): number {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
   if (!Number.isFinite(n)) return 0;
@@ -57,6 +60,11 @@ function fmtTooltip(metric: Metric, v: any): string {
   return Math.round(n).toLocaleString();
 }
 
+// Small in-memory cache: makes tab switching feel instant and avoids re-fetching if the user
+// toggles between Usage/Overview quickly. This does not change server cache semantics.
+const USAGE_DAILY_CACHE_TTL_MS = 30_000;
+let usageDailyCache: Map<number, { at: number; resp: UsageDailyResponse }> | null = null;
+
 export default function DailyUsageChart({
   className,
   days,
@@ -66,7 +74,12 @@ export default function DailyUsageChart({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [resp, setResp] = useState<UsageDailyResponse | null>(null);
+  const [resp, setResp] = useState<UsageDailyResponse | null>(() => {
+    const cached = usageDailyCache?.get?.(days);
+    if (!cached) return null;
+    if (Date.now() - cached.at > USAGE_DAILY_CACHE_TTL_MS) return null;
+    return cached.resp;
+  });
   const [metric, setMetric] = useState<Metric>("credits");
   const [group, setGroup] = useState<Grouping>("model");
   const [cumulative, setCumulative] = useState(false);
@@ -85,7 +98,13 @@ export default function DailyUsageChart({
 
   useEffect(() => {
     let cancelled = false;
-    setBusy(true);
+    // Kick off the (lazy) chart chunk request ASAP so code+data can load in parallel.
+    void import("./DailyUsageChartRenderer");
+
+    const cached = usageDailyCache?.get?.(days);
+    const cachedFresh = Boolean(cached) && Date.now() - (cached?.at ?? 0) < USAGE_DAILY_CACHE_TTL_MS;
+    // If cached data exists, avoid a visible "Loading…" state.
+    setBusy(!cachedFresh && !resp);
     setError(null);
     void (async () => {
       try {
@@ -96,10 +115,13 @@ export default function DailyUsageChart({
         if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
         if (!json || (json as any).ok !== true) throw new Error("Invalid response");
         if (!cancelled) setResp(json as UsageDailyResponse);
+        usageDailyCache = usageDailyCache ?? new Map();
+        usageDailyCache.set(days, { at: Date.now(), resp: json as UsageDailyResponse });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load daily usage";
         if (!cancelled) setError(msg);
-        if (!cancelled) setResp(null);
+        // Keep cached data visible if we have it (avoid turning a transient failure into a blank chart).
+        if (!cancelled && !(usageDailyCache?.get?.(days)?.resp)) setResp(null);
       } finally {
         if (!cancelled) setBusy(false);
       }
@@ -149,11 +171,6 @@ export default function DailyUsageChart({
       return next;
     });
   }, [series, group, keys, metric, cumulative]);
-
-  const xLabels = chartData.map((d) => String(d.day));
-  const left = xLabels[0] ?? "";
-  const mid = xLabels[Math.floor(xLabels.length / 2)] ?? "";
-  const right = xLabels[xLabels.length - 1] ?? "";
 
   const max = useMemo(() => {
     let m = 0;
@@ -257,52 +274,14 @@ export default function DailyUsageChart({
               <div className="flex items-center justify-end px-1 pb-2 text-[11px] text-[var(--muted-2)]">Max: {fmtAxis(metric, max)}</div>
             )}
 
-            <div className="h-56 w-full">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={1}>
-                <BarChart data={chartData} margin={{ top: 6, right: 10, bottom: 6, left: 6 }}>
-                  <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
-                  <XAxis
-                    dataKey="day"
-                    ticks={[left, mid, right].filter(Boolean)}
-                    tick={{ fontSize: 10, fill: "var(--muted-2)" }}
-                    axisLine={false}
-                    tickLine={false}
-                    interval={0}
-                    height={24}
-                  />
-                  <YAxis tick={{ fontSize: 10, fill: "var(--muted-2)" }} axisLine={false} tickLine={false} tickFormatter={(v) => fmtAxis(metric, v)} />
-                  <Tooltip
-                    cursor={{ fill: "var(--panel-hover)", fillOpacity: 0.5 }}
-                    contentStyle={{
-                      background: "var(--panel)",
-                      border: "1px solid var(--border)",
-                      borderRadius: 12,
-                      padding: "8px 10px",
-                      fontSize: 12,
-                      color: "var(--fg)",
-                    }}
-                    labelStyle={{ color: "var(--muted-2)" }}
-                    formatter={(v: any, name: any) => [fmtTooltip(metric, v), String(name ?? "")]}
-                  />
-
-                  {group === "total" ? (
-                    <Bar dataKey="total" name={metric === "spend" ? "Spend" : "Credits"} fill="rgb(56 189 248)" radius={[4, 4, 0, 0]} isAnimationActive={false} />
-                  ) : (
-                    keys.map((k, i) => (
-                      <Bar
-                        key={k.key}
-                        dataKey={k.key}
-                        name={k.label}
-                        stackId="a"
-                        fill={COLORS[i % COLORS.length]}
-                        radius={i === keys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
-                        isAnimationActive={false}
-                      />
-                    ))
-                  )}
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            <DailyUsageChartRenderer
+              chartData={chartData as DailyUsageChartRow[]}
+              group={group}
+              keys={keys}
+              metric={metric}
+              max={max}
+              colors={COLORS}
+            />
           </div>
         )}
       </div>

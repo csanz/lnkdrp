@@ -24,16 +24,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ orgId: stri
   const orgObjectId = new Types.ObjectId(orgId);
   const userObjectId = new Types.ObjectId(session.userId);
 
-  const membership = await OrgMembershipModel.findOne({ orgId: orgObjectId, userId: userObjectId, isDeleted: { $ne: true } })
-    .select({ role: 1 })
-    .lean();
-  const role = membership ? String((membership as { role?: unknown }).role ?? "") : "";
-  const canView = role === "owner" || role === "admin";
-  if (!canView) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
   const memberships = await OrgMembershipModel.find({ orgId: orgObjectId, isDeleted: { $ne: true } })
     .select({ userId: 1, role: 1, createdDate: 1 })
     .lean();
+
+  // Permission check without an extra DB call:
+  // Find the caller's membership among the org membership list.
+  const self = memberships.find(
+    (m) =>
+      (m as { userId?: unknown }).userId instanceof Types.ObjectId && String((m as { userId: Types.ObjectId }).userId) === String(userObjectId),
+  );
+  const selfRole = self ? String((self as { role?: unknown }).role ?? "") : "";
+  const canView = selfRole === "owner" || selfRole === "admin";
+  if (!canView) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const userIds = memberships
     .map((m) => (m as { userId?: unknown }).userId)

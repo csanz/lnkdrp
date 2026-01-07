@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActor } from "@/lib/gating/actor";
+import { resolveActorForStats } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
@@ -22,6 +22,11 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// Short-lived in-memory cache to keep the dashboard "Overview" and "Limits" sections snappy.
+// This is safe because spend usage changes slowly, and the UI already refreshes after edits.
+const BILLING_SPEND_CACHE_TTL_MS = 10_000;
+let billingSpendCache: Map<string, { at: number; payload: any }> | null = null;
 
 function toNonNegativeInt(v: unknown): number | null {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
@@ -53,22 +58,35 @@ function startOfNextUtcMonth(d: Date): Date {
 
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
-    const actor = await resolveActor(request);
+    const actor = await resolveActorForStats(request);
     try {
       if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
       if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+
+      const orgIdStr = String(actor.orgId);
+      const userIdStr = String(actor.userId);
+      billingSpendCache = billingSpendCache ?? new Map();
+      const cacheKey = `${orgIdStr}:${userIdStr}`;
+      const cached = billingSpendCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < BILLING_SPEND_CACHE_TTL_MS) {
+        return NextResponse.json(cached.payload, { headers: { "cache-control": "no-store" } });
+      }
 
       await connectMongo();
       const orgId = new Types.ObjectId(actor.orgId);
       const userId = new Types.ObjectId(actor.userId);
 
       // Editing limits is restricted to owners/admins AND requires an active subscription (Pro).
-      const [sub, membership] = await Promise.all([
+      // Fetch the "hot path" documents in parallel.
+      const [sub, membership, bal] = await Promise.all([
         SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
           .select({ status: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
           .lean(),
         OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
+        WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
+          .select({ onDemandEnabled: 1, onDemandMonthlyLimitCents: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
+          .lean(),
       ]);
       const isPro = isProStatus((sub as any)?.status);
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
@@ -76,9 +94,6 @@ export async function GET(request: Request) {
       const canEdit = isPro && roleAllowsEdit;
       const editDisabledReason = !isPro ? "On-demand limits require an active Pro subscription." : !roleAllowsEdit ? "Only workspace owners/admins can edit limits." : null;
 
-      const bal = await WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
-        .select({ onDemandEnabled: 1, onDemandMonthlyLimitCents: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
-        .lean();
       const limitCents =
         typeof (bal as any)?.onDemandMonthlyLimitCents === "number" && Number.isFinite((bal as any).onDemandMonthlyLimitCents)
           ? Math.max(0, Math.floor((bal as any).onDemandMonthlyLimitCents))
@@ -129,17 +144,29 @@ export async function GET(request: Request) {
       const centsPerCredit = USD_CENTS_PER_CREDIT;
       const usedCents = Math.max(0, usedCreditsThisCycle) * centsPerCredit;
 
-      return NextResponse.json(
-        {
-          ok: true,
-          onDemandEnabled: enabled,
-          onDemandMonthlyLimitCents: enabled ? limitCents : 0,
-          onDemandUsedCentsThisCycle: usedCents,
-          canEdit,
-          editDisabledReason,
-        },
-        { headers: { "cache-control": "no-store" } },
-      );
+      const payload = {
+        ok: true,
+        onDemandEnabled: enabled,
+        onDemandMonthlyLimitCents: enabled ? limitCents : 0,
+        onDemandUsedCentsThisCycle: usedCents,
+        canEdit,
+        editDisabledReason,
+      };
+
+      billingSpendCache.set(cacheKey, { at: Date.now(), payload });
+      if (billingSpendCache.size > 100) {
+        let oldestKey: string | null = null;
+        let oldestAt = Infinity;
+        for (const [k, v] of billingSpendCache.entries()) {
+          if (v.at < oldestAt) {
+            oldestAt = v.at;
+            oldestKey = k;
+          }
+        }
+        if (oldestKey) billingSpendCache.delete(oldestKey);
+      }
+
+      return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return NextResponse.json({ error: message }, { status: 400 });
@@ -149,7 +176,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   return withMongoRequestLogging(request, async () => {
-    const actor = await resolveActor(request);
+    const actor = await resolveActorForStats(request);
     try {
       if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
@@ -191,6 +218,18 @@ export async function POST(request: Request) {
         { $set: { onDemandEnabled: enabled, onDemandMonthlyLimitCents: enabled ? limitCents : 0 } },
         { upsert: true },
       );
+
+      // Best-effort: invalidate cached spend payloads for this org (per-user cache keys).
+      try {
+        if (billingSpendCache) {
+          const prefix = `${String(actor.orgId)}:`;
+          for (const k of Array.from(billingSpendCache.keys())) {
+            if (k.startsWith(prefix)) billingSpendCache.delete(k);
+          }
+        }
+      } catch {
+        // ignore
+      }
 
       return NextResponse.json(
         { ok: true, onDemandEnabled: enabled, onDemandMonthlyLimitCents: enabled ? limitCents : 0 },

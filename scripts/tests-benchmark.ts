@@ -14,16 +14,22 @@
  * - Default base URL matches repo dev port (3001).
  */
 import { performance } from "node:perf_hooks";
+import fs from "node:fs";
+import path from "node:path";
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 type Args = {
-  mode: "dashboard" | "admin" | null;
+  mode: "dashboard" | "document" | "admin" | null;
   baseUrl: string;
   cookie: string;
   iterations: number;
   timeoutMs: number;
   json: boolean;
+  summary: boolean;
+  select: boolean;
+  selectSpec: string | null;
+  docId: string | null;
 };
 
 type BenchResult = {
@@ -36,6 +42,8 @@ type BenchResult = {
   bytes: number | null;
   error?: string;
   skipped?: boolean;
+  // Optional: parsed JSON for requests where we need to derive follow-up calls (e.g. billing cycleStart).
+  jsonBody?: unknown;
 };
 
 function usage(): string {
@@ -45,7 +53,13 @@ function usage(): string {
     "",
     "Options:",
     "  --dashboard               Run dashboard benchmarks",
+    "  --document                Run document (/doc/:docId) benchmarks",
     "  --admin                   (Listed for parity; not implemented)",
+    "  --summary                 Print summary tables (default is section-by-section live output)",
+    "  --select [spec]           Choose which sections/pages to run (interactive if omitted)",
+    '                           Dashboard examples: --select 7   |  --select "5,7"  |  --select all',
+    '                           Document examples:  --select 1   |  --select all',
+    "  --doc-id <docId>          Document ObjectId to benchmark (document mode). If omitted, auto-picks most recent doc.",
     "  --base-url <url>          Base URL (default: http://localhost:3001)",
     "  --cookie <cookieHeader>   Full Cookie header value (or env LNKDRP_COOKIE)",
     "  --iterations <n>          Repeat each request n times (default: 1)",
@@ -65,6 +79,10 @@ function parseArgs(argv: string[]): Args {
   let iterations = 1;
   let timeoutMs = 30_000;
   let json = false;
+  let summary = false;
+  let select = false;
+  let selectSpec: string | null = null;
+  let docId: string | null = process.env.LNKDRP_DOC_ID?.trim() || null;
 
   const nextValue = (i: number) => {
     const v = argv[i + 1];
@@ -75,7 +93,22 @@ function parseArgs(argv: string[]): Args {
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dashboard") mode = "dashboard";
+    else if (a === "--document") mode = "document";
     else if (a === "--admin") mode = "admin";
+    else if (a === "--summary") summary = true;
+    else if (a === "--select") {
+      select = true;
+      const next = argv[i + 1];
+      if (next && !next.startsWith("--")) {
+        selectSpec = next;
+        i++;
+      }
+    } else if (typeof a === "string" && a.startsWith("--select=")) {
+      select = true;
+      const v = a.slice("--select=".length).trim();
+      selectSpec = v || null;
+    }
+    else if (a === "--doc-id") docId = nextValue(i++);
     else if (a === "--base-url") baseUrl = nextValue(i++);
     else if (a === "--cookie") cookie = nextValue(i++);
     else if (a === "--iterations") iterations = Math.max(1, Math.floor(Number(nextValue(i++))));
@@ -91,7 +124,20 @@ function parseArgs(argv: string[]): Args {
   }
 
   baseUrl = baseUrl.replace(/\/+$/, "");
-  return { mode, baseUrl, cookie, iterations, timeoutMs, json };
+  return { mode, baseUrl, cookie, iterations, timeoutMs, json, summary, select, selectSpec, docId };
+}
+
+function tryReadCookieFile(): string {
+  try {
+    const fp = path.join(process.cwd(), "scripts", "cookie.json");
+    if (!fs.existsSync(fp)) return "";
+    const raw = fs.readFileSync(fp, "utf8");
+    const json = JSON.parse(raw) as any;
+    const cookie = typeof json?.cookie === "string" ? json.cookie.trim() : "";
+    return cookie;
+  } catch {
+    return "";
+  }
 }
 
 function msStats(values: number[]) {
@@ -157,10 +203,75 @@ async function timedFetch(opts: {
   }
 }
 
+async function timedFetchJson(opts: {
+  name: string;
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  timeoutMs: number;
+}): Promise<BenchResult> {
+  const method = (opts.method || "GET").toUpperCase();
+  const controller = new AbortController();
+  const t0 = performance.now();
+  const timeout = setTimeout(() => controller.abort(), opts.timeoutMs);
+  try {
+    const res = await fetch(opts.url, {
+      method,
+      headers: opts.headers,
+      body: opts.body,
+      signal: controller.signal,
+    });
+    const text = await res.text().catch(() => "");
+    const bytes = text ? Buffer.byteLength(text, "utf8") : 0;
+    let jsonBody: unknown = undefined;
+    try {
+      jsonBody = text ? JSON.parse(text) : undefined;
+    } catch {
+      jsonBody = undefined;
+    }
+    const t1 = performance.now();
+    return {
+      name: opts.name,
+      method,
+      url: opts.url,
+      status: res.status,
+      ok: res.ok,
+      ms: t1 - t0,
+      bytes,
+      jsonBody,
+    };
+  } catch (e) {
+    const t1 = performance.now();
+    return {
+      name: opts.name,
+      method,
+      url: opts.url,
+      status: null,
+      ok: false,
+      ms: t1 - t0,
+      bytes: null,
+      error: e instanceof Error ? e.message : "Request failed",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function urlToRoute(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.pathname}${u.search}`;
+  } catch {
+    return url;
+  }
+}
+
 function printTable(results: BenchResult[]) {
   const rows = results.map((r) => ({
     name: r.name,
     method: r.method,
+    route: urlToRoute(r.url),
     status: r.skipped ? "SKIP" : r.status ?? "ERR",
     ms: r.ms.toFixed(1),
     ok: r.skipped ? true : r.ok,
@@ -179,10 +290,13 @@ async function chooseModeInteractive(): Promise<Args["mode"]> {
     // eslint-disable-next-line no-console
     console.log("  1) Dashboard");
     // eslint-disable-next-line no-console
-    console.log("  2) Admin");
+    console.log("  2) Document");
+    // eslint-disable-next-line no-console
+    console.log("  3) Admin");
     const ans = (await rl.question("Enter 1 or 2: ")).trim();
     if (ans === "1") return "dashboard";
-    if (ans === "2") return "admin";
+    if (ans === "2") return "document";
+    if (ans === "3") return "admin";
     return null;
   } finally {
     rl.close();
@@ -194,11 +308,12 @@ async function dashboardBench(args: Args): Promise<BenchResult[]> {
   const cookie = args.cookie;
   const commonHeaders: Record<string, string> = {
     accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
     ...(cookie ? { cookie } : null),
   };
 
-  // Resolve org context (also validates auth).
-  const orgsRes = await timedFetch({
+  // Resolve org context (also validates auth). IMPORTANT: do not do hidden extra fetches.
+  const orgsRes = await timedFetchJson({
     name: "orgs:list",
     url: `${base}/api/orgs`,
     method: "GET",
@@ -206,25 +321,13 @@ async function dashboardBench(args: Args): Promise<BenchResult[]> {
     timeoutMs: args.timeoutMs,
   });
 
-  let activeOrg: { id: string; type: string; role: string } | null = null;
-  if (orgsRes.ok) {
-    try {
-      const res = await fetch(`${base}/api/orgs`, { method: "GET", headers: commonHeaders });
-      const json = (await res.json().catch(() => null)) as any;
-      const activeOrgId = typeof json?.activeOrgId === "string" ? json.activeOrgId : "";
-      const orgs = Array.isArray(json?.orgs) ? json.orgs : [];
-      const match = orgs.find((o: any) => String(o?.id) === activeOrgId) ?? null;
-      if (match) {
-        activeOrg = {
-          id: String(match.id),
-          type: String(match.type ?? ""),
-          role: String(match.role ?? ""),
-        };
-      }
-    } catch {
-      // ignore; we still proceed with other requests
-    }
-  }
+  const orgsJson = (orgsRes as any).jsonBody as any;
+  const activeOrgId = typeof orgsJson?.activeOrgId === "string" ? orgsJson.activeOrgId : "";
+  const orgs = Array.isArray(orgsJson?.orgs) ? orgsJson.orgs : [];
+  const match = orgs.find((o: any) => String(o?.id) === activeOrgId) ?? null;
+  const activeOrg: { id: string; type: string; role: string } | null = match
+    ? { id: String(match.id), type: String(match.type ?? ""), role: String(match.role ?? "") }
+    : null;
 
   // Define the dashboard requests (matching what the UI calls).
   const requests: Array<() => Promise<BenchResult>> = [
@@ -309,13 +412,21 @@ async function dashboardBench(args: Args): Promise<BenchResult[]> {
         headers: commonHeaders,
         timeoutMs: args.timeoutMs,
       }),
+    async () =>
+      timedFetch({
+        name: "orgs:active",
+        url: `${base}/api/orgs/active`,
+        method: "GET",
+        headers: commonHeaders,
+        timeoutMs: args.timeoutMs,
+      }),
   ];
 
   // Billing usage depends on billing summary (cycleStart).
   requests.push(async () => {
-    const res = await fetch(`${base}/api/billing/summary`, { method: "GET", headers: commonHeaders }).catch(() => null);
-    const json = res ? await res.json().catch(() => null) : null;
-    const cycleStart = typeof (json as any)?.cycle?.start === "string" ? String((json as any).cycle.start) : "";
+    // Avoid hidden extra call: use the already-timed billing:summary response if present.
+    const summaryRes = results.find((r) => r.name === "billing:summary" && !r.skipped) as BenchResult | undefined;
+    const cycleStart = typeof (summaryRes as any)?.jsonBody?.cycle?.start === "string" ? String((summaryRes as any).jsonBody.cycle.start) : "";
     if (!cycleStart) {
       return {
         name: "billing:usage(cycleStart=summary)",
@@ -392,9 +503,960 @@ async function dashboardBench(args: Args): Promise<BenchResult[]> {
   const results: BenchResult[] = [];
   for (const fn of requests) {
     for (let i = 0; i < args.iterations; i++) {
-      results.push(await fn());
+      const r = await fn();
+      results.push(r);
     }
   }
+  return results;
+}
+
+type DashboardSection =
+  | "Overview"
+  | "Account"
+  | "Workspace"
+  | "Teams"
+  | "Usage"
+  | "Limits"
+  | "Billing & Invoices";
+
+const ORDERED_SECTIONS: DashboardSection[] = [
+  "Overview",
+  "Account",
+  "Workspace",
+  "Teams",
+  "Usage",
+  "Limits",
+  "Billing & Invoices",
+];
+
+type DocumentPage = "Main Page" | "Metrics Page" | "Share Page" | "History Page";
+
+const ORDERED_DOC_PAGES: DocumentPage[] = ["Main Page", "Metrics Page", "Share Page", "History Page"];
+
+function parseDashboardSelectSpec(spec: string): DashboardSection[] | null {
+  const s = spec.trim().toLowerCase();
+  if (!s) return null;
+  if (s === "all") return ORDERED_SECTIONS.slice();
+  const raw = s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const idxs = raw
+    .map((x) => Number(x))
+    .filter((n) => Number.isFinite(n) && n >= 1 && n <= ORDERED_SECTIONS.length);
+  if (!idxs.length) return null;
+  const unique = Array.from(new Set(idxs));
+  return unique.map((n) => ORDERED_SECTIONS[n - 1]!).filter(Boolean) as DashboardSection[];
+}
+
+function parseDocumentSelectSpec(spec: string): DocumentPage[] | null {
+  const s = spec.trim().toLowerCase();
+  if (!s) return null;
+  if (s === "all") return ORDERED_DOC_PAGES.slice();
+  const raw = s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const idxs = raw
+    .map((x) => Number(x))
+    .filter((n) => Number.isFinite(n) && n >= 1 && n <= ORDERED_DOC_PAGES.length);
+  if (!idxs.length) return null;
+  const unique = Array.from(new Set(idxs));
+  return unique.map((n) => ORDERED_DOC_PAGES[n - 1]!).filter(Boolean) as DocumentPage[];
+}
+
+async function chooseDashboardSectionsInteractive(): Promise<DashboardSection[] | null> {
+  const rl = readline.createInterface({ input, output });
+  try {
+    // eslint-disable-next-line no-console
+    console.log("Select dashboard section(s) to benchmark (comma-separated):");
+    ORDERED_SECTIONS.forEach((s, idx) => {
+      // eslint-disable-next-line no-console
+      console.log(`  ${idx + 1}) ${s}`);
+    });
+    // eslint-disable-next-line no-console
+    console.log('  (or type "all")');
+    const ans = (await rl.question("Selection: ")).trim().toLowerCase();
+    if (!ans) return null;
+    return parseDashboardSelectSpec(ans);
+  } finally {
+    rl.close();
+  }
+}
+
+async function chooseDocumentPagesInteractive(): Promise<DocumentPage[] | null> {
+  const rl = readline.createInterface({ input, output });
+  try {
+    // eslint-disable-next-line no-console
+    console.log("Select document page(s) to benchmark (comma-separated):");
+    ORDERED_DOC_PAGES.forEach((s, idx) => {
+      // eslint-disable-next-line no-console
+      console.log(`  ${idx + 1}) ${s}`);
+    });
+    // eslint-disable-next-line no-console
+    console.log('  (or type "all")');
+    const ans = (await rl.question("Selection: ")).trim().toLowerCase();
+    if (!ans) return null;
+    return parseDocumentSelectSpec(ans);
+  } finally {
+    rl.close();
+  }
+}
+
+type DashboardStep = {
+  section: DashboardSection;
+  name: string;
+  method: "GET" | "POST";
+  url: (ctx: { base: string; activeOrg: { id: string; type: string; role: string } | null }) => string;
+  run: (ctx: { base: string; headers: Record<string, string>; activeOrg: { id: string; type: string; role: string } | null; timeoutMs: number; results: BenchResult[] }) => Promise<BenchResult>;
+};
+
+function formatMs(ms: number): string {
+  if (!Number.isFinite(ms)) return "—";
+  return `${ms.toFixed(1)}ms`;
+}
+
+function printSectionHeader(title: DashboardSection) {
+  // eslint-disable-next-line no-console
+  console.log(`\n${title}`);
+  // eslint-disable-next-line no-console
+  console.log("-".repeat(title.length));
+}
+
+async function runWithSpinner(label: string, run: () => Promise<BenchResult>): Promise<BenchResult> {
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  let idx = 0;
+  const started = performance.now();
+  const interval = setInterval(() => {
+    const elapsed = performance.now() - started;
+    const frame = frames[idx++ % frames.length];
+    process.stdout.write(`\r${frame} ${label} (${formatMs(elapsed)})`);
+  }, 80);
+
+  try {
+    const r = await run();
+    return r;
+  } finally {
+    clearInterval(interval);
+    process.stdout.write("\r");
+    process.stdout.write(" ".repeat(Math.min(120, label.length + 32)));
+    process.stdout.write("\r");
+  }
+}
+
+async function runSectionParallel(opts: {
+  section: DashboardSection;
+  stepsForSection: DashboardStep[];
+  ctxBase: { base: string; activeOrg: { id: string; type: string; role: string } | null };
+  ctx: { base: string; headers: Record<string, string>; activeOrg: { id: string; type: string; role: string } | null; timeoutMs: number; results: BenchResult[] };
+  iterations: number;
+}): Promise<{ wallMs: number; results: BenchResult[] }> {
+  const { section, stepsForSection, ctxBase, ctx, iterations } = opts;
+  const started = performance.now();
+
+  // Billing & Invoices has a real dependency chain in the UI:
+  // - /api/billing/summary and /api/billing/invoices fire on mount
+  // - /api/billing/usage waits on summary (needs cycleStart)
+  // So treat it as: start (summary + invoices) in parallel, then run usage, then await invoices.
+  if (section === "Billing & Invoices") {
+    const summaryStep = stepsForSection.find((s) => s.name === "billing:summary") ?? null;
+    const usageStep = stepsForSection.find((s) => s.name === "billing:usage(cycleStart=summary)") ?? null;
+    const invoicesStep = stepsForSection.find((s) => s.name === "billing:invoices(default)") ?? null;
+
+    if (summaryStep && usageStep && invoicesStep) {
+      const results: BenchResult[] = [];
+      for (let iter = 0; iter < iterations; iter++) {
+        const invoicesPromise = invoicesStep.run(ctx);
+
+        const summaryRes = await summaryStep.run(ctx);
+        results.push(summaryRes);
+        ctx.results.push(summaryRes);
+        // eslint-disable-next-line no-console
+        console.log(`GET ${urlToRoute(summaryStep.url(ctxBase))} -> ${summaryRes.skipped ? "SKIP" : summaryRes.status ?? "ERR"} (${summaryRes.ok ? "ok" : "fail"}) in ${formatMs(summaryRes.ms)}${summaryRes.error ? ` — ${summaryRes.error}` : ""}`);
+
+        const usageRes = await usageStep.run(ctx);
+        results.push(usageRes);
+        ctx.results.push(usageRes);
+        // eslint-disable-next-line no-console
+        console.log(`GET ${urlToRoute(usageStep.url(ctxBase))} -> ${usageRes.skipped ? "SKIP" : usageRes.status ?? "ERR"} (${usageRes.ok ? "ok" : "fail"}) in ${formatMs(usageRes.ms)}${usageRes.error ? ` — ${usageRes.error}` : ""}`);
+
+        const invoicesRes = await invoicesPromise;
+        results.push(invoicesRes);
+        ctx.results.push(invoicesRes);
+        // eslint-disable-next-line no-console
+        console.log(`GET ${urlToRoute(invoicesStep.url(ctxBase))} -> ${invoicesRes.skipped ? "SKIP" : invoicesRes.status ?? "ERR"} (${invoicesRes.ok ? "ok" : "fail"}) in ${formatMs(invoicesRes.ms)}${invoicesRes.error ? ` — ${invoicesRes.error}` : ""}`);
+      }
+
+      const wallMs = performance.now() - started;
+      return { wallMs, results };
+    }
+  }
+
+  type Task = { label: string; run: () => Promise<BenchResult> };
+  const tasks: Task[] = [];
+  for (const step of stepsForSection) {
+    for (let iter = 0; iter < iterations; iter++) {
+      const iterLabel = iterations > 1 ? ` [${iter + 1}/${iterations}]` : "";
+      const route = urlToRoute(step.url(ctxBase));
+      tasks.push({
+        label: `${step.method} ${route}${iterLabel}`,
+        run: () => step.run(ctx),
+      });
+    }
+  }
+
+  let done = 0;
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  let frameIdx = 0;
+  const tick = setInterval(() => {
+    const elapsed = performance.now() - started;
+    const frame = frames[frameIdx++ % frames.length];
+    process.stdout.write(`\r${frame} Loading ${section}… (${done}/${tasks.length}) ${formatMs(elapsed)}`);
+  }, 80);
+
+  const clearSpinnerLine = () => {
+    process.stdout.write("\r");
+    process.stdout.write(" ".repeat(120));
+    process.stdout.write("\r");
+  };
+
+  const results: BenchResult[] = [];
+  try {
+    await Promise.all(
+      tasks.map(async (t) => {
+        const r = await t.run();
+        results.push(r);
+        ctx.results.push(r);
+        done += 1;
+
+        const statusLabel = r.skipped ? "SKIP" : r.status ?? "ERR";
+        const okLabel = r.skipped ? "ok" : r.ok ? "ok" : "fail";
+        const extra = r.skipped ? (r.error ? ` — ${r.error}` : "") : r.error ? ` — ${r.error}` : "";
+        clearSpinnerLine();
+        // eslint-disable-next-line no-console
+        console.log(`${t.label} -> ${statusLabel} (${okLabel}) in ${formatMs(r.ms)}${extra}`);
+      }),
+    );
+  } finally {
+    clearInterval(tick);
+    clearSpinnerLine();
+  }
+
+  const wallMs = performance.now() - started;
+  return { wallMs, results };
+}
+
+async function dashboardBenchBySection(args: Args): Promise<BenchResult[]> {
+  const base = args.baseUrl;
+  const cookie = args.cookie;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
+    ...(cookie ? { cookie } : null),
+  };
+
+  const results: BenchResult[] = [];
+
+  const selected = args.select
+    ? args.selectSpec
+      ? parseDashboardSelectSpec(args.selectSpec)
+      : process.stdin.isTTY
+        ? await chooseDashboardSectionsInteractive()
+        : null
+    : ORDERED_SECTIONS.slice();
+  if (!selected) return results;
+
+  // Only fetch org list when a selected section actually needs active org resolution (Teams).
+  // This keeps the Overview benchmark aligned with what you care about (no extra prerequisite call).
+  let orgsRes: BenchResult | null = null;
+  let activeOrg: { id: string; type: string; role: string } | null = null;
+  if (selected.includes("Teams")) {
+    orgsRes = await timedFetchJson({
+      name: "orgs:list",
+      url: `${base}/api/orgs`,
+      method: "GET",
+      headers,
+      timeoutMs: args.timeoutMs,
+    });
+    results.push(orgsRes);
+    const orgsJson = (orgsRes as any).jsonBody as any;
+    const activeOrgId = typeof orgsJson?.activeOrgId === "string" ? orgsJson.activeOrgId : "";
+    const orgs = Array.isArray(orgsJson?.orgs) ? orgsJson.orgs : [];
+    const match = orgs.find((o: any) => String(o?.id) === activeOrgId) ?? null;
+    activeOrg = match ? { id: String(match.id), type: String(match.type ?? ""), role: String(match.role ?? "") } : null;
+  }
+
+  const ctxBase = { base, activeOrg };
+  const ctx = { base, headers, activeOrg, timeoutMs: args.timeoutMs, results };
+
+  const steps: DashboardStep[] = [
+    // Overview
+    {
+      section: "Overview",
+      name: "credits:snapshot",
+      method: "GET",
+      url: ({ base }) => `${base}/api/credits/snapshot`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "credits:snapshot", url: `${base}/api/credits/snapshot`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Overview",
+      name: "dashboard:stats",
+      method: "GET",
+      url: ({ base }) => `${base}/api/dashboard/stats`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "dashboard:stats", url: `${base}/api/dashboard/stats`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Overview",
+      name: "billing:status",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/status`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "billing:status", url: `${base}/api/billing/status`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Overview",
+      name: "billing:spend",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/spend`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "billing:spend", url: `${base}/api/billing/spend`, method: "GET", headers, timeoutMs }),
+    },
+
+    // Account
+    {
+      section: "Account",
+      name: "orgs:active:notification-preferences",
+      method: "GET",
+      url: ({ base }) => `${base}/api/orgs/active/notification-preferences`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({
+          name: "orgs:active:notification-preferences",
+          url: `${base}/api/orgs/active/notification-preferences`,
+          method: "GET",
+          headers,
+          timeoutMs,
+        }),
+    },
+
+    // Workspace
+    {
+      section: "Workspace",
+      name: "orgs:active",
+      method: "GET",
+      url: ({ base }) => `${base}/api/orgs/active`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "orgs:active", url: `${base}/api/orgs/active`, method: "GET", headers, timeoutMs }),
+    },
+
+    // Teams
+    {
+      section: "Teams",
+      name: "teams:members(activeOrg)",
+      method: "GET",
+      url: ({ base, activeOrg }) => `${base}/api/orgs/${encodeURIComponent(activeOrg?.id ?? ":orgId")}/members`,
+      run: async ({ base, headers, timeoutMs, activeOrg }) => {
+        const eligible = Boolean(activeOrg && activeOrg.type !== "personal");
+        if (!eligible || !activeOrg) {
+          return {
+            name: "teams:members(activeOrg)",
+            method: "GET",
+            url: `${base}/api/orgs/:orgId/members`,
+            status: null,
+            ok: true,
+            ms: 0,
+            bytes: null,
+            skipped: true,
+            error: "Skipped (active org is personal or unknown)",
+          };
+        }
+        return timedFetch({
+          name: "teams:members(activeOrg)",
+          url: `${base}/api/orgs/${encodeURIComponent(activeOrg.id)}/members`,
+          method: "GET",
+          headers,
+          timeoutMs,
+        });
+      },
+    },
+    {
+      section: "Teams",
+      name: "teams:invites(activeOrg)",
+      method: "GET",
+      url: ({ base, activeOrg }) => `${base}/api/org-invites?orgId=${encodeURIComponent(activeOrg?.id ?? ":orgId")}`,
+      run: async ({ base, headers, timeoutMs, activeOrg }) => {
+        const eligible = Boolean(activeOrg && activeOrg.type !== "personal");
+        if (!eligible || !activeOrg) {
+          return {
+            name: "teams:invites(activeOrg)",
+            method: "GET",
+            url: `${base}/api/org-invites?orgId=:orgId`,
+            status: null,
+            ok: true,
+            ms: 0,
+            bytes: null,
+            skipped: true,
+            error: "Skipped (active org is personal or unknown)",
+          };
+        }
+        return timedFetch({
+          name: "teams:invites(activeOrg)",
+          url: `${base}/api/org-invites?orgId=${encodeURIComponent(activeOrg.id)}`,
+          method: "GET",
+          headers,
+          timeoutMs,
+        });
+      },
+    },
+
+    // Usage
+    {
+      section: "Usage",
+      name: "credits:snapshot",
+      method: "GET",
+      url: ({ base }) => `${base}/api/credits/snapshot`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "credits:snapshot", url: `${base}/api/credits/snapshot`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Usage",
+      name: "billing:status",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/status`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "billing:status", url: `${base}/api/billing/status`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Usage",
+      name: "billing:spend",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/spend`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "billing:spend", url: `${base}/api/billing/spend`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Usage",
+      name: "dashboard:usage-daily(days=30)",
+      method: "GET",
+      url: ({ base }) => `${base}/api/dashboard/usage-daily?days=30`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({
+          name: "dashboard:usage-daily(days=30)",
+          url: `${base}/api/dashboard/usage-daily?days=30`,
+          method: "GET",
+          headers,
+          timeoutMs,
+        }),
+    },
+    {
+      section: "Usage",
+      name: "dashboard:usage(days=30)",
+      method: "GET",
+      url: ({ base }) => `${base}/api/dashboard/usage?days=30`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({
+          name: "dashboard:usage(days=30)",
+          url: `${base}/api/dashboard/usage?days=30`,
+          method: "GET",
+          headers,
+          timeoutMs,
+        }),
+    },
+
+    // Limits
+    {
+      section: "Limits",
+      name: "billing:spend",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/spend`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "billing:spend", url: `${base}/api/billing/spend`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Limits",
+      name: "credits:quality-defaults",
+      method: "GET",
+      url: ({ base }) => `${base}/api/credits/quality-defaults`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({
+          name: "credits:quality-defaults",
+          url: `${base}/api/credits/quality-defaults`,
+          method: "GET",
+          headers,
+          timeoutMs,
+        }),
+    },
+
+    // Billing & Invoices
+    {
+      section: "Billing & Invoices",
+      name: "billing:summary",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/summary`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetchJson({ name: "billing:summary", url: `${base}/api/billing/summary`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Billing & Invoices",
+      name: "billing:usage(cycleStart=summary)",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/usage?cycleStart=...`,
+      run: async ({ base, headers, timeoutMs, results }) => {
+        const summaryRes = results.find((r) => r.name === "billing:summary" && !r.skipped) as BenchResult | undefined;
+        const cycleStart =
+          typeof (summaryRes as any)?.jsonBody?.cycle?.start === "string" ? String((summaryRes as any).jsonBody.cycle.start) : "";
+        if (!cycleStart) {
+          return {
+            name: "billing:usage(cycleStart=summary)",
+            method: "GET",
+            url: `${base}/api/billing/usage?cycleStart=...`,
+            status: null,
+            ok: false,
+            ms: 0,
+            bytes: null,
+            skipped: true,
+            error: "Skipped (could not resolve cycleStart from /api/billing/summary)",
+          };
+        }
+        const qs = new URLSearchParams();
+        qs.set("cycleStart", cycleStart);
+        return timedFetch({
+          name: "billing:usage(cycleStart=summary)",
+          url: `${base}/api/billing/usage?${qs.toString()}`,
+          method: "GET",
+          headers,
+          timeoutMs,
+        });
+      },
+    },
+    {
+      section: "Billing & Invoices",
+      name: "billing:invoices(default)",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/invoices`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "billing:invoices(default)", url: `${base}/api/billing/invoices`, method: "GET", headers, timeoutMs }),
+    },
+  ];
+
+  for (const section of selected) {
+    printSectionHeader(section);
+
+    const stepsForSection = steps.filter((s) => s.section === section);
+
+    // If we pre-fetched /api/orgs for Teams, print it as part of Teams output.
+    if (section === "Teams" && orgsRes) {
+      const route = urlToRoute(orgsRes.url);
+      const statusLabel = orgsRes.skipped ? "SKIP" : orgsRes.status ?? "ERR";
+      const okLabel = orgsRes.skipped ? "ok" : orgsRes.ok ? "ok" : "fail";
+      const extra = orgsRes.error ? ` — ${orgsRes.error}` : "";
+      // eslint-disable-next-line no-console
+      console.log(`GET ${route} -> ${statusLabel} (${okLabel}) in ${formatMs(orgsRes.ms)}${extra}`);
+    }
+
+    // NOTE: Section totals represent "page load wall clock" (parallel), not sum of sequential calls.
+    // This matches how the dashboard loads in the browser (requests fire concurrently).
+    const { wallMs } = await runSectionParallel({
+      section,
+      stepsForSection,
+      ctxBase,
+      ctx,
+      iterations: args.iterations,
+    });
+
+    // eslint-disable-next-line no-console
+    console.log(`Section total (parallel page load): ${formatMs(wallMs)} (${stepsForSection.length * args.iterations} calls)`);
+  }
+
+  return results;
+}
+
+async function resolveDocIdForBench(args: Args): Promise<{ docId: string; setup?: BenchResult }> {
+  if (args.docId && args.docId.trim()) return { docId: args.docId.trim() };
+  const base = args.baseUrl;
+  const cookie = args.cookie;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
+    ...(cookie ? { cookie } : null),
+  };
+  const setup = await timedFetchJson({
+    name: "docs:list (setup)",
+    url: `${base}/api/docs?limit=1&page=1`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
+  });
+  const body = (setup as any).jsonBody as any;
+  const first = Array.isArray(body?.docs) && body.docs[0] ? body.docs[0] : null;
+  const docId = typeof first?.id === "string" ? String(first.id).trim() : "";
+  if (!docId) {
+    throw new Error("Could not resolve a docId. Pass --doc-id <docId>.");
+  }
+  return { docId, setup };
+}
+
+async function documentMainBench(args: Args): Promise<BenchResult[]> {
+  const base = args.baseUrl;
+  const cookie = args.cookie;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
+    ...(cookie ? { cookie } : null),
+  };
+
+  const results: BenchResult[] = [];
+  const resolved = await resolveDocIdForBench(args);
+  if (resolved.setup) results.push(resolved.setup);
+
+  const docId = resolved.docId;
+
+  const printResult = (label: string, r: BenchResult) => {
+    const statusLabel = r.skipped ? "SKIP" : r.status ?? "ERR";
+    const okLabel = r.skipped ? "ok" : r.ok ? "ok" : "fail";
+    const extra = r.skipped ? (r.error ? ` — ${r.error}` : "") : r.error ? ` — ${r.error}` : "";
+    // eslint-disable-next-line no-console
+    console.log(`${label} -> ${statusLabel} (${okLabel}) in ${formatMs(r.ms)}${extra}`);
+  };
+
+  // 1) Core hydration/poll endpoint used by the page (fetchWithTempUser; cache: no-store).
+  // In local dev, the client uses ?debug=1 by default.
+  const debugParam = base.includes("localhost") || base.includes("127.0.0.1") ? "?lite=1&debug=1" : "?lite=1";
+  const docRes = await timedFetchJson({
+    name: "docs:get",
+    url: `${base}/api/docs/${encodeURIComponent(docId)}${debugParam}`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
+  });
+  results.push(docRes);
+  printResult(`GET ${urlToRoute(docRes.url)}`, docRes);
+
+  const docJson = (docRes as any).jsonBody as any;
+  const doc = docJson?.doc ?? null;
+  const blobUrl = typeof doc?.blobUrl === "string" ? doc.blobUrl.trim() : "";
+  const currentUploadId = typeof doc?.currentUploadId === "string" ? doc.currentUploadId.trim() : "";
+  const currentUploadVersion =
+    typeof doc?.currentUploadVersion === "number" && Number.isFinite(doc.currentUploadVersion) ? doc.currentUploadVersion : null;
+  const sharePasswordEnabled = Boolean(doc?.sharePasswordEnabled);
+  const isReceivedViaRequest =
+    Boolean(doc?.receivedViaRequestProjectId) || Boolean(doc?.project && typeof doc.project === "object" && (doc.project as any)?.isRequest);
+
+  const pdfKey = currentUploadId || (currentUploadVersion != null ? String(currentUploadVersion) : "0");
+
+  // 2) Remaining calls are largely independent; fire in parallel to mimic browser page load.
+  const startedParallel = performance.now();
+  const pending: Array<Promise<BenchResult>> = [];
+
+  pending.push(
+    timedFetch({
+      name: "auth:session",
+      url: `${base}/api/auth/session`,
+      method: "GET",
+      headers,
+      timeoutMs: args.timeoutMs,
+    }),
+  );
+
+  pending.push(
+    blobUrl
+      ? timedFetch({
+          name: "docs:pdf",
+          url: `${base}/api/docs/${encodeURIComponent(docId)}/pdf?v=${encodeURIComponent(pdfKey)}`,
+          method: "GET",
+          headers,
+          timeoutMs: args.timeoutMs,
+        })
+      : Promise.resolve({
+          name: "docs:pdf",
+          method: "GET",
+          url: `${base}/api/docs/${encodeURIComponent(docId)}/pdf?v=${encodeURIComponent(pdfKey)}`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: "Skipped (doc blobUrl not ready)",
+        } satisfies BenchResult),
+  );
+
+  pending.push(
+    timedFetchJson({
+      name: "projects:list(limit=50,page=1)",
+      url: `${base}/api/projects?limit=50&page=1&lite=1`,
+      method: "GET",
+      headers,
+      timeoutMs: args.timeoutMs,
+    }),
+  );
+
+  pending.push(
+    sharePasswordEnabled
+      ? timedFetchJson({
+          name: "docs:share-password:get",
+          url: `${base}/api/docs/${encodeURIComponent(docId)}/share-password`,
+          method: "GET",
+          headers,
+          timeoutMs: args.timeoutMs,
+        })
+      : Promise.resolve({
+          name: "docs:share-password:get",
+          method: "GET",
+          url: `${base}/api/docs/${encodeURIComponent(docId)}/share-password`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: "Skipped (sharePasswordEnabled is false)",
+        } satisfies BenchResult),
+  );
+
+  pending.push(
+    isReceivedViaRequest
+      ? timedFetchJson({
+          name: "docs:reviews(latest=1)",
+          url: `${base}/api/docs/${encodeURIComponent(docId)}/reviews?latest=1`,
+          method: "GET",
+          headers,
+          timeoutMs: args.timeoutMs,
+        })
+      : Promise.resolve({
+          name: "docs:reviews(latest=1)",
+          method: "GET",
+          url: `${base}/api/docs/${encodeURIComponent(docId)}/reviews?latest=1`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: "Skipped (doc is not request-received)",
+        } satisfies BenchResult),
+  );
+
+  pending.push(
+    timedFetchJson({
+      name: "docs:changes",
+      url: `${base}/api/docs/${encodeURIComponent(docId)}/changes?lite=1&limit=10`,
+      method: "GET",
+      headers,
+      timeoutMs: args.timeoutMs,
+    }),
+  );
+
+  const more = await Promise.all(pending);
+  const wallParallelMs = performance.now() - startedParallel;
+  for (const r of more) {
+    results.push(r);
+    printResult(`GET ${urlToRoute(r.url)}`, r);
+  }
+
+  const nonSkipped = results.filter((r) => !r.skipped);
+  const totalMs = nonSkipped.reduce((acc, r) => acc + (Number.isFinite(r.ms) ? r.ms : 0), 0);
+  // eslint-disable-next-line no-console
+  console.log(`\nMain Page total (wall clock after doc hydration): ${formatMs(wallParallelMs)}`);
+  // eslint-disable-next-line no-console
+  console.log(`Main Page total (sum of calls): ${formatMs(totalMs)} (${nonSkipped.length} calls)`);
+
+  return results;
+}
+
+async function documentMetricsBench(args: Args): Promise<BenchResult[]> {
+  const base = args.baseUrl;
+  const cookie = args.cookie;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
+    ...(cookie ? { cookie } : null),
+  };
+
+  const results: BenchResult[] = [];
+  const resolved = await resolveDocIdForBench(args);
+  if (resolved.setup) results.push(resolved.setup);
+  const docId = resolved.docId;
+
+  const printResult = (label: string, r: BenchResult) => {
+    const statusLabel = r.skipped ? "SKIP" : r.status ?? "ERR";
+    const okLabel = r.skipped ? "ok" : r.ok ? "ok" : "fail";
+    const extra = r.skipped ? (r.error ? ` — ${r.error}` : "") : r.error ? ` — ${r.error}` : "";
+    // eslint-disable-next-line no-console
+    console.log(`${label} -> ${statusLabel} (${okLabel}) in ${formatMs(r.ms)}${extra}`);
+  };
+
+  const docRes = await timedFetchJson({
+    name: "docs:get",
+    url: `${base}/api/docs/${encodeURIComponent(docId)}?lite=1`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
+  });
+  results.push(docRes);
+  printResult(`GET ${urlToRoute(docRes.url)}`, docRes);
+
+  const days = 15;
+  const shareviewsRes = await timedFetchJson({
+    name: `docs:shareviews(days=${days})`,
+    url: `${base}/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
+  });
+  results.push(shareviewsRes);
+  printResult(`GET ${urlToRoute(shareviewsRes.url)}`, shareviewsRes);
+
+  const nonSkipped = results.filter((r) => !r.skipped);
+  const totalMs = nonSkipped.reduce((acc, r) => acc + (Number.isFinite(r.ms) ? r.ms : 0), 0);
+  // eslint-disable-next-line no-console
+  console.log(`\nMetrics Page total (sum of calls): ${formatMs(totalMs)} (${nonSkipped.length} calls)`);
+  return results;
+}
+
+async function documentHistoryBench(args: Args): Promise<BenchResult[]> {
+  const base = args.baseUrl;
+  const cookie = args.cookie;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
+    ...(cookie ? { cookie } : null),
+  };
+
+  const results: BenchResult[] = [];
+  const resolved = await resolveDocIdForBench(args);
+  if (resolved.setup) results.push(resolved.setup);
+  const docId = resolved.docId;
+
+  const printResult = (label: string, r: BenchResult) => {
+    const statusLabel = r.skipped ? "SKIP" : r.status ?? "ERR";
+    const okLabel = r.skipped ? "ok" : r.ok ? "ok" : "fail";
+    const extra = r.skipped ? (r.error ? ` — ${r.error}` : "") : r.error ? ` — ${r.error}` : "";
+    // eslint-disable-next-line no-console
+    console.log(`${label} -> ${statusLabel} (${okLabel}) in ${formatMs(r.ms)}${extra}`);
+  };
+
+  const defaultsRes = await timedFetchJson({
+    name: "credits:quality-defaults",
+    url: `${base}/api/credits/quality-defaults`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
+  });
+  results.push(defaultsRes);
+  printResult(`GET ${urlToRoute(defaultsRes.url)}`, defaultsRes);
+
+  const docRes = await timedFetchJson({
+    name: "docs:get",
+    url: `${base}/api/docs/${encodeURIComponent(docId)}?lite=1`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
+  });
+  results.push(docRes);
+  printResult(`GET ${urlToRoute(docRes.url)}`, docRes);
+
+  const changesRes = await timedFetchJson({
+    name: "docs:changes",
+    url: `${base}/api/docs/${encodeURIComponent(docId)}/changes?lite=1&limit=10`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
+  });
+  results.push(changesRes);
+  printResult(`GET ${urlToRoute(changesRes.url)}`, changesRes);
+
+  const nonSkipped = results.filter((r) => !r.skipped);
+  const totalMs = nonSkipped.reduce((acc, r) => acc + (Number.isFinite(r.ms) ? r.ms : 0), 0);
+  // eslint-disable-next-line no-console
+  console.log(`\nHistory Page total (sum of calls): ${formatMs(totalMs)} (${nonSkipped.length} calls)`);
+  return results;
+}
+
+async function documentShareBench(args: Args): Promise<BenchResult[]> {
+  const base = args.baseUrl;
+  const cookie = args.cookie;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
+    ...(cookie ? { cookie } : null),
+  };
+
+  const results: BenchResult[] = [];
+  const resolved = await resolveDocIdForBench(args);
+  if (resolved.setup) results.push(resolved.setup);
+  const docId = resolved.docId;
+
+  const printResult = (label: string, r: BenchResult) => {
+    const statusLabel = r.skipped ? "SKIP" : r.status ?? "ERR";
+    const okLabel = r.skipped ? "ok" : r.ok ? "ok" : "fail";
+    const extra = r.skipped ? (r.error ? ` — ${r.error}` : "") : r.error ? ` — ${r.error}` : "";
+    // eslint-disable-next-line no-console
+    console.log(`${label} -> ${statusLabel} (${okLabel}) in ${formatMs(r.ms)}${extra}`);
+  };
+
+  // Resolve shareId + whether blob is ready.
+  const docRes = await timedFetchJson({
+    name: "docs:get",
+    url: `${base}/api/docs/${encodeURIComponent(docId)}?lite=1`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
+  });
+  results.push(docRes);
+  printResult(`GET ${urlToRoute(docRes.url)}`, docRes);
+
+  const docJson = (docRes as any).jsonBody as any;
+  const doc = docJson?.doc ?? null;
+  const shareId = typeof doc?.shareId === "string" ? doc.shareId.trim() : "";
+  const blobUrl = typeof doc?.blobUrl === "string" ? doc.blobUrl.trim() : "";
+
+  const statsRes = shareId
+    ? await timedFetchJson({
+        name: "share:stats:get",
+        url: `${base}/api/share/${encodeURIComponent(shareId)}/stats`,
+        method: "GET",
+        headers,
+        timeoutMs: args.timeoutMs,
+      })
+    : ({
+        name: "share:stats:get",
+        method: "GET",
+        url: `${base}/api/share/:shareId/stats`,
+        status: null,
+        ok: true,
+        ms: 0,
+        bytes: null,
+        skipped: true,
+        error: "Skipped (doc has no shareId)",
+      } satisfies BenchResult);
+  results.push(statsRes);
+  printResult(`GET ${urlToRoute(statsRes.url)}`, statsRes);
+
+  const pdfRes = shareId && blobUrl
+    ? await timedFetch({
+        name: "share:pdf",
+        url: `${base}/s/${encodeURIComponent(shareId)}/pdf`,
+        method: "GET",
+        headers,
+        timeoutMs: args.timeoutMs,
+      })
+    : ({
+        name: "share:pdf",
+        method: "GET",
+        url: shareId ? `${base}/s/${encodeURIComponent(shareId)}/pdf` : `${base}/s/:shareId/pdf`,
+        status: null,
+        ok: true,
+        ms: 0,
+        bytes: null,
+        skipped: true,
+        error: !shareId ? "Skipped (doc has no shareId)" : "Skipped (doc blobUrl not ready)",
+      } satisfies BenchResult);
+  results.push(pdfRes);
+  printResult(`GET ${urlToRoute(pdfRes.url)}`, pdfRes);
+
+  const nonSkipped = results.filter((r) => !r.skipped);
+  const totalMs = nonSkipped.reduce((acc, r) => acc + (Number.isFinite(r.ms) ? r.ms : 0), 0);
+  // eslint-disable-next-line no-console
+  console.log(`\nShare Page total (sum of calls): ${formatMs(totalMs)} (${nonSkipped.length} calls)`);
   return results;
 }
 
@@ -430,7 +1492,7 @@ async function main() {
     return;
   }
 
-  if (args.mode !== "dashboard") {
+  if (args.mode !== "dashboard" && args.mode !== "document") {
     // eslint-disable-next-line no-console
     console.error(usage());
     process.exit(2);
@@ -438,8 +1500,13 @@ async function main() {
   }
 
   if (!args.cookie) {
+    const fromFile = tryReadCookieFile();
+    if (fromFile) args.cookie = fromFile;
+  }
+
+  if (!args.cookie) {
     // eslint-disable-next-line no-console
-    console.error("Missing cookie. Provide --cookie or env LNKDRP_COOKIE.");
+    console.error("Missing cookie. Provide --cookie, env LNKDRP_COOKIE, or set scripts/cookie.json.");
     // eslint-disable-next-line no-console
     console.error("");
     // eslint-disable-next-line no-console
@@ -448,7 +1515,40 @@ async function main() {
     return;
   }
 
-  const results = await dashboardBench(args);
+  let results: BenchResult[] = [];
+  if (args.mode === "dashboard") {
+    results = args.summary ? await dashboardBench(args) : await dashboardBenchBySection(args);
+  } else if (args.mode === "document") {
+    const pages = args.select
+      ? args.selectSpec
+        ? parseDocumentSelectSpec(args.selectSpec)
+        : process.stdin.isTTY
+          ? await chooseDocumentPagesInteractive()
+          : null
+      : ["Main Page"];
+    if (!pages || !pages.length) {
+      // eslint-disable-next-line no-console
+      console.error("No document pages selected.");
+      process.exit(2);
+      return;
+    }
+    const all: BenchResult[] = [];
+    for (const p of pages) {
+      // eslint-disable-next-line no-console
+      console.log(`\nDocument: ${p}`);
+      // eslint-disable-next-line no-console
+      console.log("-".repeat(`Document: ${p}`.length));
+      if (p === "Main Page") all.push(...(await documentMainBench(args)));
+      else if (p === "Metrics Page") all.push(...(await documentMetricsBench(args)));
+      else if (p === "History Page") all.push(...(await documentHistoryBench(args)));
+      else if (p === "Share Page") all.push(...(await documentShareBench(args)));
+      else {
+        // eslint-disable-next-line no-console
+        console.error(`Not implemented: ${p}`);
+      }
+    }
+    results = all;
+  }
 
   if (args.json) {
     // eslint-disable-next-line no-console
@@ -456,7 +1556,7 @@ async function main() {
     return;
   }
 
-  printTable(results);
+  if (args.summary) printTable(results);
 
   // Summary by request name.
   const byName = new Map<string, number[]>();

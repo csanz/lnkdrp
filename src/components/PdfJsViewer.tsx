@@ -48,6 +48,14 @@ type Props = {
    */
   shareId?: string | null;
   /**
+   * If true, allow recipients to view a light revision history for the shared doc.
+   */
+  revisionHistoryEnabled?: boolean;
+  /**
+   * Endpoint for fetching revision history JSON (typically `/api/share/:shareId/changes`).
+   */
+  revisionHistoryUrl?: string | null;
+  /**
    * If true, show a receiver-facing "Download PDF" button.
    */
   allowDownload?: boolean;
@@ -189,6 +197,8 @@ export function PdfJsViewer({
   url,
   initialPage = 1,
   shareId,
+  revisionHistoryEnabled = false,
+  revisionHistoryUrl = null,
   allowDownload = false,
   downloadUrl = null,
   relevancyEnabled: _relevancyEnabled = false,
@@ -214,6 +224,20 @@ export function PdfJsViewer({
   const [zoom, setZoom] = useState(1); // multiplier on top of "fit-to-screen"
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyItems, setHistoryItems] = useState<
+    | null
+    | Array<{
+        fromVersion: number | null;
+        toVersion: number | null;
+        createdDate: string | null;
+        summary: string;
+        pagesThatChanged?: Array<{ pageNumber: number; summary: string }>;
+      }>
+  >(null);
+  const historyReqIdRef = useRef(0);
   const [viewMode, setViewMode] = useState<"single" | "all" | "grid">("single");
   const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
@@ -466,6 +490,122 @@ export function PdfJsViewer({
     document.addEventListener("pointerdown", onPointerDown, true);
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [aiOpen]);
+
+  useEffect(() => {
+    if (!historyOpen) return;
+    if (!revisionHistoryEnabled) return;
+    if (!revisionHistoryUrl) return;
+    if (historyItems) return;
+
+    const reqId = (historyReqIdRef.current += 1);
+    const startedAt = Date.now();
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+
+    setHistoryLoading(true);
+    setHistoryError(null);
+
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.log("[lnkdrp][share][history] fetch start", { revisionHistoryUrl, reqId });
+    }
+
+    const timeoutId =
+      typeof window !== "undefined" && controller
+        ? window.setTimeout(() => {
+            // Abort the request, and if this is still the latest request, surface a friendly error.
+            try {
+              controller.abort();
+            } catch {
+              // ignore
+            }
+            if (historyReqIdRef.current === reqId) {
+              setHistoryError("Timed out loading revision history.");
+              setHistoryLoading(false);
+            }
+          }, 10_000)
+        : null;
+
+    void (async () => {
+      try {
+        const res = await fetchWithTempUser(revisionHistoryUrl, {
+          cache: "no-store",
+          ...(controller ? { signal: controller.signal } : {}),
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(text || `Request failed (${res.status})`);
+        }
+        const json = (await res.json().catch(() => null)) as unknown;
+
+        // If Fast Refresh / re-renders triggered a newer request, ignore this result.
+        if (historyReqIdRef.current !== reqId) return;
+
+        const changesRaw = json && typeof json === "object" ? (json as any).changes : null;
+        const items = Array.isArray(changesRaw)
+          ? (changesRaw as unknown[])
+              .map((c) => {
+                if (!c || typeof c !== "object") return null;
+                const fromVersion = Number.isFinite((c as any).fromVersion) ? Number((c as any).fromVersion) : null;
+                const toVersion = Number.isFinite((c as any).toVersion) ? Number((c as any).toVersion) : null;
+                const createdDate = typeof (c as any).createdDate === "string" ? (c as any).createdDate : null;
+                const summary = typeof (c as any).summary === "string" ? (c as any).summary : "";
+                const pagesRaw = (c as any).pagesThatChanged;
+                const pagesThatChanged = Array.isArray(pagesRaw)
+                  ? pagesRaw
+                      .map((p: any) => ({
+                        pageNumber:
+                          typeof p?.pageNumber === "number" && Number.isFinite(p.pageNumber)
+                            ? Math.floor(p.pageNumber)
+                            : null,
+                        summary: typeof p?.summary === "string" ? p.summary : "",
+                      }))
+                      .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
+                  : [];
+                return { fromVersion, toVersion, createdDate, summary: summary.trim(), pagesThatChanged };
+              })
+              .filter(Boolean)
+          : [];
+
+        setHistoryItems(items as any);
+        setHistoryLoading(false);
+
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.log("[lnkdrp][share][history] fetch ok", {
+            reqId,
+            ms: Date.now() - startedAt,
+            count: Array.isArray(items) ? items.length : 0,
+          });
+        }
+      } catch (e) {
+        if (historyReqIdRef.current !== reqId) return;
+        const message = e instanceof Error ? e.message : "Failed to load revision history";
+        setHistoryError(message);
+        setHistoryLoading(false);
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.warn("[lnkdrp][share][history] fetch failed", {
+            reqId,
+            ms: Date.now() - startedAt,
+            message,
+          });
+        }
+      } finally {
+        if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
+      }
+    })();
+
+    // Cleanup: abort in-flight request and ensure we don't stay stuck loading in dev (Fast Refresh).
+    return () => {
+      try {
+        controller?.abort();
+      } catch {
+        // ignore
+      }
+      // If this request was the latest one, clear loading so the next render can retry.
+      if (historyReqIdRef.current === reqId) setHistoryLoading(false);
+    };
+  }, [historyItems, historyLoading, historyOpen, revisionHistoryEnabled, revisionHistoryUrl]);
 
   useEffect(() => {
 /**
@@ -1339,6 +1479,20 @@ export function PdfJsViewer({
                   </span>
                 </button>
 
+                {revisionHistoryEnabled ? (
+                  <button
+                    type="button"
+                    aria-label="Revision history"
+                    onClick={() => setHistoryOpen(true)}
+                    className="inline-flex h-8 items-center rounded-xl px-3 text-xs font-medium text-white/90 hover:bg-white/10"
+                  >
+                    <span className="inline-flex items-center gap-1.5">
+                      <HistoryIcon />
+                      History
+                    </span>
+                  </button>
+                ) : null}
+
                 {shareIdSafe && !shareContext?.isOwner ? (
                   <>
                     <div className="hidden h-8 w-px bg-white/10 sm:block" aria-hidden="true" />
@@ -1660,6 +1814,81 @@ export function PdfJsViewer({
           </div>
         </>
       ) : null}
+
+      <Modal
+        open={historyOpen}
+        onClose={() => {
+          setHistoryOpen(false);
+        }}
+        ariaLabel="Revision history"
+        panelClassName="border-white/15 bg-black/95 text-white ring-white/15"
+        contentClassName="px-6 pb-6 pt-5"
+      >
+        <div className="flex items-center gap-2 text-base font-semibold text-white">
+          <HistoryIcon />
+          <span>Revision history</span>
+        </div>
+        <div className="mt-2 text-sm text-white/70">
+          A light history of updates (version + date + summary).
+        </div>
+
+        {historyLoading ? (
+          <div className="mt-5 text-sm text-white/80">Loading…</div>
+        ) : historyError ? (
+          <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            {historyError}
+          </div>
+        ) : historyItems && historyItems.length ? (
+          <div className="mt-5 grid gap-3">
+            {historyItems.map((h, idx) => (
+              <div key={`h:${idx}`} className="rounded-xl border border-white/10 bg-white/5 px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-white/70">
+                  <span className="rounded-md border border-white/10 bg-black/30 px-2 py-0.5 font-semibold text-white/85">
+                    v{h.toVersion ?? "?"}
+                  </span>
+                  <span className="text-white/50">•</span>
+                  <span className="tabular-nums">
+                    {h.createdDate ? new Date(h.createdDate).toLocaleString() : "Unknown date"}
+                  </span>
+                </div>
+                <div className="mt-2 text-sm leading-relaxed text-white/92">
+                  {h.summary || "Update summary unavailable."}
+                </div>
+
+                {Array.isArray(h.pagesThatChanged) && h.pagesThatChanged.length ? (
+                  <div className="mt-3 border-t border-white/10 pt-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-white/70">
+                      Pages changed
+                    </div>
+                    <div className="mt-2 grid gap-2">
+                      {h.pagesThatChanged.slice(0, 12).map((p) => (
+                        <button
+                          key={`h:${idx}:p:${p.pageNumber}`}
+                          type="button"
+                          className="rounded-lg border border-white/10 bg-black/25 px-3 py-2 text-left text-sm text-white/90 hover:bg-black/35"
+                          onClick={() => {
+                            setPageNumber(p.pageNumber);
+                            setViewMode("single");
+                            setHistoryOpen(false);
+                          }}
+                          title={`Jump to page ${p.pageNumber}`}
+                        >
+                          <div className="text-xs font-semibold text-white/85">Page {p.pageNumber}</div>
+                          <div className="mt-0.5 text-sm text-white/80">
+                            {(p.summary || "").trim() || "Change summary unavailable."}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-5 text-sm text-white/75">No revisions yet.</div>
+        )}
+      </Modal>
 
       {/* Page */}
       <div
@@ -1993,6 +2222,41 @@ function SparklesIcon() {
         d="M5 13l.6 2.1 2.1.6-2.1.6L5 18.4l-.6-2.1-2.1-.6 2.1-.6L5 13Z"
         stroke="currentColor"
         strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function HistoryIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M12 8v4l3 2"
+        stroke="currentColor"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 12a9 9 0 1 0 3-6.7"
+        stroke="currentColor"
+        strokeWidth="2.1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M3 5v4h4"
+        stroke="currentColor"
+        strokeWidth="2.1"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>

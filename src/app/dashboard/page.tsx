@@ -112,13 +112,6 @@ function tabFromSearchParams(searchParams: URLSearchParams | null): DashTab {
   return raw === "spending" ? "limits" : raw;
 }
 
-type SpendStatusResponse = {
-  ok: true;
-  onDemandEnabled: boolean;
-  onDemandMonthlyLimitCents: number;
-  error?: string;
-};
-
 // Small in-memory cache to avoid visible "loading" states on initial render and when
 // navigating between dashboard tabs (tab switches are client-side and can re-run effects).
 const DASHBOARD_STATS_CACHE_TTL_MS = 30_000;
@@ -137,7 +130,9 @@ function PlaceholderTile({ title, body }: { title: string; body: string }) {
 export default function DashboardPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const tab = tabFromSearchParams(searchParams);
+  const urlTab = useMemo(() => tabFromSearchParams(searchParams), [searchParams]);
+  // Optimistic tab state so UI switches immediately on click; URL sync follows.
+  const [tab, setTab] = useState<DashTab>(urlTab);
   const { data: session, update: updateSession } = useSession();
   const [limitsAttention, setLimitsAttention] = useState(false);
 
@@ -172,9 +167,12 @@ export default function DashboardPage() {
   const [statsBusy, setStatsBusy] = useState(false);
   const [statsError, setStatsError] = useState<string | null>(null);
   const [usageDays, setUsageDays] = useState<1 | 7 | 30>(30);
-  const [limitsOnDemandEnabled, setLimitsOnDemandEnabled] = useState<boolean | null>(null);
 
   const userKey = useMemo(() => (session?.user?.email ?? "").trim(), [session?.user?.email]);
+
+  useEffect(() => {
+    setTab(urlTab);
+  }, [urlTab]);
 
   useEffect(() => {
     const onBanner = (e: Event) => {
@@ -262,26 +260,7 @@ export default function DashboardPage() {
     };
   }, [tab]);
 
-  useEffect(() => {
-    if (tab !== "limits") return;
-    let cancelled = false;
-    setLimitsOnDemandEnabled(null);
-    void (async () => {
-      try {
-        const res = await fetch("/api/billing/spend", { method: "GET" });
-        const json = (await res.json().catch(() => null)) as SpendStatusResponse | { error?: string } | null;
-        if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
-        if (!json || (json as any).ok !== true) throw new Error("Invalid response");
-        const enabled = Boolean((json as any).onDemandEnabled) && Number((json as any).onDemandMonthlyLimitCents ?? 0) > 0;
-        if (!cancelled) setLimitsOnDemandEnabled(enabled);
-      } catch {
-        if (!cancelled) setLimitsOnDemandEnabled(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [tab]);
+  // NOTE: `/api/billing/spend` is fetched by the Limits tab components (`SpendLimitModule` / `OnDemandUsageCard`).
 
   return (
     <div className="grid grid-cols-1 gap-10 md:grid-cols-[280px_1fr]">
@@ -332,12 +311,9 @@ export default function DashboardPage() {
                         )}
                         title={showLimitsAttention ? "Credits exhausted. Enable on-demand to continue." : undefined}
                         onClick={() => {
-                          if (t.id === "account") {
-                            router.push("/dashboard/account", { scroll: false });
-                          } else {
-                            const href = `/dashboard?tab=${encodeURIComponent(t.id)}`;
-                            router.push(href, { scroll: false });
-                          }
+                          setTab(t.id);
+                          const href = `/dashboard?tab=${encodeURIComponent(t.id)}`;
+                          router.push(href, { scroll: false });
                         }}
                       >
                         <span className="flex min-w-0 items-center gap-2">
@@ -383,6 +359,27 @@ export default function DashboardPage() {
               <div className="rounded-2xl bg-[var(--panel)] p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
+                    <div className="text-[13px] font-semibold text-[var(--fg)]">All docs activity</div>
+                    <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
+                      Last 30 days (UTC). Uploads, docs created, unique share views, and downloads.
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-4 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
+                  {statsBusy ? (
+                    <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                  ) : stats && Array.isArray(stats.series30d) && stats.series30d.length ? (
+                    <MultiLineChart30d series={stats.series30d} />
+                  ) : (
+                    <div className="px-2 py-2 text-[12px] text-[var(--muted-2)]">No data yet.</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-[var(--panel)] p-6">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">This month</div>
                     <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
                       Upload activity and sharing performance (last 30 days).
@@ -409,27 +406,6 @@ export default function DashboardPage() {
                     hint="Docs created"
                   />
                   <StatCard label="Share views" value={stats ? stats.sharing.views30d : null} hint="Views on docs created in the last 30 days" />
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-[var(--panel)] p-6">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <div className="text-[13px] font-semibold text-[var(--fg)]">All docs activity</div>
-                    <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-                      Last 30 days (UTC). Uploads, docs created, unique share views, and downloads.
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-4 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
-                  {statsBusy ? (
-                    <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                  ) : stats && Array.isArray(stats.series30d) && stats.series30d.length ? (
-                    <MultiLineChart30d series={stats.series30d} />
-                  ) : (
-                    <div className="px-2 py-2 text-[12px] text-[var(--muted-2)]">No data yet.</div>
-                  )}
                 </div>
               </div>
 
@@ -514,6 +490,7 @@ export default function DashboardPage() {
           <Section title="Usage" description="Credits and quality breakdown.">
             <div className="grid gap-3">
               <SubscriptionCard />
+              <DailyUsageChart days={usageDays} />
               <CreditsSummaryCard />
               <div className="rounded-2xl bg-[var(--panel)] p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -545,7 +522,6 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <DailyUsageChart days={usageDays} />
               <UsageTable days={usageDays} />
             </div>
           </Section>

@@ -12,9 +12,10 @@ import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { debugEnabled, debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 /**
@@ -73,6 +74,8 @@ export async function GET(
   try {
     const url = new URL(request.url);
     const wantsDebug = url.searchParams.get("debug") === "1";
+    const wantsDebugUploads = url.searchParams.get("debugUploads") === "1";
+    const lite = url.searchParams.get("lite") === "1";
     // In local dev, allow `?debug=1` without requiring DEBUG env.
     const includeDebug = wantsDebug && (process.env.NODE_ENV !== "production" || debugEnabled(1));
 
@@ -81,8 +84,8 @@ export async function GET(
       return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
     }
 
-    debugLog(2, "[api/docs/:docId] GET", { docId, includeDebug });
-    const actor = await resolveActor(request);
+    debugLog(2, "[api/docs/:docId] GET", { docId, includeDebug, lite });
+    const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
     await connectMongo();
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
@@ -97,26 +100,25 @@ export async function GET(
         }
       : { _id: docObjectId, orgId };
 
-    // Ensure doc has a shareId (older docs may not). Retry on rare collisions.
-    let doc = await DocModel.findOne({
-      ...docMatch,
-    });
-    if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // Fetch doc (lean) so we don't pay for a full Mongoose document instance on this hot path.
+    // NOTE: We still do a few best-effort backfills below; keep them lightweight.
+    let docLean = await DocModel.findOne({ ...docMatch }).lean();
+    if (!docLean) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     // Best-effort: backfill orgId for legacy personal docs.
-    if (allowLegacyByUserId && !(doc as unknown as { orgId?: unknown }).orgId) {
+    if (allowLegacyByUserId && !(docLean as unknown as { orgId?: unknown }).orgId) {
       try {
         await DocModel.updateOne(
           { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
           { $set: { orgId } },
         );
-        (doc as unknown as { orgId?: Types.ObjectId }).orgId = orgId;
+        (docLean as unknown as { orgId?: Types.ObjectId }).orgId = orgId;
       } catch {
         // ignore; best-effort
       }
     }
 
-    if (!doc.shareId) {
+    if (!(docLean as any).shareId) {
       let ensured = false;
       for (let i = 0; i < 5; i++) {
         const candidate = newShareId();
@@ -128,17 +130,15 @@ export async function GET(
             },
             { $set: { shareId: candidate } },
             { new: true },
-          );
+          ).lean();
           if (updated) {
-            doc = updated;
+            docLean = updated;
             ensured = true;
             break;
           }
           // Another request beat us to it; re-fetch and continue.
-          doc = await DocModel.findOne({
-            ...docMatch,
-          });
-          if (doc?.shareId) {
+          docLean = await DocModel.findOne({ ...docMatch }).lean();
+          if ((docLean as any)?.shareId) {
             ensured = true;
             break;
           }
@@ -161,10 +161,10 @@ export async function GET(
 
     // Ensure request-received docs have a replacement upload token (best-effort).
     // Keep this extremely light-weight since `/api/docs/:id` is polled by the doc page.
-    const receivedViaRequestProjectIdRaw = (doc as unknown as { receivedViaRequestProjectId?: unknown })
+    const receivedViaRequestProjectIdRaw = (docLean as unknown as { receivedViaRequestProjectId?: unknown })
       .receivedViaRequestProjectId;
     const isReceivedViaRequest = Boolean(receivedViaRequestProjectIdRaw);
-    const replaceUploadTokenRaw = (doc as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
+    const replaceUploadTokenRaw = (docLean as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
     const hasReplaceUploadToken = typeof replaceUploadTokenRaw === "string" && replaceUploadTokenRaw.trim().length > 0;
     if (isReceivedViaRequest && !hasReplaceUploadToken) {
       // Very low collision probability, but handle duplicate-key errors defensively.
@@ -182,7 +182,7 @@ export async function GET(
           // If we updated, mirror it into the in-memory doc instance so the response includes it
           // without requiring an extra re-fetch.
           if ((result as unknown as { modifiedCount?: unknown }).modifiedCount) {
-            (doc as unknown as { replaceUploadToken?: string }).replaceUploadToken = candidate;
+            (docLean as unknown as { replaceUploadToken?: string }).replaceUploadToken = candidate;
           }
           break;
         } catch (e) {
@@ -193,17 +193,26 @@ export async function GET(
       }
     }
 
-    if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    const docLean = doc.toObject();
+    if (!docLean) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    const currentUploadId = docLean.currentUploadId ?? docLean.uploadId ?? null;
+    const currentUploadId = (docLean as any).currentUploadId ?? (docLean as any).uploadId ?? null;
 
-    const upload = currentUploadId
-      ? await UploadModel.findById(currentUploadId).lean()
-      : null;
+    const uploadPromise = currentUploadId ? UploadModel.findById(currentUploadId).lean() : Promise.resolve(null);
 
     // Best-effort: resolve who uploaded the current version.
     const lastUpload = (function () {
+      // placeholder, computed after upload resolves
+      return null as null | {
+        version: number | null;
+        uploadedAt: string | null;
+        uploadedByUserId: string | null;
+      };
+    })();
+
+    const upload = lite ? null : await uploadPromise;
+
+    const lastUploadResolved = (function () {
+      if (lite) return null;
       if (!upload || typeof upload !== "object") return null;
       const v = Number.isFinite((upload as any).version) ? Number((upload as any).version) : null;
       const createdDate = (upload as any).createdDate instanceof Date ? (upload as any).createdDate : null;
@@ -217,8 +226,8 @@ export async function GET(
     })();
 
     const lastUploadedBy =
-      lastUpload?.uploadedByUserId
-        ? await UserModel.findById(new Types.ObjectId(lastUpload.uploadedByUserId))
+      !lite && lastUploadResolved?.uploadedByUserId
+        ? await UserModel.findById(new Types.ObjectId(lastUploadResolved.uploadedByUserId))
             .select({ _id: 1, name: 1, email: 1, isTemp: 1 })
             .lean()
         : null;
@@ -259,6 +268,7 @@ export async function GET(
      * if a background worker update was interrupted.
      */
     if (
+      !lite &&
       upload &&
       (upload as { status?: unknown }).status === "completed" &&
       !isInRequestRepo &&
@@ -270,7 +280,11 @@ export async function GET(
           : false))
     ) {
       const isReplacement = Number.isFinite((upload as any).version) && Number((upload as any).version) > 1;
-      const nextPreview = (upload as any).previewImageUrl ?? (upload as any).firstPagePngUrl ?? null;
+      const nextPreviewFromUpload = (upload as any).previewImageUrl ?? (upload as any).firstPagePngUrl ?? null;
+      // IMPORTANT: for replacement uploads, never wipe an existing doc preview
+      // if the upload didn't generate one (best-effort preview rendering can fail).
+      const nextPreview =
+        nextPreviewFromUpload ?? (isReplacement ? (docLean.previewImageUrl ?? docLean.firstPagePngUrl ?? null) : null);
       const nextText = (upload as any).rawExtractedText ?? (upload as any).pdfText ?? null;
 
       await DocModel.updateOne(
@@ -317,7 +331,8 @@ export async function GET(
     try {
       const raw = (docLean as unknown as { guideForRequestProjectId?: unknown }).guideForRequestProjectId;
       guideForRequestProjectId = raw ? String(raw) : null;
-      if (!guideForRequestProjectId) {
+      // Keep lite reads very cheap: don't do an extra Project lookup just to infer guide backlinks.
+      if (!lite && !guideForRequestProjectId) {
         const reqProject = await ProjectModel.findOne({
           ...(allowLegacyByUserId
             ? {
@@ -379,10 +394,13 @@ export async function GET(
         blobUrl: docLean.blobUrl ?? null,
         previewImageUrl:
           docLean.previewImageUrl ?? docLean.firstPagePngUrl ?? null,
-        extractedText: docLean.extractedText ?? docLean.pdfText ?? null,
+        extractedText: lite ? null : (docLean.extractedText ?? docLean.pdfText ?? null),
         aiOutput: docLean.aiOutput ?? null,
         receiverRelevanceChecklist: Boolean(docLean.receiverRelevanceChecklist),
         shareAllowPdfDownload: Boolean((docLean as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload),
+        shareAllowRevisionHistory: Boolean(
+          (docLean as unknown as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory,
+        ),
         sharePasswordEnabled: Boolean(docLean.sharePasswordHash),
         receivedViaRequestProjectId: (function () {
           const raw = (docLean as unknown as { receivedViaRequestProjectId?: unknown }).receivedViaRequestProjectId;
@@ -421,8 +439,8 @@ export async function GET(
           };
         })(),
         lastUpdate: {
-          version: lastUpload?.version ?? null,
-          uploadedAt: lastUpload?.uploadedAt ?? null,
+          version: lastUploadResolved?.version ?? null,
+          uploadedAt: lastUploadResolved?.uploadedAt ?? null,
           uploadedBy: lastUploadedBy
             ? {
                 id: String((lastUploadedBy as any)._id),
@@ -441,8 +459,7 @@ export async function GET(
             blobUrl: upload.blobUrl ?? null,
             previewImageUrl:
               upload.previewImageUrl ?? upload.firstPagePngUrl ?? null,
-            rawExtractedText:
-              upload.rawExtractedText ?? upload.pdfText ?? null,
+            rawExtractedText: lite ? null : (upload.rawExtractedText ?? upload.pdfText ?? null),
             aiOutput: upload.aiOutput ?? null,
             ...(function () {
               const u = upload as unknown as Record<string, unknown>;
@@ -473,18 +490,20 @@ export async function GET(
         uploadBlobUrl: upload && typeof (upload as any).blobUrl === "string" ? "[set]" : null,
       });
 
-      const uploads = await UploadModel.find({
-        docId: new Types.ObjectId(docId),
-        isDeleted: { $ne: true },
-      })
-        .sort({ createdDate: -1 })
-        .lean();
-
       response.debug = {
         enabled: true,
         doc: docLean,
         currentUpload: upload,
-        uploads,
+        ...(wantsDebugUploads
+          ? {
+              uploads: await UploadModel.find({
+                docId: new Types.ObjectId(docId),
+                isDeleted: { $ne: true },
+              })
+                .sort({ createdDate: -1 })
+                .lean(),
+            }
+          : {}),
         derived: {
           isInRequestRepo,
           repairedFromCompletedUpload,
@@ -492,7 +511,7 @@ export async function GET(
       };
     }
 
-    return applyTempUserHeaders(NextResponse.json(response), actor);
+    return applyTempUserHeaders(NextResponse.json(response, { headers: { "cache-control": "no-store" } }), actor);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/docs/:docId] GET failed", { message });
@@ -525,6 +544,7 @@ export async function PATCH(
       extractedText: string | null;
       receiverRelevanceChecklist: boolean;
       shareAllowPdfDownload: boolean;
+      shareAllowRevisionHistory: boolean;
       addProjectId: string;
       removeProjectId: string;
       projectId: string | null;
@@ -562,6 +582,9 @@ export async function PATCH(
     }
     if (typeof body.shareAllowPdfDownload === "boolean") {
       setFields.shareAllowPdfDownload = body.shareAllowPdfDownload;
+    }
+    if (typeof body.shareAllowRevisionHistory === "boolean") {
+      setFields.shareAllowRevisionHistory = body.shareAllowRevisionHistory;
     }
 
     if (typeof body.isArchived === "boolean") {
@@ -699,7 +722,8 @@ export async function PATCH(
         : null) ?? (projects[0] ?? null);
 
     return applyTempUserHeaders(
-      NextResponse.json({
+      NextResponse.json(
+        {
         doc: {
           id: String(doc._id),
           shareId: doc.shareId ?? null,
@@ -725,8 +749,14 @@ export async function PATCH(
           aiOutput: doc.aiOutput ?? null,
           receiverRelevanceChecklist: Boolean(doc.receiverRelevanceChecklist),
           sharePasswordEnabled: Boolean((doc as unknown as { sharePasswordHash?: unknown }).sharePasswordHash),
+          shareAllowPdfDownload: Boolean((doc as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload),
+          shareAllowRevisionHistory: Boolean(
+            (doc as unknown as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory,
+          ),
         },
-      }),
+        },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {
@@ -775,7 +805,7 @@ export async function DELETE(
     );
     if (!res.matchedCount) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
+    return applyTempUserHeaders(NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } }), actor);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/docs/:docId] DELETE failed", { message });

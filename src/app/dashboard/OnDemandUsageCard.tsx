@@ -12,6 +12,7 @@ import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { clampNonNegInt } from "@/lib/format/number";
 import { formatUsdFromCents } from "@/lib/format/money";
+import { SPEND_LIMIT_UPDATED_EVENT, getCachedSpendStatus, refreshSpendStatus } from "./SpendLimitModule";
 
 type SpendStatus = {
   ok: true;
@@ -23,28 +24,38 @@ type SpendStatus = {
 export default function OnDemandUsageCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<SpendStatus | null>(null);
+  const [data, setData] = useState<SpendStatus | null>(() => (getCachedSpendStatus() as SpendStatus | null) ?? null);
 
   useEffect(() => {
     let cancelled = false;
-    setBusy(true);
+    setBusy(!data);
     setError(null);
     void (async () => {
       try {
-        const res = await fetch("/api/billing/spend", { method: "GET" });
-        const json = (await res.json().catch(() => null)) as SpendStatus | { error?: string } | null;
-        if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
-        if (!json || (json as any).ok !== true) throw new Error("Invalid response");
-        if (!cancelled) setData(json as SpendStatus);
+        const next = await refreshSpendStatus();
+        if (!cancelled) setData(next as SpendStatus);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load on-demand usage");
       } finally {
         if (!cancelled) setBusy(false);
       }
     })();
+    const onUpdated = () => {
+      void (async () => {
+        try {
+          const next = await refreshSpendStatus({ force: true });
+          if (!cancelled) setData(next as SpendStatus);
+        } catch {
+          // ignore; keep last-known data
+        }
+      })();
+    };
+    window.addEventListener(SPEND_LIMIT_UPDATED_EVENT, onUpdated);
     return () => {
       cancelled = true;
+      window.removeEventListener(SPEND_LIMIT_UPDATED_EVENT, onUpdated);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const centsPerCredit = USD_CENTS_PER_CREDIT;

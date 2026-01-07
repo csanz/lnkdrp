@@ -7,6 +7,7 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 /**
  * As Positive Int (uses Number, isFinite, floor).
  */
@@ -160,7 +161,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         user?: { email?: string | null; name?: string | null } | null;
       }>;
 
-      const res = NextResponse.json({
+      const res = NextResponse.json(
+        {
         ok: true,
         days,
         totals: {
@@ -179,7 +181,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           firstSeen: v.firstSeen ? new Date(v.firstSeen).toISOString() : null,
           lastSeen: v.lastSeen ? new Date(v.lastSeen).toISOString() : null,
         })),
-      });
+        },
+        { headers: { "cache-control": "no-store" } },
+      );
       return applyTempUserHeaders(res, actor);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";

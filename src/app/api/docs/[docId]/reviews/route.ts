@@ -7,6 +7,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 /**
  * Return whether object id.
  */
@@ -81,38 +82,41 @@ export async function GET(
           .lean();
 
     return applyTempUserHeaders(
-      NextResponse.json({
-        total,
-        page,
-        limit,
-        reviews: reviews.map((r) => ({
-          id: String(r._id),
-          docId: String(r.docId),
-          uploadId: r.uploadId ? String(r.uploadId) : null,
-          version: Number.isFinite(r.version) ? r.version : null,
-          status: r.status ?? null,
-          // Customer-facing API: never return vendor model names.
-          model: null,
-          priorReviewVersion: Number.isFinite(r.priorReviewVersion)
-            ? r.priorReviewVersion
-            : null,
-          outputMarkdown: r.outputMarkdown ?? null,
-          intel: (function () {
-            const intel = (r as unknown as { intel?: unknown }).intel;
-            return intel && typeof intel === "object" ? intel : null;
-          })(),
-          agentKind:
-            typeof (r as unknown as { agentKind?: unknown }).agentKind === "string"
-              ? ((r as unknown as { agentKind: string }).agentKind ?? null)
+      NextResponse.json(
+        {
+          total,
+          page,
+          limit,
+          reviews: reviews.map((r) => ({
+            id: String(r._id),
+            docId: String(r.docId),
+            uploadId: r.uploadId ? String(r.uploadId) : null,
+            version: Number.isFinite(r.version) ? r.version : null,
+            status: r.status ?? null,
+            // Customer-facing API: never return vendor model names.
+            model: null,
+            priorReviewVersion: Number.isFinite(r.priorReviewVersion)
+              ? r.priorReviewVersion
               : null,
-          agentOutput: (function () {
-            const out = (r as unknown as { agentOutput?: unknown }).agentOutput;
-            return out && typeof out === "object" ? out : null;
-          })(),
-          createdDate: r.createdDate ? new Date(r.createdDate).toISOString() : null,
-          updatedDate: r.updatedDate ? new Date(r.updatedDate).toISOString() : null,
-        })),
-      }),
+            outputMarkdown: r.outputMarkdown ?? null,
+            intel: (function () {
+              const intel = (r as unknown as { intel?: unknown }).intel;
+              return intel && typeof intel === "object" ? intel : null;
+            })(),
+            agentKind:
+              typeof (r as unknown as { agentKind?: unknown }).agentKind === "string"
+                ? ((r as unknown as { agentKind: string }).agentKind ?? null)
+                : null,
+            agentOutput: (function () {
+              const out = (r as unknown as { agentOutput?: unknown }).agentOutput;
+              return out && typeof out === "object" ? out : null;
+            })(),
+            createdDate: r.createdDate ? new Date(r.createdDate).toISOString() : null,
+            updatedDate: r.updatedDate ? new Date(r.updatedDate).toISOString() : null,
+          })),
+        },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {

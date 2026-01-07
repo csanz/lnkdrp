@@ -99,6 +99,15 @@ const docSchema = new Schema(
     shareAllowPdfDownload: { type: Boolean, default: false },
 
     /**
+     * Share-page UX option:
+     * If true, receivers can view a *light* revision history on `/s/:shareId`.
+     *
+     * "Light" means a basic list of revisions (version + date + summary) without
+     * owner-only details (recipients, per-viewer timing, raw text diffs, etc).
+     */
+    shareAllowRevisionHistory: { type: Boolean, default: false },
+
+    /**
      * Cached metrics snapshot for the owner doc page.
      *
      * This is written by a cron/rollup job so the doc detail page can show a quick
@@ -394,9 +403,14 @@ export const DocModel: Model<Doc> = (() => {
       Boolean(existing.schema.path("sharePasswordEncTag"));
     const hasProjectIds = Boolean(existing.schema.path("projectIds"));
     const hasShareAllowPdfDownload = Boolean(existing.schema.path("shareAllowPdfDownload"));
+    const hasShareAllowRevisionHistory = Boolean(existing.schema.path("shareAllowRevisionHistory"));
     const hasReplaceUploadToken = Boolean(existing.schema.path("replaceUploadToken"));
     if (
-      (!hasSharePassword || !hasProjectIds || !hasShareAllowPdfDownload || !hasReplaceUploadToken) &&
+      (!hasSharePassword ||
+        !hasProjectIds ||
+        !hasShareAllowPdfDownload ||
+        !hasShareAllowRevisionHistory ||
+        !hasReplaceUploadToken) &&
       process.env.NODE_ENV !== "production"
     ) {
       delete mongoose.models.Doc;

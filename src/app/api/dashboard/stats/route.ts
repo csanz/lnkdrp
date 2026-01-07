@@ -12,6 +12,7 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function utcDayStart(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
@@ -186,7 +187,8 @@ export async function GET(request: Request) {
       }));
 
       // Keep this payload stable and simple for the client.
-      return NextResponse.json({
+      return NextResponse.json(
+        {
         ok: true,
         generatedAt: now.toISOString(),
         window: {
@@ -211,7 +213,9 @@ export async function GET(request: Request) {
           views30d: typeof countsRow?.views30d === "number" ? countsRow.views30d : 0,
           pagesViewed30d: typeof countsRow?.pagesViewed30d === "number" ? countsRow.pagesViewed30d : 0,
         },
-      });
+        },
+        { headers: { "cache-control": "no-store" } },
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return NextResponse.json({ error: message }, { status: 400 });

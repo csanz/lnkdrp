@@ -49,3 +49,6 @@ next-env.d.ts
 
 # AI context files
 .aicontext/
+
+# local auth cookies (benchmark scripts)
+/scripts/cookie.json

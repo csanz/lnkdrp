@@ -47,6 +47,7 @@ type DocDTO = {
   aiOutput?: unknown | null;
   receiverRelevanceChecklist?: boolean;
   shareAllowPdfDownload?: boolean;
+  shareAllowRevisionHistory?: boolean;
   sharePasswordEnabled?: boolean;
   receivedViaRequestProjectId?: string | null;
   replaceUploadToken?: string | null;
@@ -184,6 +185,19 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const lastResyncUploadIdRef = useRef<string>("");
   const lastDocPollLogKeyRef = useRef<string>("");
   const replacePendingRef = useRef<boolean>(false);
+  const [replaceUploadId, setReplaceUploadId] = useState<string | null>(null);
+  const [replaceToVersion, setReplaceToVersion] = useState<number | null>(null);
+  const [replaceUploadStatus, setReplaceUploadStatus] = useState<string | null>(null);
+  const [replaceNotice, setReplaceNotice] = useState<
+    | null
+    | {
+        kind: "success" | "error";
+        toVersion: number | null;
+        summary: string;
+        createdAtMs: number;
+      }
+  >(null);
+  const [highlightVersionLink, setHighlightVersionLink] = useState(false);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState<string>(() => (initialDoc.title || "").toString());
   const [titleSaveBusy, setTitleSaveBusy] = useState(false);
@@ -329,12 +343,15 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return (
       doc.status === "preparing" ||
       doc.status === "draft" ||
+      // Replacement uploads should lock navigation while we upload/process the new version
+      // (even though the Doc stays on the last good version until success).
+      Boolean(replaceUploadId) ||
       (hasHydratedFromServer &&
         isReceivedViaRequest &&
         doc.status === "ready" &&
         (reviewRerunPending || reviewRunStatus === "queued" || reviewRunStatus === "processing"))
     );
-  }, [doc.status, hasHydratedFromServer, isReceivedViaRequest, reviewRunStatus, reviewRerunPending]);
+  }, [doc.status, hasHydratedFromServer, isReceivedViaRequest, replaceUploadId, reviewRunStatus, reviewRerunPending]);
 
   const docSummary = useMemo(() => pickDocSummary(doc.aiOutput ?? null), [doc.aiOutput]);
 
@@ -487,8 +504,14 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
     async function refreshOnce(): Promise<boolean> {
       try {
-        const debugParam = process.env.NODE_ENV !== "production" ? "?debug=1" : "";
-        const res = await fetchWithTempUser(`/api/docs/${docRef.current.id}${debugParam}`, { cache: "no-store" });
+        const qs = new URLSearchParams();
+        // Keep the hot polling endpoint lightweight (do not ship full extracted text on every poll).
+        qs.set("lite", "1");
+        // In local dev, allow extra debug context when explicitly requested.
+        if (process.env.NODE_ENV !== "production") qs.set("debug", "1");
+        const query = qs.toString() ? `?${qs.toString()}` : "";
+
+        const res = await fetchWithTempUser(`/api/docs/${docRef.current.id}${query}`, { cache: "no-store" });
         if (cancelled) return false;
 
         if (!res.ok) {
@@ -590,16 +613,12 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
         setDoc((prev) => {
           const next = { ...prev, ...data.doc };
-          // If the user just selected a replacement file, we optimistically flip the UI into
-          // `preparing` before the server has created the new Upload record. During that small
-          // window, the poll response can still reflect the previous "ready" state; don't let it
-          // overwrite the optimistic preparing UI.
-          if (replacePendingRef.current && prev.status === "preparing" && data.doc.status === "ready") {
-            next.status = "preparing";
-          }
-          // When processing finishes, force-refresh the sidebar cache so the newly
-          // processed doc appears in the left sidebar immediately again.
-          if (prev.status !== "ready" && next.status === "ready") {
+          // When processing finishes (or a new version lands), force-refresh the sidebar cache so the
+          // updated version badge + timestamps show up immediately.
+          if (
+            prev.status !== "ready" && next.status === "ready" ||
+            (prev.currentUploadId && next.currentUploadId && prev.currentUploadId !== next.currentUploadId)
+          ) {
             notifyDocsChanged();
           }
           return next;
@@ -627,6 +646,93 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       if (timeoutId) window.clearTimeout(timeoutId);
     };
   }, [doc.id, doc.currentUploadId]);
+
+  useEffect(() => {
+    if (!replaceUploadId) return;
+    let cancelled = false;
+    let intervalId: number | null = null;
+
+    async function poll() {
+      try {
+        const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(replaceUploadId)}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json().catch(() => null)) as any;
+        if (cancelled) return;
+        const upload = json && typeof json === "object" ? (json as any).upload : null;
+        const statusRaw = upload && typeof upload === "object" ? (upload as any).status : null;
+        const status = typeof statusRaw === "string" ? statusRaw.toLowerCase() : "";
+        setReplaceUploadStatus(status || null);
+
+        if (status === "failed") {
+          const msg =
+            upload && typeof upload === "object" && (upload as any).error && typeof (upload as any).error.message === "string"
+              ? String((upload as any).error.message)
+              : "Processing failed. Your existing document was kept.";
+          setReplaceNotice({
+            kind: "error",
+            toVersion: replaceToVersion,
+            summary: msg,
+            createdAtMs: Date.now(),
+          });
+          replacePendingRef.current = false;
+          setReplaceUploadId(null);
+          setReplaceUploadStatus(null);
+          // Clear the local preview (it never became a real version).
+          setLocalPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return null;
+          });
+          setLocalPreviewUploadId(null);
+          return;
+        }
+
+        if (status === "completed") {
+          // Fetch a lightweight change summary (best-effort) for the banner.
+          let summary = "";
+          if (typeof replaceToVersion === "number" && Number.isFinite(replaceToVersion)) {
+            try {
+              const changesRes = await fetchWithTempUser(
+                `/api/docs/${encodeURIComponent(docRef.current.id)}/changes?lite=1&limit=10`,
+                {
+                cache: "no-store",
+                },
+              );
+              if (changesRes.ok) {
+                const changesJson = (await changesRes.json().catch(() => null)) as any;
+                const changes = Array.isArray(changesJson?.changes) ? (changesJson.changes as any[]) : [];
+                const match = changes.find((c) => Number(c?.toVersion) === replaceToVersion) ?? null;
+                summary = typeof match?.summary === "string" ? match.summary : "";
+              }
+            } catch {
+              // ignore (best-effort)
+            }
+          }
+          const vLabel =
+            typeof replaceToVersion === "number" && Number.isFinite(replaceToVersion) ? `Updated to v${replaceToVersion}.` : "Update complete.";
+          setReplaceNotice({
+            kind: "success",
+            toVersion: replaceToVersion,
+            summary: summary?.trim() ? summary.trim() : vLabel,
+            createdAtMs: Date.now(),
+          });
+          setHighlightVersionLink(true);
+          window.setTimeout(() => setHighlightVersionLink(false), 2600);
+          replacePendingRef.current = false;
+          setReplaceUploadId(null);
+          setReplaceUploadStatus(null);
+        }
+      } catch {
+        // ignore; keep polling
+      }
+    }
+
+    void poll();
+    intervalId = window.setInterval(poll, 900);
+    return () => {
+      cancelled = true;
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [replaceUploadId, replaceToVersion]);
 
   const shareUrl = useMemo(() => {
     return buildPublicShareUrl(doc.shareId);
@@ -822,6 +928,36 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return "Preparing document…";
   })();
 
+  const pdfStatusOverlay = useMemo(() => {
+    if (!hasHydratedFromServer) return null;
+    if (replaceUploadId) {
+      const s = (replaceUploadStatus ?? "").toLowerCase();
+      if (s === "failed") {
+        return { title: "Upload failed", body: "Processing failed. Your existing document was kept." };
+      }
+      return {
+        title: "Replacing…",
+        body:
+          s === "uploading"
+            ? "Uploading your new PDF…"
+            : s === "processing"
+              ? "Processing your new PDF…"
+              : overlayText,
+      };
+    }
+    if (doc.status === "ready") return null;
+    if (doc.status === "failed") {
+      return {
+        title: "Upload failed",
+        body: "Processing failed. Replace the file to try again.",
+      };
+    }
+    return {
+      title: "Preparing",
+      body: overlayText,
+    };
+  }, [doc.status, hasHydratedFromServer, overlayText, replaceUploadId, replaceUploadStatus]);
+
   const shouldShowReviewRunOverlay =
     hasHydratedFromServer &&
     showRequestIntel &&
@@ -905,6 +1041,27 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     } catch {
       // Revert on failure
       setDoc((d) => ({ ...d, shareAllowPdfDownload: prev }));
+    }
+  }
+
+  /**
+   * Set share allow revision history.
+   */
+  async function setShareAllowRevisionHistory(next: boolean) {
+    const prev = Boolean(doc.shareAllowRevisionHistory);
+    if (prev === next) return;
+
+    // Optimistic update
+    setDoc((d) => ({ ...d, shareAllowRevisionHistory: next }));
+    try {
+      await fetchJson(`/api/docs/${doc.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ shareAllowRevisionHistory: next }),
+      });
+    } catch {
+      // Revert on failure
+      setDoc((d) => ({ ...d, shareAllowRevisionHistory: prev }));
     }
   }
 /**
@@ -1158,8 +1315,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   async function replaceFile(file: File) {
     // Keep route stable; create a new upload record and rerun the pipeline.
     try {
-      const prevDoc = docRef.current;
       replacePendingRef.current = true;
+      setReplaceNotice(null);
+      setReplaceToVersion(null);
+      setReplaceUploadStatus(null);
 
       // Immediately clear the current view and show a local preview for the new file.
       setLocalPreviewUrl((prev) => {
@@ -1167,15 +1326,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         return URL.createObjectURL(file);
       });
 
-      // Immediately enter "preparing" UI so we don't wait for the network round-trip to
-      // `/api/uploads` before showing the loading animation.
-      setDoc((d) => ({
-        ...d,
-        status: "preparing",
-        // Clear derived fields so the UI doesn't briefly show stale artifacts.
-        previewImageUrl: null,
-        extractedText: null,
-      }));
       preparingStartedAtRef.current = Date.now();
 
       // Create a new upload record
@@ -1190,8 +1340,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       } catch (e) {
         const message = e instanceof Error ? e.message : "";
         if (message === "TEMP_USER_LIMIT") setTempGateOpen(true);
-        // Restore state (best-effort) since we already flipped the UI into preparing.
-        setDoc(prevDoc);
         replacePendingRef.current = false;
         // Best effort: restore server-backed view.
         setLocalPreviewUrl((prev) => {
@@ -1204,42 +1352,14 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       }
       setLocalPreviewUploadId(newUploadId);
       replacePendingRef.current = false;
-      // Optimistically update the sidebar's version badge (so it never "disappears"),
-      // then force a refresh so server truth lands quickly.
-      const optimisticNextVersion =
-        typeof doc.currentUploadVersion === "number" && Number.isFinite(doc.currentUploadVersion)
-          ? doc.currentUploadVersion + 1
-          : null;
-      if (typeof optimisticNextVersion === "number" && Number.isFinite(optimisticNextVersion)) {
-        const snap = getSidebarCacheSnapshot();
-        if (snap) {
-          const nowIso = new Date().toISOString();
-          setSidebarCacheSnapshot({
-            ...snap,
-            updatedAt: Date.now(),
-            docs: {
-              ...snap.docs,
-              items: snap.docs.items.map((it) =>
-                it.id === doc.id
-                  ? { ...it, version: optimisticNextVersion, status: "preparing", updatedDate: nowIso }
-                  : it,
-              ),
-            },
-          });
-        }
-      }
-      notifyDocsChanged();
 
-      // Set local state to preparing immediately.
-      setDoc((d) => ({
-        ...d,
-        status: "preparing",
-        currentUploadId: newUploadId,
-        currentUploadVersion:
-          typeof d.currentUploadVersion === "number" ? d.currentUploadVersion + 1 : d.currentUploadVersion,
-        previewImageUrl: null,
-        extractedText: null,
-      }));
+      const optimisticNextVersion =
+        typeof docRef.current.currentUploadVersion === "number" && Number.isFinite(docRef.current.currentUploadVersion)
+          ? docRef.current.currentUploadVersion + 1
+          : null;
+      setReplaceToVersion(optimisticNextVersion);
+      setReplaceUploadId(newUploadId);
+      setReplaceUploadStatus("uploading");
       preparingStartedAtRef.current = Date.now();
 
       // Start direct-to-blob upload in the background (do not block UI).
@@ -1248,21 +1368,31 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         uploadId: newUploadId,
         file,
         onFailure: async (message) => {
-          // Mark DB state as failed so the UI can surface it consistently.
+          // IMPORTANT: a failed replacement must not overwrite the current doc.
+          // We'll mark the upload failed (best-effort) and show an inline error.
           try {
             await fetchJson(`/api/uploads/${newUploadId}`, {
               method: "PATCH",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ status: "failed", error: { message } }),
             });
-            await fetchJson(`/api/docs/${doc.id}`, {
-              method: "PATCH",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ status: "failed" }),
-            });
           } catch {
             // ignore
           }
+          setReplaceNotice({
+            kind: "error",
+            toVersion: optimisticNextVersion,
+            summary: message || "Processing failed. Your existing document was kept.",
+            createdAtMs: Date.now(),
+          });
+          setReplaceUploadStatus("failed");
+          setReplaceUploadId(null);
+          // Clear local preview; we never landed a new version.
+          setLocalPreviewUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return null;
+          });
+          setLocalPreviewUploadId(null);
         },
       });
     } catch {
@@ -1698,6 +1828,67 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 hasSidePanel ? "lg:grid-cols-[1.35fr_0.65fr]" : "lg:grid-cols-[1fr]",
               ].join(" ")}
             >
+              {replaceNotice ? (
+                <div
+                  className={[
+                    "rounded-2xl border px-4 py-3 text-sm",
+                    replaceNotice.kind === "success"
+                      ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200"
+                      : "border-red-300/30 bg-red-400/10 text-red-200",
+                  ].join(" ")}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-white/70">
+                        {replaceNotice.kind === "success" ? "Upload complete" : "Upload failed"}
+                      </div>
+                      <div className="mt-1 text-sm font-medium text-white/90">{replaceNotice.summary}</div>
+                    </div>
+                    <div className="shrink-0">
+                      <Link
+                        href={`/doc/${encodeURIComponent(doc.id)}/history`}
+                        className={[
+                          "inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold",
+                          "bg-white/10 text-white/90 hover:bg-white/15",
+                          highlightVersionLink && replaceNotice.kind === "success" ? "lnkdrp-heartbeat-glow" : "",
+                        ].join(" ")}
+                      >
+                        {replaceNotice.toVersion ? `View v${replaceNotice.toVersion} changes` : "View version history"}
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <style jsx global>{`
+                @keyframes lnkdrpHeartbeatGlow {
+                  0% {
+                    transform: scale(1);
+                    box-shadow: 0 0 0 rgba(34, 197, 94, 0);
+                  }
+                  18% {
+                    transform: scale(1.04);
+                    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.35), 0 0 22px rgba(34, 197, 94, 0.25);
+                  }
+                  36% {
+                    transform: scale(1);
+                    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.18), 0 0 14px rgba(34, 197, 94, 0.18);
+                  }
+                  56% {
+                    transform: scale(1.03);
+                    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.25), 0 0 18px rgba(34, 197, 94, 0.22);
+                  }
+                  100% {
+                    transform: scale(1);
+                    box-shadow: 0 0 0 rgba(34, 197, 94, 0);
+                  }
+                }
+                .lnkdrp-heartbeat-glow {
+                  animation: lnkdrpHeartbeatGlow 1.1s ease-in-out 0s 2;
+                  will-change: transform, box-shadow;
+                }
+              `}</style>
+
                 <section className="relative min-h-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                   {/* progress bar (pinned top) */}
                   {(!hasHydratedFromServer ||
@@ -1739,14 +1930,20 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           currentUploadId: doc.currentUploadId,
                           currentUploadVersion: doc.currentUploadVersion,
                         })}
-                        className="block h-full w-full border-0"
+                        className={[
+                          "block h-full w-full border-0",
+                          pdfStatusOverlay ? "pointer-events-none" : "",
+                        ].join(" ")}
                         allow="fullscreen"
                       />
                     ) : localPreviewUrl ? (
                       <iframe
                         title="PDF preview"
                         src={localPreviewUrl}
-                        className="block h-full w-full border-0"
+                        className={[
+                          "block h-full w-full border-0",
+                          pdfStatusOverlay ? "pointer-events-none" : "",
+                        ].join(" ")}
                         allow="fullscreen"
                       />
                     ) : doc.blobUrl ? (
@@ -1757,7 +1954,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           currentUploadId: doc.currentUploadId,
                           currentUploadVersion: doc.currentUploadVersion,
                         })}
-                        className="block h-full w-full border-0"
+                        className={[
+                          "block h-full w-full border-0",
+                          pdfStatusOverlay ? "pointer-events-none" : "",
+                        ].join(" ")}
                         allow="fullscreen"
                       />
                     ) : doc.previewImageUrl ? (
@@ -1777,17 +1977,23 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                   </div>
 
                   {/* overlay */}
-                  {(!hasHydratedFromServer ||
-                    doc.status === "preparing" ||
-                    doc.status === "draft") &&
-                    !localPreviewUrl &&
-                    !doc.blobUrl && (
+                  {pdfStatusOverlay ? (
                     <div className="absolute inset-0 z-10 grid place-items-center bg-[var(--bg)]/35 backdrop-blur-xl backdrop-saturate-150">
-                      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]/90 px-6 py-4 text-sm font-medium text-[var(--fg)] shadow-[0_2px_10px_rgba(0,0,0,0.18)]">
-                        {overlayText}
+                      <div className="max-w-[460px] rounded-2xl border border-[var(--border)] bg-[var(--panel)]/90 px-6 py-4 text-center shadow-[0_2px_10px_rgba(0,0,0,0.18)]">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                          {pdfStatusOverlay.title}
+                        </div>
+                        <div className="mt-2 text-sm font-medium text-[var(--fg)]">
+                          {pdfStatusOverlay.body}
+                        </div>
+                        {doc.status !== "failed" ? (
+                          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
+                            <div className="h-full w-1/3 bg-[var(--primary-bg)] animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
+                          </div>
+                        ) : null}
                       </div>
                     </div>
-                  )}
+                  ) : null}
 
                 </section>
 
@@ -1803,6 +2009,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     onToggleRelevancy={(next) => void setReceiverRelevanceChecklist(next)}
                     pdfDownloadEnabled={Boolean(doc.shareAllowPdfDownload)}
                     onPdfDownloadEnabledChange={(next) => void setShareAllowPdfDownload(next)}
+                    revisionHistoryEnabled={Boolean(doc.shareAllowRevisionHistory)}
+                    onRevisionHistoryEnabledChange={(next) => void setShareAllowRevisionHistory(next)}
                     sharePasswordEnabled={Boolean(doc.sharePasswordEnabled)}
                     onSharePasswordEnabledChange={(enabled) =>
                       setDoc((d) => ({ ...d, sharePasswordEnabled: enabled }))

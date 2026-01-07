@@ -6,12 +6,14 @@
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
-import { OrgModel } from "@/lib/models/Org";
+import { OrgModel, ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { debugError, debugLog } from "@/lib/debug";
-import { resolveActor } from "@/lib/gating/actor";
+import { tryResolveAuthUserId } from "@/lib/gating/actor";
+import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function slugify(input: string) {
   return input
@@ -36,19 +38,27 @@ async function ensureUniqueOrgSlug(base: string): Promise<string> {
 export async function GET(request: Request) {
   try {
     debugLog(2, "[api/orgs] GET");
-    const actor = await resolveActor(request);
-    if (actor.kind !== "user") {
+    const session = await tryResolveAuthUserId(request);
+    if (!session?.userId) {
       return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
     }
 
     await connectMongo();
-    const userId = new Types.ObjectId(actor.userId);
+    const userId = new Types.ObjectId(session.userId);
 
-    // Note: `resolveActor()` already ensures the user has a personal org + membership (best-effort).
-
-    const memberships = await OrgMembershipModel.find({ userId, isDeleted: { $ne: true } })
+    // Hot-path optimization: most users already have memberships (including a personal org),
+    // so avoid the extra ensurePersonalOrgForUserId() DB work unless it's actually needed.
+    let memberships = await OrgMembershipModel.find({ userId, isDeleted: { $ne: true } })
       .select({ orgId: 1, role: 1 })
       .lean();
+    let ensuredPersonalOrgId: string | null = null;
+    if (!memberships.length) {
+      const { orgId: personalOrgIdObjectId } = await ensurePersonalOrgForUserId({ userId });
+      ensuredPersonalOrgId = String(personalOrgIdObjectId);
+      memberships = await OrgMembershipModel.find({ userId, isDeleted: { $ne: true } })
+        .select({ orgId: 1, role: 1 })
+        .lean();
+    }
 
     // Deduplicate by orgId in case the collection has legacy duplicates (unique index may not exist yet).
     const membershipByOrgId = new Map<string, { orgId: Types.ObjectId; role: string }>();
@@ -74,14 +84,45 @@ export async function GET(request: Request) {
     // Sort: stable (personal first, then name).
     // UX: do NOT sort "active org first" because it makes the workspace switcher reorder itself
     // when switching, which breaks spatial memory.
-    const activeOrgId = actor.orgId;
+    const cookieHeader = request.headers.get("cookie") ?? "";
+    const cookieActiveOrgId = (() => {
+      try {
+        const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
+        for (const p of parts) {
+          const idx = p.indexOf("=");
+          if (idx < 0) continue;
+          const k = p.slice(0, idx).trim();
+          if (k !== ACTIVE_ORG_COOKIE) continue;
+          return decodeURIComponent(p.slice(idx + 1)).trim();
+        }
+        return "";
+      } catch {
+        return "";
+      }
+    })();
+    const claimActiveOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
+    const personalOrgId =
+      ensuredPersonalOrgId ||
+      (orgs.find((o) => Boolean((o as unknown as { personalForUserId?: unknown }).personalForUserId))?._id
+        ? String(orgs.find((o) => Boolean((o as unknown as { personalForUserId?: unknown }).personalForUserId))!._id)
+        : "") ||
+      "";
+    // Source-of-truth priority without extra DB reads:
+    // 1) server-issued active-org cookie (but only if the user has a membership for it)
+    // 2) JWT claim activeOrgId (but only if the user has a membership for it)
+    // 3) personal org
+    const activeOrgId =
+      (cookieActiveOrgId && membershipByOrgId.has(cookieActiveOrgId) ? cookieActiveOrgId : "") ||
+      (claimActiveOrgId && membershipByOrgId.has(claimActiveOrgId) ? claimActiveOrgId : "") ||
+      personalOrgId ||
+      (orgs[0]?._id ? String(orgs[0]._id) : "");
 
     // Guardrail: if there are multiple personal orgs for this user (shouldn't happen),
     // return only one to avoid confusing duplicate "Personal" entries in the UI.
     const personal = orgs.filter((o) => String((o as { type?: unknown }).type) === "personal");
     if (personal.length > 1) {
       // Prefer the one matching the user's canonical personal org id.
-      const keepId = actor.personalOrgId;
+      const keepId = personalOrgId || String(personal[0]!._id);
       const kept = orgs.find((o) => String(o._id) === keepId) ?? personal[0]!;
       const keptId = String(kept._id);
       const filtered = orgs.filter((o) => {
@@ -103,17 +144,20 @@ export async function GET(request: Request) {
       return String(a._id).localeCompare(String(b._id));
     });
 
-    return NextResponse.json({
-      activeOrgId,
-      orgs: orgs.map((o) => ({
-        id: String(o._id),
-        type: String((o as unknown as { type?: unknown }).type ?? "team"),
-        name: String(o.name ?? ""),
-        slug: (o as unknown as { slug?: unknown }).slug ?? null,
-        avatarUrl: (o as unknown as { avatarUrl?: unknown }).avatarUrl ?? null,
-        role: roleByOrgId.get(String(o._id)) ?? "member",
-      })),
-    });
+    return NextResponse.json(
+      {
+        activeOrgId,
+        orgs: orgs.map((o) => ({
+          id: String(o._id),
+          type: String((o as unknown as { type?: unknown }).type ?? "team"),
+          name: String(o.name ?? ""),
+          slug: (o as unknown as { slug?: unknown }).slug ?? null,
+          avatarUrl: (o as unknown as { avatarUrl?: unknown }).avatarUrl ?? null,
+          role: roleByOrgId.get(String(o._id)) ?? "member",
+        })),
+      },
+      { headers: { "cache-control": "no-store" } },
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/orgs] GET failed", { message });
@@ -173,7 +217,7 @@ export async function POST(request: Request) {
           role: "owner",
         },
       },
-      { status: 201 },
+      { status: 201, headers: { "cache-control": "no-store" } },
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

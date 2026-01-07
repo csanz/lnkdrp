@@ -14,7 +14,10 @@ import Panel from "@/components/ui/Panel";
 import DataTable from "@/components/ui/DataTable";
 import Select from "@/components/ui/Select";
 import Alert from "@/components/ui/Alert";
+import Modal from "@/components/modals/Modal";
+import { CopyButton } from "@/components/CopyButton";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
+import { debugEnabled as isDebugEnabled } from "@/lib/debug";
 import { clampNonNegInt, formatInt } from "@/lib/format/number";
 import { formatDateRange, formatMonthLabel, formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents, formatUsdOrNotAvailable } from "@/lib/format/money";
@@ -110,6 +113,14 @@ function CreditsInfo({ className }: { className?: string }) {
   );
 }
 
+function formatJson(v: unknown) {
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
+}
+
 export default function BillingInvoicesTab() {
   const cached = billingCacheFresh();
 
@@ -137,6 +148,13 @@ export default function BillingInvoicesTab() {
   const [manageBusy, setManageBusy] = useState(false);
   const [manageError, setManageError] = useState<string | null>(null);
   const [creditsInfoOpen, setCreditsInfoOpen] = useState(false);
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugBusy, setDebugBusy] = useState(false);
+  const [debugError, setDebugError] = useState<string | null>(null);
+  const [debugPayload, setDebugPayload] = useState<unknown>(null);
+  const [debugCopyDone, setDebugCopyDone] = useState(false);
+  const [debugCopying, setDebugCopying] = useState(false);
 
   const cycleOptions = useMemo(() => {
     const start = summary?.cycle?.start;
@@ -156,6 +174,11 @@ export default function BillingInvoicesTab() {
     }
     return out;
   }, [summary?.cycle?.start, summary?.cycle?.end]);
+
+  useEffect(() => {
+    // Show debug UI only when DEBUG_LEVEL>0 (injected into window.__DEBUG_LEVEL__ by RootLayout).
+    setDebugEnabled(isDebugEnabled(1));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -191,6 +214,57 @@ export default function BillingInvoicesTab() {
       cancelled = true;
     };
   }, []);
+
+  async function loadDebug() {
+    if (!cycleStartIso) {
+      setDebugError("Billing debug requires a loaded cycleStart.");
+      return;
+    }
+    setDebugBusy(true);
+    setDebugError(null);
+    setDebugPayload(null);
+    setDebugCopyDone(false);
+    try {
+      const qsUsage = new URLSearchParams();
+      qsUsage.set("cycleStart", cycleStartIso);
+      qsUsage.set("debug", "1");
+      const qsSummary = new URLSearchParams();
+      qsSummary.set("debug", "1");
+
+      const [summaryRes, usageRes] = await Promise.all([
+        fetch(`/api/billing/summary?${qsSummary.toString()}`, { method: "GET", cache: "no-store" }),
+        fetch(`/api/billing/usage?${qsUsage.toString()}`, { method: "GET", cache: "no-store" }),
+      ]);
+      const summaryJson = await summaryRes.json().catch(() => null);
+      const usageJson = await usageRes.json().catch(() => null);
+      if (!summaryRes.ok) throw new Error(summaryJson?.error || `Summary debug failed (${summaryRes.status})`);
+      if (!usageRes.ok) throw new Error(usageJson?.error || `Usage debug failed (${usageRes.status})`);
+
+      setDebugPayload({
+        generatedAtIso: new Date().toISOString(),
+        summary: summaryJson?.debug ?? null,
+        usage: usageJson?.debug ?? null,
+      });
+    } catch (e) {
+      setDebugError(e instanceof Error ? e.message : "Failed to load debug queries");
+    } finally {
+      setDebugBusy(false);
+    }
+  }
+
+  async function copyDebug() {
+    try {
+      setDebugCopying(true);
+      setDebugCopyDone(false);
+      await navigator.clipboard.writeText(formatJson(debugPayload));
+      setDebugCopyDone(true);
+      window.setTimeout(() => setDebugCopyDone(false), 1200);
+    } catch (e) {
+      setDebugError(e instanceof Error ? e.message : "Copy failed");
+    } finally {
+      setDebugCopying(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -315,7 +389,19 @@ export default function BillingInvoicesTab() {
         <div className="min-w-0">
           <div className="text-[28px] font-semibold tracking-tight text-[var(--fg)]">Billing & Invoices</div>
         </div>
-        <div className="shrink-0">
+        <div className="shrink-0 flex items-center gap-2">
+          {debugEnabled ? (
+            <button
+              type="button"
+              className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+              onClick={() => {
+                setDebugOpen(true);
+                void loadDebug();
+              }}
+            >
+              Debug queries
+            </button>
+          ) : null}
           <button
             type="button"
             className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
@@ -332,6 +418,46 @@ export default function BillingInvoicesTab() {
           {manageError}
         </Alert>
       ) : null}
+
+      <Modal
+        open={debugOpen}
+        onClose={() => {
+          if (debugBusy) return;
+          setDebugOpen(false);
+        }}
+        ariaLabel="Billing debug queries"
+        panelClassName="w-[min(980px,calc(100vw-32px))]"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[18px] font-semibold tracking-tight text-[var(--fg)]">Billing debug queries</div>
+            <div className="mt-1 text-[12px] text-[var(--muted-2)]">
+              Copy/paste the payload below. The `usage.mongosh` field contains a ready-to-run aggregation.
+            </div>
+          </div>
+          <CopyButton
+            copyDone={debugCopyDone}
+            isCopying={debugCopying}
+            disabled={debugBusy || !debugPayload}
+            onCopy={() => void copyDebug()}
+            className="inline-flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+            label="Copy JSON"
+          />
+        </div>
+
+        {debugBusy ? <div className="mt-4 text-[12px] text-[var(--muted-2)]">Loading…</div> : null}
+        {debugError ? (
+          <Alert variant="error" className="mt-4 text-[12px]">
+            {debugError}
+          </Alert>
+        ) : null}
+
+        {!debugBusy && !debugError ? (
+          <pre className="mt-4 max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--muted-2)]">
+            {formatJson(debugPayload)}
+          </pre>
+        ) : null}
+      </Modal>
 
       {/* Card 1: Included Usage */}
       <Panel padding="lg">

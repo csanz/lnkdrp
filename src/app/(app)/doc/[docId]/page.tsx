@@ -31,6 +31,7 @@ export default function DocPage(props: { params: Promise<{ docId: string }> }) {
         aiOutput: null,
         receiverRelevanceChecklist: false,
         shareAllowPdfDownload: false,
+        shareAllowRevisionHistory: false,
         sharePasswordEnabled: false,
       }}
     />

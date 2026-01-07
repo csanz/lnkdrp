@@ -155,7 +155,7 @@ export default function DocActionsMenu({
     setProjectsLoading(true);
     setProjectsError(null);
     try {
-      const res = await fetchJson<{ projects?: ProjectDTO[] }>(`/api/projects?limit=50&page=1`, {
+      const res = await fetchJson<{ projects?: ProjectDTO[] }>(`/api/projects?limit=50&page=1&lite=1`, {
         method: "GET",
         cache: "no-store",
       });

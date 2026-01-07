@@ -53,7 +53,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
-      path: `/s/${shareId}`,
+      // Must be visible to both `/s/:shareId/*` (viewer + pdf proxy) AND `/api/share/:shareId/*`
+      // (e.g. revision history endpoint). Cookie name is shareId-scoped, so widening path is safe.
+      path: "/",
       maxAge: 60 * 60 * 24 * 14, // 14 days
     });
     return res;
@@ -62,6 +64,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
 
 
 

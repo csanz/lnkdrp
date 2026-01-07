@@ -9,9 +9,10 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { DocChangeModel } from "@/lib/models/DocChange";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function isObjectId(id: string) {
   return Types.ObjectId.isValid(id);
@@ -19,10 +20,15 @@ function isObjectId(id: string) {
 
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
   try {
+    const url = new URL(request.url);
+    const lite = url.searchParams.get("lite") === "1";
+    const limitParam = url.searchParams.get("limit");
+    const limit = Math.max(1, Math.min(50, Number.isFinite(Number(limitParam)) ? Number(limitParam) : 50));
+
     const { docId } = await ctx.params;
     if (!isObjectId(docId)) return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
 
-    const actor = await resolveActor(request);
+    const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
     await connectMongo();
 
     // Authorization: doc must belong to the actor's org (with legacy personal-org fallback).
@@ -55,7 +61,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         },
       },
       { $sort: { toVersion: -1, createdDate: -1 } },
-      { $limit: 50 },
+      { $limit: limit },
       {
         $lookup: {
           from: "users",
@@ -74,8 +80,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           fromVersion: 1,
           toVersion: 1,
           diff: 1,
-          previousText: 1,
-          newText: 1,
+          ...(lite ? {} : { previousText: 1, newText: 1 }),
           createdDate: 1,
           createdByUserId: 1,
           createdByUser: { _id: 1, name: 1, email: 1, isTemp: 1 },
@@ -84,30 +89,46 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     ])) as Array<Record<string, any>>;
 
     return applyTempUserHeaders(
-      NextResponse.json({
-        docId,
-        changes: changesAgg.map((c) => ({
-          id: String(c._id),
-          docId: c.docId ? String(c.docId) : docId,
-          fromUploadId: c.fromUploadId ? String(c.fromUploadId) : null,
-          toUploadId: c.toUploadId ? String(c.toUploadId) : null,
-          fromVersion: typeof c.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
-          toVersion: typeof c.toVersion === "number" && Number.isFinite(c.toVersion) ? c.toVersion : null,
-          summary: c?.diff?.summary ?? "",
-          changes: Array.isArray(c?.diff?.changes) ? c.diff.changes : [],
-          previousText: typeof c.previousText === "string" ? c.previousText : "",
-          newText: typeof c.newText === "string" ? c.newText : "",
-          createdBy: (function () {
-            const u = c.createdByUser;
-            if (!u || typeof u !== "object") return null;
-            const id = u._id ? String(u._id) : null;
-            const name = typeof u.name === "string" && u.name.trim() ? u.name.trim() : null;
-            const email = typeof u.email === "string" && u.email.trim() ? u.email.trim() : null;
-            return { id, name, email };
-          })(),
-          createdDate: c.createdDate ? new Date(c.createdDate).toISOString() : null,
-        })),
-      }),
+      NextResponse.json(
+        {
+          docId,
+          changes: changesAgg.map((c) => ({
+            id: String(c._id),
+            docId: c.docId ? String(c.docId) : docId,
+            fromUploadId: c.fromUploadId ? String(c.fromUploadId) : null,
+            toUploadId: c.toUploadId ? String(c.toUploadId) : null,
+            fromVersion: typeof c.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
+            toVersion: typeof c.toVersion === "number" && Number.isFinite(c.toVersion) ? c.toVersion : null,
+            summary: c?.diff?.summary ?? "",
+            ...(lite
+              ? {}
+              : {
+                  changes: Array.isArray(c?.diff?.changes) ? c.diff.changes : [],
+                  pagesThatChanged: Array.isArray(c?.diff?.pagesThatChanged)
+                    ? c.diff.pagesThatChanged
+                        .map((p: any) => ({
+                          pageNumber:
+                            typeof p?.pageNumber === "number" && Number.isFinite(p.pageNumber) ? Math.floor(p.pageNumber) : null,
+                          summary: typeof p?.summary === "string" ? p.summary : "",
+                        }))
+                        .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
+                    : [],
+                  previousText: typeof c.previousText === "string" ? c.previousText : "",
+                  newText: typeof c.newText === "string" ? c.newText : "",
+                }),
+            createdBy: (function () {
+              const u = c.createdByUser;
+              if (!u || typeof u !== "object") return null;
+              const id = u._id ? String(u._id) : null;
+              const name = typeof u.name === "string" && u.name.trim() ? u.name.trim() : null;
+              const email = typeof u.email === "string" && u.email.trim() ? u.email.trim() : null;
+              return { id, name, email };
+            })(),
+            createdDate: c.createdDate ? new Date(c.createdDate).toISOString() : null,
+          })),
+        },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {

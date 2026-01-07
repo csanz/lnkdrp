@@ -16,6 +16,7 @@ import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export const ACTIVE_ORG_COOKIE = "ld_active_org";
 
@@ -24,7 +25,7 @@ export async function GET(request: Request) {
     debugLog(2, "[api/orgs/active] GET");
     const actor = await resolveActor(request);
     if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
-    return NextResponse.json({ activeOrgId: actor.orgId });
+    return NextResponse.json({ activeOrgId: actor.orgId }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/orgs/active] GET failed", { message });
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
       { $set: { "metadata.activeOrgId": orgId, lastLoginAt: new Date() } },
     );
 
-    const res = NextResponse.json({ ok: true, activeOrgId: orgId });
+    const res = NextResponse.json({ ok: true, activeOrgId: orgId }, { headers: { "cache-control": "no-store" } });
     res.cookies.set(ACTIVE_ORG_COOKIE, orgId, {
       httpOnly: true,
       sameSite: "lax",

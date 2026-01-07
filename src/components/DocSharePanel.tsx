@@ -18,6 +18,8 @@ type Props = {
   onToggleRelevancy: (next: boolean) => void;
   pdfDownloadEnabled: boolean;
   onPdfDownloadEnabledChange: (enabled: boolean) => void;
+  revisionHistoryEnabled: boolean;
+  onRevisionHistoryEnabledChange: (enabled: boolean) => void;
   sharePasswordEnabled: boolean;
   onSharePasswordEnabledChange: (enabled: boolean) => void;
   aiOutput?: unknown | null;
@@ -39,6 +41,8 @@ export default function DocSharePanel({
   onToggleRelevancy: _onToggleRelevancy,
   pdfDownloadEnabled,
   onPdfDownloadEnabledChange,
+  revisionHistoryEnabled,
+  onRevisionHistoryEnabledChange,
   sharePasswordEnabled,
   onSharePasswordEnabledChange,
   aiOutput,
@@ -245,6 +249,43 @@ export default function DocSharePanel({
               className={[
                 "inline-block h-5 w-5 transform rounded-full bg-[var(--panel)] shadow ring-1 ring-[var(--border)] transition-transform",
                 pdfDownloadEnabled ? "translate-x-5" : "translate-x-1",
+              ].join(" ")}
+            />
+          </button>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
+          <div className="min-w-0">
+            <div className="text-[12px] font-medium text-[var(--fg)]">Enable revision history viewing</div>
+            <div className="mt-0.5 text-[12px] text-[var(--muted)]">
+              Show a light revision history to recipients (version + date + summary).
+            </div>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={revisionHistoryEnabled}
+            aria-label="Enable revision history viewing"
+            disabled={!shareUrl}
+            className={[
+              "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+              revisionHistoryEnabled ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
+              !shareUrl ? "opacity-50" : "cursor-pointer",
+            ].join(" ")}
+            onClick={() => onRevisionHistoryEnabledChange(!revisionHistoryEnabled)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              onRevisionHistoryEnabledChange(!revisionHistoryEnabled);
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className={[
+                "inline-block h-5 w-5 transform rounded-full bg-[var(--panel)] shadow ring-1 ring-[var(--border)] transition-transform",
+                revisionHistoryEnabled ? "translate-x-5" : "translate-x-1",
               ].join(" ")}
             />
           </button>

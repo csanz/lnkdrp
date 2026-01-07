@@ -189,6 +189,45 @@ export async function tryResolveUserActor(request: Request): Promise<Actor | nul
 }
 
 /**
+ * Fast path: resolve a signed-in user actor with exactly one membership check.
+ *
+ * This intentionally avoids:
+ * - ensuring personal org exists
+ * - reading User.metadata.activeOrgId
+ * - reading/validating the active-org cookie
+ *
+ * Use this for performance-sensitive, read-only endpoints where:
+ * - orgId from the JWT claim is sufficient, and
+ * - the route still scopes data by orgId, and
+ * - you can tolerate falling back to full `resolveActor()` when claim is missing.
+ */
+export async function tryResolveUserActorFast(request: Request): Promise<Actor | null> {
+  const session = await tryGetSessionClaims(request);
+  if (!session?.userId) return null;
+
+  // Prefer the server-issued active-org cookie (it is set only after membership validation),
+  // then fall back to the JWT claim.
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
+  const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
+  const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
+  const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
+  if (!orgId || !Types.ObjectId.isValid(orgId)) return null;
+
+  await connectMongo();
+  const ok = await OrgMembershipModel.exists({
+    orgId: new Types.ObjectId(orgId),
+    userId: new Types.ObjectId(session.userId),
+    isDeleted: { $ne: true },
+  });
+  if (!ok) return null;
+
+  // Note: personalOrgId isn't needed for most hot read paths; keep it stable without extra DB work.
+  // Callers that require true personal-org resolution should use `tryResolveUserActor()` or `resolveActor()`.
+  return { kind: "user", userId: session.userId, orgId, personalOrgId: orgId };
+}
+
+/**
  * Resolve the current "actor" for an API request:
  * - signed-in user (NextAuth session), else
  * - temp user (by headers), else

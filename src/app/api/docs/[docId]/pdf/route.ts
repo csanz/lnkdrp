@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 /**
@@ -54,7 +54,7 @@ export async function GET(
     return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
   }
 
-  const actor = await resolveActor(request);
+  const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
   await connectMongo();
 
   const orgId = new Types.ObjectId(actor.orgId);
@@ -83,32 +83,13 @@ export async function GET(
     return NextResponse.json({ error: "PDF not available" }, { status: 404 });
   }
 
-  const range = request.headers.get("range");
-  const upstream = await fetch(blobUrl, {
-    headers: range ? { range } : undefined,
-    // Always fetch the current bytes server-side; the browser cache is handled
-    // by our response headers + the versioned URL.
-    cache: "no-store",
-  });
-
-  // Build a tight header set (avoid leaking upstream storage headers).
-  const headers = new Headers();
-  pickHeader(upstream.headers, headers, "content-type", { fallback: "application/pdf" });
-  pickHeader(upstream.headers, headers, "content-length");
-  pickHeader(upstream.headers, headers, "content-range");
-  pickHeader(upstream.headers, headers, "accept-ranges");
-  pickHeader(upstream.headers, headers, "etag");
-  pickHeader(upstream.headers, headers, "last-modified");
-
+  // Redirect to the blob URL so the browser downloads bytes directly (avoids double-hop proxying).
+  // This keeps the owner-only authorization check here, but prevents the server from streaming
+  // potentially large PDF bytes on every request.
+  const res = NextResponse.redirect(blobUrl, { status: 302 });
   // Cache aggressively in the browser; URL versioning handles invalidation.
   // Use `private` because this is an authenticated owner endpoint.
-  headers.set("cache-control", "private, max-age=31536000, immutable");
-
-  const res = new Response(upstream.body, {
-    status: upstream.status,
-    headers,
-  });
-
+  res.headers.set("cache-control", "private, max-age=31536000, immutable");
   return applyTempUserHeaders(res, actor);
 }
 

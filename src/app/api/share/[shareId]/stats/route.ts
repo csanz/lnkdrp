@@ -8,6 +8,7 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 /**
  * As Non Empty String (uses trim).
  */
@@ -131,6 +132,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
               },
             }
           : { isOwner: false },
+        { headers: { "cache-control": "no-store" } },
       );
       return applyTempUserHeaders(res, actor);
     } catch (err) {

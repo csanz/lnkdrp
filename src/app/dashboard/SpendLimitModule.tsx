@@ -31,6 +31,38 @@ export const SPEND_LIMIT_UPDATED_EVENT = "lnkdrp:spend-limit-updated";
 // between dashboard tabs (tab switches unmount/remount this module).
 const SPEND_STATUS_CACHE_TTL_MS = 30_000;
 let spendStatusCache: { data: SpendStatus; at: number } | null = null;
+let spendStatusInflight: Promise<SpendStatus> | null = null;
+
+export function getCachedSpendStatus(): SpendStatus | null {
+  return spendStatusCache?.data ?? null;
+}
+
+export async function refreshSpendStatus({
+  maxAgeMs = SPEND_STATUS_CACHE_TTL_MS,
+  force = false,
+}: {
+  maxAgeMs?: number;
+  force?: boolean;
+} = {}): Promise<SpendStatus> {
+  const cachedAt = spendStatusCache?.at ?? 0;
+  const cachedFresh = Boolean(spendStatusCache?.data) && Date.now() - cachedAt < maxAgeMs;
+  if (!force && cachedFresh && spendStatusCache?.data) return spendStatusCache.data;
+
+  if (spendStatusInflight) return await spendStatusInflight;
+  spendStatusInflight = (async () => {
+    try {
+      const res = await fetch("/api/billing/spend", { method: "GET" });
+      const json = (await res.json().catch(() => null)) as SpendStatus | { error?: string } | null;
+      if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
+      if (!json || (json as any).ok !== true) throw new Error("Invalid response");
+      spendStatusCache = { data: json as SpendStatus, at: Date.now() };
+      return json as SpendStatus;
+    } finally {
+      spendStatusInflight = null;
+    }
+  })();
+  return await spendStatusInflight;
+}
 
 function dollarsFromCents(cents: number): number {
   return Math.max(0, Math.floor(cents)) / 100;
@@ -68,16 +100,12 @@ export default function SpendLimitModule({
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  async function refresh({ silent }: { silent?: boolean } = {}) {
+  async function refresh({ silent, force }: { silent?: boolean; force?: boolean } = {}) {
     if (!silent) setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/billing/spend", { method: "GET" });
-      const json = (await res.json().catch(() => null)) as SpendStatus | { error?: string } | null;
-      if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
-      if (!json || (json as any).ok !== true) throw new Error("Invalid response");
-      setData(json as SpendStatus);
-      spendStatusCache = { data: json as SpendStatus, at: Date.now() };
+      const next = await refreshSpendStatus({ force: Boolean(force) });
+      setData(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load spend");
     } finally {
@@ -89,7 +117,7 @@ export default function SpendLimitModule({
     const cachedAt = spendStatusCache?.at ?? 0;
     const cachedFresh = Boolean(spendStatusCache?.data) && Date.now() - cachedAt < SPEND_STATUS_CACHE_TTL_MS;
     void refresh({ silent: cachedFresh });
-    const onUpdated = () => void refresh();
+    const onUpdated = () => void refresh({ force: true });
     window.addEventListener(SPEND_LIMIT_UPDATED_EVENT, onUpdated);
     return () => window.removeEventListener(SPEND_LIMIT_UPDATED_EVENT, onUpdated);
   }, []);
@@ -167,7 +195,7 @@ export default function SpendLimitModule({
       const json = (await res.json().catch(() => null)) as { ok?: boolean; onDemandMonthlyLimitCents?: number; error?: string } | null;
       if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
       setEditOpen(false);
-      await refresh();
+      await refresh({ force: true });
       window.dispatchEvent(new Event(SPEND_LIMIT_UPDATED_EVENT));
       // Ensure dashboard header badge + credits drawer re-fetch the snapshot without a full refresh.
       dispatchCreditsSnapshotRefresh();

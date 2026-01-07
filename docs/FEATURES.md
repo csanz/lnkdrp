@@ -136,6 +136,9 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - When enabled, recipients must unlock via `/api/share/:shareId/unlock` which sets a per-share cookie.
 - **Allow PDF download**:
   - Toggle whether recipients can download the PDF from the share page.
+- **Allow recipients to view revision history**:
+  - Toggle whether recipients can view a **light** revision history (version + date + summary) from the share page.
+  - When available, each revision also includes **page-numbered change hints** so recipients can click a changed page and jump to it in the viewer.
 - **Receiver relevance checklist toggle**:
   - Owner can enable a receiver-facing relevance checklist in the share viewer (feature flag stored on the doc).
 
@@ -145,6 +148,8 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Renders a PDF viewer when the PDF is available; otherwise shows a “preparing” fallback with an image preview (if present).
   - The viewer includes an **All pages** mode (scroll the full document) and a **Grid** mode (thumbnail overview of all pages, click to open).
   - Grid and All-pages views are responsive and fit to the available viewport width by default.
+- **Optional revision history**:
+  - If enabled by the owner, recipients can open a **Revision history** modal that shows a light list of updates (no owner-only details).
 - **Password gate** (optional):
   - If a share password is configured, the share page requires a successful unlock cookie before rendering.
   - The password screen includes a quick **preview thumbnail** (when available) to help recipients confirm they're unlocking the right doc.

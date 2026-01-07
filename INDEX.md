@@ -14,12 +14,13 @@
 - `src/app/preferences/NotificationPreferences.tsx` — exports: NotificationPreferences (default). Workspace-level notification preferences UI (doc update emails).
 - `src/components/notifications/NotificationPreferences.tsx` — exports: NotificationPreferences (default). Workspace-level notification preferences UI (doc update emails; used by dashboard + preferences).
 - `src/app/dashboard/SubscriptionCard.tsx` — exports: SubscriptionCard (default)
-- `src/app/dashboard/SpendLimitModule.tsx` — exports: SpendLimitModule (default), SPEND_LIMIT_UPDATED_EVENT
+- `src/app/dashboard/SpendLimitModule.tsx` — exports: SpendLimitModule (default), SPEND_LIMIT_UPDATED_EVENT, getCachedSpendStatus, refreshSpendStatus
 - `src/app/dashboard/CreditsSummaryCard.tsx` — exports: CreditsSummaryCard (default)
 - `src/app/dashboard/OnDemandUsageCard.tsx` — exports: OnDemandUsageCard (default)
 - `src/app/dashboard/AiQualityDefaultsCard.tsx` — exports: AiQualityDefaultsCard (default)
 - `src/app/dashboard/UsageTable.tsx` — exports: UsageTable (default), (type) UsageRow
 - `src/app/dashboard/DailyUsageChart.tsx` — exports: DailyUsageChart (default)
+- `src/app/dashboard/DailyUsageChartRenderer.tsx` — exports: DailyUsageChartRenderer (default), DailyUsageChartRow (type)
 - `src/app/dashboard/BillingInvoicesTab.tsx` — exports: BillingInvoicesTab (default). Billing & Invoices tab content (3 cards: Included Usage, On-Demand Usage, Invoices).
 - `src/admin/components/CacheToolsClient.tsx` — exports: CacheToolsClient
 - `src/components/LeftSidebar.tsx` — exports: LeftSidebar
@@ -279,6 +280,9 @@
 - `src/app/api/debug/route.ts` — API route for \`/api/debug\`.
   - GET (function) — Debug endpoint to confirm server-side env wiring.
   - runtime (const) — Next.js route configuration.
+- `src/app/api/debug/cookie/route.ts` — API route for \`/api/debug/cookie\`.
+  - GET (function) — Dev-only: echo request Cookie header and write it to `scripts/cookie.json` (auth required; disabled in prod by default).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/metrics/events/route.ts` — API route for \`/api/metrics/events\`.
   - POST (function) — Ingest metrics events (project views, in-project clicks, session page timing).
   - runtime (const) — Next.js route configuration.
@@ -431,6 +435,9 @@
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
   - Note: POST records per-viewer share view state (including best-effort `viewerIp`) keyed by (shareId, botIdHash).
+- `src/app/api/share/[shareId]/changes/route.ts` — API route for \`/api/share/:shareId/changes\`.
+  - GET (function) — Return a light revision history for a shared doc (gated by doc settings + share password).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/share/[shareId]/unlock/route.ts` — API route for \`/api/share/:shareId/unlock\`.
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
@@ -468,6 +475,7 @@
   - GET (function) — Dynamic OG image route for a share page.
   - runtime (const) — Next.js route configuration.
 - `src/app/s/[shareId]/page.tsx` — Page for \`/s/:shareId\`.
+- `src/app/s/[shareId]/changes/route.ts` — API route for \`/s/:shareId/changes\`.
 - `src/app/s/[shareId]/pdf/route.ts` — API route for \`/s/:shareId/pdf\`.
   - GET (function) — Same-origin PDF proxy for `/s/:shareId`.
   - runtime (const) — Next.js route configuration.
@@ -566,6 +574,7 @@
 - `src/lib/gating/actor.ts`
   - Actor (type) — Type: actor.
   - applyTempUserHeaders (function) — Apply temp user headers.
+  - tryResolveAuthUserId (function) — Fast path: resolve authenticated user id + activeOrgId claim without DB access.
   - tryResolveUserActor (function) — Best-effort resolve authenticated user actor without creating temp users.
   - resolveActor (function) — Resolve actor.
   - resolveActorForStats (function) — Faster actor resolution for stats endpoints (single membership check + request cache).
@@ -753,6 +762,7 @@
 - `public/sample/skycatch.jpg`
 - `public/sample/usavx_op.pdf`
 - `public/sample/usavx.pdf`
+- `docs/BENCHMARK.md`
 - `docs/FEATURES.md`
 - `docs/SUBSCRIPTION.md`
 - `docs/ERROR_LOGGING.md`
@@ -784,6 +794,7 @@
 - `scripts/test-ai-extract.mjs`
 - `scripts/test-ai-extract.ts`
 - `scripts/test-vercel-blob.mjs`
+- `scripts/cookie.json`
 - `scripts/tests-benchmark.ts`
 - `src/app/(app)/doc/[docId]/ai/page.tsx`
 - `src/app/(app)/doc/[docId]/page.tsx`

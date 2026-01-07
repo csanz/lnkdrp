@@ -17,6 +17,12 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Short-lived in-memory cache to reduce repeated expensive aggregates on initial dashboard load
+// and when toggling day ranges. Cache is per (org,user,days) and safe because it’s customer-facing
+// derived data and changes slowly.
+const USAGE_DAILY_CACHE_TTL_MS = 10_000;
+let usageDailyCache: Map<string, { at: number; payload: UsageDailyResponse }> | null = null;
+
 function clampDays(v: string | null): 1 | 7 | 30 {
   const n = Number(v);
   if (n === 1) return 1;
@@ -58,6 +64,13 @@ export async function GET(request: Request) {
 
       await connectMongo();
       const orgId = new Types.ObjectId(actor.orgId);
+
+      usageDailyCache = usageDailyCache ?? new Map();
+      const cacheKey = `${String(actor.orgId)}:${String(actor.userId)}:${String(days)}`;
+      const cached = usageDailyCache.get(cacheKey);
+      if (cached && Date.now() - cached.at < USAGE_DAILY_CACHE_TTL_MS) {
+        return NextResponse.json(cached.payload, { headers: { "cache-control": "no-store" } });
+      }
 
       // Permission for "Spend" (owner/admin only), consistent with /api/dashboard/usage.
       const membership = await OrgMembershipModel.findOne({
@@ -170,6 +183,7 @@ export async function GET(request: Request) {
       }
 
       const payload: UsageDailyResponse = { ok: true, days, canViewSpend, models, series };
+      usageDailyCache.set(cacheKey, { at: Date.now(), payload });
       return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load daily usage";

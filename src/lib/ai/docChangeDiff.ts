@@ -16,6 +16,8 @@ const SYSTEM_PROMPT_PATH = path.join(PROMPTS_DIR, "docChangeDiff-system.md");
 const USER_PROMPT_PATH = path.join(PROMPTS_DIR, "docChangeDiff-user.md");
 
 const MAX_SUMMARY_CHARS = 400;
+const MAX_PAGE_SUMMARY_CHARS = 220;
+const MAX_PAGES_THAT_CHANGED = 30;
 
 /** Output schema for doc change diffs. */
 export const DocChangeDiffSchema = z
@@ -30,6 +32,16 @@ export const DocChangeDiffSchema = z
         })
         .strict(),
     ),
+    pagesThatChanged: z
+      .array(
+        z
+          .object({
+            pageNumber: z.number().int().min(1),
+            summary: z.string().max(MAX_PAGE_SUMMARY_CHARS),
+          })
+          .strict(),
+      )
+      .max(MAX_PAGES_THAT_CHANGED),
   })
   .strict();
 
@@ -56,11 +68,22 @@ function trimForPrompt(input: string, max: number): string {
   return `${head}\n\n...[truncated]...\n\n${tail}`;
 }
 
-function fillUserPrompt(template: string, params: { previousText: string; newText: string }): string {
+function fillUserPrompt(
+  template: string,
+  params: { previousText: string; newText: string; changedPages: string },
+): string {
   return (template ?? "")
     .replaceAll("{{PREVIOUS_TEXT}}", params.previousText)
     .replaceAll("{{NEW_TEXT}}", params.newText)
+    .replaceAll("{{CHANGED_PAGES}}", params.changedPages)
     .trim();
+}
+
+function normalizePageText(input: string): string {
+  return (input ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 6000);
 }
 
 /**
@@ -72,6 +95,11 @@ function fillUserPrompt(template: string, params: { previousText: string; newTex
 export async function runDocChangeDiff(input: {
   previousText: string;
   newText: string;
+  /**
+   * Optional page-level context for changed pages.
+   * When provided, the model should use it to populate `pagesThatChanged`.
+   */
+  changedPages?: Array<{ pageNumber: number; previousText: string; newText: string }>;
   qualityTier?: "basic" | "standard" | "advanced";
 }): Promise<DocChangeDiff | null> {
   if (!process.env.OPENAI_API_KEY) return null;
@@ -82,9 +110,28 @@ export async function runDocChangeDiff(input: {
   const newText = trimForPrompt(input.newText, max);
   if (!previousText || !newText) return null;
 
+  const changedPages = Array.isArray(input.changedPages) ? input.changedPages : [];
+  const changedPagesText = changedPages.length
+    ? changedPages
+        .slice(0, MAX_PAGES_THAT_CHANGED)
+        .map((p) => {
+          const pageNumber = Number.isFinite(p.pageNumber) ? Math.floor(p.pageNumber) : NaN;
+          if (!Number.isFinite(pageNumber) || pageNumber < 1) return null;
+          const prev = normalizePageText(p.previousText);
+          const next = normalizePageText(p.newText);
+          return [
+            `Page ${pageNumber}:`,
+            `PREVIOUS: ${prev || "[empty]"}`,
+            `NEW: ${next || "[empty]"}`,
+          ].join("\n");
+        })
+        .filter(Boolean)
+        .join("\n\n---\n\n")
+    : "No page-level context available.";
+
   const prompts = await loadPrompts();
   const system = prompts.system.trim();
-  const prompt = fillUserPrompt(prompts.user, { previousText, newText });
+  const prompt = fillUserPrompt(prompts.user, { previousText, newText, changedPages: changedPagesText });
   if (!system || !prompt) return null;
 
   const { object } = await generateObject({
@@ -99,7 +146,8 @@ export async function runDocChangeDiff(input: {
   // Extra guardrail: ensure summary is always <= MAX_SUMMARY_CHARS.
   const summary = (object.summary ?? "").toString().trim().slice(0, MAX_SUMMARY_CHARS).trimEnd();
   const changes = Array.isArray(object.changes) ? object.changes : [];
-  return { summary, changes };
+  const pagesThatChanged = Array.isArray((object as any).pagesThatChanged) ? (object as any).pagesThatChanged : [];
+  return { summary, changes, pagesThatChanged };
 }
 
 
