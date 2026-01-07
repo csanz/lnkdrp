@@ -96,6 +96,7 @@ export async function GET(request: Request) {
     const pageRaw = url.searchParams.get("page");
     const qRaw = url.searchParams.get("q") ?? "";
     const lite = url.searchParams.get("lite") === "1";
+    const sidebar = url.searchParams.get("sidebar") === "1";
     const limit = Math.max(
       1,
       Math.min(50, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 25),
@@ -103,8 +104,9 @@ export async function GET(request: Request) {
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
     const q = qRaw.trim();
 
-    debugLog(2, "[api/projects] GET", { limit, page, lite, q: q ? "[redacted]" : "" });
-    const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
+    debugLog(2, "[api/projects] GET", { limit, page, lite, sidebar, q: q ? "[redacted]" : "" });
+    const actor =
+      (lite || sidebar ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
     await connectMongo();
 
     const orgId = new Types.ObjectId(actor.orgId);
@@ -132,7 +134,9 @@ export async function GET(request: Request) {
       (filter.$and as Array<Record<string, unknown>>).push({ $or: [{ name: rx }, { description: rx }] });
     }
 
-    const total = lite ? null : await ProjectModel.countDocuments(filter);
+    // `lite=1` is used by doc page menus where totals aren't needed.
+    // `sidebar=1` is used by the app left sidebar and needs totals for "See more" affordances.
+    const total = lite && !sidebar ? null : await ProjectModel.countDocuments(filter);
     // Stable ordering: when `updatedDate` ties (or is null), add a deterministic tiebreaker.
     // Without this, MongoDB is free to return ties in arbitrary order, causing UI "flip" on refresh.
     const projects = await ProjectModel.find(filter)
@@ -155,7 +159,8 @@ export async function GET(request: Request) {
     // Best-effort: backfill slug for older projects.
     // IMPORTANT: skip this work for `lite=1` callers (used by doc page menus), so opening
     // the project picker never pays a migration/backfill tax.
-    if (!lite) {
+    // Also skip for `sidebar=1` (the left sidebar polls frequently and must not pay migration costs).
+    if (!lite && !sidebar) {
       for (const p of projects) {
         // Best-effort: backfill orgId for legacy personal projects so org scoping works.
         const pOrgId = (p as unknown as { orgId?: unknown }).orgId;

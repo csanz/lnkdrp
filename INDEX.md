@@ -1,7 +1,7 @@
 # Components
 - `src/components/AboutCopy.tsx` — exports: AboutCopy
-- `src/components/AccountMenu.tsx` — exports: AccountMenu
-- `src/components/ActiveWorkspacePill.tsx` — exports: ActiveWorkspacePill (default). Props: `planBadgeText?` to optionally show a small plan badge (e.g. “PRO”).
+- `src/components/AccountMenu.tsx` — exports: AccountMenu. Props: `variant?` ("sidebar" | "topbar").
+- `src/components/ActiveWorkspacePill.tsx` — exports: ActiveWorkspacePill (default). Props: `planBadgeText?` to optionally show a small plan badge (e.g. “PRO”); `disableNetwork?` to avoid network calls on mount (header fast-path).
 - `src/components/BlobClientUploadTest.tsx` — exports: BlobClientUploadTest
 - `src/components/CopyButton.tsx` — exports: CopyButton
 - `src/components/DocActionsMenu.tsx` — exports: DocActionsMenu
@@ -285,6 +285,14 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/api/metrics/events/route.ts` — API route for \`/api/metrics/events\`.
   - POST (function) — Ingest metrics events (project views, in-project clicks, session page timing).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/starred/route.ts` — API route for \`/api/starred\`.
+  - GET (function) — List starred docs for the current user + active org.
+  - POST (function) — Toggle starred state for a doc.
+  - PATCH (function) — Reorder starred docs.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/starred/bootstrap/route.ts` — API route for \`/api/starred/bootstrap\`.
+  - POST (function) — One-time helper to migrate localStorage starred cache into MongoDB.
   - runtime (const) — Next.js route configuration.
 - `src/app/api/orgs/route.ts` — API route for \`/api/orgs\`.
   - GET (function) — List orgs for the signed-in user (includes active org id).
@@ -657,6 +665,8 @@
   - ShareView (type) — Mongoose document type for the shareviews collection.
   - ShareViewModel (const) — Mongoose model for the shareviews collection.
   - Note: includes best-effort `viewerIp` captured from request proxy headers.
+- `src/lib/models/StarredDoc.ts` — Data model for persisted starred docs (per user + workspace).
+  - StarredDocModel (const) — Mongoose model for the starredDocs collection.
 - `src/lib/models/UsageAggDaily.ts` — Data model for pre-aggregated daily usage totals (derived from CreditLedger).
   - UsageAggDaily (type) — Mongoose document type for daily usage aggregates.
   - UsageAggDailyModel (const) — Mongoose model for daily usage aggregates.
@@ -714,6 +724,7 @@
   - StarredDoc (type) — Type: starred doc.
   - getStarredDocs (function) — Get starred docs.
   - isDocStarred (function) — Check whether doc starred.
+  - refreshStarredDocsFromServer (function) — Sync local cache from MongoDB source-of-truth (best-effort).
   - toggleStarredDoc (function) — Toggle starred doc.
   - upsertStarredDocTitle (function) — Upsert starred doc title.
   - moveStarredDoc (function) — Move starred doc (manual ordering).

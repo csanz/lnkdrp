@@ -31,6 +31,11 @@ type UsageResponse = {
   rows: UsageRow[];
 };
 
+// Small in-memory cache: makes tab switching feel instant and avoids re-fetching if the user
+// toggles between tabs quickly. This does not change server cache semantics.
+const USAGE_TABLE_CACHE_TTL_MS = 30_000;
+let usageTableCache: Map<string, { at: number; resp: UsageResponse }> | null = null;
+
 function fmtDateTime(iso: string): string {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return iso;
@@ -50,10 +55,28 @@ export default function UsageTable({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [rows, setRows] = useState<UsageRow[]>([]);
-  const [canViewSpend, setCanViewSpend] = useState(false);
+  const [rows, setRows] = useState<UsageRow[]>(() => {
+    const key = `${days}|0`;
+    const cached = usageTableCache?.get?.(key);
+    if (!cached) return [];
+    if (Date.now() - cached.at > USAGE_TABLE_CACHE_TTL_MS) return [];
+    return Array.isArray(cached.resp.rows) ? cached.resp.rows : [];
+  });
+  const [canViewSpend, setCanViewSpend] = useState(() => {
+    const key = `${days}|0`;
+    const cached = usageTableCache?.get?.(key);
+    if (!cached) return false;
+    if (Date.now() - cached.at > USAGE_TABLE_CACHE_TTL_MS) return false;
+    return Boolean(cached.resp.canViewSpend);
+  });
   const [showSpend, setShowSpend] = useState(false);
-  const [monthSpendCents, setMonthSpendCents] = useState<number | null>(null);
+  const [monthSpendCents, setMonthSpendCents] = useState<number | null>(() => {
+    const key = `${days}|0`;
+    const cached = usageTableCache?.get?.(key);
+    if (!cached) return null;
+    if (Date.now() - cached.at > USAGE_TABLE_CACHE_TTL_MS) return null;
+    return typeof cached.resp.monthSpendCents === "number" ? cached.resp.monthSpendCents : null;
+  });
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   // Re-fetch usage whenever the global credits snapshot is refreshed (uploads, limits changes, etc).
@@ -65,7 +88,11 @@ export default function UsageTable({
 
   useEffect(() => {
     let cancelled = false;
-    setBusy(true);
+    const cacheKey = `${days}|${showSpend ? 1 : 0}`;
+    const cached = usageTableCache?.get?.(cacheKey);
+    const cachedFresh = Boolean(cached) && Date.now() - (cached?.at ?? 0) < USAGE_TABLE_CACHE_TTL_MS;
+    // If cached data exists, avoid a visible "Loading…" state.
+    setBusy(!cachedFresh && rows.length === 0);
     setError(null);
     void (async () => {
       try {
@@ -81,11 +108,16 @@ export default function UsageTable({
           setCanViewSpend(Boolean((json as any).canViewSpend));
           setMonthSpendCents(typeof (json as any).monthSpendCents === "number" ? (json as any).monthSpendCents : null);
         }
+        usageTableCache = usageTableCache ?? new Map();
+        usageTableCache.set(cacheKey, { at: Date.now(), resp: json as UsageResponse });
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load usage";
         if (!cancelled) setError(msg);
-        if (!cancelled) setRows([]);
-        if (!cancelled) setMonthSpendCents(null);
+        // Keep cached data visible if we have it (avoid turning a transient failure into a blank table).
+        if (!cancelled && !(usageTableCache?.get?.(cacheKey)?.resp)) {
+          setRows([]);
+          setMonthSpendCents(null);
+        }
       } finally {
         if (!cancelled) setBusy(false);
       }

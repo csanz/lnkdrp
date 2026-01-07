@@ -66,6 +66,7 @@ export async function GET(request: Request) {
     const pageRaw = url.searchParams.get("page");
     const qRaw = url.searchParams.get("q") ?? "";
     const idsRaw = url.searchParams.get("ids") ?? "";
+    const sidebar = url.searchParams.get("sidebar") === "1";
     const limit = Math.max(
       1,
       Math.min(50, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 25),
@@ -82,6 +83,7 @@ export async function GET(request: Request) {
     debugLog(2, "[api/docs] GET", {
       limit,
       page,
+      sidebar,
       q: q ? "[redacted]" : "",
       ids: ids.length ? `[${ids.length}]` : "",
     });
@@ -118,6 +120,24 @@ export async function GET(request: Request) {
     // Stable ordering: when `updatedDate` ties (or is null), add a deterministic tiebreaker.
     // Without this, MongoDB is free to return ties in arbitrary order, causing UI "flip" on refresh.
     const docsUnordered = await DocModel.find(filter)
+      .select({
+        _id: 1,
+        orgId: 1,
+        userId: 1,
+        shareId: 1,
+        title: 1,
+        status: 1,
+        currentUploadId: 1,
+        uploadId: 1, // legacy
+        previewImageUrl: 1,
+        firstPagePngUrl: 1,
+        receiverRelevanceChecklist: 1,
+        receivedViaRequestProjectId: 1,
+        guideForRequestProjectId: 1,
+        updatedDate: 1,
+        createdDate: 1,
+        "aiOutput.one_liner": 1,
+      })
       .sort({ updatedDate: -1, _id: -1 })
       .skip(useIds ? 0 : (page - 1) * limit)
       .limit(useIds ? ids.length : limit)
@@ -156,78 +176,84 @@ export async function GET(request: Request) {
     }
 
     // Best-effort: ensure shareIds exist for listed docs so links work.
-    for (const d of docs) {
-      // Best-effort: backfill orgId for legacy personal docs so org scoping works.
-      const dOrgId = (d as unknown as { orgId?: unknown }).orgId;
-      if (allowLegacyByUserId && !dOrgId) {
-        try {
-          await DocModel.updateOne(
-            { _id: d._id, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-            { $set: { orgId } },
-            // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
-            { timestamps: false },
-          );
-          (d as unknown as { orgId?: Types.ObjectId }).orgId = orgId;
-        } catch {
-          // ignore
+    // IMPORTANT: skip backfill/migration work for `sidebar=1` callers (the left sidebar polls frequently).
+    if (!sidebar) {
+      for (const d of docs) {
+        // Best-effort: backfill orgId for legacy personal docs so org scoping works.
+        const dOrgId = (d as unknown as { orgId?: unknown }).orgId;
+        if (allowLegacyByUserId && !dOrgId) {
+          try {
+            await DocModel.updateOne(
+              { _id: d._id, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+              { $set: { orgId } },
+              // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
+              { timestamps: false },
+            );
+            (d as unknown as { orgId?: Types.ObjectId }).orgId = orgId;
+          } catch {
+            // ignore
+          }
         }
-      }
 
-      if (d.shareId) continue;
-      for (let i = 0; i < 3; i++) {
-        const candidate = newShareId();
-        try {
-          await DocModel.updateOne(
-            { _id: d._id, shareId: { $in: [null, undefined, ""] } },
-            { $set: { shareId: candidate } },
-            // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
-            { timestamps: false },
-          );
-          d.shareId = candidate;
-          break;
-        } catch (e) {
-          // Duplicate shareId; retry.
-          if (
-            e &&
-            typeof e === "object" &&
-            "code" in e &&
-            (e as { code?: number }).code === 11000
-          )
-            continue;
-          throw e;
+        if (d.shareId) continue;
+        for (let i = 0; i < 3; i++) {
+          const candidate = newShareId();
+          try {
+            await DocModel.updateOne(
+              { _id: d._id, shareId: { $in: [null, undefined, ""] } },
+              { $set: { shareId: candidate } },
+              // Avoid bumping `updatedDate` for backfills; otherwise list order can "flip" on refresh.
+              { timestamps: false },
+            );
+            d.shareId = candidate;
+            break;
+          } catch (e) {
+            // Duplicate shareId; retry.
+            if (
+              e &&
+              typeof e === "object" &&
+              "code" in e &&
+              (e as { code?: number }).code === 11000
+            )
+              continue;
+            throw e;
+          }
         }
       }
     }
 
     // Best-effort: relate "guide docs" back to request repos even if older docs
     // haven't been backfilled with `guideForRequestProjectId` yet.
+    // IMPORTANT: skip this extra join for `sidebar=1` callers.
     const guideProjectIdByDocId = new Map<string, string>();
-    try {
-      const docIds = docs.map((d) => d._id).filter(Boolean);
-      if (docIds.length) {
-        const reqProjects = await ProjectModel.find({
-          ...(allowLegacyByUserId
-            ? {
-                $or: [
-                  { orgId },
-                  { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-                ],
-              }
-            : { orgId }),
-          isDeleted: { $ne: true },
-          requestReviewGuideDocId: { $in: docIds },
-          $or: [{ isRequest: true }, { requestUploadToken: { $exists: true, $nin: [null, ""] } }],
-        })
-          .select({ _id: 1, requestReviewGuideDocId: 1 })
-          .lean();
-        for (const p of reqProjects) {
-          const guideIdRaw = (p as unknown as { requestReviewGuideDocId?: unknown }).requestReviewGuideDocId;
-          if (!guideIdRaw) continue;
-          guideProjectIdByDocId.set(String(guideIdRaw), String(p._id));
+    if (!sidebar) {
+      try {
+        const docIds = docs.map((d) => d._id).filter(Boolean);
+        if (docIds.length) {
+          const reqProjects = await ProjectModel.find({
+            ...(allowLegacyByUserId
+              ? {
+                  $or: [
+                    { orgId },
+                    { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+                  ],
+                }
+              : { orgId }),
+            isDeleted: { $ne: true },
+            requestReviewGuideDocId: { $in: docIds },
+            $or: [{ isRequest: true }, { requestUploadToken: { $exists: true, $nin: [null, ""] } }],
+          })
+            .select({ _id: 1, requestReviewGuideDocId: 1 })
+            .lean();
+          for (const p of reqProjects) {
+            const guideIdRaw = (p as unknown as { requestReviewGuideDocId?: unknown }).requestReviewGuideDocId;
+            if (!guideIdRaw) continue;
+            guideProjectIdByDocId.set(String(guideIdRaw), String(p._id));
+          }
         }
+      } catch {
+        // ignore; list endpoint is best-effort
       }
-    } catch {
-      // ignore; list endpoint is best-effort
     }
 
     return applyTempUserHeaders(

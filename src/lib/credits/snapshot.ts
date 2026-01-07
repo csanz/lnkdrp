@@ -51,8 +51,9 @@ function startOfNextUtcMonth(d: Date): Date {
  * - Balances from `WorkspaceCreditBalanceModel`
  * - Usage in-cycle from `CreditLedgerModel` (charged rows within cycle window)
  */
-export async function getCreditsSnapshot(params: { workspaceId: string }): Promise<CreditsSnapshot> {
+export async function getCreditsSnapshot(params: { workspaceId: string; fast?: boolean }): Promise<CreditsSnapshot> {
   const workspaceId = params.workspaceId;
+  const fast = Boolean(params.fast);
   if (!Types.ObjectId.isValid(workspaceId)) throw new Error("Invalid workspaceId");
   const orgId = new Types.ObjectId(workspaceId);
 
@@ -139,6 +140,12 @@ export async function getCreditsSnapshot(params: { workspaceId: string }): Promi
   const includedRemaining = pro ? subscriptionRemaining : trialRemaining;
   const paidRemaining = purchasedRemaining;
 
+  const onDemandEnabled = Boolean((bal as any)?.onDemandEnabled);
+  const onDemandMonthlyLimitCents = clampNonNegInt((bal as any)?.onDemandMonthlyLimitCents ?? 0);
+  const centsPerCredit = USD_CENTS_PER_CREDIT;
+  // We treat on-demand as "off" unless explicitly enabled with a positive limit.
+  const onDemandAllowed = onDemandEnabled && onDemandMonthlyLimitCents > 0;
+
   // Used this cycle: sum charged credits within the resolved billing cycle window.
   let usedThisCycle = 0;
   let onDemandUsedCreditsThisCycle = 0;
@@ -155,6 +162,15 @@ export async function getCreditsSnapshot(params: { workspaceId: string }): Promi
       usedThisCycle = clampNonNegInt((cycleAgg as any)?.totalUsedCredits ?? 0);
       onDemandUsedCreditsThisCycle = clampNonNegInt((cycleAgg as any)?.onDemandUsedCredits ?? 0);
       debugLog(2, "[credits:snapshot] cycle usage (agg)", { ms: Date.now() - t1, ops: 1 });
+    } else if (fast) {
+      // Fast mode (used by the dashboard header): do NOT fall back to ledger aggregation.
+      // Ledger aggregation can be very expensive on large workspaces and isn't required for the header UX.
+      //
+      // To avoid *overstating* remaining credits, we conservatively treat on-demand as fully used
+      // when aggregates are missing.
+      usedThisCycle = 0;
+      onDemandUsedCreditsThisCycle = onDemandAllowed ? Math.floor(onDemandMonthlyLimitCents / centsPerCredit) : 0;
+      debugLog(2, "[credits:snapshot] cycle usage (fast; missing agg)", { ms: Date.now() - t1, ops: 1 });
     } else {
       // Fallback: bounded aggregate over the ledger for correctness while aggregates backfill.
       const agg = await CreditLedgerModel.aggregate([
@@ -180,13 +196,7 @@ export async function getCreditsSnapshot(params: { workspaceId: string }): Promi
     }
   }
 
-  const onDemandEnabled = Boolean((bal as any)?.onDemandEnabled);
-  const onDemandMonthlyLimitCents = clampNonNegInt((bal as any)?.onDemandMonthlyLimitCents ?? 0);
-
   // Blocked when no remaining credits and on-demand is off (or has no remaining headroom).
-  // We treat on-demand as "off" unless explicitly enabled with a positive limit.
-  const onDemandAllowed = onDemandEnabled && onDemandMonthlyLimitCents > 0;
-  const centsPerCredit = USD_CENTS_PER_CREDIT;
   const onDemandRemainingCreditsThisCycle = onDemandAllowed
     ? Math.max(0, Math.floor(onDemandMonthlyLimitCents / centsPerCredit) - onDemandUsedCreditsThisCycle)
     : 0;

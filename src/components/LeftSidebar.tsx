@@ -279,10 +279,13 @@ export default function LeftSidebar({
   const [createdRequestUploadUrl, setCreatedRequestUploadUrl] = useState<string | null>(null);
   const [createdRequestViewUrl, setCreatedRequestViewUrl] = useState<string | null>(null);
   const [createdRequestProjectId, setCreatedRequestProjectId] = useState<string | null>(null);
+  // IMPORTANT: don't read localStorage in render-time initializers; it causes SSR/client hydration mismatches.
+  // We'll hydrate starred docs in a client-only effect below.
   const [starredDocs, setStarredDocs] = useState<StarredDoc[]>([]);
   // IDs we could not resolve via `/api/docs?ids=...` (stale/phantom localStorage entries).
   // This allows the Starred section to render instantly while still hiding invalid items once verified.
   const [starredInvalidById, setStarredInvalidById] = useState<Record<string, true>>({});
+  const [starredSyncing, setStarredSyncing] = useState(false);
   const [starredMetaById, setStarredMetaById] = useState<
     Record<string, { updatedDate: string | null; createdDate: string | null }>
   >({});
@@ -298,9 +301,7 @@ export default function LeftSidebar({
   const [docsCollapsedLoaded, setDocsCollapsedLoaded] = useState(false);
   // Cached meta used ONLY for sorting to avoid a brief reorder flash on refresh.
   // Keep "verified existence" logic based on `starredMetaById` (loaded from /api/docs) untouched.
-  const [starredMetaCacheById, setStarredMetaCacheById] = useState<StarredMetaById>(() =>
-    typeof window === "undefined" ? {} : readStarredMetaCache(),
-  );
+  const [starredMetaCacheById, setStarredMetaCacheById] = useState<StarredMetaById>({});
 
   const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -616,11 +617,15 @@ export default function LeftSidebar({
     }
 
     // Best-effort sync from MongoDB source-of-truth into local cache.
+    let disposed = false;
     async function syncStarredFromServer() {
       try {
+        setStarredSyncing(true);
         await refreshStarredDocsFromServer({ bootstrap: true });
       } catch {
         // ignore
+      } finally {
+        if (!disposed) setStarredSyncing(false);
       }
     }
 /**
@@ -641,6 +646,7 @@ export default function LeftSidebar({
     window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, onActiveOrgChanged);
     window.addEventListener("storage", onStorage);
     return () => {
+      disposed = true;
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, refreshStarred);
       window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onActiveOrgChanged);
       window.removeEventListener("storage", onStorage);
@@ -770,7 +776,7 @@ export default function LeftSidebar({
         let allOk = true;
         for (const chunk of chunks) {
           if (cancelled) return;
-          const res = await fetchWithTempUser(`/api/docs?ids=${encodeURIComponent(chunk.join(","))}`, {
+          const res = await fetchWithTempUser(`/api/docs?ids=${encodeURIComponent(chunk.join(","))}&sidebar=1`, {
             cache: "no-store",
           });
           if (!res.ok) {
@@ -849,10 +855,9 @@ export default function LeftSidebar({
     async function load() {
       try {
         const q = docsQuery.trim() ? `&q=${encodeURIComponent(docsQuery.trim())}` : "";
-        const res = await fetchWithTempUser(
-          `/api/docs?limit=${docsModal.limit}&page=${docsModal.page}${q}`,
-          { cache: "no-store" },
-        );
+        const res = await fetchWithTempUser(`/api/docs?limit=${docsModal.limit}&page=${docsModal.page}${q}&sidebar=1`, {
+          cache: "no-store",
+        });
         if (!res.ok) return;
         const json = (await res.json()) as {
           docs?: DocListItem[];
@@ -888,7 +893,7 @@ export default function LeftSidebar({
       try {
         const q = projectsQuery.trim() ? `&q=${encodeURIComponent(projectsQuery.trim())}` : "";
         const res = await fetchWithTempUser(
-          `/api/projects?limit=${projectsModal.limit}&page=${projectsModal.page}${q}`,
+          `/api/projects?limit=${projectsModal.limit}&page=${projectsModal.page}${q}&sidebar=1`,
           { cache: "no-store" },
         );
         if (!res.ok) return;
@@ -926,7 +931,7 @@ export default function LeftSidebar({
       try {
         const q = requestsQuery.trim() ? `&q=${encodeURIComponent(requestsQuery.trim())}` : "";
         const res = await fetchWithTempUser(
-          `/api/requests?limit=${requestsModal.limit}&page=${requestsModal.page}${q}`,
+          `/api/requests?limit=${requestsModal.limit}&page=${requestsModal.page}${q}&sidebar=1`,
           { cache: "no-store" },
         );
         if (!res.ok) return;
@@ -954,6 +959,21 @@ export default function LeftSidebar({
   }, [showRequestsModal, requestsModal.page, requestsModal.limit, requestsQuery]);
 
   const docsForSidebar = useMemo(() => docs.items.slice(0, DOCS_SIDEBAR_LIMIT), [docs.items]);
+
+  // Fast-path for starred "v#" pills: if the starred doc is present in the sidebar docs list
+  // (which is loaded from localStorage immediately), use that version instead of waiting on
+  // `/api/docs?ids=...` to resolve starred details.
+  const sidebarDocMetaById = useMemo(() => {
+    const out = new Map<string, { version: number | null; status: string | null }>();
+    for (const d of docs.items) {
+      if (!d?.id) continue;
+      out.set(d.id, {
+        version: typeof d.version === "number" && Number.isFinite(d.version) ? d.version : null,
+        status: typeof d.status === "string" ? d.status : null,
+      });
+    }
+    return out;
+  }, [docs.items]);
 
   const requestFoldersForSidebar = useMemo(() => {
     return requests.items.slice(0, REQUESTS_SIDEBAR_LIMIT);
@@ -1629,7 +1649,9 @@ export default function LeftSidebar({
 
               {(starredCollapsedLoaded ? starredCollapsed : true) ? (
                 !starredValid.length ? (
-                  <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">No starred docs yet.</div>
+                  <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">
+                    {starredSyncing ? "Loading starred…" : "No starred docs yet."}
+                  </div>
                 ) : (
                   <div className="mt-2 flex items-center justify-between gap-3 px-2 py-1.5">
                     <div className="text-[13px] font-medium text-[var(--muted-2)]">{starredValid.length} starred</div>
@@ -1650,13 +1672,20 @@ export default function LeftSidebar({
                   </div>
                 )
               ) : !starredForSidebar.length ? (
-                <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">No starred docs yet.</div>
+                <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">
+                  {starredSyncing ? "Loading starred…" : "No starred docs yet."}
+                </div>
               ) : (
                 <ul className="mt-2 space-y-1">
                   {starredForSidebar.map((d) => {
                     const href = `/doc/${d.id}`;
                     const details = starredDetailsById[d.id] ?? null;
+                    const sidebarMeta = sidebarDocMetaById.get(d.id) ?? null;
                     const title = truncateEnd(d.title, 22);
+                    const version =
+                      (typeof sidebarMeta?.version === "number" && Number.isFinite(sidebarMeta.version) ? sidebarMeta.version : null) ??
+                      (typeof details?.version === "number" && Number.isFinite(details.version) ? details.version : null);
+                    const status = (sidebarMeta?.status ?? details?.status ?? null) as string | null;
                     return (
                       <li key={d.id}>
                         <div
@@ -1675,11 +1704,11 @@ export default function LeftSidebar({
                             <span className="block max-w-[170px] truncate font-medium text-[var(--fg)]">
                               {title}
                             </span>
-                            {typeof details?.version === "number" && Number.isFinite(details.version) ? (
+                            {typeof version === "number" && Number.isFinite(version) ? (
                               <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
-                                v{details.version}
+                                v{version}
                               </span>
-                            ) : (details?.status ?? "").toLowerCase() === "preparing" ? (
+                            ) : (status ?? "").toLowerCase() === "preparing" ? (
                               <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
                                 v…
                               </span>

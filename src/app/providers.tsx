@@ -2,6 +2,7 @@
 
 import { Suspense, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { SessionProvider, useSession } from "next-auth/react";
+import type { Session } from "next-auth";
 import { ThemeProvider } from "next-themes";
 import { usePathname, useSearchParams } from "next/navigation";
 import { PendingUploadProvider } from "@/lib/pendingUpload";
@@ -107,9 +108,11 @@ export function useNavigationLocked() {
 export default function Providers({
   children,
   enableAuth = false,
+  initialSession,
 }: {
   children: React.ReactNode;
   enableAuth?: boolean;
+  initialSession?: Session | null;
 }) {
   if (!enableAuth) {
     return (
@@ -131,7 +134,7 @@ export default function Providers({
   return (
     <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
       <AuthEnabledContext.Provider value>
-        <SessionProvider>
+        <SessionProvider session={initialSession ?? undefined}>
           <AuthTransitionClearOnAuth />
           <ActiveOrgCacheSync />
           <TempUserClaimOnLogin />
@@ -241,6 +244,7 @@ function TempUserClaimOnLogin() {
  */
 function ActiveOrgCacheSync() {
   const { status, data: session } = useSession();
+  const pathname = usePathname();
   const prevRef = useRef<string | null>(null);
   useEffect(() => {
     // Important: NextAuth starts in a transient "loading" state on page loads/navigation.
@@ -253,6 +257,19 @@ function ActiveOrgCacheSync() {
       prevRef.current = null;
       return;
     }
+
+    // `/dashboard/*` is a standalone shell (no sidebar), so skip the network call + sidebar refresh work.
+    // Keep cache scoping best-effort using the session value to avoid surprising cache resets.
+    if (typeof pathname === "string" && pathname.startsWith("/dashboard")) {
+      const raw =
+        (session?.user as { activeOrgId?: unknown } | undefined)?.activeOrgId ??
+        (session as { activeOrgId?: unknown } | undefined)?.activeOrgId;
+      const next = typeof raw === "string" ? raw : null;
+      setActiveOrgIdForCaches(next);
+      prevRef.current = next;
+      return;
+    }
+
     let cancelled = false;
     void (async () => {
       try {
@@ -294,7 +311,7 @@ function ActiveOrgCacheSync() {
     return () => {
       cancelled = true;
     };
-  }, [status, session]);
+  }, [status, session, pathname]);
   return null;
 }
 

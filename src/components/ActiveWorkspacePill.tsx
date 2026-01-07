@@ -24,6 +24,7 @@ export default function ActiveWorkspacePill({
   maxWidthClassName = "max-w-[240px]",
   planBadgeText,
   textClassName,
+  disableNetwork = false,
 }: {
   className?: string;
   /** Tailwind max-width class for truncation control (defaults to max-w-[240px]). */
@@ -32,6 +33,8 @@ export default function ActiveWorkspacePill({
   planBadgeText?: string;
   /** Tailwind text sizing overrides (defaults to text-[12px]). */
   textClassName?: string;
+  /** If true, avoid immediate network calls on mount (header fast-path); refreshes may be deferred. */
+  disableNetwork?: boolean;
 }) {
   const { data: session } = useSession();
   const userKey = useMemo(() => (session?.user?.email ?? "").trim(), [session?.user?.email]);
@@ -63,22 +66,38 @@ export default function ActiveWorkspacePill({
 
     hydrate();
 
-    // Best-effort refresh to ensure the indicator reflects server state (cache is not a source of truth).
-    void (async () => {
-      try {
-        await refreshOrgsCache({ userKey, force: false });
-        hydrate();
-      } catch {
-        // ignore
-      }
-    })();
+    const scheduleRefresh =
+      typeof window !== "undefined" && disableNetwork
+        ? window.setTimeout
+        : null;
+
+    const kick = () => {
+      // Best-effort refresh to ensure the indicator reflects server state (cache is not a source of truth).
+      void (async () => {
+        try {
+          await refreshOrgsCache({ userKey, force: false });
+          hydrate();
+        } catch {
+          // ignore
+        }
+      })();
+    };
+
+    if (!disableNetwork) {
+      kick();
+    } else if (scheduleRefresh) {
+      // Defer refresh so initial paint isn't blocked by network.
+      const id = window.setTimeout(kick, 250);
+      // Keep cancel behavior consistent.
+      void id;
+    }
 
     window.addEventListener(ORGS_CACHE_UPDATED_EVENT, hydrate);
     return () => {
       cancelled = true;
       window.removeEventListener(ORGS_CACHE_UPDATED_EVENT, hydrate);
     };
-  }, [userKey]);
+  }, [userKey, disableNetwork]);
 
   useEffect(() => {
     if (!userKey) return;
@@ -88,6 +107,27 @@ export default function ActiveWorkspacePill({
     const cachedPlan = typeof window !== "undefined" ? window.sessionStorage.getItem(cacheKey) : null;
     if (cachedPlan === "pro") setIsPro(true);
     if (cachedPlan === "free") setIsPro(false);
+
+    if (disableNetwork) {
+      // Defer background refresh so initial paint isn't blocked by network.
+      const id = typeof window !== "undefined" ? window.setTimeout(async () => {
+        try {
+          const res = await fetch("/api/billing/status", { method: "GET" });
+          const json = (await res.json().catch(() => null)) as { plan?: string } | { error?: string } | null;
+          if (!res.ok) return;
+          const plan = typeof (json as any)?.plan === "string" ? String((json as any).plan).trim() : "";
+          const nextIsPro = plan === "pro";
+          if (typeof window !== "undefined") window.sessionStorage.setItem(cacheKey, nextIsPro ? "pro" : "free");
+          if (!cancelled) setIsPro(nextIsPro);
+        } catch {
+          // ignore (best-effort)
+        }
+      }, 350) : null;
+      return () => {
+        cancelled = true;
+        if (id != null) window.clearTimeout(id);
+      };
+    }
 
     void (async () => {
       try {
@@ -106,7 +146,7 @@ export default function ActiveWorkspacePill({
     return () => {
       cancelled = true;
     };
-  }, [userKey]);
+  }, [userKey, disableNetwork]);
 
   if (!activeWorkspaceName) return null;
 

@@ -21,6 +21,7 @@ import Markdown from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
 import {
   isDocStarred,
+  refreshStarredDocsFromServer,
   STARRED_DOCS_CHANGED_EVENT,
   toggleStarredDoc,
   upsertStarredDocTitle,
@@ -369,6 +370,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
   useEffect(() => {
     // Keep local starred state in sync (this tab + other tabs).
+    void refreshStarredDocsFromServer({ bootstrap: true });
     setStarred(isDocStarred(doc.id));
 /**
  * Handle changed events; updates state (setStarred); uses setStarred, isDocStarred.
@@ -507,8 +509,18 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         const qs = new URLSearchParams();
         // Keep the hot polling endpoint lightweight (do not ship full extracted text on every poll).
         qs.set("lite", "1");
-        // In local dev, allow extra debug context when explicitly requested.
-        if (process.env.NODE_ENV !== "production") qs.set("debug", "1");
+        // Debug is intentionally opt-in so it doesn't slow down normal page loads.
+        const wantsDebug = (() => {
+          try {
+            return (
+              new URLSearchParams(window.location.search).get("debug") === "1" ||
+              window.localStorage.getItem("lnkdrp_debug") === "1"
+            );
+          } catch {
+            return false;
+          }
+        })();
+        if (wantsDebug) qs.set("debug", "1");
         const query = qs.toString() ? `?${qs.toString()}` : "";
 
         const res = await fetchWithTempUser(`/api/docs/${docRef.current.id}${query}`, { cache: "no-store" });

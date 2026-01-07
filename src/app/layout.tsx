@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Providers from "@/app/providers";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
 function getMetadataBase(): URL | undefined {
   const raw =
@@ -66,7 +68,7 @@ export const metadata: Metadata = {
  */
 
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
@@ -85,6 +87,8 @@ export default function RootLayout({
     !!process.env.GOOGLE_CLIENT_ID &&
     !!process.env.GOOGLE_CLIENT_SECRET;
 
+  const initialSession = enableAuth ? await getServerSession(authOptions) : null;
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
@@ -93,7 +97,9 @@ export default function RootLayout({
             __html: `window.__DEBUG_LEVEL__=${Number.isFinite(debugLevel) ? debugLevel : 0};`,
           }}
         />
-        <Providers enableAuth={enableAuth}>{children}</Providers>
+        <Providers enableAuth={enableAuth} initialSession={initialSession}>
+          {children}
+        </Providers>
       </body>
     </html>
   );

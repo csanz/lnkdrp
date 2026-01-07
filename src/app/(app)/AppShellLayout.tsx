@@ -33,6 +33,19 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const { resolvedTheme } = useTheme();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
+  // Prefetch dashboard route chunks so clicking "Dashboard" from menus feels instant.
+  // Many dashboard links live inside dropdowns (not mounted until click), which prevents
+  // Next.js from prefetching by default.
+  useEffect(() => {
+    if (!authEnabled) return;
+    try {
+      router.prefetch("/dashboard");
+      router.prefetch("/dashboard?tab=overview");
+    } catch {
+      // ignore (best-effort)
+    }
+  }, [authEnabled, router]);
+
   // Avoid hydration mismatches from client-only sources.
   const mounted = useSyncExternalStore(
     () => () => {

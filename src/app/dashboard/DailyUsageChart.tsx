@@ -6,13 +6,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 
 import Alert from "@/components/ui/Alert";
 import { cn } from "@/lib/cn";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
 import type { DailyUsageChartRow } from "./DailyUsageChartRenderer";
+import DailyUsageChartRenderer from "./DailyUsageChartRenderer";
 
 type UsageDailyResponse = {
   ok: true;
@@ -39,8 +39,6 @@ const COLORS = [
   "rgb(34 197 94)", // green
   "rgb(203 213 225)", // slate light
 ];
-
-const DailyUsageChartRenderer = dynamic(() => import("./DailyUsageChartRenderer"), { ssr: false });
 
 function niceNumber(v: unknown): number {
   const n = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN;
@@ -98,9 +96,6 @@ export default function DailyUsageChart({
 
   useEffect(() => {
     let cancelled = false;
-    // Kick off the (lazy) chart chunk request ASAP so code+data can load in parallel.
-    void import("./DailyUsageChartRenderer");
-
     const cached = usageDailyCache?.get?.(days);
     const cachedFresh = Boolean(cached) && Date.now() - (cached?.at ?? 0) < USAGE_DAILY_CACHE_TTL_MS;
     // If cached data exists, avoid a visible "Loading…" state.

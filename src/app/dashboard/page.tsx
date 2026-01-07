@@ -16,7 +16,7 @@ import DailyUsageChart from "./DailyUsageChart";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } from "@/lib/orgsCache";
 import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
@@ -722,6 +722,8 @@ function MultiLineChart30d({
   series: Array<{ day: string; docsCreated: number; uploadsCreated: number; shareUniqueViews: number; shareDownloads: number }>;
 }) {
   const safe = Array.isArray(series) ? series : [];
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const data = safe.map((s) => ({
     day: s.day,
     uploads: typeof s.uploadsCreated === "number" && Number.isFinite(s.uploadsCreated) ? Math.max(0, s.uploadsCreated) : 0,
@@ -750,6 +752,23 @@ function MultiLineChart30d({
     ...data.map((d) => d.downloads),
   );
 
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+
+    function update() {
+      const r = el.getBoundingClientRect();
+      const w = Math.floor(r.width);
+      const h = Math.floor(r.height);
+      if (w > 0 && h > 0) setSize({ w, h });
+    }
+
+    update();
+    const ro = new ResizeObserver(() => update());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <div className="w-full">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 pb-2 text-[11px] text-[var(--muted-2)]">
@@ -762,9 +781,9 @@ function MultiLineChart30d({
         <div className="ml-auto text-[11px] text-[var(--muted-2)]">Max: {max.toLocaleString()}</div>
       </div>
 
-      <div className="h-56 w-full">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={1}>
-          <LineChart data={data} margin={{ top: 6, right: 10, bottom: 6, left: 6 }}>
+      <div ref={wrapRef} className="h-56 w-full">
+        {!size ? null : (
+          <LineChart width={size.w} height={size.h} data={data} margin={{ top: 6, right: 10, bottom: 6, left: 6 }}>
             <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
             <XAxis
               dataKey="day"
@@ -794,7 +813,7 @@ function MultiLineChart30d({
             <Line type="monotone" dataKey="views" stroke="rgb(168 85 247)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
             <Line type="monotone" dataKey="downloads" stroke="rgb(34 197 94)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
           </LineChart>
-        </ResponsiveContainer>
+        )}
       </div>
     </div>
   );

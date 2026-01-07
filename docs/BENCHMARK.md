@@ -32,6 +32,29 @@ Recommended (env var):
 LNKDRP_COOKIE="PASTE_COOKIE_HEADER_VALUE" npm run tests:benchmark -- --dashboard
 ```
 
+## Run: Left menu (sidebar) benchmarks
+
+This benchmarks the API calls initiated by the **main app left sidebar** (`src/components/LeftSidebar.tsx`):
+
+- Sidebar cache refresh (parallel):
+  - `GET /api/docs?limit=5&page=1`
+  - `GET /api/projects?limit=10&page=1`
+  - `GET /api/requests?limit=10&page=1`
+- Starred metadata resolution (best-effort simulation):
+  - `GET /api/docs?ids=...`
+- Modal opens:
+  - `GET /api/docs?limit=20&page=1`
+  - `GET /api/projects?limit=20&page=1`
+  - `GET /api/requests?limit=20&page=1`
+- Delete doc modal (fetch doc to list folders/projects):
+  - `GET /api/docs/:docId`
+
+Run:
+
+```bash
+npm run tests:benchmark -- --leftmenu
+```
+
 Alternative (file):
 
 - If you already visited `http://localhost:3001/api/debug/cookie`, `scripts/cookie.json` should be populated.

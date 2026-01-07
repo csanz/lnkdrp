@@ -83,7 +83,14 @@ export async function generateMetadata(props: {
   if (!shareId) return { title: "Shared document" };
 
   await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } }).lean();
+  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+    .select({
+      title: 1,
+      aiOutput: 1,
+      previewImageUrl: 1,
+      firstPagePngUrl: 1,
+    })
+    .lean();
 
   const meta = pickMetaStrings(doc?.aiOutput);
   const og = pickOgStrings(doc?.aiOutput);
@@ -154,7 +161,20 @@ export default async function SharePage(props: {
   if (!shareId) notFound();
 
   await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } }).lean();
+  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+    .select({
+      title: 1,
+      blobUrl: 1,
+      aiOutput: 1,
+      receiverRelevanceChecklist: 1,
+      shareAllowPdfDownload: 1,
+      shareAllowRevisionHistory: 1,
+      sharePasswordHash: 1,
+      sharePasswordSalt: 1,
+      previewImageUrl: 1,
+      firstPagePngUrl: 1,
+    })
+    .lean();
   if (!doc) notFound();
 
   const previewUrl = doc.previewImageUrl ?? doc.firstPagePngUrl ?? null;

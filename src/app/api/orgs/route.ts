@@ -15,6 +15,11 @@ import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+// Short-lived in-memory cache to keep the header/workspace switcher feeling instant.
+// Keyed by (userId + active-org cookie value) so org switches don't serve stale activeOrgId.
+const ORGS_CACHE_TTL_MS = 15_000;
+let orgsCache: Map<string, { at: number; payload: any }> | null = null;
+
 function slugify(input: string) {
   return input
     .trim()
@@ -41,6 +46,31 @@ export async function GET(request: Request) {
     const session = await tryResolveAuthUserId(request);
     if (!session?.userId) {
       return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const cookieHeader = request.headers.get("cookie") ?? "";
+    const cookieActiveOrgId = (() => {
+      try {
+        const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
+        for (const p of parts) {
+          const idx = p.indexOf("=");
+          if (idx < 0) continue;
+          const k = p.slice(0, idx).trim();
+          if (k !== ACTIVE_ORG_COOKIE) continue;
+          return decodeURIComponent(p.slice(idx + 1)).trim();
+        }
+        return "";
+      } catch {
+        return "";
+      }
+    })();
+
+    // Best-effort cache read.
+    orgsCache = orgsCache ?? new Map();
+    const cacheKey = `${String(session.userId)}:${cookieActiveOrgId}`;
+    const cached = orgsCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < ORGS_CACHE_TTL_MS) {
+      return NextResponse.json(cached.payload, { headers: { "cache-control": "no-store" } });
     }
 
     await connectMongo();
@@ -84,22 +114,6 @@ export async function GET(request: Request) {
     // Sort: stable (personal first, then name).
     // UX: do NOT sort "active org first" because it makes the workspace switcher reorder itself
     // when switching, which breaks spatial memory.
-    const cookieHeader = request.headers.get("cookie") ?? "";
-    const cookieActiveOrgId = (() => {
-      try {
-        const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
-        for (const p of parts) {
-          const idx = p.indexOf("=");
-          if (idx < 0) continue;
-          const k = p.slice(0, idx).trim();
-          if (k !== ACTIVE_ORG_COOKIE) continue;
-          return decodeURIComponent(p.slice(idx + 1)).trim();
-        }
-        return "";
-      } catch {
-        return "";
-      }
-    })();
     const claimActiveOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
     const personalOrgId =
       ensuredPersonalOrgId ||
@@ -144,20 +158,33 @@ export async function GET(request: Request) {
       return String(a._id).localeCompare(String(b._id));
     });
 
-    return NextResponse.json(
-      {
-        activeOrgId,
-        orgs: orgs.map((o) => ({
-          id: String(o._id),
-          type: String((o as unknown as { type?: unknown }).type ?? "team"),
-          name: String(o.name ?? ""),
-          slug: (o as unknown as { slug?: unknown }).slug ?? null,
-          avatarUrl: (o as unknown as { avatarUrl?: unknown }).avatarUrl ?? null,
-          role: roleByOrgId.get(String(o._id)) ?? "member",
-        })),
-      },
-      { headers: { "cache-control": "no-store" } },
-    );
+    const payload = {
+      activeOrgId,
+      orgs: orgs.map((o) => ({
+        id: String(o._id),
+        type: String((o as unknown as { type?: unknown }).type ?? "team"),
+        name: String(o.name ?? ""),
+        slug: (o as unknown as { slug?: unknown }).slug ?? null,
+        avatarUrl: (o as unknown as { avatarUrl?: unknown }).avatarUrl ?? null,
+        role: roleByOrgId.get(String(o._id)) ?? "member",
+      })),
+    };
+
+    // Best-effort cache write (bounded).
+    orgsCache.set(cacheKey, { at: Date.now(), payload });
+    if (orgsCache.size > 100) {
+      let oldestKey: string | null = null;
+      let oldestAt = Infinity;
+      for (const [k, v] of orgsCache.entries()) {
+        if (v.at < oldestAt) {
+          oldestAt = v.at;
+          oldestKey = k;
+        }
+      }
+      if (oldestKey) orgsCache.delete(oldestKey);
+    }
+
+    return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/orgs] GET failed", { message });

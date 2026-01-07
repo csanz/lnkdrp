@@ -112,15 +112,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 
     hydrate();
 
-    // Best-effort refresh so active org id is accurate for per-workspace persistence.
-    void (async () => {
-      try {
-        await refreshOrgsCache({ userKey, force: false });
-        hydrate();
-      } catch {
-        // ignore
-      }
-    })();
+    // NOTE: dashboard header fast-path: do not refresh orgs cache on mount.
+    // We rely on localStorage cache (if present) and refresh only on explicit interactions.
 
     window.addEventListener(ORGS_CACHE_UPDATED_EVENT, hydrate);
     return () => {
@@ -147,6 +140,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     try {
       const qs = new URLSearchParams();
       if (includeSpend) qs.set("includeSpend", "1");
+      // Header fast-path: use `fast=1` by default (bounded; avoids expensive fallback work).
+      if (!qs.has("fast")) qs.set("fast", "1");
       const res = await fetch(`/api/credits/snapshot?${qs.toString()}`, { method: "GET" });
       const json = (await res.json().catch(() => null)) as any;
       if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
@@ -188,7 +183,12 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   }
 
   useEffect(() => {
-    void refreshCredits(false);
+    // Dashboard header fast-path: defer credits fetch so initial paint isn't blocked by network.
+    // Still fetch soon after mount so the header value populates without requiring hover.
+    const id = typeof window !== "undefined" ? window.setTimeout(() => void refreshCredits(false), 400) : null;
+    return () => {
+      if (id != null) window.clearTimeout(id);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -298,6 +298,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
               className="hidden sm:inline-flex"
               maxWidthClassName="max-w-[160px]"
               textClassName="text-[11px]"
+              disableNetwork
             />
           </div>
 
@@ -307,6 +308,10 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                 href="/dashboard?tab=usage"
                 className={`inline-flex h-[34px] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
                 title="View usage"
+                onMouseEnter={() => {
+                  if (credits || creditsBusyRef.current) return;
+                  void refreshCredits(false);
+                }}
               >
                 AI Credits:
                 {credits ? (

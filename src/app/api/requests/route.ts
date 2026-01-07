@@ -114,11 +114,12 @@ export async function GET(request: Request) {
     const limitRaw = url.searchParams.get("limit");
     const pageRaw = url.searchParams.get("page");
     const qRaw = url.searchParams.get("q") ?? "";
+    const sidebar = url.searchParams.get("sidebar") === "1";
     const limit = Math.max(1, Math.min(50, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 25));
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
     const q = qRaw.trim();
 
-    debugLog(2, "[api/requests] GET", { limit, page, q: q ? "[redacted]" : "" });
+    debugLog(2, "[api/requests] GET", { limit, page, sidebar, q: q ? "[redacted]" : "" });
     const actor = await resolveActor(request);
     await connectMongo();
 
@@ -126,23 +127,26 @@ export async function GET(request: Request) {
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
 
-    // Backfill: ensure `isRequest=true` is persisted for any repo that already has a token.
-    // This is idempotent and makes the discriminator reliable for downstream UIs/queries.
-    await ProjectModel.updateMany(
-      {
-        ...(allowLegacyByUserId
-          ? {
-              $or: [
-                { orgId },
-                { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-              ],
-            }
-          : { orgId }),
-        requestUploadToken: { $exists: true, $nin: [null, ""] },
-        $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }],
-      },
-      { $set: { isRequest: true } },
-    );
+    // IMPORTANT: skip backfill/migration work for `sidebar=1` callers (the left sidebar polls frequently).
+    if (!sidebar) {
+      // Backfill: ensure `isRequest=true` is persisted for any repo that already has a token.
+      // This is idempotent and makes the discriminator reliable for downstream UIs/queries.
+      await ProjectModel.updateMany(
+        {
+          ...(allowLegacyByUserId
+            ? {
+                $or: [
+                  { orgId },
+                  { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+                ],
+              }
+            : { orgId }),
+          requestUploadToken: { $exists: true, $nin: [null, ""] },
+          $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }],
+        },
+        { $set: { isRequest: true } },
+      );
+    }
 
     const requestOnly = {
       $or: [{ isRequest: true }, { requestUploadToken: { $exists: true, $nin: [null, ""] } }],
@@ -173,37 +177,52 @@ export async function GET(request: Request) {
 
     const total = await ProjectModel.countDocuments(filter);
     const rows = await ProjectModel.find(filter)
-      .sort({ updatedDate: -1 })
+      .select({
+        _id: 1,
+        name: 1,
+        slug: 1,
+        description: 1,
+        docCount: 1,
+        isRequest: 1,
+        requestUploadToken: 1,
+        requestViewToken: 1,
+        updatedDate: 1,
+        createdDate: 1,
+        orgId: 1,
+      })
+      .sort({ updatedDate: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
 
-    // Best-effort backfill: ensure request repos have a view token so owners can share
-    // a view-only link without needing a migration.
-    const missingViewTokenIds = rows
-      .filter((p) => {
-        const raw = (p as unknown as { requestViewToken?: unknown }).requestViewToken;
-        return !(typeof raw === "string" && raw.trim());
-      })
-      .map((p) => p._id)
-      .filter(Boolean);
-    if (missingViewTokenIds.length) {
-      await Promise.all(
-        missingViewTokenIds.map(async (_id) => {
-          try {
-            await ProjectModel.updateOne(
-              { _id, $or: [{ requestViewToken: { $exists: false } }, { requestViewToken: null }, { requestViewToken: "" }] },
-              { $set: { requestViewToken: newRequestViewToken() } },
-            );
-          } catch {
-            // ignore
-          }
-        }),
-      );
+    if (!sidebar) {
+      // Best-effort backfill: ensure request repos have a view token so owners can share
+      // a view-only link without needing a migration.
+      const missingViewTokenIds = rows
+        .filter((p) => {
+          const raw = (p as unknown as { requestViewToken?: unknown }).requestViewToken;
+          return !(typeof raw === "string" && raw.trim());
+        })
+        .map((p) => p._id)
+        .filter(Boolean);
+      if (missingViewTokenIds.length) {
+        await Promise.all(
+          missingViewTokenIds.map(async (_id) => {
+            try {
+              await ProjectModel.updateOne(
+                { _id, $or: [{ requestViewToken: { $exists: false } }, { requestViewToken: null }, { requestViewToken: "" }] },
+                { $set: { requestViewToken: newRequestViewToken() } },
+              );
+            } catch {
+              // ignore
+            }
+          }),
+        );
+      }
     }
 
     // Best-effort: backfill orgId for legacy personal request repos.
-    if (allowLegacyByUserId) {
+    if (!sidebar && allowLegacyByUserId) {
       const legacyIds = rows
         .filter((p) => !(p as unknown as { orgId?: unknown }).orgId)
         .map((p) => p._id)

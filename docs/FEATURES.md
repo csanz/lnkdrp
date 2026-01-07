@@ -120,10 +120,13 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Changes are only accessible to users who have access to the doc (API: `/api/docs/:docId/changes`).
   - History UI: `/doc/:docId/history` (version badge links here).
   - History includes who uploaded each version (best-effort from user record).
+  - Performance: History initially loads a lightweight list (no large extracted text blobs) and fetches previous/new extracted text **on-demand** when a version is expanded.
   - History includes a best-effort **Recipients** preview for each version (workspace members + whether they opened that version), plus per-viewer **page timing** aggregates (internal-only; uses doc page timing events).
   - History UI includes a right-side overview panel with aggregate stats (replacements count, top editors, cadence, and best-effort impact/signals).
 - **Starred docs**:
-  - Client-side “star” state with a local cache and change events.
+  - Starred state is **persisted in MongoDB** (source of truth) per user + workspace.
+  - The UI uses a **localStorage cache** for fast UX and dispatches change events for cross-tab updates.
+  - API: `/api/starred` (list/toggle/reorder). One-time migration helper: `/api/starred/bootstrap`.
 - **Assign docs to projects**:
   - UI for viewing/adjusting project membership (multi-project aware).
 

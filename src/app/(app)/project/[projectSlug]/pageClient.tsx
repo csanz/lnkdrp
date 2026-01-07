@@ -20,7 +20,7 @@ import { trackProjectClick, trackProjectView } from "@/lib/metrics/client";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import ProjectSharePanel from "@/components/ProjectSharePanel";
 import { CopyButton } from "@/components/CopyButton";
-import { isDocStarred, STARRED_DOCS_CHANGED_EVENT, toggleStarredDoc } from "@/lib/starredDocs";
+import { isDocStarred, refreshStarredDocsFromServer, STARRED_DOCS_CHANGED_EVENT, toggleStarredDoc } from "@/lib/starredDocs";
 import { ACTIVE_ORG_CHANGED_EVENT, DOCS_CHANGED_EVENT, PROJECTS_CHANGED_EVENT } from "@/lib/sidebarCache";
 import Modal from "@/components/modals/Modal";
 import { upload as blobUpload } from "@vercel/blob/client";
@@ -342,6 +342,8 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
     window.addEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
     window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
     window.addEventListener("storage", onStorage);
+    // Best-effort sync from MongoDB source-of-truth into local cache.
+    void refreshStarredDocsFromServer({ bootstrap: true });
     return () => {
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
       window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);

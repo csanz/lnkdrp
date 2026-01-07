@@ -33,6 +33,38 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  /**
+   * In dev, ignore noisy filesystem churn (sync tools / caches) that can cause
+   * infinite "rebuilding" + full page reload loops.
+   */
+  webpack: (config, { dev }) => {
+    if (!dev) return config;
+
+    const existingIgnored = config.watchOptions?.ignored;
+    const ignoredArrayRaw = Array.isArray(existingIgnored)
+      ? existingIgnored
+      : existingIgnored
+        ? [existingIgnored]
+        : [];
+    // Webpack schema validation requires non-empty strings here.
+    // Some environments (or upstream config) can provide `""`, which breaks `next dev --webpack`.
+    const ignoredArray = ignoredArrayRaw.filter(
+      (v): v is string => typeof v === "string" && v.trim().length > 0,
+    );
+
+    config.watchOptions = {
+      ...(config.watchOptions ?? {}),
+      ignored: [
+        ...ignoredArray,
+        "**/tmp/**",
+        "**/.npm-cache/**",
+        "**/.DS_Store",
+        "**/.__mtime_ref",
+      ],
+    };
+
+    return config;
+  },
 };
 
 export default nextConfig;

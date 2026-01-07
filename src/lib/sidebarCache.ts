@@ -253,9 +253,9 @@ export async function refreshSidebarCache(opts?: { force?: boolean; reason?: str
   const run = (async () => {
     try {
       const [dRes, pRes, rRes] = await Promise.all([
-        fetchWithTempUser(`/api/docs?limit=5&page=1`, { cache: "no-store" }),
-        fetchWithTempUser(`/api/projects?limit=10&page=1`, { cache: "no-store" }),
-        fetchWithTempUser(`/api/requests?limit=10&page=1`, { cache: "no-store" }),
+        fetchWithTempUser(`/api/docs?limit=5&page=1&sidebar=1`, { cache: "no-store" }),
+        fetchWithTempUser(`/api/projects?limit=10&page=1&sidebar=1`, { cache: "no-store" }),
+        fetchWithTempUser(`/api/requests?limit=10&page=1&sidebar=1`, { cache: "no-store" }),
       ]);
 
       const dJson = dRes.ok

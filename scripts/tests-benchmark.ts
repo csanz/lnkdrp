@@ -20,7 +20,7 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 type Args = {
-  mode: "dashboard" | "document" | "admin" | null;
+  mode: "dashboard" | "document" | "leftmenu" | "admin" | null;
   baseUrl: string;
   cookie: string;
   iterations: number;
@@ -50,14 +50,16 @@ function usage(): string {
   return [
     "Usage:",
     "  npm run tests:benchmark -- --dashboard",
+    "  npm run tests:benchmark -- --leftmenu",
     "",
     "Options:",
     "  --dashboard               Run dashboard benchmarks",
     "  --document                Run document (/doc/:docId) benchmarks",
+    "  --leftmenu                Run left menu (sidebar) benchmarks",
     "  --admin                   (Listed for parity; not implemented)",
     "  --summary                 Print summary tables (default is section-by-section live output)",
     "  --select [spec]           Choose which sections/pages to run (interactive if omitted)",
-    '                           Dashboard examples: --select 7   |  --select "5,7"  |  --select all',
+    '                           Dashboard examples: --select 8   |  --select "1,8"  |  --select all',
     '                           Document examples:  --select 1   |  --select all',
     "  --doc-id <docId>          Document ObjectId to benchmark (document mode). If omitted, auto-picks most recent doc.",
     "  --base-url <url>          Base URL (default: http://localhost:3001)",
@@ -94,6 +96,7 @@ function parseArgs(argv: string[]): Args {
     const a = argv[i];
     if (a === "--dashboard") mode = "dashboard";
     else if (a === "--document") mode = "document";
+    else if (a === "--leftmenu") mode = "leftmenu";
     else if (a === "--admin") mode = "admin";
     else if (a === "--summary") summary = true;
     else if (a === "--select") {
@@ -292,15 +295,182 @@ async function chooseModeInteractive(): Promise<Args["mode"]> {
     // eslint-disable-next-line no-console
     console.log("  2) Document");
     // eslint-disable-next-line no-console
-    console.log("  3) Admin");
-    const ans = (await rl.question("Enter 1 or 2: ")).trim();
+    console.log("  3) Left Menu");
+    // eslint-disable-next-line no-console
+    console.log("  4) Admin");
+    const ans = (await rl.question("Enter 1-4: ")).trim();
     if (ans === "1") return "dashboard";
     if (ans === "2") return "document";
-    if (ans === "3") return "admin";
+    if (ans === "3") return "leftmenu";
+    if (ans === "4") return "admin";
     return null;
   } finally {
     rl.close();
   }
+}
+
+function printLeftMenuHeader(title: string) {
+  // eslint-disable-next-line no-console
+  console.log(`\nLeft Menu: ${title}`);
+  // eslint-disable-next-line no-console
+  console.log("-".repeat(`Left Menu: ${title}`.length));
+}
+
+function printBenchResultLine(r: BenchResult) {
+  const statusLabel = r.skipped ? "SKIP" : r.status ?? "ERR";
+  const okLabel = r.skipped ? "ok" : r.ok ? "ok" : "fail";
+  const extra = r.skipped ? (r.error ? ` — ${r.error}` : "") : r.error ? ` — ${r.error}` : "";
+  // eslint-disable-next-line no-console
+  console.log(`${r.method} ${urlToRoute(r.url)} -> ${statusLabel} (${okLabel}) in ${formatMs(r.ms)}${extra}`);
+}
+
+async function leftMenuBench(args: Args): Promise<BenchResult[]> {
+  const base = args.baseUrl;
+  const cookie = args.cookie;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
+    ...(cookie ? { cookie } : null),
+  };
+
+  const results: BenchResult[] = [];
+
+  // This benchmarks the API calls made by the app's left sidebar:
+  // - sidebar cache refresh (parallel): docs/projects/requests
+  // - starred details resolution via /api/docs?ids=...
+  // - paging modals (docs/projects/requests)
+  // - delete doc modal (fetch doc to list folders/projects)
+  for (let iter = 0; iter < args.iterations; iter++) {
+    const iterLabel = args.iterations > 1 ? ` [${iter + 1}/${args.iterations}]` : "";
+
+    printLeftMenuHeader(`Sidebar cache refresh (parallel)${iterLabel}`);
+    const started = performance.now();
+    const [docsRes, projectsRes, requestsRes] = await Promise.all([
+      timedFetchJson({
+        name: "leftmenu:docs:list(limit=5,page=1)",
+        url: `${base}/api/docs?limit=5&page=1&sidebar=1`,
+        method: "GET",
+        headers,
+        timeoutMs: args.timeoutMs,
+      }),
+      timedFetch({
+        name: "leftmenu:projects:list(limit=10,page=1)",
+        url: `${base}/api/projects?limit=10&page=1&sidebar=1`,
+        method: "GET",
+        headers,
+        timeoutMs: args.timeoutMs,
+      }),
+      timedFetch({
+        name: "leftmenu:requests:list(limit=10,page=1)",
+        url: `${base}/api/requests?limit=10&page=1&sidebar=1`,
+        method: "GET",
+        headers,
+        timeoutMs: args.timeoutMs,
+      }),
+    ]);
+    const wallMs = performance.now() - started;
+
+    [docsRes, projectsRes, requestsRes].forEach((r) => {
+      results.push(r);
+      printBenchResultLine(r);
+    });
+
+    // eslint-disable-next-line no-console
+    console.log(`\nSidebar cache refresh total (wall clock): ${formatMs(wallMs)} (3 calls)`);
+
+    // Starred metadata resolution (mirrors LeftSidebar's /api/docs?ids=... chunked call).
+    // We simulate this by taking up to 3 recent docs from the sidebar docs list.
+    printLeftMenuHeader(`Starred metadata (/api/docs?ids=...)${iterLabel}`);
+    const docsJson = (docsRes as any).jsonBody as any;
+    const docs = Array.isArray(docsJson?.docs) ? docsJson.docs : [];
+    const ids = docs
+      .map((d: any) => (typeof d?.id === "string" ? d.id.trim() : ""))
+      .filter(Boolean)
+      .slice(0, 3);
+
+    const idsRes: BenchResult = ids.length
+      ? await timedFetch({
+          name: `leftmenu:docs:ids(count=${ids.length})`,
+          url: `${base}/api/docs?ids=${encodeURIComponent(ids.join(","))}&sidebar=1`,
+          method: "GET",
+          headers,
+          timeoutMs: args.timeoutMs,
+        })
+      : {
+          name: "leftmenu:docs:ids(count=0)",
+          method: "GET",
+          url: `${base}/api/docs?ids=...`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: "Skipped (no doc ids available from /api/docs?limit=5)",
+        };
+    results.push(idsRes);
+    printBenchResultLine(idsRes);
+
+    // Modal opens (one request each).
+    printLeftMenuHeader(`Docs modal${iterLabel}`);
+    const docsModalRes = await timedFetch({
+      name: "leftmenu:docs:modal(limit=20,page=1)",
+      url: `${base}/api/docs?limit=20&page=1&sidebar=1`,
+      method: "GET",
+      headers,
+      timeoutMs: args.timeoutMs,
+    });
+    results.push(docsModalRes);
+    printBenchResultLine(docsModalRes);
+
+    printLeftMenuHeader(`Projects modal${iterLabel}`);
+    const projectsModalRes = await timedFetch({
+      name: "leftmenu:projects:modal(limit=20,page=1)",
+      url: `${base}/api/projects?limit=20&page=1&sidebar=1`,
+      method: "GET",
+      headers,
+      timeoutMs: args.timeoutMs,
+    });
+    results.push(projectsModalRes);
+    printBenchResultLine(projectsModalRes);
+
+    printLeftMenuHeader(`Received modal${iterLabel}`);
+    const receivedModalRes = await timedFetch({
+      name: "leftmenu:requests:modal(limit=20,page=1)",
+      url: `${base}/api/requests?limit=20&page=1&sidebar=1`,
+      method: "GET",
+      headers,
+      timeoutMs: args.timeoutMs,
+    });
+    results.push(receivedModalRes);
+    printBenchResultLine(receivedModalRes);
+
+    // Delete doc modal: fetch doc details to show project memberships.
+    printLeftMenuHeader(`Delete doc modal${iterLabel}`);
+    const firstDocId = ids[0] ?? "";
+    const deleteDocRes: BenchResult = firstDocId
+      ? await timedFetch({
+          name: "leftmenu:docs:get(for-delete-modal)",
+          url: `${base}/api/docs/${encodeURIComponent(firstDocId)}`,
+          method: "GET",
+          headers,
+          timeoutMs: args.timeoutMs,
+        })
+      : {
+          name: "leftmenu:docs:get(for-delete-modal)",
+          method: "GET",
+          url: `${base}/api/docs/:docId`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: "Skipped (no doc ids available from /api/docs?limit=5)",
+        };
+    results.push(deleteDocRes);
+    printBenchResultLine(deleteDocRes);
+  }
+
+  return results;
 }
 
 async function dashboardBench(args: Args): Promise<BenchResult[]> {
@@ -511,6 +681,7 @@ async function dashboardBench(args: Args): Promise<BenchResult[]> {
 }
 
 type DashboardSection =
+  | "Header"
   | "Overview"
   | "Account"
   | "Workspace"
@@ -520,6 +691,7 @@ type DashboardSection =
   | "Billing & Invoices";
 
 const ORDERED_SECTIONS: DashboardSection[] = [
+  "Header",
   "Overview",
   "Account",
   "Workspace",
@@ -790,6 +962,10 @@ async function dashboardBenchBySection(args: Args): Promise<BenchResult[]> {
   const ctx = { base, headers, activeOrg, timeoutMs: args.timeoutMs, results };
 
   const steps: DashboardStep[] = [
+    // Header (dashboard shell/top bar)
+    // Fast-path goal: header should render without any required network calls.
+    // (We defer org refresh, plan status, and credits fetch until interaction/idle.)
+
     // Overview
     {
       section: "Overview",
@@ -1122,8 +1298,8 @@ async function documentMainBench(args: Args): Promise<BenchResult[]> {
   };
 
   // 1) Core hydration/poll endpoint used by the page (fetchWithTempUser; cache: no-store).
-  // In local dev, the client uses ?debug=1 by default.
-  const debugParam = base.includes("localhost") || base.includes("127.0.0.1") ? "?lite=1&debug=1" : "?lite=1";
+  // Debug is opt-in on the client; benchmarks should measure the default fast path.
+  const debugParam = "?lite=1";
   const docRes = await timedFetchJson({
     name: "docs:get",
     url: `${base}/api/docs/${encodeURIComponent(docId)}${debugParam}`,
@@ -1152,89 +1328,89 @@ async function documentMainBench(args: Args): Promise<BenchResult[]> {
 
   pending.push(
     timedFetch({
-      name: "auth:session",
-      url: `${base}/api/auth/session`,
-      method: "GET",
-      headers,
-      timeoutMs: args.timeoutMs,
+    name: "auth:session",
+    url: `${base}/api/auth/session`,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
     }),
   );
 
   pending.push(
     blobUrl
       ? timedFetch({
-          name: "docs:pdf",
-          url: `${base}/api/docs/${encodeURIComponent(docId)}/pdf?v=${encodeURIComponent(pdfKey)}`,
-          method: "GET",
+        name: "docs:pdf",
+        url: `${base}/api/docs/${encodeURIComponent(docId)}/pdf?v=${encodeURIComponent(pdfKey)}`,
+        method: "GET",
           // Mimic how PDF viewers typically load: they request a small Range first.
           // This keeps the benchmark aligned with "time to first render" rather than full download time.
           headers: { ...headers, range: "bytes=0-262143" },
-          timeoutMs: args.timeoutMs,
-        })
+        timeoutMs: args.timeoutMs,
+      })
       : Promise.resolve({
-          name: "docs:pdf",
-          method: "GET",
-          url: `${base}/api/docs/${encodeURIComponent(docId)}/pdf?v=${encodeURIComponent(pdfKey)}`,
-          status: null,
-          ok: true,
-          ms: 0,
-          bytes: null,
-          skipped: true,
-          error: "Skipped (doc blobUrl not ready)",
+        name: "docs:pdf",
+        method: "GET",
+        url: `${base}/api/docs/${encodeURIComponent(docId)}/pdf?v=${encodeURIComponent(pdfKey)}`,
+        status: null,
+        ok: true,
+        ms: 0,
+        bytes: null,
+        skipped: true,
+        error: "Skipped (doc blobUrl not ready)",
         } satisfies BenchResult),
   );
 
   pending.push(
     timedFetchJson({
-      name: "projects:list(limit=50,page=1)",
+    name: "projects:list(limit=50,page=1)",
       url: `${base}/api/projects?limit=50&page=1&lite=1`,
-      method: "GET",
-      headers,
-      timeoutMs: args.timeoutMs,
+    method: "GET",
+    headers,
+    timeoutMs: args.timeoutMs,
     }),
   );
 
   pending.push(
     sharePasswordEnabled
       ? timedFetchJson({
-          name: "docs:share-password:get",
+        name: "docs:share-password:get",
           url: `${base}/api/docs/${encodeURIComponent(docId)}/share-password?lite=1`,
-          method: "GET",
-          headers,
-          timeoutMs: args.timeoutMs,
-        })
+        method: "GET",
+        headers,
+        timeoutMs: args.timeoutMs,
+      })
       : Promise.resolve({
-          name: "docs:share-password:get",
-          method: "GET",
+        name: "docs:share-password:get",
+        method: "GET",
           url: `${base}/api/docs/${encodeURIComponent(docId)}/share-password?lite=1`,
-          status: null,
-          ok: true,
-          ms: 0,
-          bytes: null,
-          skipped: true,
-          error: "Skipped (sharePasswordEnabled is false)",
+        status: null,
+        ok: true,
+        ms: 0,
+        bytes: null,
+        skipped: true,
+        error: "Skipped (sharePasswordEnabled is false)",
         } satisfies BenchResult),
   );
 
   pending.push(
     isReceivedViaRequest
       ? timedFetchJson({
-          name: "docs:reviews(latest=1)",
-          url: `${base}/api/docs/${encodeURIComponent(docId)}/reviews?latest=1`,
-          method: "GET",
-          headers,
-          timeoutMs: args.timeoutMs,
-        })
+        name: "docs:reviews(latest=1)",
+        url: `${base}/api/docs/${encodeURIComponent(docId)}/reviews?latest=1`,
+        method: "GET",
+        headers,
+        timeoutMs: args.timeoutMs,
+      })
       : Promise.resolve({
-          name: "docs:reviews(latest=1)",
-          method: "GET",
-          url: `${base}/api/docs/${encodeURIComponent(docId)}/reviews?latest=1`,
-          status: null,
-          ok: true,
-          ms: 0,
-          bytes: null,
-          skipped: true,
-          error: "Skipped (doc is not request-received)",
+        name: "docs:reviews(latest=1)",
+        method: "GET",
+        url: `${base}/api/docs/${encodeURIComponent(docId)}/reviews?latest=1`,
+        status: null,
+        ok: true,
+        ms: 0,
+        bytes: null,
+        skipped: true,
+        error: "Skipped (doc is not request-received)",
         } satisfies BenchResult),
   );
 
@@ -1655,7 +1831,7 @@ async function main() {
     return;
   }
 
-  if (args.mode !== "dashboard" && args.mode !== "document") {
+  if (args.mode !== "dashboard" && args.mode !== "document" && args.mode !== "leftmenu") {
     // eslint-disable-next-line no-console
     console.error(usage());
     process.exit(2);
@@ -1699,18 +1875,20 @@ async function main() {
     for (const p of pages) {
       // eslint-disable-next-line no-console
       console.log(`\nDocument: ${p}`);
-      // eslint-disable-next-line no-console
+    // eslint-disable-next-line no-console
       console.log("-".repeat(`Document: ${p}`.length));
       if (p === "Main Page") all.push(...(await documentMainBench(args)));
       else if (p === "Metrics Page") all.push(...(await documentMetricsBench(args)));
       else if (p === "History Page") all.push(...(await documentHistoryBench(args)));
       else if (p === "Share Page") all.push(...(await documentShareBench(args)));
       else {
-        // eslint-disable-next-line no-console
+    // eslint-disable-next-line no-console
         console.error(`Not implemented: ${p}`);
       }
     }
     results = all;
+  } else if (args.mode === "leftmenu") {
+    results = await leftMenuBench(args);
   }
 
   if (args.json) {

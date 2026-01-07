@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useRouter } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import {
   ArrowRightOnRectangleIcon,
@@ -80,7 +81,15 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   const [showAboutModal, setShowAboutModal] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const navLocked = useNavigationLocked();
-  const isDark = (resolvedTheme ?? theme) === "dark";
+  // Avoid hydration mismatch: theme can differ between SSR and the first client render.
+  const mounted = useSyncExternalStore(
+    () => () => {
+      // no-op subscription
+    },
+    () => true,
+    () => false,
+  );
+  const isDark = mounted && (resolvedTheme ?? theme) === "dark";
   const logoSrc = isDark ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
 
   const displayName = "Guest";
@@ -317,6 +326,7 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
 
 
 function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
+  const router = useRouter();
   const { data: session } = useSession();
   const { theme, resolvedTheme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
@@ -331,7 +341,15 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string; type: string; role: string; avatarUrl?: string | null }>>([]);
   const [serverActiveOrgId, setServerActiveOrgId] = useState<string | null>(null);
 
-  const isDark = (resolvedTheme ?? theme) === "dark";
+  // Avoid hydration mismatch: theme can differ between SSR and the first client render.
+  const mounted = useSyncExternalStore(
+    () => () => {
+      // no-op subscription
+    },
+    () => true,
+    () => false,
+  );
+  const isDark = mounted && (resolvedTheme ?? theme) === "dark";
   const logoSrc = isDark ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
 
   const displayName = session?.user?.name?.trim() || (session?.user ? "Account" : "Guest");
@@ -667,7 +685,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
                       disabled={navLocked}
                       onClick={() => {
                         setOpen(false);
-                        if (typeof window !== "undefined") window.location.assign("/dashboard?tab=workspace");
+                        router.push("/dashboard?tab=workspace", { scroll: false });
                       }}
                     >
                       Manage workspaces…
