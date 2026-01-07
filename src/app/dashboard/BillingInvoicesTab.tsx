@@ -284,6 +284,10 @@ export default function BillingInvoicesTab() {
       try {
         const qs = new URLSearchParams();
         qs.set("cycleStart", start);
+        // Pass cycleEnd so the API can avoid extra DB reads (it otherwise needs to infer period length).
+        const opt = cycleOptions.find((c) => c.start === start) ?? null;
+        const cycleEndIso = opt?.end ?? summary?.cycle?.end ?? "";
+        if (cycleEndIso) qs.set("cycleEnd", cycleEndIso);
         const res = await fetch(`/api/billing/usage?${qs.toString()}`, { method: "GET" });
         const json = (await res.json().catch(() => null)) as BillingUsage | { error?: string } | null;
         if (!res.ok) throw new Error((json as any)?.error || `Request failed (${res.status})`);
@@ -302,7 +306,7 @@ export default function BillingInvoicesTab() {
     return () => {
       cancelled = true;
     };
-  }, [cycleStartIso]);
+  }, [cycleStartIso, cycleOptions, summary?.cycle?.end]);
 
   useEffect(() => {
     let cancelled = false;

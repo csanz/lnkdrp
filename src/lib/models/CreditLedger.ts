@@ -112,6 +112,18 @@ creditLedgerSchema.index(
   { unique: true, partialFilterExpression: { eventType: "cycle_grant_included", cycleKey: { $type: "string" } } } as any,
 );
 creditLedgerSchema.index({ status: 1, eventType: 1, stripeUsageReportedAt: 1, creditsFromOnDemand: 1, createdDate: -1 });
+// Speed up on-demand usage aggregates on hot paths (e.g. `/api/billing/spend` fallback).
+creditLedgerSchema.index(
+  { workspaceId: 1, eventType: 1, status: 1, cycleKey: 1, creditsFromOnDemand: 1 },
+  {
+    partialFilterExpression: {
+      eventType: "ai_run",
+      status: "charged",
+      cycleKey: { $type: "string" },
+      creditsFromOnDemand: { $gt: 0 },
+    },
+  } as any,
+);
 
 export type CreditLedger = InferSchemaType<typeof creditLedgerSchema> & {
   workspaceId: Types.ObjectId;

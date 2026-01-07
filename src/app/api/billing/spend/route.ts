@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActorForStats } from "@/lib/gating/actor";
+import { resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
@@ -19,6 +19,7 @@ import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
 import { ALLOWED_LIMITS, UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,16 +57,50 @@ function startOfNextUtcMonth(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
 }
 
+function readCookie(cookieHeader: string, name: string): string | null {
+  const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
+  for (const p of parts) {
+    const idx = p.indexOf("=");
+    if (idx < 0) continue;
+    const k = p.slice(0, idx).trim();
+    if (k !== name) continue;
+    return decodeURIComponent(p.slice(idx + 1));
+  }
+  return null;
+}
+
+async function resolveUserAndOrgForWorkspaceRoute(
+  request: Request,
+): Promise<{ ok: true; userId: string; orgId: string } | { ok: false; status: number; error: string }> {
+  const session = await tryResolveAuthUserId(request);
+  if (!session?.userId) return { ok: false, status: 401, error: "Unauthorized" };
+  const userId = String(session.userId);
+  if (!Types.ObjectId.isValid(userId)) return { ok: false, status: 400, error: "Invalid user" };
+
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
+  const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
+  const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
+
+  const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
+  if (orgId && Types.ObjectId.isValid(orgId)) return { ok: true, userId, orgId };
+
+  // Fallback: full actor resolution (ensures org context exists).
+  const actor = await resolveActor(request);
+  if (actor.kind !== "user") return { ok: false, status: 401, error: "Unauthorized" };
+  if (!Types.ObjectId.isValid(actor.userId)) return { ok: false, status: 400, error: "Invalid user" };
+  if (!Types.ObjectId.isValid(actor.orgId)) return { ok: false, status: 400, error: "Invalid org" };
+  return { ok: true, userId: actor.userId, orgId: actor.orgId };
+}
+
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
-    const actor = await resolveActorForStats(request);
     try {
-      if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
-      if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+      const ctx = await resolveUserAndOrgForWorkspaceRoute(request);
+      if (!ctx.ok) return NextResponse.json({ error: ctx.error }, { status: ctx.status });
 
-      const orgIdStr = String(actor.orgId);
-      const userIdStr = String(actor.userId);
+      const orgIdStr = String(ctx.orgId);
+      const userIdStr = String(ctx.userId);
       billingSpendCache = billingSpendCache ?? new Map();
       const cacheKey = `${orgIdStr}:${userIdStr}`;
       const cached = billingSpendCache.get(cacheKey);
@@ -74,20 +109,23 @@ export async function GET(request: Request) {
       }
 
       await connectMongo();
-      const orgId = new Types.ObjectId(actor.orgId);
-      const userId = new Types.ObjectId(actor.userId);
+      const orgId = new Types.ObjectId(ctx.orgId);
+      const userId = new Types.ObjectId(ctx.userId);
 
-      // Editing limits is restricted to owners/admins AND requires an active subscription (Pro).
       // Fetch the "hot path" documents in parallel.
-      const [sub, membership, bal] = await Promise.all([
+      // Note: we intentionally read membership (role) here so we can enforce membership validity
+      // and also avoid a separate "exists" query.
+      const [membership, sub, bal] = await Promise.all([
+        OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
         SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
           .select({ status: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
           .lean(),
-        OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
         WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
           .select({ onDemandEnabled: 1, onDemandMonthlyLimitCents: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
           .lean(),
       ]);
+      if (!membership) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
       const isPro = isProStatus((sub as any)?.status);
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       const roleAllowsEdit = role === "owner" || role === "admin";
@@ -111,7 +149,7 @@ export async function GET(request: Request) {
         const now = new Date();
         const cycleStart = subStart && subEnd ? subStart : balStart && balEnd ? balStart : startOfUtcMonth(now);
         const cycleEnd = subStart && subEnd ? subEnd : balStart && balEnd ? balEnd : startOfNextUtcMonth(now);
-        const cycleKey = `${actor.orgId}:${cycleStart.toISOString()}`;
+        const cycleKey = `${orgIdStr}:${cycleStart.toISOString()}`;
 
         const agg = await UsageAggCycleModel.findOne({ workspaceId: orgId, cycleKey })
           .select({ onDemandUsedCredits: 1 })
@@ -122,22 +160,41 @@ export async function GET(request: Request) {
               ? Math.max(0, Math.floor((agg as any).onDemandUsedCredits))
               : 0;
         } else {
-          const rows = await CreditLedgerModel.aggregate([
+          // Prefer a tight equality match on `cycleKey` (index-friendly) and fall back to a bounded
+          // createdDate range for legacy rows that don't have cycleKey.
+          const fast = await CreditLedgerModel.aggregate([
             {
               $match: {
                 workspaceId: orgId,
                 status: "charged",
                 eventType: "ai_run",
-                createdDate: { $gte: cycleStart, $lt: cycleEnd },
+                cycleKey,
                 creditsFromOnDemand: { $gt: 0 },
               },
             },
             { $group: { _id: null, sum: { $sum: "$creditsFromOnDemand" } } },
           ]);
-          usedCreditsThisCycle =
-            typeof (rows as any)?.[0]?.sum === "number" && Number.isFinite((rows as any)[0].sum)
-              ? Math.max(0, Math.floor((rows as any)[0].sum))
-              : 0;
+          const fastSum = (fast as any)?.[0]?.sum;
+          if (typeof fastSum === "number" && Number.isFinite(fastSum) && fastSum > 0) {
+            usedCreditsThisCycle = Math.max(0, Math.floor(fastSum));
+          } else {
+            const rows = await CreditLedgerModel.aggregate([
+              {
+                $match: {
+                  workspaceId: orgId,
+                  status: "charged",
+                  eventType: "ai_run",
+                  createdDate: { $gte: cycleStart, $lt: cycleEnd },
+                  creditsFromOnDemand: { $gt: 0 },
+                },
+              },
+              { $group: { _id: null, sum: { $sum: "$creditsFromOnDemand" } } },
+            ]);
+            usedCreditsThisCycle =
+              typeof (rows as any)?.[0]?.sum === "number" && Number.isFinite((rows as any)[0].sum)
+                ? Math.max(0, Math.floor((rows as any)[0].sum))
+                : 0;
+          }
         }
       }
 

@@ -150,9 +150,11 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Grid and All-pages views are responsive and fit to the available viewport width by default.
 - **Optional revision history**:
   - If enabled by the owner, recipients can open a **Revision history** modal that shows a light list of updates (no owner-only details).
+  - The history modal is optimized for speed: it **prefetches** the first page of history in the background and loads additional items **lazily as you scroll**.
 - **Password gate** (optional):
   - If a share password is configured, the share page requires a successful unlock cookie before rendering.
-  - The password screen includes a quick **preview thumbnail** (when available) to help recipients confirm they're unlocking the right doc.
+  - The password screen includes a quick **preview thumbnail** (when available) that preserves the thumbnail's aspect ratio to help recipients confirm they're unlocking the right doc.
+  - The password screen header uses the user's selected **global theme branding** (dark/light).
 - **Same-origin PDF proxy for recipients**:
   - Recipient PDF loads from `/s/:shareId/pdf` (supports `?download=1` when downloads are enabled).
 - **Open Graph / Twitter metadata**:
@@ -233,7 +235,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - The full structured output (stage match + relevancy + reasons + strengths/weaknesses + open questions + founder note) is stored on the Review record and is currently surfaced in **admin** for debugging.
 
 ## Sharing (public share links)
-  - Recipient views are visually marked as **Shared** in the PDF viewer header and omit owner-only controls like metrics.
+  - Recipient views omit owner-only controls like metrics.
   - Owner views show a **Visible to you only** indicator along with share view stats.
 - **Optional review agent per request**:
   - Enable “review agent” on a request to score each uploaded deck for relevancy/alignment to your Guide + reviewer notes.
@@ -262,6 +264,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Tools → Cache**: `/a/tools/cache`
   - Inspect browser localStorage keys/values and clear app caches (useful for debugging navigation/data state during development).
   - Clear actions use a quick click-to-confirm UI (avoids relying on browser confirm dialogs).
+  - “Clear app cache” clears `lnkdrp*` localStorage keys (including both `lnkdrp-*` and `lnkdrp.*` variants).
 - **Tools → Billing**: `/a/tools/billing`
   - Refresh and inspect billing UI config stored in MongoDB (e.g. Pro price label).
   - Uses `POST /api/admin/billing/pro-price` to refresh from Stripe; dashboard reads do not call Stripe.

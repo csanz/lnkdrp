@@ -3,7 +3,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
@@ -34,15 +34,18 @@ function utcDayKey(d: Date): string {
 
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
   return withMongoRequestLogging(request, async () => {
-    const actor = await resolveActor(request);
+    const url = new URL(request.url);
+    const lite = url.searchParams.get("lite") === "1";
+    const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
     try {
       const { docId } = await ctx.params;
       if (!Types.ObjectId.isValid(docId)) {
         return applyTempUserHeaders(NextResponse.json({ error: "Invalid docId" }, { status: 400 }), actor);
       }
 
-      const url = new URL(request.url);
       const days = Math.min(60, asPositiveInt(url.searchParams.get("days")) ?? 15);
+      const includeViewers = url.searchParams.get("viewers") === "1";
+      const viewersOnly = url.searchParams.get("viewersOnly") === "1";
 
       await connectMongo();
 
@@ -64,7 +67,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             }
           : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
       })
-        .select({ _id: 1, numberOfPagesViewed: 1, shareAllowPdfDownload: 1 })
+        .select({
+          _id: 1,
+          numberOfViews: 1,
+          numberOfPagesViewed: 1,
+          shareAllowPdfDownload: 1,
+        })
         .lean();
 
       if (!doc) {
@@ -77,89 +85,104 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       start.setUTCHours(0, 0, 0, 0);
       start.setUTCDate(start.getUTCDate() - (days - 1));
 
-      const seriesAgg = (await ShareViewModel.aggregate([
-        { $match: { docId: docObjectId, createdDate: { $gte: start } } },
-        {
-          $group: {
-            _id: { $dateToString: { date: "$createdDate", format: "%Y-%m-%d", timezone: "UTC" } },
-            views: { $sum: 1 },
-          },
-        },
-        { $sort: { _id: 1 } },
-      ])) as Array<{ _id: string; views: number }>;
-
-      const byDay = new Map<string, number>(seriesAgg.map((x) => [x._id, x.views]));
       const startKey = utcDayKey(start);
-      const downloadsSeriesAgg = (await ShareViewModel.aggregate([
-        { $match: { docId: docObjectId } },
-        {
-          $project: {
-            items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } },
-          },
-        },
-        { $unwind: "$items" },
-        { $match: { "items.k": { $gte: startKey } } },
-        { $group: { _id: "$items.k", downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
-        { $sort: { _id: 1 } },
-      ])) as Array<{ _id: string; downloads: number }>;
-      const downloadsByDay = new Map<string, number>(downloadsSeriesAgg.map((x) => [x._id, x.downloads]));
+      const downloadsEnabled = Boolean((doc as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload);
+
+      const totalViews = typeof (doc as any).numberOfViews === "number" ? (doc as any).numberOfViews : 0;
+      const pagesViewed = typeof doc.numberOfPagesViewed === "number" ? doc.numberOfPagesViewed : 0;
 
       const series: Array<{ date: string; views: number; downloads: number }> = [];
-      for (let i = 0; i < days; i++) {
-        const d = new Date(start);
-        d.setUTCDate(start.getUTCDate() + i);
-        const key = utcDayKey(d);
-        series.push({ date: key, views: byDay.get(key) ?? 0, downloads: downloadsByDay.get(key) ?? 0 });
+      let totalDownloads = 0;
+      if (!viewersOnly) {
+        const [seriesAgg, downloadsSeriesAgg, downloadsAgg] = await Promise.all([
+          ShareViewModel.aggregate([
+            { $match: { docId: docObjectId, createdDate: { $gte: start } } },
+            {
+              $group: {
+                _id: { $dateToString: { date: "$createdDate", format: "%Y-%m-%d", timezone: "UTC" } },
+                views: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: 1 } },
+          ]) as Promise<Array<{ _id: string; views: number }>>,
+          downloadsEnabled
+            ? (ShareViewModel.aggregate([
+                { $match: { docId: docObjectId } },
+                {
+                  $project: {
+                    items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } },
+                  },
+                },
+                { $unwind: "$items" },
+                { $match: { "items.k": { $gte: startKey } } },
+                { $group: { _id: "$items.k", downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
+                { $sort: { _id: 1 } },
+              ]) as Promise<Array<{ _id: string; downloads: number }>>)
+            : Promise.resolve([] as Array<{ _id: string; downloads: number }>),
+          downloadsEnabled
+            ? (ShareViewModel.aggregate([
+                { $match: { docId: docObjectId } },
+                { $group: { _id: null, downloads: { $sum: { $ifNull: ["$downloads", 0] } } } },
+              ]) as Promise<Array<{ downloads?: number }>>)
+            : Promise.resolve([] as Array<{ downloads?: number }>),
+        ]);
+
+        const byDay = new Map<string, number>(seriesAgg.map((x) => [x._id, x.views]));
+        const downloadsByDay = new Map<string, number>(downloadsSeriesAgg.map((x) => [x._id, x.downloads]));
+        for (let i = 0; i < days; i++) {
+          const d = new Date(start);
+          d.setUTCDate(start.getUTCDate() + i);
+          const key = utcDayKey(d);
+          series.push({ date: key, views: byDay.get(key) ?? 0, downloads: downloadsByDay.get(key) ?? 0 });
+        }
+
+        totalDownloads =
+          downloadsAgg && downloadsAgg[0] && typeof downloadsAgg[0].downloads === "number" ? downloadsAgg[0].downloads : 0;
       }
 
-      const totalViews = await ShareViewModel.countDocuments({ docId: docObjectId });
-      const downloadsAgg = (await ShareViewModel.aggregate([
-        { $match: { docId: docObjectId } },
-        { $group: { _id: null, downloads: { $sum: { $ifNull: ["$downloads", 0] } } } },
-      ])) as Array<{ downloads?: number }>;
-      const totalDownloads =
-        downloadsAgg && downloadsAgg[0] && typeof downloadsAgg[0].downloads === "number"
-          ? downloadsAgg[0].downloads
-          : 0;
-      const authedUserIds = await ShareViewModel.distinct("viewerUserId", {
-        docId: docObjectId,
-        viewerUserId: { $ne: null },
-      });
-      const uniqueAuthedViewers = Array.isArray(authedUserIds)
-        ? authedUserIds.filter((x) => Types.ObjectId.isValid(String(x))).length
+      const uniqueAuthedViewers = includeViewers
+        ? await (async () => {
+            const authedUserIds = await ShareViewModel.distinct("viewerUserId", {
+              docId: docObjectId,
+              viewerUserId: { $ne: null },
+            });
+            return Array.isArray(authedUserIds) ? authedUserIds.filter((x) => Types.ObjectId.isValid(String(x))).length : 0;
+          })()
         : 0;
 
-      const viewersAgg = (await ShareViewModel.aggregate([
-        { $match: { docId: docObjectId, viewerUserId: { $ne: null } } },
-        {
-          $group: {
-            _id: "$viewerUserId",
-            firstSeen: { $min: "$createdDate" },
-            lastSeen: { $max: "$updatedDate" },
-            views: { $sum: 1 },
-          },
-        },
-        { $sort: { lastSeen: -1 } },
-        { $limit: 100 },
-        { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "user" } },
-        { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
-        {
-          $project: {
-            _id: 0,
-            viewerUserId: "$_id",
-            firstSeen: 1,
-            lastSeen: 1,
-            views: 1,
-            user: { email: "$user.email", name: "$user.name" },
-          },
-        },
-      ])) as Array<{
-        viewerUserId: Types.ObjectId;
-        firstSeen: Date;
-        lastSeen: Date;
-        views: number;
-        user?: { email?: string | null; name?: string | null } | null;
-      }>;
+      const viewersAgg = includeViewers
+        ? ((await ShareViewModel.aggregate([
+            { $match: { docId: docObjectId, viewerUserId: { $ne: null } } },
+            {
+              $group: {
+                _id: "$viewerUserId",
+                firstSeen: { $min: "$createdDate" },
+                lastSeen: { $max: "$updatedDate" },
+                views: { $sum: 1 },
+              },
+            },
+            { $sort: { lastSeen: -1 } },
+            { $limit: 100 },
+            { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "user" } },
+            { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+            {
+              $project: {
+                _id: 0,
+                viewerUserId: "$_id",
+                firstSeen: 1,
+                lastSeen: 1,
+                views: 1,
+                user: { email: "$user.email", name: "$user.name" },
+              },
+            },
+          ])) as Array<{
+            viewerUserId: Types.ObjectId;
+            firstSeen: Date;
+            lastSeen: Date;
+            views: number;
+            user?: { email?: string | null; name?: string | null } | null;
+          }>)
+        : [];
 
       const res = NextResponse.json(
         {
@@ -168,10 +191,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         totals: {
           views: totalViews,
           downloads: totalDownloads,
-          pagesViewed: typeof doc.numberOfPagesViewed === "number" ? doc.numberOfPagesViewed : 0,
+          pagesViewed,
           authenticatedViewers: uniqueAuthedViewers,
         },
-        downloadsEnabled: Boolean((doc as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload),
+        downloadsEnabled,
         series,
         viewers: viewersAgg.map((v) => ({
           userId: String(v.viewerUserId),

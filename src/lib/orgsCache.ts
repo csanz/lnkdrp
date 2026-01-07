@@ -104,6 +104,23 @@ export function writeOrgsCacheSnapshot(next: OrgsCacheSnapshot) {
 }
 
 /**
+ * Clear the orgs cache (in-memory + localStorage) and notify listeners.
+ *
+ * Useful for debugging cases where the org switcher is showing stale workspace data.
+ */
+export function clearOrgsCache(): void {
+  memorySnapshot = null;
+  inflightRefresh = null;
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(ORGS_CACHE_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+  dispatchUpdatedEvent();
+}
+
+/**
  * Refresh the orgs cache by calling `/api/orgs`.
  *
  * - `force`: bypasses the TTL and always requests the server (still dedupes concurrent refreshes).

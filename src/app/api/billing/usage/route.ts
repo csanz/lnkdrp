@@ -9,7 +9,6 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActorForStats } from "@/lib/gating/actor";
-import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { aggregateBillingUsage, type BillingLedgerRow } from "@/lib/billing/usageAggregation";
@@ -90,6 +89,8 @@ export async function GET(request: Request) {
       const cycleStartParam = url.searchParams.get("cycleStart");
       const requestedStart = parseIsoDate(cycleStartParam);
       if (!requestedStart) return NextResponse.json({ error: "Missing or invalid cycleStart" }, { status: 400 });
+      const cycleEndParam = url.searchParams.get("cycleEnd");
+      const requestedEnd = cycleEndParam ? parseIsoDate(cycleEndParam) : null;
 
       await connectMongo();
       const orgId = new Types.ObjectId(actor.orgId);
@@ -102,27 +103,27 @@ export async function GET(request: Request) {
         }
       }
 
-      // Determine a stable period length to compute cycle end.
-      const [sub, bal] = await Promise.all([
-        SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-          .select({ currentPeriodStart: 1, currentPeriodEnd: 1 })
-          .lean(),
-        WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
-          .select({ currentPeriodStart: 1, currentPeriodEnd: 1, onDemandEnabled: 1, onDemandMonthlyLimitCents: 1 })
-          .lean(),
-      ]);
-
-      const subStart = (sub as any)?.currentPeriodStart instanceof Date ? (sub as any).currentPeriodStart : null;
-      const subEnd = (sub as any)?.currentPeriodEnd instanceof Date ? (sub as any).currentPeriodEnd : null;
-      const balStart = (bal as any)?.currentPeriodStart instanceof Date ? (bal as any).currentPeriodStart : null;
-      const balEnd = (bal as any)?.currentPeriodEnd instanceof Date ? (bal as any).currentPeriodEnd : null;
-
-      const current = resolveCycleWindow({ subStart, subEnd, balStart, balEnd });
-      debugLog(1, "[billing:usage] cycle window", { source: current.source, start: current.start.toISOString(), end: current.end.toISOString() });
-      const periodMs = Math.max(1, current.end.getTime() - current.start.getTime());
+      const bal = await WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
+        .select({ currentPeriodStart: 1, currentPeriodEnd: 1, onDemandEnabled: 1, onDemandMonthlyLimitCents: 1 })
+        .lean();
 
       const cycleStart = new Date(requestedStart);
-      const cycleEnd = new Date(cycleStart.getTime() + periodMs);
+      let cycleEnd: Date;
+      if (requestedEnd && requestedEnd.getTime() > cycleStart.getTime()) {
+        // Guardrail: don't allow absurd windows (helps protect aggregation from abuse).
+        const maxWindowMs = 90 * 24 * 60 * 60 * 1000;
+        const rawMs = requestedEnd.getTime() - cycleStart.getTime();
+        if (rawMs > maxWindowMs) return NextResponse.json({ error: "cycleEnd too far from cycleStart" }, { status: 400 });
+        cycleEnd = new Date(requestedEnd);
+      } else {
+        // Fallback for callers that don't pass cycleEnd: infer period length from balance window.
+        const balStart = (bal as any)?.currentPeriodStart instanceof Date ? (bal as any).currentPeriodStart : null;
+        const balEnd = (bal as any)?.currentPeriodEnd instanceof Date ? (bal as any).currentPeriodEnd : null;
+        const current = resolveCycleWindow({ subStart: null, subEnd: null, balStart, balEnd });
+        debugLog(1, "[billing:usage] cycle window (fallback)", { source: current.source, start: current.start.toISOString(), end: current.end.toISOString() });
+        const periodMs = Math.max(1, current.end.getTime() - current.start.getTime());
+        cycleEnd = new Date(cycleStart.getTime() + periodMs);
+      }
 
       const onDemandMonthlyLimitCents = clampNonNegInt((bal as any)?.onDemandMonthlyLimitCents ?? 0);
       const onDemandEnabled = Boolean((bal as any)?.onDemandEnabled) && onDemandMonthlyLimitCents > 0;

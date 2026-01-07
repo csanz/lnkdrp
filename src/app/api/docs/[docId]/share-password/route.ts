@@ -4,6 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
+import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,15 +26,59 @@ function asPassword(v: unknown): string | null {
   if (typeof v !== "string") return null;
   return v;
 }
+
+function safeErrMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "Unknown error";
+}
+
+function logSharePasswordError(args: {
+  request: Request;
+  method: "GET" | "POST";
+  actor: { userId: string; orgId: string } | null;
+  docId: string | null;
+  err: unknown;
+}) {
+  // Always log to server console in dev so we can correlate "silent redirects".
+  // eslint-disable-next-line no-console
+  console.error("[api/docs/:docId/share-password] error", {
+    method: args.method,
+    docId: args.docId,
+    actorUserId: args.actor?.userId ?? null,
+    actorOrgId: args.actor?.orgId ?? null,
+    message: safeErrMessage(args.err),
+  });
+
+  // Best-effort persist to Mongo ErrorEvent (when enabled by env policy).
+  void logErrorEvent({
+    severity: "error",
+    category: "api",
+    code: ERROR_CODE_UNHANDLED_EXCEPTION,
+    err: args.err,
+    request: args.request,
+    route: "/api/docs/:docId/share-password",
+    method: args.method,
+    ids: {
+      userId: args.actor?.userId ?? null,
+      workspaceId: args.actor?.orgId ?? null,
+      docId: args.docId ?? null,
+    },
+    meta: {
+      handler: "share-password",
+    },
+  });
+}
 /**
  * Handle POST requests.
  */
 
 
 export async function POST(request: Request, ctx: { params: Promise<{ docId: string }> }) {
-  const actor = await resolveActor(request);
+  let actor: Awaited<ReturnType<typeof resolveActor>> | null = null;
+  let docIdForLog: string | null = null;
   try {
+    actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
     const { docId } = await ctx.params;
+    docIdForLog = docId;
     if (!isObjectId(docId)) {
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid docId" }, { status: 400 }), actor);
     }
@@ -115,8 +160,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       actor,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+    logSharePasswordError({
+      request,
+      method: "POST",
+      actor: actor ? { userId: actor.userId, orgId: actor.orgId } : null,
+      docId: docIdForLog,
+      err,
+    });
+    const message = safeErrMessage(err);
+    if (actor) {
+      return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+    }
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }
 /**
@@ -127,9 +182,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
   const url = new URL(request.url);
   const lite = url.searchParams.get("lite") === "1";
-  const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
+  let actor: Awaited<ReturnType<typeof resolveActor>> | null = null;
+  let docIdForLog: string | null = null;
   try {
+    actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
     const { docId } = await ctx.params;
+    docIdForLog = docId;
     if (!isObjectId(docId)) {
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid docId" }, { status: 400 }), actor);
     }
@@ -153,7 +211,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           }
         : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
     })
-      .select({ sharePasswordHash: 1, sharePasswordEnc: 1, sharePasswordEncIv: 1, sharePasswordEncTag: 1 })
+      .select(
+        lite
+          ? { sharePasswordHash: 1 }
+          : { sharePasswordHash: 1, sharePasswordEnc: 1, sharePasswordEncIv: 1, sharePasswordEncTag: 1 },
+      )
       .lean();
 
     if (!doc) {
@@ -161,6 +223,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     }
 
     const enabled = Boolean((doc as { sharePasswordHash?: unknown }).sharePasswordHash);
+    if (lite) {
+      return applyTempUserHeaders(
+        NextResponse.json(
+          { sharePasswordEnabled: enabled, password: null },
+          { headers: { "cache-control": "no-store" } },
+        ),
+        actor,
+      );
+    }
     const password = decryptSharePassword({
       enc: (doc as { sharePasswordEnc?: unknown }).sharePasswordEnc as string | null | undefined,
       iv: (doc as { sharePasswordEncIv?: unknown }).sharePasswordEncIv as string | null | undefined,
@@ -175,8 +246,18 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       actor,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+    logSharePasswordError({
+      request,
+      method: "GET",
+      actor: actor ? { userId: actor.userId, orgId: actor.orgId } : null,
+      docId: docIdForLog,
+      err,
+    });
+    const message = safeErrMessage(err);
+    if (actor) {
+      return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+    }
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }
 

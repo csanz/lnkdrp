@@ -33,7 +33,13 @@ import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
 import CreateProjectModal from "@/components/modals/CreateProjectModal";
 import { buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getPublicSiteBase } from "@/lib/urls";
-import { getStarredDocs, moveStarredDoc, STARRED_DOCS_CHANGED_EVENT, type StarredDoc } from "@/lib/starredDocs";
+import {
+  getStarredDocs,
+  moveStarredDoc,
+  refreshStarredDocsFromServer,
+  STARRED_DOCS_CHANGED_EVENT,
+  type StarredDoc,
+} from "@/lib/starredDocs";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
@@ -608,6 +614,15 @@ export default function LeftSidebar({
       // Seed sort metadata from cache so order is stable before the best-effort API paging completes.
       setStarredMetaCacheById(readStarredMetaCache());
     }
+
+    // Best-effort sync from MongoDB source-of-truth into local cache.
+    async function syncStarredFromServer() {
+      try {
+        await refreshStarredDocsFromServer({ bootstrap: true });
+      } catch {
+        // ignore
+      }
+    }
 /**
  * Handle storage events; uses refreshStarred.
  */
@@ -617,12 +632,17 @@ export default function LeftSidebar({
       refreshStarred();
     }
     refreshStarred();
+    void syncStarredFromServer();
+    function onActiveOrgChanged() {
+      refreshStarred();
+      void syncStarredFromServer();
+    }
     window.addEventListener(STARRED_DOCS_CHANGED_EVENT, refreshStarred);
-    window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, refreshStarred);
+    window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, onActiveOrgChanged);
     window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, refreshStarred);
-      window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, refreshStarred);
+      window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onActiveOrgChanged);
       window.removeEventListener("storage", onStorage);
     };
   }, []);

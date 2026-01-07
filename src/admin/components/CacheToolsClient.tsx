@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { clearSidebarCache } from "@/lib/sidebarCache";
+import { clearOrgsCache } from "@/lib/orgsCache";
 import Button from "@/components/ui/Button";
 import {
   clearLocalStorageKeysByPrefix,
@@ -65,7 +66,7 @@ export default function CacheToolsClient() {
   }, [rows, filter]);
 
   const totalBytes = useMemo(() => rows.reduce((acc, r) => acc + r.bytes, 0), [rows]);
-  const appKeys = useMemo(() => rows.filter((r) => r.key.startsWith("lnkdrp-")), [rows]);
+  const appKeys = useMemo(() => rows.filter((r) => r.key.startsWith("lnkdrp")), [rows]);
 
   return (
     <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
@@ -75,7 +76,7 @@ export default function CacheToolsClient() {
           <div className="mt-1 text-sm text-[var(--muted)]">
             {rows.length} keys • {totalBytes.toLocaleString()} bytes
           </div>
-          <div className="mt-1 text-sm text-[var(--muted)]">{appKeys.length} app keys (lnkdrp-*) detected</div>
+          <div className="mt-1 text-sm text-[var(--muted)]">{appKeys.length} app keys (lnkdrp*) detected</div>
           {lastAction ? <div className="mt-2 text-sm text-[var(--fg)]">{lastAction}</div> : null}
         </div>
 
@@ -101,7 +102,7 @@ export default function CacheToolsClient() {
                 setPendingClearAll(true);
                 setPendingClearKey(null);
                 armConfirmTimeout();
-                setLastAction("Click again to confirm: clear app cache (lnkdrp-*)");
+                setLastAction("Click again to confirm: clear app cache (lnkdrp*)");
                 return;
               }
 
@@ -112,8 +113,10 @@ export default function CacheToolsClient() {
               try {
                 // Clear in-memory + persisted sidebar cache for all orgs first (affects running app immediately).
                 clearSidebarCache({ all: true });
+                // Clear in-memory + persisted orgs cache (so workspace switcher updates immediately).
+                clearOrgsCache();
 
-                const attempted = clearLocalStorageKeysByPrefix("lnkdrp-", ["lnkdrp-projects-collapsed"]);
+                const attempted = clearLocalStorageKeysByPrefix("lnkdrp");
                 // Update UI snapshot after the clear.
                 refresh();
                 setLastAction(`Cleared app cache. Attempted ${attempted.length.toLocaleString()} key(s).`);
@@ -133,7 +136,8 @@ export default function CacheToolsClient() {
               setBusy(true);
               try {
                 clearSidebarCache({ all: true });
-                clearLocalStorageKeysByPrefix("lnkdrp-", ["lnkdrp-projects-collapsed"]);
+                clearOrgsCache();
+                clearLocalStorageKeysByPrefix("lnkdrp");
               } finally {
                 window.location.reload();
               }

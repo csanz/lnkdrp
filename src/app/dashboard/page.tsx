@@ -763,7 +763,7 @@ function MultiLineChart30d({
       </div>
 
       <div className="h-56 w-full">
-        <ResponsiveContainer width="100%" height="100%">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={1}>
           <LineChart data={data} margin={{ top: 6, right: 10, bottom: 6, left: 6 }}>
             <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
             <XAxis

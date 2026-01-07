@@ -1004,8 +1004,8 @@ async function dashboardBenchBySection(args: Args): Promise<BenchResult[]> {
       url: ({ base }) => `${base}/api/billing/usage?cycleStart=...`,
       run: async ({ base, headers, timeoutMs, results }) => {
         const summaryRes = results.find((r) => r.name === "billing:summary" && !r.skipped) as BenchResult | undefined;
-        const cycleStart =
-          typeof (summaryRes as any)?.jsonBody?.cycle?.start === "string" ? String((summaryRes as any).jsonBody.cycle.start) : "";
+        const cycleStart = typeof (summaryRes as any)?.jsonBody?.cycle?.start === "string" ? String((summaryRes as any).jsonBody.cycle.start) : "";
+        const cycleEnd = typeof (summaryRes as any)?.jsonBody?.cycle?.end === "string" ? String((summaryRes as any).jsonBody.cycle.end) : "";
         if (!cycleStart) {
           return {
             name: "billing:usage(cycleStart=summary)",
@@ -1021,6 +1021,7 @@ async function dashboardBenchBySection(args: Args): Promise<BenchResult[]> {
         }
         const qs = new URLSearchParams();
         qs.set("cycleStart", cycleStart);
+        if (cycleEnd) qs.set("cycleEnd", cycleEnd);
         return timedFetch({
           name: "billing:usage(cycleStart=summary)",
           url: `${base}/api/billing/usage?${qs.toString()}`,
@@ -1165,7 +1166,9 @@ async function documentMainBench(args: Args): Promise<BenchResult[]> {
           name: "docs:pdf",
           url: `${base}/api/docs/${encodeURIComponent(docId)}/pdf?v=${encodeURIComponent(pdfKey)}`,
           method: "GET",
-          headers,
+          // Mimic how PDF viewers typically load: they request a small Range first.
+          // This keeps the benchmark aligned with "time to first render" rather than full download time.
+          headers: { ...headers, range: "bytes=0-262143" },
           timeoutMs: args.timeoutMs,
         })
       : Promise.resolve({
@@ -1195,7 +1198,7 @@ async function documentMainBench(args: Args): Promise<BenchResult[]> {
     sharePasswordEnabled
       ? timedFetchJson({
           name: "docs:share-password:get",
-          url: `${base}/api/docs/${encodeURIComponent(docId)}/share-password`,
+          url: `${base}/api/docs/${encodeURIComponent(docId)}/share-password?lite=1`,
           method: "GET",
           headers,
           timeoutMs: args.timeoutMs,
@@ -1203,7 +1206,7 @@ async function documentMainBench(args: Args): Promise<BenchResult[]> {
       : Promise.resolve({
           name: "docs:share-password:get",
           method: "GET",
-          url: `${base}/api/docs/${encodeURIComponent(docId)}/share-password`,
+          url: `${base}/api/docs/${encodeURIComponent(docId)}/share-password?lite=1`,
           status: null,
           ok: true,
           ms: 0,
@@ -1395,7 +1398,7 @@ async function documentShareBench(args: Args): Promise<BenchResult[]> {
 
   // Resolve shareId + whether blob is ready.
   const docRes = await timedFetchJson({
-    name: "docs:get",
+    name: "docs:get (setup)",
     url: `${base}/api/docs/${encodeURIComponent(docId)}?lite=1`,
     method: "GET",
     headers,
@@ -1408,19 +1411,24 @@ async function documentShareBench(args: Args): Promise<BenchResult[]> {
   const doc = docJson?.doc ?? null;
   const shareId = typeof doc?.shareId === "string" ? doc.shareId.trim() : "";
   const blobUrl = typeof doc?.blobUrl === "string" ? doc.blobUrl.trim() : "";
+  const allowDownload = Boolean(doc?.shareAllowPdfDownload);
+  const allowRevisionHistory = Boolean(doc?.shareAllowRevisionHistory);
+  const sharePasswordEnabled = Boolean(doc?.sharePasswordEnabled);
 
-  const statsRes = shareId
-    ? await timedFetchJson({
-        name: "share:stats:get",
-        url: `${base}/api/share/${encodeURIComponent(shareId)}/stats`,
+  // The public share page itself is a server-rendered Next route.
+  // Benchmark it as well since it performs DB reads (DocModel.findOne) and gating.
+  const sharePageRes = shareId
+    ? await timedFetch({
+        name: "share:page",
+        url: `${base}/s/${encodeURIComponent(shareId)}`,
         method: "GET",
-        headers,
+        headers: { ...headers, accept: "text/html" },
         timeoutMs: args.timeoutMs,
       })
     : ({
-        name: "share:stats:get",
+        name: "share:page",
         method: "GET",
-        url: `${base}/api/share/:shareId/stats`,
+        url: `${base}/s/:shareId`,
         status: null,
         ok: true,
         ms: 0,
@@ -1428,35 +1436,190 @@ async function documentShareBench(args: Args): Promise<BenchResult[]> {
         skipped: true,
         error: "Skipped (doc has no shareId)",
       } satisfies BenchResult);
-  results.push(statsRes);
-  printResult(`GET ${urlToRoute(statsRes.url)}`, statsRes);
+  results.push(sharePageRes);
+  printResult(`GET ${urlToRoute(sharePageRes.url)}`, sharePageRes);
 
-  const pdfRes = shareId && blobUrl
-    ? await timedFetch({
-        name: "share:pdf",
-        url: `${base}/s/${encodeURIComponent(shareId)}/pdf`,
-        method: "GET",
-        headers,
-        timeoutMs: args.timeoutMs,
-      })
-    : ({
-        name: "share:pdf",
-        method: "GET",
-        url: shareId ? `${base}/s/${encodeURIComponent(shareId)}/pdf` : `${base}/s/:shareId/pdf`,
-        status: null,
-        ok: true,
-        ms: 0,
-        bytes: null,
-        skipped: true,
-        error: !shareId ? "Skipped (doc has no shareId)" : "Skipped (doc blobUrl not ready)",
-      } satisfies BenchResult);
-  results.push(pdfRes);
-  printResult(`GET ${urlToRoute(pdfRes.url)}`, pdfRes);
+  // Mimic the browser viewer load: after the page loads, the client viewer makes several calls.
+  // Run these in parallel to match real page load behavior.
+  const startedParallel = performance.now();
+  const pending: Array<Promise<BenchResult>> = [];
 
-  const nonSkipped = results.filter((r) => !r.skipped);
+  const viewerEnabled = shareId && !sharePasswordEnabled;
+
+  // Owner/receiver context stats (viewer header UI).
+  pending.push(
+    viewerEnabled
+      ? timedFetchJson({
+          name: "share:stats:get",
+          url: `${base}/api/share/${encodeURIComponent(shareId)}/stats`,
+          method: "GET",
+          headers,
+          timeoutMs: args.timeoutMs,
+        })
+      : Promise.resolve({
+          name: "share:stats:get",
+          method: "GET",
+          url: shareId ? `${base}/api/share/${encodeURIComponent(shareId)}/stats` : `${base}/api/share/:shareId/stats`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: !shareId ? "Skipped (doc has no shareId)" : "Skipped (share is password gated)",
+        } satisfies BenchResult),
+  );
+
+  // Public view tracking (mutating): PdfJsViewer POSTs once per (shareId, botId), and records initial page.
+  // Note: This is a real write (it matches production behavior).
+  pending.push(
+    viewerEnabled
+      ? timedFetchJson({
+          name: "share:stats:post(view,page=1)",
+          url: `${base}/api/share/${encodeURIComponent(shareId)}/stats`,
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({ botId: "benchmark-bot", pageNumber: 1 }),
+          timeoutMs: args.timeoutMs,
+        })
+      : Promise.resolve({
+          name: "share:stats:post(view,page=1)",
+          method: "POST",
+          url: shareId ? `${base}/api/share/${encodeURIComponent(shareId)}/stats` : `${base}/api/share/:shareId/stats`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: !shareId ? "Skipped (doc has no shareId)" : "Skipped (share is password gated)",
+        } satisfies BenchResult),
+  );
+
+  // Revision history (only enabled when the author allows it). The viewer fetches this when the history panel is opened.
+  pending.push(
+    viewerEnabled && allowRevisionHistory
+      ? timedFetchJson({
+          name: "share:changes",
+          url: `${base}/s/${encodeURIComponent(shareId)}/changes`,
+          method: "GET",
+          headers,
+          timeoutMs: args.timeoutMs,
+        })
+      : Promise.resolve({
+          name: "share:changes",
+          method: "GET",
+          url: shareId ? `${base}/s/${encodeURIComponent(shareId)}/changes` : `${base}/s/:shareId/changes`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: !shareId
+            ? "Skipped (doc has no shareId)"
+            : sharePasswordEnabled
+              ? "Skipped (share is password gated)"
+              : "Skipped (shareAllowRevisionHistory is false)",
+        } satisfies BenchResult),
+  );
+
+  // PDF bytes (viewer will make Range requests).
+  pending.push(
+    viewerEnabled && blobUrl
+      ? timedFetch({
+          name: "share:pdf(range=0-262143)",
+          url: `${base}/s/${encodeURIComponent(shareId)}/pdf`,
+          method: "GET",
+          // Mimic how PDF viewers typically load: they request a small Range first.
+          // This keeps the benchmark aligned with "time to first render" rather than full download time.
+          headers: { ...headers, range: "bytes=0-262143" },
+          timeoutMs: args.timeoutMs,
+        })
+      : Promise.resolve({
+          name: "share:pdf(range=0-262143)",
+          method: "GET",
+          url: shareId ? `${base}/s/${encodeURIComponent(shareId)}/pdf` : `${base}/s/:shareId/pdf`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: !shareId
+            ? "Skipped (doc has no shareId)"
+            : sharePasswordEnabled
+              ? "Skipped (share is password gated)"
+              : "Skipped (doc blobUrl not ready)",
+        } satisfies BenchResult),
+  );
+
+  // Download URL exists when allowed (not fetched on initial load; it's a button action).
+  pending.push(
+    viewerEnabled && blobUrl && allowDownload
+      ? timedFetch({
+          name: "share:pdf(download=1,range=0-262143)",
+          url: `${base}/s/${encodeURIComponent(shareId)}/pdf?download=1`,
+          method: "GET",
+          headers: { ...headers, range: "bytes=0-262143" },
+          timeoutMs: args.timeoutMs,
+        })
+      : Promise.resolve({
+          name: "share:pdf(download=1,range=0-262143)",
+          method: "GET",
+          url: shareId ? `${base}/s/${encodeURIComponent(shareId)}/pdf?download=1` : `${base}/s/:shareId/pdf?download=1`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: !shareId
+            ? "Skipped (doc has no shareId)"
+            : !blobUrl
+              ? "Skipped (doc blobUrl not ready)"
+              : sharePasswordEnabled
+                ? "Skipped (share is password gated)"
+              : "Skipped (shareAllowPdfDownload is false)",
+        } satisfies BenchResult),
+  );
+
+  // Password gate unlock is only relevant when password is enabled and the viewer submits a password.
+  pending.push(
+    shareId && sharePasswordEnabled
+      ? Promise.resolve({
+          name: "share:unlock(password)",
+          method: "POST",
+          url: `${base}/api/share/${encodeURIComponent(shareId)}/unlock`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: "Skipped (requires a password to submit)",
+        } satisfies BenchResult)
+      : Promise.resolve({
+          name: "share:unlock(password)",
+          method: "POST",
+          url: shareId ? `${base}/api/share/${encodeURIComponent(shareId)}/unlock` : `${base}/api/share/:shareId/unlock`,
+          status: null,
+          ok: true,
+          ms: 0,
+          bytes: null,
+          skipped: true,
+          error: !shareId ? "Skipped (doc has no shareId)" : "Skipped (sharePasswordEnabled is false)",
+        } satisfies BenchResult),
+  );
+
+  const more = await Promise.all(pending);
+  const wallParallelMs = performance.now() - startedParallel;
+  for (const r of more) {
+    results.push(r);
+    const method = (r.method || "GET").toUpperCase();
+    printResult(`${method} ${urlToRoute(r.url)}`, r);
+  }
+
+  const nonSkipped = results.filter((r) => !r.skipped && !r.name.includes("(setup)"));
   const totalMs = nonSkipped.reduce((acc, r) => acc + (Number.isFinite(r.ms) ? r.ms : 0), 0);
   // eslint-disable-next-line no-console
-  console.log(`\nShare Page total (sum of calls): ${formatMs(totalMs)} (${nonSkipped.length} calls)`);
+  console.log(`\nShare Page total (wall clock after setup): ${formatMs(wallParallelMs)}`);
+  // eslint-disable-next-line no-console
+  console.log(`Share Page total (sum of calls): ${formatMs(totalMs)} (${nonSkipped.length} calls)`);
   return results;
 }
 

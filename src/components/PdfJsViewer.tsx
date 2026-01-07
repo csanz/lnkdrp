@@ -123,6 +123,14 @@ const SHARE_OWNER_STATS_PREFIX = "lnkdrp_share_owner_stats_v1:";
 type OwnerStats = { views: number; pagesViewed: number };
 type ShareContext = { isOwner: boolean; stats?: OwnerStats };
 
+type HistoryItem = {
+  fromVersion: number | null;
+  toVersion: number | null;
+  createdDate: string | null;
+  summary: string;
+  pagesThatChanged?: Array<{ pageNumber: number; summary: string }>;
+};
+
 function normalizePdfRotation(page: { rotate?: number } | null | undefined): number {
   const raw = typeof page?.rotate === "number" && Number.isFinite(page.rotate) ? page.rotate : 0;
   // Normalize to 0/90/180/270 range; PDF rotation is specified in degrees.
@@ -227,17 +235,13 @@ export function PdfJsViewer({
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
-  const [historyItems, setHistoryItems] = useState<
-    | null
-    | Array<{
-        fromVersion: number | null;
-        toVersion: number | null;
-        createdDate: string | null;
-        summary: string;
-        pagesThatChanged?: Array<{ pageNumber: number; summary: string }>;
-      }>
-  >(null);
+  const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState(true);
   const historyReqIdRef = useRef(0);
+  const historyPrefetchDoneRef = useRef(false);
+  const historyScrollRef = useRef<HTMLDivElement | null>(null);
+  const historySentinelRef = useRef<HTMLDivElement | null>(null);
   const [viewMode, setViewMode] = useState<"single" | "all" | "grid">("single");
   const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
@@ -491,121 +495,162 @@ export function PdfJsViewer({
     return () => document.removeEventListener("pointerdown", onPointerDown, true);
   }, [aiOpen]);
 
+  const historyStateRef = useRef<{ cursor: string | null; hasMore: boolean; loading: boolean }>({
+    cursor: null,
+    hasMore: true,
+    loading: false,
+  });
   useEffect(() => {
-    if (!historyOpen) return;
+    historyStateRef.current = { cursor: historyCursor, hasMore: historyHasMore, loading: historyLoading };
+  }, [historyCursor, historyHasMore, historyLoading]);
+
+  async function loadMoreHistory(reason: "open" | "prefetch" | "scroll") {
     if (!revisionHistoryEnabled) return;
     if (!revisionHistoryUrl) return;
-    if (historyItems) return;
+    if (historyStateRef.current.loading) return;
+    if (!historyStateRef.current.hasMore) return;
 
     const reqId = (historyReqIdRef.current += 1);
-    const startedAt = Date.now();
     const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-
-    setHistoryLoading(true);
-    setHistoryError(null);
-
-    if (process.env.NODE_ENV !== "production") {
-      // eslint-disable-next-line no-console
-      console.log("[lnkdrp][share][history] fetch start", { revisionHistoryUrl, reqId });
-    }
-
     const timeoutId =
       typeof window !== "undefined" && controller
         ? window.setTimeout(() => {
-            // Abort the request, and if this is still the latest request, surface a friendly error.
             try {
               controller.abort();
             } catch {
               // ignore
             }
-            if (historyReqIdRef.current === reqId) {
-              setHistoryError("Timed out loading revision history.");
-              setHistoryLoading(false);
-            }
           }, 10_000)
         : null;
 
-    void (async () => {
-      try {
-        const res = await fetchWithTempUser(revisionHistoryUrl, {
-          cache: "no-store",
-          ...(controller ? { signal: controller.signal } : {}),
-        });
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(text || `Request failed (${res.status})`);
-        }
-        const json = (await res.json().catch(() => null)) as unknown;
+    setHistoryLoading(true);
+    setHistoryError(null);
 
-        // If Fast Refresh / re-renders triggered a newer request, ignore this result.
-        if (historyReqIdRef.current !== reqId) return;
-
-        const changesRaw = json && typeof json === "object" ? (json as any).changes : null;
-        const items = Array.isArray(changesRaw)
-          ? (changesRaw as unknown[])
-              .map((c) => {
-                if (!c || typeof c !== "object") return null;
-                const fromVersion = Number.isFinite((c as any).fromVersion) ? Number((c as any).fromVersion) : null;
-                const toVersion = Number.isFinite((c as any).toVersion) ? Number((c as any).toVersion) : null;
-                const createdDate = typeof (c as any).createdDate === "string" ? (c as any).createdDate : null;
-                const summary = typeof (c as any).summary === "string" ? (c as any).summary : "";
-                const pagesRaw = (c as any).pagesThatChanged;
-                const pagesThatChanged = Array.isArray(pagesRaw)
-                  ? pagesRaw
-                      .map((p: any) => ({
-                        pageNumber:
-                          typeof p?.pageNumber === "number" && Number.isFinite(p.pageNumber)
-                            ? Math.floor(p.pageNumber)
-                            : null,
-                        summary: typeof p?.summary === "string" ? p.summary : "",
-                      }))
-                      .filter((p: any) => typeof p.pageNumber === "number" && p.pageNumber >= 1)
-                  : [];
-                return { fromVersion, toVersion, createdDate, summary: summary.trim(), pagesThatChanged };
-              })
-              .filter(Boolean)
-          : [];
-
-        setHistoryItems(items as any);
-        setHistoryLoading(false);
-
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.log("[lnkdrp][share][history] fetch ok", {
-            reqId,
-            ms: Date.now() - startedAt,
-            count: Array.isArray(items) ? items.length : 0,
-          });
-        }
-      } catch (e) {
-        if (historyReqIdRef.current !== reqId) return;
-        const message = e instanceof Error ? e.message : "Failed to load revision history";
-        setHistoryError(message);
-        setHistoryLoading(false);
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.warn("[lnkdrp][share][history] fetch failed", {
-            reqId,
-            ms: Date.now() - startedAt,
-            message,
-          });
-        }
-      } finally {
-        if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
-      }
+    const limit = historyItems.length ? 18 : 10;
+    const cursor = historyStateRef.current.cursor;
+    const url = (() => {
+      const base = revisionHistoryUrl;
+      const joiner = base.includes("?") ? "&" : "?";
+      const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+      return `${base}${joiner}limit=${encodeURIComponent(String(limit))}${cursorParam}`;
     })();
 
-    // Cleanup: abort in-flight request and ensure we don't stay stuck loading in dev (Fast Refresh).
-    return () => {
-      try {
-        controller?.abort();
-      } catch {
-        // ignore
+    if (process.env.NODE_ENV !== "production") {
+      // eslint-disable-next-line no-console
+      console.log("[lnkdrp][share][history] fetch", { reason, reqId, url });
+    }
+
+    try {
+      const res = await fetchWithTempUser(url, {
+        cache: "no-store",
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `Request failed (${res.status})`);
       }
-      // If this request was the latest one, clear loading so the next render can retry.
-      if (historyReqIdRef.current === reqId) setHistoryLoading(false);
-    };
-  }, [historyItems, historyLoading, historyOpen, revisionHistoryEnabled, revisionHistoryUrl]);
+      const json = (await res.json().catch(() => null)) as any;
+      if (historyReqIdRef.current !== reqId) return;
+
+      const changesRaw = json && typeof json === "object" ? json.changes : null;
+      const nextCursorRaw = json && typeof json === "object" ? json.nextCursor : null;
+
+      const nextItems: HistoryItem[] = Array.isArray(changesRaw)
+        ? (changesRaw as unknown[])
+            .map((c) => {
+              if (!c || typeof c !== "object") return null;
+              const fromVersion = Number.isFinite((c as any).fromVersion) ? Number((c as any).fromVersion) : null;
+              const toVersion = Number.isFinite((c as any).toVersion) ? Number((c as any).toVersion) : null;
+              const createdDate = typeof (c as any).createdDate === "string" ? (c as any).createdDate : null;
+              const summary = typeof (c as any).summary === "string" ? (c as any).summary : "";
+              const pagesRaw = (c as any).pagesThatChanged;
+              const pagesThatChanged = Array.isArray(pagesRaw)
+                ? (pagesRaw as unknown[])
+                    .map((p: any) => {
+                      const n =
+                        typeof p?.pageNumber === "number" && Number.isFinite(p.pageNumber) ? Math.floor(p.pageNumber) : null;
+                      if (!n || n < 1) return null;
+                      const s = typeof p?.summary === "string" ? p.summary : "";
+                      return { pageNumber: n, summary: s };
+                    })
+                    .filter((x): x is { pageNumber: number; summary: string } => Boolean(x))
+                : [];
+              return { fromVersion, toVersion, createdDate, summary: summary.trim(), pagesThatChanged } satisfies HistoryItem;
+            })
+            .filter(Boolean) as HistoryItem[]
+        : [];
+
+      setHistoryItems((prev) => {
+        const seen = new Set(prev.map((x) => `${x.toVersion ?? "?"}:${x.createdDate ?? "?"}`));
+        const merged = [...prev];
+        for (const it of nextItems) {
+          const key = `${it.toVersion ?? "?"}:${it.createdDate ?? "?"}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(it);
+        }
+        return merged;
+      });
+
+      const nextCursor = typeof nextCursorRaw === "string" && nextCursorRaw.trim() ? nextCursorRaw.trim() : null;
+      setHistoryCursor(nextCursor);
+      setHistoryHasMore(Boolean(nextCursor));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "";
+      // Keep wording calm and factual (avoid blame/negativity).
+      setHistoryError(message || "Revision history isn’t available right now.");
+    } finally {
+      if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
+      setHistoryLoading(false);
+    }
+  }
+
+  // Ensure first page loads quickly when the user opens History.
+  useEffect(() => {
+    if (!historyOpen) return;
+    if (!revisionHistoryEnabled) return;
+    if (historyItems.length) return;
+    void loadMoreHistory("open");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyOpen, revisionHistoryEnabled]);
+
+  // Prefetch the first page of history (best-effort) so opening the modal is snappy.
+  useEffect(() => {
+    if (!revisionHistoryEnabled) return;
+    if (!revisionHistoryUrl) return;
+    if (historyPrefetchDoneRef.current) return;
+    if (historyItems.length) return;
+    if (!historyHasMore) return;
+
+    historyPrefetchDoneRef.current = true;
+    const run = () => void loadMoreHistory("prefetch");
+
+    if (typeof (window as any)?.requestIdleCallback === "function") {
+      (window as any).requestIdleCallback(() => run());
+    } else if (typeof window !== "undefined") {
+      window.setTimeout(run, 900);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyHasMore, historyItems.length, revisionHistoryEnabled, revisionHistoryUrl]);
+
+  // Infinite scroll: when the sentinel becomes visible, load more.
+  useEffect(() => {
+    if (!historyOpen) return;
+    if (!historyHasMore) return;
+    const sentinel = historySentinelRef.current;
+    if (!sentinel) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const anyVisible = entries.some((e) => e.isIntersecting);
+        if (!anyVisible) return;
+        void loadMoreHistory("scroll");
+      },
+      { threshold: [0, 0.05, 0.2] },
+    );
+    obs.observe(sentinel);
+    return () => obs.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyHasMore, historyOpen]);
 
   useEffect(() => {
 /**
@@ -1493,18 +1538,7 @@ export function PdfJsViewer({
                   </button>
                 ) : null}
 
-                {shareIdSafe && !shareContext?.isOwner ? (
-                  <>
-                    <div className="hidden h-8 w-px bg-white/10 sm:block" aria-hidden="true" />
-                    <div className="inline-flex h-8 items-center rounded-xl border border-sky-400/20 bg-sky-500/10 px-3">
-                      <span className="whitespace-nowrap text-[10px] font-semibold uppercase tracking-wide text-sky-100/90">
-                        Shared
-                      </span>
-                    </div>
-                  </>
-                ) : null}
-
-                {/* Intentionally do not show the owner-only "Visible to you only" badge on share views. */}
+                {/* Intentionally no share-context badge here; share links are self-evident. */}
               </div>
             </div>
 
@@ -1832,9 +1866,9 @@ export function PdfJsViewer({
           A light history of updates (version + date + summary).
         </div>
 
-        {historyLoading ? (
+        {!historyItems.length && historyLoading ? (
           <div className="mt-5 text-sm text-white/80">Loading…</div>
-        ) : historyError ? (
+        ) : !historyItems.length && historyError ? (
           <div className="mt-5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
             {historyError}
           </div>
@@ -1858,7 +1892,7 @@ export function PdfJsViewer({
                 {Array.isArray(h.pagesThatChanged) && h.pagesThatChanged.length ? (
                   <div className="mt-3 border-t border-white/10 pt-3">
                     <div className="text-[11px] font-semibold uppercase tracking-wide text-white/70">
-                      Pages changed
+                      Pages updated
                     </div>
                     <div className="mt-2 grid gap-2">
                       {h.pagesThatChanged.slice(0, 12).map((p) => (
@@ -1884,6 +1918,13 @@ export function PdfJsViewer({
                 ) : null}
               </div>
             ))}
+
+            {/* Infinite scroll sentinel */}
+            <div ref={historySentinelRef} className="h-4" />
+            {historyLoading ? <div className="text-sm text-white/70">Loading more…</div> : null}
+            {!historyHasMore && !historyLoading ? (
+              <div className="text-sm text-white/60">You’ve reached the start of the history.</div>
+            ) : null}
           </div>
         ) : (
           <div className="mt-5 text-sm text-white/75">No revisions yet.</div>

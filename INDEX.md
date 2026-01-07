@@ -61,7 +61,7 @@
 # Lib
 - `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
 - `src/lib/admin/format.ts` — exports: fmtDate, fmtDuration
-- `src/lib/orgsCache.ts` — exports: OrgsCacheOrg, OrgsCacheSnapshot, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, writeOrgsCacheSnapshot, refreshOrgsCache, setCachedActiveOrgId
+- `src/lib/orgsCache.ts` — exports: OrgsCacheOrg, OrgsCacheSnapshot, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, writeOrgsCacheSnapshot, clearOrgsCache, refreshOrgsCache, setCachedActiveOrgId
 - `src/lib/client/outOfCredits.ts` — exports: OUT_OF_CREDITS_EVENT, dispatchOutOfCredits
 - `src/lib/client/creditsSnapshotRefresh.ts` — exports: CREDITS_SNAPSHOT_REFRESH_EVENT, dispatchCreditsSnapshotRefresh
 - `src/lib/credits/grants.ts` — exports: INCLUDED_CREDITS_PER_CYCLE, buildCycleKey, grantCycleIncludedCredits
@@ -358,6 +358,9 @@
 - `src/app/api/docs/[docId]/changes/route.ts` — API route for \`/api/docs/:docId/changes\`.
   - GET (function) — List replacement change history records for a doc (access-gated).
   - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/changes/[changeId]/route.ts` — API route for \`/api/docs/:docId/changes/:changeId\`.
+  - GET (function) — Fetch a single change (includes large text fields) for on-demand History viewing.
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/docs/[docId]/history/[version]/recipients/route.ts` — API route for \`/api/docs/:docId/history/:version/recipients\`.
   - GET (function) — List org members and whether each opened the given doc version.
   - runtime (const) — Next.js route configuration.
@@ -476,6 +479,11 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/s/[shareId]/page.tsx` — Page for \`/s/:shareId\`.
 - `src/app/s/[shareId]/changes/route.ts` — API route for \`/s/:shareId/changes\`.
+  - GET (function) — Return a light revision history for a shared doc (version + date + summary + page hints).
+    - Supports cursor pagination via `?limit=` and `?cursor=` and returns `{ nextCursor }` when more results are available.
+    - Public caching is enabled when the share is not password-protected; password-protected shares use `no-store`.
+  - runtime (const) — Next.js route configuration.
+  - dynamic (const) — Next.js route configuration.
 - `src/app/s/[shareId]/pdf/route.ts` — API route for \`/s/:shareId/pdf\`.
   - GET (function) — Same-origin PDF proxy for `/s/:shareId`.
   - runtime (const) — Next.js route configuration.
@@ -776,6 +784,8 @@
 - `db/migration/20251229_0004_backfill_orgId_to_personal_org.mjs`
 - `db/migration/20251229_0005_create_org_invite_indexes.mjs`
 - `db/migration/20260105_0001_usage_aggs_and_indexes.mjs`
+- `db/migration/20260107_0001_teams_query_indexes.mjs`
+- `db/migration/20260107_0002_creditledger_on_demand_cyclekey_index.mjs`
 - `scripts/lib/time.mjs`
 - `scripts/mongo-clear.mjs`
 - `scripts/mongo-clear-ai-runs-and-requests.mjs`

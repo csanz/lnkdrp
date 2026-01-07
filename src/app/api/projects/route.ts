@@ -136,6 +136,17 @@ export async function GET(request: Request) {
     // Stable ordering: when `updatedDate` ties (or is null), add a deterministic tiebreaker.
     // Without this, MongoDB is free to return ties in arbitrary order, causing UI "flip" on refresh.
     const projects = await ProjectModel.find(filter)
+      .select({
+        _id: 1,
+        shareId: 1,
+        name: 1,
+        slug: 1,
+        description: 1,
+        docCount: 1,
+        autoAddFiles: 1,
+        updatedDate: 1,
+        createdDate: 1,
+      })
       .sort({ updatedDate: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)

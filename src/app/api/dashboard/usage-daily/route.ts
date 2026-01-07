@@ -8,11 +8,12 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActorForStats } from "@/lib/gating/actor";
+import { resolveActorForStats, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,18 @@ export const dynamic = "force-dynamic";
 // derived data and changes slowly.
 const USAGE_DAILY_CACHE_TTL_MS = 10_000;
 let usageDailyCache: Map<string, { at: number; payload: UsageDailyResponse }> | null = null;
+
+function readCookie(cookieHeader: string, name: string): string | null {
+  const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
+  for (const p of parts) {
+    const idx = p.indexOf("=");
+    if (idx < 0) continue;
+    const k = p.slice(0, idx).trim();
+    if (k !== name) continue;
+    return decodeURIComponent(p.slice(idx + 1));
+  }
+  return null;
+}
 
 function clampDays(v: string | null): 1 | 7 | 30 {
   const n = Number(v);
@@ -53,20 +66,39 @@ type UsageDailyResponse = {
 
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
-    const actor = await resolveActorForStats(request);
     try {
-      if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
-      if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+      // Fast-path: read user id and org id without the heavier actor resolver, then validate membership once.
+      const session = await tryResolveAuthUserId(request);
+      if (!session?.userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      if (!Types.ObjectId.isValid(session.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
+
+      const cookieHeader = request.headers.get("cookie") ?? "";
+      const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
+      const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
+      const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
+      const orgIdStr = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
+
+      // Fallback (rare): if org context is missing, resolve via the full stats actor resolver.
+      const actorOrgId = orgIdStr && Types.ObjectId.isValid(orgIdStr) ? orgIdStr : null;
+      let orgId: Types.ObjectId;
+      if (actorOrgId) {
+        orgId = new Types.ObjectId(actorOrgId);
+      } else {
+        const actor = await resolveActorForStats(request);
+        if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+        orgId = new Types.ObjectId(actor.orgId);
+      }
+
+      const userId = new Types.ObjectId(session.userId);
 
       const url = new URL(request.url);
       const days = clampDays(url.searchParams.get("days"));
 
       await connectMongo();
-      const orgId = new Types.ObjectId(actor.orgId);
 
       usageDailyCache = usageDailyCache ?? new Map();
-      const cacheKey = `${String(actor.orgId)}:${String(actor.userId)}:${String(days)}`;
+      const cacheKey = `${String(orgId)}:${String(userId)}:${String(days)}`;
       const cached = usageDailyCache.get(cacheKey);
       if (cached && Date.now() - cached.at < USAGE_DAILY_CACHE_TTL_MS) {
         return NextResponse.json(cached.payload, { headers: { "cache-control": "no-store" } });
@@ -75,11 +107,12 @@ export async function GET(request: Request) {
       // Permission for "Spend" (owner/admin only), consistent with /api/dashboard/usage.
       const membership = await OrgMembershipModel.findOne({
         orgId,
-        userId: new Types.ObjectId(actor.userId),
+        userId,
         isDeleted: { $ne: true },
       })
         .select({ role: 1 })
         .lean();
+      if (!membership) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       const canViewSpend = role === "owner" || role === "admin";
 

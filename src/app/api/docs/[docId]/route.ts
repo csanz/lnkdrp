@@ -211,6 +211,20 @@ export async function GET(
 
     const upload = lite ? null : await uploadPromise;
 
+    // In `lite=1` mode we avoid hydrating the full Upload, but the doc page still needs the
+    // current version number to render the `vN` badge/link in the top bar.
+    let currentUploadVersion: number | null =
+      upload && Number.isFinite((upload as any).version) ? Number((upload as any).version) : null;
+    if (lite && currentUploadId) {
+      try {
+        const v = await UploadModel.findById(currentUploadId).select({ version: 1 }).lean();
+        const next = v && Number.isFinite((v as any).version) ? Number((v as any).version) : null;
+        if (typeof next === "number") currentUploadVersion = next;
+      } catch {
+        // ignore; keep version null
+      }
+    }
+
     const lastUploadResolved = (function () {
       if (lite) return null;
       if (!upload || typeof upload !== "object") return null;
@@ -389,8 +403,7 @@ export async function GET(
         })),
         isArchived: Boolean(docLean.isArchived),
         currentUploadId: currentUploadId ? String(currentUploadId) : null,
-        currentUploadVersion:
-          upload && Number.isFinite(upload.version) ? upload.version : null,
+        currentUploadVersion,
         blobUrl: docLean.blobUrl ?? null,
         previewImageUrl:
           docLean.previewImageUrl ?? docLean.firstPagePngUrl ?? null,

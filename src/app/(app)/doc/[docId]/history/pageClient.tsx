@@ -144,8 +144,8 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
 
   async function refresh() {
     const [docRes, changesRes] = await Promise.all([
-      fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, { cache: "no-store" }),
-      fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/changes`, { cache: "no-store" }),
+      fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?lite=1`, { cache: "no-store" }),
+      fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/changes?noText=1`, { cache: "no-store" }),
     ]);
 
     if (docRes.ok) {
@@ -195,6 +195,32 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
       setItems(next);
     } else {
       setItems([]);
+    }
+  }
+
+  async function ensureChangeText(changeId: string) {
+    const id = (changeId ?? "").toString().trim();
+    if (!id) return;
+    // Already loaded?
+    const existing = items.find((x) => x.id === id);
+    if (!existing) return;
+    if (existing.previousText || existing.newText) return;
+
+    try {
+      const res = await fetchWithTempUser(
+        `/api/docs/${encodeURIComponent(docId)}/changes/${encodeURIComponent(id)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) return;
+      const json = (await res.json().catch(() => null)) as any;
+      const c = json && typeof json === "object" ? (json as any).change : null;
+      const prevText = typeof c?.previousText === "string" ? c.previousText : "";
+      const newText = typeof c?.newText === "string" ? c.newText : "";
+      setItems((prev) =>
+        prev.map((it) => (it.id === id ? { ...it, previousText: prevText, newText } : it)),
+      );
+    } catch {
+      // ignore; best-effort
     }
   }
 
@@ -594,7 +620,14 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                               <div className="mt-2 text-xs font-medium text-red-700">{rerunErrorById[it.id]}</div>
                             ) : null}
 
-                            <details className="mt-4">
+                            <details
+                              className="mt-4"
+                              onToggle={(e) => {
+                                const el = e.currentTarget;
+                                if (!el.open) return;
+                                void ensureChangeText(it.id);
+                              }}
+                            >
                               <summary className="cursor-pointer select-none text-xs font-medium text-[var(--muted)] hover:text-[var(--fg)]">
                                 View extracted text (previous vs new)
                               </summary>

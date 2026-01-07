@@ -8,10 +8,12 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActorForStats } from "@/lib/gating/actor";
+import { resolveActorForStats, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
+import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,42 +25,67 @@ function clampDays(v: string | null): 1 | 7 | 30 {
   return 30;
 }
 
+function readCookie(cookieHeader: string, name: string): string | null {
+  const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
+  for (const p of parts) {
+    const idx = p.indexOf("=");
+    if (idx < 0) continue;
+    const k = p.slice(0, idx).trim();
+    if (k !== name) continue;
+    return decodeURIComponent(p.slice(idx + 1));
+  }
+  return null;
+}
+
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
-    const actor = await resolveActorForStats(request);
     try {
-      if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
-      if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+      const session = await tryResolveAuthUserId(request);
+      if (!session?.userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      if (!Types.ObjectId.isValid(session.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
+
+      const cookieHeader = request.headers.get("cookie") ?? "";
+      const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
+      const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
+      const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
+      const orgIdStr = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
+
+      // Fallback (rare): if org context is missing, resolve via the full stats actor resolver.
+      const actorOrgId = orgIdStr && Types.ObjectId.isValid(orgIdStr) ? orgIdStr : null;
+      let orgId: Types.ObjectId;
+      if (actorOrgId) {
+        orgId = new Types.ObjectId(actorOrgId);
+      } else {
+        const actor = await resolveActorForStats(request);
+        if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+        if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+        orgId = new Types.ObjectId(actor.orgId);
+      }
+
+      const userId = new Types.ObjectId(session.userId);
 
       const url = new URL(request.url);
       const days = clampDays(url.searchParams.get("days"));
       const includeSpend = url.searchParams.get("includeSpend") === "1";
 
       await connectMongo();
-      const orgId = new Types.ObjectId(actor.orgId);
 
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
-      // Best-effort permission for optional spend aggregate (owner/admin only).
-      let canViewSpend = false;
-    const now = new Date();
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-      if (includeSpend) {
-        const membership = await OrgMembershipModel.findOne({
-          orgId,
-          userId: new Types.ObjectId(actor.userId),
-          isDeleted: { $ne: true },
-        })
-          .select({ role: 1 })
-          .lean();
-        const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
-        canViewSpend = role === "owner" || role === "admin";
-      }
+      // Validate membership once; also yields role for "Spend" permission.
+      const membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean();
+      if (!membership) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
+      const canViewSpend = includeSpend && (role === "owner" || role === "admin");
 
-      const windowStart = includeSpend && canViewSpend && monthStart < since ? monthStart : since;
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
 
-      const agg = (await CreditLedgerModel.aggregate([
+      // Fetch rows for the selected window; month-to-date spend is a separate query (when allowed)
+      // so we don't force the main query to scan extra days.
+      const windowStart = since;
+
+      const rowsAggPromise = CreditLedgerModel.aggregate([
         {
           $match: {
             workspaceId: orgId,
@@ -66,79 +93,73 @@ export async function GET(request: Request) {
             createdDate: { $gte: windowStart },
           },
         },
+        { $sort: { createdDate: -1 } },
+        { $limit: 200 },
         {
-          $facet: {
-            rows: [
-              { $match: { createdDate: { $gte: since } } },
-              { $sort: { createdDate: -1 } },
-              { $limit: 200 },
-              {
-                $lookup: {
-                  from: "docs",
-                  localField: "docId",
-                  foreignField: "_id",
-                  as: "doc",
-                },
-              },
-              { $unwind: { path: "$doc", preserveNullAndEmptyArrays: true } },
-              {
-                $lookup: {
-                  from: "users",
-                  localField: "userId",
-                  foreignField: "_id",
-                  as: "user",
-                },
-              },
-              { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
-              {
-                $project: {
-                  _id: 1,
-                  createdDate: 1,
-                  actionType: 1,
-                  qualityTier: 1,
-                  status: 1,
-                  creditsCharged: 1,
-                  doc: { _id: 1, title: 1 },
-                  user: { _id: 1, name: 1, email: 1 },
-                },
-              },
-            ],
-            monthSpend:
-              includeSpend && canViewSpend
-                ? [
-                    {
-                      $match: {
-                        createdDate: { $gte: monthStart },
-                        status: "charged",
-                      },
-                    },
-                    { $group: { _id: null, sum: { $sum: "$creditsCharged" } } },
-                  ]
-                : [{ $match: { _id: { $exists: false } } }],
+          $lookup: {
+            from: "docs",
+            localField: "docId",
+            foreignField: "_id",
+            as: "doc",
           },
         },
-      ])) as Array<{ rows?: Array<Record<string, any>>; monthSpend?: Array<{ sum?: number }> }>;
+        { $unwind: { path: "$doc", preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: "users",
+            localField: "userId",
+            foreignField: "_id",
+            as: "user",
+          },
+        },
+        { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+        {
+          $project: {
+            _id: 1,
+            createdDate: 1,
+            actionType: 1,
+            qualityTier: 1,
+            status: 1,
+            creditsCharged: 1,
+            doc: { _id: 1, title: 1 },
+            user: { _id: 1, name: 1, email: 1 },
+          },
+        },
+      ]);
 
-    const rowsAgg = Array.isArray(agg?.[0]?.rows) ? agg[0]!.rows! : [];
+      const monthSpendAggPromise = canViewSpend
+        ? CreditLedgerModel.aggregate([
+            {
+              $match: {
+                workspaceId: orgId,
+                eventType: "ai_run",
+                status: "charged",
+                createdDate: { $gte: monthStart },
+              },
+            },
+            { $group: { _id: null, sum: { $sum: "$creditsCharged" } } },
+          ])
+        : Promise.resolve([]);
 
-      // Optional: month-to-date spend (credits * $0.10), owner/admin only.
+      const [rowsAgg, monthAgg] = await Promise.all([rowsAggPromise, monthSpendAggPromise]);
+
+      // Optional: month-to-date spend (credits × USD_CENTS_PER_CREDIT), owner/admin only.
       let monthSpendCents: number | null = null;
-    if (includeSpend && canViewSpend) {
-      const monthAgg = Array.isArray(agg?.[0]?.monthSpend) ? agg[0]!.monthSpend! : [];
-      const credits =
-        typeof monthAgg?.[0]?.sum === "number" && Number.isFinite(monthAgg[0]!.sum!)
-          ? Math.max(0, Math.floor(monthAgg[0]!.sum!))
-          : 0;
-      monthSpendCents = credits * 10;
-    }
+      if (canViewSpend) {
+        const credits =
+          typeof (monthAgg as any)?.[0]?.sum === "number" && Number.isFinite((monthAgg as any)[0].sum)
+            ? Math.max(0, Math.floor((monthAgg as any)[0].sum))
+            : 0;
+        monthSpendCents = credits * USD_CENTS_PER_CREDIT;
+      }
 
       return NextResponse.json(
         {
           ok: true,
           days,
-          canViewSpend,
+          canViewSpend: Boolean(canViewSpend),
           monthSpendCents,
-          rows: rowsAgg.map((r) => ({
+          rows: (Array.isArray(rowsAgg) ? rowsAgg : []).map((r: any) => ({
             id: String(r._id),
             createdAt: r.createdDate ? new Date(r.createdDate).toISOString() : new Date().toISOString(),
             action: typeof r.actionType === "string" ? r.actionType : "unknown",

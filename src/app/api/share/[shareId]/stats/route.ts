@@ -4,8 +4,9 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { after } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -103,26 +104,25 @@ function asPositiveInt(v: unknown): number | null {
 
 export async function GET(request: Request, ctx: { params: Promise<{ shareId: string }> }) {
   return withMongoRequestLogging(request, async () => {
-    const actor = await resolveActor(request);
     try {
       const { shareId } = await ctx.params;
       if (!shareId) {
-        return applyTempUserHeaders(
-          NextResponse.json({ error: "Missing shareId" }, { status: 400 }),
-          actor,
-        );
+        return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
       }
+
+      // Perf: avoid minting temp users for public share stats reads.
+      const session = await tryResolveAuthUserId(request);
 
       await connectMongo();
       const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
         .select({ userId: 1, numberOfViews: 1, numberOfPagesViewed: 1 })
         .lean();
       if (!doc) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
 
-      const isOwner = String(doc.userId) === actor.userId;
-      const res = NextResponse.json(
+      const isOwner = Boolean(session?.userId) && String(doc.userId) === String(session?.userId);
+      return NextResponse.json(
         isOwner
           ? {
               isOwner: true,
@@ -134,10 +134,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
           : { isOwner: false },
         { headers: { "cache-control": "no-store" } },
       );
-      return applyTempUserHeaders(res, actor);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+      return NextResponse.json({ error: message }, { status: 400 });
     }
   });
 }
@@ -148,14 +147,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
 export async function POST(request: Request, ctx: { params: Promise<{ shareId: string }> }) {
   return withMongoRequestLogging(request, async () => {
-    const actor = await resolveActor(request);
     try {
       const { shareId } = await ctx.params;
       if (!shareId) {
-        return applyTempUserHeaders(
-          NextResponse.json({ error: "Missing shareId" }, { status: 400 }),
-          actor,
-        );
+        return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
       }
 
       const body = (await request.json().catch(() => ({}))) as unknown;
@@ -164,10 +159,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const viewerEmailRaw = asNonEmptyString((body as { viewerEmail?: unknown })?.viewerEmail);
       const viewerEmail = viewerEmailRaw ? normalizeEmail(viewerEmailRaw) : null;
       if (!botId) {
-        return applyTempUserHeaders(
-          NextResponse.json({ error: "Missing botId" }, { status: 400 }),
-          actor,
-        );
+        return NextResponse.json({ error: "Missing botId" }, { status: 400 });
       }
 
       await connectMongo();
@@ -175,63 +167,66 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
         .select({ _id: 1 })
         .lean();
       if (!doc) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
 
-      const botIdHash = crypto.createHash("sha256").update(botId).digest("hex");
-      const viewerUserId =
-        actor.kind === "user" && Types.ObjectId.isValid(actor.userId)
-          ? new Types.ObjectId(actor.userId)
-          : null;
+      // Perf: return immediately; analytics updates are best-effort.
+      const docId = doc._id;
       const viewerIp = getClientIp(request);
+      const session = await tryResolveAuthUserId(request);
+      const viewerUserId =
+        session?.userId && Types.ObjectId.isValid(session.userId) ? new Types.ObjectId(session.userId) : null;
+      const botIdHash = crypto.createHash("sha256").update(botId).digest("hex");
 
-      // Deduplicate by (shareId, botIdHash). On first-seen, increment views once.
-      const existing = await ShareViewModel.findOne({ shareId, botIdHash })
-        .select({ _id: 1, pagesSeen: 1 })
-        .lean();
+      after(async () => {
+        try {
+          const setFields: Record<string, unknown> = {};
+          if (viewerIp) setFields.viewerIp = viewerIp;
+          if (viewerUserId) setFields.viewerUserId = viewerUserId;
+          if (viewerEmail) setFields.viewerEmail = viewerEmail;
 
-      if (!existing) {
-        await ShareViewModel.create({
-          shareId,
-          docId: doc._id,
-          botIdHash,
-          pagesSeen: pageNumber ? [pageNumber] : [],
-          ...(viewerIp ? { viewerIp } : {}),
-          ...(viewerUserId ? { viewerUserId } : {}),
-          ...(viewerEmail ? { viewerEmail } : {}),
-        });
-        await DocModel.updateOne(
-          { _id: doc._id },
-          {
-            $inc: {
-              numberOfViews: 1,
-              ...(pageNumber ? { numberOfPagesViewed: 1 } : {}),
+          const upsert = await ShareViewModel.updateOne(
+            { shareId, botIdHash },
+            {
+              $setOnInsert: {
+                shareId,
+                docId,
+                botIdHash,
+                pagesSeen: [],
+              },
+              ...(Object.keys(setFields).length ? { $set: setFields } : {}),
             },
-          },
-        );
-      } else {
-        const seen = Array.isArray(existing.pagesSeen) ? existing.pagesSeen : [];
-        const update: Record<string, unknown> = {};
-        if (viewerIp) update.viewerIp = viewerIp;
-        if (viewerUserId) update.viewerUserId = viewerUserId;
-        if (viewerEmail) update.viewerEmail = viewerEmail;
+            { upsert: true },
+          );
 
-        // If we have new identity info, persist it even if pageNumber is a duplicate.
-        if (Object.keys(update).length > 0) {
-          await ShareViewModel.updateOne({ _id: existing._id }, { $set: update });
-        }
+          const created = Boolean((upsert as any)?.upsertedCount);
+          if (created) {
+            await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
+          }
 
-        if (pageNumber && !seen.includes(pageNumber)) {
-          await ShareViewModel.updateOne({ _id: existing._id }, { $addToSet: { pagesSeen: pageNumber } });
-          await DocModel.updateOne({ _id: doc._id }, { $inc: { numberOfPagesViewed: 1 } });
+          if (pageNumber) {
+            const add = await ShareViewModel.updateOne(
+              { shareId, botIdHash, pagesSeen: { $ne: pageNumber } },
+              {
+                $addToSet: { pagesSeen: pageNumber },
+                ...(Object.keys(setFields).length ? { $set: setFields } : {}),
+              },
+            );
+            const added = Boolean((add as any)?.modifiedCount);
+            if (added) {
+              await DocModel.updateOne({ _id: docId }, { $inc: { numberOfPagesViewed: 1 } });
+            }
+          }
+        } catch {
+          // ignore; best-effort analytics
         }
-      }
+      });
 
       // Do NOT return stats here (owner-only); POST is used by public viewers.
-      return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
+      return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
-      return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+      return NextResponse.json({ error: message }, { status: 400 });
     }
   });
 }

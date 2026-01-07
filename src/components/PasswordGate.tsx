@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { useTheme } from "next-themes";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 /**
@@ -18,9 +20,20 @@ export default function PasswordGate({
   title?: string | null;
   previewUrl?: string | null;
 }) {
+  const { resolvedTheme } = useTheme();
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Avoid hydration mismatches from client-only theme.
+  const mounted = useSyncExternalStore(
+    () => () => {
+      // no-op subscription
+    },
+    () => true,
+    () => false,
+  );
+  const logoSrc = mounted && resolvedTheme === "dark" ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
 
   const previewSrc =
     typeof previewUrl === "string" && (previewUrl.startsWith("/") || /^https?:\/\//i.test(previewUrl))
@@ -46,18 +59,27 @@ export default function PasswordGate({
   }
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-50">
+    <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
       <div className="mx-auto flex w-full max-w-md flex-col items-center px-6 py-16">
-        <div className="mb-8 inline-flex items-center justify-center">
-          <Image src="/icon-white.svg?v=3" alt="LinkDrop" width={34} height={34} priority />
-        </div>
+        <header className="mb-8 w-full">
+          <div className="flex items-center justify-center">
+            <Link
+              href="/"
+              className="inline-flex items-center"
+              aria-label="Home"
+              title="LinkDrop"
+            >
+              <Image src={logoSrc} alt="LinkDrop" width={34} height={34} priority />
+            </Link>
+          </div>
+        </header>
 
-        <div className="w-full rounded-3xl border border-white/10 bg-white/5 p-6 shadow-sm backdrop-blur">
-          <div className="text-base font-semibold text-white">Password required</div>
-          <div className="mt-2 text-sm text-white/70">
+        <div className="w-full rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-sm">
+          <div className="text-base font-semibold text-[var(--fg)]">Password required</div>
+          <div className="mt-2 text-sm text-[var(--muted)]">
             {title ? (
               <>
-                Enter the password to view <span className="font-semibold text-white/90">{title}</span>.
+                Enter the password to view <span className="font-semibold text-[var(--fg)]">{title}</span>.
               </>
             ) : (
               "Enter the password to view this document."
@@ -65,18 +87,18 @@ export default function PasswordGate({
           </div>
 
           {previewSrc ? (
-            <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+            <div className="mt-5 flex items-center justify-center overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewSrc}
                 alt={title ? `Preview of ${title}` : "Document preview"}
-                className="aspect-[16/9] w-full object-cover"
+                className="block max-h-56 w-auto max-w-full object-contain"
               />
             </div>
           ) : null}
 
           <div className="mt-5">
-            <label className="text-xs font-medium text-white/75" htmlFor="share-password">
+            <label className="text-xs font-medium text-[var(--muted-2)]" htmlFor="share-password">
               Password
             </label>
             <input
@@ -90,7 +112,7 @@ export default function PasswordGate({
                 if (!password.trim() || submitting) return;
                 void unlock();
               }}
-              className="mt-2 h-10 w-full rounded-lg border border-white/10 bg-white/5 px-3 text-sm text-white placeholder:text-white/35 focus:outline-none focus:ring-2 focus:ring-white/15"
+              className="mt-2 h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 text-sm text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
               placeholder="Enter password"
               autoComplete="current-password"
               autoFocus
@@ -108,7 +130,7 @@ export default function PasswordGate({
               type="button"
               onClick={() => void unlock()}
               disabled={!password.trim() || submitting}
-              className="inline-flex items-center justify-center rounded-lg bg-white/90 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60"
             >
               {submitting ? "Unlocking…" : "Unlock"}
             </button>

@@ -39,6 +39,12 @@ export async function fetchJson<T>(
     // Important: We only do this for *authentication* failures (not every 401),
     // because some endpoints use 401 for other flows (e.g. wrong share password).
     if (typeof window !== "undefined" && res.status === 401 && shouldRedirectHomeForAuthFailure(message)) {
+      // eslint-disable-next-line no-console
+      console.error("[lnkdrp][fetchJson] auth failure; redirecting home", {
+        status: res.status,
+        url: typeof input === "string" ? input : "fetch",
+        message,
+      });
       try {
         if (window.location.pathname !== "/") window.location.assign("/");
       } catch {

@@ -141,6 +141,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MetricsResponse | null>(null);
+  const [viewersLoading, setViewersLoading] = useState(false);
   const [days, setDays] = useState(15);
   const [rangeOpen, setRangeOpen] = useState(false);
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
@@ -153,7 +154,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
 
     async function load() {
       try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, { cache: "no-store" });
+        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?lite=1`, { cache: "no-store" });
         if (res.status === 404) {
           if (!cancelled) router.replace("/dashboard");
           return;
@@ -203,9 +204,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     async function loadMetrics() {
       setLoading(true);
       setError(null);
+      setViewersLoading(false);
       try {
         const res = await fetchWithTempUser(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}`,
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1`,
           { cache: "no-store" },
         );
         if (res.status === 404) {
@@ -234,6 +236,44 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       cancelled = true;
     };
   }, [docId, days]);
+
+  // Load the expensive viewers list after the lightweight chart/totals payload arrives.
+  useEffect(() => {
+    if (!data?.ok) return;
+    if (viewersLoading) return;
+    // If viewers are already present, don't refetch.
+    if (Array.isArray(data.viewers) && data.viewers.length) return;
+    let cancelled = false;
+    setViewersLoading(true);
+    void (async () => {
+      try {
+        const res = await fetchWithTempUser(
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&viewers=1&viewersOnly=1`,
+          { cache: "no-store" },
+        );
+        if (!res.ok) return;
+        const json = (await res.json().catch(() => null)) as any;
+        if (cancelled) return;
+        if (!json || typeof json !== "object" || json.ok !== true) return;
+        setData((prev) => {
+          if (!prev || typeof prev !== "object") return prev as any;
+          const next = { ...(prev as any) };
+          next.totals = {
+            ...(prev as any).totals,
+            authenticatedViewers: typeof json?.totals?.authenticatedViewers === "number" ? json.totals.authenticatedViewers : (prev as any)?.totals?.authenticatedViewers ?? 0,
+          };
+          next.viewers = Array.isArray(json.viewers) ? json.viewers : [];
+          return next as MetricsResponse;
+        });
+      } finally {
+        if (!cancelled) setViewersLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docId, days, data?.ok]);
 
   const views = data?.totals?.views ?? 0;
   const downloads = data?.totals?.downloads ?? 0;
@@ -354,7 +394,16 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                     ) : (
                       <>
                         <span className="tabular-nums">{pagesViewed}</span> pages viewed ·{" "}
-                        <span className="tabular-nums">{authedViewers}</span> authenticated viewers
+                        {viewersLoading ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="h-3 w-12 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                            <span>authenticated viewers</span>
+                          </span>
+                        ) : (
+                          <>
+                            <span className="tabular-nums">{authedViewers}</span> authenticated viewers
+                          </>
+                        )}
                       </>
                     )}
                   </div>

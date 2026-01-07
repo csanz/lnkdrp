@@ -499,7 +499,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   useEffect(() => {
     let cancelled = false;
     let timeoutId: number | null = null;
-    let delayMs = 900;
+    let delayMs = 1500;
     let consecutiveNotFound = 0;
 
     async function refreshOnce(): Promise<boolean> {
@@ -605,11 +605,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         }
 
         // Keep polling even when ready:
-        // "Replace file" keeps the same doc id, so if we stop polling once the doc is ready,
-        // replacements can get stuck in `preparing` (the server finishes, but the client never
-        // fetches the updated status). Instead, poll slowly when ready and quickly when preparing.
+        // Stop polling when ready:
+        // We only need aggressive polling while the doc is preparing (initial upload or replacement).
+        // For "replace file", we keep polling while the replace flow is active (replaceUploadId set).
         const isReady = data.doc.status === "ready" && Boolean(data.doc.shareId);
-        delayMs = isReady ? 5_000 : 900;
+        delayMs = isReady ? 5_000 : 1500;
 
         setDoc((prev) => {
           const next = { ...prev, ...data.doc };
@@ -625,6 +625,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         });
         setCurrentUpload(data.upload ?? null);
         setHasHydratedFromServer(true);
+        if (isReady && !replaceUploadId) return false;
         return true;
       } catch {
         // Network errors: keep polling but back off a bit.
@@ -645,7 +646,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       cancelled = true;
       if (timeoutId) window.clearTimeout(timeoutId);
     };
-  }, [doc.id, doc.currentUploadId]);
+  }, [doc.id, doc.currentUploadId, replaceUploadId]);
 
   useEffect(() => {
     if (!replaceUploadId) return;
