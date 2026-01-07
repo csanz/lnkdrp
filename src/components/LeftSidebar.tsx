@@ -2461,14 +2461,19 @@ function StablePlusMinusIcon({ expanded }: { expanded: boolean }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.75"
+      strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
       className="h-4 w-4"
     >
-      <path d="M6 12h12" />
-      {!expanded ? <path d="M12 6v12" /> : null}
+      {expanded ? (
+        // plus
+        <path d="m4.5 5.25 7.5 7.5 7.5-7.5m-15 6 7.5 7.5 7.5-7.5" />
+      ) : (
+        // minus
+        <path d="m5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5" />
+      )}
     </svg>
   );
 }

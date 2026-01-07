@@ -13,6 +13,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, YAxis } f
 
 type MetricsResponse = {
   ok: true;
+  docTitle?: string;
   days: number;
   totals: { views: number; downloads: number; pagesViewed: number; authenticatedViewers: number };
   downloadsEnabled?: boolean;
@@ -146,38 +147,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [rangeOpen, setRangeOpen] = useState(false);
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
 
-  useEffect(() => {
-    let cancelled = false;
-/**
- * Load (updates state (setDocTitle); uses fetchWithTempUser, encodeURIComponent, json).
- */
-
-    async function load() {
-      try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?lite=1`, { cache: "no-store" });
-        if (res.status === 404) {
-          if (!cancelled) router.replace("/dashboard");
-          return;
-        }
-        if (!res.ok) return;
-        const json = (await res.json()) as unknown;
-        const t =
-          json &&
-          typeof json === "object" &&
-          (json as { doc?: unknown }).doc &&
-          typeof (json as { doc: { title?: unknown } }).doc.title === "string"
-            ? String((json as { doc: { title: string } }).doc.title).trim()
-            : "";
-        if (!cancelled) setDocTitle(t);
-      } catch {
-        // ignore
-      }
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [docId]);
+  // Doc title now comes back as part of /shareviews to avoid an extra API call on load.
 
   useEffect(() => {
     function onPointerDown(e: MouseEvent | PointerEvent) {
@@ -223,7 +193,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
         if (!json || typeof json !== "object" || !(json as { ok?: unknown }).ok) {
           throw new Error("Invalid response");
         }
-        setData(json as MetricsResponse);
+        const parsed = json as MetricsResponse;
+        setData(parsed);
+        const t = typeof parsed?.docTitle === "string" ? parsed.docTitle.trim() : "";
+        if (!cancelled && t) setDocTitle(t);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load metrics");
       } finally {

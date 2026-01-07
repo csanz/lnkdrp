@@ -864,7 +864,6 @@
 - `src/app/api/uploads/[uploadId]/route.ts`
 - `src/app/api/uploads/route.ts`
 - `src/app/client-upload/page.tsx`
-- `src/app/favicon.ico`
 - `src/app/globals.css`
 - `src/app/icon.svg`
 - `src/app/layout.tsx`

@@ -1463,16 +1463,6 @@ async function documentMetricsBench(args: Args): Promise<BenchResult[]> {
     console.log(`${label} -> ${statusLabel} (${okLabel}) in ${formatMs(r.ms)}${extra}`);
   };
 
-  const docRes = await timedFetchJson({
-    name: "docs:get",
-    url: `${base}/api/docs/${encodeURIComponent(docId)}?lite=1`,
-    method: "GET",
-    headers,
-    timeoutMs: args.timeoutMs,
-  });
-  results.push(docRes);
-  printResult(`GET ${urlToRoute(docRes.url)}`, docRes);
-
   const days = 15;
   const shareviewsRes = await timedFetchJson({
     name: `docs:shareviews(days=${days})`,

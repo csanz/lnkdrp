@@ -1841,37 +1841,71 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 hasSidePanel ? "lg:grid-cols-[1.35fr_0.65fr]" : "lg:grid-cols-[1fr]",
               ].join(" ")}
             >
-              {replaceNotice ? (
-                <div
-                  className={[
-                    "rounded-2xl border px-4 py-3 text-sm",
-                    replaceNotice.kind === "success"
-                      ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200"
-                      : "border-red-300/30 bg-red-400/10 text-red-200",
-                  ].join(" ")}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-white/70">
-                        {replaceNotice.kind === "success" ? "Upload complete" : "Upload failed"}
+              {/* PDF left, info panel right (desktop). On mobile: show the PDF first, then the side panel. */}
+              <div className="order-1 min-h-0 h-full flex flex-col gap-3 lg:order-1">
+                {replaceNotice ? (
+                  <div
+                    className={[
+                      "rounded-xl border px-3 py-2 text-sm",
+                      replaceNotice.kind === "success"
+                        ? [
+                            // Light mode
+                            "border-emerald-200 bg-emerald-50 text-emerald-950",
+                            // Dark mode (keep existing look)
+                            "dark:border-emerald-300/30 dark:bg-emerald-400/10 dark:text-emerald-200",
+                          ].join(" ")
+                        : [
+                            "border-red-200 bg-red-50 text-red-950",
+                            "dark:border-red-300/30 dark:bg-red-400/10 dark:text-red-200",
+                          ].join(" "),
+                    ].join(" ")}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div
+                          className={[
+                            "text-[11px] font-semibold uppercase tracking-wide",
+                            replaceNotice.kind === "success"
+                              ? "text-emerald-700 dark:text-white/70"
+                              : "text-red-700 dark:text-white/70",
+                          ].join(" ")}
+                        >
+                          {replaceNotice.kind === "success" ? "Upload complete" : "Upload failed"}
+                        </div>
+                        <div
+                          className={[
+                            "mt-1 text-sm font-medium",
+                            replaceNotice.kind === "success"
+                              ? "text-emerald-950 dark:text-white/90"
+                              : "text-red-950 dark:text-white/90",
+                          ].join(" ")}
+                        >
+                          {replaceNotice.summary}
+                        </div>
                       </div>
-                      <div className="mt-1 text-sm font-medium text-white/90">{replaceNotice.summary}</div>
-                    </div>
-                    <div className="shrink-0">
-                      <Link
-                        href={`/doc/${encodeURIComponent(doc.id)}/history`}
-                        className={[
-                          "inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold",
-                          "bg-white/10 text-white/90 hover:bg-white/15",
-                          highlightVersionLink && replaceNotice.kind === "success" ? "lnkdrp-heartbeat-glow" : "",
-                        ].join(" ")}
-                      >
-                        {replaceNotice.toVersion ? `View v${replaceNotice.toVersion} changes` : "View version history"}
-                      </Link>
+                      <div className="shrink-0">
+                        <Link
+                          href={`/doc/${encodeURIComponent(doc.id)}/history`}
+                          className={[
+                            "inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold",
+                            replaceNotice.kind === "success"
+                              ? [
+                                  "bg-emerald-600/10 text-emerald-900 hover:bg-emerald-600/15",
+                                  "dark:bg-white/10 dark:text-white/90 dark:hover:bg-white/15",
+                                ].join(" ")
+                              : [
+                                  "bg-red-600/10 text-red-900 hover:bg-red-600/15",
+                                  "dark:bg-white/10 dark:text-white/90 dark:hover:bg-white/15",
+                                ].join(" "),
+                            highlightVersionLink && replaceNotice.kind === "success" ? "lnkdrp-heartbeat-glow" : "",
+                          ].join(" ")}
+                        >
+                          {replaceNotice.toVersion ? `View v${replaceNotice.toVersion} changes` : "View version history"}
+                        </Link>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ) : null}
+                ) : null}
 
               <style jsx global>{`
                 @keyframes lnkdrpHeartbeatGlow {
@@ -1902,7 +1936,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 }
               `}</style>
 
-                <section className="relative min-h-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                <section className="relative flex-1 min-h-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                   {/* progress bar (pinned top) */}
                   {(!hasHydratedFromServer ||
                     doc.status === "preparing" ||
@@ -2009,7 +2043,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                   ) : null}
 
                 </section>
+              </div>
 
+              <div className="order-2 min-h-0 h-full lg:order-2">
                 {doc.status === "ready" && !isReceivedViaRequest ? (
                   <DocSharePanel
                     docId={doc.id}
@@ -2525,6 +2561,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
               </div>
             </div>
           </div>
+        </div>
       </div>
 
       <Modal open={showStarAuthModal} onClose={() => setShowStarAuthModal(false)} ariaLabel="Sign up to star docs">

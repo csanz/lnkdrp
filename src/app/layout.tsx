@@ -32,9 +32,6 @@ export const metadata: Metadata = {
     template: "%s - LinkDrop",
   },
   description: "Share your docs with a simple link.",
-  icons: {
-    icon: "/icon.svg",
-  },
   metadataBase: getMetadataBase(),
   openGraph: {
     title: "LinkDrop - Share Docs",

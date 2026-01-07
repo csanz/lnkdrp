@@ -69,6 +69,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       })
         .select({
           _id: 1,
+          title: 1,
           numberOfViews: 1,
           numberOfPagesViewed: 1,
           shareAllowPdfDownload: 1,
@@ -187,6 +188,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const res = NextResponse.json(
         {
         ok: true,
+        docTitle: typeof (doc as any)?.title === "string" ? String((doc as any).title).trim() : "",
         days,
         totals: {
           views: totalViews,
