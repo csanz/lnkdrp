@@ -21,7 +21,6 @@ import Markdown from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
 import {
   isDocStarred,
-  refreshStarredDocsFromServer,
   STARRED_DOCS_CHANGED_EVENT,
   toggleStarredDoc,
   upsertStarredDocTitle,
@@ -206,6 +205,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
   const [localPreviewUploadId, setLocalPreviewUploadId] = useState<string | null>(null);
+  // UX/perf: when a preview image is available, show it first and only load the PDF iframe on intent.
+  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
+  const pdfViewerOpenedRef = useRef(false);
+  const pdfAutoOpenDeadlineRef = useRef<number | null>(null);
   const [isCopying, setIsCopying] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
@@ -247,6 +250,48 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     if (doc.project?.isRequest && doc.projectId) return doc.projectId;
     return null;
   }, [doc.receivedViaRequestProjectId, doc.project?.isRequest, doc.projectId]);
+
+  // If there's no preview available (or someone deep-links with #page=...), don't block on "open".
+  useEffect(() => {
+    if (pdfViewerOpen) return;
+    if (!doc.blobUrl) return;
+    const hash = typeof window !== "undefined" ? window.location.hash : "";
+    if (hash && /page=\d+/i.test(hash)) {
+      pdfViewerOpenedRef.current = true;
+      setPdfViewerOpen(true);
+    }
+  }, [pdfViewerOpen, doc.blobUrl, doc.previewImageUrl]);
+
+  // Reconcile open/closed state after the real doc data hydrates.
+  // The route entrypoint initializes `initialDoc` as a placeholder (no preview/pdf), so we need
+  // to decide once `doc.blobUrl` / `doc.previewImageUrl` arrive from `/api/docs/:docId`.
+  useEffect(() => {
+    if (pdfViewerOpenedRef.current) return;
+    if (!doc.blobUrl) return;
+    // If a preview exists, default to preview-first (closed).
+    if (doc.previewImageUrl && !localPreviewUrl) {
+      setPdfViewerOpen(false);
+      pdfAutoOpenDeadlineRef.current = null;
+      return;
+    }
+    // If we haven't hydrated yet, don't guess—avoid mounting the iframe early.
+    if (!hasHydratedFromServer) return;
+    // If there's no preview, wait a beat in case it arrives shortly after the PDF does.
+    // This prevents a "flash mount" that starts a PDF fetch and then immediately closes.
+    const now = Date.now();
+    if (pdfAutoOpenDeadlineRef.current === null) {
+      pdfAutoOpenDeadlineRef.current = now + 1500;
+      const t = window.setTimeout(() => {
+        // Re-check after the grace period.
+        if (pdfViewerOpenedRef.current) return;
+        if (!docRef.current?.blobUrl) return;
+        if (docRef.current?.previewImageUrl) return;
+        setPdfViewerOpen(true);
+      }, 1550);
+      return () => window.clearTimeout(t);
+    }
+    if (now >= pdfAutoOpenDeadlineRef.current) setPdfViewerOpen(true);
+  }, [doc.blobUrl, doc.previewImageUrl, localPreviewUrl, hasHydratedFromServer]);
 
   const requestReviewEnabledForRequestRepo = useMemo(() => {
     if (!requestProjectId) return false;
@@ -370,7 +415,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
   useEffect(() => {
     // Keep local starred state in sync (this tab + other tabs).
-    void refreshStarredDocsFromServer({ bootstrap: true });
     setStarred(isDocStarred(doc.id));
 /**
  * Handle changed events; updates state (setStarred); uses setStarred, isDocStarred.
@@ -401,38 +445,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     };
   }, [doc.id]);
 
+  // Avoid fetching session during initial paint; we only need it when the user tries to star.
   useEffect(() => {
-    // Best-effort session detection. Only relevant when auth is enabled.
-    if (!authEnabled) {
-      setIsSignedIn(null);
-      return;
-    }
-
-    let cancelled = false;
-/**
- * Load Session (updates state (setIsSignedIn); uses fetch, setIsSignedIn, json).
- */
-
-    async function loadSession() {
-      try {
-        const res = await fetch("/api/auth/session", { cache: "no-store" });
-        if (!res.ok) {
-          if (!cancelled) setIsSignedIn(false);
-          return;
-        }
-        const json = (await res.json()) as { user?: unknown };
-        if (cancelled) return;
-        const hasUser = Boolean(json && typeof json === "object" && (json as { user?: unknown }).user);
-        setIsSignedIn(hasUser);
-      } catch {
-        if (!cancelled) setIsSignedIn(false);
-      }
-    }
-
-    void loadSession();
-    return () => {
-      cancelled = true;
-    };
+    if (!authEnabled) setIsSignedIn(null);
   }, [authEnabled]);
 /**
  * Handle Toggle Star (updates state (setIsSignedIn, setShowStarAuthModal, setStarred); uses fetch, json, Boolean).
@@ -661,13 +676,14 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   }, [doc.id, doc.currentUploadId, replaceUploadId]);
 
   useEffect(() => {
-    if (!replaceUploadId) return;
+    const uploadId = replaceUploadId;
+    if (!uploadId) return;
     let cancelled = false;
     let intervalId: number | null = null;
 
     async function poll() {
       try {
-        const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(replaceUploadId)}`, { cache: "no-store" });
+        const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}`, { cache: "no-store" });
         if (!res.ok) return;
         const json = (await res.json().catch(() => null)) as any;
         if (cancelled) return;
@@ -1969,7 +1985,48 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           </div>
                         </div>
                       </div>
-                    ) : doc.status === "ready" && doc.blobUrl ? (
+                    ) : !localPreviewUrl && !pdfViewerOpen && doc.blobUrl && doc.previewImageUrl ? (
+                      <div className="relative h-full w-full">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={doc.previewImageUrl}
+                          alt="Document preview"
+                          loading="eager"
+                          fetchPriority="high"
+                          decoding="async"
+                          className="h-full w-full object-contain"
+                        />
+                        <div className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--panel)]/95 px-4 py-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                            Preview
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              pdfViewerOpenedRef.current = true;
+                              setPdfViewerOpen(true);
+                            }}
+                            className="rounded-lg bg-[var(--primary-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
+                          >
+                            Open PDF
+                          </button>
+                        </div>
+                      </div>
+                    ) : !localPreviewUrl && !pdfViewerOpen && doc.blobUrl && !doc.previewImageUrl ? (
+                      <div className="grid h-full place-items-center px-6 text-center">
+                        <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-6 py-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                            Preview
+                          </div>
+                          <div className="mt-2 text-sm font-medium text-[var(--fg)]">
+                            Preparing preview…
+                          </div>
+                          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
+                            <div className="h-full w-1/3 bg-[var(--primary-bg)] animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
+                          </div>
+                        </div>
+                      </div>
+                    ) : pdfViewerOpen && doc.status === "ready" && doc.blobUrl ? (
                       <iframe
                         title="PDF"
                         src={buildCachedPdfIframeUrl({
@@ -1993,7 +2050,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         ].join(" ")}
                         allow="fullscreen"
                       />
-                    ) : doc.blobUrl ? (
+                    ) : pdfViewerOpen && doc.blobUrl ? (
                       <iframe
                         title="PDF"
                         src={buildCachedPdfIframeUrl({

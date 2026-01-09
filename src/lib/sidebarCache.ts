@@ -54,6 +54,7 @@ export type SidebarCacheSnapshot = {
 };
 
 const STORAGE_KEY_BASE = "lnkdrp-sidebar-cache-v3";
+const ETAG_KEY_BASE = "lnkdrp-sidebar-cache-etag-v1";
 export const ACTIVE_ORG_STORAGE_KEY = "lnkdrp-active-org-id";
 export const ACTIVE_ORG_CHANGED_EVENT = "lnkdrp-active-org-changed";
 const MIN_REFRESH_MS = 1500;
@@ -100,6 +101,29 @@ export function setActiveOrgIdForCaches(orgId: string | null): void {
 
 function storageKeyForOrg(orgId: string | null): string {
   return `${STORAGE_KEY_BASE}:${orgId ?? "anon"}`;
+}
+
+function etagStorageKeyForOrg(orgId: string | null): string {
+  return `${ETAG_KEY_BASE}:${orgId ?? "anon"}`;
+}
+
+function readEtag(orgId: string | null): string {
+  if (!isBrowser()) return "";
+  try {
+    return window.localStorage.getItem(etagStorageKeyForOrg(orgId)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeEtag(orgId: string | null, etag: string): void {
+  if (!isBrowser()) return;
+  try {
+    if (etag) window.localStorage.setItem(etagStorageKeyForOrg(orgId), etag);
+    else window.localStorage.removeItem(etagStorageKeyForOrg(orgId));
+  } catch {
+    // ignore
+  }
 }
 
 /** Return whether a value looks like a valid SidebarCacheSnapshot (best-effort). */
@@ -201,9 +225,13 @@ export function clearSidebarCache(opts?: { orgId?: string | null; memoryOnly?: b
           if (k === STORAGE_KEY_BASE || k.startsWith(`${STORAGE_KEY_BASE}:`)) {
             window.localStorage.removeItem(k);
           }
+          if (k === ETAG_KEY_BASE || k.startsWith(`${ETAG_KEY_BASE}:`)) {
+            window.localStorage.removeItem(k);
+          }
         }
       } else {
         window.localStorage.removeItem(storageKeyForOrg(orgId));
+        window.localStorage.removeItem(etagStorageKeyForOrg(orgId));
       }
       // Best-effort: clear legacy keys as well.
       window.localStorage.removeItem(STORAGE_KEY_BASE);
@@ -248,60 +276,55 @@ export async function refreshSidebarCache(opts?: { force?: boolean; reason?: str
 
   if (!force && recentlyRefreshed) return;
   const inFlight = inFlightByKey.get(key) ?? null;
-  if (inFlight && !force) return inFlight;
+  // Coalesce concurrent refresh calls (even when `force` is true) to avoid
+  // duplicate network work during app boot / org-sync transitions.
+  if (inFlight) return inFlight;
 
   const run = (async () => {
     try {
-      const [dRes, pRes, rRes] = await Promise.all([
-        fetchWithTempUser(`/api/docs?limit=5&page=1&sidebar=1`, { cache: "no-store" }),
-        fetchWithTempUser(`/api/projects?limit=10&page=1&sidebar=1`, { cache: "no-store" }),
-        fetchWithTempUser(`/api/requests?limit=10&page=1&sidebar=1`, { cache: "no-store" }),
-      ]);
+      const etag = readEtag(orgId);
+      const res = await fetchWithTempUser(`/api/sidebar?sidebar=1`, {
+        cache: "no-store",
+        headers: etag ? { "if-none-match": etag } : undefined,
+      });
 
-      const dJson = dRes.ok
-        ? ((await dRes.json()) as {
-            docs?: SidebarDocListItem[];
-            total?: number;
-            page?: number;
-            limit?: number;
-          })
-        : {};
-      const pJson = pRes.ok
-        ? ((await pRes.json()) as {
-            projects?: SidebarProjectListItem[];
-            total?: number;
-            page?: number;
-            limit?: number;
-          })
-        : {};
-      const rJson = rRes.ok
-        ? ((await rRes.json()) as {
-            items?: SidebarProjectListItem[];
-            total?: number;
-            page?: number;
-            limit?: number;
+      // 304 means "no change"; still bump timestamp so we don't refetch too aggressively.
+      if (res.status === 304) {
+        const prev = getSidebarCacheSnapshot({ orgId });
+        if (prev) setSidebarCacheSnapshot({ ...prev, updatedAt: Date.now() }, { orgId });
+        return;
+      }
+
+      const nextEtag = res.headers.get("etag") ?? "";
+      if (nextEtag) writeEtag(orgId, nextEtag);
+
+      const json = res.ok
+        ? ((await res.json()) as {
+            docs?: Paged<SidebarDocListItem>;
+            projects?: Paged<SidebarProjectListItem>;
+            requests?: Paged<SidebarProjectListItem>;
           })
         : {};
 
       const next: SidebarCacheSnapshot = {
         updatedAt: Date.now(),
         docs: {
-          items: Array.isArray(dJson.docs) ? dJson.docs : [],
-          total: typeof dJson.total === "number" ? dJson.total : 0,
-          page: typeof dJson.page === "number" ? dJson.page : 1,
-          limit: typeof dJson.limit === "number" ? dJson.limit : 5,
+          items: Array.isArray(json.docs?.items) ? json.docs!.items : [],
+          total: typeof json.docs?.total === "number" ? json.docs.total : 0,
+          page: typeof json.docs?.page === "number" ? json.docs.page : 1,
+          limit: typeof json.docs?.limit === "number" ? json.docs.limit : 5,
         },
         projects: {
-          items: Array.isArray(pJson.projects) ? pJson.projects : [],
-          total: typeof pJson.total === "number" ? pJson.total : 0,
-          page: typeof pJson.page === "number" ? pJson.page : 1,
-          limit: typeof pJson.limit === "number" ? pJson.limit : 10,
+          items: Array.isArray(json.projects?.items) ? json.projects!.items : [],
+          total: typeof json.projects?.total === "number" ? json.projects.total : 0,
+          page: typeof json.projects?.page === "number" ? json.projects.page : 1,
+          limit: typeof json.projects?.limit === "number" ? json.projects.limit : 10,
         },
         requests: {
-          items: Array.isArray(rJson.items) ? rJson.items : [],
-          total: typeof rJson.total === "number" ? rJson.total : 0,
-          page: typeof rJson.page === "number" ? rJson.page : 1,
-          limit: typeof rJson.limit === "number" ? rJson.limit : 10,
+          items: Array.isArray(json.requests?.items) ? json.requests!.items : [],
+          total: typeof json.requests?.total === "number" ? json.requests.total : 0,
+          page: typeof json.requests?.page === "number" ? json.requests.page : 1,
+          limit: typeof json.requests?.limit === "number" ? json.requests.limit : 10,
         },
       };
 

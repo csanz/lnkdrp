@@ -129,8 +129,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
     window.addEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
     window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
     window.addEventListener("storage", onStorage);
-    // Best-effort sync from MongoDB source-of-truth into local cache.
-    void refreshStarredDocsFromServer({ bootstrap: true });
+    // Avoid extra mount-time network work; LeftSidebar best-effort syncs starred docs shortly after mount.
     return () => {
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
       window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);

@@ -114,7 +114,12 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Doc page**: `/doc/:docId`
   - Shows doc status (`draft`/`preparing`/`ready`/`failed`) and updates as processing completes.
+  - Shows a fast **preview image first** (when available) and loads the full PDF viewer on intent (click **Open deck**) to reduce initial load time on large decks.
   - PDF viewing via `PdfJsViewer` once the PDF is ready (owner uses a same-origin cached PDF proxy at `/api/docs/:docId/pdf`).
+- **Doc metrics page**: `/doc/:docId/metrics`
+  - Loads charts/totals quickly from `/api/docs/:docId/shareviews`.
+  - Viewers list loads shortly after (background) and avoids a Mongo `$lookup` by using denormalized viewer snapshots stored on `ShareView`.
+  - Shows both **authenticated viewers** and **anonymous viewers** (best-effort, per browser/device), including per-viewer **pages viewed** (unique pages seen).
 - **Doc replacement change history**:
   - When the owner replaces a doc file (creating a new upload version), the server stores a best-effort “what changed” record (previous text, new text, summary + changes list).
   - Changes are only accessible to users who have access to the doc (API: `/api/docs/:docId/changes`).
@@ -148,9 +153,10 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 ## Recipient share view (`/s/:shareId`)
 
 - **Public share page**:
-  - Renders a PDF viewer when the PDF is available; otherwise shows a “preparing” fallback with an image preview (if present).
+  - If the PDF isn’t available yet, shows a “preparing” fallback with an image preview (if present).
   - The viewer includes an **All pages** mode (scroll the full document) and a **Grid** mode (thumbnail overview of all pages, click to open).
   - Grid and All-pages views are responsive and fit to the available viewport width by default.
+  - In **Single page** mode, clicking past the first/last page shows a tiny “First page” / “Last page” hint (semi-transparent, fades away).
 - **Optional revision history**:
   - If enabled by the owner, recipients can open a **Revision history** modal that shows a light list of updates (no owner-only details).
   - The history modal is optimized for speed: it **prefetches** the first page of history in the background and loads additional items **lazily as you scroll**.
@@ -260,6 +266,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - `/api/projects/:projectSlug/docs`.
 - **Project page**:
   - `/project/:projectSlug` (app shell) and public-ish route under `/p/:projectSlug` (as present in routing).
+  - The public `/p/:projectSlug` view shows the project name/description and a list of shared documents (header is branding-only; no viewer controls).
 
 ## Admin tools
 

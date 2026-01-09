@@ -342,8 +342,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
     window.addEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
     window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
     window.addEventListener("storage", onStorage);
-    // Best-effort sync from MongoDB source-of-truth into local cache.
-    void refreshStarredDocsFromServer({ bootstrap: true });
+    // Avoid extra mount-time network work; LeftSidebar best-effort syncs starred docs shortly after mount.
     return () => {
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, onChanged);
       window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onChanged);
@@ -1252,6 +1251,11 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
 
           <label className="grid gap-1">
             <span className="text-[11px] font-medium text-[var(--muted)]">Description</span>
+            {!project?.isRequest ? (
+              <span className="text-[11px] text-[var(--muted-2)]">
+                Visible to recipients when you share this project link.
+              </span>
+            ) : null}
             <textarea
               value={draftDescription}
               onChange={(e) => setDraftDescription(e.target.value)}

@@ -222,9 +222,7 @@ export default async function SharePage(props: {
         allowDownload={allowDownload}
         downloadUrl={allowDownload ? `/s/${encodeURIComponent(shareId)}/pdf?download=1` : null}
         revisionHistoryEnabled={allowRevisionHistory}
-        revisionHistoryUrl={
-          allowRevisionHistory ? `/s/${encodeURIComponent(shareId)}/changes` : null
-        }
+        revisionHistoryUrl={allowRevisionHistory ? `/s/${encodeURIComponent(shareId)}/changes` : null}
       />
     );
   }
