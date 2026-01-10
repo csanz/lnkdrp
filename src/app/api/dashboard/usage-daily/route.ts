@@ -13,7 +13,7 @@ import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
-import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

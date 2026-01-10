@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
+import Button from "@/components/ui/Button";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 
@@ -34,6 +35,13 @@ function formatDateTime(iso: string | null): string {
 /**
  * Format Day Label (uses isFinite, getTime, format).
  */
+
+function formatShortId(id: string | null | undefined, { head = 4, tail = 4 }: { head?: number; tail?: number } = {}): string {
+  const raw = typeof id === "string" ? id.trim() : "";
+  if (!raw) return "";
+  if (raw.length <= head + tail + 1) return raw;
+  return `${raw.slice(0, head)}…${raw.slice(-tail)}`;
+}
 
 
 function formatDayLabel(isoDay: string | null): string {
@@ -141,10 +149,13 @@ export default function DocMetricsModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MetricsResponse | null>(null);
+  const [authedViewersModalOpen, setAuthedViewersModalOpen] = useState(false);
+  const [authedViewersModalPage, setAuthedViewersModalPage] = useState(0);
 
   const [days, setDays] = useState(15);
   const [rangeOpen, setRangeOpen] = useState(false);
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
+  const VIEWERS_PAGE_SIZE = 25;
 
   useEffect(() => {
     if (!open) return;
@@ -221,6 +232,14 @@ export default function DocMetricsModal({
   const downloadsSeries = series.map((s) =>
     typeof s.downloads === "number" && Number.isFinite(s.downloads) ? s.downloads : 0,
   );
+  const authedViewersList = Array.isArray(data?.viewers) ? data!.viewers : [];
+  const authedViewersTop = authedViewersList.slice(0, 5);
+  const authedModalTotal = authedViewersList.length;
+  const authedModalPages = Math.max(1, Math.ceil(authedModalTotal / VIEWERS_PAGE_SIZE));
+  const authedModalPageSafe = Math.min(Math.max(0, authedViewersModalPage), authedModalPages - 1);
+  const authedModalStart = authedModalTotal ? authedModalPageSafe * VIEWERS_PAGE_SIZE : 0;
+  const authedModalEnd = authedModalTotal ? Math.min(authedModalStart + VIEWERS_PAGE_SIZE, authedModalTotal) : 0;
+  const authedModalItems = authedViewersList.slice(authedModalStart, authedModalEnd);
 
   const dateRangeLabel = useMemo(() => {
     if (!series.length) return `Last ${days} days`;
@@ -228,6 +247,12 @@ export default function DocMetricsModal({
     const last = series[series.length - 1]?.date ?? "";
     return first && last ? `${first} → ${last}` : `Last ${days} days`;
   }, [series]);
+
+  // Keep modal pagination in-bounds if list size changes.
+  useEffect(() => {
+    if (authedViewersModalOpen && authedViewersModalPage !== authedModalPageSafe) setAuthedViewersModalPage(authedModalPageSafe);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authedViewersModalOpen, authedModalPageSafe]);
 
   const content = (
     <>
@@ -402,15 +427,32 @@ export default function DocMetricsModal({
               <div className="p-4 text-sm text-[var(--muted)]">No authenticated viewers yet.</div>
             ) : (
               <ul className="divide-y divide-[var(--border)]">
-                {data.viewers.map((v) => (
-                  <li key={v.userId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                {authedViewersTop.map((v) => (
+                  <li
+                    key={v.userId}
+                    className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
+                  >
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-[var(--fg)]">
-                        {v.name || v.email || v.userId}
-                      </div>
-                      {v.email ? <div className="truncate text-xs text-[var(--muted-2)]">{v.email}</div> : null}
+                      {(() => {
+                        const name = typeof v.name === "string" ? v.name.trim() : "";
+                        const email = typeof v.email === "string" ? v.email.trim() : "";
+                        const title = name || email || "Signed-in user";
+                        const showEmailLine = Boolean(name && email);
+                        const shortId = formatShortId(v.userId);
+                        const showIdLine = !showEmailLine && !email && shortId;
+                        return (
+                          <>
+                            <div className="truncate text-sm font-semibold text-[var(--fg)]">{title}</div>
+                            {showEmailLine ? (
+                              <div className="truncate text-xs text-[var(--muted-2)]">{email}</div>
+                            ) : showIdLine ? (
+                              <div className="truncate text-xs text-[var(--muted-2)]">User ID {shortId}</div>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                     </div>
-                    <div className="shrink-0 text-right">
+                    <div className="shrink-0 sm:text-right">
                       <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">{v.views} views</div>
                       <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
                     </div>
@@ -420,7 +462,93 @@ export default function DocMetricsModal({
             )}
           </div>
         </div>
+        {authedViewersList.length > 5 ? (
+          <div className="mt-3 flex justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setAuthedViewersModalPage(0);
+                setAuthedViewersModalOpen(true);
+              }}
+            >
+              See more
+            </Button>
+          </div>
+        ) : null}
       </div>
+
+      <Modal open={authedViewersModalOpen} onClose={() => setAuthedViewersModalOpen(false)} ariaLabel="Authenticated viewers">
+        <div className="text-base font-semibold text-[var(--fg)]">Authenticated viewers</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">Only signed-in viewers are listed here.</div>
+        <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+          {!authedViewersList.length ? (
+            <div className="p-4 text-sm text-[var(--muted)]">No authenticated viewers yet.</div>
+          ) : (
+            <ul className="divide-y divide-[var(--border)]">
+              {authedModalItems.map((v) => (
+                <li
+                  key={v.userId}
+                  className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
+                >
+                  <div className="min-w-0">
+                    {(() => {
+                      const name = typeof v.name === "string" ? v.name.trim() : "";
+                      const email = typeof v.email === "string" ? v.email.trim() : "";
+                      const title = name || email || "Signed-in user";
+                      const showEmailLine = Boolean(name && email);
+                      const shortId = formatShortId(v.userId);
+                      const showIdLine = !showEmailLine && !email && shortId;
+                      return (
+                        <>
+                          <div className="truncate text-sm font-semibold text-[var(--fg)]">{title}</div>
+                          {showEmailLine ? (
+                            <div className="truncate text-xs text-[var(--muted-2)]">{email}</div>
+                          ) : showIdLine ? (
+                            <div className="truncate text-xs text-[var(--muted-2)]">User ID {shortId}</div>
+                          ) : null}
+                        </>
+                      );
+                    })()}
+                  </div>
+                  <div className="shrink-0 sm:text-right">
+                    <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">{v.views} views</div>
+                    <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {authedModalTotal > VIEWERS_PAGE_SIZE ? (
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs text-[var(--muted)] tabular-nums">
+              Showing {authedModalTotal ? authedModalStart + 1 : 0}–{authedModalEnd} of {authedModalTotal}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAuthedViewersModalPage((p) => Math.max(0, p - 1))}
+                disabled={authedModalPageSafe <= 0}
+              >
+                Prev
+              </Button>
+              <div className="text-xs text-[var(--muted)] tabular-nums">
+                Page {authedModalPageSafe + 1} / {authedModalPages}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setAuthedViewersModalPage((p) => Math.min(authedModalPages - 1, p + 1))}
+                disabled={authedModalPageSafe >= authedModalPages - 1}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
     </>
   );
 

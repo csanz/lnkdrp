@@ -17,6 +17,10 @@ export type StarredDoc = {
   starredAt: number;
   /** Ordering key; lower sorts earlier. May be missing in legacy local cache entries. */
   sortKey?: number;
+  /** Cached doc version for fast sidebar rendering (best-effort). */
+  version?: number | null;
+  /** Cached doc status for fast sidebar rendering (best-effort). */
+  status?: string | null;
 };
 
 const STORAGE_KEY_BASE = "lnkdrp-starred-docs-v2";
@@ -41,12 +45,28 @@ function normalizeStarredDocs(value: unknown): StarredDoc[] {
   const out: StarredDoc[] = [];
   for (const v of value) {
     if (!v || typeof v !== "object") continue;
-    const o = v as { id?: unknown; title?: unknown; starredAt?: unknown; sortKey?: unknown };
+    const o = v as {
+      id?: unknown;
+      title?: unknown;
+      starredAt?: unknown;
+      sortKey?: unknown;
+      version?: unknown;
+      status?: unknown;
+    };
     if (typeof o.id !== "string" || !o.id) continue;
     if (typeof o.title !== "string") continue;
     const starredAt = typeof o.starredAt === "number" && Number.isFinite(o.starredAt) ? o.starredAt : 0;
     const sortKey = typeof o.sortKey === "number" && Number.isFinite(o.sortKey) ? o.sortKey : undefined;
-    out.push({ id: o.id, title: o.title, starredAt, ...(typeof sortKey === "number" ? { sortKey } : {}) });
+    const version = typeof o.version === "number" && Number.isFinite(o.version) ? o.version : o.version === null ? null : undefined;
+    const status = typeof o.status === "string" ? o.status : o.status === null ? null : undefined;
+    out.push({
+      id: o.id,
+      title: o.title,
+      starredAt,
+      ...(typeof sortKey === "number" ? { sortKey } : {}),
+      ...(version !== undefined ? { version } : {}),
+      ...(status !== undefined ? { status } : {}),
+    });
   }
   return out;
 }
@@ -238,6 +258,40 @@ export function upsertStarredDocTitle(doc: { id: string; title: string }): void 
     if (cur.title === doc.title) return;
     const next = prev.slice();
     next[idx] = { ...cur, title: doc.title };
+    writeStarredDocsUnsafe(next);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Best-effort upsert of cached doc meta (version/status) for a starred doc.
+ * This is used to make the left menu "v#" pills render instantly without waiting for `/api/docs?ids=...`.
+ */
+export function upsertStarredDocMeta(doc: { id: string; version?: number | null; status?: string | null }): void {
+  if (typeof window === "undefined") return;
+  const id = (doc.id ?? "").trim();
+  if (!id) return;
+  try {
+    const prev = readStarredDocsUnsafe();
+    const idx = prev.findIndex((d) => d.id === id);
+    if (idx < 0) return;
+    const cur = prev[idx]!;
+
+    const nextVersion =
+      typeof doc.version === "number" && Number.isFinite(doc.version) ? doc.version : doc.version === null ? null : undefined;
+    const nextStatus = typeof doc.status === "string" ? doc.status : doc.status === null ? null : undefined;
+
+    const noChange =
+      (nextVersion === undefined || cur.version === nextVersion) && (nextStatus === undefined || cur.status === nextStatus);
+    if (noChange) return;
+
+    const next = prev.slice();
+    next[idx] = {
+      ...cur,
+      ...(nextVersion !== undefined ? { version: nextVersion } : {}),
+      ...(nextStatus !== undefined ? { status: nextStatus } : {}),
+    };
     writeStarredDocsUnsafe(next);
   } catch {
     // ignore

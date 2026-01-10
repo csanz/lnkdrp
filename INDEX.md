@@ -21,8 +21,10 @@
 - `src/app/dashboard/UsageTable.tsx` — exports: UsageTable (default), (type) UsageRow
 - `src/app/dashboard/DailyUsageChart.tsx` — exports: DailyUsageChart (default)
 - `src/app/dashboard/DailyUsageChartRenderer.tsx` — exports: DailyUsageChartRenderer (default), DailyUsageChartRow (type)
+- `src/app/dashboard/MultiLineChart30d.tsx` — exports: MultiLineChart30d (default). Overview chart (code-split: imports Recharts).
 - `src/app/dashboard/BillingInvoicesTab.tsx` — exports: BillingInvoicesTab (default). Billing & Invoices tab content (3 cards: Included Usage, On-Demand Usage, Invoices).
 - `src/admin/components/CacheToolsClient.tsx` — exports: CacheToolsClient
+- `src/app/s/[shareId]/ShareViewerClient.tsx` — exports: ShareViewerClient (default). Client wrapper to code-split `PdfJsViewer` for `/s/:shareId`.
 - `src/components/LeftSidebar.tsx` — exports: LeftSidebar
 - `src/components/SidebarProjectsSection.tsx` — exports: SidebarProjectsSection
 - `src/components/Markdown.tsx` — exports: Markdown
@@ -62,6 +64,7 @@
 - `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
 - `src/lib/admin/format.ts` — exports: fmtDate, fmtDuration
 - `src/lib/orgsCache.ts` — exports: OrgsCacheOrg, OrgsCacheSnapshot, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, writeOrgsCacheSnapshot, clearOrgsCache, refreshOrgsCache, setCachedActiveOrgId
+- `src/lib/orgs/activeOrgCookie.ts` — exports: ACTIVE_ORG_COOKIE. Shared cookie name for the active workspace/org.
 - `src/lib/client/outOfCredits.ts` — exports: OUT_OF_CREDITS_EVENT, dispatchOutOfCredits
 - `src/lib/client/creditsSnapshotRefresh.ts` — exports: CREDITS_SNAPSHOT_REFRESH_EVENT, dispatchCreditsSnapshotRefresh
 - `src/lib/credits/grants.ts` — exports: INCLUDED_CREDITS_PER_CYCLE, buildCycleKey, grantCycleIncludedCredits
@@ -73,14 +76,17 @@
 - `src/lib/billing/usageAggregation.ts` — exports: BillingLedgerRow (type), aggregateBillingUsage, onDemandCostCentsOrNull
 - `src/lib/billing/proPriceLabel.ts` — exports: getBillingProPriceLabel, revalidateBillingProPriceLabel
 - `src/lib/metrics/rollupDocMetrics.ts` — exports: rollupDocMetrics
+- `src/lib/email/sendTextEmail.ts` — exports: sendTextEmail. Plain-text email sender with `EMAIL_TRANSPORT=console` support.
+- `src/lib/notifications/sendNotificationEmails.ts` — exports: sendNotificationEmails. Cron/worker helper for notification emails (doc updates + request repos).
 - `src/lib/models/CronHealth.ts` — exports: CronHealthModel, (type) CronHealth
+- `src/lib/models/NotificationEmailCursor.ts` — exports: NotificationEmailCursorModel, (type) NotificationEmailCursor. Per-user email cursors for cron idempotency.
 - `src/lib/models/AiRun.ts` — exports: AiRunModel, (type) AiRun
 - `src/lib/models/ErrorEvent.ts` — exports: ErrorEventModel, (type) ErrorEvent
 
 # Pages
 - `src/app/(app)/doc/[docId]/ai/page.tsx` — Page for \`/doc/:docId/ai\`.
 - `src/app/(app)/doc/[docId]/page.tsx` — Page for \`/doc/:docId\`.
-- `src/app/(app)/doc/[docId]/metrics/page.tsx` — Page for \`/doc/:docId/metrics\`.
+- `src/app/(app)/doc/[docId]/metrics/page.tsx` — Page for \`/doc/:docId/metrics\` (includes per-viewer details modal).
 - `src/app/(app)/doc/[docId]/history/page.tsx` — Page for \`/doc/:docId/history\`.
 - `src/app/(app)/doc/[docId]/review/page.tsx` — Page for \`/doc/:docId/review\`.
 - `src/app/(app)/layout.tsx` — Layout for \`/\`.
@@ -93,6 +99,7 @@
 - `src/app/billing/success/page.tsx` — Page for \`/billing/success\` (post-Checkout redirect; polls server until webhooks activate Pro).
 - `src/app/billing/cancel/page.tsx` — Page for \`/billing/cancel\` (Checkout canceled).
 - `src/app/p/[shareId]/page.tsx` — Page for \`/p/:shareId\`.
+- `src/app/p/[shareId]/loading.tsx` — Loading skeleton for \`/p/:shareId\`.
 - `src/app/r/[token]/page.tsx` — Page for \`/r/:token\` (request upload link).
 - `src/app/request/[token]/page.tsx` — Page for \`/request/:token\` (request upload link).
 - `src/app/request-view/[token]/page.tsx` — Page for \`/request-view/:token\` (request repo viewer; read-only capability link).
@@ -277,6 +284,9 @@
 - `src/app/api/cron/usage-agg-reconcile/route.ts` — Cron route for recomputing usage aggregates from CreditLedger.
   - POST (function) — Recompute daily/cycle usage aggregates for a date range (idempotent).
   - runtime (const) — Next.js route configuration.
+- `src/app/api/cron/notification-emails/route.ts` — Cron route for sending notification emails (doc updates + request repos).
+  - POST (function) — Send emails based on OrgMembership preferences (idempotent via cursors).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/debug/route.ts` — API route for \`/api/debug\`.
   - GET (function) — Debug endpoint to confirm server-side env wiring.
   - runtime (const) — Next.js route configuration.
@@ -356,8 +366,9 @@
   - DELETE (function) — Handle DELETE requests.
   - runtime (const) — Next.js route configuration.
   - Note: GET response doc payload includes \`receivedViaRequestProjectId\` (request uploads) and \`guideForRequestProjectId\` (request guide docs) to relate docs back to their request repo.
+  - Note: GET supports \`lite=1\` polling and still includes \`lastUpdate\` (uploadedAt + uploadedBy) so the doc header can show who last replaced the file.
 - `src/app/api/docs/[docId]/shareviews/route.ts` — API route for \`/api/docs/:docId/shareviews\`.
-  - GET (function) — Owner-only share metrics (views, downloads, viewers).
+  - GET (function) — Owner-only share metrics (views, downloads, viewers + per-viewer pages seen).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/docs/[docId]/share-password/route.ts` — API route for \`/api/docs/:docId/share-password\`.
   - POST (function) — Handle POST requests.
@@ -380,6 +391,9 @@
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
   - Note: GET list items can include \`receivedViaRequestProjectId\` and \`guideForRequestProjectId\` for request context indicators in doc lists.
+- `src/app/api/sidebar/route.ts` — API route for \`/api/sidebar\`.
+  - GET (function) — Return a single snapshot payload for the main app left sidebar (docs/projects/requests).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/invites/codes/[inviteId]/toggle-active/route.ts` — API route for \`/api/invites/codes/:inviteId/toggle-active\`.
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
@@ -592,6 +606,8 @@
   - applyTempUserHeaders (function) — Apply temp user headers.
   - tryResolveAuthUserId (function) — Fast path: resolve authenticated user id + activeOrgId claim without DB access.
   - tryResolveUserActor (function) — Best-effort resolve authenticated user actor without creating temp users.
+  - tryResolveUserActorFast (function) — Fast path: resolve signed-in user actor with one membership check (personalOrgId is a placeholder; use only when personal-org legacy scoping isn’t required).
+  - tryResolveUserActorFastWithPersonalOrg (function) — Fast path: resolve signed-in user actor with one membership check and a cached real personalOrgId (safe for legacy personal-doc scoping).
   - resolveActor (function) — Resolve actor.
   - resolveActorForStats (function) — Faster actor resolution for stats endpoints (single membership check + request cache).
   - TEMP_USER_ID_HEADER (const) — HTTP header name constant.
@@ -797,9 +813,11 @@
 - `db/migration/20260105_0001_usage_aggs_and_indexes.mjs`
 - `db/migration/20260107_0001_teams_query_indexes.mjs`
 - `db/migration/20260107_0002_creditledger_on_demand_cyclekey_index.mjs`
+- `db/migration/20260109_0001_docs_project_list_indexes.mjs`
 - `scripts/lib/time.mjs`
 - `scripts/mongo-clear.mjs`
 - `scripts/mongo-clear-ai-runs-and-requests.mjs`
+- `scripts/pdf-extract-images.mjs`
 - `scripts/pdf-first-page-to-png.mjs`
 - `scripts/pdf-to-text.mjs`
 - `scripts/rollup-doc-metrics.ts`
@@ -815,6 +833,7 @@
 - `scripts/test-ai-extract.mjs`
 - `scripts/test-ai-extract.ts`
 - `scripts/test-vercel-blob.mjs`
+- `scripts/notifications-send-emails.ts` — Local runner for notification emails (dry-run by default).
 - `scripts/cookie.json`
 - `scripts/tests-benchmark.ts`
 - `src/app/(app)/doc/[docId]/ai/page.tsx`

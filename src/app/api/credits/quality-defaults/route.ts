@@ -12,7 +12,7 @@ import { resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
-import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

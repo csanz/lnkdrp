@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
-import { resolveActor } from "@/lib/gating/actor";
+import { resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,13 +25,15 @@ function normalizeMode(v: Mode | "immediately"): Mode {
 }
 
 export async function GET(request: Request) {
-  const actor = await resolveActor(request);
+  const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   await connectMongo();
+  const orgId = new Types.ObjectId(actor.orgId);
+  const userId = new Types.ObjectId(actor.userId);
   const membership = await OrgMembershipModel.findOne({
-    orgId: new Types.ObjectId(actor.orgId),
-    userId: new Types.ObjectId(actor.userId),
+    orgId,
+    userId,
     isDeleted: { $ne: true },
   })
     .select({ docUpdateEmailMode: 1, repoLinkRequestEmailMode: 1, docUpdateDigestTimezone: 1, docUpdateDigestTimeLocal: 1 })
@@ -59,7 +61,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const actor = await resolveActor(request);
+  const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const body = (await request.json().catch(() => ({}))) as Partial<{
@@ -82,10 +84,12 @@ export async function POST(request: Request) {
   }
 
   await connectMongo();
+  const orgId = new Types.ObjectId(actor.orgId);
+  const userId = new Types.ObjectId(actor.userId);
   const res = await OrgMembershipModel.updateOne(
     {
-      orgId: new Types.ObjectId(actor.orgId),
-      userId: new Types.ObjectId(actor.userId),
+      orgId,
+      userId,
       isDeleted: { $ne: true },
     },
     { $set: { ...set, updatedDate: new Date() } },

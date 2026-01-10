@@ -6,7 +6,8 @@ import { cookies, headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { PdfJsViewer, type AiOutput } from "@/components/PdfJsViewer";
+import type { AiOutput } from "@/components/PdfJsViewer";
+import ShareViewerClient from "./ShareViewerClient";
 import PasswordGate from "./PasswordGate";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 
@@ -86,7 +87,11 @@ export async function generateMetadata(props: {
   const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
     .select({
       title: 1,
-      aiOutput: 1,
+      // Perf: only pull the minimal metadata-related AI fields (avoid huge aiOutput JSON).
+      "aiOutput.meta_title": 1,
+      "aiOutput.meta_description": 1,
+      "aiOutput.openGraph.title": 1,
+      "aiOutput.openGraph.description": 1,
       previewImageUrl: 1,
       firstPagePngUrl: 1,
     })
@@ -165,7 +170,19 @@ export default async function SharePage(props: {
     .select({
       title: 1,
       blobUrl: 1,
-      aiOutput: 1,
+      // Perf: only fetch receiver-facing AI snapshot fields (avoid huge aiOutput JSON).
+      "aiOutput.one_liner": 1,
+      "aiOutput.core_problem_or_need": 1,
+      "aiOutput.primary_capabilities_or_scope": 1,
+      "aiOutput.intended_use_or_context": 1,
+      "aiOutput.outcomes_or_value": 1,
+      "aiOutput.maturity_or_status": 1,
+      "aiOutput.summary": 1,
+      "aiOutput.company_or_project_name": 1,
+      "aiOutput.category": 1,
+      "aiOutput.tags": 1,
+      "aiOutput.key_metrics": 1,
+      "aiOutput.ask": 1,
       receiverRelevanceChecklist: 1,
       shareAllowPdfDownload: 1,
       shareAllowRevisionHistory: 1,
@@ -211,35 +228,35 @@ export default async function SharePage(props: {
   const allowRevisionHistory = Boolean((doc as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory);
 
   if (pdfUrl) {
-    // PdfJsViewer is a client component; pass the AI output as JSON (or null).
     return (
-      <PdfJsViewer
-        url={pdfUrl}
-        initialPage={1}
-        shareId={shareId}
-        ai={ai}
-        relevancyEnabled={Boolean(doc.receiverRelevanceChecklist)}
-        allowDownload={allowDownload}
-        downloadUrl={allowDownload ? `/s/${encodeURIComponent(shareId)}/pdf?download=1` : null}
-        revisionHistoryEnabled={allowRevisionHistory}
-        revisionHistoryUrl={allowRevisionHistory ? `/s/${encodeURIComponent(shareId)}/changes` : null}
-      />
+      <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
+        <ShareViewerClient
+          pdfUrl={pdfUrl}
+          shareId={shareId}
+          ai={ai}
+          relevancyEnabled={Boolean(doc.receiverRelevanceChecklist)}
+          allowDownload={allowDownload}
+          downloadUrl={allowDownload ? `/s/${encodeURIComponent(shareId)}/pdf?download=1` : null}
+          revisionHistoryEnabled={allowRevisionHistory}
+          revisionHistoryUrl={allowRevisionHistory ? `/s/${encodeURIComponent(shareId)}/changes` : null}
+        />
+      </main>
     );
   }
 
   // Fallback if we don't have a PDF URL yet (older docs / processing).
   return (
-    <main className="min-h-screen bg-white text-zinc-900">
+    <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
-        <div className="text-lg font-semibold tracking-tight">Shared document</div>
-        <div className="mt-2 text-sm text-zinc-600">
+        <div className="text-lg font-semibold tracking-tight text-white/90">Shared document</div>
+        <div className="mt-2 text-sm text-white/70">
           This document is still preparing a PDF viewer.{" "}
           {previewUrl ? "A preview is available below." : "Preview not available yet."}
         </div>
 
         {previewUrl ? (
-          <div className="mt-6 overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-            <div className="h-[70svh] w-full bg-zinc-50">
+          <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-white/5">
+            <div className="h-[70svh] w-full bg-black/40">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewUrl}

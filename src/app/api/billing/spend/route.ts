@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
+import { resolveActor, resolveActorForStats, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
@@ -19,7 +19,7 @@ import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
 import { ALLOWED_LIMITS, UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
-import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -109,8 +109,8 @@ export async function GET(request: Request) {
       }
 
       await connectMongo();
-      const orgId = new Types.ObjectId(ctx.orgId);
-      const userId = new Types.ObjectId(ctx.userId);
+      const orgId = new Types.ObjectId(String(ctx.orgId));
+      const userId = new Types.ObjectId(String(ctx.userId));
 
       // Fetch the "hot path" documents in parallel.
       // Note: we intentionally read membership (role) here so we can enforce membership validity
@@ -252,8 +252,8 @@ export async function POST(request: Request) {
       }
 
       await connectMongo();
-      const orgId = new Types.ObjectId(actor.orgId);
-      const userId = new Types.ObjectId(actor.userId);
+      const orgId = new Types.ObjectId(String(actor.orgId));
+      const userId = new Types.ObjectId(String(actor.userId));
 
       // On-demand limits require an active subscription (Pro).
       const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean();

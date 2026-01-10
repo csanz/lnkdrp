@@ -1,6 +1,6 @@
 import { cn } from "@/lib/cn";
 
-export type SelectProps = React.ComponentPropsWithoutRef<"select"> & {
+export type SelectProps = Omit<React.ComponentPropsWithoutRef<"select">, "size"> & {
   variant?: "panel" | "panel2";
   size?: "md";
 };

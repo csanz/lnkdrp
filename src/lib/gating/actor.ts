@@ -1,12 +1,118 @@
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { UserModel, createTempUser, verifyTempUserSecret } from "@/lib/models/User";
-import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
+import { ensurePersonalOrgForUserId, OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER } from "@/lib/gating/tempUserHeaders";
-import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 const ACTOR_CACHE = new WeakMap<Request, Promise<Actor>>();
+
+/**
+ * Short-lived in-memory membership cache.
+ *
+ * Why: the dashboard can fire multiple API requests in quick succession; doing the same
+ * `OrgMembership.exists({ orgId, userId })` round-trip repeatedly is unnecessary.
+ *
+ * Tradeoff: if membership is revoked, access may persist until TTL expires. Keep TTL small.
+ * This is consistent with other short-lived caching already used in dashboard endpoints.
+ */
+const MEMBERSHIP_EXISTS_CACHE_TTL_MS = 10_000;
+const MEMBERSHIP_EXISTS_CACHE_MAX = 500;
+let membershipExistsCache: Map<string, { at: number; ok: boolean }> | null = null;
+
+function membershipCacheKey(params: { orgId: string; userId: string }): string {
+  return `org:${params.orgId}:user:${params.userId}`;
+}
+
+function getCachedMembershipExists(key: string): boolean | null {
+  membershipExistsCache = membershipExistsCache ?? new Map();
+  const e = membershipExistsCache.get(key);
+  if (!e) return null;
+  if (Date.now() - e.at > MEMBERSHIP_EXISTS_CACHE_TTL_MS) {
+    membershipExistsCache.delete(key);
+    return null;
+  }
+  return e.ok;
+}
+
+function setCachedMembershipExists(key: string, ok: boolean) {
+  membershipExistsCache = membershipExistsCache ?? new Map();
+  membershipExistsCache.set(key, { at: Date.now(), ok });
+  // Best-effort bound; drop oldest-ish entry (O(n), rare).
+  if (membershipExistsCache.size > MEMBERSHIP_EXISTS_CACHE_MAX) {
+    let oldestKey: string | null = null;
+    let oldestAt = Infinity;
+    for (const [k, v] of membershipExistsCache.entries()) {
+      if (v.at < oldestAt) {
+        oldestAt = v.at;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) membershipExistsCache.delete(oldestKey);
+  }
+}
+
+/**
+ * Short-lived in-memory personal-org cache.
+ *
+ * Why: `ensurePersonalOrgForUserId()` is intentionally idempotent but not cheap (read + upsert).
+ * Many auth-required routes only need the personal org id for legacy-scoping decisions; caching
+ * avoids repeating those DB calls on every request.
+ */
+const PERSONAL_ORG_CACHE_TTL_MS = 5 * 60_000;
+const PERSONAL_ORG_CACHE_MAX = 500;
+let personalOrgCache: Map<string, { at: number; orgId: string }> | null = null;
+
+function getCachedPersonalOrgId(userId: string): string | null {
+  personalOrgCache = personalOrgCache ?? new Map();
+  const e = personalOrgCache.get(userId);
+  if (!e) return null;
+  if (Date.now() - e.at > PERSONAL_ORG_CACHE_TTL_MS) {
+    personalOrgCache.delete(userId);
+    return null;
+  }
+  return e.orgId;
+}
+
+function setCachedPersonalOrgId(userId: string, orgId: string) {
+  personalOrgCache = personalOrgCache ?? new Map();
+  personalOrgCache.set(userId, { at: Date.now(), orgId });
+  if (personalOrgCache.size > PERSONAL_ORG_CACHE_MAX) {
+    let oldestKey: string | null = null;
+    let oldestAt = Infinity;
+    for (const [k, v] of personalOrgCache.entries()) {
+      if (v.at < oldestAt) {
+        oldestAt = v.at;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) personalOrgCache.delete(oldestKey);
+  }
+}
+
+async function resolvePersonalOrgIdCached(userId: string): Promise<string> {
+  const cached = getCachedPersonalOrgId(userId);
+  if (cached) return cached;
+  // Prefer a cheap read (no membership upsert) for the common case.
+  const existing = await OrgModel.findOne({
+    type: "personal",
+    personalForUserId: new Types.ObjectId(userId),
+    isDeleted: { $ne: true },
+  })
+    .select({ _id: 1 })
+    .lean();
+  if (existing?._id) {
+    const id = String(existing._id);
+    setCachedPersonalOrgId(userId, id);
+    return id;
+  }
+  // Fallback: ensure it exists (bootstrap/backfill path).
+  const ensured = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(userId) });
+  const id = String(ensured.orgId);
+  setCachedPersonalOrgId(userId, id);
+  return id;
+}
 
 /**
  * Server-side "actor" resolution for API routes.
@@ -215,16 +321,63 @@ export async function tryResolveUserActorFast(request: Request): Promise<Actor |
   if (!orgId || !Types.ObjectId.isValid(orgId)) return null;
 
   await connectMongo();
-  const ok = await OrgMembershipModel.exists({
-    orgId: new Types.ObjectId(orgId),
-    userId: new Types.ObjectId(session.userId),
-    isDeleted: { $ne: true },
-  });
+  const cacheKey = membershipCacheKey({ orgId, userId: session.userId });
+  const cachedOk = getCachedMembershipExists(cacheKey);
+  const ok =
+    typeof cachedOk === "boolean"
+      ? cachedOk
+      : Boolean(
+          await OrgMembershipModel.exists({
+            orgId: new Types.ObjectId(orgId),
+            userId: new Types.ObjectId(session.userId),
+            isDeleted: { $ne: true },
+          }),
+        );
+  if (typeof cachedOk !== "boolean") setCachedMembershipExists(cacheKey, ok);
   if (!ok) return null;
 
   // Note: personalOrgId isn't needed for most hot read paths; keep it stable without extra DB work.
   // Callers that require true personal-org resolution should use `tryResolveUserActor()` or `resolveActor()`.
   return { kind: "user", userId: session.userId, orgId, personalOrgId: orgId };
+}
+
+/**
+ * Fast path: resolve a signed-in user actor with:
+ * - org context from active-org cookie/JWT claim
+ * - one membership check (cached)
+ * - a cached personalOrgId (to preserve legacy personal-doc scoping behavior without extra upserts)
+ */
+export async function tryResolveUserActorFastWithPersonalOrg(request: Request): Promise<Actor | null> {
+  const session = await tryGetSessionClaims(request);
+  if (!session?.userId) return null;
+
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
+  const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
+  const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
+  const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
+  if (!orgId || !Types.ObjectId.isValid(orgId)) return null;
+
+  await connectMongo();
+
+  // Membership check (cached)
+  const membershipKey = membershipCacheKey({ orgId, userId: session.userId });
+  const cachedOk = getCachedMembershipExists(membershipKey);
+  const ok =
+    typeof cachedOk === "boolean"
+      ? cachedOk
+      : Boolean(
+          await OrgMembershipModel.exists({
+            orgId: new Types.ObjectId(orgId),
+            userId: new Types.ObjectId(session.userId),
+            isDeleted: { $ne: true },
+          }),
+        );
+  if (typeof cachedOk !== "boolean") setCachedMembershipExists(membershipKey, ok);
+  if (!ok) return null;
+
+  const personalOrgId = await resolvePersonalOrgIdCached(session.userId);
+  return { kind: "user", userId: session.userId, orgId, personalOrgId };
 }
 
 /**
@@ -236,7 +389,7 @@ export async function tryResolveUserActorFast(request: Request): Promise<Actor |
 export async function resolveActor(request: Request): Promise<Actor> {
   const cached = ACTOR_CACHE.get(request);
   if (cached) return await cached;
-  const p = (async () => {
+  const p: Promise<Actor> = (async () => {
   // 1) Authenticated user (preferred)
   const userActor = await tryResolveUserActor(request);
   if (userActor) return userActor;
@@ -309,7 +462,7 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
   const cached = ACTOR_CACHE.get(request);
   if (cached) return await cached;
 
-  const p = (async () => {
+  const p: Promise<Actor> = (async () => {
     const session = await tryGetSessionClaims(request);
     if (!session?.userId) return await resolveActor(request);
 
@@ -328,11 +481,19 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
     // Security: membership can change after a cookie is minted. Validate membership once (1 query).
     // (We intentionally avoid the heavier `tryResolveUserActor` flow that also ensures personal org.)
     await connectMongo();
-    const ok = await OrgMembershipModel.exists({
-      orgId: new Types.ObjectId(orgId),
-      userId: new Types.ObjectId(session.userId),
-      isDeleted: { $ne: true },
-    });
+    const cacheKey = membershipCacheKey({ orgId, userId: session.userId });
+    const cachedOk = getCachedMembershipExists(cacheKey);
+    const ok =
+      typeof cachedOk === "boolean"
+        ? cachedOk
+        : Boolean(
+            await OrgMembershipModel.exists({
+              orgId: new Types.ObjectId(orgId),
+              userId: new Types.ObjectId(session.userId),
+              isDeleted: { $ne: true },
+            }),
+          );
+    if (typeof cachedOk !== "boolean") setCachedMembershipExists(cacheKey, ok);
     if (!ok) return await resolveActor(request);
 
     // For stats endpoints we don't need personalOrgId for legacy access checks.

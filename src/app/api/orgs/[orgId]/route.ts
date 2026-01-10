@@ -16,7 +16,7 @@ import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { resolveActor } from "@/lib/gating/actor";
-import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 

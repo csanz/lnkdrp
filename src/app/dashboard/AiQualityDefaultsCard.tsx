@@ -84,7 +84,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
   }
 
   return (
-    <div className={cn("rounded-2xl bg-[var(--panel)] p-6", className)}>
+    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">AI Quality Defaults</div>

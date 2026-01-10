@@ -54,6 +54,15 @@ Frequencies below are from `vercel.json` `"crons"` (production source of truth).
   - **Reads**: `CreditLedger(status="charged", eventType="ai_run")`
   - **Writes**: `UsageAggDaily`, `UsageAggCycle`, `CronHealth(jobKey="usage-agg-reconcile")`
   - **Idempotency**: deterministic recompute via upserts; safe to re-run for the same date range.
+- **Notification emails (doc updates + request repos)**
+  - **Route**: `POST /api/cron/notification-emails`
+  - **Schedule**: `*/5 * * * *` (every 5 minutes)
+  - **Purpose**:
+    - Send **doc update** emails based on `OrgMembership.docUpdateEmailMode` (off/daily/immediate).
+    - Send **repo link request** emails when request-repo uploads complete, based on `OrgMembership.repoLinkRequestEmailMode`.
+  - **Reads**: `OrgMembership`, `DocChange` (doc replacements), `Upload` (completed v1 request uploads), `Doc`, `Project`, `User`
+  - **Writes**: `NotificationEmailCursor` (per-user cursor), `CronHealth(jobKey="notification-emails")`
+  - **Idempotency**: safe under retries; per-user cursors prevent duplicates.
 
 ## Doc metrics rollup (cached snapshot)
 
@@ -97,6 +106,7 @@ Cron endpoints can upsert a small “health” record in MongoDB so we can see w
 - `/api/cron/stripe-credits-reconcile` — **every 6 hours** (heavier Stripe sync + grant backstop)
 - `/api/cron/stripe-credits-report` — **hourly** (reports metered credits usage to Stripe)
 - `/api/cron/usage-agg-reconcile` — **hourly** (recomputes usage aggregates from ledger)
+- `/api/cron/notification-emails` — **every 5 minutes** (doc update + request repo notification emails)
 
 If you deploy on Vercel, these are configured in `vercel.json` under `"crons"` so schedules are committed in-repo (recommended).
 You can also manage schedules from Vercel UI (Project → Settings → Cron Jobs), but `vercel.json` is the source of truth for production in this repo.

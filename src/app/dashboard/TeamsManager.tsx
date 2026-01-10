@@ -163,6 +163,9 @@ export default function TeamsManager() {
   // Personal workspaces are single-user; teams + invites are not allowed.
   const canAdminTeams = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
   const canInvite = canAdminTeams;
+  // Avoid flashing "no permission" while org/role context is still loading.
+  // Only show unauthorized once we have a resolved org + role.
+  const teamsAuthResolved = Boolean(activeOrgId) && Boolean(currentOrg) && Boolean(activeOrgRole);
 
   const setPersonalMembers = useCallback(() => {
     const email = (session?.user?.email ?? "").trim() || null;
@@ -499,7 +502,7 @@ export default function TeamsManager() {
       {tab === "members" ? (
         <div className="space-y-3">
           {isPersonalOrg ? (
-            <div className="overflow-hidden rounded-xl bg-[var(--panel)]">
+            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
               <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-4">
                 <div className="text-[12px] font-semibold text-[var(--muted-2)]">
                   {(currentOrg?.name ?? "").trim() ? `${String(currentOrg?.name).trim()} Members` : "Members"}
@@ -535,12 +538,16 @@ export default function TeamsManager() {
                 <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">—</div>
               )}
             </div>
+          ) : !teamsAuthResolved ? (
+            <div className="rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
+              Loading…
+            </div>
           ) : !canAdminTeams ? (
             <div className="rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
               You don’t have permission to view members in this workspace.
             </div>
           ) : (
-            <div className="overflow-hidden rounded-xl bg-[var(--panel)]">
+            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
               <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-4">
                 <div className="text-[12px] font-semibold text-[var(--muted-2)]">
                   {(currentOrg?.name ?? "").trim() ? `${String(currentOrg?.name).trim()} Members` : "Members"}
@@ -651,6 +658,8 @@ export default function TeamsManager() {
                     {inviteBusy ? "Generating…" : inviteLink ? "Generate new link" : "Generate link"}
                   </button>
                 </div>
+              ) : !teamsAuthResolved ? (
+                <div className="text-[12px] text-[var(--muted-2)]">Loading…</div>
               ) : (
                 <div className="text-[12px] text-[var(--muted-2)]">Only owners/admins can invite members.</div>
               )}
@@ -746,7 +755,7 @@ export default function TeamsManager() {
 
             {existingInvitesError ? <div className="text-[12px] text-red-500">{existingInvitesError}</div> : null}
 
-            <div className="overflow-hidden rounded-xl bg-[var(--panel)]">
+            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
               <div className="grid grid-cols-[1fr_90px_90px_90px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
                 <div>Link</div>
                 <div>Role</div>

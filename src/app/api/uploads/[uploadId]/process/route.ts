@@ -1309,7 +1309,7 @@ export async function POST(
                   uploadId,
                   version: uploadVersion,
                   extractedText,
-                  qualityTier: reviewTier,
+                  qualityTier: reviewTier === "advanced" ? "advanced" : "standard",
                   instructions: null,
                   force: true,
                   meta: {
@@ -1360,7 +1360,7 @@ export async function POST(
                   uploadId,
                   version: uploadVersion,
                   extractedText,
-                  qualityTier: reviewTier,
+                  qualityTier: reviewTier === "advanced" ? "advanced" : "standard",
                   agentKind: "requestReviewInvestorFocused",
                   instructions: null,
                   guideText: requestGuideDocText,

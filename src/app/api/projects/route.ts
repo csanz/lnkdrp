@@ -9,7 +9,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -106,7 +106,7 @@ export async function GET(request: Request) {
 
     debugLog(2, "[api/projects] GET", { limit, page, lite, sidebar, q: q ? "[redacted]" : "" });
     const actor =
-      (lite || sidebar ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
+      (lite || sidebar ? await tryResolveUserActorFastWithPersonalOrg(request) : null) ?? (await resolveActor(request));
     await connectMongo();
 
     const orgId = new Types.ObjectId(actor.orgId);

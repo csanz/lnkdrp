@@ -36,6 +36,13 @@ const orgInviteSchema = new Schema(
   },
 );
 
+// Performance: listing invites in Teams tab:
+// OrgInvite.find({ orgId, isRevoked: { $ne: true } }).sort({ createdDate: -1 }).limit(25)
+orgInviteSchema.index(
+  { orgId: 1, createdDate: -1 },
+  { partialFilterExpression: { isRevoked: { $ne: true } } },
+);
+
 export type OrgInvite = InferSchemaType<typeof orgInviteSchema>;
 
 export const OrgInviteModel: Model<OrgInvite> =

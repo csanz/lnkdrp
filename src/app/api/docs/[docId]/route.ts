@@ -12,7 +12,7 @@ import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { debugEnabled, debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -85,7 +85,8 @@ export async function GET(
     }
 
     debugLog(2, "[api/docs/:docId] GET", { docId, includeDebug, lite });
-    const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
+    // Hot path (doc detail + modals): avoid heavy resolver; preserve correct personalOrgId for legacy scoping.
+    const actor = (await tryResolveUserActorFastWithPersonalOrg(request)) ?? (await resolveActor(request));
     await connectMongo();
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
@@ -102,7 +103,51 @@ export async function GET(
 
     // Fetch doc (lean) so we don't pay for a full Mongoose document instance on this hot path.
     // NOTE: We still do a few best-effort backfills below; keep them lightweight.
-    let docLean = await DocModel.findOne({ ...docMatch }).lean();
+    const docQuery = DocModel.findOne({ ...docMatch });
+    // Perf: `lite=1` must not pull huge fields (extractedText / full aiOutput JSON).
+    // Only fetch the minimal snapshot fields used by the doc UI + share panel.
+    if (lite) {
+      docQuery.select({
+        _id: 1,
+        orgId: 1,
+        userId: 1,
+        shareId: 1,
+        title: 1,
+        docName: 1,
+        fileName: 1,
+        pageSlugs: 1,
+        status: 1,
+        projectId: 1,
+        projectIds: 1,
+        isArchived: 1,
+        currentUploadId: 1,
+        uploadId: 1, // legacy
+        blobUrl: 1,
+        previewImageUrl: 1,
+        firstPagePngUrl: 1,
+        receiverRelevanceChecklist: 1,
+        shareAllowPdfDownload: 1,
+        shareAllowRevisionHistory: 1,
+        sharePasswordHash: 1,
+        receivedViaRequestProjectId: 1,
+        replaceUploadToken: 1,
+        guideForRequestProjectId: 1,
+        metricsSnapshot: 1,
+        // AI Snapshot fields used by `DocSharePanel` + doc summary badges.
+        "aiOutput.company_or_project_name": 1,
+        "aiOutput.one_liner": 1,
+        "aiOutput.core_problem_or_need": 1,
+        "aiOutput.primary_capabilities_or_scope": 1,
+        "aiOutput.intended_use_or_context": 1,
+        "aiOutput.outcomes_or_value": 1,
+        "aiOutput.maturity_or_status": 1,
+        "aiOutput.ask": 1,
+        "aiOutput.key_metrics": 1,
+        "aiOutput.summary": 1,
+        "aiOutput.tags": 1,
+      });
+    }
+    let docLean = await docQuery.lean();
     if (!docLean) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     // Best-effort: backfill orgId for legacy personal docs.
@@ -154,7 +199,7 @@ export async function GET(
           throw e;
         }
       }
-      if (!ensured || !doc?.shareId) {
+      if (!ensured || !(docLean as any)?.shareId) {
         throw new Error("Failed to ensure shareId for doc");
       }
     }
@@ -199,38 +244,29 @@ export async function GET(
 
     const uploadPromise = currentUploadId ? UploadModel.findById(currentUploadId).lean() : Promise.resolve(null);
 
-    // Best-effort: resolve who uploaded the current version.
-    const lastUpload = (function () {
-      // placeholder, computed after upload resolves
-      return null as null | {
-        version: number | null;
-        uploadedAt: string | null;
-        uploadedByUserId: string | null;
-      };
-    })();
-
     const upload = lite ? null : await uploadPromise;
+    const uploadLite =
+      lite && currentUploadId
+        ? await UploadModel.findById(currentUploadId)
+            .select({ version: 1, createdDate: 1, userId: 1 })
+            .lean()
+        : null;
 
     // In `lite=1` mode we avoid hydrating the full Upload, but the doc page still needs the
     // current version number to render the `vN` badge/link in the top bar.
     let currentUploadVersion: number | null =
-      upload && Number.isFinite((upload as any).version) ? Number((upload as any).version) : null;
-    if (lite && currentUploadId) {
-      try {
-        const v = await UploadModel.findById(currentUploadId).select({ version: 1 }).lean();
-        const next = v && Number.isFinite((v as any).version) ? Number((v as any).version) : null;
-        if (typeof next === "number") currentUploadVersion = next;
-      } catch {
-        // ignore; keep version null
-      }
-    }
+      upload && Number.isFinite((upload as any).version)
+        ? Number((upload as any).version)
+        : uploadLite && Number.isFinite((uploadLite as any).version)
+          ? Number((uploadLite as any).version)
+          : null;
 
+    const uploadForLastUpdate = lite ? uploadLite : upload;
     const lastUploadResolved = (function () {
-      if (lite) return null;
-      if (!upload || typeof upload !== "object") return null;
-      const v = Number.isFinite((upload as any).version) ? Number((upload as any).version) : null;
-      const createdDate = (upload as any).createdDate instanceof Date ? (upload as any).createdDate : null;
-      const uploaderIdRaw = (upload as any).userId ? String((upload as any).userId) : "";
+      if (!uploadForLastUpdate || typeof uploadForLastUpdate !== "object") return null;
+      const v = Number.isFinite((uploadForLastUpdate as any).version) ? Number((uploadForLastUpdate as any).version) : null;
+      const createdDate = (uploadForLastUpdate as any).createdDate instanceof Date ? (uploadForLastUpdate as any).createdDate : null;
+      const uploaderIdRaw = (uploadForLastUpdate as any).userId ? String((uploadForLastUpdate as any).userId) : "";
       const uploaderId = uploaderIdRaw && Types.ObjectId.isValid(uploaderIdRaw) ? uploaderIdRaw : null;
       return {
         version: v,
@@ -240,7 +276,7 @@ export async function GET(
     })();
 
     const lastUploadedBy =
-      !lite && lastUploadResolved?.uploadedByUserId
+      lastUploadResolved?.uploadedByUserId
         ? await UserModel.findById(new Types.ObjectId(lastUploadResolved.uploadedByUserId))
             .select({ _id: 1, name: 1, email: 1, isTemp: 1 })
             .lean()

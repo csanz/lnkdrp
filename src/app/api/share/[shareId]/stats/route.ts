@@ -7,6 +7,7 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
+import { UserModel } from "@/lib/models/User";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -202,6 +203,37 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           const created = Boolean((upsert as any)?.upsertedCount);
           if (created) {
             await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
+          }
+
+          // Denormalize viewer name/email for fast owner metrics reads (avoid $lookup).
+          // Best-effort: only populate when we have an authenticated viewer and snapshot fields are missing.
+          if (viewerUserId) {
+            try {
+              const u = await UserModel.findById(viewerUserId).select({ _id: 1, name: 1, email: 1 }).lean();
+              const viewerName =
+                u && typeof (u as any).name === "string" && (u as any).name.trim() ? (u as any).name.trim() : null;
+              const viewerEmailSnapshot =
+                u && typeof (u as any).email === "string" && (u as any).email.trim()
+                  ? String((u as any).email).trim().toLowerCase()
+                  : viewerEmail ?? null;
+              if (viewerName || viewerEmailSnapshot) {
+                await ShareViewModel.updateOne(
+                  {
+                    shareId,
+                    botIdHash,
+                    $or: [
+                      { viewerName: { $exists: false } },
+                      { viewerName: null },
+                      { viewerEmailSnapshot: { $exists: false } },
+                      { viewerEmailSnapshot: null },
+                    ],
+                  },
+                  { $set: { ...(viewerName ? { viewerName } : {}), ...(viewerEmailSnapshot ? { viewerEmailSnapshot } : {}) } },
+                );
+              }
+            } catch {
+              // ignore
+            }
           }
 
           if (pageNumber) {

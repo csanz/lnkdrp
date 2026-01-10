@@ -3,17 +3,8 @@
  */
 "use client";
 
-import WorkspaceManager from "./WorkspaceManager";
-import TeamsManager from "./TeamsManager";
 import SubscriptionCard from "./SubscriptionCard";
-import UsageTable from "./UsageTable";
-import CreditsSummaryCard from "./CreditsSummaryCard";
-import SpendLimitModule from "./SpendLimitModule";
-import OnDemandUsageCard from "./OnDemandUsageCard";
-import AiQualityDefaultsCard from "./AiQualityDefaultsCard";
-import BillingInvoicesTab from "./BillingInvoicesTab";
-import DailyUsageChart from "./DailyUsageChart";
-import NotificationPreferences from "@/components/notifications/NotificationPreferences";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -33,7 +24,22 @@ import {
   UserCircleIcon,
   UsersIcon,
 } from "@heroicons/react/24/outline";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+
+// Perf: keep the dashboard Overview bundle lean.
+// Tabs and charts are split into separate chunks and loaded only when needed.
+const WorkspaceManager = dynamic(() => import("./WorkspaceManager"));
+const TeamsManager = dynamic(() => import("./TeamsManager"));
+const UsageTable = dynamic(() => import("./UsageTable"));
+const CreditsSummaryCard = dynamic(() => import("./CreditsSummaryCard"));
+const SpendLimitModule = dynamic(() => import("./SpendLimitModule"));
+const OnDemandUsageCard = dynamic(() => import("./OnDemandUsageCard"));
+const AiQualityDefaultsCard = dynamic(() => import("./AiQualityDefaultsCard"));
+const BillingInvoicesTab = dynamic(() => import("./BillingInvoicesTab"));
+const DailyUsageChart = dynamic(() => import("./DailyUsageChart"));
+const NotificationPreferences = dynamic(() => import("@/components/notifications/NotificationPreferences"));
+const MultiLineChart30d = dynamic(() => import("./MultiLineChart30d"), {
+  loading: () => <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />,
+});
 
 function Section({
   title,
@@ -356,7 +362,7 @@ export default function DashboardPage() {
           <Section title="Overview" description="A quick snapshot of your workspace.">
             <div className="grid gap-3">
               <SubscriptionCard />
-              <div className="rounded-2xl bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">All docs activity</div>
@@ -377,7 +383,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">This month</div>
@@ -410,7 +416,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl bg-[var(--panel)] p-6">
+                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
                   <div className="text-[13px] font-semibold text-[var(--fg)]">Library</div>
                   <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Your active content in this workspace.</div>
                   <div className="mt-5 grid grid-cols-2 gap-3">
@@ -421,7 +427,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl bg-[var(--panel-2)] p-6">
+                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-6">
                   <div className="text-[13px] font-semibold text-[var(--fg)]">Next up</div>
                   <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
                     A few helpful ideas to get more leverage from LinkDrop.
@@ -440,15 +446,15 @@ export default function DashboardPage() {
         {tab === "account" ? (
           <Section title="Account" description="Account-level settings and actions.">
             <div className="grid gap-3">
-              <div className="rounded-2xl bg-[var(--panel)] p-6">
-                <div className="text-[13px] font-semibold text-[var(--fg)]">Email notifications</div>
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+                <div className="text-[13px] font-semibold text-[var(--fg)]">Email preferences</div>
                 <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Applies to the currently selected workspace.</div>
                 <div className="mt-4">
                   <NotificationPreferences />
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">Delete account</div>
@@ -467,7 +473,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl bg-[var(--panel-2)] px-5 py-4 text-[12px] text-[var(--muted-2)]">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4 text-[12px] text-[var(--muted-2)]">
                 Coming soon. We’ll add a secure deletion flow once the backend endpoint is in place.
               </div>
             </div>
@@ -492,7 +498,7 @@ export default function DashboardPage() {
               <SubscriptionCard />
               <DailyUsageChart days={usageDays} />
               <CreditsSummaryCard />
-              <div className="rounded-2xl bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] font-semibold text-[var(--muted-2)]">
@@ -537,7 +543,7 @@ export default function DashboardPage() {
           >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <OnDemandUsageCard />
-              <div className="rounded-2xl bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand limit</div>
                   <HelpTooltip
@@ -554,7 +560,7 @@ export default function DashboardPage() {
 
             <AiQualityDefaultsCard className="mt-3" />
 
-            <div className="mt-3 rounded-2xl bg-[var(--panel)] p-6">
+            <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
               <div className="text-[13px] font-semibold text-[var(--fg)]">Deep Search Agent</div>
               <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
                 Deep-searches your document for companies, people, products, and potential risks.
@@ -715,108 +721,4 @@ function StatMini({ label, value }: { label: string; value: number | null }) {
     </div>
   );
 }
-
-function MultiLineChart30d({
-  series,
-}: {
-  series: Array<{ day: string; docsCreated: number; uploadsCreated: number; shareUniqueViews: number; shareDownloads: number }>;
-}) {
-  const safe = Array.isArray(series) ? series : [];
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
-  const data = safe.map((s) => ({
-    day: s.day,
-    uploads: typeof s.uploadsCreated === "number" && Number.isFinite(s.uploadsCreated) ? Math.max(0, s.uploadsCreated) : 0,
-    docs: typeof s.docsCreated === "number" && Number.isFinite(s.docsCreated) ? Math.max(0, s.docsCreated) : 0,
-    views: typeof s.shareUniqueViews === "number" && Number.isFinite(s.shareUniqueViews) ? Math.max(0, s.shareUniqueViews) : 0,
-    downloads: typeof s.shareDownloads === "number" && Number.isFinite(s.shareDownloads) ? Math.max(0, s.shareDownloads) : 0,
-  }));
-
-  const lines: Array<{ key: string; label: string; stroke: string; values: number[] }> = [
-    { key: "uploads", label: "Uploads", stroke: "rgb(59 130 246)", values: data.map((d) => d.uploads) },
-    { key: "docs", label: "Docs created", stroke: "rgb(16 185 129)", values: data.map((d) => d.docs) },
-    { key: "views", label: "Unique share views", stroke: "rgb(168 85 247)", values: data.map((d) => d.views) },
-    { key: "downloads", label: "Share downloads", stroke: "rgb(34 197 94)", values: data.map((d) => d.downloads) },
-  ];
-
-  const labels = data.map((d) => d.day);
-  const left = labels[0] ?? "";
-  const mid = labels[Math.floor(labels.length / 2)] ?? "";
-  const right = labels[labels.length - 1] ?? "";
-
-  const max = Math.max(
-    1,
-    ...data.map((d) => d.uploads),
-    ...data.map((d) => d.docs),
-    ...data.map((d) => d.views),
-    ...data.map((d) => d.downloads),
-  );
-
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-
-    function update() {
-      const r = el.getBoundingClientRect();
-      const w = Math.floor(r.width);
-      const h = Math.floor(r.height);
-      if (w > 0 && h > 0) setSize({ w, h });
-    }
-
-    update();
-    const ro = new ResizeObserver(() => update());
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
-  return (
-    <div className="w-full">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-1 pb-2 text-[11px] text-[var(--muted-2)]">
-        {lines.map((l) => (
-          <div key={l.key} className="inline-flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: l.stroke }} aria-hidden="true" />
-            <span>{l.label}</span>
-          </div>
-        ))}
-        <div className="ml-auto text-[11px] text-[var(--muted-2)]">Max: {max.toLocaleString()}</div>
-      </div>
-
-      <div ref={wrapRef} className="h-56 w-full">
-        {!size ? null : (
-          <LineChart width={size.w} height={size.h} data={data} margin={{ top: 6, right: 10, bottom: 6, left: 6 }}>
-            <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
-            <XAxis
-              dataKey="day"
-              ticks={[left, mid, right].filter(Boolean)}
-              tick={{ fontSize: 10, fill: "var(--muted-2)" }}
-              axisLine={false}
-              tickLine={false}
-              interval={0}
-              height={24}
-            />
-            <YAxis hide domain={[0, "dataMax"]} />
-            <Tooltip
-              cursor={{ stroke: "var(--border)", strokeOpacity: 0.25 }}
-              contentStyle={{
-                background: "var(--panel)",
-                border: "1px solid var(--border)",
-                borderRadius: 12,
-                padding: "8px 10px",
-                fontSize: 12,
-                color: "var(--fg)",
-              }}
-              labelStyle={{ color: "var(--muted-2)" }}
-              formatter={(v: any, name: any) => [typeof v === "number" ? v.toLocaleString() : String(v), String(name ?? "")]}
-            />
-            <Line type="monotone" dataKey="uploads" stroke="rgb(59 130 246)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="docs" stroke="rgb(16 185 129)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="views" stroke="rgb(168 85 247)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="downloads" stroke="rgb(34 197 94)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
-          </LineChart>
-        )}
-      </div>
-    </div>
-  );
-}
-
 

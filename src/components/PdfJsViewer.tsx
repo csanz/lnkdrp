@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -227,6 +227,32 @@ export function PdfJsViewer({
   const [useNativePdf, setUseNativePdf] = useState(false);
   const [nativePdfLoaded, setNativePdfLoaded] = useState(false);
   const [nativePdfError, setNativePdfError] = useState<string | null>(null);
+  // Perf: never let non-essential share stats compete with "first page painted".
+  const [hasPaintedFirstPage, setHasPaintedFirstPage] = useState(false);
+  const hasPaintedFirstPageRef = useRef(false);
+  const markFirstPainted = useCallback(() => {
+    if (hasPaintedFirstPageRef.current) return;
+    hasPaintedFirstPageRef.current = true;
+    setHasPaintedFirstPage(true);
+  }, []);
+  const hasFirstPaint = hasPaintedFirstPage || (useNativePdf && nativePdfLoaded);
+
+  function scheduleAfterPaint(fn: () => void) {
+    // Best-effort: give the browser a chance to paint the PDF before background work.
+    try {
+      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+        (window as any).requestIdleCallback(fn, { timeout: 2000 });
+        return;
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      if (typeof window !== "undefined") window.setTimeout(fn, 800);
+    } catch {
+      // ignore
+    }
+  }
   const [headerHeight, setHeaderHeight] = useState(0);
   const [viewportSize, setViewportSize] = useState({ w: 0, h: 0 });
   const [zoom, setZoom] = useState(1); // multiplier on top of "fit-to-screen"
@@ -299,11 +325,45 @@ export function PdfJsViewer({
     [numPages, pageNumber],
   );
 
-  const goPrev = useMemo(
-    () => () => setPageNumber((p) => Math.max(1, p - 1)),
-    [],
-  );
-  const goNext = useMemo(() => () => setPageNumber((p) => p + 1), []);
+  const [edgeHint, setEdgeHint] = useState<{ kind: "start" | "end"; visible: boolean }>({
+    kind: "start",
+    visible: false,
+  });
+  const edgeHintTimerRef = useRef<number | null>(null);
+
+  const showEdgeHint = useCallback((kind: "start" | "end") => {
+    setEdgeHint({ kind, visible: true });
+    if (edgeHintTimerRef.current) window.clearTimeout(edgeHintTimerRef.current);
+    edgeHintTimerRef.current = window.setTimeout(() => {
+      setEdgeHint((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+    }, 1100);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (edgeHintTimerRef.current) window.clearTimeout(edgeHintTimerRef.current);
+    };
+  }, []);
+
+  const goPrev = useCallback(() => {
+    setPageNumber((p) => {
+      if (p <= 1) {
+        showEdgeHint("start");
+        return 1;
+      }
+      return p - 1;
+    });
+  }, [showEdgeHint]);
+
+  const goNext = useCallback(() => {
+    setPageNumber((p) => {
+      if (numPages && p >= numPages) {
+        showEdgeHint("end");
+        return p;
+      }
+      return p + 1;
+    });
+  }, [numPages, showEdgeHint]);
 
   // When we're using the browser's native PDF viewer, force the "single page" slideshow experience.
   // (All/Grid are PDF.js-only features.)
@@ -311,6 +371,10 @@ export function PdfJsViewer({
     if (!useNativePdf) return;
     setViewMode("single");
   }, [useNativePdf]);
+
+  useEffect(() => {
+    if (useNativePdf && nativePdfLoaded) markFirstPainted();
+  }, [useNativePdf, nativePdfLoaded, markFirstPainted]);
 
   const nativePdfSrc = useMemo(() => {
     // Chrome's built-in viewer respects these hash params.
@@ -668,12 +732,12 @@ export function PdfJsViewer({
 
       if (e.key === "ArrowLeft") {
         if (viewMode === "single") {
-          if (canPrev) goPrev();
+          goPrev();
           e.preventDefault();
         }
       } else if (e.key === "ArrowRight") {
         if (viewMode === "single") {
-          if (canNext) goNext();
+          goNext();
           e.preventDefault();
         }
       } else if (e.key === "=" || e.key === "+") {
@@ -696,8 +760,6 @@ export function PdfJsViewer({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
-    canNext,
-    canPrev,
     canZoomIn,
     canZoomOut,
     goNext,
@@ -1037,6 +1099,7 @@ export function PdfJsViewer({
         await renderTask.promise;
 
         if (cancelled) return;
+        markFirstPainted();
         setStatus({ kind: "idle" });
       } catch (e: unknown) {
         if (cancelled) return;
@@ -1383,6 +1446,7 @@ export function PdfJsViewer({
 
   useEffect(() => {
     if (!shareIdSafe) return;
+    if (!hasFirstPaint) return;
     const shareId = shareIdSafe;
     let cancelled = false;
 /**
@@ -1418,11 +1482,13 @@ export function PdfJsViewer({
         // ignore
       }
     }
-    void loadContext();
+    scheduleAfterPaint(() => {
+      if (!cancelled) void loadContext();
+    });
     return () => {
       cancelled = true;
     };
-  }, [shareIdSafe]);
+  }, [hasFirstPaint, shareIdSafe]);
 
   useEffect(() => {
     // Public stats collection for share pages:
@@ -1430,6 +1496,7 @@ export function PdfJsViewer({
     // - record one "view" per (shareId, botId) server-side
     // - record distinct pages viewed per (shareId, botId) server-side
     if (!shareIdSafe) return;
+    if (!hasFirstPaint) return;
     const botId = getOrCreateBotId();
     if (!botId) return;
 
@@ -1438,11 +1505,13 @@ export function PdfJsViewer({
 
     // Record the view once per browser (localStorage) to reduce spam.
     if (!local.viewedAt) {
-      void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ botId, pageNumber }),
-      }).catch(() => void 0);
+      scheduleAfterPaint(() => {
+        void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ botId, pageNumber }),
+        }).catch(() => void 0);
+      });
 
       pagesSeen.add(pageNumber);
       writeLocalShareStats(shareIdSafe, {
@@ -1454,11 +1523,13 @@ export function PdfJsViewer({
 
     // If we've already recorded a view, still record the initial page if it wasn't stored yet.
     if (!pagesSeen.has(pageNumber)) {
-      void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ botId, pageNumber }),
-      }).catch(() => void 0);
+      scheduleAfterPaint(() => {
+        void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ botId, pageNumber }),
+        }).catch(() => void 0);
+      });
       pagesSeen.add(pageNumber);
       writeLocalShareStats(shareIdSafe, {
         viewedAt: local.viewedAt,
@@ -1466,29 +1537,32 @@ export function PdfJsViewer({
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shareIdSafe]);
+  }, [hasFirstPaint, shareIdSafe]);
 
   useEffect(() => {
     // Record distinct page views as the user navigates.
     if (!shareIdSafe) return;
+    if (!hasFirstPaint) return;
     const botId = getOrCreateBotId();
     if (!botId) return;
     const local = readLocalShareStats(shareIdSafe);
     const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
     if (pagesSeen.has(pageNumber)) return;
 
-    void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ botId, pageNumber }),
-    }).catch(() => void 0);
+    scheduleAfterPaint(() => {
+      void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ botId, pageNumber }),
+      }).catch(() => void 0);
+    });
 
     pagesSeen.add(pageNumber);
     writeLocalShareStats(shareIdSafe, {
       viewedAt: local.viewedAt,
       pagesSeen: Array.from(pagesSeen).sort((a, b) => a - b),
     });
-  }, [pageNumber, shareIdSafe]);
+  }, [hasFirstPaint, pageNumber, shareIdSafe]);
 
   return (
     <div
@@ -2057,7 +2131,7 @@ export function PdfJsViewer({
           <div
             aria-live="polite"
             aria-busy="true"
-            className="pointer-events-none absolute inset-0 z-20 grid place-items-center"
+            className="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-black"
           >
             <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/70 px-4 py-3 text-sm text-white/90 shadow-xl backdrop-blur-sm">
               <div
@@ -2168,8 +2242,11 @@ export function PdfJsViewer({
             type="button"
             aria-label="Previous page"
             onClick={goPrev}
-            disabled={!canPrev || status.kind === "loading"}
-            className="pointer-events-auto absolute left-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100"
+            aria-disabled={!canPrev}
+            disabled={status.kind === "loading"}
+            className={`pointer-events-auto absolute left-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100 ${
+              canPrev ? "" : "text-white/70"
+            }`}
           >
             <svg
               width="22"
@@ -2194,8 +2271,11 @@ export function PdfJsViewer({
             type="button"
             aria-label="Next page"
             onClick={goNext}
-            disabled={!canNext || status.kind === "loading"}
-            className="pointer-events-auto absolute right-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100"
+            aria-disabled={!canNext}
+            disabled={status.kind === "loading"}
+            className={`pointer-events-auto absolute right-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100 ${
+              canNext ? "" : "text-white/70"
+            }`}
           >
             <svg
               width="22"
@@ -2213,6 +2293,17 @@ export function PdfJsViewer({
               />
             </svg>
           </button>
+        ) : null}
+
+        {/* Edge hint (only when trying to navigate past first/last page) */}
+        {viewMode === "single" ? (
+          <div
+            className={`pointer-events-none absolute bottom-6 left-1/2 -translate-x-1/2 rounded-full bg-black/45 px-3.5 py-1.5 text-[12px] font-medium text-white/80 shadow-lg backdrop-blur-sm transition-all duration-200 sm:text-[13px] ${
+              edgeHint.visible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+            }`}
+          >
+            {edgeHint.kind === "start" ? "First page" : "Last page"}
+          </div>
         ) : null}
 
         {/* Subtle zoom reset overlay (only when zoomed) */}

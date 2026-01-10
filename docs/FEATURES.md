@@ -64,7 +64,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
     - The banner can be **dismissed** (per workspace + billing cycle). After dismissal, the banner stays hidden for the rest of the cycle and the **Limits** nav item shows a subtle doesn’t-miss indicator (tooltip: “Credits exhausted. Enable on-demand to continue.”).
   - Includes a **Contact Us** item in the left menu that opens a modal with the support email (`hi@lnkdrp.com`).
   - Account tab includes an **Edit name** modal (updates the signed-in user's display name).
-  - Account tab includes **Email notifications** for the currently selected workspace (doc update + repo link request cadence).
+  - Account tab includes **Email preferences** for the currently selected workspace (doc update + repo link request cadence).
   - User avatar UI uses **initials** (we do not display the Google profile image).
   - Workspaces can have an optional **workspace icon** (org avatar); recommended requirements: **square (1:1), at least 120×120**, and ≤ 2MB.
   - Includes a **Billing & Invoices** tab (`/dashboard?tab=billing` or `/dashboard/billing`) with:
@@ -114,12 +114,14 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Doc page**: `/doc/:docId`
   - Shows doc status (`draft`/`preparing`/`ready`/`failed`) and updates as processing completes.
-  - Shows a fast **preview image first** (when available) and loads the full PDF viewer on intent (click **Open deck**) to reduce initial load time on large decks.
+  - Shows a fast **preview image first** (when available) and loads the full PDF viewer on intent (click **Open PDF**) to reduce initial load time on large decks. Preview always **fits fully** (no crop) and is **top-aligned**. The preview uses a consistent dark “stage” (even in light theme) and, for landscape previews, applies a subtle bottom blend that starts within the image and fades into black; portrait previews skip the blend.
   - PDF viewing via `PdfJsViewer` once the PDF is ready (owner uses a same-origin cached PDF proxy at `/api/docs/:docId/pdf`).
+  - Header shows a small line with the **last upload/replacement** timestamp and **who uploaded it** (best-effort name/email), so owners can see who replaced a doc most recently.
 - **Doc metrics page**: `/doc/:docId/metrics`
   - Loads charts/totals quickly from `/api/docs/:docId/shareviews`.
   - Viewers list loads shortly after (background) and avoids a Mongo `$lookup` by using denormalized viewer snapshots stored on `ShareView`.
   - Shows both **authenticated viewers** and **anonymous viewers** (best-effort, per browser/device), including per-viewer **pages viewed** (unique pages seen).
+  - Clicking a viewer opens a **Viewer details** modal that shows the specific **pages seen** (page numbers) plus first/last seen timestamps.
 - **Doc replacement change history**:
   - When the owner replaces a doc file (creating a new upload version), the server stores a best-effort “what changed” record (previous text, new text, summary + changes list).
   - Changes are only accessible to users who have access to the doc (API: `/api/docs/:docId/changes`).

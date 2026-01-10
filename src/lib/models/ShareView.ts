@@ -35,6 +35,12 @@ const shareViewSchema = new Schema(
      */
     viewerUserId: { type: Schema.Types.ObjectId, ref: "User", index: true, default: null },
     viewerEmail: { type: String, trim: true, lowercase: true, index: true, default: null },
+    /**
+     * Denormalized snapshots for fast owner metrics (avoid $lookup into users).
+     * These are best-effort and may become stale if a user changes their profile.
+     */
+    viewerName: { type: String, trim: true, default: null },
+    viewerEmailSnapshot: { type: String, trim: true, lowercase: true, default: null },
   },
   {
     timestamps: { createdAt: "createdDate", updatedAt: "updatedDate" },

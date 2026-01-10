@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
 
@@ -76,7 +76,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
   let actor: Awaited<ReturnType<typeof resolveActor>> | null = null;
   let docIdForLog: string | null = null;
   try {
-    actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
+    actor = (await tryResolveUserActorFastWithPersonalOrg(request)) ?? (await resolveActor(request));
     const { docId } = await ctx.params;
     docIdForLog = docId;
     if (!isObjectId(docId)) {
@@ -185,7 +185,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
   let actor: Awaited<ReturnType<typeof resolveActor>> | null = null;
   let docIdForLog: string | null = null;
   try {
-    actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
+    actor = (await tryResolveUserActorFastWithPersonalOrg(request)) ?? (await resolveActor(request));
     const { docId } = await ctx.params;
     docIdForLog = docId;
     if (!isObjectId(docId)) {

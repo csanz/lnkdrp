@@ -128,7 +128,7 @@ export default function UsageTable({
   }, [days, showSpend, refreshNonce]);
 
   return (
-    <div className={cn("rounded-2xl bg-[var(--panel)] p-6", className)}>
+    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6", className)}>
       <div className="flex items-center justify-between gap-3">
         <div className="text-[13px] font-semibold text-[var(--fg)]">Usage</div>
         <div className="flex items-center gap-2">

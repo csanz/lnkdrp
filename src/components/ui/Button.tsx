@@ -5,7 +5,7 @@
  */
 "use client";
 
-type Variant = "outline" | "solid" | "danger" | "ghost";
+type Variant = "outline" | "secondary" | "solid" | "danger" | "ghost";
 type Size = "sm" | "md";
 
 export type ButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "type"> & {
@@ -27,6 +27,8 @@ export default function Button({ variant = "outline", size = "md", className, di
       ? "bg-[var(--fg)] text-[var(--bg)] hover:opacity-90 focus-visible:ring-[var(--ring)]"
       : variant === "danger"
         ? "bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-500/40"
+        : variant === "secondary"
+          ? "border border-[var(--border)] bg-[var(--panel-2)] text-[var(--fg)] hover:bg-[var(--panel-hover)] focus-visible:ring-[var(--ring)]"
         : variant === "ghost"
           ? "bg-transparent text-[var(--fg)] hover:bg-[var(--panel-hover)] focus-visible:ring-[var(--ring)]"
           : "border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] hover:bg-[var(--panel-hover)] focus-visible:ring-[var(--ring)]";

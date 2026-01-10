@@ -38,6 +38,7 @@ import {
   moveStarredDoc,
   refreshStarredDocsFromServer,
   STARRED_DOCS_CHANGED_EVENT,
+  upsertStarredDocMeta,
   type StarredDoc,
 } from "@/lib/starredDocs";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -207,6 +208,15 @@ type ProjectListItem = {
   createdDate: string | null;
 };
 
+type RequestListItem = {
+  id: string;
+  name: string;
+  description: string;
+  docCount?: number;
+  updatedDate: string | null;
+  createdDate: string | null;
+};
+
 /**
  * Render a user-friendly relative time string for ISO timestamps.
  */
@@ -236,9 +246,10 @@ export default function LeftSidebar({
   onAddNewFile: (file: File) => void;
 }) {
   const router = useRouter();
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
   const { resolvedTheme } = useTheme();
   const navLocked = useNavigationLocked();
+  const isDocRoute = useMemo(() => pathname.startsWith("/doc/"), [pathname]);
 
   const activeProjectId = useMemo(() => {
     const p = typeof pathname === "string" ? pathname : "";
@@ -322,7 +333,7 @@ export default function LeftSidebar({
     page: 1,
     limit: PROJECTS_SIDEBAR_LIMIT,
   });
-  const [requests, setRequests] = useState<Paged<ProjectListItem>>({
+  const [requests, setRequests] = useState<Paged<RequestListItem>>({
     items: [],
     total: 0,
     page: 1,
@@ -355,7 +366,7 @@ export default function LeftSidebar({
   const [deleteRequestRepoOpen, setDeleteRequestRepoOpen] = useState(false);
   const [deleteRequestRepoBusy, setDeleteRequestRepoBusy] = useState(false);
   const [deleteRequestRepoError, setDeleteRequestRepoError] = useState<string | null>(null);
-  const [deleteRequestRepoTarget, setDeleteRequestRepoTarget] = useState<ProjectListItem | null>(null);
+  const [deleteRequestRepoTarget, setDeleteRequestRepoTarget] = useState<RequestListItem | null>(null);
   const [deleteDocOpen, setDeleteDocOpen] = useState(false);
   const [deleteDocBusy, setDeleteDocBusy] = useState(false);
   const [deleteDocError, setDeleteDocError] = useState<string | null>(null);
@@ -376,7 +387,7 @@ export default function LeftSidebar({
     limit: 20,
   });
 
-  const [requestsModal, setRequestsModal] = useState<Paged<ProjectListItem>>({
+  const [requestsModal, setRequestsModal] = useState<Paged<RequestListItem>>({
     items: [],
     total: 0,
     page: 1,
@@ -413,20 +424,51 @@ export default function LeftSidebar({
     window.addEventListener(SIDEBAR_CACHE_UPDATED_EVENT, onCacheUpdated);
 
     // Background refresh: keep UI stable; update silently when data changes.
-    void refreshSidebarCache({ reason: "mount" }).finally(() => {
-      if (!cancelled) {
-        setProjectsLoaded(true);
-        setRequestsLoaded(true);
+    // Defer so initial page paint isn't competing with sidebar work.
+    // Doc pages are especially sensitive (viewer + history), so delay more there.
+    // If there's no cache snapshot yet, refresh immediately (otherwise the sidebar stays empty).
+    const hasCache = Boolean(getSidebarCacheSnapshot());
+    const mountDelayMs = hasCache ? (isDocRoute ? 1200 : 350) : 0;
+    const mountT = window.setTimeout(() => {
+      void refreshSidebarCache({ reason: "mount" }).finally(() => {
+        if (!cancelled) {
+          setProjectsLoaded(true);
+          setRequestsLoaded(true);
+        }
+      });
+    }, mountDelayMs);
+    // Avoid aggressive polling. The sidebar snapshot is cached (localStorage) and updated via:
+    // - explicit "changed" events (docs/projects)
+    // - tab visibility transitions
+    // - a slow backstop interval for long-lived tabs
+    const backstopMs = 60_000;
+    const id = window.setInterval(() => {
+      try {
+        if (document.hidden) return;
+      } catch {
+        // ignore
       }
-    });
-    const id = window.setInterval(() => void refreshSidebarCache({ reason: "interval" }), 8000);
+      void refreshSidebarCache({ reason: "interval" });
+    }, backstopMs);
+
+    function onVisibility() {
+      try {
+        if (document.hidden) return;
+      } catch {
+        // ignore
+      }
+      void refreshSidebarCache({ reason: "visibility", force: true });
+    }
+    window.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       cancelled = true;
       window.removeEventListener(SIDEBAR_CACHE_UPDATED_EVENT, onCacheUpdated);
+      window.removeEventListener("visibilitychange", onVisibility);
+      window.clearTimeout(mountT);
       window.clearInterval(id);
     };
-  }, []);
+  }, [isDocRoute]);
 
   useEffect(() => {
     if (!openProjectMenuId) return;
@@ -526,7 +568,7 @@ export default function LeftSidebar({
         );
         if (!rRes.ok) return;
         const rJson = (await rRes.json()) as {
-          items?: ProjectListItem[];
+          items?: RequestListItem[];
           total?: number;
           page?: number;
           limit?: number;
@@ -637,7 +679,7 @@ export default function LeftSidebar({
       refreshStarred();
     }
     refreshStarred();
-    void syncStarredFromServer();
+    const syncT = window.setTimeout(() => void syncStarredFromServer(), 500);
     function onActiveOrgChanged() {
       refreshStarred();
       void syncStarredFromServer();
@@ -647,6 +689,7 @@ export default function LeftSidebar({
     window.addEventListener("storage", onStorage);
     return () => {
       disposed = true;
+      window.clearTimeout(syncT);
       window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, refreshStarred);
       window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, onActiveOrgChanged);
       window.removeEventListener("storage", onStorage);
@@ -785,7 +828,7 @@ export default function LeftSidebar({
           }
           const json = (await res.json()) as { docs?: DocListItem[] };
           const docsPage = Array.isArray(json.docs) ? json.docs : [];
-          for (const doc of docsPage) {
+        for (const doc of docsPage) {
             if (!doc?.id) continue;
             if (!ids.has(doc.id)) continue;
             foundIds.add(doc.id);
@@ -805,6 +848,13 @@ export default function LeftSidebar({
                 status: typeof doc.status === "string" ? doc.status : null,
               };
             }
+
+            // Persist version/status into the starred local cache so "v#" pills render instantly next time.
+            upsertStarredDocMeta({
+              id: doc.id,
+              version: typeof doc.version === "number" && Number.isFinite(doc.version) ? doc.version : null,
+              status: typeof doc.status === "string" ? doc.status : null,
+            });
           }
         }
 
@@ -839,9 +889,10 @@ export default function LeftSidebar({
       }
     }
 
-    void loadStarredMeta();
+    const starredMetaT = window.setTimeout(() => void loadStarredMeta(), 600);
     return () => {
       cancelled = true;
+      window.clearTimeout(starredMetaT);
     };
   }, [starredDocs, starredDetailsRefreshTick]);
 
@@ -854,6 +905,14 @@ export default function LeftSidebar({
 
     async function load() {
       try {
+        // Prefill from cached sidebar snapshot for instant UI, then refresh in the background.
+        if (!docsQuery.trim() && docsModal.page === 1 && docs.items.length) {
+          setDocsModal((prev) => ({
+            ...prev,
+            items: prev.items.length ? prev.items : docs.items.slice(0, prev.limit),
+            total: prev.total || docs.total || docs.items.length,
+          }));
+        }
         const q = docsQuery.trim() ? `&q=${encodeURIComponent(docsQuery.trim())}` : "";
         const res = await fetchWithTempUser(`/api/docs?limit=${docsModal.limit}&page=${docsModal.page}${q}&sidebar=1`, {
           cache: "no-store",
@@ -891,6 +950,14 @@ export default function LeftSidebar({
 
     async function load() {
       try {
+        // Prefill from cached sidebar snapshot for instant UI, then refresh in the background.
+        if (!projectsQuery.trim() && projectsModal.page === 1 && projects.items.length) {
+          setProjectsModal((prev) => ({
+            ...prev,
+            items: prev.items.length ? prev.items : projects.items.slice(0, prev.limit),
+            total: prev.total || projects.total || projects.items.length,
+          }));
+        }
         const q = projectsQuery.trim() ? `&q=${encodeURIComponent(projectsQuery.trim())}` : "";
         const res = await fetchWithTempUser(
           `/api/projects?limit=${projectsModal.limit}&page=${projectsModal.page}${q}&sidebar=1`,
@@ -929,6 +996,14 @@ export default function LeftSidebar({
 
     async function load() {
       try {
+        // Prefill from cached sidebar snapshot for instant UI, then refresh in the background.
+        if (!requestsQuery.trim() && requestsModal.page === 1 && requests.items.length) {
+          setRequestsModal((prev) => ({
+            ...prev,
+            items: prev.items.length ? prev.items : requests.items.slice(0, prev.limit),
+            total: prev.total || requests.total || requests.items.length,
+          }));
+        }
         const q = requestsQuery.trim() ? `&q=${encodeURIComponent(requestsQuery.trim())}` : "";
         const res = await fetchWithTempUser(
           `/api/requests?limit=${requestsModal.limit}&page=${requestsModal.page}${q}&sidebar=1`,
@@ -936,7 +1011,7 @@ export default function LeftSidebar({
         );
         if (!res.ok) return;
         const json = (await res.json()) as {
-          items?: ProjectListItem[];
+          items?: RequestListItem[];
           total?: number;
           page?: number;
           limit?: number;
@@ -996,6 +1071,21 @@ export default function LeftSidebar({
   }, [starredInvalidById, starredSorted]);
 
   const starredForSidebar = useMemo(() => starredValid.slice(0, STARRED_SIDEBAR_LIMIT), [starredValid]);
+
+  // Keep cached starred meta (version/status) up to date from the sidebar docs list snapshot.
+  // This makes the Starred "v#" pills render instantly without waiting on `/api/docs?ids=...`.
+  useEffect(() => {
+    if (!starredDocs.length) return;
+    if (!docs.items.length) return;
+    for (const s of starredDocs) {
+      const meta = sidebarDocMetaById.get(s.id) ?? null;
+      if (!meta) continue;
+      // Only write when we have something meaningful; `upsertStarredDocMeta` is internally no-op when unchanged.
+      if (meta.version != null || meta.status) {
+        upsertStarredDocMeta({ id: s.id, version: meta.version, status: meta.status });
+      }
+    }
+  }, [docs.items.length, sidebarDocMetaById, starredDocs]);
 
   const starredFilteredForModal = useMemo(() => {
     const q = starredQuery.trim().toLowerCase();
@@ -1509,6 +1599,8 @@ export default function LeftSidebar({
           <ActiveWorkspacePill
             maxWidthClassName="max-w-[240px]"
             textClassName="text-[11px]"
+            // On doc pages, avoid extra network work competing with the viewer/history UI.
+            disableNetwork={isDocRoute}
           />
         </div>
 
@@ -1617,7 +1709,7 @@ export default function LeftSidebar({
         >
           <div className="grid gap-5">
             <section>
-              <div className="flex items-center gap-1.5 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+              <div className="flex items-center gap-1 px-2 text-[14px] font-medium text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
@@ -1684,8 +1776,9 @@ export default function LeftSidebar({
                     const title = truncateEnd(d.title, 22);
                     const version =
                       (typeof sidebarMeta?.version === "number" && Number.isFinite(sidebarMeta.version) ? sidebarMeta.version : null) ??
+                      (typeof d.version === "number" && Number.isFinite(d.version) ? d.version : null) ??
                       (typeof details?.version === "number" && Number.isFinite(details.version) ? details.version : null);
-                    const status = (sidebarMeta?.status ?? details?.status ?? null) as string | null;
+                    const status = (sidebarMeta?.status ?? d.status ?? details?.status ?? null) as string | null;
                     return (
                       <li key={d.id}>
                         <div
@@ -1742,7 +1835,7 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="flex items-center gap-1.5 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+              <div className="flex items-center gap-1 px-2 text-[14px] font-medium text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
@@ -1930,7 +2023,7 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="flex items-center gap-1.5 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+              <div className="flex items-center gap-1 px-2 text-[14px] font-medium text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
@@ -2468,13 +2561,12 @@ function StablePlusMinusIcon({ expanded }: { expanded: boolean }) {
       className="h-4 w-4"
     >
       {expanded ? (
-        // plus
-        <path d="m4.5 5.25 7.5 7.5 7.5-7.5m-15 6 7.5 7.5 7.5-7.5" />
+        // minus (list shown)
+        <path d="m19.5 8.25-7.5 7.5-7.5-7.5" />
       ) : (
-        // minus
-        <path d="m5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5" />
+        // plus (list hidden)
+        <path d="m8.25 4.5 7.5 7.5-7.5 7.5" />
       )}
     </svg>
   );
 }
-

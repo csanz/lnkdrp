@@ -52,7 +52,10 @@ export default function DailyUsageChartRenderer({
     if (!el) return;
 
     function update() {
-      const r = el.getBoundingClientRect();
+      const cur = wrapRef.current;
+      if (!cur) return;
+
+      const r = cur.getBoundingClientRect();
       const w = Math.floor(r.width);
       const h = Math.floor(r.height);
       if (w > 0 && h > 0) setSize({ w, h });

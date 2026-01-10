@@ -117,16 +117,31 @@ export async function GET(request: Request) {
       ]),
       ShareViewModel.aggregate([
         { $match: { $or: [{ createdDate: { $gte: since30d } }, { updatedDate: { $gte: since30d } }] } },
+        // Keep the working set small: we only need docId + dates + downloadsByDay for the dashboard series.
+        { $project: { docId: 1, createdDate: 1, updatedDate: 1, downloadsByDay: 1 } },
         {
           $lookup: {
             from: "docs",
-            localField: "docId",
-            foreignField: "_id",
+            let: { docId: "$docId" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      { $eq: ["$_id", "$$docId"] },
+                      { $eq: ["$orgId", orgId] },
+                      { $ne: ["$isDeleted", true] },
+                    ],
+                  },
+                },
+              },
+              // IMPORTANT: avoid pulling large doc fields (extractedText, aiOutput, etc) into this aggregation.
+              { $project: { _id: 1 } },
+            ],
             as: "doc",
           },
         },
         { $unwind: "$doc" },
-        { $match: { "doc.orgId": orgId, "doc.isDeleted": { $ne: true } } },
         {
           $facet: {
             viewsByDay: [

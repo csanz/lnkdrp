@@ -58,12 +58,15 @@ export default function CreateProjectModal({
 
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Description (optional)</div>
+          <div className="mt-1 text-[11px] text-[var(--muted-2)]">
+            Visible to recipients when you share this project link.
+          </div>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             disabled={busy}
             placeholder="What belongs here?"
-            className="mt-1 min-h-[96px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+            className="mt-2 min-h-[96px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
           />
         </div>
 

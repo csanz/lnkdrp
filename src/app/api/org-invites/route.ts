@@ -11,6 +11,7 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
+import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
@@ -76,54 +77,55 @@ function originFromRequest(request: Request): string {
 }
 
 export async function GET(request: Request) {
-  const session = await tryResolveAuthUserId(request);
-  if (!session?.userId) return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  return withMongoRequestLogging(request, async () => {
+    const session = await tryResolveAuthUserId(request);
+    if (!session?.userId) return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
-  const url = new URL(request.url);
-  const orgIdRaw = (url.searchParams.get("orgId") ?? "").trim() || session.activeOrgId || "";
-  if (!orgIdRaw || !Types.ObjectId.isValid(orgIdRaw)) {
-    return NextResponse.json({ error: "Invalid orgId" }, { status: 400 });
-  }
+    const url = new URL(request.url);
+    const orgIdRaw = (url.searchParams.get("orgId") ?? "").trim() || session.activeOrgId || "";
+    if (!orgIdRaw || !Types.ObjectId.isValid(orgIdRaw)) {
+      return NextResponse.json({ error: "Invalid orgId" }, { status: 400 });
+    }
 
-  await connectMongo();
+    await connectMongo();
 
-  // Personal orgs are single-user; invites are not supported.
-  const org = await OrgModel.findOne({ _id: new Types.ObjectId(orgIdRaw), isDeleted: { $ne: true } })
-    .select({ type: 1 })
-    .lean();
-  const orgType = org ? String((org as { type?: unknown }).type ?? "") : "";
-  if (orgType !== "team") return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // Personal orgs are single-user; invites are not supported.
+    const org = await OrgModel.findOne({ _id: new Types.ObjectId(orgIdRaw), isDeleted: { $ne: true } })
+      .select({ type: 1 })
+      .lean();
+    const orgType = org ? String((org as { type?: unknown }).type ?? "") : "";
+    if (orgType !== "team") return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  const membership = await OrgMembershipModel.findOne({
-    orgId: new Types.ObjectId(orgIdRaw),
-    userId: new Types.ObjectId(session.userId),
-    isDeleted: { $ne: true },
-  })
-    .select({ role: 1 })
-    .lean();
-  const userRole = membership ? String((membership as { role?: unknown }).role ?? "") : "";
-  const canInvite = userRole === "owner" || userRole === "admin";
-  if (!canInvite) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const invites = await OrgInviteModel.find({
-    orgId: new Types.ObjectId(orgIdRaw),
-    isRevoked: { $ne: true },
-  })
-    .select({
-      _id: 1,
-      role: 1,
-      expiresAt: 1,
-      redeemedAt: 1,
-      redeemedByUserId: 1,
-      createdDate: 1,
-      recipientEmail: 1,
-      tokenEnc: 1,
-      tokenEncIv: 1,
-      tokenEncTag: 1,
+    const membership = await OrgMembershipModel.findOne({
+      orgId: new Types.ObjectId(orgIdRaw),
+      userId: new Types.ObjectId(session.userId),
+      isDeleted: { $ne: true },
     })
-    .sort({ createdDate: -1 })
-    .limit(25)
-    .lean();
+      .select({ role: 1 })
+      .lean();
+    const userRole = membership ? String((membership as { role?: unknown }).role ?? "") : "";
+    const canInvite = userRole === "owner" || userRole === "admin";
+    if (!canInvite) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    const invites = await OrgInviteModel.find({
+      orgId: new Types.ObjectId(orgIdRaw),
+      isRevoked: { $ne: true },
+    })
+      .select({
+        _id: 1,
+        role: 1,
+        expiresAt: 1,
+        redeemedAt: 1,
+        redeemedByUserId: 1,
+        createdDate: 1,
+        recipientEmail: 1,
+        tokenEnc: 1,
+        tokenEncIv: 1,
+        tokenEncTag: 1,
+      })
+      .sort({ createdDate: -1 })
+      .limit(25)
+      .lean();
 
   const redeemedUserIds = Array.from(
     new Set(
@@ -138,14 +140,14 @@ export async function GET(request: Request) {
   const redeemedById = new Map(redeemedUsers.map((u) => [String(u._id), u]));
 
   const origin = originFromRequest(request);
-  const out = invites.map((inv) => {
-    const token = decryptInviteToken({
-      enc: (inv as unknown as { tokenEnc?: unknown }).tokenEnc,
-      iv: (inv as unknown as { tokenEncIv?: unknown }).tokenEncIv,
-      tag: (inv as unknown as { tokenEncTag?: unknown }).tokenEncTag,
-    });
-    const inviteUrl =
-      token && origin ? `${origin}/org/join/${encodeURIComponent(token)}` : token ? `/org/join/${encodeURIComponent(token)}` : null;
+    const out = invites.map((inv) => {
+      const token = decryptInviteToken({
+        enc: (inv as unknown as { tokenEnc?: unknown }).tokenEnc,
+        iv: (inv as unknown as { tokenEncIv?: unknown }).tokenEncIv,
+        tag: (inv as unknown as { tokenEncTag?: unknown }).tokenEncTag,
+      });
+      const inviteUrl =
+        token && origin ? `${origin}/org/join/${encodeURIComponent(token)}` : token ? `/org/join/${encodeURIComponent(token)}` : null;
 
     const redeemedByUserId =
       (inv as unknown as { redeemedByUserId?: unknown }).redeemedByUserId instanceof Types.ObjectId
@@ -184,7 +186,8 @@ export async function GET(request: Request) {
     };
   });
 
-  return NextResponse.json({ ok: true, invites: out });
+    return NextResponse.json({ ok: true, invites: out });
+  });
 }
 
 export async function POST(request: Request) {

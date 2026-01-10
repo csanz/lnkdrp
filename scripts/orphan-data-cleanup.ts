@@ -69,7 +69,9 @@ async function orphanIdsByLookup(opts: {
 }): Promise<Types.ObjectId[]> {
   const { child, parent, localField, childMatch, limit } = opts;
   const from = parent.collection.name;
-  const pipeline: Record<string, any>[] = [
+  // Note: Mongoose's `PipelineStage` typing can be overly strict across versions (e.g. $vectorSearch).
+  // For scripts, keep the pipeline flexible.
+  const pipeline: any[] = [
     { $match: { ...(childMatch ?? {}), [localField]: { $type: "objectId" } } },
     { $lookup: { from, localField, foreignField: "_id", as: "__parent" } },
     { $match: { "__parent.0": { $exists: false } } },

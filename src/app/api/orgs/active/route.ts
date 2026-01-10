@@ -13,17 +13,19 @@ import { connectMongo } from "@/lib/mongodb";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
 import { debugError, debugLog } from "@/lib/debug";
-import { resolveActor } from "@/lib/gating/actor";
+import { resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export const ACTIVE_ORG_COOKIE = "ld_active_org";
-
 export async function GET(request: Request) {
   try {
     debugLog(2, "[api/orgs/active] GET");
-    const actor = await resolveActor(request);
+    // Hot path: this endpoint is hit frequently by the dashboard Workspace tab.
+    // Prefer the fast resolver (cookie/JWT + single membership check) and fall back to the full
+    // resolver only when org context can't be determined.
+    const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
     if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
     return NextResponse.json({ activeOrgId: actor.orgId }, { headers: { "cache-control": "no-store" } });
   } catch (err) {

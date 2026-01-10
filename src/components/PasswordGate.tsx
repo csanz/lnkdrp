@@ -87,12 +87,12 @@ export default function PasswordGate({
           </div>
 
           {previewSrc ? (
-            <div className="mt-5 h-56 w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel-2)]">
+            <div className="mt-5 w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={previewSrc}
                 alt={title ? `Preview of ${title}` : "Document preview"}
-                className="block h-full w-full object-cover"
+                className="block h-auto w-full rounded-xl"
               />
             </div>
           ) : null}

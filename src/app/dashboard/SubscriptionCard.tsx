@@ -172,7 +172,7 @@ export default function SubscriptionCard() {
     rightSlot?: React.ReactNode;
   }) {
     return (
-      <div className="rounded-2xl bg-[var(--panel-2)] p-5">
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -191,7 +191,7 @@ export default function SubscriptionCard() {
   const outOfCredits = creditsBlocked === true;
 
   return (
-    <div className="rounded-2xl bg-[var(--panel)] p-6">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Plan</div>

@@ -83,7 +83,7 @@ export default function CreditsSummaryCard({
   const usedCentsThisCycle = usedThisCycle !== null ? usedThisCycle * centsPerCredit : null;
 
   return (
-    <div className="rounded-2xl bg-[var(--panel)] p-6">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Credits</div>

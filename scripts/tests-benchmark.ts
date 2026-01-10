@@ -20,7 +20,7 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 type Args = {
-  mode: "dashboard" | "document" | "leftmenu" | "admin" | null;
+  mode: "dashboard" | "document" | "project" | "leftmenu" | "admin" | null;
   baseUrl: string;
   cookie: string;
   iterations: number;
@@ -30,6 +30,7 @@ type Args = {
   select: boolean;
   selectSpec: string | null;
   docId: string | null;
+  projectId: string | null;
 };
 
 type BenchResult = {
@@ -50,11 +51,13 @@ function usage(): string {
   return [
     "Usage:",
     "  npm run tests:benchmark -- --dashboard",
+    "  npm run tests:benchmark -- --project --project-id <projectId>",
     "  npm run tests:benchmark -- --leftmenu",
     "",
     "Options:",
     "  --dashboard               Run dashboard benchmarks",
     "  --document                Run document (/doc/:docId) benchmarks",
+    "  --project                 Run project (/project/:projectId) benchmarks",
     "  --leftmenu                Run left menu (sidebar) benchmarks",
     "  --admin                   (Listed for parity; not implemented)",
     "  --summary                 Print summary tables (default is section-by-section live output)",
@@ -62,6 +65,7 @@ function usage(): string {
     '                           Dashboard examples: --select 8   |  --select "1,8"  |  --select all',
     '                           Document examples:  --select 1   |  --select all',
     "  --doc-id <docId>          Document ObjectId to benchmark (document mode). If omitted, auto-picks most recent doc.",
+    "  --project-id <projectId>  Project ObjectId to benchmark (project mode).",
     "  --base-url <url>          Base URL (default: http://localhost:3001)",
     "  --cookie <cookieHeader>   Full Cookie header value (or env LNKDRP_COOKIE)",
     "  --iterations <n>          Repeat each request n times (default: 1)",
@@ -85,6 +89,7 @@ function parseArgs(argv: string[]): Args {
   let select = false;
   let selectSpec: string | null = null;
   let docId: string | null = process.env.LNKDRP_DOC_ID?.trim() || null;
+  let projectId: string | null = process.env.LNKDRP_PROJECT_ID?.trim() || null;
 
   const nextValue = (i: number) => {
     const v = argv[i + 1];
@@ -96,6 +101,7 @@ function parseArgs(argv: string[]): Args {
     const a = argv[i];
     if (a === "--dashboard") mode = "dashboard";
     else if (a === "--document") mode = "document";
+    else if (a === "--project") mode = "project";
     else if (a === "--leftmenu") mode = "leftmenu";
     else if (a === "--admin") mode = "admin";
     else if (a === "--summary") summary = true;
@@ -112,6 +118,7 @@ function parseArgs(argv: string[]): Args {
       selectSpec = v || null;
     }
     else if (a === "--doc-id") docId = nextValue(i++);
+    else if (a === "--project-id") projectId = nextValue(i++);
     else if (a === "--base-url") baseUrl = nextValue(i++);
     else if (a === "--cookie") cookie = nextValue(i++);
     else if (a === "--iterations") iterations = Math.max(1, Math.floor(Number(nextValue(i++))));
@@ -127,7 +134,7 @@ function parseArgs(argv: string[]): Args {
   }
 
   baseUrl = baseUrl.replace(/\/+$/, "");
-  return { mode, baseUrl, cookie, iterations, timeoutMs, json, summary, select, selectSpec, docId };
+  return { mode, baseUrl, cookie, iterations, timeoutMs, json, summary, select, selectSpec, docId, projectId };
 }
 
 function tryReadCookieFile(): string {
@@ -295,14 +302,17 @@ async function chooseModeInteractive(): Promise<Args["mode"]> {
     // eslint-disable-next-line no-console
     console.log("  2) Document");
     // eslint-disable-next-line no-console
-    console.log("  3) Left Menu");
+    console.log("  3) Project");
     // eslint-disable-next-line no-console
-    console.log("  4) Admin");
-    const ans = (await rl.question("Enter 1-4: ")).trim();
+    console.log("  4) Left Menu");
+    // eslint-disable-next-line no-console
+    console.log("  5) Admin");
+    const ans = (await rl.question("Enter 1-5: ")).trim();
     if (ans === "1") return "dashboard";
     if (ans === "2") return "document";
-    if (ans === "3") return "leftmenu";
-    if (ans === "4") return "admin";
+    if (ans === "3") return "project";
+    if (ans === "4") return "leftmenu";
+    if (ans === "5") return "admin";
     return null;
   } finally {
     rl.close();
@@ -343,46 +353,28 @@ async function leftMenuBench(args: Args): Promise<BenchResult[]> {
   for (let iter = 0; iter < args.iterations; iter++) {
     const iterLabel = args.iterations > 1 ? ` [${iter + 1}/${args.iterations}]` : "";
 
-    printLeftMenuHeader(`Sidebar cache refresh (parallel)${iterLabel}`);
+    printLeftMenuHeader(`Sidebar cache refresh (/api/sidebar)${iterLabel}`);
     const started = performance.now();
-    const [docsRes, projectsRes, requestsRes] = await Promise.all([
-      timedFetchJson({
-        name: "leftmenu:docs:list(limit=5,page=1)",
-        url: `${base}/api/docs?limit=5&page=1&sidebar=1`,
-        method: "GET",
-        headers,
-        timeoutMs: args.timeoutMs,
-      }),
-      timedFetch({
-        name: "leftmenu:projects:list(limit=10,page=1)",
-        url: `${base}/api/projects?limit=10&page=1&sidebar=1`,
-        method: "GET",
-        headers,
-        timeoutMs: args.timeoutMs,
-      }),
-      timedFetch({
-        name: "leftmenu:requests:list(limit=10,page=1)",
-        url: `${base}/api/requests?limit=10&page=1&sidebar=1`,
-        method: "GET",
-        headers,
-        timeoutMs: args.timeoutMs,
-      }),
-    ]);
+    const sidebarRes = await timedFetchJson({
+      name: "leftmenu:sidebar:snapshot",
+      url: `${base}/api/sidebar?sidebar=1`,
+      method: "GET",
+      headers,
+      timeoutMs: args.timeoutMs,
+    });
     const wallMs = performance.now() - started;
 
-    [docsRes, projectsRes, requestsRes].forEach((r) => {
-      results.push(r);
-      printBenchResultLine(r);
-    });
+    results.push(sidebarRes);
+    printBenchResultLine(sidebarRes);
 
     // eslint-disable-next-line no-console
-    console.log(`\nSidebar cache refresh total (wall clock): ${formatMs(wallMs)} (3 calls)`);
+    console.log(`\nSidebar cache refresh total (wall clock): ${formatMs(wallMs)} (1 call)`);
 
     // Starred metadata resolution (mirrors LeftSidebar's /api/docs?ids=... chunked call).
     // We simulate this by taking up to 3 recent docs from the sidebar docs list.
     printLeftMenuHeader(`Starred metadata (/api/docs?ids=...)${iterLabel}`);
-    const docsJson = (docsRes as any).jsonBody as any;
-    const docs = Array.isArray(docsJson?.docs) ? docsJson.docs : [];
+    const sidebarJson = (sidebarRes as any).jsonBody as any;
+    const docs = Array.isArray(sidebarJson?.docs?.items) ? sidebarJson.docs.items : [];
     const ids = docs
       .map((d: any) => (typeof d?.id === "string" ? d.id.trim() : ""))
       .filter(Boolean)
@@ -468,6 +460,86 @@ async function leftMenuBench(args: Args): Promise<BenchResult[]> {
         };
     results.push(deleteDocRes);
     printBenchResultLine(deleteDocRes);
+  }
+
+  return results;
+}
+
+function printProjectHeader(title: string) {
+  // eslint-disable-next-line no-console
+  console.log(`\nProject: ${title}`);
+  // eslint-disable-next-line no-console
+  console.log("-".repeat(`Project: ${title}`.length));
+}
+
+async function projectBench(args: Args): Promise<BenchResult[]> {
+  const base = args.baseUrl;
+  const cookie = args.cookie;
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    "x-lnkdrp-benchmark": "1",
+    ...(cookie ? { cookie } : null),
+  };
+
+  const projectId = (args.projectId ?? "").trim();
+  if (!projectId) {
+    throw new Error('Missing --project-id. Example: npm run tests:benchmark -- --project --project-id 695e017df74404a90566ab9c');
+  }
+
+  const results: BenchResult[] = [];
+
+  for (let iter = 0; iter < args.iterations; iter++) {
+    const iterLabel = args.iterations > 1 ? ` [${iter + 1}/${args.iterations}]` : "";
+    printProjectHeader(`Main Page (/project/${projectId})${iterLabel}`);
+
+    // On initial mount, the project page triggers several independent calls:
+    // - POST /api/metrics/events (project_view)
+    // - GET  /api/projects/:projectId/docs (main content; UI uses ETag revalidation)
+    // - GET  /api/starred (best-effort sync for local starred cache)
+    const started = performance.now();
+    const pending: Array<Promise<BenchResult>> = [
+      timedFetchJson({
+        name: "metrics:project_view",
+        url: `${base}/api/metrics/events`,
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({
+          type: "project_view",
+          sessionId: "benchmark",
+          projectId,
+          path: `/project/${encodeURIComponent(projectId)}`,
+        }),
+        timeoutMs: args.timeoutMs,
+      }),
+      timedFetchJson({
+        name: "projects:docs(limit=25,page=1)",
+        url: `${base}/api/projects/${encodeURIComponent(projectId)}/docs?limit=25&page=1`,
+        method: "GET",
+        headers: { ...headers, "cache-control": "no-store" },
+        timeoutMs: args.timeoutMs,
+      }),
+      timedFetchJson({
+        name: "starred:list",
+        url: `${base}/api/starred`,
+        method: "GET",
+        headers: { ...headers, "cache-control": "no-store" },
+        timeoutMs: args.timeoutMs,
+      }),
+    ];
+
+    const out = await Promise.all(pending);
+    const wallMs = performance.now() - started;
+    for (const r of out) {
+      results.push(r);
+      printBenchResultLine(r);
+    }
+
+    const nonSkipped = out.filter((r) => !r.skipped);
+    const sumMs = nonSkipped.reduce((acc, r) => acc + (Number.isFinite(r.ms) ? r.ms : 0), 0);
+    // eslint-disable-next-line no-console
+    console.log(`\nProject Page total (parallel page load): ${formatMs(wallMs)} (${nonSkipped.length} calls)`);
+    // eslint-disable-next-line no-console
+    console.log(`Project Page total (sum of calls): ${formatMs(sumMs)} (${nonSkipped.length} calls)`);
   }
 
   return results;
@@ -963,8 +1035,38 @@ async function dashboardBenchBySection(args: Args): Promise<BenchResult[]> {
 
   const steps: DashboardStep[] = [
     // Header (dashboard shell/top bar)
-    // Fast-path goal: header should render without any required network calls.
-    // (We defer org refresh, plan status, and credits fetch until interaction/idle.)
+    // Even though the UI defers these with short setTimeouts, they still happen on initial load.
+    // Benchmark them here as the "Header" network surface area.
+    {
+      section: "Header",
+      name: "credits:snapshot(fast=1)",
+      method: "GET",
+      url: ({ base }) => `${base}/api/credits/snapshot?fast=1`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({
+          name: "credits:snapshot(fast=1)",
+          url: `${base}/api/credits/snapshot?fast=1`,
+          method: "GET",
+          headers,
+          timeoutMs,
+        }),
+    },
+    {
+      section: "Header",
+      name: "billing:status",
+      method: "GET",
+      url: ({ base }) => `${base}/api/billing/status`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "billing:status", url: `${base}/api/billing/status`, method: "GET", headers, timeoutMs }),
+    },
+    {
+      section: "Header",
+      name: "orgs:list",
+      method: "GET",
+      url: ({ base }) => `${base}/api/orgs`,
+      run: ({ base, headers, timeoutMs }) =>
+        timedFetch({ name: "orgs:list", url: `${base}/api/orgs`, method: "GET", headers, timeoutMs }),
+    },
 
     // Overview
     {
@@ -1513,19 +1615,9 @@ async function documentHistoryBench(args: Args): Promise<BenchResult[]> {
   results.push(defaultsRes);
   printResult(`GET ${urlToRoute(defaultsRes.url)}`, defaultsRes);
 
-  const docRes = await timedFetchJson({
-    name: "docs:get",
-    url: `${base}/api/docs/${encodeURIComponent(docId)}?lite=1`,
-    method: "GET",
-    headers,
-    timeoutMs: args.timeoutMs,
-  });
-  results.push(docRes);
-  printResult(`GET ${urlToRoute(docRes.url)}`, docRes);
-
   const changesRes = await timedFetchJson({
     name: "docs:changes",
-    url: `${base}/api/docs/${encodeURIComponent(docId)}/changes?lite=1&limit=10`,
+    url: `${base}/api/docs/${encodeURIComponent(docId)}/changes?noText=1`,
     method: "GET",
     headers,
     timeoutMs: args.timeoutMs,
@@ -1821,7 +1913,7 @@ async function main() {
     return;
   }
 
-  if (args.mode !== "dashboard" && args.mode !== "document" && args.mode !== "leftmenu") {
+  if (args.mode !== "dashboard" && args.mode !== "document" && args.mode !== "project" && args.mode !== "leftmenu") {
     // eslint-disable-next-line no-console
     console.error(usage());
     process.exit(2);
@@ -1877,6 +1969,8 @@ async function main() {
       }
     }
     results = all;
+  } else if (args.mode === "project") {
+    results = await projectBench(args);
   } else if (args.mode === "leftmenu") {
     results = await leftMenuBench(args);
   }

@@ -12,7 +12,7 @@ import { resolveActorForStats, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
-import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 
 export const runtime = "nodejs";

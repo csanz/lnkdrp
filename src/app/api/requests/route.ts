@@ -9,7 +9,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
@@ -120,7 +120,8 @@ export async function GET(request: Request) {
     const q = qRaw.trim();
 
     debugLog(2, "[api/requests] GET", { limit, page, sidebar, q: q ? "[redacted]" : "" });
-    const actor = await resolveActor(request);
+    // Hot path (left menu): avoid heavy resolver; preserve correct personalOrgId for legacy scoping.
+    const actor = (sidebar ? await tryResolveUserActorFastWithPersonalOrg(request) : null) ?? (await resolveActor(request));
     await connectMongo();
 
     const orgId = new Types.ObjectId(actor.orgId);

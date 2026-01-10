@@ -9,7 +9,8 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { DocChangeModel } from "@/lib/models/DocChange";
-import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
+import { UserModel } from "@/lib/models/User";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,7 +30,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const { docId } = await ctx.params;
     if (!isObjectId(docId)) return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
 
-    const actor = (lite ? await tryResolveUserActorFast(request) : null) ?? (await resolveActor(request));
+    const actor = (await tryResolveUserActorFastWithPersonalOrg(request)) ?? (await resolveActor(request));
     await connectMongo();
 
     // Authorization: doc must belong to the actor's org (with legacy personal-org fallback).
@@ -37,7 +38,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docObjectId = new Types.ObjectId(docId);
-    const docExists = await DocModel.exists({
+    const doc = await DocModel.findOne({
       ...(allowLegacyByUserId
         ? {
             $or: [
@@ -51,19 +52,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             ],
           }
         : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
-    });
-    if (!docExists) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    const pipeline: any[] = [
-      {
-        $match: {
-          docId: docObjectId,
-          ...(allowLegacyByUserId ? {} : { orgId }),
-        },
-      },
-      { $sort: { toVersion: -1, createdDate: -1 } },
-      { $limit: limit },
-    ];
+    })
+      .select({ _id: 1, title: 1, currentUploadVersion: 1 })
+      .lean();
+    if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     // Modes:
     // - lite=1: used by doc page replace banner; cheapest possible (no joins, no change list).
@@ -72,43 +64,66 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const includeChangeList = !lite;
     const includeText = !lite && !noText;
 
-    // Avoid joins for lite.
+    const changeFilter: Record<string, unknown> = {
+      docId: docObjectId,
+      ...(allowLegacyByUserId ? {} : { orgId }),
+    };
+    const changeSelect: Record<string, 1> = {
+      _id: 1,
+      docId: 1,
+      fromUploadId: 1,
+      toUploadId: 1,
+      fromVersion: 1,
+      toVersion: 1,
+      diff: 1,
+      createdDate: 1,
+      createdByUserId: 1,
+      ...(includeText ? { previousText: 1, newText: 1 } : {}),
+    } as const;
+
+    const changesAgg = (await DocChangeModel.find(changeFilter)
+      .select(changeSelect)
+      .sort({ toVersion: -1, createdDate: -1 })
+      .limit(limit)
+      .lean()) as Array<Record<string, any>>;
+
+    // Resolve createdBy in one query (faster than $lookup for large-ish result sets).
+    const createdByMap: Map<string, { id: string; name: string | null; email: string | null }> = new Map();
     if (!lite) {
-      pipeline.push(
-        {
-          $lookup: {
-            from: "users",
-            localField: "createdByUserId",
-            foreignField: "_id",
-            as: "createdByUser",
-          },
-        },
-        { $unwind: { path: "$createdByUser", preserveNullAndEmptyArrays: true } },
+      const ids = Array.from(
+        new Set(
+          changesAgg
+            .map((c) => (c?.createdByUserId ? String(c.createdByUserId) : ""))
+            .filter((id) => id && Types.ObjectId.isValid(id)),
+        ),
       );
+      if (ids.length) {
+        const users = await UserModel.find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) }, isActive: { $ne: false } })
+          .select({ _id: 1, name: 1, email: 1 })
+          .lean();
+        for (const u of users) {
+          const id = u?._id ? String(u._id) : "";
+          if (!id) continue;
+          const name = typeof (u as any).name === "string" && (u as any).name.trim() ? (u as any).name.trim() : null;
+          const email = typeof (u as any).email === "string" && (u as any).email.trim() ? (u as any).email.trim() : null;
+          createdByMap.set(id, { id, name, email });
+        }
+      }
     }
-
-    pipeline.push({
-      $project: {
-        _id: 1,
-        docId: 1,
-        fromUploadId: 1,
-        toUploadId: 1,
-        fromVersion: 1,
-        toVersion: 1,
-        diff: 1,
-        ...(includeText ? { previousText: 1, newText: 1 } : {}),
-        createdDate: 1,
-        createdByUserId: 1,
-        ...(lite ? {} : { createdByUser: { _id: 1, name: 1, email: 1, isTemp: 1 } }),
-      },
-    });
-
-    const changesAgg = (await DocChangeModel.aggregate(pipeline)) as Array<Record<string, any>>;
 
     return applyTempUserHeaders(
       NextResponse.json(
         {
           docId,
+          ...(noText
+            ? {
+                docTitle: typeof (doc as any)?.title === "string" ? String((doc as any).title).trim() : "",
+                currentUploadVersion:
+                  typeof (doc as any)?.currentUploadVersion === "number" && Number.isFinite((doc as any).currentUploadVersion)
+                    ? (doc as any).currentUploadVersion
+                    : null,
+              }
+            : {}),
           changes: changesAgg.map((c) => ({
             id: String(c._id),
             docId: c.docId ? String(c.docId) : docId,
@@ -142,12 +157,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             createdBy: lite
               ? null
               : (function () {
-                  const u = c.createdByUser;
-                  if (!u || typeof u !== "object") return null;
-                  const id = u._id ? String(u._id) : null;
-                  const name = typeof u.name === "string" && u.name.trim() ? u.name.trim() : null;
-                  const email = typeof u.email === "string" && u.email.trim() ? u.email.trim() : null;
-                  return { id, name, email };
+                  const id = c?.createdByUserId ? String(c.createdByUserId) : "";
+                  if (!id) return null;
+                  return createdByMap.get(id) ?? { id, name: null, email: null };
                 })(),
             createdDate: c.createdDate ? new Date(c.createdDate).toISOString() : null,
           })),

@@ -66,7 +66,7 @@ export default function SidebarProjectsSection({
 }) {
   return (
     <section>
-      <div className="flex items-center gap-1.5 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+      <div className="flex items-center gap-1 px-2 text-[14px] font-medium text-[var(--muted-2)]">
         <button
           type="button"
           className="rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
@@ -257,11 +257,11 @@ function StablePlusMinusIcon({ expanded }: { expanded: boolean }) {
       className="h-4 w-4"
     >
       {expanded ? (
-        // plus
-        <path d="m4.5 5.25 7.5 7.5 7.5-7.5m-15 6 7.5 7.5 7.5-7.5" />
+        // minus (list shown)
+        <path d="m19.5 8.25-7.5 7.5-7.5-7.5" />
       ) : (
-        // minus
-        <path d="m5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5" />
+        // plus (list hidden)
+        <path d="m8.25 4.5 7.5 7.5-7.5 7.5" />
       )}
     </svg>
   );

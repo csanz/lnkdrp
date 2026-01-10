@@ -9,7 +9,7 @@ import { PendingUploadProvider } from "@/lib/pendingUpload";
 import { clearTempUser, getTempUser } from "@/lib/gating/tempUserClient";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { trackPageTiming } from "@/lib/metrics/client";
-import { clearSidebarCache, refreshSidebarCache, setActiveOrgIdForCaches } from "@/lib/sidebarCache";
+import { ACTIVE_ORG_STORAGE_KEY, clearSidebarCache, refreshSidebarCache, setActiveOrgIdForCaches } from "@/lib/sidebarCache";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
 import OutOfCreditsListener from "@/components/OutOfCreditsListener";
 
@@ -270,6 +270,65 @@ function ActiveOrgCacheSync() {
       return;
     }
 
+    // Doc pages are very performance-sensitive (viewer/history), but the sidebar cache *requires*
+    // `ACTIVE_ORG_STORAGE_KEY` to be set or it will show nothing.
+    //
+    // So on `/doc/*` we:
+    // - hydrate from session if present (best-effort),
+    // - NEVER clear the active org id if session is missing it (avoid blank sidebar),
+    // - and defer the authoritative `/api/orgs/active` fetch unless we have no stored org id yet.
+    if (typeof pathname === "string" && pathname.startsWith("/doc/")) {
+      const raw =
+        (session?.user as { activeOrgId?: unknown } | undefined)?.activeOrgId ??
+        (session as { activeOrgId?: unknown } | undefined)?.activeOrgId;
+      const sessionOrgId = typeof raw === "string" ? raw : null;
+      if (sessionOrgId) {
+        setActiveOrgIdForCaches(sessionOrgId);
+        prevRef.current = sessionOrgId;
+      }
+
+      let hasStored = false;
+      try {
+        const v = typeof window !== "undefined" ? window.localStorage.getItem(ACTIVE_ORG_STORAGE_KEY) : null;
+        hasStored = typeof v === "string" && /^[a-f0-9]{24}$/i.test(v.trim());
+      } catch {
+        hasStored = false;
+      }
+
+      let cancelled = false;
+      const delayMs = hasStored ? 1200 : 0;
+      const t = typeof window !== "undefined"
+        ? window.setTimeout(async () => {
+            try {
+              const json = await fetchJson<{ activeOrgId?: string }>("/api/orgs/active", {
+                cache: "no-store",
+                credentials: "include",
+              });
+              const serverOrgId = typeof json?.activeOrgId === "string" ? json.activeOrgId : null;
+              if (cancelled) return;
+              const next = typeof serverOrgId === "string" ? serverOrgId : null;
+              const prev = prevRef.current;
+              if (next) setActiveOrgIdForCaches(next);
+              // If org context changed (or was previously unknown), clear in-memory cache and force refresh.
+              if (next && next !== prev) {
+                clearSidebarCache({ memoryOnly: true });
+                await refreshSidebarCache({ force: true, reason: "active-org-sync-doc" });
+              } else if (next && !prev) {
+                await refreshSidebarCache({ force: true, reason: "active-org-sync-doc" });
+              }
+              prevRef.current = next ?? prevRef.current;
+            } catch {
+              // ignore (best-effort)
+            }
+          }, delayMs)
+        : null;
+
+      return () => {
+        cancelled = true;
+        if (t != null) window.clearTimeout(t);
+      };
+    }
+
     let cancelled = false;
     void (async () => {
       try {
@@ -322,6 +381,7 @@ function ActiveOrgCacheSync() {
  */
 function OrgJoinClaimOnLogin() {
   const { status, data: session, update } = useSession();
+  const pathname = usePathname() ?? "";
   async function doSwitch(orgId: string) {
     const returnTo =
       typeof window !== "undefined"
@@ -334,8 +394,19 @@ function OrgJoinClaimOnLogin() {
     if (status !== "authenticated") return;
     if (!session?.user?.id) return;
 
+    // Best-effort: only attempt once per tab session to avoid repeated work on navigations/hot reloads.
+    try {
+      if (typeof window !== "undefined") {
+        const key = "ld_claim_join_attempted";
+        if (window.sessionStorage.getItem(key) === "1") return;
+        window.sessionStorage.setItem(key, "1");
+      }
+    } catch {
+      // ignore (best-effort)
+    }
+
     let cancelled = false;
-    void (async () => {
+    const run = async () => {
       try {
         const res = await fetchJson<{ claimed?: boolean; orgId?: string }>("/api/orgs/claim-join", {
           method: "POST",
@@ -363,12 +434,17 @@ function OrgJoinClaimOnLogin() {
       } catch {
         // ignore (best-effort)
       }
-    })();
+    };
+
+    // Doc pages are performance-sensitive; defer this non-critical best-effort claim.
+    const delayMs = pathname.startsWith("/doc/") ? 1500 : 0;
+    const t = typeof window !== "undefined" ? window.setTimeout(() => void run(), delayMs) : null;
 
     return () => {
       cancelled = true;
+      if (t != null) window.clearTimeout(t);
     };
-  }, [status, session?.user?.id, update, session?.user]);
+  }, [status, session?.user?.id, update, session?.user, pathname]);
 
   return null;
 }

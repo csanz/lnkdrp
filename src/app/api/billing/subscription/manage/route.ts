@@ -5,13 +5,14 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import Stripe from "stripe";
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActor } from "@/lib/gating/actor";
+import { resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const actor = await resolveActor(request);
+  // Hot path (dashboard): prefer fast resolver (cookie/JWT + single membership check).
+  const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
   try {
     if (actor.kind !== "user") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

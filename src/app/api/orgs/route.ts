@@ -8,17 +8,13 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgModel, ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { debugError, debugLog } from "@/lib/debug";
-import { tryResolveAuthUserId } from "@/lib/gating/actor";
-import { ACTIVE_ORG_COOKIE } from "@/app/api/orgs/active/route";
+import { resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
+import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// Short-lived in-memory cache to keep the header/workspace switcher feeling instant.
-// Keyed by (userId + active-org cookie value) so org switches don't serve stale activeOrgId.
-const ORGS_CACHE_TTL_MS = 15_000;
-let orgsCache: Map<string, { at: number; payload: any }> | null = null;
 
 function slugify(input: string) {
   return input
@@ -43,38 +39,31 @@ async function ensureUniqueOrgSlug(base: string): Promise<string> {
 export async function GET(request: Request) {
   try {
     debugLog(2, "[api/orgs] GET");
-    const session = await tryResolveAuthUserId(request);
-    if (!session?.userId) {
-      return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
-    }
-
-    const cookieHeader = request.headers.get("cookie") ?? "";
-    const cookieActiveOrgId = (() => {
-      try {
-        const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
-        for (const p of parts) {
-          const idx = p.indexOf("=");
-          if (idx < 0) continue;
-          const k = p.slice(0, idx).trim();
-          if (k !== ACTIVE_ORG_COOKIE) continue;
-          return decodeURIComponent(p.slice(idx + 1)).trim();
-        }
-        return "";
-      } catch {
-        return "";
+    return await withMongoRequestLogging(request, async () => {
+      const session = await tryResolveAuthUserId(request);
+      if (!session?.userId) {
+        return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
       }
-    })();
 
-    // Best-effort cache read.
-    orgsCache = orgsCache ?? new Map();
-    const cacheKey = `${String(session.userId)}:${cookieActiveOrgId}`;
-    const cached = orgsCache.get(cacheKey);
-    if (cached && Date.now() - cached.at < ORGS_CACHE_TTL_MS) {
-      return NextResponse.json(cached.payload, { headers: { "cache-control": "no-store" } });
-    }
+      const cookieHeader = request.headers.get("cookie") ?? "";
+      const cookieActiveOrgId = (() => {
+        try {
+          const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
+          for (const p of parts) {
+            const idx = p.indexOf("=");
+            if (idx < 0) continue;
+            const k = p.slice(0, idx).trim();
+            if (k !== ACTIVE_ORG_COOKIE) continue;
+            return decodeURIComponent(p.slice(idx + 1)).trim();
+          }
+          return "";
+        } catch {
+          return "";
+        }
+      })();
 
-    await connectMongo();
-    const userId = new Types.ObjectId(session.userId);
+      await connectMongo();
+      const userId = new Types.ObjectId(session.userId);
 
     // Hot-path optimization: most users already have memberships (including a personal org),
     // so avoid the extra ensurePersonalOrgForUserId() DB work unless it's actually needed.
@@ -158,7 +147,7 @@ export async function GET(request: Request) {
       return String(a._id).localeCompare(String(b._id));
     });
 
-    const payload = {
+      const payload = {
       activeOrgId,
       orgs: orgs.map((o) => ({
         id: String(o._id),
@@ -168,23 +157,10 @@ export async function GET(request: Request) {
         avatarUrl: (o as unknown as { avatarUrl?: unknown }).avatarUrl ?? null,
         role: roleByOrgId.get(String(o._id)) ?? "member",
       })),
-    };
+      };
 
-    // Best-effort cache write (bounded).
-    orgsCache.set(cacheKey, { at: Date.now(), payload });
-    if (orgsCache.size > 100) {
-      let oldestKey: string | null = null;
-      let oldestAt = Infinity;
-      for (const [k, v] of orgsCache.entries()) {
-        if (v.at < oldestAt) {
-          oldestAt = v.at;
-          oldestKey = k;
-        }
-      }
-      if (oldestKey) orgsCache.delete(oldestKey);
-    }
-
-    return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
+      return NextResponse.json(payload, { headers: { "cache-control": "no-store" } });
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/orgs] GET failed", { message });
@@ -206,7 +182,7 @@ export async function POST(request: Request) {
     if (!name) return NextResponse.json({ error: "Org name is required" }, { status: 400 });
 
     await connectMongo();
-    const userId = new Types.ObjectId(actor.userId);
+    const userId = new Types.ObjectId(String(actor.userId));
     const base = slugify(slugRaw || name);
     const slug = await ensureUniqueOrgSlug(base);
 

@@ -6,11 +6,8 @@ const nextConfig: NextConfig = {
    * (Otherwise Turbopack tries to place native assets into ESM chunks.)
    */
   serverExternalPackages: ["@napi-rs/canvas"],
-  devIndicators: {
-    // Disable the in-browser "Rendering/Compiling" HUD in dev.
-    // (Compilation still happens as normal; this only hides the UI indicator.)
-    buildActivity: false,
-  },
+  // Disable all in-browser dev indicators (including the "Rendering/Compiling" HUD).
+  devIndicators: false,
   /**
    * Reduce "recompiling on every navigation" in dev by keeping more entries warm.
    * This is especially helpful on slower / synced filesystems.

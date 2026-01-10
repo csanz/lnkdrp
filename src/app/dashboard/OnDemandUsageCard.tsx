@@ -73,7 +73,7 @@ export default function OnDemandUsageCard() {
   }, [enabled, usedCredits, limitCredits, unlimited]);
 
   return (
-    <div className="rounded-2xl bg-[var(--panel)] p-6">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
       <div className="flex items-start justify-between gap-3">
         <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand usage</div>
         <HelpTooltip

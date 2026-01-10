@@ -4,7 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ReviewModel } from "@/lib/models/Review";
 import { debugError, debugLog } from "@/lib/debug";
 import { DocModel } from "@/lib/models/Doc";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,7 +45,8 @@ export async function GET(
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
 
     debugLog(2, "[api/docs/:docId/reviews] GET", { docId, latestOnly, limit, page });
-    const actor = await resolveActor(request);
+    // Doc detail page hot path: avoid the heavy resolver; preserve correct personalOrgId for legacy scoping.
+    const actor = (await tryResolveUserActorFastWithPersonalOrg(request)) ?? (await resolveActor(request));
     await connectMongo();
 
     // Authorization: doc must belong to the actor.

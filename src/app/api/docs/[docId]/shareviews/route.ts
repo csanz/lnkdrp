@@ -1,8 +1,14 @@
+/**
+ * Owner doc share-view metrics API (views/downloads + viewer breakdown).
+ * Route: `/api/docs/:docId/shareviews`
+ */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
+import { after } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
@@ -141,49 +147,174 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           downloadsAgg && downloadsAgg[0] && typeof downloadsAgg[0].downloads === "number" ? downloadsAgg[0].downloads : 0;
       }
 
-      const uniqueAuthedViewers = includeViewers
-        ? await (async () => {
-            const authedUserIds = await ShareViewModel.distinct("viewerUserId", {
-              docId: docObjectId,
-              viewerUserId: { $ne: null },
-            });
-            return Array.isArray(authedUserIds) ? authedUserIds.filter((x) => Types.ObjectId.isValid(String(x))).length : 0;
-          })()
-        : 0;
+      const [viewersAgg, anonymousAgg] = includeViewers
+        ? await Promise.all([
+            ShareViewModel.aggregate([
+              { $match: { docId: docObjectId, viewerUserId: { $ne: null } } },
+              // Ensure we pick the most recent denormalized viewerName/email snapshots.
+              { $sort: { updatedDate: -1 } },
+              {
+                $group: {
+                  _id: "$viewerUserId",
+                  firstSeen: { $min: "$createdDate" },
+                  lastSeen: { $max: "$updatedDate" },
+                  views: { $sum: 1 },
+                  pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
+                  viewerName: { $first: "$viewerName" },
+                  viewerEmailSnapshot: { $first: "$viewerEmailSnapshot" },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  viewerUserId: "$_id",
+                  firstSeen: 1,
+                  lastSeen: 1,
+                  views: 1,
+                  viewerName: 1,
+                  viewerEmailSnapshot: 1,
+                  pagesSeen: {
+                    $reduce: {
+                      input: "$pagesSeenArrays",
+                      initialValue: [],
+                      in: { $setUnion: ["$$value", "$$this"] },
+                    },
+                  },
+                  pagesViewed: {
+                    $size: {
+                      $reduce: {
+                        input: "$pagesSeenArrays",
+                        initialValue: [],
+                        in: { $setUnion: ["$$value", "$$this"] },
+                      },
+                    },
+                  },
+                },
+              },
+              { $sort: { lastSeen: -1 } },
+              { $limit: 100 },
+            ]) as Promise<
+              Array<{
+                viewerUserId: Types.ObjectId;
+                firstSeen: Date;
+                lastSeen: Date;
+                views: number;
+                pagesViewed: number;
+                pagesSeen?: number[];
+                viewerName?: string | null;
+                viewerEmailSnapshot?: string | null;
+              }>
+            >,
+            ShareViewModel.aggregate([
+              { $match: { docId: docObjectId, $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] } },
+              { $sort: { updatedDate: -1 } },
+              {
+                $group: {
+                  _id: "$botIdHash",
+                  firstSeen: { $min: "$createdDate" },
+                  lastSeen: { $max: "$updatedDate" },
+                  views: { $sum: 1 },
+                  pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  botIdHash: "$_id",
+                  firstSeen: 1,
+                  lastSeen: 1,
+                  views: 1,
+                  pagesSeen: {
+                    $reduce: {
+                      input: "$pagesSeenArrays",
+                      initialValue: [],
+                      in: { $setUnion: ["$$value", "$$this"] },
+                    },
+                  },
+                  pagesViewed: {
+                    $size: {
+                      $reduce: {
+                        input: "$pagesSeenArrays",
+                        initialValue: [],
+                        in: { $setUnion: ["$$value", "$$this"] },
+                      },
+                    },
+                  },
+                },
+              },
+              { $sort: { lastSeen: -1 } },
+              { $limit: 100 },
+            ]) as Promise<
+              Array<{
+                botIdHash: string;
+                firstSeen: Date;
+                lastSeen: Date;
+                views: number;
+                pagesViewed: number;
+                pagesSeen?: number[];
+              }>
+            >,
+          ])
+        : [[], []];
 
-      const viewersAgg = includeViewers
-        ? ((await ShareViewModel.aggregate([
-            { $match: { docId: docObjectId, viewerUserId: { $ne: null } } },
-            {
-              $group: {
-                _id: "$viewerUserId",
-                firstSeen: { $min: "$createdDate" },
-                lastSeen: { $max: "$updatedDate" },
-                views: { $sum: 1 },
-              },
-            },
-            { $sort: { lastSeen: -1 } },
-            { $limit: 100 },
-            { $lookup: { from: "users", localField: "_id", foreignField: "_id", as: "user" } },
-            { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
-            {
-              $project: {
-                _id: 0,
-                viewerUserId: "$_id",
-                firstSeen: 1,
-                lastSeen: 1,
-                views: 1,
-                user: { email: "$user.email", name: "$user.name" },
-              },
-            },
-          ])) as Array<{
-            viewerUserId: Types.ObjectId;
-            firstSeen: Date;
-            lastSeen: Date;
-            views: number;
-            user?: { email?: string | null; name?: string | null } | null;
-          }>)
-        : [];
+      const uniqueAuthedViewers = includeViewers ? viewersAgg.length : 0;
+      const uniqueAnonymousViewers = includeViewers ? anonymousAgg.length : 0;
+
+      // Best-effort background backfill for older ShareView rows that predate denormalized snapshots.
+      // Keeps the read path join-free while allowing names/emails to appear over time.
+      if (includeViewers) {
+        const missingIds = viewersAgg
+          .filter(
+            (v) =>
+              !(
+                (typeof v.viewerName === "string" && v.viewerName.trim()) ||
+                (typeof v.viewerEmailSnapshot === "string" && v.viewerEmailSnapshot.trim())
+              ),
+          )
+          .map((v) => String(v.viewerUserId))
+          .filter((id) => Types.ObjectId.isValid(id));
+        if (missingIds.length) {
+          after(async () => {
+            try {
+              const ids = Array.from(new Set(missingIds)).slice(0, 100);
+              const users = await UserModel.find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) }, isActive: { $ne: false } })
+                .select({ _id: 1, name: 1, email: 1 })
+                .lean();
+              const ops = users
+                .map((u) => {
+                  const id = u?._id ? String(u._id) : "";
+                  if (!id) return null;
+                  const viewerName =
+                    typeof (u as any).name === "string" && (u as any).name.trim() ? (u as any).name.trim() : null;
+                  const viewerEmailSnapshot =
+                    typeof (u as any).email === "string" && (u as any).email.trim()
+                      ? String((u as any).email).trim().toLowerCase()
+                      : null;
+                  if (!viewerName && !viewerEmailSnapshot) return null;
+                  return {
+                    updateMany: {
+                      filter: {
+                        docId: docObjectId,
+                        viewerUserId: new Types.ObjectId(id),
+                        $or: [
+                          { viewerName: { $exists: false } },
+                          { viewerName: null },
+                          { viewerEmailSnapshot: { $exists: false } },
+                          { viewerEmailSnapshot: null },
+                        ],
+                      },
+                      update: { $set: { ...(viewerName ? { viewerName } : {}), ...(viewerEmailSnapshot ? { viewerEmailSnapshot } : {}) } },
+                    },
+                  };
+                })
+                .filter(Boolean) as any[];
+              if (ops.length) await ShareViewModel.bulkWrite(ops, { ordered: false });
+            } catch {
+              // ignore
+            }
+          });
+        }
+      }
 
       const res = NextResponse.json(
         {
@@ -195,17 +326,44 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           downloads: totalDownloads,
           pagesViewed,
           authenticatedViewers: uniqueAuthedViewers,
+          anonymousViewers: uniqueAnonymousViewers,
         },
         downloadsEnabled,
         series,
-        viewers: viewersAgg.map((v) => ({
-          userId: String(v.viewerUserId),
-          name: typeof v.user?.name === "string" ? v.user.name : null,
-          email: typeof v.user?.email === "string" ? v.user.email : null,
-          views: typeof v.views === "number" ? v.views : 0,
-          firstSeen: v.firstSeen ? new Date(v.firstSeen).toISOString() : null,
-          lastSeen: v.lastSeen ? new Date(v.lastSeen).toISOString() : null,
-        })),
+        viewers: viewersAgg.map((v) => {
+          const pagesSeen = Array.isArray((v as any).pagesSeen)
+            ? ((v as any).pagesSeen as unknown[])
+                .map((n) => (typeof n === "number" && Number.isFinite(n) ? Math.floor(n) : null))
+                .filter((n): n is number => Boolean(n && n >= 1))
+                .sort((a, b) => a - b)
+            : [];
+          return {
+            userId: String(v.viewerUserId),
+            name: typeof v.viewerName === "string" ? v.viewerName : null,
+            email: typeof v.viewerEmailSnapshot === "string" ? v.viewerEmailSnapshot : null,
+            views: typeof v.views === "number" ? v.views : 0,
+            pagesViewed: typeof v.pagesViewed === "number" ? v.pagesViewed : pagesSeen.length,
+            pagesSeen,
+            firstSeen: v.firstSeen ? new Date(v.firstSeen).toISOString() : null,
+            lastSeen: v.lastSeen ? new Date(v.lastSeen).toISOString() : null,
+          };
+        }),
+        anonymousViewers: anonymousAgg.map((v) => {
+          const pagesSeen = Array.isArray((v as any).pagesSeen)
+            ? ((v as any).pagesSeen as unknown[])
+                .map((n) => (typeof n === "number" && Number.isFinite(n) ? Math.floor(n) : null))
+                .filter((n): n is number => Boolean(n && n >= 1))
+                .sort((a, b) => a - b)
+            : [];
+          return {
+            botIdHash: typeof v.botIdHash === "string" ? v.botIdHash : "",
+            views: typeof v.views === "number" ? v.views : 0,
+            pagesViewed: typeof v.pagesViewed === "number" ? v.pagesViewed : pagesSeen.length,
+            pagesSeen,
+            firstSeen: v.firstSeen ? new Date(v.firstSeen).toISOString() : null,
+            lastSeen: v.lastSeen ? new Date(v.lastSeen).toISOString() : null,
+          };
+        }),
         },
         { headers: { "cache-control": "no-store" } },
       );

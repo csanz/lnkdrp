@@ -11,7 +11,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,7 +87,8 @@ export async function GET(request: Request) {
       q: q ? "[redacted]" : "",
       ids: ids.length ? `[${ids.length}]` : "",
     });
-    const actor = await resolveActor(request);
+    // Hot path (left menu): avoid heavy resolver; preserve correct personalOrgId for legacy scoping.
+    const actor = (sidebar || ids.length ? await tryResolveUserActorFastWithPersonalOrg(request) : null) ?? (await resolveActor(request));
     await connectMongo();
 
     const orgId = new Types.ObjectId(actor.orgId);

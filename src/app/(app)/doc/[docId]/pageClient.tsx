@@ -2,7 +2,7 @@
 
 // Client UI for `/doc/:docId` (owner doc view).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
@@ -205,6 +205,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
   const [localPreviewUploadId, setLocalPreviewUploadId] = useState<string | null>(null);
+  const [previewBlurEnabled, setPreviewBlurEnabled] = useState(true);
   // UX/perf: when a preview image is available, show it first and only load the PDF iframe on intent.
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
   const pdfViewerOpenedRef = useRef(false);
@@ -261,6 +262,20 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       setPdfViewerOpen(true);
     }
   }, [pdfViewerOpen, doc.blobUrl, doc.previewImageUrl]);
+
+  useEffect(() => {
+    // Default to blur-on; the onLoad handler will turn it off for portrait previews.
+    setPreviewBlurEnabled(true);
+  }, [doc.previewImageUrl]);
+
+  const onPreviewImageLoad = useCallback((e: SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    const w = img?.naturalWidth ?? 0;
+    const h = img?.naturalHeight ?? 0;
+    if (!w || !h) return;
+    // Only blur/fade for landscape-ish previews; portrait pages look weird with this treatment.
+    setPreviewBlurEnabled(w / h >= 1);
+  }, []);
 
   // Reconcile open/closed state after the real doc data hydrates.
   // The route entrypoint initializes `initialDoc` as a placeholder (no preview/pdf), so we need
@@ -677,13 +692,14 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
   useEffect(() => {
     const uploadId = replaceUploadId;
-    if (!uploadId) return;
+    if (typeof uploadId !== "string" || !uploadId) return;
+    const uploadIdStr = uploadId;
     let cancelled = false;
     let intervalId: number | null = null;
 
     async function poll() {
       try {
-        const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}`, { cache: "no-store" });
+        const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadIdStr)}`, { cache: "no-store" });
         if (!res.ok) return;
         const json = (await res.json().catch(() => null)) as any;
         if (cancelled) return;
@@ -1628,6 +1644,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       <span>
                         {(() => {
                           const iso = doc.lastUpdate?.uploadedAt ?? "";
+                          const vRaw = doc.lastUpdate?.version ?? null;
+                          const v = typeof vRaw === "number" && Number.isFinite(vRaw) ? vRaw : null;
+                          const isReplacement = typeof v === "number" && v >= 2;
                           const relative = iso ? formatRelativeAge(iso) : null;
                           const absolute = (() => {
                             try {
@@ -1638,7 +1657,17 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           })();
                           return (
                             <>
-                              Last updated{" "}
+                              {isReplacement ? "Last replaced" : "Uploaded"}
+                              {v ? (
+                                <>
+                                  {" "}
+                                  <span className="font-medium text-[var(--fg)]" title={`Version ${v}`}>
+                                    (v{v})
+                                  </span>
+                                </>
+                              ) : (
+                                ""
+                              )}{" "}
                               {relative ? (
                                 <span className="font-medium text-[var(--fg)]" title={absolute}>
                                   {relative}
@@ -1707,15 +1736,21 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       const Pill = (
                         <span
                           className={[
-                            "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
-                            "text-[12px] font-medium text-[var(--muted-2)]",
+                            "inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 leading-none",
+                            "text-xs font-medium text-[var(--muted-2)]",
                             "bg-transparent hover:bg-[var(--panel-hover)]",
                           ].join(" ")}
                         >
                           {isRequestProject ? (
-                            <InboxArrowDownIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                            <InboxArrowDownIcon
+                              className="relative top-px h-4 w-4 shrink-0 text-[var(--muted-2)]"
+                              aria-hidden="true"
+                            />
                           ) : (
-                            <FolderIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                            <FolderIcon
+                              className="relative top-px h-4 w-4 shrink-0 text-[var(--muted-2)]"
+                              aria-hidden="true"
+                            />
                           )}
                           <span className="max-w-[160px] truncate">{p.name}</span>
                         </span>
@@ -1986,18 +2021,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         </div>
                       </div>
                     ) : !localPreviewUrl && !pdfViewerOpen && doc.blobUrl && doc.previewImageUrl ? (
-                      <div className="relative h-full w-full">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={doc.previewImageUrl}
-                          alt="Document preview"
-                          loading="eager"
-                          fetchPriority="high"
-                          decoding="async"
-                          className="h-full w-full object-contain"
-                        />
-                        <div className="absolute left-0 right-0 top-0 z-10 flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--panel)]/95 px-4 py-3">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                      <div className="flex h-full w-full flex-col overflow-hidden bg-black">
+                        {/* Header row (not overlaying the image). */}
+                        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-black/8 px-4 py-3 backdrop-blur-2xl backdrop-saturate-150">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-white/60">
                             Preview
                           </div>
                           <button
@@ -2006,10 +2033,82 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               pdfViewerOpenedRef.current = true;
                               setPdfViewerOpen(true);
                             }}
-                            className="rounded-lg bg-[var(--primary-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
+                            className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/92 hover:bg-white/14"
                           >
                             Open PDF
                           </button>
+                        </div>
+
+                        {/* Image stage */}
+                        <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
+                          {/* Background fill (soft) */}
+                          <div
+                            aria-hidden="true"
+                            className={[
+                              "absolute inset-0 z-0 scale-110",
+                              previewBlurEnabled ? "opacity-25 blur-3xl" : "opacity-15 blur-2xl",
+                            ].join(" ")}
+                            style={{
+                              backgroundImage: `url(${doc.previewImageUrl})`,
+                              backgroundSize: "cover",
+                              backgroundPosition: "bottom center",
+                            }}
+                          />
+                          <div aria-hidden="true" className="absolute inset-0 z-0 bg-black/60" />
+
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={doc.previewImageUrl}
+                            alt="Document preview"
+                            loading="eager"
+                            fetchPriority="high"
+                            decoding="async"
+                            onLoad={onPreviewImageLoad}
+                            className="relative z-10 h-full w-full object-contain object-top"
+                          />
+
+                          {previewBlurEnabled ? (
+                            <>
+                              {/* Contain-aligned blurred clone that starts blending *within* the image and fades to black below. */}
+                              <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-0 z-[2]"
+                                style={{
+                                  backgroundImage: `url(${doc.previewImageUrl})`,
+                                  backgroundRepeat: "no-repeat",
+                                  backgroundSize: "contain",
+                                  backgroundPosition: "top center",
+                                  filter: "blur(44px) saturate(1.2) brightness(0.62)",
+                                  WebkitMaskImage:
+                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 34%, rgba(0,0,0,0.22) 52%, rgba(0,0,0,0.75) 74%, rgba(0,0,0,1) 100%)",
+                                  maskImage:
+                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 34%, rgba(0,0,0,0.22) 52%, rgba(0,0,0,0.75) 74%, rgba(0,0,0,1) 100%)",
+                                }}
+                              />
+
+                              {/* Extra black ramp to ensure the bottom lands in black, not gray. */}
+                              <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-0 z-[3]"
+                                style={{
+                                  background:
+                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 46%, rgba(0,0,0,0.28) 66%, rgba(0,0,0,0.72) 86%, rgba(0,0,0,1) 100%)",
+                                }}
+                              />
+
+                              {/* Backdrop blur to soften the join into the area below. */}
+                              <div
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-0 z-[4] backdrop-blur-2xl backdrop-saturate-150"
+                                style={{
+                                  WebkitMaskImage:
+                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.2) 62%, rgba(0,0,0,0.75) 86%, rgba(0,0,0,1) 100%)",
+                                  maskImage:
+                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.2) 62%, rgba(0,0,0,0.75) 86%, rgba(0,0,0,1) 100%)",
+                                }}
+                              />
+                            </>
+                          ) : null}
                         </div>
                       </div>
                     ) : !localPreviewUrl && !pdfViewerOpen && doc.blobUrl && !doc.previewImageUrl ? (
@@ -2065,12 +2164,66 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         allow="fullscreen"
                       />
                     ) : doc.previewImageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={doc.previewImageUrl}
-                        alt="Document preview"
-                        className="h-full w-full object-contain"
-                      />
+                      <div className="relative h-full w-full overflow-hidden bg-black">
+                        <div aria-hidden="true" className="absolute inset-0 z-0 bg-black" />
+                        <div
+                          aria-hidden="true"
+                          className={[
+                            "absolute inset-0 z-0 scale-110",
+                            previewBlurEnabled ? "opacity-35 blur-3xl" : "opacity-20 blur-2xl",
+                          ].join(" ")}
+                          style={{
+                            backgroundImage: `url(${doc.previewImageUrl})`,
+                            backgroundSize: "cover",
+                            backgroundPosition: "bottom center",
+                          }}
+                        />
+                        <div aria-hidden="true" className="absolute inset-0 z-0 bg-black/55" />
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={doc.previewImageUrl}
+                          alt="Document preview"
+                          onLoad={onPreviewImageLoad}
+                          className="relative z-10 h-full w-full object-contain object-top"
+                        />
+                        {previewBlurEnabled ? (
+                          <>
+                            <div
+                              aria-hidden="true"
+                              className="pointer-events-none absolute inset-0 z-[2] opacity-80"
+                              style={{
+                                backgroundImage: `url(${doc.previewImageUrl})`,
+                                backgroundRepeat: "no-repeat",
+                                backgroundSize: "contain",
+                                backgroundPosition: "top center",
+                                filter: "blur(34px) saturate(1.25) brightness(0.72)",
+                                WebkitMaskImage:
+                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.35) 62%, rgba(0,0,0,0.85) 82%, rgba(0,0,0,1) 100%)",
+                                maskImage:
+                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.35) 62%, rgba(0,0,0,0.85) 82%, rgba(0,0,0,1) 100%)",
+                              }}
+                            />
+                            <div
+                              aria-hidden="true"
+                              className="pointer-events-none absolute inset-0 z-[3] backdrop-blur-xl backdrop-saturate-150"
+                              style={{
+                                WebkitMaskImage:
+                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.18) 68%, rgba(0,0,0,0.7) 86%, rgba(0,0,0,1) 100%)",
+                                maskImage:
+                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.18) 68%, rgba(0,0,0,0.7) 86%, rgba(0,0,0,1) 100%)",
+                              }}
+                            />
+                            <div
+                              aria-hidden="true"
+                              className="pointer-events-none absolute inset-0 z-[4]"
+                              style={{
+                                background:
+                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 52%, rgba(0,0,0,0.22) 72%, rgba(0,0,0,0.55) 88%, rgba(0,0,0,0.88) 100%)",
+                              }}
+                            />
+                          </>
+                        ) : null}
+                      </div>
                     ) : (
                       <div className="grid h-full place-items-center px-6 text-center">
                         <div className="text-sm font-medium text-[var(--muted)]">

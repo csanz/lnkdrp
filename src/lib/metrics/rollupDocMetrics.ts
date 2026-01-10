@@ -50,7 +50,15 @@ export async function rollupDocMetrics(opts?: {
   const query: Record<string, unknown> = { isDeleted: { $ne: true } };
   if (opts?.docId) {
     if (!Types.ObjectId.isValid(opts.docId)) {
-      return { ok: true, processed: 0, days, docIds: [] };
+      return {
+        ok: true,
+        processed: 0,
+        days,
+        docIds: [] as string[],
+        viewsLastDaysTotal: 0,
+        downloadsLastDaysTotal: 0,
+        downloadsTotalTotal: 0,
+      };
     }
     query._id = new Types.ObjectId(opts.docId);
   }

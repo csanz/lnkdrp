@@ -510,7 +510,7 @@ export default function WorkspaceManager() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl bg-[var(--panel)]">
+      <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
         <div className="grid grid-cols-[1fr_110px_140px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
           <div>Workspace</div>
           <div>Role</div>

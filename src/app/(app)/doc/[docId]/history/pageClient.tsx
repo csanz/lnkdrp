@@ -21,6 +21,10 @@ type DocChangeItem = {
   newText: string;
   createdBy: null | { id: string | null; name: string | null; email: string | null };
   createdDate: string | null;
+  // Precomputed derived fields to keep render fast (History can have many records).
+  impact: { label: "None" | "Minor" | "Medium" | "Major"; tone: "muted" | "ok" | "warn" };
+  tags: string[];
+  timeLabel: string | null;
 };
 
 type RecipientRow = { userId: string; name: string | null; email: string | null; opened: boolean };
@@ -63,19 +67,6 @@ function inferImpactLevel(item: { summary: string; changes: Array<{ title?: stri
 }
 
 function inferTags(item: { summary: string; changes: Array<{ type?: string; title?: string; detail?: string | null }> }): string[] {
-  const text = [
-    item.summary ?? "",
-    ...(Array.isArray(item.changes)
-      ? item.changes.flatMap((c) => [
-          (c?.type ?? "").toString(),
-          (c?.title ?? "").toString(),
-          (c?.detail ?? "").toString(),
-        ])
-      : []),
-  ]
-    .join("\n")
-    .toLowerCase();
-
   const tags: string[] = [];
   const add = (t: string) => {
     if (!tags.includes(t)) tags.push(t);
@@ -91,8 +82,28 @@ function inferTags(item: { summary: string; changes: Array<{ type?: string; titl
     if (t.includes("ask") || t.includes("fund")) add("Ask");
     if (t.includes("traction") || t.includes("growth")) add("Traction");
   }
+  // Fast-path: if types already gave us enough signal, skip all regex work.
+  if (tags.length >= 3) return tags.slice(0, 3);
 
   // Keyword-based fallback (best-effort).
+  // Perf: keep this extremely cheap:
+  // - do NOT include long `detail` fields
+  // - cap total text length
+  const MAX_CHARS = 2200;
+  const parts: string[] = [];
+  const summary = (item.summary ?? "").toString();
+  if (summary) parts.push(summary);
+  const ch = Array.isArray(item.changes) ? item.changes : [];
+  for (let i = 0; i < ch.length && parts.join("\n").length < MAX_CHARS; i++) {
+    const c = ch[i];
+    const type = (c?.type ?? "").toString();
+    const title = (c?.title ?? "").toString();
+    // Intentionally skip `detail` (can be huge and slows down lowercasing/regex).
+    const line = `${type}\n${title}`.trim();
+    if (line) parts.push(line);
+  }
+  const text = parts.join("\n").slice(0, MAX_CHARS).toLowerCase();
+
   const has = (rx: RegExp) => rx.test(text);
   if (has(/\b(team|founder|hiring|hire|people)\b/)) add("Team");
   if (has(/\b(problem|pain|why now)\b/)) add("Problem");
@@ -143,54 +154,46 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   }, []);
 
   async function refresh() {
-    const [docRes, changesRes] = await Promise.all([
-      fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?lite=1`, { cache: "no-store" }),
-      fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/changes?noText=1`, { cache: "no-store" }),
-    ]);
-
-    if (docRes.ok) {
-      const json = (await docRes.json()) as unknown;
-      const t =
-        json &&
-        typeof json === "object" &&
-        (json as { doc?: unknown }).doc &&
-        typeof (json as { doc: { title?: unknown } }).doc.title === "string"
-          ? String((json as { doc: { title: string } }).doc.title).trim()
-          : "";
-      setDocTitle(t);
-      const v =
-        json &&
-        typeof json === "object" &&
-        (json as { doc?: any }).doc &&
-        typeof (json as { doc: { currentUploadVersion?: unknown } }).doc.currentUploadVersion === "number" &&
-        Number.isFinite((json as { doc: { currentUploadVersion: number } }).doc.currentUploadVersion)
-          ? Number((json as { doc: { currentUploadVersion: number } }).doc.currentUploadVersion)
-          : null;
-      setDocCurrentVersion(v);
-    }
+    const changesRes = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/changes?noText=1`, { cache: "no-store" });
 
     if (changesRes.ok) {
-      const json = (await changesRes.json()) as unknown;
+      const json = (await changesRes.json()) as any;
+      const t = typeof json?.docTitle === "string" ? json.docTitle.trim() : "";
+      if (t) setDocTitle(t);
+      const v = typeof json?.currentUploadVersion === "number" && Number.isFinite(json.currentUploadVersion) ? json.currentUploadVersion : null;
+      setDocCurrentVersion(v);
       const arr = json && typeof json === "object" && Array.isArray((json as any).changes) ? ((json as any).changes as any[]) : [];
       const next: DocChangeItem[] = arr
-        .map((c) => ({
-          id: typeof c?.id === "string" ? c.id : "",
-          fromVersion: typeof c?.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
-          toVersion: typeof c?.toVersion === "number" && Number.isFinite(c.toVersion) ? c.toVersion : null,
-          summary: typeof c?.summary === "string" ? c.summary : "",
-          changes: Array.isArray(c?.changes) ? c.changes : [],
-          previousText: typeof c?.previousText === "string" ? c.previousText : "",
-          newText: typeof c?.newText === "string" ? c.newText : "",
-          createdBy:
-            c?.createdBy && typeof c.createdBy === "object"
-              ? {
-                  id: typeof c.createdBy.id === "string" ? c.createdBy.id : null,
-                  name: typeof c.createdBy.name === "string" ? c.createdBy.name : null,
-                  email: typeof c.createdBy.email === "string" ? c.createdBy.email : null,
-                }
-              : null,
-          createdDate: typeof c?.createdDate === "string" ? c.createdDate : null,
-        }))
+        .map((c) => {
+          const id = typeof c?.id === "string" ? c.id : "";
+          const summary = typeof c?.summary === "string" ? c.summary : "";
+          const changes = Array.isArray(c?.changes) ? c.changes : [];
+          const createdDate = typeof c?.createdDate === "string" ? c.createdDate : null;
+          const impact = inferImpactLevel({ summary, changes });
+          const tags = inferTags({ summary, changes });
+          const timeLabel = createdDate ? formatRelativeAge(createdDate) : null;
+          return {
+            id,
+            fromVersion: typeof c?.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
+            toVersion: typeof c?.toVersion === "number" && Number.isFinite(c.toVersion) ? c.toVersion : null,
+            summary,
+            changes,
+            previousText: typeof c?.previousText === "string" ? c.previousText : "",
+            newText: typeof c?.newText === "string" ? c.newText : "",
+            createdBy:
+              c?.createdBy && typeof c.createdBy === "object"
+                ? {
+                    id: typeof c.createdBy.id === "string" ? c.createdBy.id : null,
+                    name: typeof c.createdBy.name === "string" ? c.createdBy.name : null,
+                    email: typeof c.createdBy.email === "string" ? c.createdBy.email : null,
+                  }
+                : null,
+            createdDate,
+            impact,
+            tags,
+            timeLabel,
+          } satisfies DocChangeItem;
+        })
         .filter((c) => Boolean(c.id));
       setItems(next);
     } else {
@@ -308,13 +311,12 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     }
     const topEditors = Array.from(byUser.values()).sort((a, b) => b.count - a.count).slice(0, 5);
 
-    // Impact breakdown + tag counts (reuse existing heuristics).
+    // Impact breakdown + tag counts (reuse precomputed fields to keep this fast).
     const impactCounts = { None: 0, Minor: 0, Medium: 0, Major: 0 } as Record<string, number>;
     const tagCounts = new Map<string, number>();
     for (const it of items) {
-      const impact = inferImpactLevel({ summary: it.summary, changes: it.changes });
-      impactCounts[impact.label] = (impactCounts[impact.label] ?? 0) + 1;
-      for (const t of inferTags({ summary: it.summary, changes: it.changes })) {
+      impactCounts[it.impact.label] = (impactCounts[it.impact.label] ?? 0) + 1;
+      for (const t of it.tags) {
         tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
       }
     }
@@ -458,10 +460,10 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                       const toV = it.toVersion;
                       const fromV = it.fromVersion;
                       const anchorId = toV ? `v-${toV}` : it.id;
-                      const impact = inferImpactLevel({ summary: it.summary, changes: it.changes });
-                      const tags = inferTags({ summary: it.summary, changes: it.changes });
+                      const impact = it.impact;
+                      const tags = it.tags;
                       const uploaderLabel = it.createdBy?.name ?? it.createdBy?.email ?? null;
-                      const timeLabel = it.createdDate ? formatRelativeAge(it.createdDate) : null;
+                      const timeLabel = it.timeLabel;
                       const absoluteLabel = it.createdDate
                         ? (() => {
                             try {
@@ -835,15 +837,16 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
 
       {viewerStatsOpen ? (
         <Modal
-          title="Viewer stats"
-          isOpen={Boolean(viewerStatsOpen)}
+          open={Boolean(viewerStatsOpen)}
           onClose={() => {
             setViewerStatsOpen(null);
             setViewerStats(null);
             setViewerStatsError(null);
           }}
+          ariaLabel="Viewer stats"
         >
           <div className="space-y-3">
+            <div className="text-base font-semibold text-[var(--fg)]">Viewer stats</div>
             <div className="text-sm font-semibold text-[var(--fg)]">
               {viewerStatsOpen.name ?? viewerStatsOpen.email ?? "Viewer"} — v{viewerStatsOpen.version}
             </div>

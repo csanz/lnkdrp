@@ -4,7 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 /**
@@ -125,7 +125,8 @@ export async function GET(
 
     debugLog(2, "[api/projects/:id/suggested-docs] GET", { projectId: projectIdParam, limit });
 
-    const actor = await resolveActor(request);
+    // Hot path (project settings): avoid heavy resolver; preserve correct personalOrgId for legacy scoping.
+    const actor = (await tryResolveUserActorFastWithPersonalOrg(request)) ?? (await resolveActor(request));
     await connectMongo();
 
     if (!Types.ObjectId.isValid(projectIdParam)) {
@@ -159,7 +160,8 @@ export async function GET(
       return applyTempUserHeaders(NextResponse.json({ tags: [], docs: [] }), actor);
     }
 
-    const rxs = tags.map((t) => new RegExp(escapeRegex(t), "i"));
+    // IMPORTANT: avoid regex scans over the docs collection.
+    // Prefer exact tag matches (fast + indexable) and do project-exclusion in-memory.
     const filter: Record<string, unknown> = {
       ...(allowLegacyByUserId
         ? {
@@ -171,19 +173,13 @@ export async function GET(
         : { orgId }),
       isDeleted: { $ne: true },
       isArchived: { $ne: true },
-      $and: [
-        // Any tag hit in aiOutput.tags (array of strings)
-        { $or: rxs.map((rx) => ({ "aiOutput.tags": rx })) },
-        // Exclude docs already in this project (primary or membership)
-        { $or: [{ projectId: { $ne: projectId } }, { projectId: null }, { projectId: { $exists: false } }] },
-        { projectIds: { $ne: projectId } },
-      ],
+      "aiOutput.tags": { $in: tags },
     };
 
-    // Overfetch a bit so we can rank by match count.
-    const overfetch = Math.min(120, Math.max(limit * 8, 24));
+    // Overfetch so we can (a) drop docs already in the project and (b) rank by match count.
+    const overfetch = Math.min(250, Math.max(limit * 20, 60));
     const docs = await DocModel.find(filter)
-      .sort({ updatedDate: -1 })
+      .sort({ updatedDate: -1, _id: -1 })
       .limit(overfetch)
       .select({
         _id: 1,
@@ -194,12 +190,23 @@ export async function GET(
         createdDate: 1,
         previewImageUrl: 1,
         firstPagePngUrl: 1,
-        aiOutput: 1,
+        projectId: 1,
+        projectIds: 1,
+        "aiOutput.tags": 1,
+        "aiOutput.summary": 1,
       })
       .lean();
 
     const tagSet = new Set(tags.map((t) => t.toLowerCase()));
     const scored = docs
+      .filter((d) => {
+        // Exclude docs already in this project (primary or membership).
+        const primary = (d as unknown as { projectId?: unknown }).projectId;
+        if (primary && String(primary) === String(projectId)) return false;
+        const memberships = (d as unknown as { projectIds?: unknown }).projectIds;
+        if (Array.isArray(memberships) && memberships.some((x) => String(x) === String(projectId))) return false;
+        return true;
+      })
       .map((d) => {
         const ai = (d as unknown as { aiOutput?: unknown }).aiOutput;
         const aiTagsRaw =

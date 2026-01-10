@@ -12,7 +12,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { ReviewModel } from "@/lib/models/Review";
 import { debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
@@ -86,7 +86,8 @@ export async function GET(
       q: q ? "[redacted]" : "",
     });
 
-    const actor = await resolveActor(request);
+    // Hot path (/project/:id): avoid heavy resolver; preserve correct personalOrgId for legacy scoping.
+    const actor = (await tryResolveUserActorFastWithPersonalOrg(request)) ?? (await resolveActor(request));
     await connectMongo();
 
     const orgId = new Types.ObjectId(actor.orgId);
@@ -116,6 +117,7 @@ export async function GET(
         name: 1,
         slug: 1,
         description: 1,
+        docCount: 1,
         autoAddFiles: 1,
         isRequest: 1,
         requestUploadToken: 1,
@@ -284,12 +286,38 @@ export async function GET(
       (filter.$and as Array<Record<string, unknown>>).push({ $or: [{ title: rx }, { shareId: rx }] });
     }
 
-    const total = await DocModel.countDocuments(filter);
-    const docs = await DocModel.find(filter)
-      .sort({ updatedDate: -1 })
+    // Perf: avoid an extra `countDocuments` query on the hot path.
+    // `Project.docCount` is maintained by write paths specifically so list UIs don't have to count.
+    const projectDocCountRaw = (project as unknown as { docCount?: unknown }).docCount;
+    const projectDocCount =
+      typeof projectDocCountRaw === "number" && Number.isFinite(projectDocCountRaw) ? projectDocCountRaw : null;
+
+    const docsQuery = DocModel.find(filter)
+      .select({
+        _id: 1,
+        orgId: 1,
+        userId: 1,
+        shareId: 1,
+        title: 1,
+        status: 1,
+        currentUploadId: 1,
+        uploadId: 1, // legacy
+        previewImageUrl: 1,
+        firstPagePngUrl: 1,
+        projectId: 1,
+        projectIds: 1,
+        updatedDate: 1,
+        createdDate: 1,
+        "aiOutput.summary": 1,
+      })
+      .sort({ updatedDate: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
       .lean();
+
+    const [total, docs] = q
+      ? await Promise.all([DocModel.countDocuments(filter), docsQuery])
+      : [projectDocCount ?? (await DocModel.countDocuments(filter)), await docsQuery];
 
     // Add current upload versions (best-effort), same as /api/docs.
     const currentUploadIds = docs
