@@ -26,7 +26,7 @@ export const getBillingProPriceLabel = unstable_cache(
 
 /** Invalidate the cached Pro price label so the next read pulls from MongoDB. */
 export function revalidateBillingProPriceLabel() {
-  revalidateTag(BILLING_PRO_PRICE_LABEL_TAG);
+  revalidateTag(BILLING_PRO_PRICE_LABEL_TAG, "max");
 }
 
 

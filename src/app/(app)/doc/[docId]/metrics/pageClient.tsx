@@ -31,6 +31,8 @@ type MetricsResponse = {
     name: string | null;
     email: string | null;
     views: number;
+    timeSpentMs?: number;
+    pageTimeMsByPage?: Record<string, number>;
     pagesViewed?: number;
     pagesSeen?: number[];
     firstSeen: string | null;
@@ -39,6 +41,8 @@ type MetricsResponse = {
   anonymousViewers?: Array<{
     botIdHash: string;
     views: number;
+    timeSpentMs?: number;
+    pageTimeMsByPage?: Record<string, number>;
     pagesViewed?: number;
     pagesSeen?: number[];
     firstSeen: string | null;
@@ -87,6 +91,25 @@ function formatDayLabel(isoDay: string | null): string {
   const d = new Date(`${isoDay}T00:00:00.000Z`);
   if (!Number.isFinite(d.getTime())) return isoDay;
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(d);
+}
+
+function parseIsoMs(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const t = d.getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+function formatDurationShort(msRaw: number | null | undefined): string {
+  const ms = typeof msRaw === "number" && Number.isFinite(msRaw) ? Math.max(0, Math.floor(msRaw)) : 0;
+  if (ms <= 0) return "";
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 function MiniLineChartSingle({
@@ -229,10 +252,18 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
         views: number;
         pagesViewed: number;
         pagesSeen: number[];
+        timeSpentMs: number;
+        timeOpenMs: number;
+        pageTimeMsByPage: Record<string, number>;
         firstSeen: string | null;
         lastSeen: string | null;
       }
   >(null);
+
+  const viewerTimeTotalMs = viewerDetail ? (viewerDetail.timeSpentMs > 0 ? viewerDetail.timeSpentMs : viewerDetail.timeOpenMs) : 0;
+  const viewerTimeApproxPrefix = viewerDetail ? (viewerDetail.timeSpentMs > 0 ? "" : "~") : "";
+  const viewerAvgTimeMs =
+    viewerDetail && viewerTimeTotalMs > 0 ? Math.round(viewerTimeTotalMs / Math.max(1, viewerDetail.views)) : 0;
 
   const VIEWERS_PAGE_SIZE = 25;
 
@@ -392,6 +423,16 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       : [];
     const pagesViewed =
       typeof v.pagesViewed === "number" && Number.isFinite(v.pagesViewed) ? Math.max(0, Math.floor(v.pagesViewed)) : pagesSeen.length;
+    const timeSpentMs =
+      typeof v.timeSpentMs === "number" && Number.isFinite(v.timeSpentMs) ? Math.max(0, Math.floor(v.timeSpentMs)) : 0;
+    const firstSeenIso = v.firstSeen ?? null;
+    const lastSeenIso = v.lastSeen ?? null;
+    const firstMs = parseIsoMs(firstSeenIso);
+    const lastMs = parseIsoMs(lastSeenIso);
+    const timeOpenMs =
+      timeSpentMs > 0 || firstMs === null || lastMs === null ? 0 : Math.max(0, Math.min(24 * 60 * 60 * 1000, lastMs - firstMs));
+    const pageTimeMsByPage =
+      v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object" ? (v.pageTimeMsByPage as Record<string, number>) : {};
     setViewerDetail({
       kind: "authed",
       key: v.userId,
@@ -400,8 +441,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       views: typeof v.views === "number" && Number.isFinite(v.views) ? Math.max(0, Math.floor(v.views)) : 0,
       pagesViewed,
       pagesSeen,
-      firstSeen: v.firstSeen ?? null,
-      lastSeen: v.lastSeen ?? null,
+      timeSpentMs,
+      timeOpenMs,
+      pageTimeMsByPage,
+      firstSeen: firstSeenIso,
+      lastSeen: lastSeenIso,
     });
   }
 
@@ -416,6 +460,16 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       : [];
     const pagesViewed =
       typeof v.pagesViewed === "number" && Number.isFinite(v.pagesViewed) ? Math.max(0, Math.floor(v.pagesViewed)) : pagesSeen.length;
+    const timeSpentMs =
+      typeof v.timeSpentMs === "number" && Number.isFinite(v.timeSpentMs) ? Math.max(0, Math.floor(v.timeSpentMs)) : 0;
+    const firstSeenIso = v.firstSeen ?? null;
+    const lastSeenIso = v.lastSeen ?? null;
+    const firstMs = parseIsoMs(firstSeenIso);
+    const lastMs = parseIsoMs(lastSeenIso);
+    const timeOpenMs =
+      timeSpentMs > 0 || firstMs === null || lastMs === null ? 0 : Math.max(0, Math.min(24 * 60 * 60 * 1000, lastMs - firstMs));
+    const pageTimeMsByPage =
+      v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object" ? (v.pageTimeMsByPage as Record<string, number>) : {};
     setViewerDetail({
       kind: "anon",
       key: botIdHash || "anon",
@@ -424,8 +478,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       views: typeof v.views === "number" && Number.isFinite(v.views) ? Math.max(0, Math.floor(v.views)) : 0,
       pagesViewed,
       pagesSeen,
-      firstSeen: v.firstSeen ?? null,
-      lastSeen: v.lastSeen ?? null,
+      timeSpentMs,
+      timeOpenMs,
+      pageTimeMsByPage,
+      firstSeen: firstSeenIso,
+      lastSeen: lastSeenIso,
     });
   }
 
@@ -960,6 +1017,18 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                   <span className="tabular-nums text-[var(--fg)]">
                     {viewerDetail.pagesViewed} {viewerDetail.pagesViewed === 1 ? "page" : "pages"}
                   </span>
+                  {viewerTimeTotalMs > 0 ? (
+                    <span className="tabular-nums text-[var(--fg)]">
+                      {viewerDetail.timeSpentMs > 0 ? "Time spent" : "Time open"} {viewerTimeApproxPrefix}
+                      {formatDurationShort(viewerTimeTotalMs)}
+                    </span>
+                  ) : null}
+                  {viewerAvgTimeMs > 0 ? (
+                    <span className="tabular-nums text-[var(--fg)]">
+                      Avg / view {viewerTimeApproxPrefix}
+                      {formatDurationShort(viewerAvgTimeMs)}
+                    </span>
+                  ) : null}
                 </div>
                 <div className="mt-2 text-xs text-[var(--muted)]">
                   First seen {formatDateTime(viewerDetail.firstSeen)} · Last seen {formatDateTime(viewerDetail.lastSeen)}
@@ -977,7 +1046,14 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                       {viewerDetail.pagesSeen.slice(0, 60).map((p) => (
                         <span
                           key={`page:${viewerDetail.key}:${p}`}
-                          className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1 text-xs font-semibold text-[var(--fg)] tabular-nums"
+                            title={
+                              (() => {
+                                const raw = viewerDetail.pageTimeMsByPage?.[String(p)];
+                                const ms = typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+                                return ms > 0 ? `Time on page: ${formatDurationShort(ms)}` : `Page ${p}`;
+                              })()
+                            }
+                            className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1 text-xs font-semibold text-[var(--fg)] tabular-nums"
                         >
                           {p}
                         </span>

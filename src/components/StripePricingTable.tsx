@@ -13,18 +13,6 @@
 
 import Script from "next/script";
 
-declare global {
-  // Allow JSX to render the custom element without TS errors.
-  namespace JSX {
-    interface IntrinsicElements {
-      "stripe-pricing-table": React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
-        "pricing-table-id"?: string;
-        "publishable-key"?: string;
-      };
-    }
-  }
-}
-
 export type StripePricingTableProps = {
   pricingTableId?: string;
   publishableKey?: string;

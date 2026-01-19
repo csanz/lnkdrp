@@ -129,7 +129,7 @@ export async function POST(request: Request) {
       // ignore
     }
 
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json(result);
   } catch (err) {
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());

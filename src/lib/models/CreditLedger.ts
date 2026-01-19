@@ -141,13 +141,13 @@ if (ExistingCreditLedgerModel && !ExistingCreditLedgerModel.schema.path("eventTy
   ExistingCreditLedgerModel.schema.add({
     eventType: { type: String, trim: true, default: "ai_run", index: true },
     cycleKey: { type: String, trim: true, default: null, index: true },
-  });
+  } as any);
 }
 if (ExistingCreditLedgerModel && !ExistingCreditLedgerModel.schema.path("adminReason")) {
   ExistingCreditLedgerModel.schema.add({
     adminReason: { type: String, trim: true, default: null },
     adminActorEmail: { type: String, trim: true, default: null },
-  });
+  } as any);
 }
 
 

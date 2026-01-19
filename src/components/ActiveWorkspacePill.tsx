@@ -31,7 +31,7 @@ export default function ActiveWorkspacePill({
   maxWidthClassName?: string;
   /** Optional plan badge (e.g. "PRO") rendered as a right-side segment of the pill. */
   planBadgeText?: string;
-  /** Tailwind text sizing overrides (defaults to text-[12px]). */
+  /** Tailwind text sizing overrides (defaults to text-[13px]). */
   textClassName?: string;
   /** If true, avoid immediate network calls on mount (header fast-path); refreshes may be deferred. */
   disableNetwork?: boolean;
@@ -158,7 +158,7 @@ export default function ActiveWorkspacePill({
       className={cn(
         "inline-flex min-w-0 items-stretch overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] font-semibold text-[var(--fg)] dark:border-[color-mix(in_srgb,var(--border)_30%,transparent)]",
         maxWidthClassName,
-        textClassName ?? "text-[12px]",
+        textClassName ?? "text-[13px]",
         className,
       )}
       title={activeWorkspaceName}

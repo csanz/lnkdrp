@@ -8,7 +8,7 @@ import mongoose, { Schema, type InferSchemaType, type Model, Types } from "mongo
  */
 const subscriptionSchema = new Schema(
   {
-    orgId: { type: Schema.Types.ObjectId, ref: "Org", index: true, required: true },
+    orgId: { type: Schema.Types.ObjectId, ref: "Org", required: true },
 
     /**
      * Stripe identifiers.
@@ -65,12 +65,12 @@ const ExistingSubscriptionModel = mongoose.models.Subscription as Model<Subscrip
 if (ExistingSubscriptionModel && !ExistingSubscriptionModel.schema.path("stripeSubscriptionItemId")) {
   ExistingSubscriptionModel.schema.add({
     stripeSubscriptionItemId: { type: String, trim: true, default: null },
-  });
+  } as any);
 }
 if (ExistingSubscriptionModel && !ExistingSubscriptionModel.schema.path("currentPeriodStart")) {
   ExistingSubscriptionModel.schema.add({
     currentPeriodStart: { type: Date, default: null },
-  });
+  } as any);
 }
 
 

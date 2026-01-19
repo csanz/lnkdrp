@@ -756,79 +756,85 @@ export default function TeamsManager() {
             {existingInvitesError ? <div className="text-[12px] text-red-500">{existingInvitesError}</div> : null}
 
             <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
-              <div className="grid grid-cols-[1fr_90px_90px_90px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
-                <div>Link</div>
-                <div>Role</div>
-                <div>Status</div>
-                <div>Expires</div>
-              </div>
-              <div className="h-px bg-[var(--border)]" />
-
-              {existingInvitesBusy ? (
-                <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
-              ) : filteredInvites.length ? (
-                <div className="max-h-[420px] overflow-auto">
-                  <div className="divide-y divide-[var(--border)]">
-                    {filteredInvites.map((inv, idx) => {
-                      const url = typeof inv.inviteUrl === "string" ? inv.inviteUrl : "";
-                      const email = typeof inv.email === "string" ? inv.email : "";
-                      const redeemedByLabel = (() => {
-                        const rb = inv.redeemedBy;
-                        if (!rb) return "";
-                        const name = (rb.name ?? "").trim();
-                        const em = (rb.email ?? "").trim();
-                        return name || em;
-                      })();
-                      const { status, expiresLabel } = inviteRowMeta({
-                        expiresAt: inv.expiresAt,
-                        redeemedAt: inv.redeemedAt,
-                      });
-                      return (
-                        <div
-                          key={`${inv.id ?? inv.createdDate ?? "x"}:${idx}`}
-                          className="grid grid-cols-[1fr_90px_90px_90px] items-center gap-3 px-3 py-2 text-[12px] text-[var(--fg)] hover:bg-[var(--panel-hover)] sm:px-4"
-                        >
-                          <div className="min-w-0">
-                            {email ? (
-                              <div className="truncate text-[12px] font-semibold text-[var(--fg)]" title={email}>
-                                {email}
-                              </div>
-                            ) : null}
-                            {status === "Used" && redeemedByLabel ? (
-                              <div className="truncate text-[11px] text-[var(--muted-2)]" title={redeemedByLabel}>
-                                Used by {redeemedByLabel}
-                              </div>
-                            ) : null}
-                            {url ? (
-                              <button
-                                type="button"
-                                className="w-full truncate text-left text-[12px] text-[var(--muted-2)] hover:text-[var(--fg)]"
-                                title={url}
-                                onClick={() => void navigator.clipboard?.writeText?.(url)}
-                              >
-                                {url}
-                              </button>
-                            ) : (
-                              <div className="truncate text-[12px] text-[var(--muted-2)]">Legacy invite (no link saved)</div>
-                            )}
-                          </div>
-                          <div className="truncate text-[12px] text-[var(--fg)]">{inv.role || "member"}</div>
-                          <div>
-                            <span className="inline-flex items-center rounded-full bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]">
-                              {status}
-                            </span>
-                          </div>
-                          <div className="text-[12px] text-[var(--muted-2)]">{expiresLabel}</div>
-                        </div>
-                      );
-                    })}
+              <div className="overflow-x-auto">
+                <div className="min-w-[560px]">
+                  <div className="grid grid-cols-[1fr_90px_90px_90px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
+                    <div>Link</div>
+                    <div>Role</div>
+                    <div>Status</div>
+                    <div>Expires</div>
                   </div>
+                  <div className="h-px bg-[var(--border)]" />
+
+                  {existingInvitesBusy ? (
+                    <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
+                  ) : filteredInvites.length ? (
+                    <div className="max-h-[420px] overflow-auto">
+                      <div className="divide-y divide-[var(--border)]">
+                        {filteredInvites.map((inv, idx) => {
+                          const url = typeof inv.inviteUrl === "string" ? inv.inviteUrl : "";
+                          const email = typeof inv.email === "string" ? inv.email : "";
+                          const redeemedByLabel = (() => {
+                            const rb = inv.redeemedBy;
+                            if (!rb) return "";
+                            const name = (rb.name ?? "").trim();
+                            const em = (rb.email ?? "").trim();
+                            return name || em;
+                          })();
+                          const { status, expiresLabel } = inviteRowMeta({
+                            expiresAt: inv.expiresAt,
+                            redeemedAt: inv.redeemedAt,
+                          });
+                          return (
+                            <div
+                              key={`${inv.id ?? inv.createdDate ?? "x"}:${idx}`}
+                              className="grid grid-cols-[1fr_90px_90px_90px] items-center gap-3 px-3 py-2 text-[12px] text-[var(--fg)] hover:bg-[var(--panel-hover)] sm:px-4"
+                            >
+                              <div className="min-w-0">
+                                {email ? (
+                                  <div className="truncate text-[12px] font-semibold text-[var(--fg)]" title={email}>
+                                    {email}
+                                  </div>
+                                ) : null}
+                                {status === "Used" && redeemedByLabel ? (
+                                  <div className="truncate text-[11px] text-[var(--muted-2)]" title={redeemedByLabel}>
+                                    Used by {redeemedByLabel}
+                                  </div>
+                                ) : null}
+                                {url ? (
+                                  <button
+                                    type="button"
+                                    className="w-full truncate text-left text-[12px] text-[var(--muted-2)] hover:text-[var(--fg)]"
+                                    title={url}
+                                    onClick={() => void navigator.clipboard?.writeText?.(url)}
+                                  >
+                                    {url}
+                                  </button>
+                                ) : (
+                                  <div className="truncate text-[12px] text-[var(--muted-2)]">
+                                    Legacy invite (no link saved)
+                                  </div>
+                                )}
+                              </div>
+                              <div className="truncate text-[12px] text-[var(--fg)]">{inv.role || "member"}</div>
+                              <div>
+                                <span className="inline-flex items-center rounded-full bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]">
+                                  {status}
+                                </span>
+                              </div>
+                              <div className="text-[12px] text-[var(--muted-2)]">{expiresLabel}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">
+                      {inviteCounts.all === 0 ? "No invite links yet." : "No invite links in this view."}
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">
-                  {inviteCounts.all === 0 ? "No invite links yet." : "No invite links in this view."}
-                </div>
-              )}
+              </div>
             </div>
           </div>
         )

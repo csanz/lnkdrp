@@ -182,7 +182,7 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         {!isTopbar ? (
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{displayName}</div>
-            <div className="truncate text-[11px] text-[var(--muted-2)]">{subLabel}</div>
+            <div className="truncate text-[13px] text-[var(--muted-2)]">{subLabel}</div>
           </div>
         ) : null}
       </button>
@@ -221,7 +221,13 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           }
         >
           <div className="px-3 py-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+            <div
+              className={
+                isTopbar
+                  ? "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]"
+                  : "text-[13px] font-semibold uppercase tracking-wide text-[var(--muted-2)]"
+              }
+            >
               Theme
             </div>
             <div className="mt-2 grid grid-cols-3 gap-2">
@@ -598,7 +604,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         {!isTopbar ? (
           <div className="min-w-0 flex-1">
             <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{displayName}</div>
-            <div className="truncate text-[11px] text-[var(--muted-2)]">{subLabel}</div>
+            <div className="truncate text-[13px] text-[var(--muted-2)]">{subLabel}</div>
           </div>
         ) : null}
       </button>
@@ -640,14 +646,14 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           {/* Workspace quick switch (keep lightweight; full management lives in Dashboard). */}
           {session?.user ? (
             <div className="px-3 py-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+              <div className={isTopbar ? "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]" : "text-[13px] font-semibold uppercase tracking-wide text-[var(--muted-2)]"}>
                 Workspace
               </div>
               <div className="mt-2 space-y-1">
                 {orgsBusy ? (
-                  <div className="px-2 py-1 text-[12px] text-[var(--muted-2)]">Loading…</div>
+                  <div className={isTopbar ? "px-2 py-1 text-[12px] text-[var(--muted-2)]" : "px-2 py-1 text-[13px] text-[var(--muted-2)]"}>Loading…</div>
                 ) : orgsError ? (
-                  <div className="px-2 py-1 text-[12px] text-[var(--muted-2)]">{orgsError}</div>
+                  <div className={isTopbar ? "px-2 py-1 text-[12px] text-[var(--muted-2)]" : "px-2 py-1 text-[13px] text-[var(--muted-2)]"}>{orgsError}</div>
                 ) : quickOrgs.length ? (
                   <>
                     {quickOrgs.map((o) => {
@@ -673,7 +679,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
                             <OrgAvatar name={o.name} avatarUrl={typeof o.avatarUrl === "string" ? o.avatarUrl : null} />
                             <span className="truncate">{o.name}</span>
                           </span>
-                          <span className="ml-2 text-[11px] text-[var(--muted-2)]">
+                          <span className={isTopbar ? "ml-2 text-[11px] text-[var(--muted-2)]" : "ml-2 text-[13px] text-[var(--muted-2)]"}>
                             {isActive ? "Active" : o.type === "personal" ? "Personal" : "Org"}
                           </span>
                         </button>
@@ -681,7 +687,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
                     })}
                     <button
                       type="button"
-                      className="mt-2 w-full rounded-lg border border-[var(--border)] px-2 py-1 text-[12px] text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      className={isTopbar ? "mt-2 w-full rounded-lg border border-[var(--border)] px-2 py-1 text-[12px] text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60" : "mt-2 w-full rounded-lg border border-[var(--border)] px-2 py-1 text-[13px] text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"}
                       disabled={navLocked}
                       onClick={() => {
                         setOpen(false);
@@ -692,7 +698,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
                     </button>
                   </>
                 ) : (
-                  <div className="px-2 py-1 text-[12px] text-[var(--muted-2)]">No workspaces</div>
+                  <div className={isTopbar ? "px-2 py-1 text-[12px] text-[var(--muted-2)]" : "px-2 py-1 text-[13px] text-[var(--muted-2)]"}>No workspaces</div>
                 )}
               </div>
             </div>
@@ -701,11 +707,11 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           <div className="my-1 h-px bg-[var(--border)]" />
 
           {session?.user?.email ? (
-            <div className="px-3 py-2 text-[11px] text-[var(--muted-2)]">Signed in as: {session.user.email}</div>
+            <div className={isTopbar ? "px-3 py-2 text-[11px] text-[var(--muted-2)]" : "px-3 py-2 text-[13px] text-[var(--muted-2)]"}>Signed in as: {session.user.email}</div>
           ) : null}
 
           <div className="px-3 py-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">Theme</div>
+            <div className={isTopbar ? "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]" : "text-[13px] font-semibold uppercase tracking-wide text-[var(--muted-2)]"}>Theme</div>
             <div className="mt-2 grid grid-cols-3 gap-2">
               <ThemeChoice
                 label="System"

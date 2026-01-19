@@ -245,11 +245,34 @@ export async function GET(
     const uploadPromise = currentUploadId ? UploadModel.findById(currentUploadId).lean() : Promise.resolve(null);
 
     const upload = lite ? null : await uploadPromise;
-    const uploadLite =
-      lite && currentUploadId
-        ? await UploadModel.findById(currentUploadId)
-            .select({ version: 1, createdDate: 1, userId: 1 })
-            .lean()
+    // In `lite=1` mode we avoid fetching heavy text fields, but we still need:
+    // - upload `version` for the `vN` badge
+    // - upload `blobUrl` / preview fields to avoid "blank" doc pages when the Doc record is missing artifacts
+    // - upload `status` so we can safely repair stale Doc pointers when the upload is completed
+    const shouldFetchUploadLite =
+      lite &&
+      Boolean(currentUploadId) &&
+      (docLean.status !== "ready" ||
+        !(typeof (docLean as any).blobUrl === "string" && (docLean as any).blobUrl) ||
+        !(
+          (typeof (docLean as any).previewImageUrl === "string" && (docLean as any).previewImageUrl) ||
+          (typeof (docLean as any).firstPagePngUrl === "string" && (docLean as any).firstPagePngUrl)
+        ));
+    const uploadLite = shouldFetchUploadLite
+      ? await UploadModel.findById(currentUploadId)
+          .select({
+            _id: 1,
+            version: 1,
+            status: 1,
+            blobUrl: 1,
+            previewImageUrl: 1,
+            firstPagePngUrl: 1,
+            createdDate: 1,
+            userId: 1,
+          })
+          .lean()
+      : lite && currentUploadId
+        ? await UploadModel.findById(currentUploadId).select({ _id: 1, version: 1, createdDate: 1, userId: 1 }).lean()
         : null;
 
     // In `lite=1` mode we avoid hydrating the full Upload, but the doc page still needs the
@@ -317,62 +340,75 @@ export async function GET(
      * to the Upload's canonical artifacts. This is idempotent and keeps the UI responsive even
      * if a background worker update was interrupted.
      */
+    const uploadForRepair = (lite ? uploadLite : upload) as any;
     if (
-      !lite &&
-      upload &&
-      (upload as { status?: unknown }).status === "completed" &&
+      uploadForRepair &&
+      (uploadForRepair as { status?: unknown }).status === "completed" &&
       !isInRequestRepo &&
-      !docLean.receivedViaRequestProjectId &&
-      (docLean.status !== "ready" ||
-        String(docLean.currentUploadId ?? docLean.uploadId ?? "") !== String((upload as any)._id ?? "") ||
-        (typeof docLean.blobUrl === "string" && typeof (upload as any).blobUrl === "string"
-          ? docLean.blobUrl !== (upload as any).blobUrl
-          : false))
+      !docLean.receivedViaRequestProjectId
     ) {
-      const isReplacement = Number.isFinite((upload as any).version) && Number((upload as any).version) > 1;
-      const nextPreviewFromUpload = (upload as any).previewImageUrl ?? (upload as any).firstPagePngUrl ?? null;
+      const needsArtifactRepair =
+        docLean.status !== "ready" ||
+        String(docLean.currentUploadId ?? docLean.uploadId ?? "") !== String(uploadForRepair._id ?? "") ||
+        (!docLean.blobUrl && typeof uploadForRepair.blobUrl === "string" && uploadForRepair.blobUrl) ||
+        (!docLean.previewImageUrl &&
+          !docLean.firstPagePngUrl &&
+          (typeof uploadForRepair.previewImageUrl === "string" ||
+            typeof uploadForRepair.firstPagePngUrl === "string"));
+
+      if (needsArtifactRepair) {
+        const isReplacement = Number.isFinite(uploadForRepair.version) && Number(uploadForRepair.version) > 1;
+        const nextPreviewFromUpload = uploadForRepair.previewImageUrl ?? uploadForRepair.firstPagePngUrl ?? null;
       // IMPORTANT: for replacement uploads, never wipe an existing doc preview
       // if the upload didn't generate one (best-effort preview rendering can fail).
       const nextPreview =
         nextPreviewFromUpload ?? (isReplacement ? (docLean.previewImageUrl ?? docLean.firstPagePngUrl ?? null) : null);
-      const nextText = (upload as any).rawExtractedText ?? (upload as any).pdfText ?? null;
+        const nextText = lite ? null : (uploadForRepair as any).rawExtractedText ?? (uploadForRepair as any).pdfText ?? null;
 
-      await DocModel.updateOne(
-        { ...docMatch },
-        {
-          $set: {
-            status: "ready",
-            blobUrl: (upload as any).blobUrl ?? docLean.blobUrl ?? null,
-            currentUploadId: (upload as any)._id,
-            uploadId: (upload as any)._id, // backward compat
-            previewImageUrl: nextPreview,
-            firstPagePngUrl: nextPreview, // compat
-            extractedText: nextText,
-            pdfText: nextText, // compat
-            aiOutput: (upload as any).aiOutput ?? (isReplacement ? docLean.aiOutput ?? null : null),
-            docName: (upload as any).docName ?? (isReplacement ? docLean.docName ?? null : null),
-            pageSlugs: Array.isArray((upload as any).pageSlugs)
-              ? (upload as any).pageSlugs
-              : (isReplacement ? (docLean.pageSlugs ?? []) : []),
+        await DocModel.updateOne(
+          { ...docMatch },
+          {
+            $set: {
+              status: "ready",
+              blobUrl: uploadForRepair.blobUrl ?? docLean.blobUrl ?? null,
+              currentUploadId: uploadForRepair._id,
+              uploadId: uploadForRepair._id, // backward compat
+              previewImageUrl: nextPreview,
+              firstPagePngUrl: nextPreview, // compat
+              ...(lite
+                ? null
+                : {
+                    extractedText: nextText,
+                    pdfText: nextText, // compat
+                    aiOutput: (uploadForRepair as any).aiOutput ?? (isReplacement ? docLean.aiOutput ?? null : null),
+                    docName: (uploadForRepair as any).docName ?? (isReplacement ? docLean.docName ?? null : null),
+                    pageSlugs: Array.isArray((uploadForRepair as any).pageSlugs)
+                      ? (uploadForRepair as any).pageSlugs
+                      : (isReplacement ? (docLean.pageSlugs ?? []) : []),
+                  }),
+            },
           },
-        },
-      );
-      repairedFromCompletedUpload = true;
+        );
+        repairedFromCompletedUpload = true;
 
-      // Update the in-memory snapshot we use for the response so the client sees the fix immediately.
-      docLean.status = "ready";
-      docLean.blobUrl = (upload as any).blobUrl ?? docLean.blobUrl ?? null;
-      (docLean as any).currentUploadId = (upload as any)._id;
-      (docLean as any).uploadId = (upload as any)._id;
-      docLean.previewImageUrl = nextPreview;
-      docLean.firstPagePngUrl = nextPreview;
-      docLean.extractedText = nextText;
-      docLean.pdfText = nextText;
-      docLean.aiOutput = (upload as any).aiOutput ?? (isReplacement ? docLean.aiOutput ?? null : null);
-      (docLean as any).docName = (upload as any).docName ?? (isReplacement ? (docLean as any).docName ?? null : null);
-      (docLean as any).pageSlugs = Array.isArray((upload as any).pageSlugs)
-        ? (upload as any).pageSlugs
-        : (isReplacement ? (docLean as any).pageSlugs ?? [] : []);
+        // Update the in-memory snapshot we use for the response so the client sees the fix immediately.
+        docLean.status = "ready";
+        docLean.blobUrl = uploadForRepair.blobUrl ?? docLean.blobUrl ?? null;
+        (docLean as any).currentUploadId = uploadForRepair._id;
+        (docLean as any).uploadId = uploadForRepair._id;
+        docLean.previewImageUrl = nextPreview;
+        docLean.firstPagePngUrl = nextPreview;
+        if (!lite) {
+          docLean.extractedText = nextText;
+          docLean.pdfText = nextText;
+          docLean.aiOutput = (uploadForRepair as any).aiOutput ?? (isReplacement ? docLean.aiOutput ?? null : null);
+          (docLean as any).docName =
+            (uploadForRepair as any).docName ?? (isReplacement ? (docLean as any).docName ?? null : null);
+          (docLean as any).pageSlugs = Array.isArray((uploadForRepair as any).pageSlugs)
+            ? (uploadForRepair as any).pageSlugs
+            : (isReplacement ? (docLean as any).pageSlugs ?? [] : []);
+        }
+      }
     }
 
     // Best-effort: if this doc is a request guide doc, provide the request repo id even if

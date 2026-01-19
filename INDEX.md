@@ -95,7 +95,7 @@
 - `src/app/preferences/layout.tsx` — Layout for \`/preferences\` (standalone; no app sidebar).
 - `src/app/preferences/page.tsx` — Page for \`/preferences\` (preferences hub).
 - `src/app/preferences/[tab]/page.tsx` — Page for \`/preferences/:tab\` (redirects to query-param tab).
-- `src/app/dashboard/page.tsx` — Page for \`/dashboard\` (standalone dashboard hub; includes Overview/Account/Workspace/Teams/Usage/Spending/Billing tabs).
+- `src/app/dashboard/page.tsx` — Page for \`/dashboard\` (standalone dashboard hub; includes Overview/Account/Workspace/Teams/Usage/Spending/Billing tabs; mobile uses a hamburger menu to open the tab nav).
 - `src/app/billing/success/page.tsx` — Page for \`/billing/success\` (post-Checkout redirect; polls server until webhooks activate Pro).
 - `src/app/billing/cancel/page.tsx` — Page for \`/billing/cancel\` (Checkout canceled).
 - `src/app/p/[shareId]/page.tsx` — Page for \`/p/:shareId\`.
@@ -459,7 +459,7 @@
   - GET (function) — Handle GET requests.
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
-  - Note: POST records per-viewer share view state (including best-effort `viewerIp`) keyed by (shareId, botIdHash).
+  - Note: POST records per-viewer share view state (pages seen + best-effort time spent + best-effort \`viewerIp\`) keyed by (shareId, botIdHash).
 - `src/app/api/share/[shareId]/changes/route.ts` — API route for \`/api/share/:shareId/changes\`.
   - GET (function) — Return a light revision history for a shared doc (gated by doc settings + share password).
   - runtime (const) — Next.js route configuration.
@@ -798,11 +798,14 @@
 - `public/sample/usavx_op.pdf`
 - `public/sample/usavx.pdf`
 - `docs/BENCHMARK.md`
+- `docs/CURSOR.md` — How we use Cursor rules and maintain `INDEX.md` / `docs/FEATURES.md`.
 - `docs/FEATURES.md`
 - `docs/SUBSCRIPTION.md`
 - `docs/ERROR_LOGGING.md`
 - `README.md`
+- `DEV.md` — Development guide: setup, environment variables, Stripe testing, cron jobs, ngrok, npm scripts.
 - `docs/CRON.md`
+- `docs/deploy/Deploy_1.md` — First production deployment checklist + deployment plan.
 - `docs/REQUEST.md`
 - `db/migration/run.mjs`
 - `db/migration/20251226_0001_backfill_deletedDate_from_isDeletedDate.mjs`
@@ -833,6 +836,7 @@
 - `scripts/test-ai-extract.mjs`
 - `scripts/test-ai-extract.ts`
 - `scripts/test-vercel-blob.mjs`
+- `scripts/gen-env-secrets.mjs` — Generate strong random env secrets for production (NextAuth, cron, token secrets).
 - `scripts/notifications-send-emails.ts` — Local runner for notification emails (dry-run by default).
 - `scripts/cookie.json`
 - `scripts/tests-benchmark.ts`
@@ -964,6 +968,7 @@
 - `src/types/next-auth.d.ts`
 - `src/types/pdf-parse.d.ts`
 - `src/types/pdfjs-dist.d.ts`
+- `src/types/stripe-pricing-table.d.ts`
 - `THEME.md`
 - `tmp/archive/src/components/DocDebugModal.tsx`
 - `tmp/archive/src/components/GoogleSignInButton.tsx`

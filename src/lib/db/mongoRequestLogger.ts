@@ -98,12 +98,10 @@ export async function withMongoRequestLogging<T>(
     try {
       return await fn();
     } finally {
-      const s = als.getStore();
-      if (!s) return;
       const entry = {
-        path: s.path,
-        ops: s.ops,
-        mongoMs: Math.round(s.mongoMs),
+        path: store.path,
+        ops: store.ops,
+        mongoMs: Math.round(store.mongoMs),
         totalMs: Date.now() - started,
         at: Date.now(),
       };

@@ -268,6 +268,10 @@ export function PdfJsViewer({
   const historyPrefetchDoneRef = useRef(false);
   const historyScrollRef = useRef<HTMLDivElement | null>(null);
   const historySentinelRef = useRef<HTMLDivElement | null>(null);
+  const shareTimingEnteredAtMsRef = useRef<number | null>(null);
+  const shareTimingLastFlushAtMsRef = useRef<number>(0);
+  const shareTimingPageRef = useRef<number>(initialPage);
+  const shareTimingPageEnteredAtMsRef = useRef<number | null>(null);
   const [viewMode, setViewMode] = useState<"single" | "all" | "grid">("single");
   const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
@@ -1489,6 +1493,100 @@ export function PdfJsViewer({
       cancelled = true;
     };
   }, [hasFirstPaint, shareIdSafe]);
+
+  useEffect(() => {
+    // Best-effort "time spent" tracking for share pages.
+    // We attribute time to the same per-browser botId used for views/pages.
+    if (!shareIdSafe) return;
+    if (!hasFirstPaint) return;
+    const shareId = shareIdSafe;
+    const botId = getOrCreateBotId();
+    if (!botId) return;
+
+    shareTimingEnteredAtMsRef.current = Date.now();
+    shareTimingLastFlushAtMsRef.current = 0;
+    // Do NOT reset page timing here; it is managed by the page-dwell effect below.
+
+    function flushTime({ includePage }: { includePage: boolean }) {
+      const enteredAtMs = shareTimingEnteredAtMsRef.current;
+      if (!enteredAtMs) return;
+      const now = Date.now();
+      // Avoid double-flush storms from multiple lifecycle events.
+      if (shareTimingLastFlushAtMsRef.current && now - shareTimingLastFlushAtMsRef.current < 1200) return;
+      shareTimingLastFlushAtMsRef.current = now;
+
+      const durationMs = now - enteredAtMs;
+      // Ignore extremely short stays.
+      if (!Number.isFinite(durationMs) || durationMs < 1500) return;
+      // Reset start time so we increment in chunks.
+      shareTimingEnteredAtMsRef.current = now;
+
+      const payload: Record<string, unknown> = { botId, durationMs };
+      if (includePage) {
+        const p = shareTimingPageRef.current;
+        if (typeof p === "number" && Number.isFinite(p) && p >= 1) payload.pageNumber = Math.floor(p);
+      }
+      void fetchWithTempUser(`/api/share/${shareId}/stats`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify(payload),
+      }).catch(() => void 0);
+    }
+
+    function onVisChange() {
+      if (document.visibilityState === "hidden") flushTime({ includePage: true });
+    }
+    function onPageHide() {
+      flushTime({ includePage: true });
+    }
+
+    window.addEventListener("pagehide", onPageHide);
+    document.addEventListener("visibilitychange", onVisChange);
+    const interval = window.setInterval(() => flushTime({ includePage: true }), 30000);
+    return () => {
+      // Best-effort on unmount too (route transitions).
+      flushTime({ includePage: true });
+      window.clearInterval(interval);
+      window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onVisChange);
+    };
+  }, [hasFirstPaint, shareIdSafe]);
+
+  useEffect(() => {
+    // Track per-page dwell time (best-effort): when the page changes, flush time for the previous page.
+    if (!shareIdSafe) return;
+    if (!hasFirstPaint) return;
+    const shareId = shareIdSafe;
+    const botId = getOrCreateBotId();
+    if (!botId) return;
+
+    const prevPage = shareTimingPageRef.current;
+    const enteredAt = shareTimingPageEnteredAtMsRef.current;
+    const now = Date.now();
+
+    // Initialize on first run.
+    if (!enteredAt) {
+      shareTimingPageRef.current = pageNumber;
+      shareTimingPageEnteredAtMsRef.current = now;
+      return;
+    }
+
+    if (pageNumber === prevPage) return;
+
+    const durationMs = now - enteredAt;
+    if (Number.isFinite(durationMs) && durationMs >= 1500 && Number.isFinite(prevPage) && prevPage >= 1) {
+      void fetchWithTempUser(`/api/share/${shareId}/stats`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({ botId, pageNumber: Math.floor(prevPage), durationMs }),
+      }).catch(() => void 0);
+    }
+
+    shareTimingPageRef.current = pageNumber;
+    shareTimingPageEnteredAtMsRef.current = now;
+  }, [hasFirstPaint, pageNumber, shareIdSafe]);
 
   useEffect(() => {
     // Public stats collection for share pages:

@@ -161,64 +161,83 @@ export default function UsageTable({
       ) : null}
 
       <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel-2)]">
-        <table className="w-full border-collapse text-left text-[13px]">
-          <thead className="bg-[var(--panel)] text-[12px] font-semibold text-[var(--muted-2)]">
-            <tr>
-              <th className="px-4 py-3">Date</th>
-              <th className="px-4 py-3">Action</th>
-              <th className="px-4 py-3">Quality</th>
-              <th className="px-4 py-3">Doc</th>
-              <th className="px-4 py-3">User</th>
-              <th className="px-4 py-3 text-right">Credits</th>
-              <th className="px-4 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {busy ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-[760px] w-full border-collapse text-left text-[13px]">
+            <thead className="bg-[var(--panel)] text-[12px] font-semibold text-[var(--muted-2)]">
               <tr>
-                <td className="px-4 py-5 text-[12px] text-[var(--muted-2)]" colSpan={7}>
-                  Loading…
-                </td>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Action</th>
+                <th className="px-4 py-3">Quality</th>
+                <th className="px-4 py-3">Doc</th>
+                <th className="px-4 py-3">User</th>
+                <th className="px-4 py-3 text-right">Credits</th>
+                <th className="px-4 py-3">Status</th>
               </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td className="px-4 py-5 text-[12px] text-[var(--muted-2)]" colSpan={7}>
-                  No usage yet.
-                </td>
-              </tr>
-            ) : (
-              rows.map((r) => {
-                const docTitle = (r.doc?.title ?? "").trim() || "Untitled";
-                const userLabel = (r.user?.name ?? "").trim() || (r.user?.email ?? "").trim() || "—";
-                return (
-                  <tr key={r.id} className="border-t border-[var(--border)]">
-                    <td className="px-4 py-3 text-[var(--muted-2)]">{fmtDateTime(r.createdAt)}</td>
-                    <td className="px-4 py-3 text-[var(--muted-2)]">
-                      {r.action === "summary" ? "Summary" : r.action === "review" ? "Review" : r.action === "history" ? "History" : "Unknown"}
-                    </td>
-                    <td className="px-4 py-3 text-[var(--muted-2)]">
-                      {r.quality === "basic" ? "Basic" : r.quality === "standard" ? "Standard" : "Advanced"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {r.doc?.id ? (
-                        <a className="text-[var(--fg)] underline underline-offset-2" href={`/doc/${encodeURIComponent(r.doc.id)}`}>
-                          {docTitle}
-                        </a>
-                      ) : (
-                        <span className="text-[var(--muted-2)]">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-[var(--muted-2)]">{userLabel}</td>
-                    <td className="px-4 py-3 text-right text-[var(--muted-2)]">{Number.isFinite(r.credits) ? r.credits.toLocaleString() : "—"}</td>
-                    <td className="px-4 py-3 text-[var(--muted-2)]">
-                      {r.status === "charged" ? "Charged" : r.status === "pending" ? "Pending" : r.status === "refunded" ? "Refunded" : "Failed"}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {busy ? (
+                <tr>
+                  <td className="px-4 py-5 text-[12px] text-[var(--muted-2)]" colSpan={7}>
+                    Loading…
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-5 text-[12px] text-[var(--muted-2)]" colSpan={7}>
+                    No usage yet.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r) => {
+                  const docTitle = (r.doc?.title ?? "").trim() || "Untitled";
+                  const userLabel = (r.user?.name ?? "").trim() || (r.user?.email ?? "").trim() || "—";
+                  return (
+                    <tr key={r.id} className="border-t border-[var(--border)]">
+                      <td className="px-4 py-3 text-[var(--muted-2)]">{fmtDateTime(r.createdAt)}</td>
+                      <td className="px-4 py-3 text-[var(--muted-2)]">
+                        {r.action === "summary"
+                          ? "Summary"
+                          : r.action === "review"
+                            ? "Review"
+                            : r.action === "history"
+                              ? "History"
+                              : "Unknown"}
+                      </td>
+                      <td className="px-4 py-3 text-[var(--muted-2)]">
+                        {r.quality === "basic" ? "Basic" : r.quality === "standard" ? "Standard" : "Advanced"}
+                      </td>
+                      <td className="px-4 py-3">
+                        {r.doc?.id ? (
+                          <a
+                            className="text-[var(--fg)] underline underline-offset-2"
+                            href={`/doc/${encodeURIComponent(r.doc.id)}`}
+                          >
+                            {docTitle}
+                          </a>
+                        ) : (
+                          <span className="text-[var(--muted-2)]">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-[var(--muted-2)]">{userLabel}</td>
+                      <td className="px-4 py-3 text-right text-[var(--muted-2)]">
+                        {Number.isFinite(r.credits) ? r.credits.toLocaleString() : "—"}
+                      </td>
+                      <td className="px-4 py-3 text-[var(--muted-2)]">
+                        {r.status === "charged"
+                          ? "Charged"
+                          : r.status === "pending"
+                            ? "Pending"
+                            : r.status === "refunded"
+                              ? "Refunded"
+                              : "Failed"}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

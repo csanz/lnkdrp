@@ -98,6 +98,18 @@ function asPositiveInt(v: unknown): number | null {
   const i = Math.floor(n);
   return i >= 1 ? i : null;
 }
+
+/**
+ * As Duration Ms (clamped).
+ */
+function asDurationMs(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return null;
+  const ms = Math.floor(n);
+  if (ms < 1) return null;
+  // Cap to 24h to prevent abuse / broken clocks.
+  return Math.min(ms, 24 * 60 * 60 * 1000);
+}
 /**
  * Handle GET requests.
  */
@@ -157,6 +169,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const body = (await request.json().catch(() => ({}))) as unknown;
       const botId = asNonEmptyString((body as { botId?: unknown })?.botId);
       const pageNumber = asPositiveInt((body as { pageNumber?: unknown })?.pageNumber);
+      const durationMs = asDurationMs((body as { durationMs?: unknown })?.durationMs);
       const viewerEmailRaw = asNonEmptyString((body as { viewerEmail?: unknown })?.viewerEmail);
       const viewerEmail = viewerEmailRaw ? normalizeEmail(viewerEmailRaw) : null;
       if (!botId) {
@@ -248,6 +261,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             if (added) {
               await DocModel.updateOne({ _id: docId }, { $inc: { numberOfPagesViewed: 1 } });
             }
+          }
+
+          if (durationMs) {
+            // Increment total time spent, and best-effort per-page time if we know the page number.
+            const inc: Record<string, number> = { timeSpentMs: durationMs };
+            if (pageNumber) inc[`pageTimeMsByPage.${String(pageNumber)}`] = durationMs;
+            await ShareViewModel.updateOne({ shareId, botIdHash }, { $inc: inc });
           }
         } catch {
           // ignore; best-effort analytics

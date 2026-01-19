@@ -104,6 +104,7 @@ export default function SidebarDocsModal({
                   role="link"
                   tabIndex={0}
                   className="group rounded-xl border border-transparent px-3 py-2 text-[13px] hover:bg-[var(--panel-hover)] focus:border-[var(--border)] focus:outline-none"
+                  title={when ? `Updated ${when}` : undefined}
                   onClick={() => {
                     onDismiss();
                     routerPush(href);
@@ -176,9 +177,6 @@ export default function SidebarDocsModal({
                           ) : null}
                         </div>
                         {oneLiner ? <div className="mt-1 line-clamp-2 text-[12px] text-[var(--muted-2)]">{oneLiner}</div> : null}
-                        <div className="mt-1 flex min-w-0 items-center gap-1 text-[12px] text-[var(--muted-2)]">
-                          <span className="min-w-0 flex-1 truncate">{when || "-"}</span>
-                        </div>
                       </div>
                     </div>
 

@@ -511,137 +511,141 @@ export default function WorkspaceManager() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
-        <div className="grid grid-cols-[1fr_110px_140px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
-          <div>Workspace</div>
-          <div>Role</div>
-          <div className="text-right">Actions</div>
-        </div>
-        <div className="h-px bg-[var(--border)]" />
+        <div className="overflow-x-auto">
+          <div className="min-w-[520px]">
+            <div className="grid grid-cols-[1fr_110px_140px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
+              <div>Workspace</div>
+              <div>Role</div>
+              <div className="text-right">Actions</div>
+            </div>
+            <div className="h-px bg-[var(--border)]" />
 
-        {orgsError ? <div className="px-3 py-3 text-[12px] text-red-500 sm:px-4">{orgsError}</div> : null}
-        {orgsBusy ? (
-          <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
-        ) : stableOrgs.length ? (
-          <div className="divide-y divide-[var(--border)]">
-            {activeRow ? (
-              <div className="bg-[var(--panel-2)]">
-                <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)] sm:px-4">
-                  Active
-                </div>
-                <div className="px-3 pb-3 sm:px-4">
-                  <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      {activeRow.avatarUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={activeRow.avatarUrl}
-                          alt=""
-                          className="h-9 w-9 shrink-0 rounded-lg border border-[var(--border)] object-cover"
-                        />
-                      ) : (
-                        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--panel-2)] text-[11px] font-semibold text-[var(--fg)]">
-                          {initials((activeRow.name ?? "").trim() || "Workspace")}
+            {orgsError ? <div className="px-3 py-3 text-[12px] text-red-500 sm:px-4">{orgsError}</div> : null}
+            {orgsBusy ? (
+              <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
+            ) : stableOrgs.length ? (
+              <div className="divide-y divide-[var(--border)]">
+                {activeRow ? (
+                  <div className="bg-[var(--panel-2)]">
+                    <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)] sm:px-4">
+                      Active
+                    </div>
+                    <div className="px-3 pb-3 sm:px-4">
+                      <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          {activeRow.avatarUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={activeRow.avatarUrl}
+                              alt=""
+                              className="h-9 w-9 shrink-0 rounded-lg border border-[var(--border)] object-cover"
+                            />
+                          ) : (
+                            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--panel-2)] text-[11px] font-semibold text-[var(--fg)]">
+                              {initials((activeRow.name ?? "").trim() || "Workspace")}
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{activeRow.name}</div>
+                            <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
+                              {activeRow.type === "personal" ? "Personal" : "Org"} • Active
+                            </div>
+                          </div>
                         </div>
-                      )}
-                      <div className="min-w-0">
-                        <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{activeRow.name}</div>
-                        <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                          {activeRow.type === "personal" ? "Personal" : "Org"} • Active
+
+                        <div className="w-[110px] text-[12px] text-[var(--muted-2)]">{activeRow.role}</div>
+
+                        <div className="flex w-[140px] justify-end gap-2">
+                          {activeRow.role === "owner" || activeRow.role === "admin" ? (
+                            <button
+                              type="button"
+                              className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                              disabled={navLocked || orgActionBusy}
+                              onClick={() => void openManageOrg(activeRow.id)}
+                            >
+                              Manage…
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="rounded-lg bg-[var(--panel-hover)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)]"
+                            disabled
+                            title="Current workspace"
+                          >
+                            Active
+                          </button>
                         </div>
                       </div>
                     </div>
-
-                    <div className="w-[110px] text-[12px] text-[var(--muted-2)]">{activeRow.role}</div>
-
-                    <div className="flex w-[140px] justify-end gap-2">
-                      {activeRow.role === "owner" || activeRow.role === "admin" ? (
-                        <button
-                          type="button"
-                          className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                          disabled={navLocked || orgActionBusy}
-                          onClick={() => void openManageOrg(activeRow.id)}
-                        >
-                          Manage…
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="rounded-lg bg-[var(--panel-hover)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)]"
-                        disabled
-                        title="Current workspace"
-                      >
-                        Active
-                      </button>
-                    </div>
                   </div>
-                </div>
-              </div>
-            ) : null}
+                ) : null}
 
-            {otherRows.length ? (
-              <div>
-                <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)] sm:px-4">
-                  Other workspaces
-                </div>
-                {otherRows.map((o) => {
-                  const isActive = false;
-                  const avatarLabel = (o.name ?? "").trim() || "Workspace";
-                  return (
-                    <div key={o.id} className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
-                  <div className="flex min-w-0 items-center gap-3">
-                    {o.avatarUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={o.avatarUrl}
-                        alt=""
-                        className="h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] object-cover"
-                      />
-                    ) : (
-                      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--panel-2)] text-[11px] font-semibold text-[var(--fg)]">
-                        {initials(avatarLabel)}
+                {otherRows.length ? (
+                  <div>
+                    <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)] sm:px-4">
+                      Other workspaces
+                    </div>
+                    {otherRows.map((o) => {
+                      const isActive = false;
+                      const avatarLabel = (o.name ?? "").trim() || "Workspace";
+                      return (
+                        <div key={o.id} className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
+                          <div className="flex min-w-0 items-center gap-3">
+                            {o.avatarUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={o.avatarUrl}
+                                alt=""
+                                className="h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] object-cover"
+                              />
+                            ) : (
+                              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--panel-2)] text-[11px] font-semibold text-[var(--fg)]">
+                                {initials(avatarLabel)}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{o.name}</div>
+                              <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
+                                {o.type === "personal" ? "Personal" : "Org"}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="w-[110px] text-[12px] text-[var(--muted-2)]">{o.role}</div>
+
+                          <div className="flex w-[140px] justify-end gap-2">
+                            {o.role === "owner" || o.role === "admin" ? (
+                              <button
+                                type="button"
+                                className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                                disabled={navLocked || orgActionBusy}
+                                onClick={() => void openManageOrg(o.id)}
+                              >
+                                Manage…
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
+                              disabled={navLocked || orgActionBusy}
+                              onClick={() => void switchOrg(o.id)}
+                              title="Switch workspace"
+                            >
+                              Switch
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
+            ) : (
+              <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">No workspaces.</div>
             )}
-                    <div className="min-w-0">
-                      <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{o.name}</div>
-                      <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                        {o.type === "personal" ? "Personal" : "Org"}
           </div>
         </div>
-          </div>
-
-                  <div className="w-[110px] text-[12px] text-[var(--muted-2)]">{o.role}</div>
-
-                  <div className="flex w-[140px] justify-end gap-2">
-                    {o.role === "owner" || o.role === "admin" ? (
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                        disabled={navLocked || orgActionBusy}
-                        onClick={() => void openManageOrg(o.id)}
-                      >
-                        Manage…
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
-                      disabled={navLocked || orgActionBusy}
-                      onClick={() => void switchOrg(o.id)}
-                      title="Switch workspace"
-                    >
-                      Switch
-                    </button>
-                  </div>
-                </div>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">No workspaces.</div>
-        )}
-                  </div>
+      </div>
 
       <Modal
         open={showManageOrgModal}

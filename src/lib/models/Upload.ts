@@ -121,6 +121,6 @@ export const UploadModel: Model<Upload> =
 if (ExistingUploadModel && !ExistingUploadModel.schema.path("uploadSecret")) {
   ExistingUploadModel.schema.add({
     uploadSecret: { type: String, trim: true, default: null },
-  });
+  } as any);
 }
 

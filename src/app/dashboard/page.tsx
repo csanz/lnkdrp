@@ -123,6 +123,8 @@ function tabFromSearchParams(searchParams: URLSearchParams | null): DashTab {
 const DASHBOARD_STATS_CACHE_TTL_MS = 30_000;
 let dashboardStatsCache: { data: any; at: number } | null = null;
 
+const DASHBOARD_NAV_OPEN_EVENT = "lnkdrp:dashboard-nav-open";
+
 function PlaceholderTile({ title, body }: { title: string; body: string }) {
   return (
     <div className="rounded-xl bg-[var(--panel-2)] p-4">
@@ -141,6 +143,7 @@ export default function DashboardPage() {
   const [tab, setTab] = useState<DashTab>(urlTab);
   const { data: session, update: updateSession } = useSession();
   const [limitsAttention, setLimitsAttention] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const name = (session?.user?.name ?? "").trim() || "Account";
   const email = (session?.user?.email ?? "").trim();
@@ -179,6 +182,12 @@ export default function DashboardPage() {
   useEffect(() => {
     setTab(urlTab);
   }, [urlTab]);
+
+  useEffect(() => {
+    const onOpen = () => setMobileNavOpen(true);
+    window.addEventListener(DASHBOARD_NAV_OPEN_EVENT, onOpen as any);
+    return () => window.removeEventListener(DASHBOARD_NAV_OPEN_EVENT, onOpen as any);
+  }, []);
 
   useEffect(() => {
     const onBanner = (e: Event) => {
@@ -268,92 +277,107 @@ export default function DashboardPage() {
 
   // NOTE: `/api/billing/spend` is fetched by the Limits tab components (`SpendLimitModule` / `OnDemandUsageCard`).
 
+  function navigateToTab(nextTab: DashTab) {
+    setTab(nextTab);
+    const href = `/dashboard?tab=${encodeURIComponent(nextTab)}`;
+    router.push(href, { scroll: false });
+  }
+
+  function DashboardMenu({ onNavigate }: { onNavigate?: () => void }) {
+    return (
+      <div className="p-2">
+        <div className="px-1 pb-4 pt-1">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 truncate text-[14px] font-semibold text-[var(--fg)]">{name}</div>
+            <IconButton
+              ariaLabel="Edit your name"
+              title="Edit name"
+              size="sm"
+              className="shrink-0"
+              onClick={() => {
+                setNameError(null);
+                setEditNameOpen(true);
+                onNavigate?.();
+              }}
+            >
+              <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
+            </IconButton>
+          </div>
+          {email ? <div className="mt-0.5 truncate text-[12px] text-[var(--muted-2)]">{email}</div> : null}
+          {activeWorkspaceName ? (
+            <div className="mt-0.5 truncate text-[12px] text-[var(--muted-2)]">{activeWorkspaceName}</div>
+          ) : null}
+        </div>
+        <div className="my-3 h-px bg-[var(--border)]" />
+        <nav className="grid gap-2">
+          {TAB_GROUPS.map((g, groupIdx) => (
+            <div key={groupIdx}>
+              <div className="grid">
+                {g.items.map((t) => {
+                  const active = t.id === tab;
+                  const showLimitsAttention = t.id === "limits" && !active && limitsAttention;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold",
+                        active
+                          ? "bg-[var(--panel-hover)] text-[var(--fg)]"
+                          : "text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                        showLimitsAttention ? "text-amber-900/80 dark:text-amber-200/80" : null,
+                      )}
+                      title={showLimitsAttention ? "Credits exhausted. Enable on-demand to continue." : undefined}
+                      onClick={() => {
+                        navigateToTab(t.id);
+                        onNavigate?.();
+                      }}
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className={cn("shrink-0", active ? "text-[var(--fg)]" : "text-[var(--muted-2)]")} aria-hidden="true">
+                          {TAB_ICON[t.id]}
+                        </span>
+                        <span className="flex min-w-0 items-center gap-2 truncate">
+                          <span className="min-w-0 truncate">{t.label}</span>
+                          {showLimitsAttention ? (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/65 dark:bg-amber-300/65" aria-hidden="true" />
+                          ) : null}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {groupIdx < TAB_GROUPS.length - 1 ? <div className="my-3 h-px bg-[var(--border)]" /> : null}
+            </div>
+          ))}
+        </nav>
+        <div className="mt-6 h-px bg-[var(--border)]" />
+        <div className="mt-3 px-1">
+          <div className="grid gap-2">
+            <button
+              type="button"
+              className="flex items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+              onClick={() => {
+                setContactOpen(true);
+                onNavigate?.();
+              }}
+            >
+              Contact Us
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="grid grid-cols-1 gap-10 md:grid-cols-[280px_1fr]">
       <h1 className="sr-only">Dashboard</h1>
 
       {/* Mini dashboard menu (left) */}
-      <aside className="md:sticky md:top-6 md:h-[calc(100svh-24px-24px)] md:overflow-auto">
-        <div className="p-2">
-          <div className="px-1 pb-4 pt-1">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0 truncate text-[14px] font-semibold text-[var(--fg)]">{name}</div>
-              <IconButton
-                ariaLabel="Edit your name"
-                title="Edit name"
-                size="sm"
-                className="shrink-0"
-                onClick={() => {
-                  setNameError(null);
-                  setEditNameOpen(true);
-                }}
-              >
-                <PencilSquareIcon className="h-4 w-4" aria-hidden="true" />
-              </IconButton>
-            </div>
-            {email ? <div className="mt-0.5 truncate text-[12px] text-[var(--muted-2)]">{email}</div> : null}
-            {activeWorkspaceName ? (
-              <div className="mt-0.5 truncate text-[12px] text-[var(--muted-2)]">{activeWorkspaceName}</div>
-            ) : null}
-          </div>
-          <div className="my-3 h-px bg-[var(--border)]" />
-          <nav className="grid gap-2">
-            {TAB_GROUPS.map((g, groupIdx) => (
-              <div key={groupIdx}>
-                <div className="grid">
-                  {g.items.map((t) => {
-                    const active = t.id === tab;
-                    const showLimitsAttention = t.id === "limits" && !active && limitsAttention;
-                    return (
-                      <button
-                        key={t.id}
-                        type="button"
-                        className={cn(
-                          "flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2.5 text-[13px] font-semibold",
-                          active
-                            ? "bg-[var(--panel-hover)] text-[var(--fg)]"
-                            : "text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                          showLimitsAttention ? "text-amber-900/80 dark:text-amber-200/80" : null,
-                        )}
-                        title={showLimitsAttention ? "Credits exhausted. Enable on-demand to continue." : undefined}
-                        onClick={() => {
-                          setTab(t.id);
-                          const href = `/dashboard?tab=${encodeURIComponent(t.id)}`;
-                          router.push(href, { scroll: false });
-                        }}
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className={cn("shrink-0", active ? "text-[var(--fg)]" : "text-[var(--muted-2)]")} aria-hidden="true">
-                            {TAB_ICON[t.id]}
-                          </span>
-                          <span className="flex min-w-0 items-center gap-2 truncate">
-                            <span className="min-w-0 truncate">{t.label}</span>
-                            {showLimitsAttention ? (
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/65 dark:bg-amber-300/65" aria-hidden="true" />
-                            ) : null}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {groupIdx < TAB_GROUPS.length - 1 ? <div className="my-3 h-px bg-[var(--border)]" /> : null}
-              </div>
-            ))}
-          </nav>
-          <div className="mt-6 h-px bg-[var(--border)]" />
-          <div className="mt-3 px-1">
-            <div className="grid gap-2">
-              <button
-                type="button"
-                className="flex items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                onClick={() => setContactOpen(true)}
-              >
-                Contact Us
-              </button>
-            </div>
-          </div>
-        </div>
+      <aside className="hidden md:block md:sticky md:top-6 md:h-[calc(100svh-24px-24px)] md:overflow-auto">
+        <DashboardMenu />
       </aside>
 
       {/* Content (right) */}
@@ -581,6 +605,19 @@ export default function DashboardPage() {
           <BillingInvoicesTab />
         ) : null}
       </div>
+
+      <Modal
+        open={mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
+        ariaLabel="Dashboard menu"
+        panelClassName="!left-0 !top-0 !translate-x-0 !translate-y-0 !h-[100svh] !w-[min(360px,calc(100vw-16px))] !rounded-none"
+        contentClassName="max-h-[100svh] px-4 pb-6 pt-5"
+      >
+        <div className="text-[13px] font-semibold text-[var(--fg)]">Menu</div>
+        <div className="mt-3">
+          <DashboardMenu onNavigate={() => setMobileNavOpen(false)} />
+        </div>
+      </Modal>
 
       <Modal
         open={editNameOpen}

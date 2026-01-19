@@ -33,6 +33,44 @@ function asPositiveInt(v: unknown): number | null {
 function utcDayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
+
+/**
+ * Merge an array of objects like [{k, v}] into a summed object.
+ * (Used in Mongo aggregation projections.)
+ */
+const MERGE_PAGE_TIME_OBJECTS = {
+  $let: {
+    vars: {
+      allItems: {
+        $reduce: {
+          input: "$pageTimeItemsArrays",
+          initialValue: [],
+          in: { $concatArrays: ["$$value", "$$this"] },
+        },
+      },
+    },
+    in: {
+      $arrayToObject: {
+        $map: {
+          input: { $setUnion: [{ $map: { input: "$$allItems", as: "it", in: "$$it.k" } }, []] },
+          as: "k",
+          in: {
+            k: "$$k",
+            v: {
+              $sum: {
+                $map: {
+                  input: "$$allItems",
+                  as: "it",
+                  in: { $cond: [{ $eq: ["$$it.k", "$$k"] }, { $ifNull: ["$$it.v", 0] }, 0] },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
 /**
  * Handle GET requests.
  */
@@ -160,6 +198,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   lastSeen: { $max: "$updatedDate" },
                   views: { $sum: 1 },
                   pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
+                  timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
+                  pageTimeMaps: { $push: { $ifNull: ["$pageTimeMsByPage", {}] } },
                   viewerName: { $first: "$viewerName" },
                   viewerEmailSnapshot: { $first: "$viewerEmailSnapshot" },
                 },
@@ -171,8 +211,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   firstSeen: 1,
                   lastSeen: 1,
                   views: 1,
+                  timeSpentMs: 1,
                   viewerName: 1,
                   viewerEmailSnapshot: 1,
+                  pageTimeItemsArrays: {
+                    $map: {
+                      input: "$pageTimeMaps",
+                      as: "m",
+                      in: { $objectToArray: { $ifNull: ["$$m", {}] } },
+                    },
+                  },
+                  pageTimeMsByPage: MERGE_PAGE_TIME_OBJECTS,
                   pagesSeen: {
                     $reduce: {
                       input: "$pagesSeenArrays",
@@ -191,6 +240,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   },
                 },
               },
+              { $unset: ["pageTimeItemsArrays", "pageTimeMaps"] },
               { $sort: { lastSeen: -1 } },
               { $limit: 100 },
             ]) as Promise<
@@ -201,6 +251,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 views: number;
                 pagesViewed: number;
                 pagesSeen?: number[];
+                timeSpentMs?: number;
+                pageTimeMsByPage?: Record<string, number>;
                 viewerName?: string | null;
                 viewerEmailSnapshot?: string | null;
               }>
@@ -215,6 +267,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   lastSeen: { $max: "$updatedDate" },
                   views: { $sum: 1 },
                   pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
+                  timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
+                  pageTimeMaps: { $push: { $ifNull: ["$pageTimeMsByPage", {}] } },
                 },
               },
               {
@@ -224,6 +278,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   firstSeen: 1,
                   lastSeen: 1,
                   views: 1,
+                  timeSpentMs: 1,
+                  pageTimeItemsArrays: {
+                    $map: {
+                      input: "$pageTimeMaps",
+                      as: "m",
+                      in: { $objectToArray: { $ifNull: ["$$m", {}] } },
+                    },
+                  },
+                  pageTimeMsByPage: MERGE_PAGE_TIME_OBJECTS,
                   pagesSeen: {
                     $reduce: {
                       input: "$pagesSeenArrays",
@@ -242,6 +305,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   },
                 },
               },
+              { $unset: ["pageTimeItemsArrays", "pageTimeMaps"] },
               { $sort: { lastSeen: -1 } },
               { $limit: 100 },
             ]) as Promise<
@@ -252,6 +316,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 views: number;
                 pagesViewed: number;
                 pagesSeen?: number[];
+                timeSpentMs?: number;
+                pageTimeMsByPage?: Record<string, number>;
               }>
             >,
           ])
@@ -342,6 +408,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             name: typeof v.viewerName === "string" ? v.viewerName : null,
             email: typeof v.viewerEmailSnapshot === "string" ? v.viewerEmailSnapshot : null,
             views: typeof v.views === "number" ? v.views : 0,
+            timeSpentMs:
+              typeof (v as any).timeSpentMs === "number" && Number.isFinite((v as any).timeSpentMs)
+                ? Math.max(0, Math.floor((v as any).timeSpentMs))
+                : 0,
+            pageTimeMsByPage:
+              (v as any).pageTimeMsByPage && typeof (v as any).pageTimeMsByPage === "object" ? (v as any).pageTimeMsByPage : {},
             pagesViewed: typeof v.pagesViewed === "number" ? v.pagesViewed : pagesSeen.length,
             pagesSeen,
             firstSeen: v.firstSeen ? new Date(v.firstSeen).toISOString() : null,
@@ -358,6 +430,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           return {
             botIdHash: typeof v.botIdHash === "string" ? v.botIdHash : "",
             views: typeof v.views === "number" ? v.views : 0,
+            timeSpentMs:
+              typeof (v as any).timeSpentMs === "number" && Number.isFinite((v as any).timeSpentMs)
+                ? Math.max(0, Math.floor((v as any).timeSpentMs))
+                : 0,
+            pageTimeMsByPage:
+              (v as any).pageTimeMsByPage && typeof (v as any).pageTimeMsByPage === "object" ? (v as any).pageTimeMsByPage : {},
             pagesViewed: typeof v.pagesViewed === "number" ? v.pagesViewed : pagesSeen.length,
             pagesSeen,
             firstSeen: v.firstSeen ? new Date(v.firstSeen).toISOString() : null,

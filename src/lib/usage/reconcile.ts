@@ -122,7 +122,7 @@ export async function reconcileUsageAggsFromLedger(params: {
           },
           upsert: true,
         },
-      })),
+      })) as any,
       { ordered: false },
     );
   }
@@ -147,7 +147,7 @@ export async function reconcileUsageAggsFromLedger(params: {
           },
           upsert: true,
         },
-      })),
+      })) as any,
       { ordered: false },
     );
   }

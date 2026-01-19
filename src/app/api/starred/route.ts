@@ -171,7 +171,7 @@ export async function PATCH(request: Request) {
         update: { $set: { sortKey: idx } },
       },
     }));
-    if (ops.length) await StarredDocModel.bulkWrite(ops, { ordered: false });
+    if (ops.length) await StarredDocModel.bulkWrite(ops as any, { ordered: false });
 
     const docs = await listStarred({ orgId: actor.orgId, userId: actor.userId });
     return NextResponse.json({ docs }, { headers: { "cache-control": "no-store" } });

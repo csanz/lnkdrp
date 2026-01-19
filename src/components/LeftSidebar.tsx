@@ -11,10 +11,10 @@ import {
   ChevronUpIcon,
   EllipsisHorizontalIcon,
   FolderIcon,
+  ArrowUpTrayIcon,
   InboxArrowDownIcon,
   LightBulbIcon,
   MinusIcon,
-  PlusIcon,
   SparklesIcon,
   Square2StackIcon,
 } from "@heroicons/react/24/outline";
@@ -1592,37 +1592,50 @@ export default function LeftSidebar({
   return (
     <aside className="relative z-50 h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
-        <div className="flex min-w-0 items-center gap-2 px-4 pb-9 pt-6">
+        <div className="flex min-w-0 items-center gap-2 px-4 pb-6 pt-5">
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
             <Image src={logoSrc} alt="LinkDrop" width={31} height={31} className="block" />
           </Link>
           <ActiveWorkspacePill
             maxWidthClassName="max-w-[240px]"
-            textClassName="text-[11px]"
+            textClassName="text-[13px]"
             // On doc pages, avoid extra network work competing with the viewer/history UI.
             disableNetwork={isDocRoute}
           />
         </div>
 
-        <div className="px-3 pb-3">
-          <div className="flex gap-2">
-            <div
-              role="button"
-              tabIndex={navLocked ? -1 : 0}
+        <div className="px-3 pt-1 pb-5">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={navLocked}
               className={[
-                "group relative flex-1 cursor-pointer overflow-hidden rounded-lg bg-[var(--panel)] px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
-                navLocked ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
-                isAddNewDropActive
-                  ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
-                  : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)]",
+                "group inline-flex items-center rounded-lg bg-[var(--panel)] px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                navLocked ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)]",
+              ].join(" ")}
+              onClick={() => {
+                if (navLocked) return;
+                setShowRequestModal(true);
+                setRequestError(null);
+                setCreatedRequestUploadUrl(null);
+                setCreatedRequestProjectId(null);
+              }}
+            >
+              <div className="flex items-center gap-2 text-[13px] font-semibold">
+                <InboxArrowDownIcon className="h-4 w-4 text-[var(--muted)]" />
+                <span>Request</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              disabled={navLocked}
+              className={[
+                "group relative inline-flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg bg-[var(--panel)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                navLocked ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)]",
+                isAddNewDropActive ? "bg-[var(--sidebar-hover)] text-[var(--fg)]" : "",
               ].join(" ")}
               onClick={() => openAddNewPicker()}
-              onKeyDown={(e) => {
-                if (navLocked) return;
-                if (e.key !== "Enter" && e.key !== " ") return;
-                e.preventDefault();
-                openAddNewPicker();
-              }}
               onDragEnter={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -1653,50 +1666,20 @@ export default function LeftSidebar({
                 if (!isAcceptedPdfOrImage(file)) return;
                 onAddNewFile(file);
               }}
-              aria-label="Add new (go to upload page)"
-              aria-disabled={navLocked}
-              title={navLocked ? "Disabled while uploading" : undefined}
+              aria-label="Add new"
+              title={navLocked ? "Disabled while uploading" : "Add new"}
             >
-              <div
-                className={[
-                  "flex flex-col items-start transition-opacity",
-                  isAddNewDropActive ? "opacity-25" : "opacity-100",
-                ].join(" ")}
-              >
-                <div className="flex items-center gap-2 text-[12px] font-semibold">
-                  <PlusIcon className="h-4 w-4 text-[var(--muted)]" />
-                  <span>Add new</span>
-                </div>
-              </div>
+              <ArrowUpTrayIcon
+                className={["h-4 w-4 transition-opacity", isAddNewDropActive ? "opacity-25" : "opacity-100"].join(" ")}
+              />
 
               {isAddNewDropActive ? (
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                  <div className="rounded-full bg-[var(--panel)]/85 px-3 py-1 text-[12px] font-semibold text-[var(--fg)] shadow-sm ring-1 ring-black/5 backdrop-blur">
+                <div className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-10 -translate-x-1/2">
+                  <div className="whitespace-nowrap rounded-full bg-[var(--panel)]/90 px-3 py-1 text-[13px] font-semibold text-[var(--fg)] shadow-sm ring-1 ring-black/5 backdrop-blur">
                     Drop to upload
                   </div>
                 </div>
               ) : null}
-            </div>
-
-            <button
-              type="button"
-              disabled={navLocked}
-              className={[
-                "group flex-1 rounded-lg bg-[var(--panel)] px-2.5 py-1.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
-                navLocked ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)]",
-              ].join(" ")}
-              onClick={() => {
-                if (navLocked) return;
-                setShowRequestModal(true);
-                setRequestError(null);
-                setCreatedRequestUploadUrl(null);
-                setCreatedRequestProjectId(null);
-              }}
-            >
-              <div className="flex items-center gap-2 text-[12px] font-semibold">
-                <InboxArrowDownIcon className="h-4 w-4 text-[var(--muted)]" />
-                <span>Request</span>
-              </div>
             </button>
           </div>
         </div>
@@ -1704,21 +1687,21 @@ export default function LeftSidebar({
         <nav
           // Force a stable scrollbar presence to avoid horizontal layout shift when sections collapse/expand.
           // (Some browsers ignore `scrollbar-gutter`, so `overflow-y-scroll` is the reliable backstop.)
-          className="mt-6 flex-1 overflow-y-scroll overflow-x-hidden pl-3 pr-12 pb-4"
+          className="mt-4 flex-1 overflow-y-scroll overflow-x-hidden pl-3 pr-12 pb-4"
           style={{ scrollbarGutter: "stable" }}
         >
-          <div className="grid gap-5">
+          <div className="grid gap-4">
             <section>
-              <div className="flex items-center gap-1 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+              <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[12px] font-medium text-[var(--muted-2)]">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
+                  className="inline-flex h-6 items-center gap-1.5 rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
                   onClick={() => {
                     setStarredCollapsedLoaded(true);
                     setStarredCollapsed((v) => !v);
                   }}
                 >
-                  <StarIcon className="h-4 w-4 text-amber-400" />
+                  <StarIcon className="h-4 w-4 text-amber-400" filled />
                   <span>Starred</span>
                 </button>
                 <IconButton
@@ -1741,11 +1724,11 @@ export default function LeftSidebar({
 
               {(starredCollapsedLoaded ? starredCollapsed : true) ? (
                 !starredValid.length ? (
-                  <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">
+                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">
                     {starredSyncing ? "Loading starred…" : "No starred docs yet."}
                   </div>
                 ) : (
-                  <div className="mt-2 flex items-center justify-between gap-3 px-2 py-1.5">
+                  <div className="mt-2 flex items-center justify-between gap-3 pl-3 pr-2 py-1.5">
                     <div className="text-[13px] font-medium text-[var(--muted-2)]">{starredValid.length} starred</div>
                     <button
                       type="button"
@@ -1764,11 +1747,11 @@ export default function LeftSidebar({
                   </div>
                 )
               ) : !starredForSidebar.length ? (
-                <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">
+                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">
                   {starredSyncing ? "Loading starred…" : "No starred docs yet."}
                 </div>
               ) : (
-                <ul className="mt-2 space-y-1">
+                <ul className="mt-2 space-y-0.5">
                   {starredForSidebar.map((d) => {
                     const href = `/doc/${d.id}`;
                     const details = starredDetailsById[d.id] ?? null;
@@ -1784,7 +1767,7 @@ export default function LeftSidebar({
                         <div
                           role="link"
                           tabIndex={0}
-                          className="w-full cursor-pointer overflow-hidden rounded-xl px-2 py-2 text-left text-[14px] hover:bg-[var(--sidebar-hover)]"
+                          className="w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] hover:bg-[var(--sidebar-hover)]"
                           onClick={() => router.push(href)}
                           onKeyDown={(e) => {
                             if (e.key !== "Enter" && e.key !== " ") return;
@@ -1793,16 +1776,16 @@ export default function LeftSidebar({
                           }}
                         >
                           <div className="flex min-w-0 items-center gap-1.5">
-                            <StarIcon className="h-4 w-4 shrink-0 text-amber-400" filled />
-                            <span className="block max-w-[170px] truncate font-medium text-[var(--fg)]">
+                            <StarIcon className="h-3.5 w-3.5 shrink-0 text-amber-400 opacity-70" />
+                            <span className="block max-w-[170px] truncate font-[450] text-[var(--fg)]">
                               {title}
                             </span>
                             {typeof version === "number" && Number.isFinite(version) ? (
-                              <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
+                              <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[13px] font-medium text-[var(--muted-2)]">
                                 v{version}
                               </span>
                             ) : (status ?? "").toLowerCase() === "preparing" ? (
-                              <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
+                              <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[13px] font-medium text-[var(--muted-2)]">
                                 v…
                               </span>
                             ) : null}
@@ -1818,7 +1801,7 @@ export default function LeftSidebar({
                         type="button"
                         disabled={navLocked}
                         className={[
-                          "w-full rounded-xl px-2 py-2 text-left text-[14px] font-medium text-[var(--muted)]",
+                          "w-full rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] font-medium text-[var(--muted)]",
                           navLocked ? "cursor-not-allowed opacity-60" : "hover:bg-[var(--sidebar-hover)]",
                         ].join(" ")}
                         onClick={() => {
@@ -1835,10 +1818,10 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="flex items-center gap-1 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+              <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[12px] font-medium text-[var(--muted-2)]">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
+                  className="inline-flex h-6 items-center gap-1.5 rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
                   onClick={() => {
                     setRequestsCollapsedLoaded(true);
                     setRequestsCollapsed((v) => !v);
@@ -1867,11 +1850,11 @@ export default function LeftSidebar({
 
               {(requestsCollapsedLoaded ? requestsCollapsed : true) ? (
                 !requestsLoaded ? (
-                  <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
+                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
                 ) : !requests.total && !requests.items.length ? (
-                  <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
+                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
                 ) : (
-                  <div className="mt-2 flex items-center gap-3 px-2 py-1.5">
+                  <div className="mt-2 flex items-center gap-3 pl-3 pr-2 py-1.5">
                     <div className="text-[13px] font-medium text-[var(--muted-2)]">
                       {requests.total || requests.items.length} inbox{(requests.total || requests.items.length) === 1 ? "" : "es"}
                     </div>
@@ -1892,18 +1875,18 @@ export default function LeftSidebar({
                   </div>
                 )
               ) : !requestsLoaded ? (
-                <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
+                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
               ) : !requestFoldersForSidebar.length ? (
-                <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
+                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
               ) : (
-                <ul className="mt-2 space-y-1">
+                <ul className="mt-2 space-y-0.5">
                   {requestFoldersForSidebar.map((p) => (
                     <li key={p.id}>
                       <div className="group relative">
                         <div
                           role="link"
                           tabIndex={0}
-                          className="w-full cursor-pointer overflow-hidden rounded-xl px-2 py-2 text-left text-[14px] hover:bg-[var(--sidebar-hover)]"
+                          className="w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] hover:bg-[var(--sidebar-hover)]"
                           onClick={() => {
                             setOpenProjectMenuId(null);
                             setOpenDocMenuId(null);
@@ -1977,7 +1960,7 @@ export default function LeftSidebar({
                         type="button"
                         disabled={navLocked}
                         className={[
-                          "w-full rounded-xl px-2 py-2 text-left text-[14px] font-medium text-[var(--muted)]",
+                          "w-full rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] font-medium text-[var(--muted)]",
                           navLocked ? "cursor-not-allowed opacity-60" : "hover:bg-[var(--sidebar-hover)]",
                         ].join(" ")}
                         onClick={() => {
@@ -2023,10 +2006,10 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="flex items-center gap-1 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+              <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[12px] font-medium text-[var(--muted-2)]">
                 <button
                   type="button"
-                  className="rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
+                  className="inline-flex h-6 items-center rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
                   onClick={() => {
                     setDocsCollapsedLoaded(true);
                     setDocsCollapsed((v) => !v);
@@ -2054,9 +2037,9 @@ export default function LeftSidebar({
 
               {(docsCollapsedLoaded ? docsCollapsed : true) ? (
                 docs.total <= 0 && !docs.items.length ? (
-                  <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">No docs/links yet.</div>
+                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No docs/links yet.</div>
                 ) : (
-                  <div className="mt-2 flex items-center justify-between gap-3 px-2 py-1.5">
+                  <div className="mt-2 flex items-center justify-between gap-3 pl-3 pr-2 py-1.5">
                     <div className="text-[13px] font-medium text-[var(--muted-2)]">
                       {docs.total || docs.items.length} docs
                     </div>
@@ -2098,7 +2081,8 @@ export default function LeftSidebar({
                         <div
                           role="link"
                           tabIndex={0}
-                          className="w-full cursor-pointer overflow-hidden rounded-xl px-2 py-2 text-left text-[14px] hover:bg-[var(--sidebar-hover)]"
+                          className="w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] hover:bg-[var(--sidebar-hover)]"
+                          title={when ? `Updated ${when}` : undefined}
                           onClick={() => {
                             setOpenDocMenuId(null);
                             router.push(href);
@@ -2117,7 +2101,7 @@ export default function LeftSidebar({
                         >
                           <div className="flex min-w-0 items-start justify-between gap-2">
                             <div className="min-w-0 flex-1 overflow-hidden">
-                              <div className="flex max-w-full min-w-0 items-center gap-1.5 text-[13px] font-semibold leading-4 text-[var(--fg)]">
+                              <div className="flex max-w-full min-w-0 items-center gap-1.5 text-[13px] font-[450] leading-normal text-[var(--fg)]">
                                 {isRequestDoc ? (
                                   <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                                 ) : (
@@ -2125,17 +2109,14 @@ export default function LeftSidebar({
                                 )}
                                 <span className="block max-w-[170px] truncate">{title}</span>
                                 {typeof d.version === "number" && Number.isFinite(d.version) ? (
-                                  <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
+                                  <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[13px] font-medium text-[var(--muted-2)]">
                                     v{d.version}
                                   </span>
                                 ) : (d.status ?? "").toLowerCase() === "preparing" ? (
-                                  <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
+                                  <span className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[13px] font-medium text-[var(--muted-2)]">
                                     v…
                                   </span>
                                 ) : null}
-                              </div>
-                              <div className="mt-0.5 flex min-w-0 items-center gap-1 text-[12px] text-[var(--muted-2)]">
-                                <span className="min-w-0 flex-1 truncate">{when || "-"}</span>
                               </div>
                             </div>
 
@@ -2215,7 +2196,7 @@ export default function LeftSidebar({
                   <li>
                     <button
                       type="button"
-                      className="w-full rounded-xl px-2 py-2 text-left text-[14px] font-medium text-[var(--muted)] hover:bg-[var(--sidebar-hover)]"
+                      className="w-full rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] font-medium text-[var(--muted)] hover:bg-[var(--sidebar-hover)]"
                       onClick={() => setShowDocsModal(true)}
                     >
                       See more
@@ -2224,7 +2205,7 @@ export default function LeftSidebar({
                 ) : null}
 
                 {!docsForSidebar.length ? (
-                  <li className="px-2 py-2 text-[13px] text-[var(--muted-2)]">No docs/links yet.</li>
+                  <li className="pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No docs/links yet.</li>
                 ) : null}
                 </ul>
               )}

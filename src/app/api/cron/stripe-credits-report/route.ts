@@ -136,10 +136,13 @@ export async function POST(request: Request) {
       if (b.quantity <= 0 || !b.ledgerIds.length) continue;
       const idemKey = batchIdempotencyKey({ subscriptionItemId, ledgerIds: b.ledgerIds });
 
-      await stripe.subscriptionItems.createUsageRecord(
+      // Stripe's TypeScript surface varies by API version; `createUsageRecord` may not be present on
+      // `SubscriptionItemsResource` in newer versions even though the endpoint remains available.
+      // Cast narrowly to keep the cron behavior intact while unblocking typecheck.
+      await (stripe.subscriptionItems as any).createUsageRecord(
         subscriptionItemId,
         { quantity: b.quantity, timestamp: nowTs, action: "increment" },
-        { idempotencyKey: idemKey } as any,
+        { idempotencyKey: idemKey },
       );
 
       await CreditLedgerModel.updateMany(

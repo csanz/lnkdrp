@@ -125,6 +125,7 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
   const [isRequesting, setIsRequesting] = useState(false);
 
   const inviteNote = useMemo(() => "Invite required to continue.", []);
+  const copyrightYear = useMemo(() => new Date().getFullYear(), []);
 
   // Load last-entered invite code (if any).
   useEffect(() => {
@@ -366,6 +367,9 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
             </div>
           </div>
         </div>
+        <footer className="absolute bottom-3 left-3 z-10 text-[11px] font-medium text-white/35 sm:bottom-4 sm:left-4">
+          © {copyrightYear} LinkDrop
+        </footer>
       </main>
     );
   }
@@ -445,7 +449,9 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
             </h1>
 
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-              Doc and link sharing that gives the reader context before they commit time.
+              Doc and link sharing that gives the reader context before they commit time. AI agents create
+              summaries, review relevance, compare deep version history, and run deep search to understand
+              what matters, built for team collaboration.
             </p>
             <p className="mt-4 text-xs font-medium text-white/45">{inviteNote}</p>
 
@@ -461,6 +467,10 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
           </div>
         </section>
       </div>
+
+      <footer className="absolute bottom-3 left-3 z-10 text-[11px] font-medium text-white/35 sm:bottom-4 sm:left-4">
+        © {copyrightYear} LinkDrop
+      </footer>
 
       <Modal
         open={inviteModalOpen}

@@ -140,7 +140,7 @@ export async function POST(request: Request) {
     orgName,
     inviteUrl,
     role,
-    invitedByEmail: actor.email ?? null,
+    invitedByEmail: null,
   });
 
   return NextResponse.json({

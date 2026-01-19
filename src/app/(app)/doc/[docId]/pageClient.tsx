@@ -2,7 +2,7 @@
 
 // Client UI for `/doc/:docId` (owner doc view).
 
-import { useCallback, useEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
@@ -205,11 +205,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
   const [localPreviewUploadId, setLocalPreviewUploadId] = useState<string | null>(null);
-  const [previewBlurEnabled, setPreviewBlurEnabled] = useState(true);
-  // UX/perf: when a preview image is available, show it first and only load the PDF iframe on intent.
-  const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
-  const pdfViewerOpenedRef = useRef(false);
-  const pdfAutoOpenDeadlineRef = useRef<number | null>(null);
+  // Always show the PDF, but defer iframe `src` until after paint so the page UI renders instantly.
+  const [pdfIframeSrc, setPdfIframeSrc] = useState<string | null>(null);
+  const pdfIframeKeyRef = useRef<string>("");
   const [isCopying, setIsCopying] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
@@ -252,61 +250,48 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return null;
   }, [doc.receivedViaRequestProjectId, doc.project?.isRequest, doc.projectId]);
 
-  // If there's no preview available (or someone deep-links with #page=...), don't block on "open".
-  useEffect(() => {
-    if (pdfViewerOpen) return;
-    if (!doc.blobUrl) return;
-    const hash = typeof window !== "undefined" ? window.location.hash : "";
-    if (hash && /page=\d+/i.test(hash)) {
-      pdfViewerOpenedRef.current = true;
-      setPdfViewerOpen(true);
+  // Compute the desired PDF URL. (We defer *assigning* it to the iframe until after paint.)
+  const desiredPdfBaseUrl = useMemo(() => {
+    if (localPreviewUrl) return localPreviewUrl;
+    // Always attempt the PDF route even before hydration finishes.
+    // The `/api/docs/:docId/pdf` route can serve once ready; using `v=0` is OK as a temporary cache key.
+    const base = buildCachedPdfIframeUrl({
+      docId: doc.id,
+      currentUploadId: doc.currentUploadId,
+      currentUploadVersion: doc.currentUploadVersion,
+    });
+    // IMPORTANT: the owner PDF endpoint returns 404 until `doc.blobUrl` exists.
+    // If we set the iframe `src` before the blob is ready, the iframe can get "stuck" on a 404
+    // because the URL never changes afterwards. This param flips once (0 → 1) to force a reload.
+    const ready = typeof doc.blobUrl === "string" && doc.blobUrl ? "1" : "0";
+    return `${base}&ready=${ready}`;
+  }, [doc.blobUrl, doc.currentUploadId, doc.currentUploadVersion, doc.id, localPreviewUrl]);
+
+  const desiredPdfHash = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const raw = window.location.hash || "";
+    const pageMatch = raw.match(/(?:^#|[&#])page=(\d+)/i);
+    if (pageMatch?.[1]) {
+      // Preserve deep-links to a specific page number, but otherwise let the native PDF
+      // viewer render normally (toolbar/sidebar behavior varies by browser).
+      return `#page=${encodeURIComponent(pageMatch[1])}`;
     }
-  }, [pdfViewerOpen, doc.blobUrl, doc.previewImageUrl]);
-
-  useEffect(() => {
-    // Default to blur-on; the onLoad handler will turn it off for portrait previews.
-    setPreviewBlurEnabled(true);
-  }, [doc.previewImageUrl]);
-
-  const onPreviewImageLoad = useCallback((e: SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    const w = img?.naturalWidth ?? 0;
-    const h = img?.naturalHeight ?? 0;
-    if (!w || !h) return;
-    // Only blur/fade for landscape-ish previews; portrait pages look weird with this treatment.
-    setPreviewBlurEnabled(w / h >= 1);
+    return "";
   }, []);
 
-  // Reconcile open/closed state after the real doc data hydrates.
-  // The route entrypoint initializes `initialDoc` as a placeholder (no preview/pdf), so we need
-  // to decide once `doc.blobUrl` / `doc.previewImageUrl` arrive from `/api/docs/:docId`.
   useEffect(() => {
-    if (pdfViewerOpenedRef.current) return;
-    if (!doc.blobUrl) return;
-    // If a preview exists, default to preview-first (closed).
-    if (doc.previewImageUrl && !localPreviewUrl) {
-      setPdfViewerOpen(false);
-      pdfAutoOpenDeadlineRef.current = null;
+    if (!desiredPdfBaseUrl) {
+      pdfIframeKeyRef.current = "";
+      setPdfIframeSrc(null);
       return;
     }
-    // If we haven't hydrated yet, don't guess—avoid mounting the iframe early.
-    if (!hasHydratedFromServer) return;
-    // If there's no preview, wait a beat in case it arrives shortly after the PDF does.
-    // This prevents a "flash mount" that starts a PDF fetch and then immediately closes.
-    const now = Date.now();
-    if (pdfAutoOpenDeadlineRef.current === null) {
-      pdfAutoOpenDeadlineRef.current = now + 1500;
-      const t = window.setTimeout(() => {
-        // Re-check after the grace period.
-        if (pdfViewerOpenedRef.current) return;
-        if (!docRef.current?.blobUrl) return;
-        if (docRef.current?.previewImageUrl) return;
-        setPdfViewerOpen(true);
-      }, 1550);
-      return () => window.clearTimeout(t);
-    }
-    if (now >= pdfAutoOpenDeadlineRef.current) setPdfViewerOpen(true);
-  }, [doc.blobUrl, doc.previewImageUrl, localPreviewUrl, hasHydratedFromServer]);
+    const nextUrl = `${desiredPdfBaseUrl}${desiredPdfHash}`;
+    if (pdfIframeKeyRef.current === nextUrl) return;
+
+    // `useEffect` runs after paint, so this won't block initial UI render.
+    pdfIframeKeyRef.current = nextUrl;
+    setPdfIframeSrc(nextUrl);
+  }, [desiredPdfBaseUrl, desiredPdfHash]);
 
   const requestReviewEnabledForRequestRepo = useMemo(() => {
     if (!requestProjectId) return false;
@@ -529,6 +514,16 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   }, [localPreviewUrl]);
 
   useEffect(() => {
+    // Defensive: if the route changes (different doc), never keep an old local preview around.
+    // (This can otherwise make it look like we're showing the "wrong" PDF.)
+    setLocalPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setLocalPreviewUploadId(null);
+  }, [doc.id]);
+
+  useEffect(() => {
     let cancelled = false;
     let timeoutId: number | null = null;
     let delayMs = 1500;
@@ -692,14 +687,13 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
   useEffect(() => {
     const uploadId = replaceUploadId;
-    if (typeof uploadId !== "string" || !uploadId) return;
-    const uploadIdStr = uploadId;
+    if (!uploadId) return;
     let cancelled = false;
     let intervalId: number | null = null;
 
     async function poll() {
       try {
-        const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadIdStr)}`, { cache: "no-store" });
+        const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}`, { cache: "no-store" });
         if (!res.ok) return;
         const json = (await res.json().catch(() => null)) as any;
         if (cancelled) return;
@@ -1589,7 +1583,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : (
-                    <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <button
                         type="button"
                         disabled={navLockActive}
@@ -1636,6 +1630,54 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           </Link>
                         )
                       ) : null}
+
+                      {projectsInline.length ? (
+                        <div className="inline-flex shrink-0 flex-wrap items-center gap-1 text-sm font-medium text-[var(--muted-2)]">
+                          {projectsInline.map((p) => {
+                            const href = p.id ? `/project/${encodeURIComponent(p.id)}` : null;
+                            const isRequestProject = Boolean((p as unknown as { isRequest?: unknown }).isRequest);
+                            const Pill = (
+                              <span
+                                className={[
+                                  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+                                  "text-[12px] font-medium leading-none text-[var(--muted-2)]",
+                                  "bg-transparent hover:bg-[var(--panel-hover)]",
+                                ].join(" ")}
+                              >
+                                {isRequestProject ? (
+                                  <InboxArrowDownIcon
+                                    className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <FolderIcon
+                                    className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]"
+                                    aria-hidden="true"
+                                  />
+                                )}
+                                <span className="max-w-[160px] truncate">{p.name}</span>
+                              </span>
+                            );
+                            return href ? (
+                              <Link key={p.id} href={href} className="hover:opacity-90">
+                                {Pill}
+                              </Link>
+                            ) : (
+                              <span key={p.id}>{Pill}</span>
+                            );
+                          })}
+
+                          {projectsMoreCount > 0 ? (
+                            <button
+                              type="button"
+                              className="ml-1 text-[12px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] hover:underline underline-offset-4"
+                              onClick={() => setShowProjectsModal(true)}
+                            >
+                              See more
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   )}
                   {doc.lastUpdate?.uploadedAt ? (
@@ -1644,9 +1686,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       <span>
                         {(() => {
                           const iso = doc.lastUpdate?.uploadedAt ?? "";
-                          const vRaw = doc.lastUpdate?.version ?? null;
-                          const v = typeof vRaw === "number" && Number.isFinite(vRaw) ? vRaw : null;
-                          const isReplacement = typeof v === "number" && v >= 2;
                           const relative = iso ? formatRelativeAge(iso) : null;
                           const absolute = (() => {
                             try {
@@ -1657,17 +1696,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           })();
                           return (
                             <>
-                              {isReplacement ? "Last replaced" : "Uploaded"}
-                              {v ? (
-                                <>
-                                  {" "}
-                                  <span className="font-medium text-[var(--fg)]" title={`Version ${v}`}>
-                                    (v{v})
-                                  </span>
-                                </>
-                              ) : (
-                                ""
-                              )}{" "}
+                              Last updated{" "}
                               {relative ? (
                                 <span className="font-medium text-[var(--fg)]" title={absolute}>
                                   {relative}
@@ -1728,53 +1757,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                   ) : null}
                 </div>
 
-                {!isReceivedViaRequest && projectsInline.length ? (
-                  <div className="inline-flex shrink-0 flex-wrap items-center gap-1 text-sm font-medium text-[var(--muted-2)]">
-                    {projectsInline.map((p) => {
-                      const href = p.id ? `/project/${encodeURIComponent(p.id)}` : null;
-                      const isRequestProject = Boolean((p as unknown as { isRequest?: unknown }).isRequest);
-                      const Pill = (
-                        <span
-                          className={[
-                            "inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 leading-none",
-                            "text-xs font-medium text-[var(--muted-2)]",
-                            "bg-transparent hover:bg-[var(--panel-hover)]",
-                          ].join(" ")}
-                        >
-                          {isRequestProject ? (
-                            <InboxArrowDownIcon
-                              className="relative top-px h-4 w-4 shrink-0 text-[var(--muted-2)]"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <FolderIcon
-                              className="relative top-px h-4 w-4 shrink-0 text-[var(--muted-2)]"
-                              aria-hidden="true"
-                            />
-                          )}
-                          <span className="max-w-[160px] truncate">{p.name}</span>
-                        </span>
-                      );
-                      return href ? (
-                        <Link key={p.id} href={href} className="hover:opacity-90">
-                          {Pill}
-                        </Link>
-                      ) : (
-                        <span key={p.id}>{Pill}</span>
-                      );
-                    })}
-
-                    {projectsMoreCount > 0 ? (
-                      <button
-                        type="button"
-                        className="ml-1 text-[12px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] hover:underline underline-offset-4"
-                        onClick={() => setShowProjectsModal(true)}
-                      >
-                        See more
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
+                {/* Project pill(s) are rendered inline with the doc title row above (next to the version). */}
               </div>
             </div>
 
@@ -1884,7 +1867,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           </div>
 
           {/* Content */}
-        <div className="min-h-0 flex-1 overflow-hidden bg-[var(--bg)]">
+          <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
           <div className="h-full px-6 py-6">
             <div
               className={[
@@ -2020,214 +2003,48 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           </div>
                         </div>
                       </div>
-                    ) : !localPreviewUrl && !pdfViewerOpen && doc.blobUrl && doc.previewImageUrl ? (
-                      <div className="flex h-full w-full flex-col overflow-hidden bg-black">
-                        {/* Header row (not overlaying the image). */}
-                        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 bg-black/8 px-4 py-3 backdrop-blur-2xl backdrop-saturate-150">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-white/60">
-                            Preview
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              pdfViewerOpenedRef.current = true;
-                              setPdfViewerOpen(true);
-                            }}
-                            className="rounded-lg bg-white/10 px-3 py-1.5 text-xs font-semibold text-white/92 hover:bg-white/14"
-                          >
-                            Open PDF
-                          </button>
-                        </div>
-
-                        {/* Image stage */}
-                        <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
-                          {/* Background fill (soft) */}
-                          <div
-                            aria-hidden="true"
-                            className={[
-                              "absolute inset-0 z-0 scale-110",
-                              previewBlurEnabled ? "opacity-25 blur-3xl" : "opacity-15 blur-2xl",
-                            ].join(" ")}
-                            style={{
-                              backgroundImage: `url(${doc.previewImageUrl})`,
-                              backgroundSize: "cover",
-                              backgroundPosition: "bottom center",
-                            }}
-                          />
-                          <div aria-hidden="true" className="absolute inset-0 z-0 bg-black/60" />
-
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={doc.previewImageUrl}
-                            alt="Document preview"
-                            loading="eager"
-                            fetchPriority="high"
-                            decoding="async"
-                            onLoad={onPreviewImageLoad}
-                            className="relative z-10 h-full w-full object-contain object-top"
-                          />
-
-                          {previewBlurEnabled ? (
-                            <>
-                              {/* Contain-aligned blurred clone that starts blending *within* the image and fades to black below. */}
-                              <div
-                                aria-hidden="true"
-                                className="pointer-events-none absolute inset-0 z-[2]"
-                                style={{
-                                  backgroundImage: `url(${doc.previewImageUrl})`,
-                                  backgroundRepeat: "no-repeat",
-                                  backgroundSize: "contain",
-                                  backgroundPosition: "top center",
-                                  filter: "blur(44px) saturate(1.2) brightness(0.62)",
-                                  WebkitMaskImage:
-                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 34%, rgba(0,0,0,0.22) 52%, rgba(0,0,0,0.75) 74%, rgba(0,0,0,1) 100%)",
-                                  maskImage:
-                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 34%, rgba(0,0,0,0.22) 52%, rgba(0,0,0,0.75) 74%, rgba(0,0,0,1) 100%)",
-                                }}
-                              />
-
-                              {/* Extra black ramp to ensure the bottom lands in black, not gray. */}
-                              <div
-                                aria-hidden="true"
-                                className="pointer-events-none absolute inset-0 z-[3]"
-                                style={{
-                                  background:
-                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 46%, rgba(0,0,0,0.28) 66%, rgba(0,0,0,0.72) 86%, rgba(0,0,0,1) 100%)",
-                                }}
-                              />
-
-                              {/* Backdrop blur to soften the join into the area below. */}
-                              <div
-                                aria-hidden="true"
-                                className="pointer-events-none absolute inset-0 z-[4] backdrop-blur-2xl backdrop-saturate-150"
-                                style={{
-                                  WebkitMaskImage:
-                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.2) 62%, rgba(0,0,0,0.75) 86%, rgba(0,0,0,1) 100%)",
-                                  maskImage:
-                                    "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.2) 62%, rgba(0,0,0,0.75) 86%, rgba(0,0,0,1) 100%)",
-                                }}
-                              />
-                            </>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : !localPreviewUrl && !pdfViewerOpen && doc.blobUrl && !doc.previewImageUrl ? (
+                    ) : pdfIframeSrc ? (
+                      <iframe
+                        title="PDF"
+                        src={pdfIframeSrc}
+                        // Keep the request low priority so the page UI stays snappy.
+                        fetchPriority="low"
+                        className={[
+                          "block h-full w-full border-0",
+                          pdfStatusOverlay ? "pointer-events-none" : "",
+                        ].join(" ")}
+                        allow="fullscreen"
+                      />
+                    ) : desiredPdfBaseUrl ? (
                       <div className="grid h-full place-items-center px-6 text-center">
                         <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-6 py-4">
-                          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                            Preview
+                          <div className="inline-flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                            <div
+                              className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--fg)]"
+                              aria-hidden="true"
+                            />
+                            <span>Loading PDF…</span>
                           </div>
-                          <div className="mt-2 text-sm font-medium text-[var(--fg)]">
-                            Preparing preview…
+                          <div className="mt-2 text-sm text-[var(--muted)]">
+                            The page is ready — fetching the PDF in the background.
                           </div>
                           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
                             <div className="h-full w-1/3 bg-[var(--primary-bg)] animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
                           </div>
                         </div>
                       </div>
-                    ) : pdfViewerOpen && doc.status === "ready" && doc.blobUrl ? (
-                      <iframe
-                        title="PDF"
-                        src={buildCachedPdfIframeUrl({
-                          docId: doc.id,
-                          currentUploadId: doc.currentUploadId,
-                          currentUploadVersion: doc.currentUploadVersion,
-                        })}
-                        className={[
-                          "block h-full w-full border-0",
-                          pdfStatusOverlay ? "pointer-events-none" : "",
-                        ].join(" ")}
-                        allow="fullscreen"
-                      />
-                    ) : localPreviewUrl ? (
-                      <iframe
-                        title="PDF preview"
-                        src={localPreviewUrl}
-                        className={[
-                          "block h-full w-full border-0",
-                          pdfStatusOverlay ? "pointer-events-none" : "",
-                        ].join(" ")}
-                        allow="fullscreen"
-                      />
-                    ) : pdfViewerOpen && doc.blobUrl ? (
-                      <iframe
-                        title="PDF"
-                        src={buildCachedPdfIframeUrl({
-                          docId: doc.id,
-                          currentUploadId: doc.currentUploadId,
-                          currentUploadVersion: doc.currentUploadVersion,
-                        })}
-                        className={[
-                          "block h-full w-full border-0",
-                          pdfStatusOverlay ? "pointer-events-none" : "",
-                        ].join(" ")}
-                        allow="fullscreen"
-                      />
-                    ) : doc.previewImageUrl ? (
-                      <div className="relative h-full w-full overflow-hidden bg-black">
-                        <div aria-hidden="true" className="absolute inset-0 z-0 bg-black" />
-                        <div
-                          aria-hidden="true"
-                          className={[
-                            "absolute inset-0 z-0 scale-110",
-                            previewBlurEnabled ? "opacity-35 blur-3xl" : "opacity-20 blur-2xl",
-                          ].join(" ")}
-                          style={{
-                            backgroundImage: `url(${doc.previewImageUrl})`,
-                            backgroundSize: "cover",
-                            backgroundPosition: "bottom center",
-                          }}
-                        />
-                        <div aria-hidden="true" className="absolute inset-0 z-0 bg-black/55" />
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={doc.previewImageUrl}
-                          alt="Document preview"
-                          onLoad={onPreviewImageLoad}
-                          className="relative z-10 h-full w-full object-contain object-top"
-                        />
-                        {previewBlurEnabled ? (
-                          <>
-                            <div
-                              aria-hidden="true"
-                              className="pointer-events-none absolute inset-0 z-[2] opacity-80"
-                              style={{
-                                backgroundImage: `url(${doc.previewImageUrl})`,
-                                backgroundRepeat: "no-repeat",
-                                backgroundSize: "contain",
-                                backgroundPosition: "top center",
-                                filter: "blur(34px) saturate(1.25) brightness(0.72)",
-                                WebkitMaskImage:
-                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.35) 62%, rgba(0,0,0,0.85) 82%, rgba(0,0,0,1) 100%)",
-                                maskImage:
-                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 42%, rgba(0,0,0,0.35) 62%, rgba(0,0,0,0.85) 82%, rgba(0,0,0,1) 100%)",
-                              }}
-                            />
-                            <div
-                              aria-hidden="true"
-                              className="pointer-events-none absolute inset-0 z-[3] backdrop-blur-xl backdrop-saturate-150"
-                              style={{
-                                WebkitMaskImage:
-                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.18) 68%, rgba(0,0,0,0.7) 86%, rgba(0,0,0,1) 100%)",
-                                maskImage:
-                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 45%, rgba(0,0,0,0.18) 68%, rgba(0,0,0,0.7) 86%, rgba(0,0,0,1) 100%)",
-                              }}
-                            />
-                            <div
-                              aria-hidden="true"
-                              className="pointer-events-none absolute inset-0 z-[4]"
-                              style={{
-                                background:
-                                  "linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(0,0,0,0) 52%, rgba(0,0,0,0.22) 72%, rgba(0,0,0,0.55) 88%, rgba(0,0,0,0.88) 100%)",
-                              }}
-                            />
-                          </>
-                        ) : null}
-                      </div>
                     ) : (
                       <div className="grid h-full place-items-center px-6 text-center">
-                        <div className="text-sm font-medium text-[var(--muted)]">
-                          Preview will appear here.
+                        <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-6 py-4">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                            Preparing…
+                          </div>
+                          <div className="mt-2 text-sm text-[var(--muted)]">
+                            We’re preparing your PDF. Nothing you need to do.
+                          </div>
+                          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
+                            <div className="h-full w-1/3 bg-[var(--primary-bg)] animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
+                          </div>
                         </div>
                       </div>
                     )}

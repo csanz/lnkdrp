@@ -14,6 +14,16 @@ const shareViewSchema = new Schema(
     botIdHash: { type: String, trim: true, index: true, required: true },
     pagesSeen: { type: [Number], default: [] },
     /**
+     * Best-effort total time spent viewing this share (milliseconds).
+     * Incremented by the client on background/close events.
+     */
+    timeSpentMs: { type: Number, default: 0, min: 0 },
+    /**
+     * Best-effort per-page time spent viewing (milliseconds), keyed by page number ("1", "2", ...).
+     * Incremented by the client on page changes + periodic flush.
+     */
+    pageTimeMsByPage: { type: Map, of: Number, default: {} },
+    /**
      * Best-effort viewer IP address (from proxy headers like x-forwarded-for).
      * Note: may be a NAT/proxy IP and can change over time for the same viewer.
      */

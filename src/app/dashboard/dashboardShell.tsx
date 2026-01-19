@@ -8,14 +8,18 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useSession } from "next-auth/react";
 import { useTheme } from "next-themes";
+import { Bars3Icon } from "@heroicons/react/24/outline";
 import AccountMenu from "@/components/AccountMenu";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import { useAuthEnabled } from "@/app/providers";
 import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
+import IconButton from "@/components/ui/IconButton";
 import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } from "@/lib/orgsCache";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
+
+const DASHBOARD_NAV_OPEN_EVENT = "lnkdrp:dashboard-nav-open";
 
 function AuthRedirector() {
   const { status } = useSession();
@@ -283,37 +287,52 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   }
 
   return (
-    <div className="min-h-[100svh] w-full bg-[var(--bg)] text-[var(--fg)]">
+    <div className="min-h-[100svh] w-full overflow-x-hidden bg-[var(--bg)] text-[var(--fg)]">
       {authEnabled ? <AuthRedirector /> : null}
 
       <header className="bg-[var(--bg)]">
         {/* Full-width header: logo pinned left, account menu pinned right. */}
         {/* Keep the logo + workspace pill identical to the app shell (desktop sidebar + mobile top bar). */}
-        <div className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:h-auto md:items-start md:border-b-0 md:px-4 md:pb-7 md:pt-6">
+        <div className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:h-auto md:items-start md:border-b-0 md:px-4 md:pb-6 md:pt-5">
           <div className="flex min-w-0 items-center gap-2">
+            <IconButton
+              ariaLabel="Open dashboard menu"
+              variant="ghost"
+              className="md:hidden"
+              onClick={() => {
+                try {
+                  window.dispatchEvent(new CustomEvent(DASHBOARD_NAV_OPEN_EVENT));
+                } catch {
+                  // ignore
+                }
+              }}
+            >
+              <Bars3Icon className="h-5 w-5" aria-hidden="true" />
+            </IconButton>
             <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
               <Image src={logoSrc} alt="LinkDrop" width={31} height={31} priority />
             </Link>
             <ActiveWorkspacePill
               className="hidden sm:inline-flex"
-              maxWidthClassName="max-w-[160px]"
-              textClassName="text-[11px]"
+              maxWidthClassName="max-w-[240px]"
+              textClassName="text-[13px]"
               disableNetwork
             />
           </div>
 
-          <div className="shrink-0">
-            <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center justify-end gap-2">
               <Link
                 href="/dashboard?tab=usage"
-                className={`inline-flex h-[34px] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
+                className={`inline-flex h-[34px] min-w-0 max-w-[52vw] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] sm:max-w-none truncate ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
                 title="View usage"
                 onMouseEnter={() => {
                   if (credits || creditsBusyRef.current) return;
                   void refreshCredits(false);
                 }}
               >
-                AI Credits:
+                <span className="hidden sm:inline">AI Credits:</span>
+                <span className="sm:hidden">Credits:</span>
                 {credits ? (
                   creditsUnlimited ? (
                     <span className="inline-flex items-baseline">
@@ -346,7 +365,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 
       {blockedBanner}
 
-      <main className="mx-auto w-full max-w-[1280px] px-5 py-8">{children}</main>
+      <main className="mx-auto w-full max-w-[1280px] px-3 py-6 sm:px-5">{children}</main>
 
       <Modal
         open={creditsOpen}

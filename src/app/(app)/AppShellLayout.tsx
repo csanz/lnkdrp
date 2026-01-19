@@ -28,7 +28,6 @@ function AuthRedirector() {
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() ?? "";
-  const isDocRoute = useMemo(() => pathname.startsWith("/doc/"), [pathname]);
   const authEnabled = useAuthEnabled();
   const { setPendingFile } = usePendingUpload();
   const { resolvedTheme } = useTheme();
@@ -112,8 +111,6 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
             className="hidden sm:inline-flex"
             maxWidthClassName="max-w-[160px]"
             textClassName="text-[11px]"
-            // On doc pages, avoid extra network work competing with the viewer/history UI.
-            disableNetwork={isDocRoute}
           />
         </div>
         <IconButton

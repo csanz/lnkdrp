@@ -66,10 +66,10 @@ export default function SidebarProjectsSection({
 }) {
   return (
     <section>
-      <div className="flex items-center gap-1 px-2 text-[14px] font-medium text-[var(--muted-2)]">
+      <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[12px] font-medium text-[var(--muted-2)]">
         <button
           type="button"
-          className="rounded-md px-1 py-0.5 text-left hover:bg-[var(--sidebar-hover)]"
+          className="inline-flex h-6 items-center rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
           onClick={() => {
             setProjectsCollapsedLoaded(true);
             setProjectsCollapsed((v) => !v);
@@ -96,11 +96,11 @@ export default function SidebarProjectsSection({
 
       {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
         !projectsLoaded ? (
-          <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
+          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
         ) : !projectsForSidebar.length ? (
-          <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</div>
+          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</div>
         ) : (
-          <div className="mt-2 flex items-center justify-between gap-3 px-2 py-1.5">
+          <div className="mt-2 flex items-center justify-between gap-3 pl-3 pr-2 py-1.5">
             <div className="text-[13px] font-medium text-[var(--muted-2)]">{projects.total || projectsForSidebar.length} projects</div>
             <button
               type="button"
@@ -119,7 +119,7 @@ export default function SidebarProjectsSection({
           </div>
         )
       ) : !projectsLoaded ? (
-        <div className="mt-2 px-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
+        <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
       ) : (
         <ul className="mt-2 space-y-0.5">
           <li>
@@ -127,7 +127,7 @@ export default function SidebarProjectsSection({
               type="button"
               disabled={navLocked}
               className={[
-                "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[13px] font-medium text-[var(--muted)]",
+                "flex w-full items-center gap-2 rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] font-medium text-[var(--muted)]",
                 navLocked ? "cursor-not-allowed opacity-60" : "hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -141,7 +141,7 @@ export default function SidebarProjectsSection({
           </li>
 
           {!projectsForSidebar.length ? (
-            <li className="px-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</li>
+            <li className="pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</li>
           ) : null}
 
           {projectsForSidebar.map((p) => {
@@ -153,7 +153,7 @@ export default function SidebarProjectsSection({
                   <div
                     role="link"
                     tabIndex={0}
-                    className="flex cursor-pointer items-center justify-between gap-2 rounded-xl px-2 py-1.5 text-left text-[14px] hover:bg-[var(--sidebar-hover)]"
+                    className="flex cursor-pointer items-center justify-between gap-2 rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] hover:bg-[var(--sidebar-hover)]"
                     onClick={() => {
                       if (!p.slug) return;
                       routerPush(`/project/${p.id}`);
@@ -224,7 +224,7 @@ export default function SidebarProjectsSection({
             <li>
               <button
                 type="button"
-                className="w-full rounded-xl px-2 py-1.5 text-left text-[14px] font-medium text-[var(--muted)] hover:bg-[var(--sidebar-hover)]"
+                className="w-full rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] font-medium text-[var(--muted)] hover:bg-[var(--sidebar-hover)]"
                 onClick={() => setShowProjectsModal(true)}
               >
                 See more

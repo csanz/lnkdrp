@@ -10,6 +10,10 @@ const CONFIG = {
   // Assets
   GLB_URL: "https://svmsosyeuyawzaqr.public.blob.vercel-storage.com/graphics/paper_plane_asset.glb",
 
+  // Debug / tuning
+  // When enabled: allow pointer interaction + unlock plane drag/rotate; release prints params.
+  DEBUG_CONTROLS: false,
+
   // Scene / camera
   // Black background (matches the landing page).
   SCENE_BG: "#050506",
@@ -24,7 +28,8 @@ const CONFIG = {
 
   // Plane pose + placement
   PLANE_BASE_POS: { x: 0.876, y: -0.096, z: 0 },
-  PLANE_HEIGHT_OFFSET: 0.0,
+  // Small global nudge down for nicer framing on the home page.
+  PLANE_HEIGHT_OFFSET: -0.035,
   LOCKED_YAW: 1.183009,
   BASE_PITCH: 0.310812,
   BASE_ROLL: -0.25,
@@ -52,7 +57,7 @@ const CONFIG = {
 
   // Make the plane feel like it "glides" more than it "wobbles".
   PLANE_WOBBLE_PHASE: 0.6, // lower = slower wobble cadence
-  PLANE_WOBBLE_INTENSITY: 0.42, // lower = less motion
+  PLANE_WOBBLE_INTENSITY: 0.32, // lower = less motion
 
   // Globe
   GLOBE_POS: { x: 4, y: -7.5, z: 0 },
@@ -199,7 +204,18 @@ const GLOBE_OFFSET_BELOW = CONFIG.GLOBE_OFFSET_BELOW;
 const GLOBE_SPIN_SPEED = CONFIG.GLOBE_SPIN_SPEED;
 const GLOBE_SPIN_MULT = CONFIG.GLOBE_SPIN_MULT;
 const GLOBE_SPIN_SPEED_EFFECTIVE = GLOBE_SPIN_SPEED * GLOBE_SPIN_MULT;
-const PLANE_LOCKED = CONFIG.PLANE_LOCKED;
+const DEBUG_CONTROLS =
+  CONFIG.DEBUG_CONTROLS ||
+  (() => {
+    try {
+      const q = new URL(window.location.href).searchParams;
+      return q.has("debug") || q.get("debug") === "1";
+    } catch {
+      return false;
+    }
+  })();
+// Keep plane locked on the home page, but allow interactive tuning in debug mode.
+const PLANE_LOCKED = DEBUG_CONTROLS ? false : CONFIG.PLANE_LOCKED;
 
 const statusEl = document.getElementById("status");
 const setStatus = (msg) => {
@@ -222,7 +238,11 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 
 console.log("[paperplane] main.js loaded");
-setStatus("Initializing renderer…");
+setStatus(
+  DEBUG_CONTROLS
+    ? "Debug controls on: drag=move plane, alt/option+drag=move globe, shift+drag=rotate. Release to print params."
+    : "Initializing renderer…"
+);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -233,10 +253,11 @@ renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.setClearColor(0x050506, 1);
-// Ensure the overlay can receive clicks (canvas is visual-only).
+// Default: make canvas visual-only (overlay/click-through).
+// Debug: allow pointer interaction for tuning (drag to move/rotate + print params).
 renderer.domElement.style.position = "fixed";
 renderer.domElement.style.inset = "0";
-renderer.domElement.style.pointerEvents = "none";
+renderer.domElement.style.pointerEvents = DEBUG_CONTROLS ? "auto" : "none";
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -862,7 +883,8 @@ loader.load(
     ];
 
     const maxDim = Math.max(size.x, size.y, size.z);
-    const target = 1.6;
+    // Slightly smaller plane on screen.
+    const target = 1.42;
     const s = maxDim > 0 ? target / maxDim : 1;
     // Important: scale the parent group so the model's centering offset is scaled too.
     modelGroup.scale.setScalar(s);
@@ -912,6 +934,9 @@ loader.load(
 );
 
 const clock = new THREE.Clock();
+const tmpCamForward = new THREE.Vector3();
+const tmpCamRight = new THREE.Vector3();
+const tmpSideOffset = new THREE.Vector3();
 function animate() {
   requestAnimationFrame(animate);
   const t = clock.getElapsedTime();
@@ -1074,21 +1099,30 @@ function animate() {
     }
 
     // Subtle "flying" idle motion.
-    const bobY = Math.sin(tw * 1.05) * 0.045 * CONFIG.PLANE_WOBBLE_INTENSITY;
-    const swayX = Math.sin(tw * 0.75 + 0.8) * 0.082 * CONFIG.PLANE_WOBBLE_INTENSITY;
-    const driftZ = Math.sin(tw * 0.55 + 1.7) * 0.035 * CONFIG.PLANE_WOBBLE_INTENSITY;
+    // Prefer side-to-side glide over vertical bob/pitch (paper-plane feel).
+    // Important: sway in *screen space* (camera-right), not world-X.
+    // World-X can read as "up/down" because the camera is pitched.
+    const swaySide = Math.sin(tw * 0.75 + 0.8) * 0.090 * CONFIG.PLANE_WOBBLE_INTENSITY;
+    camera.getWorldDirection(tmpCamForward);
+    tmpCamRight.crossVectors(tmpCamForward, camera.up).normalize();
+    tmpSideOffset.copy(tmpCamRight).multiplyScalar(swaySide);
 
-    planePivot.position.set(basePos.x + swayX, basePos.y + bobY + PLANE_HEIGHT_OFFSET, basePos.z + driftZ);
+    planePivot.position.set(
+      basePos.x + tmpSideOffset.x,
+      basePos.y + PLANE_HEIGHT_OFFSET,
+      basePos.z + tmpSideOffset.z
+    );
 
     // Keep yaw fixed (backwards), only add roll/pitch.
-    planePivot.rotation.x = BASE_PITCH + Math.sin(tw * 0.9) * 0.045 * CONFIG.PLANE_WOBBLE_INTENSITY;
+    // Lock pitch so it doesn't "nod" up/down (paper planes glide more than they bob).
+    planePivot.rotation.x = BASE_PITCH;
     // Bank into the side-to-side sway (paper-plane feel).
-    const bankFromSway = swayX * 0.18; // swayX is in world units; keep this subtle
+    const bankFromSway = swaySide * 0.18; // swaySide is in world units; keep this subtle
     planePivot.rotation.z =
       BASE_ROLL + Math.sin(tw * 0.75 + 0.2) * 0.07 * CONFIG.PLANE_WOBBLE_INTENSITY + bankFromSway;
     // Tiny yaw wiggle + a touch of "follow through" from sway.
     planePivot.rotation.y =
-      LOCKED_YAW + Math.sin(tw * 0.6 + 0.4) * 0.018 * CONFIG.PLANE_WOBBLE_INTENSITY + bankFromSway * 0.22;
+      LOCKED_YAW + Math.sin(tw * 0.6 + 0.4) * 0.020 * CONFIG.PLANE_WOBBLE_INTENSITY + bankFromSway * 0.22;
 
     // Globe stays fixed in position; align it to the plane's *base* direction (no wobble).
     globePivot.position.copy(globeBasePos);

@@ -94,7 +94,7 @@ export async function POST(request: Request) {
           upsert: true,
         },
       }));
-    if (ops.length) await StarredDocModel.bulkWrite(ops, { ordered: false });
+    if (ops.length) await StarredDocModel.bulkWrite(ops as any, { ordered: false });
 
     return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
