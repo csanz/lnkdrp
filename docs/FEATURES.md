@@ -15,7 +15,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 ## Public pages (logged-out)
 
-- **Home page**: `/` — Marketing/invite landing page with paperplane animation, invite code entry, and login flow.
+- **Home page**: `/` — Marketing/invite landing page with paperplane animation, invite code entry, login flow, and a small bottom-left copyright notice (`© YEAR LinkDrop`).
 - **About page**: `/about` — Static page explaining what LinkDrop is and how it works.
 - **Terms of Service**: `/tos` — Terms of Service page accessible from the logged-out homepage header.
 - **Privacy Policy**: `/privacy` — Privacy Policy page accessible from the logged-out homepage header.
@@ -47,6 +47,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Dashboard page**: `/dashboard`
   - Cursor-like standalone settings/analytics hub with a left mini-nav.
+  - On mobile, the mini-nav is accessed via a **hamburger menu** in the dashboard header (opens a slide-in menu).
   - Left mini-nav shows the signed-in user name/email and a compact section list (Overview/Account/etc). The active workspace pill is shown in the top-left header.
   - Includes an **Overview** tab (default) that shows high-level workspace stats (e.g. new docs, pages viewed, share views) plus a **30-day activity graph** aggregated across all docs in the active workspace.
   - Overview includes a **Plan** card at the top:
@@ -121,7 +122,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Loads charts/totals quickly from `/api/docs/:docId/shareviews`.
   - Viewers list loads shortly after (background) and avoids a Mongo `$lookup` by using denormalized viewer snapshots stored on `ShareView`.
   - Shows both **authenticated viewers** and **anonymous viewers** (best-effort, per browser/device), including per-viewer **pages viewed** (unique pages seen).
-  - Clicking a viewer opens a **Viewer details** modal that shows the specific **pages seen** (page numbers) plus first/last seen timestamps.
+  - Clicking a viewer opens a **Viewer details** modal that shows the specific **pages seen** (page numbers) with best-effort **time per page**, best-effort **time spent** + **avg per view**, and first/last seen timestamps.
 - **Doc replacement change history**:
   - When the owner replaces a doc file (creating a new upload version), the server stores a best-effort “what changed” record (previous text, new text, summary + changes list).
   - Changes are only accessible to users who have access to the doc (API: `/api/docs/:docId/changes`).
@@ -141,6 +142,9 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Generate/copy share link**:
   - Share links are based on `shareId` (alphanumeric only) and resolve to `/s/:shareId` (legacy `/share/:shareId`).
+- **Disable share (master switch)**:
+  - Owners can toggle **Share enabled** off to take a link offline without deleting the doc.
+  - When disabled, recipients visiting `/s/:shareId` see a “This document is no longer shared” screen (and the PDF/history endpoints behave as not found).
 - **Password protect share link**:
   - Owner can set/remove a share password via `/api/docs/:docId/share-password`.
   - When enabled, recipients must unlock via `/api/share/:shareId/unlock` which sets a per-share cookie.
@@ -155,6 +159,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 ## Recipient share view (`/s/:shareId`)
 
 - **Public share page**:
+  - If the owner disables sharing, the page shows **“This document is no longer shared”** (share-disabled behaves like not found).
   - If the PDF isn’t available yet, shows a “preparing” fallback with an image preview (if present).
   - The viewer includes an **All pages** mode (scroll the full document) and a **Grid** mode (thumbnail overview of all pages, click to open).
   - Grid and All-pages views are responsive and fit to the available viewport width by default.
@@ -173,6 +178,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - OG image prefers the doc's preview thumbnail when present (otherwise falls back to `/s/:shareId/og.png`).
 - **Share view tracking**:
   - Server endpoints exist for share stats and admin inspection of share views.
+  - Best-effort **time spent** and **per-page dwell time** are recorded for share viewers (counts foreground time only; increments on page changes and tab hide/close; periodic flush).
 
 ## AI & review features
 
