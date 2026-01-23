@@ -19,6 +19,11 @@ import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 
+/**
+ * Normalizes a `returnTo` value into a safe same-origin path.
+ *
+ * Exists to prevent open redirects and protocol-relative navigation.
+ */
 function safeReturnTo(raw: string | null): string {
   const s = (raw ?? "").trim();
   if (!s) return "/";
@@ -28,6 +33,11 @@ function safeReturnTo(raw: string | null): string {
   return s;
 }
 
+/**
+ * Escapes a string for safe embedding in an HTML attribute.
+ *
+ * Exists because this route returns a small HTML page (not just JSON) in non-fetch flows.
+ */
 function escapeHtmlAttr(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -37,11 +47,22 @@ function escapeHtmlAttr(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Extracts a doc id from a `/doc/:docId...` path (or returns null).
+ *
+ * Exists to prevent redirecting into a doc page that doesn't belong to the target org.
+ */
 function parseDocIdFromPath(path: string): string | null {
   const m = path.match(/^\/doc\/([a-f0-9]{24})(?:\/|$)/i);
   return m ? m[1] : null;
 }
 
+/**
+ * `GET /org/switch`
+ *
+ * Server-authoritative workspace switch: validates membership, sets the active-org httpOnly cookie,
+ * and returns either JSON (`json=1`) or a small HTML redirect page to ensure Set-Cookie persistence.
+ */
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const orgId = url.searchParams.get("orgId")?.trim() ?? "";
@@ -108,6 +129,7 @@ export async function GET(request: Request) {
   // the Set-Cookie header reliably across clients.
   const hrefAttr = escapeHtmlAttr(redirectTo);
   const jsHref = JSON.stringify(redirectTo);
+  const jsOrgId = JSON.stringify(orgId);
   const res = new NextResponse(
     `<!doctype html>
 <html lang="en">
@@ -130,6 +152,14 @@ export async function GET(request: Request) {
           var parsed = raw ? parseInt(raw, 10) : NaN;
           var y = Number.isFinite(parsed) && parsed > 0 ? parsed : Math.round(window.innerHeight / 2);
           document.documentElement.style.setProperty("--ld_lock_y", y + "px");
+        } catch {}
+      })();
+
+      // Pre-seed the next app boot with the target org id so client caches can immediately
+      // scope themselves correctly (prevents cross-workspace flashes before /api/orgs/active resolves).
+      (function () {
+        try {
+          (window.sessionStorage && sessionStorage.setItem("ld_pending_active_org_id", ${jsOrgId})) || void 0;
         } catch {}
       })();
     </script>

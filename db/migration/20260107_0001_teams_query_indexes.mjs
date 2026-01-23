@@ -12,23 +12,50 @@
  * - Safe to run multiple times (createIndex is idempotent).
  */
 export async function up({ db }) {
+  async function ensureIndex(coll, key, options) {
+    const name = options?.name;
+    const wantPartial = options?.partialFilterExpression ?? null;
+    const indexes = await coll.indexes();
+    const existing = name ? indexes.find((i) => i?.name === name) : null;
+    if (existing) {
+      const sameKey = JSON.stringify(existing.key ?? null) === JSON.stringify(key ?? null);
+      const havePartial = existing.partialFilterExpression ?? null;
+      const samePartial = JSON.stringify(havePartial) === JSON.stringify(wantPartial);
+      if (!sameKey || !samePartial) {
+        await coll.dropIndex(existing.name);
+      } else {
+        return; // already correct
+      }
+    }
+    await coll.createIndex(key, options);
+  }
+
   // OrgMembership: list memberships by user (org list / workspace switcher / dashboard header)
-  await db.collection("orgmemberships").createIndex(
+  const memberships = db.collection("orgmemberships");
+  const invites = db.collection("orginvites");
+
+  await ensureIndex(
+    memberships,
     { userId: 1 },
-    { partialFilterExpression: { isDeleted: { $ne: true } } },
+    // Mongo partial indexes don't support `$ne` (it becomes `$not: {$eq: ...}`).
+    // Model default is `false`, so this keeps the index aligned with the query intent.
+    { name: "userId_1", partialFilterExpression: { isDeleted: false } },
   );
 
   // OrgMembership: list members by org (Teams: members list)
-  await db.collection("orgmemberships").createIndex(
+  await ensureIndex(
+    memberships,
     { orgId: 1 },
-    { partialFilterExpression: { isDeleted: { $ne: true } } },
+    { name: "orgId_1", partialFilterExpression: { isDeleted: false } },
   );
 
   // OrgInvite: list recent (non-revoked) invites for an org with a sort by createdDate.
   // This matches the `/api/org-invites` list query and avoids in-memory sorting.
-  await db.collection("orginvites").createIndex(
+  await ensureIndex(
+    invites,
     { orgId: 1, createdDate: -1 },
-    { partialFilterExpression: { isRevoked: { $ne: true } } },
+    // Same story as above: avoid `$ne` in partial indexes.
+    { name: "orgId_1_createdDate_-1", partialFilterExpression: { isRevoked: false } },
   );
 }
 

@@ -14,9 +14,9 @@ import {
 } from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
 import { fetchJson } from "@/lib/http/fetchJson";
-import { notifyDocsChanged, notifyProjectsChanged } from "@/lib/sidebarCache";
+import { notifyDocsChanged, notifyProjectsChanged, optimisticallyAddProjectToSidebarCache } from "@/lib/sidebarCache";
 
-type ProjectDTO = { id: string; name: string; description: string };
+type ProjectDTO = { id: string; name: string; slug?: string };
 
 // Temporary: hide unfinished actions from the doc menu.
 const SHOW_QUALITY_REVIEW = false;
@@ -58,6 +58,8 @@ export default function DocActionsMenu({
   const [projects, setProjects] = useState<ProjectDTO[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [projectsLastLoadedAt, setProjectsLastLoadedAt] = useState<number>(0);
+  const [projectMembershipBusyId, setProjectMembershipBusyId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
 
   const [showNewProject, setShowNewProject] = useState(false);
@@ -152,14 +154,18 @@ export default function DocActionsMenu({
 
 
   async function loadProjects() {
+    // Avoid refetching on every open; keeps the picker feeling instant.
+    // Still allow refresh after a short window or after an error.
+    const now = Date.now();
+    if (projects.length && !projectsError && now - projectsLastLoadedAt < 15_000) return;
     setProjectsLoading(true);
     setProjectsError(null);
     try {
       const res = await fetchJson<{ projects?: ProjectDTO[] }>(`/api/projects?limit=50&page=1&lite=1`, {
         method: "GET",
-        cache: "no-store",
       });
       setProjects(Array.isArray(res.projects) ? res.projects : []);
+      setProjectsLastLoadedAt(Date.now());
     } catch (e) {
       setProjectsError(e instanceof Error ? e.message : "Failed to load projects");
     } finally {
@@ -173,6 +179,7 @@ export default function DocActionsMenu({
 
   async function addToProject(projectId: string) {
     try {
+      setProjectMembershipBusyId(projectId);
       const res = await fetchJson<{
         doc?: {
           projectId?: string | null;
@@ -202,6 +209,8 @@ export default function DocActionsMenu({
     } catch {
       // Keep menu open; errors show in projects panel.
       setProjectsError("Failed to add to project");
+    } finally {
+      setProjectMembershipBusyId(null);
     }
   }
 /**
@@ -228,6 +237,16 @@ export default function DocActionsMenu({
       if (typeof id === "string" && id) {
         // refresh projects list and add immediately
         setProjects((prev) => [{ id, name, description }, ...prev]);
+        optimisticallyAddProjectToSidebarCache({
+          id,
+          name,
+          slug: typeof res?.project?.slug === "string" ? res.project.slug : "",
+          description,
+          isRequest: false,
+          docCount: 0,
+          updatedDate: new Date().toISOString(),
+          createdDate: new Date().toISOString(),
+        });
         // Notify other UI (sidebar, etc) to refresh projects immediately.
         notifyProjectsChanged();
         await addToProject(id);
@@ -251,6 +270,7 @@ export default function DocActionsMenu({
   async function removeFromThisProject() {
     if (!currentProjectId) return;
     try {
+      setProjectMembershipBusyId(currentProjectId);
       const res = await fetchJson<{
         doc?: {
           projectId?: string | null;
@@ -279,6 +299,8 @@ export default function DocActionsMenu({
       setProjectsOpen(false);
     } catch {
       setProjectsError("Failed to remove from project");
+    } finally {
+      setProjectMembershipBusyId(null);
     }
   }
 /**
@@ -357,7 +379,7 @@ export default function DocActionsMenu({
   const menuItemBase =
     "flex w-full items-center justify-between gap-3 px-3 py-2 text-[13px] text-[var(--fg)] hover:bg-[var(--panel-hover)]";
 
-  const disabledClass = disabled ? "cursor-not-allowed opacity-50 hover:bg-[var(--panel)]" : "";
+  const disabledClass = disabled ? "cursor-not-allowed opacity-60 hover:bg-[var(--panel)]" : "";
   const selectedProjectIds = new Set(
     (Array.isArray(currentProjectIds) ? currentProjectIds : null) ??
       (currentProjectId ? [currentProjectId] : []),
@@ -399,9 +421,13 @@ export default function DocActionsMenu({
               <button
                 type="button"
                 className={menuItemBase}
+                disabled={Boolean(projectMembershipBusyId)}
+                aria-disabled={Boolean(projectMembershipBusyId)}
                 onClick={() => {
+                  if (projectMembershipBusyId) return;
                   if (selectedProjectIds.has(p.id)) {
                     // Best-effort: allow toggling off if we know this doc is already in the project.
+                    setProjectMembershipBusyId(p.id);
                     void fetchJson<{
                       doc?: {
                         projectId?: string | null;
@@ -422,10 +448,12 @@ export default function DocActionsMenu({
                           projects: Array.isArray(r?.doc?.projects) ? r.doc.projects : undefined,
                         });
                         notifyDocsChanged();
+                        notifyProjectsChanged();
                         setOpen(false);
                         setProjectsOpen(false);
                       })
-                      .catch(() => setProjectsError("Failed to remove from project"));
+                      .catch(() => setProjectsError("Failed to remove from project"))
+                      .finally(() => setProjectMembershipBusyId(null));
                     return;
                   }
                   void addToProject(p.id);
@@ -437,9 +465,13 @@ export default function DocActionsMenu({
                   </span>
                   <span className="truncate">{p.name}</span>
                 </span>
-                {selectedProjectIds.has(p.id) ? (
-                  <span className="shrink-0 text-[12px] font-semibold text-[var(--muted-2)]">✓</span>
-                ) : null}
+                <span className="shrink-0">
+                  {projectMembershipBusyId === p.id ? (
+                    <Spinner className="h-4 w-4 text-[var(--muted-2)]" />
+                  ) : selectedProjectIds.has(p.id) ? (
+                    <span className="text-[12px] font-semibold text-[var(--muted-2)]">✓</span>
+                  ) : null}
+                </span>
               </button>
             </li>
           ))
@@ -596,7 +628,8 @@ export default function DocActionsMenu({
         disabled={disabled}
         aria-disabled={disabled}
         className={[
-          "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+          "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
+          "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
           disabledClass,
         ].join(" ")}
         aria-label="Document actions"
@@ -619,7 +652,7 @@ export default function DocActionsMenu({
           });
         }}
       >
-        <EllipsisHorizontalIcon className="h-5 w-5" />
+        <EllipsisHorizontalIcon className="h-4 w-4" />
       </button>
 
       {renderedMenu && typeof document !== "undefined" ? createPortal(renderedMenu, document.body) : null}

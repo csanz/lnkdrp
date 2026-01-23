@@ -9,6 +9,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { DocChangeModel } from "@/lib/models/DocChange";
+import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 
@@ -53,7 +54,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           }
         : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
     })
-      .select({ _id: 1, title: 1, currentUploadVersion: 1 })
+      .select({ _id: 1, orgId: 1, title: 1, currentUploadVersion: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -63,6 +64,82 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     // - default: full payload (includes text blobs, createdBy, etc).
     const includeChangeList = !lite;
     const includeText = !lite && !noText;
+
+    /**
+     * Best-effort backfill: ensure we have at least a "replacement event" row for each upload version.
+     *
+     * Why: older uploads (or rare extraction failures) can have missing text snapshots; in that case
+     * the upload processor may skip creating a DocChange record. The History UI should still be able
+     * to show that versions exist, even if we can't show a diff summary.
+     *
+     * Boundaries:
+     * - Only backfill recent versions (bounded by `limit`) for perf.
+     * - Never overwrite an existing DocChange record (only insert missing).
+     * - Never generate AI diffs here (no credits / no network calls).
+     */
+    if (includeChangeList) {
+      try {
+        const uploads = (await UploadModel.find({
+          docId: docObjectId,
+          isDeleted: { $ne: true },
+          status: "completed",
+          version: { $gte: 1 },
+        })
+          .select({ _id: 1, version: 1, createdDate: 1, userId: 1 })
+          .sort({ version: -1, createdDate: -1 })
+          .limit(limit + 1)
+          .lean()) as Array<Record<string, any>>;
+
+        const byVersion = new Map<number, Record<string, any>>();
+        for (const u of uploads) {
+          const v = typeof u?.version === "number" && Number.isFinite(u.version) ? Number(u.version) : null;
+          if (!v || v < 1) continue;
+          // Keep first-seen entry (highest version, then newest createdDate due to sort).
+          if (!byVersion.has(v)) byVersion.set(v, u);
+        }
+
+        const backfillOrgId =
+          (doc as any)?.orgId && Types.ObjectId.isValid(String((doc as any).orgId))
+            ? new Types.ObjectId(String((doc as any).orgId))
+            : new Types.ObjectId(actor.orgId);
+
+        for (const [v, u] of byVersion.entries()) {
+          if (v < 2) continue;
+          const prev = byVersion.get(v - 1) ?? null;
+          const createdDate = u?.createdDate instanceof Date ? u.createdDate : null;
+          const createdByUserIdRaw = u?.userId ? String(u.userId) : "";
+          const createdByUserId =
+            createdByUserIdRaw && Types.ObjectId.isValid(createdByUserIdRaw)
+              ? new Types.ObjectId(createdByUserIdRaw)
+              : null;
+
+          await DocChangeModel.updateOne(
+            { docId: docObjectId, toVersion: v },
+            {
+              $setOnInsert: {
+                orgId: backfillOrgId,
+                docId: docObjectId,
+                createdByUserId,
+                fromUploadId: prev?._id ?? null,
+                toUploadId: u?._id ?? null,
+                fromVersion: v - 1,
+                toVersion: v,
+                previousText: "",
+                newText: "",
+                diff: { summary: "", changes: [], pagesThatChanged: [] },
+                // Preserve original timing when possible; fallback is "now".
+                createdDate: createdDate ?? new Date(),
+                updatedDate: createdDate ?? new Date(),
+              },
+            },
+            // Avoid Mongoose timestamps overriding our backfilled createdDate.
+            { upsert: true, timestamps: false },
+          );
+        }
+      } catch {
+        // ignore; best-effort
+      }
+    }
 
     const changeFilter: Record<string, unknown> = {
       docId: docObjectId,

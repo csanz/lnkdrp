@@ -4,46 +4,20 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSession } from "next-auth/react";
 import Modal from "@/components/modals/Modal";
 import { fetchJson } from "@/lib/http/fetchJson";
-import { clearSidebarCache, setActiveOrgIdForCaches } from "@/lib/sidebarCache";
-import {
-  ORGS_CACHE_UPDATED_EVENT,
-  readOrgsCacheSnapshot,
-  refreshOrgsCache,
-  setCachedActiveOrgId,
-} from "@/lib/orgsCache";
+import { refreshOrgsCache } from "@/lib/orgsCache";
 import { useNavigationLocked } from "@/app/providers";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
-
-function initials(nameOrEmail: string) {
-  const s = nameOrEmail.trim();
-  if (!s) return "?";
-  const parts = s.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
-}
-
-function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1 text-[12px] font-semibold text-[var(--muted-2)]">
-      {children}
-    </span>
-  );
-}
-
-type OrgRow = { id: string; name: string; type: string; role: string; avatarUrl?: string | null };
+import Pill from "@/components/ui/Pill";
+import { initials } from "@/lib/orgs/orgsClient";
+import { useOrgsSnapshot } from "@/lib/orgs/useOrgsSnapshot";
 
 export default function WorkspaceManager() {
-  const { data: session } = useSession();
+  const { session, stableOrgs, activeOrgId, orgsBusy, orgsError } = useOrgsSnapshot();
   const navLocked = useNavigationLocked();
 
-  const [orgsBusy, setOrgsBusy] = useState(false);
   const [orgActionBusy, setOrgActionBusy] = useState(false);
-  const [orgs, setOrgs] = useState<OrgRow[]>([]);
-  const [orgsError, setOrgsError] = useState<string | null>(null);
-  const [serverActiveOrgId, setServerActiveOrgId] = useState<string | null>(null);
 
   const [showAllWorkspacesModal, setShowAllWorkspacesModal] = useState(false);
   const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
@@ -72,24 +46,6 @@ export default function WorkspaceManager() {
   >([]);
   const [inviteFilter, setInviteFilter] = useState<"not_used" | "used" | "expired" | "all">("not_used");
 
-  // Prefer the server-reported active org (it is the source of truth), fall back to session.
-  const activeOrgId = serverActiveOrgId ?? (session as any)?.activeOrgId ?? null;
-
-  // Ensure stable ordering even if older cached data was written when the server sorted active-first.
-  const stableOrgs = useMemo(() => {
-    const rows = Array.isArray(orgs) ? [...orgs] : [];
-    rows.sort((a, b) => {
-      const aPersonal = a.type === "personal";
-      const bPersonal = b.type === "personal";
-      if (aPersonal && !bPersonal) return -1;
-      if (bPersonal && !aPersonal) return 1;
-      const byName = String(a.name ?? "").localeCompare(String(b.name ?? ""));
-      if (byName) return byName;
-      return String(a.id ?? "").localeCompare(String(b.id ?? ""));
-    });
-    return rows;
-  }, [orgs]);
-
   const currentOrg = useMemo(() => {
     if (!activeOrgId) return null;
     return stableOrgs.find((o) => o.id === activeOrgId) ?? null;
@@ -104,63 +60,6 @@ export default function WorkspaceManager() {
   // Personal workspaces are single-user; invites are not allowed.
   const canInvite = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
 
-  useEffect(() => {
-    if (!session?.user) return;
-    let cancelled = false;
-    const userKey = session.user.email ?? "";
-
-    // Instant load: hydrate from local cache first (best-effort).
-    const cached = readOrgsCacheSnapshot(userKey);
-    if (cached) {
-      setOrgs(Array.isArray(cached.orgs) ? (cached.orgs as OrgRow[]) : []);
-      setServerActiveOrgId(typeof cached.activeOrgId === "string" ? cached.activeOrgId : null);
-      setOrgsError(null);
-    } else {
-      setOrgsBusy(true);
-      setOrgsError(null);
-    }
-
-    void (async () => {
-      try {
-        const snap = await refreshOrgsCache({ userKey, force: true });
-        if (cancelled) return;
-        if (snap) {
-          setOrgs(Array.isArray(snap.orgs) ? (snap.orgs as OrgRow[]) : []);
-          setServerActiveOrgId(typeof snap.activeOrgId === "string" ? snap.activeOrgId : null);
-          setOrgsError(null);
-        }
-      } catch (e) {
-        if (cancelled) return;
-        if (!cached) {
-          setOrgs([]);
-          setOrgsError(e instanceof Error ? e.message : "Failed to load orgs");
-          setServerActiveOrgId(null);
-        }
-      } finally {
-        if (!cancelled) setOrgsBusy(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [session?.user]);
-
-  useEffect(() => {
-    if (!session?.user) return;
-    const userKey = session.user.email ?? "";
-
-    function onCacheUpdated() {
-      const snap = readOrgsCacheSnapshot(userKey);
-      if (!snap) return;
-      setOrgs(Array.isArray(snap.orgs) ? (snap.orgs as OrgRow[]) : []);
-      setServerActiveOrgId(typeof snap.activeOrgId === "string" ? snap.activeOrgId : null);
-    }
-
-    window.addEventListener(ORGS_CACHE_UPDATED_EVENT, onCacheUpdated);
-    return () => window.removeEventListener(ORGS_CACHE_UPDATED_EVENT, onCacheUpdated);
-  }, [session?.user]);
-
   const switchOrg = useCallback(
     async (nextOrgId: string) => {
       if (!nextOrgId) return;
@@ -169,9 +68,6 @@ export default function WorkspaceManager() {
       if (orgActionBusy) return;
       setOrgActionBusy(true);
       try {
-        setCachedActiveOrgId(nextOrgId, session.user.email ?? "");
-        setActiveOrgIdForCaches(nextOrgId);
-        clearSidebarCache({ memoryOnly: true });
         if (typeof window !== "undefined") {
           const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
           try {
@@ -211,9 +107,6 @@ export default function WorkspaceManager() {
       setCreateOrgName("");
 
       if (newOrgId) {
-        setCachedActiveOrgId(newOrgId, session.user.email ?? "");
-        setActiveOrgIdForCaches(newOrgId);
-        clearSidebarCache({ memoryOnly: true });
         if (typeof window !== "undefined") {
           const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
           try {

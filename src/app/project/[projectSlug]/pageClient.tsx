@@ -148,9 +148,9 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
     <div className="flex h-[100svh] w-full bg-white text-zinc-900">
       <LeftSidebar
         onAddNewFile={(file) => {
-          // Match doc page UX: push to home and let pipeline handle it.
+          // Route to pre-upload preview, then upload.
           setPendingFile(file);
-          router.push("/");
+          router.push("/upload");
         }}
       />
 

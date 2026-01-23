@@ -17,6 +17,7 @@ export type ApiErrorShape = { error?: string } | { message?: string } | Record<s
  * Fetch a JSON endpoint and return parsed JSON.
  *
  * Throws an Error when the response is not ok.
+ * Side effects: in the browser, may redirect to `/` on detected auth failures.
  */
 export async function fetchJson<T>(
   input: RequestInfo | URL,
@@ -56,7 +57,11 @@ export async function fetchJson<T>(
 
   return data as T;
 }
-/** Return whether a given error message indicates an auth failure that should redirect home. */
+/**
+ * Returns true when an error message indicates an auth failure that should redirect home.
+ *
+ * Exists to avoid sending users into broken states after session expiry during auth-required actions.
+ */
 function shouldRedirectHomeForAuthFailure(message: string): boolean {
   const m = message.trim().toLowerCase();
   return m === "not authenticated" || m === "unauthorized" || m === "authentication required";

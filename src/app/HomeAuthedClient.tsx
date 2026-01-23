@@ -1,24 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import UploadButton from "@/components/UploadButton";
 import AppShellLayout from "./(app)/AppShellLayout";
-import { apiCreateDoc, apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
+import { apiCreateDoc, apiCreateUpload } from "@/lib/client/docUploadPipeline";
 import { usePendingUpload } from "@/lib/pendingUpload";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
-/**
- * Title From File Name (uses replace, trim).
- */
-
- 
-
-function titleFromFileName(name: string) {
-  const base = (name ?? "").trim().replace(/\.[a-z0-9]+$/i, "");
-  return base || "Untitled document";
-}
 /**
  * File Name From Url (uses trim, pop, filter).
  */
@@ -42,12 +32,19 @@ function fileNameFromUrl(rawUrl: string): string {
 export default function HomeAuthedClient() {
   const router = useRouter();
   const { pendingFile, setPendingFile, setHasEnteredShell } = usePendingUpload();
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const lastAutoHandledRef = useRef<File | null>(null);
   const [urlInput, setUrlInput] = useState("");
   const [urlBusy, setUrlBusy] = useState(false);
+  const pushingUploadRef = useRef(false);
+
+  async function waitForNextPaint() {
+    if (typeof window === "undefined") return;
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+  }
+
+  // no-op (preview is handled on `/upload`)
 
   /**
    * If the user just created an org and re-authed, there may be a short window where the
@@ -87,42 +84,6 @@ export default function HomeAuthedClient() {
     setHasEnteredShell(true);
   }, [setHasEnteredShell]);
 /**
- * Handle Upload (updates state (setBusy, setError); uses setBusy, setError, apiCreateDoc).
- */
-
-
-  async function handleUpload(file: File) {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await ensureOrgReadyForUpload();
-      const docId = await apiCreateDoc({ title: titleFromFileName(file.name) });
-      const uploadId = await apiCreateUpload({
-        docId,
-        originalFileName: file.name,
-        contentType: file.type || "application/pdf",
-        sizeBytes: file.size,
-      });
-
-      startBlobUploadAndProcess({
-        docId,
-        uploadId,
-        file,
-        onFailure: async (message) => {
-          // This is best-effort; the doc page will surface status as it updates.
-          void message;
-        },
-      });
-
-      router.push(`/doc/${encodeURIComponent(docId)}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-/**
  * Handle Url Submit (updates state (setError, setUrlBusy); uses setError, trim, setUrlBusy).
  */
 
@@ -151,12 +112,14 @@ export default function HomeAuthedClient() {
 
     setUrlBusy(true);
     try {
+      // Ensure the "Fetching…" UI renders immediately before we do any async work.
+      await waitForNextPaint();
       await ensureOrgReadyForUpload();
       const inferredName = fileNameFromUrl(raw);
       // For URL uploads, don't name the doc from the URL path (e.g. ".../view" → "view").
       // Start with a neutral placeholder; the processing pipeline will rename using AI `docName`.
       const docId = await apiCreateDoc({ title: "Untitled document" });
-      const uploadId = await apiCreateUpload({
+      const upload = await apiCreateUpload({
         docId,
         originalFileName: inferredName,
         contentType: "application/pdf",
@@ -164,7 +127,7 @@ export default function HomeAuthedClient() {
       });
 
       // Ask server to fetch the PDF and attach it to this upload.
-      const importRes = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}/import-url`, {
+      const importRes = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(upload.id)}/import-url`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ url: raw }),
@@ -175,7 +138,7 @@ export default function HomeAuthedClient() {
       }
 
       // Trigger processing (async background job).
-      await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}/process`, { method: "POST" });
+      await fetchWithTempUser(`/api/uploads/${encodeURIComponent(upload.id)}/process`, { method: "POST" });
 
       router.push(`/doc/${encodeURIComponent(docId)}`);
     } catch (e) {
@@ -185,21 +148,20 @@ export default function HomeAuthedClient() {
     }
   }
 
-  // If something else (e.g. sidebar "Add new file") set a pending file, handle it here.
+  // If something else (e.g. sidebar "Add new file") set a pending file, route to `/upload`.
   useEffect(() => {
     if (!pendingFile) return;
-    if (busy) return;
     if (lastAutoHandledRef.current === pendingFile) return;
+    if (pushingUploadRef.current) return;
     lastAutoHandledRef.current = pendingFile;
-    setPendingFile(null);
-    void handleUpload(pendingFile);
+    setError(null);
+    pushingUploadRef.current = true;
+    router.push("/upload");
+    window.setTimeout(() => {
+      pushingUploadRef.current = false;
+    }, 500);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingFile, busy, setPendingFile]);
-
-  const subtitle = useMemo(
-    () => "Upload a PDF to create a new doc.",
-    [],
-  );
+  }, [pendingFile, router]);
 
   return (
     <AppShellLayout>
@@ -234,61 +196,71 @@ export default function HomeAuthedClient() {
                 e.stopPropagation();
                 setDragActive(false);
                 const file = e.dataTransfer?.files?.[0] ?? null;
-                if (file) void handleUpload(file);
+                if (!file) return;
+                const name = (file.name ?? "").toLowerCase();
+                const isPdf = file.type === "application/pdf" || name.endsWith(".pdf");
+                if (!isPdf) return;
+                setPendingFile(file);
+                setError(null);
+                router.push("/upload");
               }}
             >
               <div className="text-xl font-semibold tracking-tight">Upload</div>
-              <div className="mt-3 text-sm leading-6 text-[var(--muted)]">{subtitle}</div>
+              <div className="mt-3 text-sm leading-6 text-[var(--muted)]">Choose a PDF to preview, then upload.</div>
 
               <div className="mt-8 flex flex-col items-center gap-3.5">
                 <UploadButton
-                  label={busy ? "Working…" : "Choose a PDF"}
+                  label="Choose a PDF"
                   accept="pdf"
                   variant="cta"
-                  disabled={busy}
-                  onFileSelected={(file) => void handleUpload(file)}
+                  disabled={urlBusy}
+                  onFileSelected={(file) => {
+                    setPendingFile(file);
+                    setError(null);
+                    router.push("/upload");
+                  }}
                 />
                 <div className="text-xs leading-5 text-[var(--muted)]">
                   or drag and drop a PDF anywhere onto this area
                 </div>
               </div>
 
-              <div className="mt-8 flex items-center gap-3">
-                <div className="h-px flex-1 bg-[var(--border)]" />
-                <div className="text-xs font-medium text-[var(--muted)]">or</div>
-                <div className="h-px flex-1 bg-[var(--border)]" />
-              </div>
-
-              <div className="mt-6">
-                <div className="text-sm font-semibold text-[var(--fg)]">Paste a PDF link</div>
-                <div className="mt-2 text-xs leading-5 text-[var(--muted)]">
-                  We’ll download it and create a share link for you.
+                <div className="mt-8 flex items-center gap-3">
+                  <div className="h-px flex-1 bg-[var(--border)]" />
+                  <div className="text-xs font-medium text-[var(--muted)]">or</div>
+                  <div className="h-px flex-1 bg-[var(--border)]" />
                 </div>
-                <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <input
-                    value={urlInput}
-                    onChange={(e) => setUrlInput(e.target.value)}
-                    placeholder="https://example.com/pitch.pdf"
-                    className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-black/10"
-                    disabled={urlBusy || busy}
-                    onKeyDown={(e) => {
-                      if (e.key !== "Enter") return;
-                      e.preventDefault();
-                      void handleUrlSubmit();
-                    }}
-                  />
-                  <button
-                    type="button"
-                    className="inline-flex shrink-0 items-center justify-center rounded-xl bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] transition-colors hover:bg-[var(--primary-hover-bg)] disabled:opacity-60"
-                    onClick={() => void handleUrlSubmit()}
-                    disabled={urlBusy || busy}
-                  >
-                    {urlBusy ? "Fetching…" : "Upload link"}
-                  </button>
-                </div>
-              </div>
 
-              {error ? <div className="mt-5 text-sm font-medium text-red-600">{error}</div> : null}
+                <div className="mt-6">
+                  <div className="text-sm font-semibold text-[var(--fg)]">Paste a PDF link</div>
+                  <div className="mt-2 text-xs leading-5 text-[var(--muted)]">
+                    We’ll download it and create a share link for you.
+                  </div>
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <input
+                      value={urlInput}
+                      onChange={(e) => setUrlInput(e.target.value)}
+                      placeholder="https://example.com/pitch.pdf"
+                      className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-black/10"
+                    disabled={urlBusy}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        e.preventDefault();
+                        void handleUrlSubmit();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="inline-flex shrink-0 items-center justify-center rounded-xl bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] transition-colors hover:bg-[var(--primary-hover-bg)] disabled:opacity-60"
+                      onClick={() => void handleUrlSubmit()}
+                    disabled={urlBusy}
+                    >
+                      {urlBusy ? "Fetching…" : "Upload link"}
+                    </button>
+                  </div>
+                </div>
+
+                {error ? <div className="mt-5 text-sm font-medium text-red-600">{error}</div> : null}
             </div>
           </div>
         </div>

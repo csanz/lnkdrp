@@ -16,10 +16,10 @@ export const dynamic = "force-dynamic";
 
 const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 /**
- * Random Base62 (uses randomBytes, max, ceil).
+ * Generates a Base62 string using cryptographic randomness.
+ *
+ * Exists to mint public IDs (e.g. shareId) without sequential patterns.
  */
-
-
 function randomBase62(length: number): string {
   let out = "";
   while (out.length < length) {
@@ -33,11 +33,13 @@ function randomBase62(length: number): string {
   }
   return out;
 }
+
 /**
- * Slugify (uses slice, replace, toLowerCase).
+ * Creates a URL-friendly slug from user-provided text.
+ *
+ * Exists to produce stable project URLs while keeping slugs predictable and safe.
+ * Note: callers still must ensure uniqueness within a workspace.
  */
-
-
 function slugify(input: string) {
   return input
     .trim()
@@ -47,11 +49,13 @@ function slugify(input: string) {
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
 }
+
 /**
- * Ensure Unique Slug (uses exists, toString, now).
+ * Finds an available project slug within the workspace (and legacy personal scope when relevant).
+ *
+ * Exists to avoid slug collisions without requiring a client round-trip. May issue multiple DB reads.
+ * Returns a best-effort unique slug; falls back to timestamp suffix after many attempts.
  */
-
-
 async function ensureUniqueSlug(opts: { orgId: Types.ObjectId; legacyUserId?: Types.ObjectId; base: string }) {
   const base = opts.base || "project";
   // Try base, then base-2, base-3, ...
@@ -78,17 +82,22 @@ async function ensureUniqueSlug(opts: { orgId: Types.ObjectId; legacyUserId?: Ty
 }
 
 /**
- * Generate a short public identifier for `/p/:shareId`.
+ * Generates a short public identifier for `/p/:shareId`.
+ *
+ * This is not secret; it is a URL slug used for public share paths.
  */
 function newProjectShareId() {
   // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
   return randomBase62(12);
 }
+
 /**
- * Handle GET requests.
+ * `GET /api/projects`
+ *
+ * Lists non-request projects for the active workspace (paged), with optional search and `lite=1` mode.
+ * Side effects: may best-effort backfill legacy `orgId`/`slug` (skipped for `lite=1` and `sidebar=1`).
+ * Errors: 400 for unexpected failures; auth failures surface via actor resolution.
  */
-
-
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -124,6 +133,8 @@ export async function GET(request: Request) {
             ],
           }
         : { orgId }),
+      // Keep soft-deleted projects out of lists. This also keeps list/count queries snappy in large workspaces.
+      isDeleted: { $ne: true },
       $and: [
         { $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }] },
         { $or: [{ requestUploadToken: { $exists: false } }, { requestUploadToken: null }, { requestUploadToken: "" }] },
@@ -139,18 +150,24 @@ export async function GET(request: Request) {
     const total = lite && !sidebar ? null : await ProjectModel.countDocuments(filter);
     // Stable ordering: when `updatedDate` ties (or is null), add a deterministic tiebreaker.
     // Without this, MongoDB is free to return ties in arbitrary order, causing UI "flip" on refresh.
+    // Perf: `lite=1` is used by small pickers (doc actions menu) and must be as cheap as possible.
+    // Only include fields those UIs actually need (id + name + slug for display/linking).
+    const select = lite
+      ? "_id name slug"
+      : {
+          _id: 1,
+          shareId: 1,
+          name: 1,
+          slug: 1,
+          description: 1,
+          docCount: 1,
+          autoAddFiles: 1,
+          updatedDate: 1,
+          createdDate: 1,
+        };
+
     const projects = await ProjectModel.find(filter)
-      .select({
-        _id: 1,
-        shareId: 1,
-        name: 1,
-        slug: 1,
-        description: 1,
-        docCount: 1,
-        autoAddFiles: 1,
-        updatedDate: 1,
-        createdDate: 1,
-      })
+      .select(select)
       .sort({ updatedDate: -1, _id: -1 })
       .skip((page - 1) * limit)
       .limit(limit)
@@ -225,7 +242,13 @@ export async function GET(request: Request) {
             createdDate: p.createdDate ? new Date(p.createdDate).toISOString() : null,
           })),
         },
-        { headers: { "cache-control": "no-store" } },
+        // Allow very short-lived private caching for `lite=1` pickers (cuts perceived latency).
+        // Full lists / sidebar calls remain no-store to keep counts fresh.
+        {
+          headers: {
+            "cache-control": lite && !sidebar && !q ? "private, max-age=15" : "no-store",
+          },
+        },
       ),
       actor,
     );
@@ -235,11 +258,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
 /**
- * Handle POST requests.
+ * `POST /api/projects`
+ *
+ * Creates a new non-request project (name/description/autoAddFiles) with a unique slug and shareId.
+ * Errors: 400 for validation/unexpected failures, 409 when a duplicate name constraint is hit.
  */
-
-
 export async function POST(request: Request) {
   try {
     debugLog(1, "[api/projects] POST");

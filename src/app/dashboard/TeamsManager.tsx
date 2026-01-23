@@ -13,6 +13,8 @@ import {
   refreshOrgsCache,
 } from "@/lib/orgsCache";
 import { useNavigationLocked } from "@/app/providers";
+import Pill from "@/components/ui/Pill";
+import { initialsFromNameOrEmail } from "@/lib/format/initials";
 
 type OrgRow = { id: string; name: string; type: string; role: string; avatarUrl?: string | null };
 
@@ -27,21 +29,7 @@ type MemberRow = {
   isActive: boolean;
 };
 
-function Pill({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1 text-[12px] font-semibold text-[var(--muted-2)]">
-      {children}
-    </span>
-  );
-}
-
-function initials(nameOrEmail: string) {
-  const s = nameOrEmail.trim();
-  if (!s) return "?";
-  const parts = s.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
-}
+const initials = initialsFromNameOrEmail;
 
 function formatDate(s: string | null): string {
   if (!s) return "—";

@@ -8,6 +8,12 @@
 
 export type FormatShortDateInvalidBehavior = "empty" | "slice10" | "raw";
 
+/**
+ * Formats an ISO date string into a short, locale-aware label.
+ *
+ * Exists for UI consistency across dashboards/tables. On invalid input, behavior is controlled by
+ * `opts.invalid` (defaults to returning `iso.slice(0, 10)`).
+ */
 export function formatShortDate(
   iso: string,
   opts?: { invalid?: FormatShortDateInvalidBehavior },
@@ -26,6 +32,11 @@ export function formatShortDate(
   }
 }
 
+/**
+ * Formats a start/end ISO pair into a readable date range label.
+ *
+ * Falls back to `YYYY-MM-DD to YYYY-MM-DD` when parsing fails.
+ */
 export function formatDateRange(start: string, end: string): string {
   const s = new Date(start);
   const e = new Date(end);
@@ -43,6 +54,11 @@ export function formatDateRange(start: string, end: string): string {
   }
 }
 
+/**
+ * Formats a `YYYY-MM` month key into a locale-aware month label.
+ *
+ * Exists for charts/tables that use stable month bucket keys. Returns the input when parsing fails.
+ */
 export function formatMonthLabel(yyyyMm: string): string {
   const [y, m] = yyyyMm.split("-");
   const yy = Number(y);

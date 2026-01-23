@@ -4,6 +4,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 
 type BillingStatus = {
@@ -152,16 +153,16 @@ export default function SuccessClient(props: { sessionId?: string; demo?: string
         ) : null}
 
         <div className="mt-6 flex flex-wrap gap-2">
-          <a className="rounded-xl bg-[var(--fg)] px-4 py-2 text-[13px] font-semibold text-[var(--bg)]" href="/dashboard">
+          <Link className="rounded-xl bg-[var(--fg)] px-4 py-2 text-[13px] font-semibold text-[var(--bg)]" href="/dashboard">
             Go to dashboard
-          </a>
+          </Link>
           {state.phase !== "active" ? (
-            <a
+            <Link
               className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
               href="/dashboard?tab=overview"
             >
               Back to billing
-            </a>
+            </Link>
           ) : null}
         </div>
     </div>

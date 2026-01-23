@@ -119,6 +119,7 @@ type PdfPage = {
 
 const SHARE_LOCAL_STATS_PREFIX = "lnkdrp_share_local_stats_v1:";
 const SHARE_OWNER_STATS_PREFIX = "lnkdrp_share_owner_stats_v1:";
+const SHARE_VISIT_SESSION_PREFIX = "lnkdrp_share_visit_session_v1:";
 
 type OwnerStats = { views: number; pagesViewed: number };
 type ShareContext = { isOwner: boolean; stats?: OwnerStats };
@@ -146,6 +147,44 @@ function isBrowser() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 type LocalShareStats = { viewedAt?: number; pagesSeen?: number[] };
+
+type ShareVisitSession = { visitId: string; lastSeenAt: number };
+
+/** Generate a cryptographically-random hex string of the given byte length. */
+function randomHex(bytes: number): string {
+  const arr = new Uint8Array(bytes);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Best-effort per-tab visit id for share pages.
+ * Stored in sessionStorage (new tab = new visit).
+ */
+function getOrCreateShareVisitId(shareId: string): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const key = `${SHARE_VISIT_SESSION_PREFIX}${shareId}`;
+    const raw = window.sessionStorage.getItem(key);
+    const now = Date.now();
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown;
+      const visitId = parsed && typeof parsed === "object" ? (parsed as any).visitId : null;
+      const lastSeenAt = parsed && typeof parsed === "object" ? (parsed as any).lastSeenAt : null;
+      if (typeof visitId === "string" && visitId.trim()) {
+        const last = typeof lastSeenAt === "number" && Number.isFinite(lastSeenAt) ? lastSeenAt : now;
+        window.sessionStorage.setItem(key, JSON.stringify({ visitId, lastSeenAt: now } satisfies ShareVisitSession));
+        // If a tab sits idle for a long time, rotate the visit id (best-effort).
+        if (now - last < 30 * 60 * 1000) return visitId;
+      }
+    }
+    const visitId = `v_${randomHex(16)}`;
+    window.sessionStorage.setItem(key, JSON.stringify({ visitId, lastSeenAt: now } satisfies ShareVisitSession));
+    return visitId;
+  } catch {
+    return null;
+  }
+}
 /**
  * Read Local Share Stats (uses isBrowser, getItem, parse).
  */
@@ -272,6 +311,7 @@ export function PdfJsViewer({
   const shareTimingLastFlushAtMsRef = useRef<number>(0);
   const shareTimingPageRef = useRef<number>(initialPage);
   const shareTimingPageEnteredAtMsRef = useRef<number | null>(null);
+  const shareVisitIdRef = useRef<string | null>(null);
   const [viewMode, setViewMode] = useState<"single" | "all" | "grid">("single");
   const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
@@ -433,7 +473,7 @@ export function PdfJsViewer({
     const el = viewportRef.current;
     if (!el) return;
 
-    let rafs: number[] = [];
+    const rafs: number[] = [];
     function measure() {
       // `el` is captured by a closure; TS won't keep the null-narrowing. We already early-returned above.
       const rect = el!.getBoundingClientRect();
@@ -470,7 +510,7 @@ export function PdfJsViewer({
     const el = headerRef.current;
     if (!el) return;
 
-    let rafs: number[] = [];
+    const rafs: number[] = [];
     function measure() {
       // `el` is captured by a closure; TS won't keep the null-narrowing. We already early-returned above.
       const rect = el!.getBoundingClientRect();
@@ -1452,6 +1492,7 @@ export function PdfJsViewer({
     if (!shareIdSafe) return;
     if (!hasFirstPaint) return;
     const shareId = shareIdSafe;
+    shareVisitIdRef.current = getOrCreateShareVisitId(shareId);
     let cancelled = false;
 /**
  * Load Context (updates state (setShareContext); uses fetchWithTempUser, catch, json).
@@ -1502,14 +1543,30 @@ export function PdfJsViewer({
     const shareId = shareIdSafe;
     const botId = getOrCreateBotId();
     if (!botId) return;
+    const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareId);
+    if (!visitId) return;
+    shareVisitIdRef.current = visitId;
 
-    shareTimingEnteredAtMsRef.current = Date.now();
-    shareTimingLastFlushAtMsRef.current = 0;
-    // Do NOT reset page timing here; it is managed by the page-dwell effect below.
+    function start(now: number) {
+      shareTimingEnteredAtMsRef.current = now;
+      shareTimingLastFlushAtMsRef.current = 0;
+      // Only start page timer if not already started.
+      if (!shareTimingPageEnteredAtMsRef.current) shareTimingPageEnteredAtMsRef.current = now;
+    }
+
+    function stop() {
+      shareTimingEnteredAtMsRef.current = null;
+      shareTimingLastFlushAtMsRef.current = 0;
+      shareTimingPageEnteredAtMsRef.current = null;
+    }
+
+    start(Date.now());
 
     function flushTime({ includePage }: { includePage: boolean }) {
       const enteredAtMs = shareTimingEnteredAtMsRef.current;
       if (!enteredAtMs) return;
+      // Only accumulate while the tab is visible (foreground).
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       const now = Date.now();
       // Avoid double-flush storms from multiple lifecycle events.
       if (shareTimingLastFlushAtMsRef.current && now - shareTimingLastFlushAtMsRef.current < 1200) return;
@@ -1521,7 +1578,7 @@ export function PdfJsViewer({
       // Reset start time so we increment in chunks.
       shareTimingEnteredAtMsRef.current = now;
 
-      const payload: Record<string, unknown> = { botId, durationMs };
+      const payload: Record<string, unknown> = { botId, visitId, durationMs };
       if (includePage) {
         const p = shareTimingPageRef.current;
         if (typeof p === "number" && Number.isFinite(p) && p >= 1) payload.pageNumber = Math.floor(p);
@@ -1535,10 +1592,40 @@ export function PdfJsViewer({
     }
 
     function onVisChange() {
-      if (document.visibilityState === "hidden") flushTime({ includePage: true });
+      if (document.visibilityState === "hidden") {
+        // Flush any visible time up to this point, then stop timers while hidden.
+        // (We intentionally do NOT accumulate hidden time.)
+        const enteredAtMs = shareTimingEnteredAtMsRef.current;
+        if (enteredAtMs) {
+          const now = Date.now();
+          const durationMs = now - enteredAtMs;
+          if (Number.isFinite(durationMs) && durationMs >= 1500) {
+            const payload: Record<string, unknown> = { botId, visitId, durationMs };
+            const p = shareTimingPageRef.current;
+            if (typeof p === "number" && Number.isFinite(p) && p >= 1) {
+              payload.pageNumber = Math.floor(p);
+              // Provide best-effort timing bounds so the server can record per-visit page segments.
+              payload.enteredAtMs = Math.max(0, Math.floor(now - durationMs));
+              payload.leftAtMs = Math.floor(now);
+            }
+            void fetchWithTempUser(`/api/share/${shareId}/stats`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              keepalive: true,
+              body: JSON.stringify(payload),
+            }).catch(() => void 0);
+          }
+        }
+        stop();
+        return;
+      }
+      // Visible again: restart timers from now.
+      start(Date.now());
     }
     function onPageHide() {
+      // Flush only visible time; pagehide typically fires while still visible.
       flushTime({ includePage: true });
+      stop();
     }
 
     window.addEventListener("pagehide", onPageHide);
@@ -1547,6 +1634,7 @@ export function PdfJsViewer({
     return () => {
       // Best-effort on unmount too (route transitions).
       flushTime({ includePage: true });
+      stop();
       window.clearInterval(interval);
       window.removeEventListener("pagehide", onPageHide);
       document.removeEventListener("visibilitychange", onVisChange);
@@ -1554,12 +1642,32 @@ export function PdfJsViewer({
   }, [hasFirstPaint, shareIdSafe]);
 
   useEffect(() => {
+    // Keep the "current page" ref in sync for time flushes.
+    if (!shareIdSafe) return;
+    if (!hasFirstPaint) return;
+    shareTimingPageRef.current = pageNumber;
+    // If we're visible and the page timer isn't running yet, start it now.
+    try {
+      if (typeof document !== "undefined" && document.visibilityState === "visible" && !shareTimingPageEnteredAtMsRef.current) {
+        shareTimingPageEnteredAtMsRef.current = Date.now();
+      }
+    } catch {
+      // ignore
+    }
+  }, [hasFirstPaint, pageNumber, shareIdSafe]);
+
+  useEffect(() => {
     // Track per-page dwell time (best-effort): when the page changes, flush time for the previous page.
     if (!shareIdSafe) return;
     if (!hasFirstPaint) return;
+    // Only count time while visible.
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
     const shareId = shareIdSafe;
     const botId = getOrCreateBotId();
     if (!botId) return;
+    const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareId);
+    if (!visitId) return;
+    shareVisitIdRef.current = visitId;
 
     const prevPage = shareTimingPageRef.current;
     const enteredAt = shareTimingPageEnteredAtMsRef.current;
@@ -1580,7 +1688,14 @@ export function PdfJsViewer({
         method: "POST",
         headers: { "content-type": "application/json" },
         keepalive: true,
-        body: JSON.stringify({ botId, pageNumber: Math.floor(prevPage), durationMs }),
+        body: JSON.stringify({
+          botId,
+          visitId,
+          pageNumber: Math.floor(prevPage),
+          durationMs,
+          enteredAtMs: Math.floor(enteredAt),
+          leftAtMs: Math.floor(now),
+        }),
       }).catch(() => void 0);
     }
 
@@ -1597,6 +1712,8 @@ export function PdfJsViewer({
     if (!hasFirstPaint) return;
     const botId = getOrCreateBotId();
     if (!botId) return;
+    const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareIdSafe);
+    if (visitId) shareVisitIdRef.current = visitId;
 
     const local = readLocalShareStats(shareIdSafe);
     const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
@@ -1607,7 +1724,7 @@ export function PdfJsViewer({
         void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ botId, pageNumber }),
+          body: JSON.stringify({ botId, ...(visitId ? { visitId } : {}), pageNumber }),
         }).catch(() => void 0);
       });
 
@@ -1625,7 +1742,7 @@ export function PdfJsViewer({
         void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ botId, pageNumber }),
+          body: JSON.stringify({ botId, ...(visitId ? { visitId } : {}), pageNumber }),
         }).catch(() => void 0);
       });
       pagesSeen.add(pageNumber);
@@ -1643,6 +1760,8 @@ export function PdfJsViewer({
     if (!hasFirstPaint) return;
     const botId = getOrCreateBotId();
     if (!botId) return;
+    const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareIdSafe);
+    if (visitId) shareVisitIdRef.current = visitId;
     const local = readLocalShareStats(shareIdSafe);
     const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
     if (pagesSeen.has(pageNumber)) return;
@@ -1651,7 +1770,7 @@ export function PdfJsViewer({
       void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ botId, pageNumber }),
+        body: JSON.stringify({ botId, ...(visitId ? { visitId } : {}), pageNumber }),
       }).catch(() => void 0);
     });
 

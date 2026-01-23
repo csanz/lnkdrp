@@ -24,21 +24,41 @@ export type CreditsSnapshot = {
   blocked: boolean;
 };
 
+/**
+ * Coerces an unknown value into a non-negative integer.
+ *
+ * Exists to keep billing math resilient to null/strings/legacy schema shapes.
+ */
 function clampNonNegInt(n: unknown): number {
   const v = typeof n === "number" ? n : typeof n === "string" ? Number(n) : NaN;
   if (!Number.isFinite(v)) return 0;
   return Math.max(0, Math.floor(v));
 }
 
+/**
+ * Returns true when a Stripe subscription status should be treated as "pro".
+ *
+ * Exists to map Stripe status strings into a simple boolean used throughout credit logic.
+ */
 function isProStatus(status: unknown): boolean {
   const s = typeof status === "string" ? status.trim().toLowerCase() : "";
   return s === "active" || s === "trialing";
 }
 
+/**
+ * Returns the UTC start of the month for a given date.
+ *
+ * Used as a stable fallback billing window when Stripe/balance boundaries are missing.
+ */
 function startOfUtcMonth(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
 }
 
+/**
+ * Returns the UTC start of the next month for a given date.
+ *
+ * Used to close the fallback cycle window when Stripe/balance boundaries are missing.
+ */
 function startOfNextUtcMonth(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
 }
@@ -50,6 +70,11 @@ function startOfNextUtcMonth(d: Date): Date {
  * - Billing cycle boundaries from `SubscriptionModel` (Stripe period start/end)
  * - Balances from `WorkspaceCreditBalanceModel`
  * - Usage in-cycle from `CreditLedgerModel` (charged rows within cycle window)
+ *
+ * `fast=true` avoids expensive ledger aggregation when pre-aggregates are missing; it trades accuracy
+ * for speed in header/dashboard contexts and may conservatively treat on-demand as fully used.
+ *
+ * Errors: throws when `workspaceId` is invalid or when required DB operations fail.
  */
 export async function getCreditsSnapshot(params: { workspaceId: string; fast?: boolean }): Promise<CreditsSnapshot> {
   const workspaceId = params.workspaceId;

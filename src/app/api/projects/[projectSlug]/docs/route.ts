@@ -97,7 +97,7 @@ export async function GET(
     if (!Types.ObjectId.isValid(projectIdParam)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    let project = await ProjectModel.findOne(
+    const project = await ProjectModel.findOne(
       allowLegacyByUserId
         ? {
             $or: [

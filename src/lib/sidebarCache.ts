@@ -59,19 +59,30 @@ export const ACTIVE_ORG_STORAGE_KEY = "lnkdrp-active-org-id";
 export const ACTIVE_ORG_CHANGED_EVENT = "lnkdrp-active-org-changed";
 const MIN_REFRESH_MS = 1500;
 
-let memByKey = new Map<string, SidebarCacheSnapshot>();
-let inFlightByKey = new Map<string, Promise<void>>();
+const memByKey = new Map<string, SidebarCacheSnapshot>();
+const inFlightByKey = new Map<string, Promise<void>>();
 
 /** Return whether we're in a browser environment where events/storage are available. */
 function isBrowser(): boolean {
   return typeof window !== "undefined" && typeof document !== "undefined";
 }
 
+/**
+ * Normalizes an org id into a canonical 24-hex string (or null).
+ *
+ * Exists to prevent cross-org cache leakage and to keep cache keys stable.
+ */
 function normalizeOrgId(v: unknown): string | null {
   const s = typeof v === "string" ? v.trim() : "";
   return /^[a-f0-9]{24}$/i.test(s) ? s : null;
 }
 
+/**
+ * Reads the active org id for client caches from localStorage (best-effort).
+ *
+ * Exists so non-React modules (like the sidebar cache) can key data correctly before session/org
+ * hydration finishes. Returns null when unavailable.
+ */
 function getActiveOrgIdForCaches(): string | null {
   if (!isBrowser()) return null;
   try {
@@ -99,14 +110,29 @@ export function setActiveOrgIdForCaches(orgId: string | null): void {
   }
 }
 
+/**
+ * Builds a per-org localStorage key for the sidebar snapshot.
+ *
+ * Exists to keep multi-workspace data isolated in localStorage.
+ */
 function storageKeyForOrg(orgId: string | null): string {
   return `${STORAGE_KEY_BASE}:${orgId ?? "anon"}`;
 }
 
+/**
+ * Builds a per-org localStorage key for the snapshot ETag.
+ *
+ * Exists to enable conditional GETs for `/api/sidebar` to reduce payloads.
+ */
 function etagStorageKeyForOrg(orgId: string | null): string {
   return `${ETAG_KEY_BASE}:${orgId ?? "anon"}`;
 }
 
+/**
+ * Reads the stored ETag for the current org (best-effort).
+ *
+ * Returns an empty string when missing/unavailable.
+ */
 function readEtag(orgId: string | null): string {
   if (!isBrowser()) return "";
   try {
@@ -116,6 +142,11 @@ function readEtag(orgId: string | null): string {
   }
 }
 
+/**
+ * Persists the ETag for the current org (best-effort).
+ *
+ * Exists so `/api/sidebar` can use `If-None-Match` and return 304 when unchanged.
+ */
 function writeEtag(orgId: string | null, etag: string): void {
   if (!isBrowser()) return;
   try {
@@ -253,6 +284,57 @@ export function notifyProjectsChanged(): void {
 export function notifyDocsChanged(): void {
   if (!isBrowser()) return;
   window.dispatchEvent(new Event(DOCS_CHANGED_EVENT));
+}
+
+/**
+ * Optimistically add a newly-created project to the cached sidebar snapshot.
+ *
+ * Exists so the left sidebar updates immediately after project creation even if the
+ * subsequent `/api/sidebar` refresh is delayed (navigation, debouncing, transient errors).
+ *
+ * Note: this is best-effort and will be reconciled by `refreshSidebarCache()`.
+ */
+export function optimisticallyAddProjectToSidebarCache(
+  project: SidebarProjectListItem,
+  opts?: { orgId?: string | null },
+): void {
+  const orgId = normalizeOrgId(opts?.orgId) ?? getActiveOrgIdForCaches();
+  if (!orgId) return;
+  if (!project?.id) return;
+
+  const prev = getSidebarCacheSnapshot({ orgId });
+  if (!prev) return;
+  // Requests live in a separate section; do not mix.
+  if (project.isRequest) return;
+
+  const limit = prev.projects.limit || 10;
+  const nowIso = new Date().toISOString();
+  const nextItem: SidebarProjectListItem = {
+    ...project,
+    // Ensure timestamps exist so sorting feels correct even before a server refresh.
+    updatedDate: project.updatedDate ?? nowIso,
+    createdDate: project.createdDate ?? nowIso,
+    isRequest: false,
+  };
+
+  const existing = prev.projects.items ?? [];
+  if (existing.some((p) => p?.id === nextItem.id)) return;
+
+  const nextItems = [nextItem, ...existing].slice(0, limit);
+  const nextTotal = Math.max(prev.projects.total, existing.length) + 1;
+
+  setSidebarCacheSnapshot(
+    {
+      ...prev,
+      updatedAt: Date.now(),
+      projects: {
+        ...prev.projects,
+        items: nextItems,
+        total: nextTotal,
+      },
+    },
+    { orgId },
+  );
 }
 
 /**

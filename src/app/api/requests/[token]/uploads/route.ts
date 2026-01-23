@@ -64,6 +64,46 @@ function newUploadSecret() {
   // Capability secret for this upload (used by recipient to PATCH/process without auth).
   return crypto.randomBytes(24).toString("base64url");
 }
+
+type MongoDupKeyError = {
+  code?: unknown;
+  keyPattern?: Record<string, unknown>;
+  keyValue?: Record<string, unknown>;
+  message?: unknown;
+};
+
+function getDupKeyFields(err: unknown): string[] {
+  if (!err || typeof err !== "object") return [];
+  const e = err as MongoDupKeyError;
+  if (e.code !== 11000) return [];
+  const fields = new Set<string>();
+  for (const src of [e.keyPattern, e.keyValue]) {
+    if (!src || typeof src !== "object") continue;
+    for (const k of Object.keys(src)) fields.add(k);
+  }
+  const msg = typeof e.message === "string" ? e.message : "";
+  const m = msg.match(/dup key.*?\{(.*?)\}/i);
+  if (m?.[1]) {
+    const keys = m[1]
+      .split(",")
+      .map((s) => s.split(":")[0]?.trim())
+      .filter(Boolean);
+    for (const k of keys) fields.add(k);
+  }
+  return Array.from(fields);
+}
+
+function describeMongoError(err: unknown): Record<string, unknown> {
+  if (!err || typeof err !== "object") return {};
+  const e = err as MongoDupKeyError & { name?: unknown };
+  return {
+    name: typeof e.name === "string" ? e.name : undefined,
+    code: typeof e.code === "number" ? e.code : undefined,
+    dupKeyFields: getDupKeyFields(err),
+    keyPattern: e.keyPattern ?? undefined,
+    keyValue: e.keyValue ?? undefined,
+  };
+}
 /**
  * Title From File Name (uses trim, pop, split).
  */
@@ -168,12 +208,14 @@ export async function POST(
 
     // Create with a shareId (retry on rare collisions).
     let docId: Types.ObjectId | null = null;
+    let lastErr: unknown = null;
+    let title = titleFromFileName(originalFileName);
     for (let i = 0; i < 3; i++) {
       try {
         const created = await DocModel.create({
           orgId: effectiveOrgId,
           userId: ownerUserId,
-          title: titleFromFileName(originalFileName),
+          title,
           status: "draft",
           shareId: newDocShareId(),
           projectId,
@@ -185,17 +227,24 @@ export async function POST(
         docId = (doc as unknown as { _id?: Types.ObjectId })._id ?? null;
         break;
       } catch (e) {
-        if (
-          e &&
-          typeof e === "object" &&
-          "code" in e &&
-          (e as { code?: number }).code === 11000
-        )
+        lastErr = e;
+        const dupFields = getDupKeyFields(e);
+        if (dupFields.includes("shareId")) continue;
+        if (dupFields.includes("title")) {
+          title = `${title} (${randomBase62(4)})`;
           continue;
+        }
         throw e;
       }
     }
-    if (!docId) throw new Error("Failed to create doc");
+    if (!docId) {
+      const details = describeMongoError(lastErr);
+      throw new Error(
+        `Failed to create doc${
+          details.dupKeyFields ? ` (dupKeyFields=${JSON.stringify(details.dupKeyFields)})` : ""
+        }`,
+      );
+    }
 
     const uploadSecret = newUploadSecret();
     const upload = await UploadModel.create({
@@ -236,7 +285,10 @@ export async function POST(
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/requests/:token/uploads] POST failed", { message });
+    debugError(1, "[api/requests/:token/uploads] POST failed", {
+      message,
+      ...(describeMongoError(err) as Record<string, unknown>),
+    });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

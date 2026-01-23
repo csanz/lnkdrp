@@ -14,6 +14,8 @@ type Props = {
   isCopying: boolean;
   copyDone: boolean;
   onCopy: () => void;
+  shareEnabled: boolean;
+  onShareEnabledChange: (enabled: boolean) => void;
   relevancyEnabled: boolean;
   onToggleRelevancy: (next: boolean) => void;
   pdfDownloadEnabled: boolean;
@@ -37,6 +39,8 @@ export default function DocSharePanel({
   isCopying,
   copyDone,
   onCopy,
+  shareEnabled,
+  onShareEnabledChange,
   relevancyEnabled: _relevancyEnabled,
   onToggleRelevancy: _onToggleRelevancy,
   pdfDownloadEnabled,
@@ -110,6 +114,7 @@ export default function DocSharePanel({
   }
 
   const displayValue = shareUrl || "Generating link…";
+  const shareActive = Boolean(shareUrl) && shareEnabled;
 
   const ai = aiOutput && typeof aiOutput === "object" ? (aiOutput as Record<string, unknown>) : null;
   const oneLiner = typeof ai?.one_liner === "string" ? ai.one_liner.trim() : "";
@@ -175,7 +180,7 @@ export default function DocSharePanel({
           <CopyButton
             copyDone={copyDone}
             isCopying={isCopying}
-            disabled={!shareUrl}
+            disabled={!shareActive}
             onCopy={onCopy}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--primary-bg)] text-[var(--primary-fg)] shadow-sm transition-colors duration-150 hover:bg-[var(--primary-hover-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-ring)] focus:ring-offset-2 focus:ring-offset-[var(--panel)] disabled:opacity-50"
             copyAriaLabel="Copy link"
@@ -207,7 +212,7 @@ export default function DocSharePanel({
                 })();
               }
             }}
-            disabled={!shareUrl || sharePasswordSaving}
+            disabled={!shareActive || sharePasswordSaving}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] shadow-sm transition-colors duration-150 hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] focus:ring-offset-2 focus:ring-offset-[var(--panel)] disabled:opacity-50"
             aria-label={sharePasswordEnabled ? "Change share password" : "Set share password"}
             title={sharePasswordEnabled ? "Password protected" : "Not password protected"}
@@ -222,6 +227,45 @@ export default function DocSharePanel({
 
         <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
           <div className="min-w-0">
+            <div className="text-[12px] font-medium text-[var(--fg)]">Share enabled</div>
+            <div className="mt-0.5 text-[12px] text-[var(--muted)]">
+              {shareEnabled
+                ? "Anyone with the link can view this document (subject to password, if set)."
+                : "Sharing is disabled. Receivers will see “This document is no longer shared.”"}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            role="switch"
+            aria-checked={shareEnabled}
+            aria-label="Share enabled"
+            disabled={!shareUrl}
+            className={[
+              "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+              shareEnabled ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
+              !shareUrl ? "opacity-50" : "cursor-pointer",
+            ].join(" ")}
+            onClick={() => onShareEnabledChange(!shareEnabled)}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" && e.key !== " ") return;
+              e.preventDefault();
+              onShareEnabledChange(!shareEnabled);
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className={[
+                "inline-block h-5 w-5 transform rounded-full bg-[var(--panel)] shadow ring-1 ring-[var(--border)] transition-transform",
+                shareEnabled ? "translate-x-5" : "translate-x-1",
+              ].join(" ")}
+            />
+          </button>
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
+          <div className="min-w-0">
             <div className="text-[12px] font-medium text-[var(--fg)]">Allow download</div>
           </div>
 
@@ -230,12 +274,12 @@ export default function DocSharePanel({
             role="switch"
             aria-checked={pdfDownloadEnabled}
             aria-label="Allow download"
-            disabled={!shareUrl}
+            disabled={!shareActive}
             className={[
               "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
               pdfDownloadEnabled ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
-              !shareUrl ? "opacity-50" : "cursor-pointer",
+              !shareActive ? "opacity-50" : "cursor-pointer",
             ].join(" ")}
             onClick={() => onPdfDownloadEnabledChange(!pdfDownloadEnabled)}
             onKeyDown={(e) => {
@@ -267,12 +311,12 @@ export default function DocSharePanel({
             role="switch"
             aria-checked={revisionHistoryEnabled}
             aria-label="Enable revision history viewing"
-            disabled={!shareUrl}
+            disabled={!shareActive}
             className={[
               "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
               revisionHistoryEnabled ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
-              !shareUrl ? "opacity-50" : "cursor-pointer",
+              !shareActive ? "opacity-50" : "cursor-pointer",
             ].join(" ")}
             onClick={() => onRevisionHistoryEnabledChange(!revisionHistoryEnabled)}
             onKeyDown={(e) => {

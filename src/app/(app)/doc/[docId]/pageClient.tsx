@@ -47,6 +47,7 @@ type DocDTO = {
   aiOutput?: unknown | null;
   receiverRelevanceChecklist?: boolean;
   shareAllowPdfDownload?: boolean;
+  shareEnabled?: boolean;
   shareAllowRevisionHistory?: boolean;
   sharePasswordEnabled?: boolean;
   receivedViaRequestProjectId?: string | null;
@@ -288,9 +289,44 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     const nextUrl = `${desiredPdfBaseUrl}${desiredPdfHash}`;
     if (pdfIframeKeyRef.current === nextUrl) return;
 
-    // `useEffect` runs after paint, so this won't block initial UI render.
+    // `useEffect` runs after paint, but mounting the native PDF viewer can still be heavy.
+    // Defer setting the iframe `src` so the rest of the page feels instantly interactive.
     pdfIframeKeyRef.current = nextUrl;
-    setPdfIframeSrc(nextUrl);
+    setPdfIframeSrc(null);
+
+    let timeoutId: number | null = null;
+    let idleId: number | null = null;
+    const schedule = () => {
+      // If a newer URL has been requested since we scheduled, abort.
+      if (pdfIframeKeyRef.current !== nextUrl) return;
+      setPdfIframeSrc(nextUrl);
+    };
+
+    try {
+      const w = window as unknown as {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number;
+        cancelIdleCallback?: (id: number) => void;
+        setTimeout: (cb: () => void, ms: number) => number;
+        clearTimeout: (id: number) => void;
+      };
+      if (typeof w.requestIdleCallback === "function") {
+        idleId = w.requestIdleCallback(schedule, { timeout: 1200 });
+      } else {
+        timeoutId = w.setTimeout(schedule, 350);
+      }
+    } catch {
+      timeoutId = window.setTimeout(schedule, 350);
+    }
+
+    return () => {
+      if (timeoutId != null) window.clearTimeout(timeoutId);
+      try {
+        const w = window as any;
+        if (idleId != null && typeof w.cancelIdleCallback === "function") w.cancelIdleCallback(idleId);
+      } catch {
+        // ignore
+      }
+    };
   }, [desiredPdfBaseUrl, desiredPdfHash]);
 
   const requestReviewEnabledForRequestRepo = useMemo(() => {
@@ -688,12 +724,15 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   useEffect(() => {
     const uploadId = replaceUploadId;
     if (!uploadId) return;
+    // Pre-compute a stable encoded id so TypeScript doesn't complain about
+    // possibly-null captured vars inside async closures.
+    const encodedUploadId = encodeURIComponent(uploadId);
     let cancelled = false;
     let intervalId: number | null = null;
 
     async function poll() {
       try {
-        const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}`, { cache: "no-store" });
+        const res = await fetchWithTempUser(`/api/uploads/${encodedUploadId}`, { cache: "no-store" });
         if (!res.ok) return;
         const json = (await res.json().catch(() => null)) as any;
         if (cancelled) return;
@@ -726,32 +765,31 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         }
 
         if (status === "completed") {
-          // Fetch a lightweight change summary (best-effort) for the banner.
-          let summary = "";
-          if (typeof replaceToVersion === "number" && Number.isFinite(replaceToVersion)) {
-            try {
-              const changesRes = await fetchWithTempUser(
-                `/api/docs/${encodeURIComponent(docRef.current.id)}/changes?lite=1&limit=10`,
-                {
-                cache: "no-store",
-                },
-              );
-              if (changesRes.ok) {
-                const changesJson = (await changesRes.json().catch(() => null)) as any;
-                const changes = Array.isArray(changesJson?.changes) ? (changesJson.changes as any[]) : [];
-                const match = changes.find((c) => Number(c?.toVersion) === replaceToVersion) ?? null;
-                summary = typeof match?.summary === "string" ? match.summary : "";
-              }
-            } catch {
-              // ignore (best-effort)
+          const actualV = upload && typeof upload === "object" ? (upload as any).version : null;
+          let actualVersion: number | null =
+            typeof actualV === "number" && Number.isFinite(actualV) ? Number(actualV) : replaceToVersion;
+          // Best-effort: confirm the doc's current version from server truth (avoids off-by-one banners).
+          try {
+            const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docRef.current.id)}?lite=1`, {
+              cache: "no-store",
+            });
+            if (res.ok) {
+              const json = (await res.json().catch(() => null)) as any;
+              const v = json && typeof json === "object" ? (json as any).doc?.currentUploadVersion : null;
+              if (typeof v === "number" && Number.isFinite(v)) actualVersion = Number(v);
             }
+          } catch {
+            // ignore (best-effort)
           }
           const vLabel =
-            typeof replaceToVersion === "number" && Number.isFinite(replaceToVersion) ? `Updated to v${replaceToVersion}.` : "Update complete.";
+            typeof actualVersion === "number" && Number.isFinite(actualVersion)
+              ? `Updated to v${actualVersion}.`
+              : "Update complete.";
           setReplaceNotice({
             kind: "success",
-            toVersion: replaceToVersion,
-            summary: summary?.trim() ? summary.trim() : vLabel,
+            toVersion: actualVersion,
+            // Keep this banner short; the user can click into history for details.
+            summary: vLabel,
             createdAtMs: Date.now(),
           });
           setHighlightVersionLink(true);
@@ -908,6 +946,31 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       setDoc((d) => ({ ...d, title: patchedTitle }));
       setTitleDraft(patchedTitle);
       setEditingTitle(false);
+      // Best-effort: keep the left sidebar's cached "recent docs" title in sync immediately.
+      // Relying solely on `/api/sidebar` revalidation can be delayed by ETag/304 caching.
+      try {
+        const snap = getSidebarCacheSnapshot();
+        const items = snap?.docs?.items;
+        if (snap && Array.isArray(items) && items.length) {
+          let changed = false;
+          const nextItems = items.map((it) => {
+            if (!it || typeof it !== "object") return it;
+            const id = typeof (it as { id?: unknown }).id === "string" ? (it as { id: string }).id : "";
+            if (id !== doc.id) return it;
+            changed = true;
+            return { ...(it as object), title: patchedTitle };
+          });
+          if (changed) {
+            setSidebarCacheSnapshot({
+              ...snap,
+              updatedAt: Date.now(),
+              docs: { ...snap.docs, items: nextItems as typeof snap.docs.items },
+            });
+          }
+        }
+      } catch {
+        // ignore
+      }
       notifyDocsChanged();
     } catch (e) {
       setTitleSaveError(e instanceof Error ? e.message : "Failed to rename document");
@@ -1101,6 +1164,27 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     } catch {
       // Revert on failure
       setDoc((d) => ({ ...d, shareAllowRevisionHistory: prev }));
+    }
+  }
+
+  /**
+   * Set share enabled (master switch for `/s/:shareId`).
+   */
+  async function setShareEnabled(next: boolean) {
+    const prev = doc.shareEnabled !== false;
+    if (prev === next) return;
+
+    // Optimistic update
+    setDoc((d) => ({ ...d, shareEnabled: next }));
+    try {
+      await fetchJson(`/api/docs/${doc.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ shareEnabled: next }),
+      });
+    } catch {
+      // Revert on failure
+      setDoc((d) => ({ ...d, shareEnabled: prev }));
     }
   }
 /**
@@ -1369,13 +1453,17 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
       // Create a new upload record
       let newUploadId = "";
+      let createdVersion: number | null = null;
       try {
-        newUploadId = await apiCreateUpload({
+        const created = await apiCreateUpload({
           docId: doc.id,
           originalFileName: file.name,
-          contentType: file.type,
+          // Some platforms/drivers provide an empty MIME type for PDFs; keep the pipeline consistent.
+          contentType: file.type || "application/pdf",
           sizeBytes: file.size,
         });
+        newUploadId = created.id;
+        createdVersion = created.version;
       } catch (e) {
         const message = e instanceof Error ? e.message : "";
         if (message === "TEMP_USER_LIMIT") setTempGateOpen(true);
@@ -1396,7 +1484,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         typeof docRef.current.currentUploadVersion === "number" && Number.isFinite(docRef.current.currentUploadVersion)
           ? docRef.current.currentUploadVersion + 1
           : null;
-      setReplaceToVersion(optimisticNextVersion);
+      setReplaceToVersion(createdVersion ?? optimisticNextVersion);
       setReplaceUploadId(newUploadId);
       setReplaceUploadStatus("uploading");
       preparingStartedAtRef.current = Date.now();
@@ -1465,38 +1553,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         {/* Top bar */}
         <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-3 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:px-6 md:py-4">
             <div className="flex w-full min-w-0 items-center gap-3 md:w-auto">
-              <button
-                type="button"
-                onClick={() => void handleToggleStar()}
-                className={[
-                  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
-                  starred
-                    ? [
-                        // Light mode: theme-aligned (soft tint + readable icon), not a loud block of color.
-                        "border-amber-200 bg-amber-50 text-amber-600 hover:bg-amber-100",
-                        "dark:border-amber-300/30 dark:bg-amber-300/10 dark:text-amber-200 dark:hover:bg-amber-300/15",
-                      ].join(" ")
-                    : [
-                        // Light mode: stick to theme neutrals; rely on hover + border for affordance.
-                        "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                        "dark:text-[var(--muted)]",
-                      ].join(" "),
-                  navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-[var(--panel)]" : "",
-                ].join(" ")}
-                disabled={navLockActive && !isReceivedViaRequest}
-                aria-disabled={navLockActive && !isReceivedViaRequest}
-                aria-label={starred ? "Unstar document" : "Star document"}
-                title={
-                  navLockActive && !isReceivedViaRequest
-                    ? "Disabled while uploading"
-                    : starred
-                      ? "Starred"
-                      : "Star"
-                }
-              >
-                <StarIcon filled={starred} />
-              </button>
-
               {isReceivedViaRequest ? (
                 <div
                   className={[
@@ -1517,42 +1573,91 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 <div className="min-w-0 flex-1">
                   {!isReceivedViaRequest && editingTitle ? (
                     <div className="min-w-0">
-                      <input
-                        ref={titleInputRef}
-                        value={titleDraft}
-                        disabled={titleSaveBusy}
-                        onChange={(e) => {
-                          setTitleDraft(e.target.value);
-                          if (titleSaveError) setTitleSaveError(null);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            void saveTitle(titleDraft);
-                          } else if (e.key === "Escape") {
-                            e.preventDefault();
-                            setTitleDraft(displayDocName);
-                            setEditingTitle(false);
-                            setTitleSaveError(null);
+                      <div className="flex min-w-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleToggleStar()}
+                          className={[
+                            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors",
+                            starred
+                              ? "text-amber-600 dark:text-amber-200"
+                              : "text-[var(--muted)] hover:text-[var(--fg)]",
+                            "hover:bg-[var(--panel-hover)]",
+                            navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
+                          ].join(" ")}
+                          disabled={navLockActive && !isReceivedViaRequest}
+                          aria-disabled={navLockActive && !isReceivedViaRequest}
+                          aria-label={starred ? "Unstar document" : "Star document"}
+                          title={
+                            navLockActive && !isReceivedViaRequest
+                              ? "Disabled while uploading"
+                              : starred
+                                ? "Starred"
+                                : "Star"
                           }
-                        }}
-                        onBlur={() => {
-                          // Best-effort: save on blur if changed.
-                          void saveTitle(titleDraft);
-                        }}
-                        aria-label="Document name"
-                        className={[
-                          "w-full min-w-0 rounded-md border bg-[var(--panel)] px-2 py-1 text-sm font-semibold text-[var(--fg)]",
-                          "border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-black/10",
-                          titleSaveBusy ? "opacity-70" : "",
-                        ].join(" ")}
-                      />
+                        >
+                          <StarIcon filled={starred} />
+                        </button>
+
+                        <input
+                          ref={titleInputRef}
+                          value={titleDraft}
+                          disabled={titleSaveBusy}
+                          onChange={(e) => {
+                            setTitleDraft(e.target.value);
+                            if (titleSaveError) setTitleSaveError(null);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void saveTitle(titleDraft);
+                            } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              setTitleDraft(displayDocName);
+                              setEditingTitle(false);
+                              setTitleSaveError(null);
+                            }
+                          }}
+                          onBlur={() => {
+                            // Best-effort: save on blur if changed.
+                            void saveTitle(titleDraft);
+                          }}
+                          aria-label="Rename document"
+                          className={[
+                            "min-w-0 flex-1 rounded-md border bg-[var(--panel)] px-2 py-1 text-sm font-semibold text-[var(--fg)]",
+                            "border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-black/10",
+                            titleSaveBusy ? "opacity-70" : "",
+                          ].join(" ")}
+                        />
+                      </div>
                       {titleSaveError ? (
                         <div className="mt-1 text-xs font-medium text-red-700">{titleSaveError}</div>
                       ) : null}
                     </div>
                   ) : isReceivedViaRequest ? (
                     <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--fg)]">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleStar()}
+                        className={[
+                          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors",
+                          starred ? "text-amber-600 dark:text-amber-200" : "text-[var(--muted)] hover:text-[var(--fg)]",
+                          "hover:bg-[var(--panel-hover)]",
+                          navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
+                        ].join(" ")}
+                        disabled={navLockActive && !isReceivedViaRequest}
+                        aria-disabled={navLockActive && !isReceivedViaRequest}
+                        aria-label={starred ? "Unstar document" : "Star document"}
+                        title={
+                          navLockActive && !isReceivedViaRequest
+                            ? "Disabled while uploading"
+                            : starred
+                              ? "Starred"
+                              : "Star"
+                        }
+                      >
+                        <StarIcon filled={starred} />
+                      </button>
                       {!hasHydratedFromServer ? (
                         <span
                           className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
@@ -1564,7 +1669,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       {displayVersion != null ? (
                         navLockActive ? (
                           <span
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1 py-0 text-[11px] font-medium text-[var(--muted-2)]"
                             aria-label={`Document version ${displayVersion}`}
                             title={`Version ${displayVersion}`}
                           >
@@ -1573,7 +1678,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         ) : (
                           <Link
                             href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)] hover:underline underline-offset-4"
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1 py-0 text-[11px] font-medium text-[var(--muted-2)] hover:underline underline-offset-4"
                             aria-label={`Document version ${displayVersion} (view history)`}
                             title={`Version ${displayVersion} (view history)`}
                           >
@@ -1584,6 +1689,28 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   ) : (
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleStar()}
+                        className={[
+                          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors",
+                          starred ? "text-amber-600 dark:text-amber-200" : "text-[var(--muted)] hover:text-[var(--fg)]",
+                          "hover:bg-[var(--panel-hover)]",
+                          navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
+                        ].join(" ")}
+                        disabled={navLockActive && !isReceivedViaRequest}
+                        aria-disabled={navLockActive && !isReceivedViaRequest}
+                        aria-label={starred ? "Unstar document" : "Star document"}
+                        title={
+                          navLockActive && !isReceivedViaRequest
+                            ? "Disabled while uploading"
+                            : starred
+                              ? "Starred"
+                              : "Star"
+                        }
+                      >
+                        <StarIcon filled={starred} />
+                      </button>
                       <button
                         type="button"
                         disabled={navLockActive}
@@ -1613,7 +1740,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       {displayVersion != null ? (
                         navLockActive ? (
                           <span
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1 py-0 text-[11px] font-medium text-[var(--muted-2)]"
                             aria-label={`Document version ${displayVersion}`}
                             title={`Version ${displayVersion}`}
                           >
@@ -1622,7 +1749,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         ) : (
                           <Link
                             href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--muted-2)] hover:underline underline-offset-4"
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1 py-0 text-[11px] font-medium text-[var(--muted-2)] hover:underline underline-offset-4"
                             aria-label={`Document version ${displayVersion} (view history)`}
                             title={`Version ${displayVersion} (view history)`}
                           >
@@ -1639,7 +1766,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             const Pill = (
                               <span
                                 className={[
-                                  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5",
+                                  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 align-middle",
                                   "text-[12px] font-medium leading-none text-[var(--muted-2)]",
                                   "bg-transparent hover:bg-[var(--panel-hover)]",
                                 ].join(" ")}
@@ -1681,7 +1808,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   )}
                   {doc.lastUpdate?.uploadedAt ? (
-                    <div className="mt-1 flex items-center gap-2 text-xs text-[var(--muted)]">
+                    <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-[var(--muted)]">
                       <ArrowPathIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
                       <span>
                         {(() => {
@@ -1722,7 +1849,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   ) : null}
                   {isReceivedViaRequest ? (
-                    <div className="mt-1 flex items-center gap-2 text-xs text-[var(--muted)]">
+                    <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-[var(--muted)] md:hidden">
                       <InboxArrowDownIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
                       <span>
                         uploaded into{" "}
@@ -1742,7 +1869,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   ) : null}
                   {guideRequestProjectId ? (
-                    <div className="mt-1 flex items-center gap-2 text-xs text-[var(--muted)]">
+                    <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-[var(--muted)]">
                       <LightBulbIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
                       <span>
                         guide for{" "}
@@ -1762,7 +1889,29 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
             </div>
 
             <div className="flex w-full flex-wrap items-center justify-end gap-2 md:w-auto md:gap-3 lg:flex-nowrap">
-              {hasHydratedFromServer && !isReceivedViaRequest ? (
+              {isReceivedViaRequest ? (
+                <div className="hidden min-w-0 items-center gap-2 text-xs text-[var(--muted)] md:flex">
+                  <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                  <div className="flex min-w-0 items-baseline gap-1">
+                    <span className="shrink-0 whitespace-nowrap">uploaded into</span>
+                    {requestProjectId ? (
+                      <Link
+                        href={`/project/${encodeURIComponent(requestProjectId)}`}
+                        className="min-w-0 truncate font-medium text-[var(--fg)] hover:underline underline-offset-4"
+                        title={receivedRequestProjectName || (doc.project?.name ?? "Request")}
+                      >
+                        {receivedRequestProjectName || (doc.project?.name ?? "Request")}
+                      </Link>
+                    ) : (
+                      <span className="min-w-0 truncate font-medium text-[var(--fg)]">
+                        {receivedRequestProjectName || (doc.project?.name ?? "Request")}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ) : null}
+
+              {hasHydratedFromServer && !isReceivedViaRequest && doc.status !== "ready" ? (
                 <div className="flex items-center gap-2">
                 <span
                   className={
@@ -1880,7 +2029,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 {replaceNotice ? (
                   <div
                     className={[
-                      "rounded-xl border px-3 py-2 text-sm",
+                      // NOTE: slightly larger bottom padding to visually match the top padding
+                      // (the summary line's font metrics otherwise makes the bottom feel tighter).
+                      "rounded-xl border px-4 pt-3 pb-4 text-sm",
                       replaceNotice.kind === "success"
                         ? [
                             // Light mode
@@ -1894,11 +2045,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           ].join(" "),
                     ].join(" ")}
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0 flex-1">
                         <div
                           className={[
-                            "text-[11px] font-semibold uppercase tracking-wide",
+                            "text-[11px] font-semibold uppercase tracking-wide leading-none",
                             replaceNotice.kind === "success"
                               ? "text-emerald-700 dark:text-white/70"
                               : "text-red-700 dark:text-white/70",
@@ -1908,7 +2059,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         </div>
                         <div
                           className={[
-                            "mt-1 text-sm font-medium",
+                            "mt-1 text-sm font-medium leading-snug",
                             replaceNotice.kind === "success"
                               ? "text-emerald-950 dark:text-white/90"
                               : "text-red-950 dark:text-white/90",
@@ -1917,11 +2068,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           {replaceNotice.summary}
                         </div>
                       </div>
-                      <div className="shrink-0">
+                      <div className="shrink-0 sm:self-center">
                         <Link
                           href={`/doc/${encodeURIComponent(doc.id)}/history`}
                           className={[
-                            "inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold",
+                            "inline-flex items-center rounded-lg px-3 py-1.5 text-xs font-semibold leading-none",
                             replaceNotice.kind === "success"
                               ? [
                                   "bg-emerald-600/10 text-emerald-900 hover:bg-emerald-600/15",
@@ -2007,8 +2158,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       <iframe
                         title="PDF"
                         src={pdfIframeSrc}
-                        // Keep the request low priority so the page UI stays snappy.
-                        fetchPriority="low"
+                        loading="lazy"
                         className={[
                           "block h-full w-full border-0",
                           pdfStatusOverlay ? "pointer-events-none" : "",
@@ -2023,13 +2173,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--border)] border-t-[var(--fg)]"
                               aria-hidden="true"
                             />
-                            <span>Loading PDF…</span>
-                          </div>
-                          <div className="mt-2 text-sm text-[var(--muted)]">
-                            The page is ready — fetching the PDF in the background.
-                          </div>
-                          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
-                            <div className="h-full w-1/3 bg-[var(--primary-bg)] animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
+                            <span>Loading…</span>
                           </div>
                         </div>
                       </div>
@@ -2040,7 +2184,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             Preparing…
                           </div>
                           <div className="mt-2 text-sm text-[var(--muted)]">
-                            We’re preparing your PDF. Nothing you need to do.
+                            Please don’t leave this page while we prepare your PDF.
                           </div>
                           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
                             <div className="h-full w-1/3 bg-[var(--primary-bg)] animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
@@ -2081,6 +2225,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     isCopying={isCopying}
                     copyDone={copyDone}
                     onCopy={() => void copyLink()}
+                    shareEnabled={doc.shareEnabled !== false}
+                    onShareEnabledChange={(next) => void setShareEnabled(next)}
                     relevancyEnabled={Boolean(doc.receiverRelevanceChecklist)}
                     onToggleRelevancy={(next) => void setReceiverRelevanceChecklist(next)}
                     pdfDownloadEnabled={Boolean(doc.shareAllowPdfDownload)}
@@ -2581,7 +2727,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     <div className="mt-2 text-sm text-[var(--muted)]">
                       {doc.status === "failed"
                         ? "Processing failed. Replace the file to try again."
-                        : "We’re preparing your PDF. Nothing you need to do."}
+                        : "Please don’t leave this page while we prepare your PDF."}
                     </div>
                   </aside>
                 )}
@@ -2712,7 +2858,7 @@ function StarIcon({ filled }: { filled: boolean }) {
       stroke="currentColor"
       strokeWidth="1.5"
       aria-hidden="true"
-      className="h-4 w-4"
+      className="h-3.5 w-3.5"
     >
       <path
         strokeLinecap="round"

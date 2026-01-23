@@ -149,6 +149,13 @@ body {
     "Segoe UI Emoji";
 }
 
+/* Sidebar typography: improve perceived sharpness on macOS. */
+.lnkdrp-sidebar {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
 /* Indeterminate progress bar (subtle, calm). */
 @keyframes lnkdrpIndeterminate {
   0% {

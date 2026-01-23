@@ -20,13 +20,20 @@ import { debugError, debugLog } from "@/lib/debug";
 
 export const runtime = "nodejs";
 /**
- * Handle POST requests.
+ * `POST /api/blob/upload`
+ *
+ * Implements the Vercel Blob client-upload handshake: mints short-lived client upload tokens
+ * (and may accept upload-completed callbacks, though we intentionally don't rely on them).
+ * Errors: returns 400 with a readable message + traceId on validation/SDK failures.
  */
-
-
 export async function POST(request: Request) {
+  const traceId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   try {
-    debugLog(2, "[api/blob/upload] POST");
+    // Unconditional dev log: if blob token minting breaks, uploads fail silently client-side.
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[api/blob/upload] POST begin", { traceId });
+    }
+    debugLog(2, "[api/blob/upload] POST", { traceId });
     // The SDK expects a JSON body in one of two event formats:
     // - blob.generate-client-token
     // - blob.upload-completed (callback)
@@ -39,7 +46,10 @@ export async function POST(request: Request) {
         // Safety gate: only allow uploads under our test prefix.
         assertAllowedTestPathname(pathname);
 
-        debugLog(1, "[api/blob/upload] mint token", { pathname });
+        if (process.env.NODE_ENV !== "production") {
+          console.log("[api/blob/upload] mint token", { traceId, pathname });
+        }
+        debugLog(1, "[api/blob/upload] mint token", { traceId, pathname });
         return {
           allowedContentTypes: [...CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES],
           maximumSizeInBytes: CLIENT_UPLOAD_MAX_SIZE_BYTES,
@@ -53,8 +63,9 @@ export async function POST(request: Request) {
     return NextResponse.json(jsonResponse);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/blob/upload] failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    console.error("[api/blob/upload] failed", { traceId, message });
+    debugError(1, "[api/blob/upload] failed", { traceId, message });
+    return NextResponse.json({ error: message, traceId }, { status: 400 });
   }
 }
 

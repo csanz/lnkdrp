@@ -6,8 +6,14 @@
  * before navigation begins.
  */
 export const SWITCHING_OVERLAY_ID = "ld_workspace_switch_overlay";
+export const DOC_NAV_OVERLAY_ID = "ld_doc_nav_overlay";
+export const PROJECT_NAV_OVERLAY_ID = "ld_project_nav_overlay";
 export const SWITCHING_OVERLAY_Y_KEY = "ld_ws_switch_overlay_y";
 export const SWITCHING_OVERLAY_STARTED_AT_KEY = "ld_ws_switch_started_at";
+// Used to pre-seed client cache scoping on the *next* page load after switching.
+// Important: do NOT write `lnkdrp-active-org-id` from the old workspace page, because
+// sidebar/starred effects may fetch using the old httpOnly cookie and pollute the new-org keys.
+export const PENDING_ACTIVE_ORG_ID_KEY = "ld_pending_active_org_id";
 
 export const DEFAULT_SWITCHING_OVERLAY_MIN_MS = 1400;
 
@@ -26,6 +32,12 @@ function safeNow() {
   return typeof Date !== "undefined" ? Date.now() : 0;
 }
 
+/**
+ * Imperatively mounts a full-screen "Switching…" overlay into the DOM (best-effort).
+ *
+ * Exists so navigation-sensitive actions (like workspace switching) can show immediate feedback
+ * before route transitions begin. Side effects: writes timing/position hints to sessionStorage.
+ */
 export function showSwitchingOverlay(opts: SwitchingOverlayOptions = {}) {
   if (typeof document === "undefined") return;
   const id = opts.id ?? SWITCHING_OVERLAY_ID;
@@ -120,10 +132,35 @@ export function showSwitchingOverlay(opts: SwitchingOverlayOptions = {}) {
   }
 }
 
+/**
+ * Removes a previously mounted overlay by id (best-effort).
+ *
+ * Exists to clean up imperative overlays after navigation completes or is cancelled.
+ */
+export function hideSwitchingOverlay(id = SWITCHING_OVERLAY_ID) {
+  if (typeof document === "undefined") return;
+  try {
+    const el = document.getElementById(id);
+    if (el?.parentNode) el.parentNode.removeChild(el);
+  } catch {
+    // ignore (best-effort)
+  }
+}
+
+/**
+ * Waits for the next paint (or a short timeout) to allow the overlay to render before navigating.
+ *
+ * Returns a promise that resolves after `ms` in the browser; resolves immediately on the server.
+ */
 export function waitForNextPaint(ms = 60) {
   return new Promise<void>((resolve) => (typeof window !== "undefined" ? window.setTimeout(resolve, ms) : resolve()));
 }
 
+/**
+ * Ensures the overlay has been visible for at least `minMs` before proceeding (best-effort).
+ *
+ * Exists to avoid UI flicker on very fast switches by enforcing a minimum perceived duration.
+ */
 export async function waitForMinOverlayTime(minMs = DEFAULT_SWITCHING_OVERLAY_MIN_MS) {
   if (typeof window === "undefined") return;
   try {
@@ -137,14 +174,36 @@ export async function waitForMinOverlayTime(minMs = DEFAULT_SWITCHING_OVERLAY_MI
   }
 }
 
+/**
+ * Calls the `/org/switch` endpoint to set the active-org cookie and returns the redirect URL.
+ *
+ * Side effects: on success, stores the target org id in sessionStorage so the next app boot can
+ * immediately scope client caches and avoid cross-workspace flashes.
+ */
 export async function fetchOrgSwitchRedirectTo(opts: { orgId: string; returnTo: string }) {
   const { orgId, returnTo } = opts;
   const url = `/org/switch?orgId=${encodeURIComponent(orgId)}&returnTo=${encodeURIComponent(returnTo)}&json=1`;
   const res = await fetch(url, { method: "GET", credentials: "include", cache: "no-store" });
   const json = (await res.json().catch(() => null)) as { redirectTo?: unknown } | null;
+  // If the server accepted the switch (and set the cookie), store the target org id in sessionStorage
+  // so the next app boot can scope caches immediately and avoid cross-workspace flashes.
+  const accepted = res.ok && typeof json?.redirectTo === "string" && json.redirectTo;
+  if (accepted) {
+    try {
+      sessionStorage.setItem(PENDING_ACTIVE_ORG_ID_KEY, orgId);
+    } catch {
+      // ignore (best-effort)
+    }
+  }
   return typeof json?.redirectTo === "string" && json.redirectTo ? json.redirectTo : returnTo || "/";
 }
 
+/**
+ * Shows the overlay, switches workspace via `/org/switch`, then navigates to the returned URL.
+ *
+ * Exists to make workspace switching feel deliberate and to avoid "flash of wrong workspace" while
+ * cookies and caches settle. Side effects: uses `window.location.assign` to perform navigation.
+ */
 export async function switchWorkspaceWithOverlay(opts: { orgId: string; returnTo: string } & SwitchingOverlayOptions) {
   if (typeof window === "undefined") return;
   const minMs = typeof opts.minMs === "number" ? opts.minMs : DEFAULT_SWITCHING_OVERLAY_MIN_MS;

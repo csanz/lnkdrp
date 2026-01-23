@@ -9,6 +9,11 @@ import { ImageResponse } from "next/og";
 
 export type OgDims = { width: number; height: number };
 
+/**
+ * Default Open Graph image dimensions (used when image bytes don't include parsable dimensions).
+ *
+ * Matches the common 1.91:1 OG aspect ratio.
+ */
 export const DEFAULT_OG_SIZE: OgDims = { width: 1200, height: 630 };
 
 /**

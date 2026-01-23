@@ -725,7 +725,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   return (
     <div className="flex h-full flex-col">
       {/* Top bar */}
-      <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
+      <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4 md:h-[68px] md:py-0">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             {isRequestRepo ? (
@@ -734,7 +734,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
               <FolderIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
             )}
             {title ? (
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 translate-y-[1px]">
                 {editingName ? (
                   <div className="min-w-0">
                     <input
@@ -1216,6 +1216,8 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
       <Modal
         open={showSettings}
         ariaLabel={project?.isRequest ? "Update link request repository" : "Project settings"}
+        panelClassName={project?.isRequest ? "!w-[min(860px,calc(100vw-32px))]" : undefined}
+        contentClassName="flex !max-h-[min(80vh,900px)] flex-col !overflow-hidden !px-0 !pb-0 !pt-0"
         onClose={() => {
           setShowSettings(false);
           setSaveError(null);
@@ -1233,39 +1235,42 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
           }
         }}
       >
-        <div className="px-1 pb-3 text-base font-semibold text-[var(--fg)]">
-          {project?.isRequest ? "Update link request repository" : "Project settings"}
+        <div className="shrink-0 border-b border-[var(--border)] px-7 pb-3 pt-6">
+          <div className="px-1 text-base font-semibold text-[var(--fg)]">
+            {project?.isRequest ? "Update link request repository" : "Project settings"}
+          </div>
         </div>
 
-        <div className="mt-3 grid gap-3">
-          <label className="grid gap-1">
-            <span className="text-[11px] font-medium text-[var(--muted)]">Name</span>
-            <input
-              value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
-              maxLength={MAX_PROJECT_NAME_LENGTH}
-              className="w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-              placeholder="Project name"
-            />
-          </label>
+        <div className="min-h-0 flex-1 overflow-y-auto px-7 pb-6 pt-4">
+          <div className="grid gap-3">
+            <label className="grid gap-1">
+              <span className="text-[11px] font-medium text-[var(--muted)]">Name</span>
+              <input
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                maxLength={MAX_PROJECT_NAME_LENGTH}
+                className="w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                placeholder="Project name"
+              />
+            </label>
 
-          <label className="grid gap-1">
-            <span className="text-[11px] font-medium text-[var(--muted)]">Description</span>
-            {!project?.isRequest ? (
-              <span className="text-[11px] text-[var(--muted-2)]">
-                Visible to recipients when you share this project link.
-              </span>
-            ) : null}
-            <textarea
-              value={draftDescription}
-              onChange={(e) => setDraftDescription(e.target.value)}
-              className="min-h-[96px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-              placeholder="What belongs in this project? (Used by AI auto-routing when enabled)"
-            />
-          </label>
+            <label className="grid gap-1">
+              <span className="text-[11px] font-medium text-[var(--muted)]">Description</span>
+              {!project?.isRequest ? (
+                <span className="text-[11px] text-[var(--muted-2)]">
+                  Visible to recipients when you share this project link.
+                </span>
+              ) : null}
+              <textarea
+                value={draftDescription}
+                onChange={(e) => setDraftDescription(e.target.value)}
+                className="min-h-[96px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                placeholder="What belongs in this project? (Used by AI auto-routing when enabled)"
+              />
+            </label>
 
-          {project?.isRequest ? (
-            <div className="grid gap-3">
+            {project?.isRequest ? (
+              <div className="grid gap-3">
               <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-3">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
                   Request link
@@ -1532,8 +1537,11 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
           )}
 
           {saveError ? <div className="text-[12px] text-red-600">{saveError}</div> : null}
+          </div>
+        </div>
 
-          <div className="mt-2 flex items-center justify-end gap-2">
+        <div className="shrink-0 border-t border-[var(--border)] bg-[var(--panel)] px-7 py-4">
+          <div className="flex items-center justify-end gap-2">
             <button
               type="button"
               className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"

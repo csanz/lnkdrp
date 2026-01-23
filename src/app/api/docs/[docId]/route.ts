@@ -19,10 +19,11 @@ export const dynamic = "force-dynamic";
 
 const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 /**
- * Random Base62 (uses randomBytes, max, ceil).
+ * Generates a Base62 string using cryptographic randomness.
+ *
+ * Exists to mint share IDs and capability tokens without leaking sequential patterns.
+ * Assumptions: collisions are extremely unlikely but callers should still handle dupes.
  */
-
-
 function randomBase62(length: number): string {
   let out = "";
   while (out.length < length) {
@@ -36,19 +37,21 @@ function randomBase62(length: number): string {
   }
   return out;
 }
+
 /**
- * Return whether object id.
+ * Validates that a string is a Mongo ObjectId.
+ *
+ * Exists to reject malformed route params early with consistent 400 responses.
  */
-
-
 function isObjectId(id: string) {
   return Types.ObjectId.isValid(id);
 }
+
 /**
- * New Share Id (uses randomBase62).
+ * Generates a short public identifier for `/s/:shareId`.
+ *
+ * This is not secret; it is a URL slug. Callers must handle rare collisions on insert/update.
  */
-
-
 function newShareId() {
   // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
   return randomBase62(12);
@@ -62,11 +65,15 @@ function newShareId() {
 function newReplaceUploadToken() {
   return randomBase62(24);
 }
+
 /**
- * Handle GET requests.
+ * `GET /api/docs/:docId`
+ *
+ * Returns doc details for the active workspace, including lightweight "lite=1" mode for hot UI paths.
+ * Side effects: may best-effort backfill `orgId`, ensure `shareId`, ensure request `replaceUploadToken`,
+ * and repair stale doc artifacts when the current upload is already completed.
+ * Errors: 400 for invalid params/processing failures, 404 when doc not found, 401 when unauthenticated.
  */
-
-
 export async function GET(
   request: Request,
   ctx: { params: Promise<{ docId: string }> },
@@ -127,6 +134,7 @@ export async function GET(
         firstPagePngUrl: 1,
         receiverRelevanceChecklist: 1,
         shareAllowPdfDownload: 1,
+        shareEnabled: 1,
         shareAllowRevisionHistory: 1,
         sharePasswordHash: 1,
         receivedViaRequestProjectId: 1,
@@ -277,7 +285,7 @@ export async function GET(
 
     // In `lite=1` mode we avoid hydrating the full Upload, but the doc page still needs the
     // current version number to render the `vN` badge/link in the top bar.
-    let currentUploadVersion: number | null =
+    const currentUploadVersion: number | null =
       upload && Number.isFinite((upload as any).version)
         ? Number((upload as any).version)
         : uploadLite && Number.isFinite((uploadLite as any).version)
@@ -483,6 +491,8 @@ export async function GET(
         aiOutput: docLean.aiOutput ?? null,
         receiverRelevanceChecklist: Boolean(docLean.receiverRelevanceChecklist),
         shareAllowPdfDownload: Boolean((docLean as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload),
+        // Default to enabled for legacy docs that don't have the field yet.
+        shareEnabled: (docLean as unknown as { shareEnabled?: unknown }).shareEnabled !== false,
         shareAllowRevisionHistory: Boolean(
           (docLean as unknown as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory,
         ),
@@ -603,11 +613,14 @@ export async function GET(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
 /**
- * Handle PATCH requests.
+ * `PATCH /api/docs/:docId`
+ *
+ * Applies user-scoped updates to doc metadata (title/status/share settings/project membership/archive state).
+ * Side effects: may update project membership fields and keep legacy pointers (`uploadId`) in sync.
+ * Errors: 400 for invalid IDs/body, 404 when doc not found.
  */
-
-
 export async function PATCH(
   request: Request,
   ctx: { params: Promise<{ docId: string }> },
@@ -629,6 +642,7 @@ export async function PATCH(
       extractedText: string | null;
       receiverRelevanceChecklist: boolean;
       shareAllowPdfDownload: boolean;
+      shareEnabled: boolean;
       shareAllowRevisionHistory: boolean;
       addProjectId: string;
       removeProjectId: string;
@@ -667,6 +681,9 @@ export async function PATCH(
     }
     if (typeof body.shareAllowPdfDownload === "boolean") {
       setFields.shareAllowPdfDownload = body.shareAllowPdfDownload;
+    }
+    if (typeof body.shareEnabled === "boolean") {
+      setFields.shareEnabled = body.shareEnabled;
     }
     if (typeof body.shareAllowRevisionHistory === "boolean") {
       setFields.shareAllowRevisionHistory = body.shareAllowRevisionHistory;
@@ -835,6 +852,8 @@ export async function PATCH(
           receiverRelevanceChecklist: Boolean(doc.receiverRelevanceChecklist),
           sharePasswordEnabled: Boolean((doc as unknown as { sharePasswordHash?: unknown }).sharePasswordHash),
           shareAllowPdfDownload: Boolean((doc as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload),
+          // Default to enabled for legacy docs that don't have the field yet.
+          shareEnabled: (doc as unknown as { shareEnabled?: unknown }).shareEnabled !== false,
           shareAllowRevisionHistory: Boolean(
             (doc as unknown as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory,
           ),
@@ -850,11 +869,14 @@ export async function PATCH(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
 /**
- * Handle DELETE requests.
+ * `DELETE /api/docs/:docId`
+ *
+ * Soft-deletes a doc for the active workspace (sets delete flags/dates).
+ * Exists to preserve history while removing the doc from normal lists.
+ * Errors: 400 for invalid docId, 404 when doc not found.
  */
-
-
 export async function DELETE(
   request: Request,
   ctx: { params: Promise<{ docId: string }> },

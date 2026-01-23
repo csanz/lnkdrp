@@ -1,6 +1,7 @@
 /**
  * Page for `/billing/cancel` — shown when a user cancels out of Stripe Checkout.
  */
+import Link from "next/link";
 import { StandaloneBrandedShell } from "@/components/StandaloneBrandedShell";
 
 export default function BillingCancelPage() {
@@ -12,9 +13,12 @@ export default function BillingCancelPage() {
           No charges were made. You can try upgrading again anytime.
         </div>
         <div className="mt-6">
-          <a className="rounded-xl bg-[var(--fg)] px-4 py-2 text-[13px] font-semibold text-[var(--bg)]" href="/dashboard?tab=overview">
+          <Link
+            className="rounded-xl bg-[var(--fg)] px-4 py-2 text-[13px] font-semibold text-[var(--bg)]"
+            href="/dashboard?tab=overview"
+          >
             Back to billing
-          </a>
+          </Link>
         </div>
       </div>
     </StandaloneBrandedShell>

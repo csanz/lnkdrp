@@ -1,5 +1,11 @@
 "use client";
 
+/**
+ * Client app shell layout for authenticated app routes.
+ *
+ * Provides responsive left sidebar + mobile drawer, handles auth-required redirects,
+ * and wires "add file" actions into the pending-upload flow.
+ */
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -13,6 +19,12 @@ import IconButton from "@/components/ui/IconButton";
 import { useAuthEnabled } from "@/app/providers";
 import { usePendingUpload } from "@/lib/pendingUpload";
 
+/**
+ * Redirects unauthenticated users back to home when auth is enabled.
+ *
+ * Exists to prevent protected UI shells from rendering in a logged-out state.
+ * Side effects: performs a client-side `router.replace("/")` when session becomes unauthenticated.
+ */
 function AuthRedirector() {
   const router = useRouter();
   const { status } = useSession();
@@ -25,6 +37,12 @@ function AuthRedirector() {
   return null;
 }
 
+/**
+ * Wraps app pages in a responsive shell with sidebar navigation.
+ *
+ * Side effects: prefetches dashboard routes (best-effort) and locks body scroll when the mobile
+ * drawer is open. Certain routes (review/invite) intentionally render full-width without sidebar.
+ */
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname() ?? "";
@@ -105,11 +123,11 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:hidden">
         <div className="flex min-w-0 items-center gap-2">
           <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
-            <Image src={logoSrc} alt="LinkDrop" width={31} height={31} priority className="block" />
+            <Image src={logoSrc} alt="LinkDrop" width={28} height={28} priority className="block" />
           </Link>
           <ActiveWorkspacePill
-            className="hidden sm:inline-flex"
-            maxWidthClassName="max-w-[160px]"
+            className="inline-flex"
+            maxWidthClassName="max-w-[44vw] sm:max-w-[160px]"
             textClassName="text-[11px]"
           />
         </div>

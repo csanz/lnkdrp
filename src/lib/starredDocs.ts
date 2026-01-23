@@ -26,6 +26,7 @@ export type StarredDoc = {
 const STORAGE_KEY_BASE = "lnkdrp-starred-docs-v2";
 const LEGACY_STORAGE_KEY = "lnkdrp.starredDocs.v1";
 const BOOTSTRAP_DONE_KEY_BASE = "lnkdrp.starred.bootstrap.v1";
+/** Window event fired when the starred-docs cache changes. */
 export const STARRED_DOCS_CHANGED_EVENT = "lnkdrp:starred-docs-changed";
 /**
  * Parse JSON input (best-effort) and return null when invalid.
@@ -70,7 +71,11 @@ function normalizeStarredDocs(value: unknown): StarredDoc[] {
   }
   return out;
 }
-/** Return the active org id used by client caches (best-effort; assumes `window` exists). */
+/**
+ * Reads the active org id used for client caches (best-effort).
+ *
+ * Exists to prevent cross-org cache leakage; assumes `window` is available.
+ */
 function getActiveOrgIdUnsafe(): string | null {
   try {
     const raw = window.localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
@@ -81,19 +86,33 @@ function getActiveOrgIdUnsafe(): string | null {
   }
 }
 
+/**
+ * Computes the localStorage key for starred docs scoped to the active org.
+ *
+ * Returns null until org context is available (to avoid flashing stale data).
+ */
 function storageKeyForActiveOrgUnsafe(): string | null {
   const orgId = getActiveOrgIdUnsafe();
   if (!orgId) return null;
   return `${STORAGE_KEY_BASE}:${orgId}`;
 }
 
+/**
+ * Computes the localStorage key used to mark "bootstrap to server" as done for the active org.
+ *
+ * Exists to avoid repeatedly replaying legacy local stars into MongoDB.
+ */
 function bootstrapDoneKeyForActiveOrgUnsafe(): string | null {
   const orgId = getActiveOrgIdUnsafe();
   if (!orgId) return null;
   return `${BOOTSTRAP_DONE_KEY_BASE}:${orgId}`;
 }
 
-/** Read starred docs from localStorage (assumes `window` exists). */
+/**
+ * Reads starred docs from localStorage for the active org.
+ *
+ * Assumes `window` exists; returns an empty list when org keying isn't available.
+ */
 function readStarredDocsUnsafe(): StarredDoc[] {
   const key = storageKeyForActiveOrgUnsafe();
   // If we don't know the active org yet, don't read any cache (prevents stale cross-org flash).
@@ -102,7 +121,11 @@ function readStarredDocsUnsafe(): StarredDoc[] {
   if (!raw) return [];
   return normalizeStarredDocs(safeParseJson(raw));
 }
-/** Write starred docs to localStorage and emit a change event (assumes `window` exists). */
+/**
+ * Persists starred docs to localStorage for the active org and emits a change event.
+ *
+ * Side effects: removes legacy unscoped storage to reduce future ambiguity.
+ */
 function writeStarredDocsUnsafe(next: StarredDoc[]): void {
   const key = storageKeyForActiveOrgUnsafe();
   if (!key) return;
@@ -116,6 +139,11 @@ function writeStarredDocsUnsafe(next: StarredDoc[]): void {
   window.dispatchEvent(new Event(STARRED_DOCS_CHANGED_EVENT));
 }
 
+/**
+ * Fetches starred docs from the server (MongoDB source of truth).
+ *
+ * Returns null on network/parse errors; never throws to callers.
+ */
 async function fetchStarredFromServer(): Promise<StarredDoc[] | null> {
   try {
     const res = await fetch("/api/starred", { cache: "no-store" });
@@ -177,10 +205,11 @@ export async function refreshStarredDocsFromServer(opts?: { bootstrap?: boolean 
   return serverDocs;
 }
 /**
- * Get starred docs.
+ * Returns the current starred docs list from the local cache.
+ *
+ * Exists for instant UI reads; source of truth remains the server.
+ * Returns an empty list during SSR or when localStorage is unavailable.
  */
-
-
 export function getStarredDocs(): StarredDoc[] {
   if (typeof window === "undefined") return [];
   try {
@@ -197,10 +226,11 @@ export function isDocStarred(docId: string): boolean {
   return getStarredDocs().some((d) => d.id === docId);
 }
 /**
- * Toggle Starred Doc (uses readStarredDocsUnsafe, some, filter).
+ * Optimistically toggles a doc in the local starred cache and syncs to the server.
+ *
+ * Exists for snappy UX: the local cache updates immediately, while the server update is best-effort.
+ * Side effects: emits `STARRED_DOCS_CHANGED_EVENT` and may overwrite local state with server truth.
  */
-
-
 export function toggleStarredDoc(doc: { id: string; title: string }): { starred: boolean; docs: StarredDoc[] } {
   if (typeof window === "undefined") return { starred: false, docs: [] };
   try {
@@ -243,10 +273,10 @@ export function toggleStarredDoc(doc: { id: string; title: string }): { starred:
   }
 }
 /**
- * Upsert Starred Doc Title (uses readStarredDocsUnsafe, findIndex, slice).
+ * Updates the cached title for a starred doc (local-only).
+ *
+ * Exists to keep the starred list readable when doc titles change without forcing a full refresh.
  */
-
-
 /** Update the stored title for a starred doc (no-op if the doc is not starred). */
 export function upsertStarredDocTitle(doc: { id: string; title: string }): void {
   if (typeof window === "undefined") return;
@@ -298,10 +328,10 @@ export function upsertStarredDocMeta(doc: { id: string; version?: number | null;
   }
 }
 /**
- * Move Starred Doc (uses trim, getStarredDocs, readStarredDocsUnsafe).
+ * Reorders a starred doc locally and syncs the new order to the server (best-effort).
+ *
+ * Side effects: rewrites local `sortKey` values to match the new order and emits a change event.
  */
-
-
 export function moveStarredDoc(docId: string, dir: "up" | "down"): { docs: StarredDoc[]; moved: boolean } {
   if (typeof window === "undefined") return { docs: [], moved: false };
   const id = (docId ?? "").trim();

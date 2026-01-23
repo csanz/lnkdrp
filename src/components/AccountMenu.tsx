@@ -19,13 +19,12 @@ import { useAuthEnabled, useNavigationLocked } from "@/app/providers";
 import AboutCopy from "@/components/AboutCopy";
 import Modal from "@/components/modals/Modal";
 import IconLink from "@/components/ui/IconLink";
+import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import {
   ORGS_CACHE_UPDATED_EVENT,
   readOrgsCacheSnapshot,
   refreshOrgsCache,
-  setCachedActiveOrgId,
 } from "@/lib/orgsCache";
-import { clearSidebarCache, setActiveOrgIdForCaches } from "@/lib/sidebarCache";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
 
 type MenuItem =
@@ -33,19 +32,9 @@ type MenuItem =
   | { type: "button"; label: string; onClick: () => void; icon?: React.ReactNode }
   | { type: "separator" }
   | { type: "disabled"; label: string; icon?: React.ReactNode; hint?: string };
-/**
- * Initials (uses trim, filter, split).
- */
-
 const OPEN_ACCOUNT_MENU_AFTER_AUTH_KEY = "ld_open_account_menu_after_auth";
 
-function initials(nameOrEmail: string) {
-  const s = nameOrEmail.trim();
-  if (!s) return "?";
-  const parts = s.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0] ?? ""}${parts[parts.length - 1][0] ?? ""}`.toUpperCase();
-}
+const initials = initialsFromNameOrEmail;
 
 function OrgAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
   const fallback = initials(name || "Org");
@@ -60,6 +49,8 @@ function OrgAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | nul
     </div>
   );
 }
+
+const SIDEBAR_TEXT_SIZE = "text-[13px]";
 /**
  * Render the AccountMenu UI.
  */
@@ -154,7 +145,7 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         aria-disabled={navLocked}
         className={
           isTopbar
-            ? "inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+            ? "inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
             : "flex w-full items-center gap-3 rounded-xl px-2 py-2 pr-9 text-left hover:bg-[var(--sidebar-hover)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
         }
         onClick={() => {
@@ -167,22 +158,25 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         <div
           className={
             isTopbar
-              ? "grid h-8 w-8 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)]"
-              : "grid h-8 w-8 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-xs font-semibold text-[var(--fg)]"
+              ? "grid h-7 w-7 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)]"
+              : `grid h-8 w-8 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] ${SIDEBAR_TEXT_SIZE} leading-none font-semibold text-[var(--fg)]`
           }
         >
           {avatarUrl ? (
-            <Image src={avatarUrl} alt="" width={32} height={32} className="h-8 w-8 object-cover" />
+            <Image src={avatarUrl} alt="" width={28} height={28} className={isTopbar ? "h-7 w-7 object-cover" : "h-8 w-8 object-cover"} />
           ) : (
-            <span className="text-xs font-semibold text-[var(--fg)]" aria-hidden="true">
+            <span
+              className={`${isTopbar ? "text-[11px]" : SIDEBAR_TEXT_SIZE} leading-none font-semibold text-[var(--fg)]`}
+              aria-hidden="true"
+            >
               {avatarFallback}
             </span>
           )}
         </div>
         {!isTopbar ? (
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{displayName}</div>
-            <div className="truncate text-[13px] text-[var(--muted-2)]">{subLabel}</div>
+            <div className={`truncate ${SIDEBAR_TEXT_SIZE} font-semibold text-[var(--fg)]`}>{displayName}</div>
+            <div className={`truncate ${SIDEBAR_TEXT_SIZE} text-[var(--muted-2)]`}>{subLabel}</div>
           </div>
         ) : null}
       </button>
@@ -359,7 +353,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   const logoSrc = isDark ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
 
   const displayName = session?.user?.name?.trim() || (session?.user ? "Account" : "Guest");
-  const subLabel = session?.user ? (session.user.email ?? "Signed in") : "Not signed in";
+  const subLabel = session?.user ? null : "Not signed in";
   const avatarFallback = useMemo(() => initials(displayName), [displayName]);
 
   const activeOrgId = serverActiveOrgId ?? ((session as any)?.activeOrgId ?? null);
@@ -460,9 +454,6 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
     if (activeOrgId && nextOrgId === activeOrgId) return;
     setOrgActionBusy(true);
     try {
-      setCachedActiveOrgId(nextOrgId, session.user.email ?? "");
-      setActiveOrgIdForCaches(nextOrgId);
-      clearSidebarCache({ memoryOnly: true });
       if (typeof window !== "undefined") {
         const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
         try {
@@ -584,7 +575,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         aria-disabled={navLocked}
         className={
           isTopbar
-            ? "inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
+            ? "inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
             : "flex w-full items-center gap-3 rounded-xl px-2 py-2 pr-9 text-left hover:bg-[var(--sidebar-hover)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent"
         }
         onClick={() => {
@@ -594,17 +585,22 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <div className="grid h-8 w-8 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-xs font-semibold text-[var(--fg)]">
+        <div
+          className={[
+            "grid place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] leading-none font-semibold text-[var(--fg)]",
+            isTopbar ? "h-7 w-7 text-[11px]" : `h-8 w-8 ${SIDEBAR_TEXT_SIZE}`,
+          ].join(" ")}
+        >
           {session?.user ? (
             <span aria-hidden="true">{avatarFallback}</span>
           ) : (
-            <UserCircleIcon className="h-6 w-6 text-[var(--muted-2)]" aria-hidden="true" />
+            <UserCircleIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
           )}
         </div>
         {!isTopbar ? (
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{displayName}</div>
-            <div className="truncate text-[13px] text-[var(--muted-2)]">{subLabel}</div>
+            <div className={`truncate ${SIDEBAR_TEXT_SIZE} font-semibold text-[var(--fg)]`}>{displayName}</div>
+            {subLabel ? <div className={`truncate ${SIDEBAR_TEXT_SIZE} text-[var(--muted-2)]`}>{subLabel}</div> : null}
           </div>
         ) : null}
       </button>
@@ -705,10 +701,6 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
           ) : null}
 
           <div className="my-1 h-px bg-[var(--border)]" />
-
-          {session?.user?.email ? (
-            <div className={isTopbar ? "px-3 py-2 text-[11px] text-[var(--muted-2)]" : "px-3 py-2 text-[13px] text-[var(--muted-2)]"}>Signed in as: {session.user.email}</div>
-          ) : null}
 
           <div className="px-3 py-2">
             <div className={isTopbar ? "text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]" : "text-[13px] font-semibold uppercase tracking-wide text-[var(--muted-2)]"}>Theme</div>

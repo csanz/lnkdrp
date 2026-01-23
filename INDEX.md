@@ -2,6 +2,7 @@
 - `src/components/AboutCopy.tsx` — exports: AboutCopy
 - `src/components/AccountMenu.tsx` — exports: AccountMenu. Props: `variant?` ("sidebar" | "topbar").
 - `src/components/ActiveWorkspacePill.tsx` — exports: ActiveWorkspacePill (default). Props: `planBadgeText?` to optionally show a small plan badge (e.g. “PRO”); `disableNetwork?` to avoid network calls on mount (header fast-path).
+- `src/components/WorkspacePill.tsx` — exports: WorkspacePill (default). Presentational pill used by `ActiveWorkspacePill` for consistent header styling across app + dashboard.
 - `src/components/BlobClientUploadTest.tsx` — exports: BlobClientUploadTest
 - `src/components/CopyButton.tsx` — exports: CopyButton
 - `src/components/DocActionsMenu.tsx` — exports: DocActionsMenu
@@ -30,7 +31,7 @@
 - `src/components/Markdown.tsx` — exports: Markdown
 - `src/components/PasswordGate.tsx` — exports: PasswordGate
 - `src/components/ProjectSharePanel.tsx` — exports: ProjectSharePanel
-- `src/components/SwitchingOverlay.tsx` — exports: SWITCHING_OVERLAY_ID, SWITCHING_OVERLAY_Y_KEY, SWITCHING_OVERLAY_STARTED_AT_KEY, DEFAULT_SWITCHING_OVERLAY_MIN_MS, showSwitchingOverlay, waitForNextPaint, waitForMinOverlayTime, fetchOrgSwitchRedirectTo, switchWorkspaceWithOverlay
+- `src/components/SwitchingOverlay.tsx` — exports: SWITCHING_OVERLAY_ID, DOC_NAV_OVERLAY_ID, PROJECT_NAV_OVERLAY_ID, SWITCHING_OVERLAY_Y_KEY, SWITCHING_OVERLAY_STARTED_AT_KEY, PENDING_ACTIVE_ORG_ID_KEY, DEFAULT_SWITCHING_OVERLAY_MIN_MS, showSwitchingOverlay, hideSwitchingOverlay, waitForNextPaint, waitForMinOverlayTime, fetchOrgSwitchRedirectTo, switchWorkspaceWithOverlay
 - `src/components/modals/CreateLinkRequestRepositoryModal.tsx` — exports: CreateLinkRequestRepositoryModal
 - `src/components/modals/CreateProjectModal.tsx` — exports: CreateProjectModal
 - `src/components/modals/DeleteDocModal.tsx` — exports: DeleteDocModal
@@ -56,6 +57,7 @@
 - `src/components/ui/Input.tsx` — exports: Input (default), InputProps (type)
 - `src/components/ui/Select.tsx` — exports: Select (default), SelectProps (type)
 - `src/components/ui/Panel.tsx` — exports: Panel (default), PanelProps (type)
+- `src/components/ui/Pill.tsx` — exports: Pill (default)
 - `src/components/ui/HelpTooltip.tsx` — exports: HelpTooltip (default)
 - `src/components/ui/DataTable.tsx` — exports: DataTable (default), DataTableProps (type)
 - `src/components/ui/CopyTextButton.tsx` — exports: CopyTextButton (default)
@@ -63,8 +65,11 @@
 # Lib
 - `src/lib/admin/localStorageTools.ts` — exports: LocalStorageRow, byteSizeUtf8, readLocalStorageSnapshot, removeLocalStorageKey, clearLocalStorageKeysByPrefix
 - `src/lib/admin/format.ts` — exports: fmtDate, fmtDuration
+- `src/lib/format/initials.ts` — exports: initialsFromNameOrEmail
 - `src/lib/orgsCache.ts` — exports: OrgsCacheOrg, OrgsCacheSnapshot, ORGS_CACHE_STORAGE_KEY, ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, writeOrgsCacheSnapshot, clearOrgsCache, refreshOrgsCache, setCachedActiveOrgId
 - `src/lib/orgs/activeOrgCookie.ts` — exports: ACTIVE_ORG_COOKIE. Shared cookie name for the active workspace/org.
+- `src/lib/orgs/orgsClient.ts` — exports: OrgRow (type), stableSortOrgs, initials
+- `src/lib/orgs/useOrgsSnapshot.ts` — exports: useOrgsSnapshot
 - `src/lib/client/outOfCredits.ts` — exports: OUT_OF_CREDITS_EVENT, dispatchOutOfCredits
 - `src/lib/client/creditsSnapshotRefresh.ts` — exports: CREDITS_SNAPSHOT_REFRESH_EVENT, dispatchCreditsSnapshotRefresh
 - `src/lib/credits/grants.ts` — exports: INCLUDED_CREDITS_PER_CYCLE, buildCycleKey, grantCycleIncludedCredits
@@ -370,6 +375,12 @@
 - `src/app/api/docs/[docId]/shareviews/route.ts` — API route for \`/api/docs/:docId/shareviews\`.
   - GET (function) — Owner-only share metrics (views, downloads, viewers + per-viewer pages seen).
   - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/shareviews/visits/route.ts` — API route for \`/api/docs/:docId/shareviews/visits\`.
+  - GET (function) — Owner-only per-visit list for a specific viewer (authed/anon).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/docs/[docId]/shareviews/visits/[visitId]/route.ts` — API route for \`/api/docs/:docId/shareviews/visits/:visitId\`.
+  - GET (function) — Owner-only per-visit detail (time per page + revisits + page sequence).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/docs/[docId]/share-password/route.ts` — API route for \`/api/docs/:docId/share-password\`.
   - POST (function) — Handle POST requests.
   - GET (function) — Handle GET requests.
@@ -499,6 +510,7 @@
 - `src/app/s/[shareId]/og.png/route.tsx` — API route for \`/s/:shareId/og.png\`.
   - GET (function) — Dynamic OG image route for a share page.
   - runtime (const) — Next.js route configuration.
+- `src/app/s/not-found.tsx` — Not-found UI for \`/s/*\` (share disabled / invalid links).
 - `src/app/s/[shareId]/page.tsx` — Page for \`/s/:shareId\`.
 - `src/app/s/[shareId]/changes/route.ts` — API route for \`/s/:shareId/changes\`.
   - GET (function) — Return a light revision history for a shared doc (version + date + summary + page hints).
@@ -681,6 +693,9 @@
   - ShareView (type) — Mongoose document type for the shareviews collection.
   - ShareViewModel (const) — Mongoose model for the shareviews collection.
   - Note: includes best-effort `viewerIp` captured from request proxy headers.
+- `src/lib/models/ShareVisit.ts` — Data model for per-visit share viewer sessions (per-tab).
+  - ShareVisit (type) — Mongoose document type for the sharevisits collection.
+  - ShareVisitModel (const) — Mongoose model for the sharevisits collection.
 - `src/lib/models/StarredDoc.ts` — Data model for persisted starred docs (per user + workspace).
   - StarredDocModel (const) — Mongoose model for the starredDocs collection.
 - `src/lib/models/UsageAggDaily.ts` — Data model for pre-aggregated daily usage totals (derived from CreditLedger).
@@ -731,6 +746,7 @@
   - clearSidebarCache (function) — Clear sidebar cache (memory + localStorage).
   - notifyProjectsChanged (function) — Notify about projects changed.
   - notifyDocsChanged (function) — Notify about docs changed.
+  - optimisticallyAddProjectToSidebarCache (function) — Best-effort: insert a newly-created project into the cached sidebar snapshot for instant UI updates.
   - refreshSidebarCache (function) — Refresh sidebar cache.
   - PROJECTS_CHANGED_EVENT (const) — Constant: projects changed event.
   - DOCS_CHANGED_EVENT (const) — Constant: docs changed event.
@@ -756,11 +772,13 @@
 - Excludes: `node_modules`, `.git`, `.next`, build outputs, dot-dirs, `.env*`, `.DS_Store`
 - `.cursorrules`
 - `.gitignore`
+- `.github/pull_request_template.md` — Short PR checklist guardrails (docs, security, duplication, repo maps).
 - `eslint.config.mjs`
 - `next-env.d.ts`
 - `next.config.ts`
 - `package-lock.json`
 - `package.json`
+- `prod.sh` — Local production runner (build + start) to validate non-dev performance behavior.
 - `tests/agent/agent.cli.ts`
 - `tests/agent/vitest.config.ts`
 - `tests/agent/vitest.reporter.concise.ts`
@@ -777,6 +795,8 @@
 - `tests/upload/clientUpload.test.ts`
 - `tests/upload/serverClientUploadRoute.test.ts`
 - `tests/upload/docUploadPipeline.test.ts`
+- `tests/lib/vitest.config.ts`
+- `tests/lib/orgsClient.test.ts`
 - `tests/agent/review/review.tests.json`
 - `tests/agent/review/review.tests.ts`
 - `tests/agent/review/review.vitest.test.ts`
@@ -799,7 +819,9 @@
 - `public/sample/usavx.pdf`
 - `docs/BENCHMARK.md`
 - `docs/CURSOR.md` — How we use Cursor rules and maintain `INDEX.md` / `docs/FEATURES.md`.
+- `docs/CODE_QUALITY.md` — Enforceable rules: required JSDoc, extraction heuristics, guardrails.
 - `docs/FEATURES.md`
+- `docs/METRICS.md` — How doc/share metrics tracking works (models, endpoints, best-effort semantics).
 - `docs/SUBSCRIPTION.md`
 - `docs/ERROR_LOGGING.md`
 - `README.md`
@@ -817,6 +839,9 @@
 - `db/migration/20260107_0001_teams_query_indexes.mjs`
 - `db/migration/20260107_0002_creditledger_on_demand_cyclekey_index.mjs`
 - `db/migration/20260109_0001_docs_project_list_indexes.mjs`
+- `db/migration/20260120_0001_fix_docs_replaceUploadToken_index.mjs`
+- `db/migration/20260121_0001_projects_list_indexes.mjs`
+- `db/migration/20260122_0001_share_visit_indexes.mjs`
 - `scripts/lib/time.mjs`
 - `scripts/mongo-clear.mjs`
 - `scripts/mongo-clear-ai-runs-and-requests.mjs`
@@ -965,6 +990,7 @@
 - `src/lib/sidebarCache.ts`
 - `src/lib/starredDocs.ts`
 - `src/lib/urls.ts`
+- `src/hooks/README.md` — Shared React hooks live in `src/hooks/` (see `docs/CODE_QUALITY.md`).
 - `src/types/next-auth.d.ts`
 - `src/types/pdf-parse.d.ts`
 - `src/types/pdfjs-dist.d.ts`

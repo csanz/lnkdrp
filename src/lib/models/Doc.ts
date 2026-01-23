@@ -99,6 +99,13 @@ const docSchema = new Schema(
     shareAllowPdfDownload: { type: Boolean, default: false },
 
     /**
+     * Share-page master switch:
+     * If false, the public share routes (`/s/:shareId/*`) behave as "not found"
+     * (used for quickly taking a shared link offline without deleting the doc).
+     */
+    shareEnabled: { type: Boolean, default: true },
+
+    /**
      * Share-page UX option:
      * If true, receivers can view a *light* revision history on `/s/:shareId`.
      *
@@ -157,7 +164,7 @@ const docSchema = new Schema(
     // Indexed for fast lookup on the public update flow (`/doc/update/:code`).
     // Not unique: collisions are already vanishingly unlikely, and avoiding unique indexes
     // reduces the chance of slow index builds on large collections.
-    replaceUploadToken: { type: String, trim: true, default: null, index: true, sparse: true },
+    replaceUploadToken: { type: String, trim: true, index: true, sparse: true },
 
     /**
      * If set, this doc is being used as a "Guide" (thesis/RFP/JD) for a request repo.
@@ -390,6 +397,13 @@ docSchema.post("save", async function () {
 
 export type Doc = InferSchemaType<typeof docSchema>;
 
+/**
+ * Mongoose model for `Doc`.
+ *
+ * Exists as the canonical persistence layer for documents and to host schema hooks that keep
+ * derived counts (e.g. `Project.docCount`) in sync. In dev, it may rebuild the cached model
+ * when schema paths changed to avoid stale Next.js module caching issues.
+ */
 export const DocModel: Model<Doc> = (() => {
   const existing = mongoose.models.Doc as Model<Doc> | undefined;
   if (existing) {

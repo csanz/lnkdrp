@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { SessionProvider, useSession } from "next-auth/react";
 import type { Session } from "next-auth";
 import { ThemeProvider } from "next-themes";
@@ -10,7 +10,14 @@ import { clearTempUser, getTempUser } from "@/lib/gating/tempUserClient";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { trackPageTiming } from "@/lib/metrics/client";
 import { ACTIVE_ORG_STORAGE_KEY, clearSidebarCache, refreshSidebarCache, setActiveOrgIdForCaches } from "@/lib/sidebarCache";
-import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
+import {
+  DOC_NAV_OVERLAY_ID,
+  hideSwitchingOverlay,
+  PENDING_ACTIVE_ORG_ID_KEY,
+  PROJECT_NAV_OVERLAY_ID,
+  showSwitchingOverlay,
+  switchWorkspaceWithOverlay,
+} from "@/components/SwitchingOverlay";
 import OutOfCreditsListener from "@/components/OutOfCreditsListener";
 
 const AuthEnabledContext = createContext(false);
@@ -86,6 +93,81 @@ function NavigationLockProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+function DocNavOverlayController() {
+  const pathname = usePathname() ?? "";
+  const ctx = useContext(NavigationLockContext);
+  const releaseRef = useRef<null | (() => void)>(null);
+
+  // Clear any leftover overlay + lock after navigation completes.
+  useEffect(() => {
+    hideSwitchingOverlay(DOC_NAV_OVERLAY_ID);
+    hideSwitchingOverlay(PROJECT_NAV_OVERLAY_ID);
+    if (releaseRef.current) {
+      try {
+        releaseRef.current();
+      } finally {
+        releaseRef.current = null;
+      }
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (!ctx) return;
+
+    function shouldTriggerForTarget(target: EventTarget | null): { href: string; kind: "doc" | "project" } | null {
+      if (!target) return null;
+      if (!(target instanceof Element)) return null;
+      // If nav is already locked (e.g. uploading), don't show a new overlay.
+      if (document.documentElement?.dataset?.navLocked === "true") return null;
+      // Ignore modified clicks (new tab, etc).
+      const a = target.closest("a[href]") as HTMLAnchorElement | null;
+      if (!a) return null;
+      const href = a.getAttribute("href") ?? "";
+      const kind = href.startsWith("/doc/") ? "doc" : href.startsWith("/project/") ? "project" : null;
+      if (!kind) return null;
+      // Avoid flashing an overlay when clicking a link to the current route.
+      if (href === pathname) return null;
+      return { href, kind };
+    }
+
+    const onClickCapture = (e: MouseEvent) => {
+      // Left-click only.
+      if (e.button !== 0) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const hit = shouldTriggerForTarget(e.target);
+      if (!hit) return;
+      showSwitchingOverlay({
+        id: hit.kind === "doc" ? DOC_NAV_OVERLAY_ID : PROJECT_NAV_OVERLAY_ID,
+        title: hit.kind === "doc" ? "Loading document…" : "Loading project…",
+        subtitle: "Just a moment.",
+      });
+      if (!releaseRef.current) releaseRef.current = ctx.acquire();
+    };
+
+    const onKeyDownCapture = (e: KeyboardEvent) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      const hit = shouldTriggerForTarget(e.target);
+      if (!hit) return;
+      showSwitchingOverlay({
+        id: hit.kind === "doc" ? DOC_NAV_OVERLAY_ID : PROJECT_NAV_OVERLAY_ID,
+        title: hit.kind === "doc" ? "Loading document…" : "Loading project…",
+        subtitle: "Just a moment.",
+      });
+      if (!releaseRef.current) releaseRef.current = ctx.acquire();
+    };
+
+    document.addEventListener("click", onClickCapture, true);
+    document.addEventListener("keydown", onKeyDownCapture, true);
+    return () => {
+      document.removeEventListener("click", onClickCapture, true);
+      document.removeEventListener("keydown", onKeyDownCapture, true);
+    };
+  }, [ctx, pathname]);
+
+  return null;
+}
+
 /**
  * Lock *all* link-style navigation (`<a>` and `[role="link"]`) while `shouldLock` is true.
  * Uses a reference-counted lock to avoid accidental unlocks if multiple operations overlap.
@@ -123,6 +205,7 @@ export default function Providers({
           </Suspense>
           <PendingUploadProvider>
             <NavigationLockProvider>
+              <DocNavOverlayController />
               {children}
               <OutOfCreditsListener />
             </NavigationLockProvider>
@@ -144,6 +227,7 @@ export default function Providers({
           </Suspense>
           <PendingUploadProvider>
             <NavigationLockProvider>
+              <DocNavOverlayController />
               {children}
               <OutOfCreditsListener />
             </NavigationLockProvider>
@@ -246,6 +330,25 @@ function ActiveOrgCacheSync() {
   const { status, data: session } = useSession();
   const pathname = usePathname();
   const prevRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    // If we just switched workspaces, the next page load can briefly render client-cached data
+    // from the previous org before `/api/orgs/active` resolves. Pre-seed the org id from the
+    // switch flow (sessionStorage) so cache keys are correct immediately.
+    try {
+      const raw = sessionStorage.getItem(PENDING_ACTIVE_ORG_ID_KEY) ?? "";
+      // Always clear the marker; it should only affect a single reload after switching.
+      sessionStorage.removeItem(PENDING_ACTIVE_ORG_ID_KEY);
+      const orgId = raw.trim();
+      if (!/^[a-f0-9]{24}$/i.test(orgId)) return;
+      setActiveOrgIdForCaches(orgId);
+      prevRef.current = orgId;
+      // Important: only memory. Persisted caches are already per-org keyed; we just want to avoid
+      // any accidental reuse of an in-memory snapshot during the first render pass.
+      clearSidebarCache({ memoryOnly: true });
+    } catch {
+      // ignore (best-effort)
+    }
+  }, []);
   useEffect(() => {
     // Important: NextAuth starts in a transient "loading" state on page loads/navigation.
     // Do NOT clear the active org cache key during this phase, otherwise client caches
@@ -418,10 +521,6 @@ function OrgJoinClaimOnLogin() {
         if (cancelled) return;
 
         // Switch via server redirect route (sets httpOnly cookie reliably).
-        setActiveOrgIdForCaches(orgId);
-        clearSidebarCache({ memoryOnly: true });
-        // Best-effort update for UI; the server cookie is the source of truth.
-        await update({ user: { ...(session.user ?? {}), activeOrgId: orgId } });
         if (typeof window !== "undefined") {
           try {
             await doSwitch(orgId);

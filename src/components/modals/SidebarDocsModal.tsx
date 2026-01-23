@@ -73,6 +73,7 @@ export default function SidebarDocsModal({
 
         <div className="mt-3">
           <input
+            autoFocus
             value={docsQuery}
             onChange={(e) => {
               setDocsQuery(e.target.value);

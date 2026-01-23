@@ -17,6 +17,12 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+/**
+ * Styled button primitive used across app/admin UIs.
+ *
+ * Exists to keep button variants/sizes consistent without repeating Tailwind strings.
+ * Side effects: none; always renders a `<button type="button">` by default.
+ */
 export default function Button({ variant = "outline", size = "md", className, disabled, ...rest }: ButtonProps) {
   const base =
     "inline-flex items-center justify-center font-semibold transition focus-visible:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-60";

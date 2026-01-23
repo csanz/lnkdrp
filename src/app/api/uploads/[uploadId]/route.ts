@@ -58,6 +58,7 @@ export async function GET(
           id: String(upload._id),
           docId: upload.docId ? String(upload.docId) : null,
           status: upload.status ?? null,
+          version: typeof (upload as any).version === "number" ? (upload as any).version : null,
         },
         doc: {
           id: upload.docId ? String(upload.docId) : null,
@@ -90,6 +91,7 @@ export async function GET(
           id: String(upload._id),
           docId: upload.docId ? String(upload.docId) : null,
           status: upload.status ?? null,
+          version: typeof (upload as any).version === "number" ? (upload as any).version : null,
         },
         doc: {
           id: upload.docId ? String(upload.docId) : null,
@@ -158,6 +160,12 @@ export async function PATCH(
         hasSecret: true,
         secretLen: trimmed.length,
       });
+      if ("previewImageUrl" in update) {
+        debugLog(1, "[api/uploads/:uploadId] PATCH previewImageUrl (secret)", {
+          uploadId,
+          hasPreview: Boolean(update.previewImageUrl),
+        });
+      }
 
       // Debug-friendly behavior: distinguish between missing upload vs secret mismatch.
       // (This route is used by capability flows; returning a clearer error helps diagnose issues.)
@@ -198,6 +206,12 @@ export async function PATCH(
     }
 
     const actor = await resolveActor(request);
+    if ("previewImageUrl" in update) {
+      debugLog(1, "[api/uploads/:uploadId] PATCH previewImageUrl (actor)", {
+        uploadId,
+        hasPreview: Boolean(update.previewImageUrl),
+      });
+    }
     const upload = await UploadModel.findOneAndUpdate(
       { _id: new Types.ObjectId(uploadId), userId: new Types.ObjectId(actor.userId) },
       update,

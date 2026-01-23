@@ -20,6 +20,11 @@ export const dynamic = "force-dynamic";
 
 type Cursor = { toVersion: number; createdDate: string; id: string };
 
+/**
+ * Parses and clamps the `limit` query param for share history pagination.
+ *
+ * Exists to keep responses bounded and stable for public share endpoints.
+ */
 function parseLimit(url: URL): number {
   const raw = url.searchParams.get("limit");
   const n = raw ? Number(raw) : NaN;
@@ -27,6 +32,11 @@ function parseLimit(url: URL): number {
   return Math.max(1, Math.min(25, Math.floor(n)));
 }
 
+/**
+ * Decodes a pagination cursor from `base64url(JSON)` (best-effort).
+ *
+ * Returns null when missing/invalid; callers treat null as "start from newest".
+ */
 function decodeCursor(raw: string | null): Cursor | null {
   if (!raw) return null;
   try {
@@ -44,10 +54,20 @@ function decodeCursor(raw: string | null): Cursor | null {
   }
 }
 
+/**
+ * Encodes a pagination cursor as `base64url(JSON)` for share history pagination.
+ *
+ * Exists to avoid leaking internal Mongo query details while keeping cursors opaque.
+ */
 function encodeCursor(c: { toVersion: number; createdDate: string; id: string }): string {
   return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
 }
 
+/**
+ * Reads a named cookie value from the request header (minimal parsing).
+ *
+ * Exists to validate share-password auth cookies without depending on Next.js cookie helpers.
+ */
 function getCookie(request: Request, name: string): string | null {
   const raw = request.headers.get("cookie");
   if (!raw) return null;
@@ -59,6 +79,13 @@ function getCookie(request: Request, name: string): string | null {
   return null;
 }
 
+/**
+ * `GET /s/:shareId/changes`
+ *
+ * Returns a recipient-facing, paginated revision history for a shared doc.
+ * Permissions: requires `shareEnabled` and `shareAllowRevisionHistory`; enforces share password when set.
+ * Errors: 400 for invalid input, 401 for missing/invalid share auth cookie, 403 when history is disabled, 404 when not found.
+ */
 export async function GET(request: Request, ctx: { params: Promise<{ shareId: string }> }) {
   return withMongoRequestLogging(request, async () => {
     try {
@@ -75,12 +102,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
         .select({
           _id: 1,
+          shareEnabled: 1,
           shareAllowRevisionHistory: 1,
           sharePasswordHash: 1,
           sharePasswordSalt: 1,
         })
         .lean();
       if (!doc) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      if ((doc as { shareEnabled?: unknown }).shareEnabled === false) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
 

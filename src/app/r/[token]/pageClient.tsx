@@ -5,7 +5,7 @@ import Link from "next/link";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpTrayIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { upload as blobUpload } from "@vercel/blob/client";
-import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
+import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname, buildDocPreviewPngPathname } from "@/lib/blob/clientUpload";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { BOT_ID_HEADER, getOrCreateBotId } from "@/lib/botId";
 import { useAuthEnabled } from "@/app/providers";
@@ -48,6 +48,53 @@ type UploadStatusResponse = {
 function isAcceptedPdfOrImage(file: File) {
   const t = (file.type || "").toLowerCase();
   return t === "application/pdf" || t.startsWith("image/");
+}
+
+async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null> {
+  try {
+    const ct = (file.type || "").toLowerCase();
+    if (ct !== "application/pdf") return null;
+
+    // Use the already-selected file bytes to avoid any CORS complications.
+    const pdfBytes = new Uint8Array(await file.arrayBuffer());
+
+    // Load PDF.js from our vendored ESM bundle in /public (same approach as PdfJsViewer).
+    const pdfjsModuleUrl = "/pdfjs/pdf.min.mjs";
+    const pdfjs = (await import(/* webpackIgnore: true */ pdfjsModuleUrl)) as any;
+
+    // Preview rendering is best-effort; disable worker for maximum compatibility.
+    const loadingTask = pdfjs.getDocument({ data: pdfBytes, disableWorker: true });
+    const pdf = await loadingTask.promise;
+    const page = await pdf.getPage(1);
+
+    const scale = 2;
+    const maxWidth = 1200;
+    const baseViewport = page.getViewport({ scale });
+    const finalScale = baseViewport.width > maxWidth ? scale * (maxWidth / baseViewport.width) : scale;
+    const viewport = page.getViewport({ scale: finalScale });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const pngBlob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), "image/png");
+    });
+
+    try {
+      await pdf.destroy?.();
+    } catch {
+      // ignore
+    }
+
+    return pngBlob;
+  } catch {
+    return null;
+  }
 }
 /**
  * Format Bytes (uses isFinite, toFixed).
@@ -277,6 +324,25 @@ export default function RequestUploadPageClient(props: {
       });
       blobUrl = blob.url;
 
+      // Best-effort: generate a server-independent preview PNG for PDFs.
+      // This avoids relying on Node-native canvas bindings during processing.
+      let previewImageUrl: string | null = null;
+      try {
+        const pngBlob = await renderPdfFirstPagePngBestEffort(file);
+        if (pngBlob) {
+          const previewPathname = buildDocPreviewPngPathname({ docId, uploadId });
+          const previewFile = new File([pngBlob], "preview.png", { type: "image/png" });
+          const preview = await blobUpload(previewPathname, previewFile, {
+            access: "public",
+            handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
+            contentType: "image/png",
+          });
+          previewImageUrl = preview.url;
+        }
+      } catch {
+        // ignore (best-effort)
+      }
+
       setStatus({ step: "finalizing" });
       await fetchJson(`/api/uploads/${encodeURIComponent(uploadId)}`, {
         method: "PATCH",
@@ -288,6 +354,7 @@ export default function RequestUploadPageClient(props: {
           status: "uploaded",
           blobUrl: blob.url,
           blobPathname: blob.pathname,
+          previewImageUrl,
           metadata: { size: file.size },
         }),
       });

@@ -6,7 +6,7 @@
 "use client";
 
 type Variant = "outline" | "ghost";
-type Size = "sm" | "md";
+type Size = "xs" | "sm" | "md";
 
 type Props = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "type" | "children" | "aria-label"> & {
   ariaLabel: string;
@@ -19,6 +19,12 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+/**
+ * Icon-only button primitive with consistent sizing and focus styles.
+ *
+ * Exists to standardize common "icon action" buttons and enforce accessible labeling via `ariaLabel`.
+ * Side effects: none; renders a `<button type="button">`.
+ */
 export default function IconButton({
   ariaLabel,
   variant = "outline",
@@ -28,7 +34,7 @@ export default function IconButton({
   ...rest
 }: Props) {
   const base = "inline-flex items-center justify-center focus-visible:outline-none focus-visible:ring-2";
-  const padding = size === "sm" ? "p-1.5" : "p-2";
+  const padding = size === "xs" ? "p-1" : size === "sm" ? "p-1.5" : "p-2";
   const shape = "rounded-lg";
   const palette =
     variant === "ghost"

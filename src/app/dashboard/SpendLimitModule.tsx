@@ -259,7 +259,7 @@ export default function SpendLimitModule({
         </button>
       </div>
 
-      <div className="mt-3 flex items-center gap-2 text-[13px] font-semibold text-[var(--fg)]">
+      <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] font-semibold text-[var(--fg)]">
         <span>{spendLimitCents === 0 ? "—" : usedCreditsLabel}</span>
         <span className="text-[var(--muted-2)]">/</span>
         {isUnlimited ? (

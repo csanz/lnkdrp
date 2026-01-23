@@ -7,6 +7,12 @@ import { UserModel } from "@/lib/models/User";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 
+/**
+ * Best-effort backfill of `NEXTAUTH_URL` in development.
+ *
+ * Exists to silence noisy NextAuth dev warnings when running locally without full env config.
+ * Side effects: mutates `process.env.NEXTAUTH_URL` when it can infer a valid base URL.
+ */
 function ensureDevNextAuthUrl() {
   if (process.env.NEXTAUTH_URL) return;
   // This avoids noisy dev warnings; production should always set NEXTAUTH_URL explicitly.
@@ -27,13 +33,6 @@ function ensureDevNextAuthUrl() {
 ensureDevNextAuthUrl();
 
 /**
- * NextAuth configuration for the app.
- *
- * - Uses Google OAuth
- * - Persists/derives app-specific claims (user id + role) from MongoDB
- * - Denies sign-in for explicitly disabled users
- */
-/**
  * Return an environment variable or throw with a clear configuration error.
  */
 function mustGetEnv(name: string): string {
@@ -53,6 +52,13 @@ type GoogleProfileShape = {
   sub?: string | null;
 };
 
+/**
+ * NextAuth configuration for the app (Google OAuth + Mongo-backed claims).
+ *
+ * Exists to keep auth stateless (JWT sessions) while enriching tokens with app-specific claims
+ * (user id, role, active org). Side effects: may upsert user records and validate org membership
+ * during `session.update` triggers.
+ */
 export const authOptions: NextAuthOptions = {
   providers: [
     GoogleProvider({

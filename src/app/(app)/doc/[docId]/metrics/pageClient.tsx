@@ -50,6 +50,40 @@ type MetricsResponse = {
   }>;
 };
 
+type ShareViewerVisitSummary = {
+  visitId: string;
+  startedAt: string | null;
+  lastEventAt: string | null;
+  timeSpentMs: number;
+  pagesSeen: number[];
+  pageTimeMsByPage?: Record<string, number>;
+  pageVisitCountByPage?: Record<string, number>;
+};
+
+type ShareViewerVisitsResponse = {
+  ok: true;
+  docId: string;
+  kind: "authed" | "anon";
+  visits: ShareViewerVisitSummary[];
+};
+
+type ShareViewerVisitDetailResponse = {
+  ok: true;
+  docId: string;
+  visit: {
+    visitId: string;
+    shareId: string | null;
+    startedAt: string | null;
+    lastEventAt: string | null;
+    timeSpentMs: number;
+    pagesSeen: number[];
+    revisitedPages: number[];
+    pageTimeMsByPage: Record<string, number>;
+    pageVisitCountByPage: Record<string, number>;
+    events: Array<{ pageNumber: number; enteredAt: string | null; leftAt: string | null; durationMs: number }>;
+  };
+};
+
 function formatDateTime(iso: string | null): string {
   if (!iso) return "-";
   const d = new Date(iso);
@@ -110,6 +144,17 @@ function formatDurationShort(msRaw: number | null | undefined): string {
   if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+function formatDurationTiny(msRaw: number | null | undefined): string {
+  const ms = typeof msRaw === "number" && Number.isFinite(msRaw) ? Math.max(0, Math.floor(msRaw)) : 0;
+  if (ms <= 0) return "";
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.round(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const totalHours = Math.round(totalMinutes / 60);
+  return `${totalHours}h`;
 }
 
 function MiniLineChartSingle({
@@ -260,10 +305,31 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       }
   >(null);
 
+  const [visitsModalOpen, setVisitsModalOpen] = useState(false);
+  const [visitsLoading, setVisitsLoading] = useState(false);
+  const [visitsError, setVisitsError] = useState<string | null>(null);
+  const [visits, setVisits] = useState<ShareViewerVisitSummary[]>([]);
+  const [visitDetail, setVisitDetail] = useState<ShareViewerVisitDetailResponse["visit"] | null>(null);
+  const [visitDetailLoading, setVisitDetailLoading] = useState(false);
+  const [visitDetailError, setVisitDetailError] = useState<string | null>(null);
+
   const viewerTimeTotalMs = viewerDetail ? (viewerDetail.timeSpentMs > 0 ? viewerDetail.timeSpentMs : viewerDetail.timeOpenMs) : 0;
   const viewerTimeApproxPrefix = viewerDetail ? (viewerDetail.timeSpentMs > 0 ? "" : "~") : "";
   const viewerAvgTimeMs =
     viewerDetail && viewerTimeTotalMs > 0 ? Math.round(viewerTimeTotalMs / Math.max(1, viewerDetail.views)) : 0;
+  const viewerAvgPageMs =
+    viewerDetail && viewerTimeTotalMs > 0
+      ? Math.round(viewerTimeTotalMs / Math.max(1, viewerDetail.pagesViewed || viewerDetail.pagesSeen.length || 1))
+      : 0;
+  const viewerHasRealPerPageTime =
+    viewerDetail ? Object.values(viewerDetail.pageTimeMsByPage ?? {}).some((v) => typeof v === "number" && Number.isFinite(v) && v > 0) : false;
+  const viewerTrackedTimeTotalMs = viewerDetail ? viewerDetail.timeSpentMs : 0;
+  const viewerTrackedAvgPerViewMs =
+    viewerDetail && viewerDetail.timeSpentMs > 0 ? Math.round(viewerDetail.timeSpentMs / Math.max(1, viewerDetail.views)) : 0;
+  const viewerTrackedAvgPerPageMs =
+    viewerDetail && viewerDetail.timeSpentMs > 0
+      ? Math.round(viewerDetail.timeSpentMs / Math.max(1, viewerDetail.pagesViewed || viewerDetail.pagesSeen.length || 1))
+      : 0;
 
   const VIEWERS_PAGE_SIZE = 25;
 
@@ -484,6 +550,62 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       firstSeen: firstSeenIso,
       lastSeen: lastSeenIso,
     });
+  }
+
+  function countRevisitedPages(visit: ShareViewerVisitSummary): number {
+    const m = visit.pageVisitCountByPage ?? {};
+    return (visit.pagesSeen ?? []).reduce((acc, p) => {
+      const c = m[String(p)];
+      return acc + (typeof c === "number" && Number.isFinite(c) && c >= 2 ? 1 : 0);
+    }, 0);
+  }
+
+  async function openVisitsForViewer() {
+    if (!viewerDetail) return;
+    setVisitsModalOpen(true);
+    setVisitsError(null);
+    setVisits([]);
+    setVisitDetail(null);
+    setVisitDetailError(null);
+    setVisitsLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("kind", viewerDetail.kind);
+      params.set("limit", "50");
+      if (viewerDetail.kind === "authed") params.set("userId", viewerDetail.key);
+      else params.set("botIdHash", viewerDetail.key);
+      const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/shareviews/visits?${params.toString()}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      const json = (await res.json().catch(() => null)) as any;
+      if (!json || typeof json !== "object" || json.ok !== true || !Array.isArray(json.visits)) throw new Error("Invalid response");
+      setVisits((json as ShareViewerVisitsResponse).visits);
+    } catch (e) {
+      setVisitsError(e instanceof Error ? e.message : "Failed to load visits");
+    } finally {
+      setVisitsLoading(false);
+    }
+  }
+
+  async function openVisitDetail(visitId: string) {
+    setVisitDetail(null);
+    setVisitDetailError(null);
+    setVisitDetailLoading(true);
+    try {
+      const res = await fetchWithTempUser(
+        `/api/docs/${encodeURIComponent(docId)}/shareviews/visits/${encodeURIComponent(visitId)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      const json = (await res.json().catch(() => null)) as any;
+      if (!json || typeof json !== "object" || json.ok !== true || !json.visit) throw new Error("Invalid response");
+      setVisitDetail((json as ShareViewerVisitDetailResponse).visit);
+    } catch (e) {
+      setVisitDetailError(e instanceof Error ? e.message : "Failed to load visit details");
+    } finally {
+      setVisitDetailLoading(false);
+    }
   }
 
   const dateRangeLabel = useMemo(() => {
@@ -1006,8 +1128,13 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               <div className="grid gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">ACTIVITY</div>
-                  <div className="text-xs text-[var(--muted)]">
-                    {viewerDetail.kind === "authed" ? "Authenticated viewer" : "Anonymous viewer"}
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs text-[var(--muted)]">
+                      {viewerDetail.kind === "authed" ? "Authenticated viewer" : "Anonymous viewer"}
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => void openVisitsForViewer()}>
+                      Visits
+                    </Button>
                   </div>
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
@@ -1019,14 +1146,21 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                   </span>
                   {viewerTimeTotalMs > 0 ? (
                     <span className="tabular-nums text-[var(--fg)]">
-                      {viewerDetail.timeSpentMs > 0 ? "Time spent" : "Time open"} {viewerTimeApproxPrefix}
-                      {formatDurationShort(viewerTimeTotalMs)}
+                      {viewerDetail.timeSpentMs > 0 ? (
+                        <>Time spent {formatDurationShort(viewerDetail.timeSpentMs)}</>
+                      ) : (
+                        <>Activity span ~{formatDurationShort(viewerDetail.timeOpenMs)}</>
+                      )}
                     </span>
                   ) : null}
-                  {viewerAvgTimeMs > 0 ? (
+                  {viewerTrackedAvgPerViewMs > 0 ? (
                     <span className="tabular-nums text-[var(--fg)]">
-                      Avg / view {viewerTimeApproxPrefix}
-                      {formatDurationShort(viewerAvgTimeMs)}
+                      Avg / view {formatDurationShort(viewerTrackedAvgPerViewMs)}
+                    </span>
+                  ) : null}
+                  {viewerTrackedAvgPerPageMs > 0 ? (
+                    <span className="tabular-nums text-[var(--fg)]">
+                      Avg / page {formatDurationShort(viewerTrackedAvgPerPageMs)}
                     </span>
                   ) : null}
                 </div>
@@ -1044,29 +1178,159 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                     <div className="mt-2 text-sm text-[var(--muted)]">{formatPageRanges(viewerDetail.pagesSeen)}</div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {viewerDetail.pagesSeen.slice(0, 60).map((p) => (
+                        (() => {
+                          const raw = viewerDetail.pageTimeMsByPage?.[String(p)];
+                          const actualMs = typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+                          const ms = actualMs;
+                          const tiny = ms > 0 ? formatDurationTiny(ms) : "";
+                          return (
                         <span
                           key={`page:${viewerDetail.key}:${p}`}
-                            title={
-                              (() => {
-                                const raw = viewerDetail.pageTimeMsByPage?.[String(p)];
-                                const ms = typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
-                                return ms > 0 ? `Time on page: ${formatDurationShort(ms)}` : `Page ${p}`;
-                              })()
-                            }
-                            className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1 text-xs font-semibold text-[var(--fg)] tabular-nums"
+                            tabIndex={ms > 0 ? 0 : -1}
+                            className="group relative inline-flex flex-col items-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1 text-[11px] font-semibold text-[var(--fg)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                         >
-                          {p}
+                            <span className="leading-4">{p}</span>
+                            {tiny ? <span className="mt-0.5 text-[10px] font-medium text-[var(--muted-2)]">{tiny}</span> : null}
+                            {ms > 0 ? (
+                              <span className="pointer-events-none absolute -top-2 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--fg)] shadow-xl group-hover:block group-focus-visible:block">
+                                Time on page: {formatDurationShort(ms)}
+                              </span>
+                            ) : null}
                         </span>
+                          );
+                        })()
                       ))}
                       {viewerDetail.pagesSeen.length > 60 ? (
                         <span className="text-xs text-[var(--muted)]">+{viewerDetail.pagesSeen.length - 60} more</span>
                       ) : null}
                     </div>
+                    {!viewerHasRealPerPageTime ? (
+                      <div className="mt-2 text-xs text-[var(--muted)]">
+                        Per-page time is best-effort and only appears after a viewer navigates with the updated share viewer.
+                      </div>
+                    ) : null}
                   </>
                 )}
               </div>
             </div>
           </>
+        )}
+      </Modal>
+
+      <Modal open={visitsModalOpen} onClose={() => setVisitsModalOpen(false)} ariaLabel="Viewer visits">
+        <div className="text-base font-semibold text-[var(--fg)]">Visits</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">
+          Per-tab visits (best-effort). A “visit” is scoped to a single browser tab session.
+        </div>
+
+        <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+          {visitsLoading ? (
+            <div className="p-4 text-sm text-[var(--muted)]">Loading visits…</div>
+          ) : visitsError ? (
+            <div className="p-4 text-sm text-red-700">{visitsError}</div>
+          ) : !visits.length ? (
+            <div className="p-4 text-sm text-[var(--muted)]">No visit data yet.</div>
+          ) : (
+            <ul className="divide-y divide-[var(--border)]">
+              {visits.map((v) => {
+                const startedAt = v.startedAt;
+                const lastEventAt = v.lastEventAt;
+                const revisited = countRevisitedPages(v);
+                return (
+                  <li key={v.visitId} className="hover:bg-[var(--panel-hover)]">
+                    <button
+                      type="button"
+                      onClick={() => void openVisitDetail(v.visitId)}
+                      className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
+                      title="View visit details"
+                    >
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-[var(--fg)]">
+                          {formatDateTime(startedAt)} → {formatDateTime(lastEventAt)}
+                        </div>
+                        <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">
+                          {v.pagesSeen?.length ?? 0} pages · {revisited} revisited
+                        </div>
+                      </div>
+                      <div className="shrink-0 sm:text-right">
+                        <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
+                          {formatDurationShort(v.timeSpentMs)}
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <div className="mt-3 flex justify-end">
+          <Button variant="ghost" size="sm" onClick={() => void openVisitsForViewer()} disabled={visitsLoading}>
+            Refresh
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(visitDetail) || visitDetailLoading || Boolean(visitDetailError)}
+        onClose={() => {
+          setVisitDetail(null);
+          setVisitDetailError(null);
+          setVisitDetailLoading(false);
+        }}
+        ariaLabel="Visit details"
+      >
+        <div className="text-base font-semibold text-[var(--fg)]">Visit details</div>
+        {visitDetailLoading ? (
+          <div className="mt-2 text-sm text-[var(--muted)]">Loading…</div>
+        ) : visitDetailError ? (
+          <div className="mt-2 text-sm text-red-700">{visitDetailError}</div>
+        ) : !visitDetail ? (
+          <div className="mt-2 text-sm text-[var(--muted)]">No details.</div>
+        ) : (
+          <div className="mt-4 grid gap-4">
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+              <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">SUMMARY</div>
+              <div className="mt-2 text-sm text-[var(--muted)]">
+                {formatDateTime(visitDetail.startedAt)} → {formatDateTime(visitDetail.lastEventAt)}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+                <span className="tabular-nums text-[var(--fg)]">Time spent {formatDurationShort(visitDetail.timeSpentMs)}</span>
+                <span className="tabular-nums text-[var(--fg)]">{visitDetail.pagesSeen.length} pages</span>
+                <span className="tabular-nums text-[var(--fg)]">{visitDetail.revisitedPages.length} revisited</span>
+              </div>
+              {visitDetail.pagesSeen.length ? (
+                <div className="mt-2 text-xs text-[var(--muted)]">Pages: {formatPageRanges(visitDetail.pagesSeen)}</div>
+              ) : null}
+              {visitDetail.revisitedPages.length ? (
+                <div className="mt-1 text-xs text-[var(--muted)]">Revisited: {formatPageRanges(visitDetail.revisitedPages)}</div>
+              ) : null}
+            </div>
+
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+              <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">PAGE SEQUENCE</div>
+              {!visitDetail.events.length ? (
+                <div className="mt-2 text-sm text-[var(--muted)]">No sequence data yet.</div>
+              ) : (
+                <div className="mt-3 max-h-[340px] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--panel-2)]">
+                  <ul className="divide-y divide-[var(--border)]">
+                    {visitDetail.events.slice(0, 250).map((e, idx) => (
+                      <li key={`${visitDetail.visitId}:ev:${idx}`} className="px-3 py-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold text-[var(--fg)] tabular-nums">Page {e.pageNumber}</div>
+                          <div className="text-xs text-[var(--muted-2)] tabular-nums">{formatDurationTiny(e.durationMs)}</div>
+                        </div>
+                        <div className="mt-0.5 text-xs text-[var(--muted)]">
+                          {formatDateTime(e.enteredAt)} → {formatDateTime(e.leftAt)}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
         )}
       </Modal>
     </div>

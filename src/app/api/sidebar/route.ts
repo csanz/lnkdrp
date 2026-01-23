@@ -42,12 +42,24 @@ type SidebarProjectListItem = {
   createdDate: string | null;
 };
 
+/**
+ * Generates a weak ETag for a JSON payload.
+ *
+ * Exists to let the sidebar cache use conditional GETs and receive 304 when unchanged.
+ */
 function etagFromJson(v: unknown): string {
   const json = JSON.stringify(v);
   const hash = crypto.createHash("sha1").update(json).digest("hex").slice(0, 16);
   return `W/"${hash}"`;
 }
 
+/**
+ * `GET /api/sidebar`
+ *
+ * Returns a single snapshot payload for the app sidebar (recent docs/projects/requests).
+ * Optimized for the "hot path": uses small fixed limits and supports conditional GET (ETag/304).
+ * Errors: 400 on unexpected failures; auth failures surface via actor resolution.
+ */
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);

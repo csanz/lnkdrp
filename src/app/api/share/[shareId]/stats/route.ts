@@ -4,6 +4,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
@@ -110,6 +111,19 @@ function asDurationMs(v: unknown): number | null {
   // Cap to 24h to prevent abuse / broken clocks.
   return Math.min(ms, 24 * 60 * 60 * 1000);
 }
+
+/**
+ * As Epoch Ms (clamped).
+ */
+function asEpochMs(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return null;
+  const ms = Math.floor(n);
+  // Guardrails: reject tiny/negative and absurdly future timestamps.
+  if (ms < 946684800000) return null; // 2000-01-01
+  if (ms > Date.now() + 10 * 60 * 1000) return null; // allow a bit of clock skew
+  return ms;
+}
 /**
  * Handle GET requests.
  */
@@ -170,6 +184,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const botId = asNonEmptyString((body as { botId?: unknown })?.botId);
       const pageNumber = asPositiveInt((body as { pageNumber?: unknown })?.pageNumber);
       const durationMs = asDurationMs((body as { durationMs?: unknown })?.durationMs);
+      const visitId = asNonEmptyString((body as { visitId?: unknown })?.visitId, 256);
+      const enteredAtMs = asEpochMs((body as { enteredAtMs?: unknown })?.enteredAtMs);
+      const leftAtMs = asEpochMs((body as { leftAtMs?: unknown })?.leftAtMs);
       const viewerEmailRaw = asNonEmptyString((body as { viewerEmail?: unknown })?.viewerEmail);
       const viewerEmail = viewerEmailRaw ? normalizeEmail(viewerEmailRaw) : null;
       if (!botId) {
@@ -191,6 +208,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const viewerUserId =
         session?.userId && Types.ObjectId.isValid(session.userId) ? new Types.ObjectId(session.userId) : null;
       const botIdHash = crypto.createHash("sha256").update(botId).digest("hex");
+      const visitIdHash = visitId ? crypto.createHash("sha256").update(visitId).digest("hex") : null;
 
       after(async () => {
         try {
@@ -268,6 +286,92 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             const inc: Record<string, number> = { timeSpentMs: durationMs };
             if (pageNumber) inc[`pageTimeMsByPage.${String(pageNumber)}`] = durationMs;
             await ShareViewModel.updateOne({ shareId, botIdHash }, { $inc: inc });
+          }
+
+          // Per-visit tracking (best-effort). This enables per-session details in owner metrics.
+          if (visitIdHash) {
+            try {
+              const now = Date.now();
+              const leftAt = leftAtMs ? new Date(leftAtMs) : new Date(now);
+              const enteredAt = enteredAtMs ? new Date(enteredAtMs) : null;
+              const derivedDurationMs =
+                durationMs ??
+                (enteredAt ? Math.max(0, Math.min(24 * 60 * 60 * 1000, leftAt.getTime() - enteredAt.getTime())) : null);
+
+              const setFields: Record<string, unknown> = {};
+              if (viewerIp) setFields.viewerIp = viewerIp;
+              if (viewerUserId) setFields.viewerUserId = viewerUserId;
+              if (viewerEmail) setFields.viewerEmail = viewerEmail;
+
+              // Keep the "best-known" viewer snapshots on the visit record too.
+              let viewerName: string | null = null;
+              let viewerEmailSnapshot: string | null = null;
+              if (viewerUserId) {
+                try {
+                  const u = await UserModel.findById(viewerUserId).select({ _id: 1, name: 1, email: 1 }).lean();
+                  viewerName =
+                    u && typeof (u as any).name === "string" && (u as any).name.trim() ? (u as any).name.trim() : null;
+                  viewerEmailSnapshot =
+                    u && typeof (u as any).email === "string" && (u as any).email.trim()
+                      ? String((u as any).email).trim().toLowerCase()
+                      : viewerEmail ?? null;
+                } catch {
+                  // ignore
+                }
+              }
+
+              const update: Record<string, unknown> = {
+                $setOnInsert: {
+                  shareId,
+                  docId,
+                  botIdHash,
+                  visitIdHash,
+                  startedAt: enteredAt ?? leftAt,
+                  lastEventAt: leftAt,
+                  pagesSeen: [],
+                },
+                $max: { lastEventAt: leftAt },
+              };
+
+              const set: Record<string, unknown> = {
+                ...(Object.keys(setFields).length ? setFields : {}),
+                ...(viewerName ? { viewerName } : {}),
+                ...(viewerEmailSnapshot ? { viewerEmailSnapshot } : {}),
+              };
+              if (Object.keys(set).length) update.$set = set;
+
+              const inc: Record<string, number> = {};
+              const shouldIncTime = typeof derivedDurationMs === "number" && Number.isFinite(derivedDurationMs) && derivedDurationMs > 0;
+              if (shouldIncTime) inc.timeSpentMs = Math.floor(derivedDurationMs);
+              if (shouldIncTime && pageNumber) inc[`pageTimeMsByPage.${String(pageNumber)}`] = Math.floor(derivedDurationMs);
+
+              // Revisits/page-sequence require a well-defined page interval (enteredAt/leftAt).
+              const canRecordPageEvent =
+                Boolean(pageNumber) &&
+                Boolean(enteredAt) &&
+                shouldIncTime &&
+                enteredAt!.getTime() <= leftAt.getTime();
+
+              if (canRecordPageEvent) {
+                inc[`pageVisitCountByPage.${String(pageNumber!)}`] = 1;
+                update.$addToSet = { pagesSeen: pageNumber };
+                update.$push = {
+                  pageEvents: {
+                    $each: [{ pageNumber, enteredAt, leftAt, durationMs: Math.floor(derivedDurationMs!) }],
+                    $slice: -500,
+                  },
+                };
+              } else if (pageNumber) {
+                // Still keep pagesSeen updated even if we can't record a full interval.
+                update.$addToSet = { pagesSeen: pageNumber };
+              }
+
+              if (Object.keys(inc).length) update.$inc = inc;
+
+              await ShareVisitModel.updateOne({ shareId, botIdHash, visitIdHash }, update, { upsert: true });
+            } catch {
+              // ignore
+            }
           }
         } catch {
           // ignore; best-effort analytics

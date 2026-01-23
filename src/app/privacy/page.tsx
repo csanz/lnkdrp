@@ -3,6 +3,7 @@
  *
  * Public privacy policy page accessible from the logged-out homepage.
  */
+/* eslint-disable react/no-unescaped-entities */
 "use client";
 
 import Link from "next/link";
@@ -104,7 +105,7 @@ export default function PrivacyPolicyPage() {
           <section>
             <h2 className="mb-3 text-xl font-semibold text-white">1. Introduction</h2>
             <p className="mb-4 leading-7">
-              LinkDrop ("we," "us," or "our") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our document sharing platform and related services (collectively, the "Service").
+              LinkDrop (“we”, “us”, or “our”) is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our document sharing platform and related services (collectively, the “Service”).
             </p>
             <p className="leading-7">
               By using the Service, you agree to the collection and use of information in accordance with this Privacy Policy. If you do not agree with our policies and practices, please do not use the Service.
@@ -298,7 +299,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">10. Children's Privacy</h2>
+            <h2 className="mb-3 text-xl font-semibold text-white">10. Children’s Privacy</h2>
             <p className="leading-7">
               The Service is not intended for individuals under the age of 13 (or the minimum age in your jurisdiction). We do not knowingly collect personal information from children. If you believe we have collected information from a child, please contact us immediately at hi@lnkdrp.com, and we will take steps to delete such information.
             </p>
@@ -370,7 +371,7 @@ export default function PrivacyPolicyPage() {
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li>Posting the updated Privacy Policy on our website</li>
-              <li>Updating the "Last updated" date</li>
+              <li>Updating the “Last updated” date</li>
               <li>Sending you an email notification (for significant changes)</li>
             </ul>
             <p className="leading-7">

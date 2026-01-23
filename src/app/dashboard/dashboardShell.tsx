@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useSession } from "next-auth/react";
 import { useTheme } from "next-themes";
-import { Bars3Icon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, Bars3Icon } from "@heroicons/react/24/outline";
 import AccountMenu from "@/components/AccountMenu";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import { useAuthEnabled } from "@/app/providers";
@@ -137,13 +137,14 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const logoSrc = mounted && resolvedTheme === "dark" ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
   const creditsUnlimited = Boolean(credits && credits.onDemandMonthlyLimitCents >= UNLIMITED_LIMIT_CENTS);
 
-  async function refreshCredits(includeSpend = false) {
+  async function refreshCredits(includeSpend = false, opts: { bust?: boolean } = {}) {
     setCreditsBusy(true);
     setCreditsError(null);
     creditsBusyRef.current = true;
     try {
       const qs = new URLSearchParams();
       if (includeSpend) qs.set("includeSpend", "1");
+      if (opts.bust) qs.set("bust", "1");
       // Header fast-path: use `fast=1` by default (bounded; avoids expensive fallback work).
       if (!qs.has("fast")) qs.set("fast", "1");
       const res = await fetch(`/api/credits/snapshot?${qs.toString()}`, { method: "GET" });
@@ -203,7 +204,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         pendingCreditsRefreshRef.current = true;
         return;
       }
-      void refreshCredits(false);
+      // Bypass the API route's short in-memory cache after mutations so the header updates immediately.
+      void refreshCredits(false, { bust: true });
     }
     window.addEventListener(CREDITS_SNAPSHOT_REFRESH_EVENT, onRefresh);
     return () => window.removeEventListener(CREDITS_SNAPSHOT_REFRESH_EVENT, onRefresh);
@@ -309,15 +311,30 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             >
               <Bars3Icon className="h-5 w-5" aria-hidden="true" />
             </IconButton>
-            <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
-              <Image src={logoSrc} alt="LinkDrop" width={31} height={31} priority />
+            <Link
+              href="/"
+              className="inline-flex shrink-0 items-center gap-2"
+              aria-label="Back to app"
+              title="Back to app"
+            >
+              <Image src={logoSrc} alt="LinkDrop" width={28} height={28} priority className="block" />
             </Link>
             <ActiveWorkspacePill
-              className="hidden sm:inline-flex"
-              maxWidthClassName="max-w-[240px]"
+              className="inline-flex"
+              maxWidthClassName="max-w-[44vw] sm:max-w-[240px]"
               textClassName="text-[13px]"
               disableNetwork
             />
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+              aria-label="Back to app"
+              title="Back to app"
+            >
+              <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Back to app</span>
+              <span className="sm:hidden">Back</span>
+            </Link>
           </div>
 
           <div className="min-w-0">

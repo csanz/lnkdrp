@@ -177,7 +177,7 @@ export default function DailyUsageChart({
   }, [chartData, group, keys]);
 
   return (
-    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6", className)}>
+    <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6", className)}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Daily usage</div>

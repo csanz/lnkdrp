@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpTrayIcon, DocumentTextIcon } from "@heroicons/react/24/outline";
 import { upload as blobUpload } from "@vercel/blob/client";
-import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
+import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname, buildDocPreviewPngPathname } from "@/lib/blob/clientUpload";
 import { extractErrorMessage, fetchJson } from "@/lib/http/fetchJson";
 import { StandaloneBrandedHeader } from "@/components/StandaloneBrandedHeader";
 
@@ -35,6 +35,52 @@ type UploadStatusResponse = {
 function isAcceptedPdfOrImage(file: File) {
   const t = (file.type || "").toLowerCase();
   return t === "application/pdf" || t.startsWith("image/");
+}
+
+async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null> {
+  try {
+    const ct = (file.type || "").toLowerCase();
+    if (ct !== "application/pdf") return null;
+
+    const pdfBytes = new Uint8Array(await file.arrayBuffer());
+
+    // Load PDF.js from our vendored ESM bundle in /public (same approach as PdfJsViewer).
+    const pdfjsModuleUrl = "/pdfjs/pdf.min.mjs";
+    const pdfjs = (await import(/* webpackIgnore: true */ pdfjsModuleUrl)) as any;
+
+    // Best-effort thumbnail: disable worker for maximum compatibility.
+    const loadingTask = pdfjs.getDocument({ data: pdfBytes, disableWorker: true });
+    const pdf = await loadingTask.promise;
+    const page = await pdf.getPage(1);
+
+    const scale = 2;
+    const maxWidth = 1200;
+    const baseViewport = page.getViewport({ scale });
+    const finalScale = baseViewport.width > maxWidth ? scale * (maxWidth / baseViewport.width) : scale;
+    const viewport = page.getViewport({ scale: finalScale });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+
+    await page.render({ canvasContext: ctx, viewport }).promise;
+
+    const pngBlob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), "image/png");
+    });
+
+    try {
+      await pdf.destroy?.();
+    } catch {
+      // ignore
+    }
+
+    return pngBlob;
+  } catch {
+    return null;
+  }
 }
 
 function formatBytes(n: number): string {
@@ -162,6 +208,30 @@ export default function DocUpdatePageClient(props: { code: string }) {
       });
 
       setStatus({ step: "finalizing" });
+      // Best-effort: generate a preview image client-side so replacement uploads update previews
+      // even if server-side rendering fails (server will still keep the old preview on failures).
+      let previewImageUrl: string | null = null;
+      try {
+        const isImage = (file.type || "").toLowerCase().startsWith("image/");
+        if (isImage) {
+          // The uploaded blob is already an image; use it directly as the preview.
+          previewImageUrl = blob.url;
+        } else {
+          const pngBlob = await renderPdfFirstPagePngBestEffort(file);
+          if (pngBlob) {
+            const previewPathname = buildDocPreviewPngPathname({ docId, uploadId });
+            const previewFile = new File([pngBlob], "preview.png", { type: "image/png" });
+            const preview = await blobUpload(previewPathname, previewFile, {
+              access: "public",
+              handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
+              contentType: "image/png",
+            });
+            previewImageUrl = preview.url;
+          }
+        }
+      } catch {
+        // ignore (best-effort)
+      }
       await fetchJsonDirect(`/api/uploads/${encodeURIComponent(uploadId)}`, {
         method: "PATCH",
         headers: {
@@ -172,6 +242,7 @@ export default function DocUpdatePageClient(props: { code: string }) {
           status: "uploaded",
           blobUrl: blob.url,
           blobPathname: blob.pathname,
+          previewImageUrl,
           metadata: { size: file.size },
         }),
       });

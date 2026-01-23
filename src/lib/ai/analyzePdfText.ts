@@ -55,6 +55,12 @@ const TONE_VALUES = ["formal", "persuasive", "technical", "marketing", "internal
 
 const CONFIDENCE_VALUES = ["low", "medium", "high"] as const;
 
+/**
+ * Strict validated shape of persisted AI doc analysis output.
+ *
+ * Exists to ensure downstream UI + routing code can rely on stable keys/types even when the model
+ * produces imperfect JSON. Parsing failures throw Zod errors.
+ */
 export const AiDocAnalysisSchema = z
   .object({
     one_liner: z.string(),
@@ -334,11 +340,20 @@ async function loadConfig(): Promise<AnalyzePdfTextConfig> {
   };
   return cachedConfig;
 }
-/** Fill the user prompt template with the PDF text (supports `{{PDF_TEXT}}`). */
-function fillUserPrompt(template: string, pdfText: string): string {
+/** Fill the user prompt template (supports `{{PDF_TEXT}}`, `{{ORIGINAL_FILE_NAME}}`). */
+function fillUserPrompt(
+  template: string,
+  params: { pdfText: string; originalFileName?: string | null },
+): string {
   const t = template || "";
-  if (t.includes("{{PDF_TEXT}}")) return t.replace("{{PDF_TEXT}}", pdfText);
-  return `${t}\n\n${pdfText}`.trim();
+  const nameRaw = typeof params.originalFileName === "string" ? params.originalFileName.trim() : "";
+  const pdfText = params.pdfText;
+  let out = t;
+  if (out.includes("{{ORIGINAL_FILE_NAME}}")) out = out.replace("{{ORIGINAL_FILE_NAME}}", nameRaw);
+  if (out.includes("{{PDF_TEXT}}")) out = out.replace("{{PDF_TEXT}}", pdfText);
+  // Backward-compat: if the template doesn't include a PDF placeholder, append the text.
+  if (!t.includes("{{PDF_TEXT}}")) out = `${out}\n\n${pdfText}`.trim();
+  return out.trim();
 }
 /** Trim and cap prompt text to keep token usage bounded (preserves head + tail). */
 function trimForPrompt(input: string, max: number): string {
@@ -429,12 +444,14 @@ function buildProjectsContextBlock(params: {
 /**
  * Analyze extracted PDF text and return a normalized `AiDocAnalysis`.
  *
- * Returns null when AI is disabled (`OPENAI_API_KEY` not configured) or when there
- * is no usable text.
+ * Returns null when AI is disabled (`OPENAI_API_KEY` missing) or when there is no usable text.
+ * Side effects: records an AI run (start/complete/fail) for observability; never throws to callers
+ * on model/validation failures (falls back to a valid empty snapshot instead).
  */
 export async function analyzePdfText(input: {
   fullText?: string | null;
   pages?: Array<{ page_number: number; text: string }>;
+  originalFileName?: string | null;
   projects?: ProjectPromptContext[] | null;
   existingProjectIds?: string[] | null;
   isReplacement?: boolean;
@@ -456,7 +473,10 @@ export async function analyzePdfText(input: {
   if (!pdfText) return null;
 
   const [prompts, cfg] = await Promise.all([loadPrompts(), loadConfig()]);
-  const userPrompt = fillUserPrompt(prompts.user, pdfText);
+  const userPrompt = fillUserPrompt(prompts.user, {
+    pdfText,
+    originalFileName: input.originalFileName ?? null,
+  });
   const projectsBlock = buildProjectsContextBlock({
     projects: input.projects ?? null,
     existingProjectIds: input.existingProjectIds ?? null,

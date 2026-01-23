@@ -10,6 +10,7 @@ import { put } from "@vercel/blob";
 import pdfParse from "pdf-parse";
 import { createRequire } from "module";
 import { pathToFileURL } from "url";
+import path from "node:path";
 import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { UploadModel } from "@/lib/models/Upload";
@@ -58,10 +59,28 @@ async function getPdfJsLib(): Promise<PdfJsLib> {
   if (_cachedPdfJsLibPromise) return _cachedPdfJsLibPromise;
 
   _cachedPdfJsLibPromise = (async () => {
+    // IMPORTANT: keep `createRequire()` argument statically analyzable by Next,
+    // otherwise dev builds can warn/error with:
+    //   "module.createRequire failed parsing argument."
+    // Using `import.meta.url` avoids bundler parsing issues.
     const require = createRequire(import.meta.url);
+
     // Resolve to a concrete file path, then import via file:// so Next doesn't try to bundle it.
-    const pdfPath = require.resolve("pdfjs-dist/legacy/build/pdf.mjs");
-    const pdfjs = (await import(pathToFileURL(pdfPath).href)) as unknown as PdfJsLib;
+    let pdfPath = "";
+    try {
+      pdfPath = require.resolve("pdfjs-dist/legacy/build/pdf.mjs");
+    } catch (e) {
+      debugError(1, "[process] pdfjs resolve failed", {
+        message: e instanceof Error ? e.message : String(e),
+      });
+      throw e;
+    }
+    // IMPORTANT: the import target is a runtime-resolved file:// URL. Without `webpackIgnore`,
+    // Next/Webpack can error during bundling with "Cannot find module as expression is too dynamic".
+    // We want this to remain a pure runtime import.
+    const pdfjs = (await import(
+      /* webpackIgnore: true */ pathToFileURL(pdfPath).href
+    )) as unknown as PdfJsLib;
 
     // pdfjs-dist on Node uses a "fake worker" implementation that still needs access to the worker module.
     // In Next dev, the default worker resolution can point at a non-existent `.next/.../pdf.worker.mjs` chunk.
@@ -895,8 +914,10 @@ export async function POST(
   ctx: { params: Promise<{ uploadId: string }> },
 ) {
   const { uploadId } = await ctx.params;
+  const traceId = crypto.randomBytes(6).toString("base64url");
   if (!Types.ObjectId.isValid(uploadId)) {
-    return NextResponse.json({ error: "Invalid uploadId" }, { status: 400 });
+    console.warn("[process] invalid uploadId", { traceId, uploadId });
+    return NextResponse.json({ error: "Invalid uploadId", traceId }, { status: 400 });
   }
 
   const url = new URL(request.url);
@@ -906,7 +927,15 @@ export async function POST(
     qualityRaw === "advanced" ? ("advanced" as const) : qualityRaw === "basic" ? ("basic" as const) : ("standard" as const);
   const requestIdempotencyKey = idempotencyKeyFromRequest(request);
 
-  debugLog(1, "[process] queued", { uploadId });
+  // Unconditional server logs (debugging aid even when DEBUG_LEVEL=0 / prod builds).
+  console.log("[process] queued", {
+    traceId,
+    uploadId,
+    forceReviewRequested,
+    quality: forceReviewQualityTier,
+    idempotencyKey: requestIdempotencyKey ? "[set]" : "",
+  });
+  debugLog(1, "[process] queued", { traceId, uploadId });
 
   await connectMongo();
   const uploadSecret = header(request, "x-upload-secret");
@@ -948,12 +977,13 @@ export async function POST(
       const snap = await getCreditsSnapshot({ workspaceId: actor.orgId });
       if (snap.blocked) {
         return applyTempUserHeaders(
-          NextResponse.json({ error: "Out of credits", code: OUT_OF_CREDITS_CODE }, { status: 402 }),
+          NextResponse.json({ error: "Out of credits", code: OUT_OF_CREDITS_CODE, traceId }, { status: 402 }),
           actor,
         );
       }
     } catch {
       // Best-effort: if snapshot fails, fall back to per-action reservation enforcement inside the job.
+      console.warn("[process] credits snapshot failed (continuing)", { traceId, uploadId });
     }
   }
 
@@ -961,7 +991,8 @@ export async function POST(
   after(async () => {
     const startedAt = Date.now();
     try {
-      debugLog(1, "[process] start", { uploadId });
+      console.log("[process] start", { traceId, uploadId });
+      debugLog(1, "[process] start", { traceId, uploadId });
       await connectMongo();
       // Allow rerunning the review agent for signed-in users, and also for temp-user
       // environments where auth isn't configured (common in dev).
@@ -1524,6 +1555,10 @@ export async function POST(
 
         if (existingPreview) {
           previewUrl = existingPreview;
+          debugLog(1, "[process] using existing preview", {
+            uploadId,
+            hasPreview: true,
+          });
           debugLog(2, "[process] preview already exists", { uploadId });
         } else {
           debugLog(1, "[process] rendering preview png", { uploadId });
@@ -1773,6 +1808,7 @@ export async function POST(
                 const analyzed = await analyzePdfText({
                   fullText: extractedText,
                   pages,
+                  originalFileName: asString((uploadObj as { originalFileName?: unknown }).originalFileName),
                   projects: projectsContext,
                   existingProjectIds,
                   isReplacement,
@@ -2044,20 +2080,19 @@ export async function POST(
       };
       // Auto-name the doc using AI once it has a recommendation.
       //
-      // Only do this for the first upload version, and only if the title still matches the initial
-      // default naming derived from the uploaded filename/URL (or a generic placeholder).
+      // Only do this for the first upload version, and only if the doc still has a generic placeholder
+      // name (URL uploads start with "Untitled document"). For local file uploads we keep the filename-
+      // derived title stable by default.
       if (uploadVersion === 1 && finalDocName) {
         const existingTitle =
           existingDocObj && typeof (existingDocObj as { title?: unknown }).title === "string"
             ? String((existingDocObj as { title: string }).title).trim()
             : "";
-        const defaultTitle = titleFromFileName(asString(uploadObj.originalFileName) ?? "");
         const isPlaceholder =
           !existingTitle ||
           existingTitle.toLowerCase() === "document" ||
           existingTitle.toLowerCase() === "untitled document";
-        const matchesDefault = existingTitle && existingTitle === defaultTitle;
-        if (isPlaceholder || matchesDefault) {
+        if (isPlaceholder) {
           docUpdate.title = finalDocName;
         }
       }
@@ -2102,17 +2137,21 @@ export async function POST(
       // Project.docCount is maintained at the model level (Doc middleware).
 
       debugLog(1, "[process] done", { uploadId, ms: Date.now() - startedAt });
+      console.log("[process] done", { traceId, uploadId, ms: Date.now() - startedAt });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[process] crashed", { traceId, uploadId, ms: Date.now() - startedAt, message });
       debugError(1, "[process] crashed", {
+        traceId,
         uploadId,
         ms: Date.now() - startedAt,
-        message: err instanceof Error ? err.message : String(err),
+        message,
       });
       try {
         await UploadModel.findByIdAndUpdate(uploadId, {
           status: "failed",
           error: {
-            message: err instanceof Error ? err.message : "Processing crashed",
+            message,
           },
         });
       } catch {
@@ -2121,6 +2160,6 @@ export async function POST(
     }
   });
 
-  return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
+  return applyTempUserHeaders(NextResponse.json({ ok: true, traceId }), actor);
 }
 

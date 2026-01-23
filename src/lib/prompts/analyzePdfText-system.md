@@ -44,9 +44,12 @@ Rules:
 - `maturity_or_status`: how far along it is (sets expectations clearly, no judgment). If truly unknown, `""`.
 - `meta_title`: SEO/meta title (max ~60 chars). Should be descriptive; include `company_or_project_name` and what it is (e.g. "USAvionix Deck"). If truly unknown, `""`.
 - `meta_description`: SEO/meta description (max ~160 chars). 1–2 concrete sentences; include the ask if present. If truly unknown, `""`.
-- `doc_name`: use the format `<company_or_project_name> <doc_type>` (no em dash).
+- `doc_name`: use the format `<company_or_project_name> <doc_type>` (no em dash), optionally followed by a short qualifier.
   - `doc_type` MUST be one of: `Deck` | `Sales Deck` | `One Pager` | `Whitepaper` | `Report` | `Strategy Memo` | `Partnership Proposal` | `Training Manual` | `Legal Document` | `Resume` | `Academic Paper` | `Document`.
-  - Examples: `USAvionix Deck`, `USAvionix Sales Deck`, `USAvionix One Pager`.
+  - You MAY add a short qualifier when it improves disambiguation and is supported by the original filename or document text (e.g. version/date): `USAvionix Deck v3`, `USAvionix Deck (Jan 2026)`.
+  - Prefer preserving meaningful qualifiers from the original filename (like `v3`, `rev-b`, `2026-01`) rather than dropping them.
+  - Only change away from the filename-implied naming when you can clearly justify a better, more accurate title from the document content (e.g. a cover-page title).
+  - Examples: `USAvionix Deck`, `USAvionix Sales Deck`, `USAvionix One Pager`, `USAvionix Deck v3`.
   - If truly unknown, `""`.
 - `page_slugs`: for each provided page, produce a short kebab-case slug (2–6 words) capturing what that page is about.
   - `slug` MUST NEVER be null/empty.

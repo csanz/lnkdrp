@@ -135,12 +135,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       title: 1,
       fileName: 1,
       shareAllowPdfDownload: 1,
+      shareEnabled: 1,
       sharePasswordHash: 1,
       sharePasswordSalt: 1,
     })
     .lean();
 
   if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if ((doc as { shareEnabled?: unknown }).shareEnabled === false) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const blobUrl = (doc as { blobUrl?: unknown }).blobUrl;
   if (typeof blobUrl !== "string" || !blobUrl) {

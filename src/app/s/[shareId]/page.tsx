@@ -170,6 +170,7 @@ export default async function SharePage(props: {
     .select({
       title: 1,
       blobUrl: 1,
+      shareEnabled: 1,
       // Perf: only fetch receiver-facing AI snapshot fields (avoid huge aiOutput JSON).
       "aiOutput.one_liner": 1,
       "aiOutput.core_problem_or_need": 1,
@@ -193,6 +194,8 @@ export default async function SharePage(props: {
     })
     .lean();
   if (!doc) notFound();
+  // Master share switch: when disabled, behave like the share link is gone.
+  if ((doc as { shareEnabled?: unknown }).shareEnabled === false) notFound();
 
   const previewUrl = doc.previewImageUrl ?? doc.firstPagePngUrl ?? null;
 

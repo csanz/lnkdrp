@@ -172,7 +172,7 @@ export default function SubscriptionCard() {
     rightSlot?: React.ReactNode;
   }) {
     return (
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4 sm:p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -180,9 +180,9 @@ export default function SubscriptionCard() {
               {price ? <div className="text-[14px] font-semibold text-[var(--muted-2)]">{price}</div> : null}
             </div>
             <div className="mt-1 text-[12px] text-[var(--muted-2)]">{subtitle}</div>
-            <div className="mt-4 flex flex-wrap items-center gap-2">{cta}</div>
+            <div className="mt-4">{cta}</div>
           </div>
-          {rightSlot ? <div className="shrink-0">{rightSlot}</div> : null}
+          {rightSlot ? <div className="w-full md:w-auto md:shrink-0">{rightSlot}</div> : null}
         </div>
       </div>
     );
@@ -191,7 +191,7 @@ export default function SubscriptionCard() {
   const outOfCredits = creditsBlocked === true;
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Plan</div>
@@ -225,10 +225,10 @@ export default function SubscriptionCard() {
             price={proPriceLabel || undefined}
             subtitle={periodHint ? periodHint : "Your subscription is active."}
             cta={
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col items-stretch gap-2 md:flex-row md:flex-wrap md:items-center">
                 <button
                   type="button"
-                  className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
+                  className="w-full whitespace-normal rounded-lg bg-[var(--fg)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60 md:w-auto"
                   disabled={busy || manageBusy}
                   onClick={() => void openManageSubscription()}
                 >
@@ -236,7 +236,7 @@ export default function SubscriptionCard() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                  className="w-full whitespace-normal rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] md:w-auto"
                   onClick={() => router.push("/dashboard?tab=billing", { scroll: false })}
                 >
                   Billing
@@ -254,10 +254,10 @@ export default function SubscriptionCard() {
                 : "Includes limited credits for this billing cycle."
             }
             cta={
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-col items-stretch gap-2 md:flex-row md:flex-wrap md:items-center">
                 <button
                   type="button"
-                  className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
+                  className="w-full whitespace-normal rounded-lg bg-[var(--fg)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60 md:w-auto"
                   disabled={busy || upgradeBusy}
                   onClick={() => void startCheckout()}
                 >
@@ -265,7 +265,7 @@ export default function SubscriptionCard() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                  className="w-full whitespace-normal rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] md:w-auto"
                   onClick={() => setDetailsOpen(true)}
                 >
                   View plan details

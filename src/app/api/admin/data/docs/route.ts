@@ -12,12 +12,24 @@ import { DocModel } from "@/lib/models/Doc";
 
 export const runtime = "nodejs";
 
+/**
+ * Returns true when the request is coming from localhost in non-production.
+ *
+ * Exists to allow local admin inspection without full auth plumbing.
+ * Side effect: weakens auth checks during local development only.
+ */
 function isLocalhostRequest(request: Request) {
   if (process.env.NODE_ENV === "production") return false;
   const host = (request.headers.get("host") ?? "").toLowerCase();
   return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
 }
 
+/**
+ * Enforces that the caller is an authenticated admin (or localhost in dev).
+ *
+ * Centralizes auth/role checks for this route so handler logic stays data-focused.
+ * Returns a tagged union with status/error for non-OK cases; never throws by design.
+ */
 async function requireAdmin(request: Request) {
   if (isLocalhostRequest(request)) {
     return { ok: true as const, userId: null as string | null };
@@ -37,6 +49,12 @@ async function requireAdmin(request: Request) {
   return { ok: true as const, userId: actor.userId };
 }
 
+/**
+ * Parses a value into a positive integer (>= 1) or returns null.
+ *
+ * Used to safely accept query params while keeping pagination logic predictable.
+ * Never throws; returns null on NaN/Infinity/non-positive values.
+ */
 function asPositiveInt(v: unknown): number | null {
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) return null;
@@ -44,10 +62,22 @@ function asPositiveInt(v: unknown): number | null {
   return i >= 1 ? i : null;
 }
 
+/**
+ * Escapes a string for safe use inside a RegExp literal.
+ *
+ * Exists to support user-provided search terms without regex injection.
+ */
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * `GET /api/admin/data/docs`
+ *
+ * Returns a paginated list of non-deleted docs for admin inspection, optionally filtered
+ * by search query, status, and archived flag. Requires admin role (except localhost in dev).
+ * Errors: returns 400 for invalid query params, 401/403 for auth/permission failures.
+ */
 export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -98,6 +128,7 @@ export async function GET(request: Request) {
       title: 1,
       status: 1,
       shareId: 1,
+      shareEnabled: 1,
       isArchived: 1,
       createdDate: 1,
       updatedDate: 1,
@@ -119,6 +150,7 @@ export async function GET(request: Request) {
       title: typeof d.title === "string" ? d.title : null,
       status: typeof d.status === "string" ? d.status : null,
       shareId: typeof d.shareId === "string" ? d.shareId : null,
+      shareEnabled: (d as { shareEnabled?: unknown }).shareEnabled !== false,
       isArchived: Boolean((d as { isArchived?: unknown }).isArchived),
       updatedDate: d.updatedDate ? new Date(d.updatedDate).toISOString() : null,
       createdDate: d.createdDate ? new Date(d.createdDate).toISOString() : null,

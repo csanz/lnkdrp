@@ -7,6 +7,7 @@ import {
 } from "@heroicons/react/24/outline";
 import type { Dispatch, SetStateAction } from "react";
 import IconButton from "@/components/ui/IconButton";
+import { PROJECT_NAV_OVERLAY_ID, showSwitchingOverlay } from "@/components/SwitchingOverlay";
 
 type ProjectListItem = {
   id: string;
@@ -66,7 +67,7 @@ export default function SidebarProjectsSection({
 }) {
   return (
     <section>
-      <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[12px] font-medium text-[var(--muted-2)]">
+      <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[13px] font-medium leading-5 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]">
         <button
           type="button"
           className="inline-flex h-6 items-center rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -82,7 +83,7 @@ export default function SidebarProjectsSection({
           variant="ghost"
           size="sm"
           className={[
-            "h-6 w-6 rounded-md p-0 text-[var(--muted-2)]",
+            "h-6 w-6 rounded-md p-0 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]",
             "opacity-100",
           ].join(" ")}
           onClick={() => {
@@ -96,12 +97,12 @@ export default function SidebarProjectsSection({
 
       {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
         !projectsLoaded ? (
-          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
+          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">Loading…</div>
         ) : !projectsForSidebar.length ? (
-          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</div>
+          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">No projects yet.</div>
         ) : (
           <div className="mt-2 flex items-center justify-between gap-3 pl-3 pr-2 py-1.5">
-            <div className="text-[13px] font-medium text-[var(--muted-2)]">{projects.total || projectsForSidebar.length} projects</div>
+            <div className="text-[13px] font-medium text-[var(--muted)]">{projects.total || projectsForSidebar.length} projects</div>
             <button
               type="button"
               disabled={navLocked}
@@ -119,15 +120,15 @@ export default function SidebarProjectsSection({
           </div>
         )
       ) : !projectsLoaded ? (
-        <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
+        <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">Loading…</div>
       ) : (
-        <ul className="mt-2 space-y-0.5">
+        <ul className="mt-2 space-y-1">
           <li>
             <button
               type="button"
               disabled={navLocked}
               className={[
-                "flex w-full items-center gap-2 rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] font-medium text-[var(--muted)]",
+                "flex w-full items-center gap-2 rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px] font-medium text-[var(--muted)]",
                 navLocked ? "cursor-not-allowed opacity-60" : "hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -135,13 +136,13 @@ export default function SidebarProjectsSection({
                 onClickNewProject();
               }}
             >
-              <FolderPlusSvg className="h-4 w-4 shrink-0 text-[var(--muted-2)]" />
+              <FolderPlusSvg className="relative top-[0.5px] h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" />
               <span>New project</span>
             </button>
           </li>
 
           {!projectsForSidebar.length ? (
-            <li className="pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</li>
+            <li className="pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">No projects yet.</li>
           ) : null}
 
           {projectsForSidebar.map((p) => {
@@ -153,48 +154,63 @@ export default function SidebarProjectsSection({
                   <div
                     role="link"
                     tabIndex={0}
-                    className="flex cursor-pointer items-center justify-between gap-2 rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] hover:bg-[var(--sidebar-hover)]"
+                    className="w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px] hover:bg-[var(--sidebar-hover)]"
                     onClick={() => {
                       if (!p.slug) return;
+                      showSwitchingOverlay({
+                        id: PROJECT_NAV_OVERLAY_ID,
+                        title: "Loading project…",
+                        subtitle: "Just a moment.",
+                      });
                       routerPush(`/project/${p.id}`);
                     }}
                     onKeyDown={(e) => {
                       if (e.key !== "Enter" && e.key !== " ") return;
                       e.preventDefault();
                       if (!p.slug) return;
+                      showSwitchingOverlay({
+                        id: PROJECT_NAV_OVERLAY_ID,
+                        title: "Loading project…",
+                        subtitle: "Just a moment.",
+                      });
                       routerPush(`/project/${p.id}`);
                     }}
                   >
-                    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <div className="flex min-w-0 items-center gap-1.5 pr-8">
                       {p.isRequest ? (
-                        <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                        <InboxArrowDownIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                       ) : (
-                        <span className="text-[var(--muted-2)]">
-                          {isActive ? <FolderOpenSvg className="h-4 w-4" /> : <FolderClosedSvg className="h-4 w-4" />}
+                        <span className="shrink-0 text-[var(--muted-2)]" aria-hidden="true">
+                          {isActive ? (
+                            <FolderOpenSvg className="h-3.5 w-3.5" />
+                          ) : (
+                            <FolderClosedSvg className="h-3.5 w-3.5" />
+                          )}
                         </span>
                       )}
                       <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">{title}</span>
                     </div>
-
-                    <IconButton
-                      ariaLabel="Project actions"
-                      variant="ghost"
-                      size="sm"
-                      className={[
-                        "shrink-0 rounded-lg p-1 text-[var(--muted-2)]",
-                        "opacity-70 transition-opacity hover:opacity-100 focus:opacity-100",
-                      ].join(" ")}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setOpenDocMenuId(null);
-                        setOpenProjectMenuId((prev) => (prev === p.id ? null : p.id));
-                      }}
-                    >
-                      <EllipsisHorizontalIcon className="h-4 w-4" />
-                    </IconButton>
                   </div>
+
+                  <IconButton
+                    ariaLabel="Project actions"
+                    variant="ghost"
+                    size="xs"
+                    className={[
+                      // IMPORTANT: keep this out of layout so it doesn't affect row height.
+                      "absolute right-2 top-1/2 -translate-y-1/2 rounded-md text-[var(--muted-2)]",
+                      "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
+                    ].join(" ")}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setOpenDocMenuId(null);
+                      setOpenProjectMenuId((prev) => (prev === p.id ? null : p.id));
+                    }}
+                  >
+                    <EllipsisHorizontalIcon className="h-4 w-4" />
+                  </IconButton>
 
                   {openProjectMenuId === p.id ? (
                     <div

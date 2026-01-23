@@ -5,6 +5,12 @@ export type InputProps = Omit<React.ComponentPropsWithoutRef<"input">, "size"> &
   size?: "md";
 };
 
+/**
+ * Styled input primitive used across app forms.
+ *
+ * Exists to standardize base Tailwind styles and theming tokens for inputs.
+ * Side effects: none; forwards all props to the underlying `<input>`.
+ */
 export default function Input({ variant = "panel", size = "md", className, ...props }: InputProps) {
   return (
     <input

@@ -3,6 +3,7 @@
  *
  * Public terms of service page accessible from the logged-out homepage.
  */
+/* eslint-disable react/no-unescaped-entities */
 "use client";
 
 import Link from "next/link";

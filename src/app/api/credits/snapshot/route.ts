@@ -15,11 +15,22 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Short-lived in-memory cache to keep the header/usage UI feeling instant.
-// Keyed by (orgId + fast flag). This does not change server-of-truth; it just reduces repeated reads.
+/**
+ * Short-lived in-memory credits snapshot cache.
+ *
+ * Exists to keep header/usage UI feeling instant by de-duping repeat reads.
+ * Assumptions: keyed by workspace (orgId) and `fast` mode; does not change server-of-truth.
+ */
 const CREDITS_SNAPSHOT_CACHE_TTL_MS = 10_000;
 let creditsSnapshotCache: Map<string, { at: number; payload: any }> | null = null;
 
+/**
+ * `GET /api/credits/snapshot`
+ *
+ * Returns the active workspace's credits snapshot (optionally `fast=1`), used by dashboard/header.
+ * Side effects: populates a short-lived in-memory cache; never persists/updates billing state.
+ * Errors: 401 for unauthenticated, 400 for invalid org or snapshot load failures.
+ */
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
     const actor = await resolveActorForStats(request);
@@ -29,10 +40,13 @@ export async function GET(request: Request) {
 
       const url = new URL(request.url);
       const fast = url.searchParams.get("fast") === "1";
+      // Allows the client to explicitly bypass the short-lived in-memory cache after mutations
+      // (e.g. updating spend limits) so header values update immediately.
+      const bust = url.searchParams.get("bust") === "1";
       const cacheKey = `${String(actor.orgId)}:${fast ? "fast" : "full"}`;
       creditsSnapshotCache = creditsSnapshotCache ?? new Map();
       const cached = creditsSnapshotCache.get(cacheKey);
-      if (cached && Date.now() - cached.at < CREDITS_SNAPSHOT_CACHE_TTL_MS) {
+      if (!bust && cached && Date.now() - cached.at < CREDITS_SNAPSHOT_CACHE_TTL_MS) {
         return NextResponse.json(cached.payload, { headers: { "cache-control": "no-store" } });
       }
 

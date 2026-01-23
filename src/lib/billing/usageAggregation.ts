@@ -70,6 +70,12 @@ function inferOnDemandCredits(l: BillingLedgerRow): number {
   return 0;
 }
 
+/**
+ * Returns the on-demand cost (in cents) for a billing ledger row, or null when unknown.
+ *
+ * Exists to keep UI aggregation logic billing-safe: we only expose cost when it is explicitly
+ * present as USD on the ledger row.
+ */
 export function onDemandCostCentsOrNull(l: BillingLedgerRow): number | null {
   if (typeof l.costUsdActual === "number" && Number.isFinite(l.costUsdActual) && l.costUsdActual !== null) {
     return centsFromUsd(l.costUsdActual);
@@ -77,6 +83,12 @@ export function onDemandCostCentsOrNull(l: BillingLedgerRow): number | null {
   return null;
 }
 
+/**
+ * Aggregates included and on-demand usage from billing-safe ledger rows.
+ *
+ * Exists to drive billing UI tables without exposing raw model/token telemetry.
+ * Assumptions: `ledgers` contains charged and refunded rows; refunds are represented as adjustments.
+ */
 export function aggregateBillingUsage(params: {
   ledgers: BillingLedgerRow[];
   onDemandLimitCents: number;

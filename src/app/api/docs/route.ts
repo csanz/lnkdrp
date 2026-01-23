@@ -18,10 +18,11 @@ export const dynamic = "force-dynamic";
 
 const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 /**
- * Random Base62 (uses randomBytes, max, ceil).
+ * Generates a Base62 string using cryptographic randomness.
+ *
+ * Exists to mint stable share slugs without leaking sequential patterns.
+ * Assumptions: collisions are extremely unlikely but callers still handle dupes defensively.
  */
-
-
 function randomBase62(length: number): string {
   let out = "";
   while (out.length < length) {
@@ -51,13 +52,66 @@ function newShareId() {
 type CreateReturn = Awaited<ReturnType<typeof DocModel.create>>;
 type CreatedDoc = CreateReturn extends (infer U)[] ? U : CreateReturn;
 
+type MongoDupKeyError = {
+  code?: unknown;
+  keyPattern?: Record<string, unknown>;
+  keyValue?: Record<string, unknown>;
+  message?: unknown;
+};
+
 /**
- * List documents (paged).
+ * Extracts the field names involved in a Mongo duplicate-key error.
  *
- * Query params:
- * - limit, page
- * - q: basic search over title/shareId
- * - ids: comma-separated list of doc ObjectIds to fetch directly (bypasses paging/search)
+ * Exists to drive safe retry logic (e.g. regenerate shareId) without guessing.
+ * Returns an empty list when the error is not a duplicate-key (code 11000).
+ */
+function getDupKeyFields(err: unknown): string[] {
+  if (!err || typeof err !== "object") return [];
+  const e = err as MongoDupKeyError;
+  if (e.code !== 11000) return [];
+  const fields = new Set<string>();
+  for (const src of [e.keyPattern, e.keyValue]) {
+    if (!src || typeof src !== "object") continue;
+    for (const k of Object.keys(src)) fields.add(k);
+  }
+  // Fall back to parsing message when keyPattern/keyValue are absent.
+  const msg = typeof e.message === "string" ? e.message : "";
+  const m = msg.match(/dup key.*?\{(.*?)\}/i);
+  if (m?.[1]) {
+    // Example: `{ shareId: "abc" }` or `{ title: "Untitled document" }`
+    const keys = m[1]
+      .split(",")
+      .map((s) => s.split(":")[0]?.trim())
+      .filter(Boolean);
+    for (const k of keys) fields.add(k);
+  }
+  return Array.from(fields);
+}
+
+/**
+ * Normalizes Mongo errors into a small, loggable/debuggable shape.
+ *
+ * Exists to keep API error logs helpful without leaking full error objects to clients.
+ */
+function describeMongoError(err: unknown): Record<string, unknown> {
+  if (!err || typeof err !== "object") return {};
+  const e = err as MongoDupKeyError & { name?: unknown };
+  return {
+    name: typeof e.name === "string" ? e.name : undefined,
+    code: typeof e.code === "number" ? e.code : undefined,
+    dupKeyFields: getDupKeyFields(err),
+    keyPattern: e.keyPattern ?? undefined,
+    keyValue: e.keyValue ?? undefined,
+  };
+}
+
+/**
+ * `GET /api/docs`
+ *
+ * Lists docs for the active workspace (paged), with optional search or direct `ids=` lookup.
+ * Side effects: may best-effort backfill legacy `orgId`/`shareId` and infer request-guide backlinks
+ * (skipped for `sidebar=1` to keep the hot path cheap).
+ * Errors: 400 for unexpected failures; auth failures surface via actor resolution.
  */
 export async function GET(request: Request) {
   try {
@@ -304,7 +358,11 @@ export async function GET(request: Request) {
 }
 
 /**
- * Create a new document with an initial shareId.
+ * `POST /api/docs`
+ *
+ * Creates a new draft doc for the active workspace with an initial public `shareId`.
+ * Permissions: temp users are limited to a single non-deleted doc.
+ * Errors: 403 for temp-user limit, 400 for unexpected failures, 201 on success.
  */
 export async function POST(request: Request) {
   try {
@@ -338,30 +396,40 @@ export async function POST(request: Request) {
 
     // Create with a shareId (retry on rare collisions).
     let doc: CreatedDoc | null = null;
+    let lastErr: unknown = null;
+    let title = body.title ?? "Untitled document";
     for (let i = 0; i < 3; i++) {
       try {
         const created = await DocModel.create({
           orgId: new Types.ObjectId(actor.orgId),
           userId: new Types.ObjectId(actor.userId),
-          title: body.title ?? "Untitled document",
+          title,
           status: "draft",
           shareId: newShareId(),
         });
         doc = (Array.isArray(created) ? created[0] : created) as CreatedDoc;
         break;
       } catch (e) {
-        // Duplicate shareId; retry.
-        if (
-          e &&
-          typeof e === "object" &&
-          "code" in e &&
-          (e as { code?: number }).code === 11000
-        )
+        lastErr = e;
+        const dupFields = getDupKeyFields(e);
+        // Only retry when we know we collided on shareId (or title, to be resilient to legacy indexes).
+        if (dupFields.includes("shareId")) continue;
+        if (dupFields.includes("title")) {
+          // Some environments may carry a legacy unique index on title; keep UX intact by suffixing.
+          title = `${title} (${randomBase62(4)})`;
           continue;
+        }
         throw e;
       }
     }
-    if (!doc) throw new Error("Failed to create doc");
+    if (!doc) {
+      const details = describeMongoError(lastErr);
+      throw new Error(
+        `Failed to create doc${
+          details.dupKeyFields ? ` (dupKeyFields=${JSON.stringify(details.dupKeyFields)})` : ""
+        }`,
+      );
+    }
 
     return applyTempUserHeaders(
       NextResponse.json(
@@ -388,7 +456,7 @@ export async function POST(request: Request) {
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/docs] POST failed", { message });
+    debugError(1, "[api/docs] POST failed", { message, ...(describeMongoError(err) as Record<string, unknown>) });
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

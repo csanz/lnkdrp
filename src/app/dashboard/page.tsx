@@ -386,7 +386,7 @@ export default function DashboardPage() {
           <Section title="Overview" description="A quick snapshot of your workspace.">
             <div className="grid gap-3">
               <SubscriptionCard />
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">All docs activity</div>
@@ -407,7 +407,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">This month</div>
@@ -440,7 +440,7 @@ export default function DashboardPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                   <div className="text-[13px] font-semibold text-[var(--fg)]">Library</div>
                   <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Your active content in this workspace.</div>
                   <div className="mt-5 grid grid-cols-2 gap-3">
@@ -451,7 +451,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-6">
+                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4 sm:p-6">
                   <div className="text-[13px] font-semibold text-[var(--fg)]">Next up</div>
                   <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
                     A few helpful ideas to get more leverage from LinkDrop.
@@ -470,7 +470,7 @@ export default function DashboardPage() {
         {tab === "account" ? (
           <Section title="Account" description="Account-level settings and actions.">
             <div className="grid gap-3">
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="text-[13px] font-semibold text-[var(--fg)]">Email preferences</div>
                 <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Applies to the currently selected workspace.</div>
                 <div className="mt-4">
@@ -478,7 +478,7 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="text-[13px] font-semibold text-[var(--fg)]">Delete account</div>
@@ -522,7 +522,7 @@ export default function DashboardPage() {
               <SubscriptionCard />
               <DailyUsageChart days={usageDays} />
               <CreditsSummaryCard />
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] font-semibold text-[var(--muted-2)]">
@@ -567,7 +567,7 @@ export default function DashboardPage() {
           >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <OnDemandUsageCard />
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="flex items-start justify-between gap-3">
                   <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand limit</div>
                   <HelpTooltip
@@ -584,7 +584,7 @@ export default function DashboardPage() {
 
             <AiQualityDefaultsCard className="mt-3" />
 
-            <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
+            <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
               <div className="text-[13px] font-semibold text-[var(--fg)]">Deep Search Agent</div>
               <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
                 Deep-searches your document for companies, people, products, and potential risks.

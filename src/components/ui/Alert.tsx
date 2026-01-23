@@ -23,6 +23,12 @@ function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+/**
+ * Inline alert box for info/error messaging.
+ *
+ * Exists to provide consistent styling + sensible ARIA defaults (`alert` for errors, `status` for info).
+ * Side effects: none; renders a semantic `<div>` with the chosen role.
+ */
 export default function Alert({ variant = "info", className, children, role }: Props) {
   const base = "rounded-xl border px-4 py-3";
   const v =
