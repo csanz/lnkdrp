@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useMemo, useSyncExternalStore } from "react";
 import AccountMenu from "@/components/AccountMenu";
+import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 
 type NavItem = { label: string; href: string; exact?: boolean };
 type NavSection = { label: string; items: NavItem[] };
@@ -69,13 +70,24 @@ export default function AdminLeftSidebar() {
   }
 
   return (
-    <aside className="h-full w-[280px] shrink-0 overflow-hidden border-r border-[var(--border)] bg-[var(--sidebar-bg)]">
+    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
-        <div className="flex items-center justify-between gap-3 px-4 pb-3 pt-4">
-          <Link href="/" className="inline-flex items-center gap-2" title="Back to app">
-            <Image src={logoSrc} alt="LinkDrop" width={32} height={32} />
-            <span className="text-[13px] font-semibold text-[var(--fg)]">Back</span>
-          </Link>
+        <div className="px-4 pb-5 pt-5">
+          <div className="flex min-w-0 min-h-[34px] items-center gap-2">
+            <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
+              <Image src={logoSrc} alt="LinkDrop" width={28} height={28} className="block" />
+            </Link>
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+              aria-label="Back to app"
+              title="Back to app"
+            >
+              <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Back to app</span>
+              <span className="sm:hidden">Back</span>
+            </Link>
+          </div>
         </div>
 
         <nav className="mt-1 flex-1 overflow-y-auto overflow-x-hidden px-3 pb-4">

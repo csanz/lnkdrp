@@ -104,7 +104,8 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 ## Document creation & uploads
 
 - **Upload a local PDF**:
-  - Create a doc record, create an upload record, then start a Blob client-upload + processing pipeline.
+  - On the new-doc upload screen (`/upload`), selecting a PDF immediately shows an in-browser preview; the user then clicks **Upload** to begin the background Blob client-upload + processing pipeline.
+  - Implementation: create a doc record, create an upload record, then start a Blob client-upload + processing pipeline.
 - **Upload via URL (import a PDF link)**:
   - Create doc + upload, ask the server to fetch the PDF into the upload (`/api/uploads/:uploadId/import-url`), then trigger processing (`/api/uploads/:uploadId/process`).
   - After processing, the doc title may be **auto-renamed** using the AI-derived document name (so URL uploads don’t end up named like `view`/`uc`).
@@ -123,11 +124,13 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Viewers list loads shortly after (background) and avoids a Mongo `$lookup` by using denormalized viewer snapshots stored on `ShareView`.
   - Shows both **authenticated viewers** and **anonymous viewers** (best-effort, per browser/device), including per-viewer **pages viewed** (unique pages seen).
   - Clicking a viewer opens a **Viewer details** modal that shows the specific **pages seen** (page numbers) with best-effort **time per page**, best-effort **time spent** + **avg per view**, and first/last seen timestamps.
+  - Viewer details also include a **Visits** view (best-effort per-tab sessions) which enables per-visit **time per page**, **revisited pages**, and a best-effort **page sequence** (path analysis).
 - **Doc replacement change history**:
   - When the owner replaces a doc file (creating a new upload version), the server stores a best-effort “what changed” record (previous text, new text, summary + changes list).
   - Changes are only accessible to users who have access to the doc (API: `/api/docs/:docId/changes`).
   - History UI: `/doc/:docId/history` (version badge links here).
   - History includes who uploaded each version (best-effort from user record).
+  - If older versions are missing stored text snapshots, History still backfills a lightweight “replacement event” row so versions show up (diff summary may be unavailable).
   - Performance: History initially loads a lightweight list (no large extracted text blobs) and fetches previous/new extracted text **on-demand** when a version is expanded.
   - History includes a best-effort **Recipients** preview for each version (workspace members + whether they opened that version), plus per-viewer **page timing** aggregates (internal-only; uses doc page timing events).
   - History UI includes a right-side overview panel with aggregate stats (replacements count, top editors, cadence, and best-effort impact/signals).
@@ -220,6 +223,10 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Technical reference**:
   - See `docs/REQUEST.md` for request-repo schema, endpoints, and request-review (Intel) agent behavior.
 
+- **Search docs** (left sidebar):
+  - The left sidebar includes a **Search** action (above Upload/Request) that opens the **Docs** modal and focuses the search input.
+  - Search is backed by `GET /api/docs?q=...` (same query used by the Docs modal).
+
 - **Create a request link** (left sidebar):
   - A request is treated like a **folder/repository of documents**.
   - You can share the link with multiple people; each upload becomes a new doc in that request folder.
@@ -239,7 +246,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Requester review (“Intel”)**:
   - For docs received via request links, the doc header shows an **Intel** icon (instead of Metrics) that opens the latest review agent output.
   - Request-received docs use a distinct doc template:
-    - The title shows a secondary line: “uploaded into <request repo>” (tray icon).
+    - The header shows an “uploaded into <request repo>” indicator (tray icon). On desktop it’s placed on the right to keep the top bar height stable.
     - No share link UI / no download toggle / no metrics (to avoid confusion with owner docs).
     - Includes a **Replace link** control that copies a per-doc update link (`/doc/update/:code`) so the owner can let someone upload a new version of that specific received doc.
   - Docs lists show request context indicators:
@@ -268,6 +275,9 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Project CRUD**:
   - `/api/projects` (list/create) and `/api/projects/:projectSlug` (update/delete).
+- **Quick feedback on slow navigation/ops**:
+  - Clicking a project in the left sidebar shows a full-screen **Loading project…** overlay immediately (so it doesn’t feel frozen).
+  - Assigning a doc to a project from the doc actions menu shows an inline **spinner** while the add/remove completes.
 - **Create from left sidebar**:
   - The left sidebar **Projects** section includes a **New project** row to create a new project without leaving the current page.
 - **List docs for a project**:
@@ -314,6 +324,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Data → Docs**: `/a/data/docs`
   - API: `/api/admin/data/docs`
   - Supports filtering by status/archived, sorting by created/updated, and soft-delete (admin action).
+  - Drilldown: click a doc row to view **full doc JSON** plus related **uploads**; click an upload to view full upload JSON (including `error.details.preview` when thumbnail generation fails).
 - **Data → Requests**: `/a/data/requests`
   - API: `/api/admin/data/requests`
   - Drilldown: `/a/data/requests/:requestId` (API: `/api/admin/data/requests/:requestId`)
@@ -327,6 +338,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Data → Uploads**: `/a/data/uploads`
   - API: `/api/admin/data/uploads`
   - Supports soft-delete (admin action).
+  - Drilldown: click an upload row to view **full upload JSON** (includes artifact pointers like `previewImageUrl` and error details).
 - **System → Cron health**: `/a/cron-health`
   - API: `/api/admin/cron-health`
   - Shows latest heartbeat snapshots written by cron endpoints (status/duration/last error).

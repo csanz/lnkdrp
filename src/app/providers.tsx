@@ -15,6 +15,7 @@ import {
   hideSwitchingOverlay,
   PENDING_ACTIVE_ORG_ID_KEY,
   PROJECT_NAV_OVERLAY_ID,
+  UPLOAD_NAV_OVERLAY_ID,
   showSwitchingOverlay,
   switchWorkspaceWithOverlay,
 } from "@/components/SwitchingOverlay";
@@ -102,6 +103,7 @@ function DocNavOverlayController() {
   useEffect(() => {
     hideSwitchingOverlay(DOC_NAV_OVERLAY_ID);
     hideSwitchingOverlay(PROJECT_NAV_OVERLAY_ID);
+    hideSwitchingOverlay(UPLOAD_NAV_OVERLAY_ID);
     if (releaseRef.current) {
       try {
         releaseRef.current();

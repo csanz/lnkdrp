@@ -25,6 +25,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const url = new URL(request.url);
     const lite = url.searchParams.get("lite") === "1";
     const noText = url.searchParams.get("noText") === "1";
+    const wantsDebug = url.searchParams.get("debug") === "1";
     const limitParam = url.searchParams.get("limit");
     const limit = Math.max(1, Math.min(50, Number.isFinite(Number(limitParam)) ? Number(limitParam) : 50));
 
@@ -77,8 +78,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
      * - Never overwrite an existing DocChange record (only insert missing).
      * - Never generate AI diffs here (no credits / no network calls).
      */
+    const debug = wantsDebug && process.env.NODE_ENV !== "production";
+    const debugInfo: Record<string, unknown> | null = debug ? {} : null;
     if (includeChangeList) {
       try {
+        const insertedVersions: number[] = [];
         const uploads = (await UploadModel.find({
           docId: docObjectId,
           isDeleted: { $ne: true },
@@ -98,6 +102,30 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           if (!byVersion.has(v)) byVersion.set(v, u);
         }
 
+        if (debugInfo) {
+          debugInfo.uploads = {
+            limit,
+            found: uploads.length,
+            versions: Array.from(byVersion.keys()).sort((a, b) => a - b),
+            sample: uploads.slice(0, 8).map((u) => ({
+              id: u?._id ? String(u._id) : null,
+              version: typeof u?.version === "number" ? u.version : null,
+              status: typeof u?.status === "string" ? u.status : null,
+              isDeleted: Boolean(u?.isDeleted),
+              createdDate: u?.createdDate instanceof Date ? u.createdDate.toISOString() : null,
+              userId: u?.userId ? String(u.userId) : null,
+              orgId: u?.orgId ? String(u.orgId) : null,
+            })),
+          };
+          debugInfo.actor = { orgId: actor.orgId, personalOrgId: actor.personalOrgId, allowLegacyByUserId };
+          debugInfo.doc = {
+            id: docId,
+            orgId: (doc as any)?.orgId ? String((doc as any).orgId) : null,
+            title: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
+            currentUploadVersion: (doc as any)?.currentUploadVersion ?? null,
+          };
+        }
+
         const backfillOrgId =
           (doc as any)?.orgId && Types.ObjectId.isValid(String((doc as any).orgId))
             ? new Types.ObjectId(String((doc as any).orgId))
@@ -113,7 +141,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               ? new Types.ObjectId(createdByUserIdRaw)
               : null;
 
-          await DocChangeModel.updateOne(
+          const res = await DocChangeModel.updateOne(
             { docId: docObjectId, toVersion: v },
             {
               $setOnInsert: {
@@ -135,16 +163,31 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             // Avoid Mongoose timestamps overriding our backfilled createdDate.
             { upsert: true, timestamps: false },
           );
+          const upsertedId =
+            res && typeof res === "object" && "upsertedId" in (res as any) ? (res as any).upsertedId : null;
+          if (upsertedId) insertedVersions.push(v);
+        }
+
+        if (debugInfo) {
+          debugInfo.backfill = {
+            attempted: true,
+            insertedVersions: insertedVersions.sort((a, b) => a - b),
+          };
         }
       } catch {
         // ignore; best-effort
+        if (debugInfo) debugInfo.backfill = { attempted: true, error: "backfill_failed" };
       }
     }
 
-    const changeFilter: Record<string, unknown> = {
-      docId: docObjectId,
-      ...(allowLegacyByUserId ? {} : { orgId }),
-    };
+    // Important: do NOT org-scope DocChange reads.
+    //
+    // Rationale: doc access is already validated above (org-scoped with legacy fallback),
+    // and `docId` is globally unique. Older DocChange rows can have:
+    // - missing orgId (legacy), or
+    // - a stale orgId from before backfills/org switching
+    // which would incorrectly hide history entries. Reading by docId avoids that.
+    const changeFilter: Record<string, unknown> = { docId: docObjectId };
     const changeSelect: Record<string, 1> = {
       _id: 1,
       docId: 1,
@@ -240,6 +283,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 })(),
             createdDate: c.createdDate ? new Date(c.createdDate).toISOString() : null,
           })),
+          ...(debugInfo ? { debug: debugInfo } : {}),
         },
         { headers: { "cache-control": "no-store" } },
       ),

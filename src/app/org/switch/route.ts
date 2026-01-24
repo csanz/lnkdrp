@@ -16,6 +16,8 @@ import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
 import { resolveActor } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
+import { LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX } from "@/lib/loadingOverlay";
+import { LOADING_OVERLAY_SHOW_TEXT_DEFAULT } from "@/lib/loadingOverlay";
 
 export const runtime = "nodejs";
 
@@ -130,6 +132,7 @@ export async function GET(request: Request) {
   const hrefAttr = escapeHtmlAttr(redirectTo);
   const jsHref = JSON.stringify(redirectTo);
   const jsOrgId = JSON.stringify(orgId);
+  const showTitle = LOADING_OVERLAY_SHOW_TEXT_DEFAULT;
   const res = new NextResponse(
     `<!doctype html>
 <html lang="en">
@@ -187,71 +190,50 @@ export async function GET(request: Request) {
         background: var(--bg);
         color: var(--fg);
       }
+      .title {
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        text-align: center;
+        opacity: 0.82;
+      }
+      .title[data-hidden="true"] {
+        display: none;
+      }
       .wrap {
         min-height: 100vh;
         min-height: 100svh;
-        padding: 40px 24px;
-      }
-      .card {
-        width: min(760px, calc(100vw - 48px));
-        position: fixed;
-        left: 50%;
-        top: var(--ld_lock_y, 50vh);
-        transform: translate(-50%, -50%);
-        border: 1px solid var(--border);
-        background: var(--panel);
-        color: var(--fg);
-        border-radius: 28px;
-        padding: 36px 36px 30px 36px;
-        box-sizing: border-box;
-        box-shadow: 0 18px 60px rgba(0,0,0,0.35);
-      }
-      .row {
+        padding: 24px;
         display: flex;
         align-items: center;
-        gap: 14px;
+        justify-content: center;
+        box-sizing: border-box;
       }
-      .mark {
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        background: var(--fg);
-        opacity: 0.75;
-        flex: 0 0 auto;
+      .stack {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: ${LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX}px;
+        color: var(--fg);
+        text-align: center;
       }
-      .title {
-        font-size: 18px;
-        font-weight: 700;
-        letter-spacing: -0.01em;
-      }
-      .sub {
-        margin-top: 8px;
-        font-size: 14px;
-        color: var(--muted-2);
-      }
-      @keyframes lnkdrpIndeterminate {
-        0% {
-          transform: translateX(-120%);
-        }
-        100% {
-          transform: translateX(320%);
+      @keyframes ldwsSpin {
+        to {
+          transform: rotate(360deg);
         }
       }
-      .progress {
-        position: relative;
-        margin-top: 24px;
-        height: 3px;
-        border-radius: 999px;
-        background: color-mix(in srgb, var(--fg) 14%, transparent);
-        overflow: hidden;
+      .spinner {
+        width: 28px;
+        height: 28px;
+        color: var(--fg);
+        opacity: 0.85;
+        animation: ldwsSpin 0.9s linear infinite;
       }
-      .progress > div {
-        position: absolute;
-        inset: 0 auto 0 0;
-        width: 34%;
-        background: var(--fg);
-        opacity: 0.55;
-        animation: lnkdrpIndeterminate 1.15s ease-in-out infinite;
+      .spinner svg {
+        display: block;
+        width: 100%;
+        height: 100%;
       }
       a {
         color: inherit;
@@ -260,20 +242,24 @@ export async function GET(request: Request) {
         margin-top: 10px;
         font-size: 12px;
         color: var(--muted-2);
+        text-align: center;
       }
     </style>
   </head>
   <body>
     <div class="wrap" role="status" aria-live="polite">
-      <div class="card">
-        <div class="row">
-          <div class="mark" aria-hidden="true"></div>
-          <div>
-            <div class="title">Switching workspace…</div>
-            <div class="sub">Just a moment.</div>
-          </div>
+      <div class="stack">
+        <div class="title" data-hidden="${showTitle ? "false" : "true"}">${showTitle ? "Switching workspace…" : ""}</div>
+        <div class="spinner" aria-hidden="true">
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" focusable="false">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="3" opacity="0.25" />
+            <path
+              fill="currentColor"
+              opacity="0.75"
+              d="M12 3a9 9 0 0 1 9 9h-3a6 6 0 0 0-6-6V3z"
+            />
+          </svg>
         </div>
-        <div class="progress" aria-hidden="true"><div></div></div>
         <noscript>
           <div class="noscript">JavaScript is disabled. <a href="${hrefAttr}">Continue</a></div>
         </noscript>

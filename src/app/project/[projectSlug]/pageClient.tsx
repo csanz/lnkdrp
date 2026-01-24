@@ -162,7 +162,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
               <div className="flex min-w-0 items-center gap-2">
                 <FolderIcon className="h-5 w-5 text-zinc-500" aria-hidden="true" />
                 {title ? (
-                  <div className="min-w-0 truncate text-sm font-semibold text-zinc-900">{title}</div>
+                  <div className="min-w-0 truncate translate-y-[2px] text-sm font-semibold text-zinc-900">{title}</div>
                 ) : (
                   <div
                     className="h-4 w-32 animate-pulse rounded bg-zinc-200/80"

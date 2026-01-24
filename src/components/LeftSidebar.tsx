@@ -1627,7 +1627,7 @@ export default function LeftSidebar({
           />
         </div>
 
-        <div className="pl-3 pr-12 pt-2 pb-2">
+        <div className="pl-3 pr-12 pt-2 pb-5">
           <div className="grid gap-0.5">
             <button
               type="button"
@@ -1809,15 +1809,18 @@ export default function LeftSidebar({
                         <Link
                           href={href}
                           className={[
-                            // Avoid `w-full + margin` overflow that can slide under the body divider.
+                            // Expand highlight into the sidebar's right padding so left/right gutters match.
+                            // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
-                            "block box-border w-[calc(100%-12px)] overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px]",
+                            "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px]",
                             activeDocId === d.id ? "bg-[var(--sidebar-hover)]" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                         >
                           <div className="flex min-w-0 items-center gap-1.5">
                             <StarIcon className="h-3.5 w-3.5 shrink-0 text-amber-400 opacity-70" />
-                            <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">{title}</span>
+                            <span className="block min-w-0 max-w-[188px] flex-1 truncate font-medium text-[var(--fg)]">
+                              {title}
+                            </span>
                           </div>
                         </Link>
                       </li>
@@ -2104,15 +2107,16 @@ export default function LeftSidebar({
                         <Link
                           href={href}
                           className={[
-                            // Avoid `w-full + margin` overflow that can slide under the body divider.
+                            // Expand highlight into the sidebar's right padding so left/right gutters match.
+                            // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
-                            "block box-border w-[calc(100%-12px)] overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px]",
+                            "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px]",
                             activeDocId === d.id ? "bg-[var(--sidebar-hover)]" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                           title={when ? `Updated ${when}` : undefined}
                         >
                           <div className="flex min-w-0 items-center gap-1.5 text-[15px] font-medium leading-normal text-[var(--fg)]">
-                            <span className="block min-w-0 flex-1 truncate">{title}</span>
+                            <span className="block min-w-0 max-w-[188px] flex-1 truncate">{title}</span>
                           </div>
                         </Link>
                       </div>

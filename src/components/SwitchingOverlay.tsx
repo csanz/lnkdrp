@@ -5,9 +5,13 @@
  * short transition states). Implemented as an imperative DOM overlay so it can show instantly
  * before navigation begins.
  */
+import { LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX } from "@/lib/loadingOverlay";
+import { LOADING_OVERLAY_SHOW_TEXT_DEFAULT } from "@/lib/loadingOverlay";
+
 export const SWITCHING_OVERLAY_ID = "ld_workspace_switch_overlay";
 export const DOC_NAV_OVERLAY_ID = "ld_doc_nav_overlay";
 export const PROJECT_NAV_OVERLAY_ID = "ld_project_nav_overlay";
+export const UPLOAD_NAV_OVERLAY_ID = "ld_upload_nav_overlay";
 export const SWITCHING_OVERLAY_Y_KEY = "ld_ws_switch_overlay_y";
 export const SWITCHING_OVERLAY_STARTED_AT_KEY = "ld_ws_switch_started_at";
 // Used to pre-seed client cache scoping on the *next* page load after switching.
@@ -19,7 +23,8 @@ export const DEFAULT_SWITCHING_OVERLAY_MIN_MS = 1400;
 
 export type SwitchingOverlayOptions = {
   id?: string;
-  title?: string;
+  title?: string | null;
+  showTitle?: boolean;
   subtitle?: string;
   /**
    * Minimum time the overlay should remain visible before the caller navigates.
@@ -44,11 +49,12 @@ export function showSwitchingOverlay(opts: SwitchingOverlayOptions = {}) {
   try {
     if (document.getElementById(id)) return;
 
-    const yPx = typeof window !== "undefined" ? Math.round(window.innerHeight / 2) : 0;
-    const title = (opts.title ?? "Switching workspace…").trim() || "Switching…";
-    const subtitle = (opts.subtitle ?? "Just a moment.").trim() || "Just a moment.";
+    const showTitle = typeof opts.showTitle === "boolean" ? opts.showTitle : LOADING_OVERLAY_SHOW_TEXT_DEFAULT;
+    const rawTitle = typeof opts.title === "string" ? opts.title : opts.title === null ? "" : "Switching workspace…";
+    const title = rawTitle.trim();
 
     try {
+      const yPx = typeof window !== "undefined" ? Math.round(window.innerHeight / 2) : 0;
       sessionStorage.setItem(SWITCHING_OVERLAY_Y_KEY, String(yPx));
       sessionStorage.setItem(SWITCHING_OVERLAY_STARTED_AT_KEY, String(safeNow()));
     } catch {
@@ -68,65 +74,61 @@ export function showSwitchingOverlay(opts: SwitchingOverlayOptions = {}) {
     // NOTE: Keep this markup/CSS in sync with the /org/switch fallback.
     root.innerHTML = `
       <style>
-        @keyframes lnkdrpIndeterminate { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
-        .ldws-card {
-          width: min(760px, calc(100vw - 48px));
-          position: fixed;
-          left: 50%;
-          top: ${yPx || 0}px;
-          transform: translate(-50%, -50%);
-          border: 1px solid var(--border, #2a2a31);
-          background: var(--panel, #111113);
-          color: var(--fg, #e7e7ea);
-          border-radius: 28px;
-          padding: 36px 36px 30px 36px;
+        .ldws-wrap {
+          min-height: 100vh;
+          min-height: 100svh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
           box-sizing: border-box;
-          box-shadow: 0 18px 60px rgba(0,0,0,0.35);
         }
-        .ldws-row { display: flex; align-items: center; gap: 14px; }
-        .ldws-mark {
-          width: 10px; height: 10px; border-radius: 999px;
-          background: var(--fg, #e7e7ea);
-          opacity: 0.75;
-          flex: 0 0 auto;
+        .ldws-stack {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: ${LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX}px;
+          color: var(--fg, #e7e7ea);
+          text-align: center;
         }
-        .ldws-title { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
-        .ldws-sub { margin-top: 8px; font-size: 14px; color: var(--muted-2, #8b8b96); }
-        .ldws-progress {
-          position: relative;
-          margin-top: 24px;
-          height: 3px;
-          border-radius: 999px;
-          background: color-mix(in srgb, var(--fg, #e7e7ea) 14%, transparent);
-          overflow: hidden;
+        .ldws-title { font-size: 17px; font-weight: 600; letter-spacing: -0.01em; opacity: 0.82; }
+        .ldws-title[data-hidden="true"] { display: none; }
+        @keyframes ldwsSpin { to { transform: rotate(360deg); } }
+        .ldws-spinner {
+          width: 28px;
+          height: 28px;
+          color: var(--fg, #e7e7ea);
+          opacity: 0.85;
+          animation: ldwsSpin 0.9s linear infinite;
         }
-        .ldws-progress > div {
-          position: absolute;
-          inset: 0 auto 0 0;
-          width: 34%;
-          background: var(--fg, #e7e7ea);
-          opacity: 0.55;
-          animation: lnkdrpIndeterminate 1.15s ease-in-out infinite;
-        }
+        .ldws-spinner svg { display: block; width: 100%; height: 100%; }
       </style>
-      <div class="ldws-card">
-        <div class="ldws-row">
-          <div class="ldws-mark" aria-hidden="true"></div>
-          <div>
-            <div class="ldws-title"></div>
-            <div class="ldws-sub"></div>
+      <div class="ldws-wrap">
+        <div class="ldws-stack">
+          <div class="ldws-title" data-hidden="false"></div>
+          <div class="ldws-spinner" aria-hidden="true">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" focusable="false">
+              <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="3" opacity="0.25" />
+              <path
+                fill="currentColor"
+                opacity="0.75"
+                d="M12 3a9 9 0 0 1 9 9h-3a6 6 0 0 0-6-6V3z"
+              />
+            </svg>
           </div>
         </div>
-        <div class="ldws-progress" aria-hidden="true"><div></div></div>
       </div>
     `;
 
     // Fill text via DOM APIs to avoid HTML injection.
     document.body.appendChild(root);
     const titleEl = root.querySelector(".ldws-title");
-    const subEl = root.querySelector(".ldws-sub");
-    if (titleEl) titleEl.textContent = title;
-    if (subEl) subEl.textContent = subtitle;
+    if (titleEl) {
+      const shouldShow = showTitle && Boolean(title);
+      titleEl.setAttribute("data-hidden", shouldShow ? "false" : "true");
+      titleEl.textContent = shouldShow ? title : "";
+    }
   } catch {
     // ignore (best-effort)
   }

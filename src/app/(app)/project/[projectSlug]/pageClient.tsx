@@ -734,7 +734,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
               <FolderIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
             )}
             {title ? (
-              <div className="min-w-0 flex-1 translate-y-[1px]">
+              <div className="min-w-0 flex-1 translate-y-[2px]">
                 {editingName ? (
                   <div className="min-w-0">
                     <input

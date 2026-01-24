@@ -5,6 +5,7 @@
  */
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import Alert from "@/components/ui/Alert";
@@ -26,7 +27,14 @@ type UploadRow = {
   createdDate: string | null;
 };
 
+type AdminUploadDetailsResponse = {
+  ok?: boolean;
+  upload?: any;
+  error?: string;
+};
+
 export default function AdminDataUploadsPage() {
+  const searchParams = useSearchParams();
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? null;
   const isAuthed = status === "authenticated";
@@ -46,7 +54,40 @@ export default function AdminDataUploadsPage() {
   const [deleteBusyUploadId, setDeleteBusyUploadId] = useState<string>("");
   const [reloadKey, setReloadKey] = useState(0);
 
+  const [selectedUploadId, setSelectedUploadId] = useState<string>("");
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [uploadDetails, setUploadDetails] = useState<AdminUploadDetailsResponse | null>(null);
+  const [uploadJsonCopyDone, setUploadJsonCopyDone] = useState(false);
+
   const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
+
+  async function copyToClipboard(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function loadUploadDetails(uploadId: string) {
+    if (!uploadId) return;
+    setDetailsLoading(true);
+    setDetailsError(null);
+    setUploadDetails(null);
+    setUploadJsonCopyDone(false);
+    try {
+      const data = await fetchJson<AdminUploadDetailsResponse>(`/api/admin/data/uploads/${encodeURIComponent(uploadId)}`, {
+        method: "GET",
+      });
+      setUploadDetails(data);
+    } catch (e) {
+      setDetailsError(e instanceof Error ? e.message : "Failed to load upload details");
+    } finally {
+      setDetailsLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -72,6 +113,16 @@ export default function AdminDataUploadsPage() {
       }
     })();
   }, [canUseAdmin, limit, page, q, reloadKey]);
+
+  useEffect(() => {
+    if (!canUseAdmin) return;
+    const fromUrl = (searchParams?.get("uploadId") ?? "").trim();
+    if (!fromUrl) return;
+    if (fromUrl === selectedUploadId) return;
+    setSelectedUploadId(fromUrl);
+    void loadUploadDetails(fromUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseAdmin, searchParams]);
 
   async function deleteUpload(uploadId: string) {
     if (!uploadId) return;
@@ -128,7 +179,7 @@ export default function AdminDataUploadsPage() {
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
-      <div className="mx-auto w-full max-w-6xl px-6 py-8">
+      <div className="mx-auto w-full max-w-[1400px] px-6 py-8">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Uploads</h1>
@@ -173,70 +224,198 @@ export default function AdminDataUploadsPage() {
           </Alert>
         ) : null}
 
-        {loading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-6">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">File</th>
-                <th className="px-4 py-3">Doc</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Version</th>
-                <th className="px-4 py-3">Created</th>
-                <th className="px-4 py-3">User ID</th>
-                <th className="px-4 py-3">Upload ID</th>
-                <th className="px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {items.map((u) => (
-                <tr key={u.id}>
-                  <td className="px-4 py-3">{u.originalFileName ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <div className="min-w-0">
-                      <div className="truncate">{u.docTitle ?? u.docId ?? "—"}</div>
-                      {u.shareId ? (
-                        <a
-                          className="mt-1 inline-block text-xs text-[var(--muted)] hover:underline"
-                          href={`/s/${encodeURIComponent(u.shareId)}`}
-                          target="_blank"
-                          rel="noreferrer"
+        <div className={["mt-6 grid gap-5", selectedUploadId ? "lg:grid-cols-[1fr_520px]" : ""].join(" ")}>
+          <div className="min-w-0">
+            {loading ? (
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
+                Loading…
+              </div>
+            ) : (
+              <DataTable>
+                <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
+                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                    <th className="px-4 py-3">File</th>
+                    <th className="px-4 py-3">Doc</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3">Version</th>
+                    <th className="px-4 py-3">Created</th>
+                    <th className="px-4 py-3">User ID</th>
+                    <th className="px-4 py-3">Upload ID</th>
+                    <th className="px-4 py-3">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {items.map((u) => (
+                    <tr key={u.id} className={selectedUploadId === u.id ? "bg-[var(--panel-2)]/60" : ""}>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          className="text-left hover:underline"
+                          onClick={() => {
+                            setSelectedUploadId(u.id);
+                            void loadUploadDetails(u.id);
+                          }}
+                          title="Open upload details"
                         >
-                          /s/{u.shareId}
-                        </a>
-                      ) : null}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{u.status ?? "—"}</td>
-                  <td className="px-4 py-3">{typeof u.version === "number" ? u.version : "—"}</td>
-                  <td className="px-4 py-3">{fmtDate(u.createdDate) || "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.userId ?? "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                      disabled={Boolean(deleteBusyUploadId) && deleteBusyUploadId !== u.id}
-                      onClick={() => void deleteUpload(u.id)}
-                    >
-                      {deleteBusyUploadId === u.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
-                    No uploads.
-                  </td>
-                </tr>
+                          {u.originalFileName ?? "—"}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="min-w-0">
+                          <div className="truncate">{u.docTitle ?? u.docId ?? "—"}</div>
+                          {u.shareId ? (
+                            <a
+                              className="mt-1 inline-block text-xs text-[var(--muted)] hover:underline"
+                              href={`/s/${encodeURIComponent(u.shareId)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              /s/{u.shareId}
+                            </a>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">{u.status ?? "—"}</td>
+                      <td className="px-4 py-3">{typeof u.version === "number" ? u.version : "—"}</td>
+                      <td className="px-4 py-3">{fmtDate(u.createdDate) || "—"}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.userId ?? "—"}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
+                            onClick={() => {
+                              setSelectedUploadId(u.id);
+                              void loadUploadDetails(u.id);
+                            }}
+                          >
+                            Details
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                            disabled={Boolean(deleteBusyUploadId) && deleteBusyUploadId !== u.id}
+                            onClick={() => void deleteUpload(u.id)}
+                          >
+                            {deleteBusyUploadId === u.id ? "Deleting…" : "Delete"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {items.length === 0 ? (
+                    <tr>
+                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
+                        No uploads.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </DataTable>
+            )}
+          </div>
+
+          {selectedUploadId ? (
+            <aside className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 lg:sticky lg:top-6 lg:max-h-[calc(100svh-80px)] lg:overflow-auto">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-semibold text-[var(--fg)]">Upload details</div>
+                  <div className="mt-1 font-mono text-xs text-[var(--muted)] break-all">{selectedUploadId}</div>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
+                  onClick={() => {
+                    setSelectedUploadId("");
+                    setUploadDetails(null);
+                    setDetailsError(null);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                  disabled={detailsLoading}
+                  onClick={() => void loadUploadDetails(selectedUploadId)}
+                >
+                  {detailsLoading ? "Loading…" : "Refresh"}
+                </button>
+                {uploadDetails?.upload?.docId ? (
+                  <a
+                    className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
+                    href={`/doc/${encodeURIComponent(String(uploadDetails.upload.docId))}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Open /doc
+                  </a>
+                ) : null}
+              </div>
+
+              {detailsError ? (
+                <Alert variant="info" className="mt-3 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+                  {detailsError}
+                </Alert>
               ) : null}
-            </tbody>
-          </DataTable>
-        )}
+
+              {detailsLoading && !uploadDetails ? (
+                <div className="mt-3 text-sm text-[var(--muted)]">Loading upload JSON…</div>
+              ) : uploadDetails?.upload ? (
+                <>
+                  <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Preview / error</div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                      <div className="text-[var(--muted)]">previewImageUrl</div>
+                      <div className={["font-mono break-all", uploadDetails.upload.previewImageUrl ? "text-[var(--fg)]" : "text-red-500"].join(" ")}>
+                        {String(uploadDetails.upload.previewImageUrl ?? uploadDetails.upload.firstPagePngUrl ?? "null")}
+                      </div>
+                      <div className="text-[var(--muted)]">error.message</div>
+                      <div className="font-mono text-[var(--fg)] break-all">
+                        {String(uploadDetails.upload.error?.message ?? "—")}
+                      </div>
+                      <div className="text-[var(--muted)]">error.details.preview</div>
+                      <div className="font-mono text-[var(--fg)] break-all">
+                        {String(uploadDetails.upload.error?.details?.preview ?? "—")}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Upload JSON</div>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                        disabled={!uploadDetails?.upload}
+                        onClick={() => {
+                          const txt = uploadDetails?.upload ? JSON.stringify(uploadDetails.upload, null, 2) : "";
+                          void (async () => {
+                            const ok = await copyToClipboard(txt);
+                            if (!ok) return;
+                            setUploadJsonCopyDone(true);
+                            window.setTimeout(() => setUploadJsonCopyDone(false), 1200);
+                          })();
+                        }}
+                      >
+                        {uploadJsonCopyDone ? "Copied" : "Copy"}
+                      </button>
+                    </div>
+                    <pre className="mt-2 max-h-[560px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[11px] text-[var(--fg)]">
+                      {JSON.stringify(uploadDetails.upload, null, 2)}
+                    </pre>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-3 text-sm text-[var(--muted)]">Select an upload to view details.</div>
+              )}
+            </aside>
+          ) : null}
+        </div>
       </div>
     </div>
   );

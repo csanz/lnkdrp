@@ -58,6 +58,9 @@
 - `src/components/ui/Select.tsx` — exports: Select (default), SelectProps (type)
 - `src/components/ui/Panel.tsx` — exports: Panel (default), PanelProps (type)
 - `src/components/ui/Pill.tsx` — exports: Pill (default)
+- `src/components/ui/DotsLoader.tsx` — exports: DotsLoader (default), DotsLoaderProps (type). Centered "Loading…" label + animated dots.
+- `src/components/ui/Spinner.tsx` — exports: Spinner (default), SpinnerProps (type). Minimal rotating circle spinner (theme-aware via `currentColor`).
+- `src/components/ui/SpinnerLoader.tsx` — exports: SpinnerLoader (default), SpinnerLoaderProps (type). Centered spinner loader with optional title.
 - `src/components/ui/HelpTooltip.tsx` — exports: HelpTooltip (default)
 - `src/components/ui/DataTable.tsx` — exports: DataTable (default), DataTableProps (type)
 - `src/components/ui/CopyTextButton.tsx` — exports: CopyTextButton (default)
@@ -194,6 +197,7 @@
   - GET (function) — List docs across all users for admin inspection (paged).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/docs/[docId]/route.ts` — API route for \`/api/admin/data/docs/:docId\`.
+  - GET (function) — Return full doc JSON plus related uploads (admin drilldown).
   - DELETE (function) — Soft-delete a doc (sets `isDeleted=true` and `deletedDate`).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/projects/route.ts` — API route for \`/api/admin/data/projects\`.
@@ -212,9 +216,10 @@
   - DELETE (function) — Soft-delete a project (sets `isDeleted=true`).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/uploads/route.ts` — API route for \`/api/admin/data/uploads\`.
-  - GET (function) — List uploads across all users for admin inspection (paged).
+  - GET (function) — List uploads across all users for admin inspection (paged; supports `docId` filter).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/admin/data/uploads/[uploadId]/route.ts` — API route for \`/api/admin/data/uploads/:uploadId\`.
+  - GET (function) — Return full upload JSON (including `error.details`) for admin drilldown.
   - DELETE (function) — Soft-delete an upload (sets `isDeleted=true` and `deletedDate`).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/auth/[...nextauth]/route.ts` — API route for \`/api/auth/:nextauth*\`.
@@ -526,6 +531,7 @@
   - runtime (const) — Next.js route configuration.
 - `src/app/share/[shareId]/page.tsx` — Page for \`/share/:shareId\`.
 - `src/app/test/client-upload/page.tsx` — Test route: Vercel Blob "client uploads"
+- `src/app/test/animation/page.tsx` — Test route: loading dots + overlay preview (\`/test/animation\`).
 - `src/app/test/share-document/og.png/route.tsx` — API route for \`/test/share-document/og.png\`.
   - GET (function) — Load the sample AI output JSON bundled under /public for testing.
   - runtime (const) — Next.js route configuration.
@@ -927,6 +933,8 @@
 - `src/app/share/[shareId]/page.tsx`
 - `src/app/share/[shareId]/PasswordGate.tsx`
 - `src/app/test/client-upload/page.tsx`
+- `src/app/test/animation/page.tsx`
+- `src/app/test/animation/pageClient.tsx`
 - `src/app/test/share-document/og.png/route.tsx`
 - `src/app/test/share-document/opengraph-image.tsx`
 - `src/app/test/share-document/page.tsx`
@@ -985,6 +993,7 @@
 - `src/lib/models/User.ts`
 - `src/lib/mongodb.ts`
 - `src/lib/og/imageResponse.tsx`
+- `src/lib/loadingOverlay.ts` — exports: LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX, LOADING_OVERLAY_SHOW_TEXT_DEFAULT. Shared constants for the centered loading overlay (keeps `/org/switch` and `SwitchingOverlay` in sync).
 - `src/lib/pendingUpload.tsx`
 - `src/lib/sharePassword.ts`
 - `src/lib/sidebarCache.ts`

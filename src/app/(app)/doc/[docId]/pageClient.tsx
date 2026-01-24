@@ -180,6 +180,7 @@ function buildCachedPdfIframeUrl(params: {
 export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const router = useRouter();
   const authEnabled = useAuthEnabled();
+  const isDev = process.env.NODE_ENV !== "production";
   const [doc, setDoc] = useState<DocDTO>(initialDoc);
   const docRef = useRef<DocDTO>(initialDoc);
   const [currentUpload, setCurrentUpload] = useState<UploadDTO | null>(null);
@@ -189,6 +190,13 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [replaceUploadId, setReplaceUploadId] = useState<string | null>(null);
   const [replaceToVersion, setReplaceToVersion] = useState<number | null>(null);
   const [replaceUploadStatus, setReplaceUploadStatus] = useState<string | null>(null);
+  // CRITICAL UX GUARDRail (do not remove):
+  // `replaceStarting` is set synchronously on file selection, BEFORE any network call.
+  //
+  // Why: in Next dev, the first hit to `/api/uploads` can take several seconds due to compilation.
+  // If we only show the "Replacing…" overlay after we have an `uploadId`, users see ~5s of dead UI.
+  // This flag exists specifically to make the animation/lockout immediate and deterministic.
+  const [replaceStarting, setReplaceStarting] = useState(false);
   const [replaceNotice, setReplaceNotice] = useState<
     | null
     | {
@@ -213,6 +221,13 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
   const [replaceCopyDone, setReplaceCopyDone] = useState(false);
+  const [debugJsonOpen, setDebugJsonOpen] = useState(false);
+  const [debugJsonLoading, setDebugJsonLoading] = useState(false);
+  const [debugJsonError, setDebugJsonError] = useState<string | null>(null);
+  const [debugJsonText, setDebugJsonText] = useState<string>("");
+  const [debugJsonPayload, setDebugJsonPayload] = useState<Record<string, unknown> | null>(null);
+  const [debugJsonCopying, setDebugJsonCopying] = useState(false);
+  const [debugJsonCopyDone, setDebugJsonCopyDone] = useState(false);
   const [preparingTick, setPreparingTick] = useState(0);
   const [hasHydratedFromServer, setHasHydratedFromServer] = useState(false);
   const [hydrateError, setHydrateError] = useState<string | null>(null);
@@ -797,6 +812,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           replacePendingRef.current = false;
           setReplaceUploadId(null);
           setReplaceUploadStatus(null);
+          // Pull fresh server truth so preview/version update immediately after replacement.
+          router.refresh();
         }
       } catch {
         // ignore; keep polling
@@ -832,6 +849,74 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   }, [isTempUser, doc.currentUploadVersion]);
 
   // We intentionally do not show summary/tags on the owner panel when AI Snapshot is present.
+
+  async function loadDebugJson() {
+    if (!isDev) return;
+    const docId = docRef.current.id;
+    setDebugJsonLoading(true);
+    setDebugJsonError(null);
+    setDebugJsonCopyDone(false);
+    try {
+      const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?t=${Date.now()}`, {
+        cache: "no-store",
+      });
+      const json = (await res.json().catch(() => null)) as any;
+      if (!res.ok) {
+        const msg =
+          json && typeof json === "object" && typeof json.error === "string"
+            ? json.error
+            : `Request failed (${res.status})`;
+        throw new Error(msg);
+      }
+
+      const payload = {
+        fetchedAt: new Date().toISOString(),
+        docId,
+        // What the server believes right now (most useful for debugging preview updates).
+        apiDocs: json,
+        // What the client currently has rendered (can be stale).
+        localDocState: docRef.current,
+        localCurrentUploadState: currentUpload,
+      };
+      setDebugJsonPayload(payload as unknown as Record<string, unknown>);
+      setDebugJsonText(JSON.stringify(payload, null, 2));
+    } catch (e) {
+      setDebugJsonText("");
+      setDebugJsonPayload(null);
+      setDebugJsonError(e instanceof Error ? e.message : "Failed to load debug JSON.");
+    } finally {
+      setDebugJsonLoading(false);
+    }
+  }
+
+  async function openDebugJson() {
+    if (!isDev) return;
+    setDebugJsonOpen(true);
+    await loadDebugJson();
+  }
+
+  async function copyDebugJson() {
+    if (!debugJsonText) return;
+    setDebugJsonCopying(true);
+    setDebugJsonCopyDone(false);
+    try {
+      await navigator.clipboard.writeText(debugJsonText);
+      setDebugJsonCopyDone(true);
+      window.setTimeout(() => setDebugJsonCopyDone(false), 1200);
+    } catch {
+      // ignore (best-effort)
+    } finally {
+      setDebugJsonCopying(false);
+    }
+  }
+
+  async function copyObjectJson(obj: unknown) {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
+    } catch {
+      // ignore
+    }
+  }
 
   useEffect(() => {
     // Defensive boundary enforcement: the doc page must never render Phase-1 CTAs.
@@ -1032,7 +1117,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
   const pdfStatusOverlay = useMemo(() => {
     if (!hasHydratedFromServer) return null;
-    if (replaceUploadId) {
+    if (replaceStarting || replaceUploadId) {
       const s = (replaceUploadStatus ?? "").toLowerCase();
       if (s === "failed") {
         return { title: "Upload failed", body: "Processing failed. Your existing document was kept." };
@@ -1040,11 +1125,13 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       return {
         title: "Replacing…",
         body:
-          s === "uploading"
-            ? "Uploading your new PDF…"
-            : s === "processing"
-              ? "Processing your new PDF…"
-              : overlayText,
+          replaceStarting && !replaceUploadId
+            ? "Starting upload…"
+            : s === "uploading"
+              ? "Uploading your new PDF…"
+              : s === "processing"
+                ? "Processing your new PDF…"
+                : overlayText,
       };
     }
     if (doc.status === "ready") return null;
@@ -1058,7 +1145,13 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       title: "Preparing",
       body: overlayText,
     };
-  }, [doc.status, hasHydratedFromServer, overlayText, replaceUploadId, replaceUploadStatus]);
+  }, [doc.status, hasHydratedFromServer, overlayText, replaceStarting, replaceUploadId, replaceUploadStatus]);
+
+  // CRITICAL UX GUARDRAIL (do not remove):
+  // During replacements, Next dev can spend several seconds compiling `/api/uploads` before we even
+  // get an upload id back. We must still flip the *right-side panel* into a preparing state
+  // immediately, otherwise users see "nothing happening" for ~5s.
+  const isReplacing = Boolean(replaceStarting || replaceUploadId);
 
   const shouldShowReviewRunOverlay =
     hasHydratedFromServer &&
@@ -1442,6 +1535,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       setReplaceNotice(null);
       setReplaceToVersion(null);
       setReplaceUploadStatus(null);
+      setReplaceStarting(true);
 
       // Immediately clear the current view and show a local preview for the new file.
       setLocalPreviewUrl((prev) => {
@@ -1468,6 +1562,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         const message = e instanceof Error ? e.message : "";
         if (message === "TEMP_USER_LIMIT") setTempGateOpen(true);
         replacePendingRef.current = false;
+        setReplaceStarting(false);
         // Best effort: restore server-backed view.
         setLocalPreviewUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
@@ -1477,6 +1572,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         router.refresh();
         return;
       }
+      setReplaceStarting(false);
       setLocalPreviewUploadId(newUploadId);
       replacePendingRef.current = false;
 
@@ -1999,6 +2095,21 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 </button>
               ) : null}
 
+              {isDev && hasHydratedFromServer ? (
+                <button
+                  type="button"
+                  onClick={() => void openDebugJson()}
+                  aria-label="Open debug JSON"
+                  title="Debug JSON"
+                  className={[
+                    "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
+                    "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                  ].join(" ")}
+                >
+                  <LightBulbIcon className="h-4 w-4" aria-hidden="true" />
+                </button>
+              ) : null}
+
               {hasHydratedFromServer && !isReceivedViaRequest ? (
                 <DocActionsMenu
                   docId={doc.id}
@@ -2217,7 +2328,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
               </div>
 
               <div className="order-2 min-h-0 h-full lg:order-2">
-                {doc.status === "ready" && !isReceivedViaRequest ? (
+                {doc.status === "ready" && !isReceivedViaRequest && !isReplacing ? (
                   <DocSharePanel
                     docId={doc.id}
                     shareUrl={shareUrl}
@@ -2240,6 +2351,16 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     aiOutput={doc.aiOutput ?? null}
                     uploadError={currentUpload?.error ?? null}
                   />
+                ) : isReplacing ? (
+                  <aside className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+                    <div className="text-sm font-semibold">{pdfStatusOverlay?.title ?? "Preparing"}</div>
+                    <div className="mt-2 text-sm text-[var(--muted)]">
+                      {pdfStatusOverlay?.body ?? "Please don’t leave this page while we prepare your PDF."}
+                    </div>
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
+                      <div className="h-full w-1/3 bg-[var(--primary-bg)] animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
+                    </div>
+                  </aside>
                 ) : isReceivedViaRequest && doc.status === "ready" && showRequestIntel ? (
                   <aside className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
                     <div className="flex items-center justify-between gap-3">
@@ -2736,6 +2857,106 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           </div>
         </div>
       </div>
+
+      <Modal
+        open={debugJsonOpen}
+        onClose={() => {
+          if (debugJsonLoading) return;
+          setDebugJsonOpen(false);
+          setDebugJsonError(null);
+        }}
+        ariaLabel="Debug JSON"
+        panelClassName="w-[min(980px,calc(100vw-32px))]"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-base font-semibold text-[var(--fg)]">Debug JSON</div>
+            <div className="mt-1 text-sm text-[var(--muted)]">
+              Fresh server response from <code className="font-mono">/api/docs/{doc.id}</code>. Check{" "}
+              <code className="font-mono">doc.previewImageUrl</code>.
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void loadDebugJson()}
+              disabled={debugJsonLoading}
+              className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+            >
+              {debugJsonLoading ? "Refreshing…" : "Refresh"}
+            </button>
+            <CopyButton
+              copyDone={debugJsonCopyDone}
+              isCopying={debugJsonCopying}
+              disabled={!debugJsonText}
+              onCopy={() => void copyDebugJson()}
+              label="Copy"
+              copiedLabel="Copied"
+              className={[
+                "inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors",
+                "border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] hover:bg-[var(--panel-hover)]",
+                !debugJsonText ? "cursor-not-allowed opacity-60" : "",
+              ].join(" ")}
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+          {debugJsonError ? (
+            <div className="text-sm text-red-700">{debugJsonError}</div>
+          ) : debugJsonLoading && !debugJsonText ? (
+            <div className="text-sm text-[var(--muted)]">Loading…</div>
+          ) : debugJsonPayload ? (
+            <div className="grid gap-3">
+              {(() => {
+                const apiDocs = (debugJsonPayload as any).apiDocs ?? null;
+                const apiDoc = apiDocs && typeof apiDocs === "object" ? (apiDocs as any).doc ?? null : null;
+                const apiUpload = apiDocs && typeof apiDocs === "object" ? (apiDocs as any).upload ?? null : null;
+                const localDocState = (debugJsonPayload as any).localDocState ?? null;
+                const localCurrentUploadState = (debugJsonPayload as any).localCurrentUploadState ?? null;
+                const blocks: Array<{ title: string; value: unknown; defaultOpen?: boolean }> = [
+                  { title: "API: doc", value: apiDoc, defaultOpen: true },
+                  { title: "API: upload (current)", value: apiUpload, defaultOpen: true },
+                  { title: "Client: localDocState", value: localDocState },
+                  { title: "Client: localCurrentUploadState", value: localCurrentUploadState },
+                  { title: "All (combined payload)", value: debugJsonPayload },
+                ];
+
+                return blocks.map((b) => (
+                  <details
+                    key={b.title}
+                    open={Boolean(b.defaultOpen)}
+                    className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3"
+                  >
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                      <div className="text-[12px] font-semibold text-[var(--fg)]">{b.title}</div>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                        disabled={b.value == null}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void copyObjectJson(b.value);
+                        }}
+                        title="Copy JSON"
+                      >
+                        Copy
+                      </button>
+                    </summary>
+                    <pre className="mt-3 max-h-[46vh] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
+                      {b.value == null ? "null" : JSON.stringify(b.value, null, 2)}
+                    </pre>
+                  </details>
+                ));
+              })()}
+            </div>
+          ) : (
+            <div className="text-sm text-[var(--muted)]">No data.</div>
+          )}
+        </div>
+      </Modal>
 
       <Modal open={showStarAuthModal} onClose={() => setShowStarAuthModal(false)} ariaLabel="Sign up to star docs">
         <div className="text-base font-semibold text-[var(--fg)]">Sign up to star docs</div>

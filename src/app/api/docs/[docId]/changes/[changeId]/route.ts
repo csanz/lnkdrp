@@ -58,7 +58,6 @@ export async function GET(
     const change = await DocChangeModel.findOne({
       _id: new Types.ObjectId(changeId),
       docId: docObjectId,
-      ...(allowLegacyByUserId ? {} : { orgId }),
     })
       .select({ _id: 1, docId: 1, previousText: 1, newText: 1 })
       .lean();

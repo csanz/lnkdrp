@@ -54,12 +54,20 @@ export async function GET(request: Request) {
   const page = Math.max(asPositiveInt(url.searchParams.get("page")) ?? 1, 1);
   const qRaw = url.searchParams.get("q") ?? "";
   const q = qRaw.trim();
+  const docIdRaw = (url.searchParams.get("docId") ?? "").trim();
 
   await connectMongo();
 
   const filter: Record<string, unknown> = {
     isDeleted: { $ne: true },
   };
+
+  if (docIdRaw) {
+    if (!Types.ObjectId.isValid(docIdRaw)) {
+      return NextResponse.json({ error: "docId must be a valid ObjectId" }, { status: 400 });
+    }
+    filter.docId = new Types.ObjectId(docIdRaw);
+  }
 
   if (q) {
     const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");

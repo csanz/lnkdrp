@@ -8,7 +8,7 @@ import { apiCreateDoc, apiCreateUpload } from "@/lib/client/docUploadPipeline";
 import { usePendingUpload } from "@/lib/pendingUpload";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { fetchJson } from "@/lib/http/fetchJson";
-import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
+import { showSwitchingOverlay, switchWorkspaceWithOverlay, UPLOAD_NAV_OVERLAY_ID } from "@/components/SwitchingOverlay";
 /**
  * File Name From Url (uses trim, pop, filter).
  */
@@ -38,6 +38,25 @@ export default function HomeAuthedClient() {
   const [urlInput, setUrlInput] = useState("");
   const [urlBusy, setUrlBusy] = useState(false);
   const pushingUploadRef = useRef(false);
+
+  function startUploadNavNow() {
+    // Show an immediate full-screen overlay before routing to `/upload`
+    // so the user never sees a "dead" period after file selection.
+    showSwitchingOverlay({
+      id: UPLOAD_NAV_OVERLAY_ID,
+      title: "Preparing upload…",
+      subtitle: "Loading your preview.",
+    });
+  }
+
+  function pushUploadRouteSoon() {
+    // Let the overlay paint before the route transition begins.
+    if (typeof window === "undefined") {
+      router.push("/upload");
+      return;
+    }
+    window.requestAnimationFrame(() => router.push("/upload"));
+  }
 
   async function waitForNextPaint() {
     if (typeof window === "undefined") return;
@@ -156,7 +175,8 @@ export default function HomeAuthedClient() {
     lastAutoHandledRef.current = pendingFile;
     setError(null);
     pushingUploadRef.current = true;
-    router.push("/upload");
+    startUploadNavNow();
+    pushUploadRouteSoon();
     window.setTimeout(() => {
       pushingUploadRef.current = false;
     }, 500);
@@ -202,7 +222,8 @@ export default function HomeAuthedClient() {
                 if (!isPdf) return;
                 setPendingFile(file);
                 setError(null);
-                router.push("/upload");
+                startUploadNavNow();
+                pushUploadRouteSoon();
               }}
             >
               <div className="text-xl font-semibold tracking-tight">Upload</div>
@@ -217,7 +238,8 @@ export default function HomeAuthedClient() {
                   onFileSelected={(file) => {
                     setPendingFile(file);
                     setError(null);
-                    router.push("/upload");
+                    startUploadNavNow();
+                    pushUploadRouteSoon();
                   }}
                 />
                 <div className="text-xs leading-5 text-[var(--muted)]">

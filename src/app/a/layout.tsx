@@ -3,7 +3,7 @@
 import AdminLeftSidebar from "@/components/AdminLeftSidebar";
 import Image from "next/image";
 import Link from "next/link";
-import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import { useTheme } from "next-themes";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { usePathname } from "next/navigation";
@@ -61,9 +61,26 @@ export default function AdminShellLayout({ children }: { children: React.ReactNo
     <div className="flex h-[100svh] w-full flex-col bg-[var(--bg)] text-[var(--fg)] md:flex-row">
       {/* Mobile top bar */}
       <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:hidden">
-        <Link href="/a" className="inline-flex items-center gap-2" aria-label="Admin home">
-          <Image src={logoSrc} alt="LinkDrop" width={28} height={28} priority />
-        </Link>
+        <div className="flex min-w-0 items-center gap-2">
+          <Link
+            href="/"
+            className="inline-flex shrink-0 items-center gap-2"
+            aria-label="Back to app"
+            title="Back to app"
+          >
+            <Image src={logoSrc} alt="LinkDrop" width={28} height={28} priority className="block" />
+          </Link>
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+            aria-label="Back to app"
+            title="Back to app"
+          >
+            <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Back to app</span>
+            <span className="sm:hidden">Back</span>
+          </Link>
+        </div>
         <IconButton
           ariaLabel={mobileSidebarOpen ? "Close menu" : "Open menu"}
           aria-expanded={mobileSidebarOpen}
