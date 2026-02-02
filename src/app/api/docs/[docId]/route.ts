@@ -48,6 +48,27 @@ function isObjectId(id: string) {
 }
 
 /**
+ * Builds the doc match query for org-scoped access with legacy personal-doc fallback.
+ *
+ * Exists to reduce duplication across GET/PATCH/DELETE handlers.
+ */
+function buildDocMatch(
+  docObjectId: Types.ObjectId,
+  orgId: Types.ObjectId,
+  legacyUserId: Types.ObjectId,
+  allowLegacyByUserId: boolean,
+) {
+  return allowLegacyByUserId
+    ? {
+        $or: [
+          { _id: docObjectId, orgId },
+          { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+        ],
+      }
+    : { _id: docObjectId, orgId };
+}
+
+/**
  * Generates a short public identifier for `/s/:shareId`.
  *
  * This is not secret; it is a URL slug. Callers must handle rare collisions on insert/update.
@@ -99,14 +120,7 @@ export async function GET(
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docObjectId = new Types.ObjectId(docId);
-    const docMatch = allowLegacyByUserId
-      ? {
-          $or: [
-            { _id: docObjectId, orgId },
-            { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-          ],
-        }
-      : { _id: docObjectId, orgId };
+    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
 
     // Fetch doc (lean) so we don't pay for a full Mongoose document instance on this hot path.
     // NOTE: We still do a few best-effort backfills below; keep them lightweight.
@@ -124,6 +138,7 @@ export async function GET(
         fileName: 1,
         pageSlugs: 1,
         status: 1,
+        primaryProjectId: 1,
         projectId: 1,
         projectIds: 1,
         isArchived: 1,
@@ -317,7 +332,12 @@ export async function GET(
     const projectIds = Array.isArray(projectIdsRaw)
       ? projectIdsRaw.filter((x) => Types.ObjectId.isValid(String(x))).map((x) => new Types.ObjectId(String(x)))
       : [];
-    const primaryProjectId = docLean.projectId ? new Types.ObjectId(String(docLean.projectId)) : null;
+    const primaryProjectId =
+      (docLean as unknown as { primaryProjectId?: unknown }).primaryProjectId && Types.ObjectId.isValid(String((docLean as any).primaryProjectId))
+        ? new Types.ObjectId(String((docLean as any).primaryProjectId))
+        : docLean.projectId
+          ? new Types.ObjectId(String(docLean.projectId))
+          : null;
     const allProjectIds = [
       ...(primaryProjectId ? [primaryProjectId] : []),
       ...projectIds,
@@ -462,6 +482,7 @@ export async function GET(
         fileName: docLean.fileName ?? null,
         pageSlugs: docLean.pageSlugs ?? [],
         status: docLean.status ?? "draft",
+        primaryProjectId: primaryProject ? String(primaryProject._id) : null,
         projectId: primaryProject ? String(primaryProject._id) : null,
         project: primaryProject
           ? {
@@ -596,6 +617,7 @@ export async function GET(
                 isDeleted: { $ne: true },
               })
                 .sort({ createdDate: -1 })
+                .limit(50)
                 .lean(),
             }
           : {}),
@@ -610,7 +632,8 @@ export async function GET(
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/docs/:docId] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    // Use 500 for unexpected internal errors; validation errors are caught earlier with 400
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -646,6 +669,7 @@ export async function PATCH(
       shareAllowRevisionHistory: boolean;
       addProjectId: string;
       removeProjectId: string;
+      primaryProjectId: string | null;
       projectId: string | null;
       isArchived: boolean;
     }>;
@@ -656,14 +680,7 @@ export async function PATCH(
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-    const docMatch = allowLegacyByUserId
-      ? {
-          $or: [
-            { _id: docObjectId, orgId },
-            { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-          ],
-        }
-      : { _id: docObjectId, orgId };
+    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
 
     const setFields: Record<string, unknown> = {};
     const addToSetFields: Record<string, unknown> = {};
@@ -696,13 +713,14 @@ export async function PATCH(
 
     // Project membership changes need current state for primary selection.
     const wantsProjectChange =
+      typeof body.primaryProjectId !== "undefined" ||
       typeof body.projectId !== "undefined" ||
       typeof body.addProjectId === "string" ||
       typeof body.removeProjectId === "string";
 
     const before = wantsProjectChange
       ? await DocModel.findOne({ ...docMatch })
-          .select({ _id: 1, projectId: 1, projectIds: 1 })
+          .select({ _id: 1, primaryProjectId: 1, projectId: 1, projectIds: 1 })
           .lean()
       : null;
 
@@ -710,16 +728,37 @@ export async function PATCH(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    // Canonical behavior: setting `primaryProjectId` sets the primary pointer and adds membership.
+    if (typeof body.primaryProjectId === "string") {
+      if (!Types.ObjectId.isValid(body.primaryProjectId)) {
+        return NextResponse.json({ error: "Invalid primaryProjectId" }, { status: 400 });
+      }
+      const pid = new Types.ObjectId(body.primaryProjectId);
+      setFields.primaryProjectId = pid;
+      // Backward-compat: keep legacy primary pointer in sync during transition.
+      setFields.projectId = pid;
+      addToSetFields.projectIds = pid;
+    } else if (body.primaryProjectId === null) {
+      // Clear primary pointer (does not modify membership list).
+      setFields.primaryProjectId = null;
+      setFields.projectId = null;
+    }
+
     // Legacy behavior: setting `projectId` still works, but also updates membership list.
+    // Note: if `primaryProjectId` is provided above, it takes precedence.
     if (typeof body.projectId === "string") {
       if (!Types.ObjectId.isValid(body.projectId)) {
         return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
       }
       const pid = new Types.ObjectId(body.projectId);
-      setFields.projectId = pid;
-      addToSetFields.projectIds = pid;
+      if (typeof body.primaryProjectId === "undefined") {
+        setFields.primaryProjectId = pid;
+        setFields.projectId = pid;
+        addToSetFields.projectIds = pid;
+      }
     } else if (body.projectId === null) {
       // Backward-compat: "remove from project" historically meant remove from all projects.
+      setFields.primaryProjectId = null;
       setFields.projectId = null;
       setFields.projectIds = [];
     }
@@ -731,11 +770,15 @@ export async function PATCH(
       const addId = new Types.ObjectId(body.addProjectId);
       if (typeof addToSetFields.projectIds === "undefined") addToSetFields.projectIds = addId;
       // If we have no explicit primary change and the doc currently has no primary, set it.
-      if (
-        typeof setFields.projectId === "undefined" &&
+      const beforePrimary =
         before &&
-        !before.projectId
+        ((before as unknown as { primaryProjectId?: unknown }).primaryProjectId ?? (before as unknown as { projectId?: unknown }).projectId);
+      if (
+        typeof setFields.primaryProjectId === "undefined" &&
+        before &&
+        !beforePrimary
       ) {
+        setFields.primaryProjectId = addId;
         setFields.projectId = addId;
       }
     }
@@ -748,12 +791,17 @@ export async function PATCH(
       const removeId = new Types.ObjectId(body.removeProjectId);
       pullFields.projectIds = removeId;
       // If we're removing the current primary (and not explicitly setting a new one), clear primary for now.
+      const beforePrimary =
+        before &&
+        ((before as unknown as { primaryProjectId?: unknown }).primaryProjectId ?? (before as unknown as { projectId?: unknown }).projectId);
       if (
         before &&
-        before.projectId &&
-        String(before.projectId) === String(removeId) &&
+        beforePrimary &&
+        String(beforePrimary) === String(removeId) &&
+        typeof setFields.primaryProjectId === "undefined" &&
         typeof setFields.projectId === "undefined"
       ) {
+        setFields.primaryProjectId = null;
         setFields.projectId = null;
         removedPrimary = true;
       }
@@ -789,8 +837,9 @@ export async function PATCH(
       const nextPrimary = remaining[0] && Types.ObjectId.isValid(remaining[0]) ? new Types.ObjectId(remaining[0]) : null;
       await DocModel.updateOne(
         { ...docMatch },
-        { $set: { projectId: nextPrimary } },
+        { $set: { primaryProjectId: nextPrimary, projectId: nextPrimary } },
       );
+      (doc as unknown as { primaryProjectId?: unknown }).primaryProjectId = nextPrimary;
       (doc as unknown as { projectId?: unknown }).projectId = nextPrimary;
     }
 
@@ -802,7 +851,12 @@ export async function PATCH(
           .filter((x) => Types.ObjectId.isValid(String(x)))
           .map((x) => new Types.ObjectId(String(x)))
       : [];
-    const docPrimaryProjectId = doc.projectId ? new Types.ObjectId(String(doc.projectId)) : null;
+    const docPrimaryProjectId =
+      (doc as unknown as { primaryProjectId?: unknown }).primaryProjectId && Types.ObjectId.isValid(String((doc as any).primaryProjectId))
+        ? new Types.ObjectId(String((doc as any).primaryProjectId))
+        : doc.projectId
+          ? new Types.ObjectId(String(doc.projectId))
+          : null;
     const uniqueDocProjectIds = Array.from(
       new Map(
         [
@@ -834,6 +888,7 @@ export async function PATCH(
           fileName: doc.fileName ?? null,
           pageSlugs: doc.pageSlugs ?? [],
           status: doc.status ?? "draft",
+          primaryProjectId: primaryProject ? String(primaryProject._id) : null,
           projectId: primaryProject ? String(primaryProject._id) : null,
           project: primaryProject ? { id: String(primaryProject._id), name: primaryProject.name ?? "" } : null,
           projectIds: projects.map((p) => String(p._id)),
@@ -866,7 +921,8 @@ export async function PATCH(
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/docs/:docId] PATCH failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    // Use 500 for unexpected internal errors; validation errors are caught earlier with 400
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
@@ -895,14 +951,7 @@ export async function DELETE(
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docObjectId = new Types.ObjectId(docId);
-    const docMatch = allowLegacyByUserId
-      ? {
-          $or: [
-            { _id: docObjectId, orgId },
-            { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-          ],
-        }
-      : { _id: docObjectId, orgId };
+    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
 
     const res = await DocModel.updateOne(
       { ...docMatch },
@@ -916,7 +965,8 @@ export async function DELETE(
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/docs/:docId] DELETE failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    // Use 500 for unexpected internal errors; validation errors are caught earlier with 400
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 

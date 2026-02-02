@@ -375,6 +375,7 @@
   - PATCH (function) — Handle PATCH requests.
   - DELETE (function) — Handle DELETE requests.
   - runtime (const) — Next.js route configuration.
+  - Note: doc payload includes `primaryProjectId` (canonical primary project pointer). `projectId` remains as a backward-compat alias during migration.
   - Note: GET response doc payload includes \`receivedViaRequestProjectId\` (request uploads) and \`guideForRequestProjectId\` (request guide docs) to relate docs back to their request repo.
   - Note: GET supports \`lite=1\` polling and still includes \`lastUpdate\` (uploadedAt + uploadedBy) so the doc header can show who last replaced the file.
 - `src/app/api/docs/[docId]/shareviews/route.ts` — API route for \`/api/docs/:docId/shareviews\`.
@@ -476,11 +477,32 @@
   - POST (function) — Handle POST requests.
   - runtime (const) — Next.js route configuration.
   - Note: POST records per-viewer share view state (pages seen + best-effort time spent + best-effort \`viewerIp\`) keyed by (shareId, botIdHash).
+- `src/app/api/share/[shareId]/download-requests/route.ts` — API route for \`/api/share/:shareId/download-requests\`.
+  - POST (function) — Create a download request and email the owner approve/deny links.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/share/[shareId]/download-requests/[token]/approve/route.ts` — API route for \`/api/share/:shareId/download-requests/:token/approve\`.
+  - GET (function) — Approve a download request (token-based) and email the requester a claim link.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/share/[shareId]/download-requests/[token]/deny/route.ts` — API route for \`/api/share/:shareId/download-requests/:token/deny\`.
+  - GET (function) — Deny a download request (token-based).
+  - runtime (const) — Next.js route configuration.
 - `src/app/api/share/[shareId]/changes/route.ts` — API route for \`/api/share/:shareId/changes\`.
   - GET (function) — Return a light revision history for a shared doc (gated by doc settings + share password).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/share/[shareId]/unlock/route.ts` — API route for \`/api/share/:shareId/unlock\`.
   - POST (function) — Handle POST requests.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/download/bootstrap/route.ts` — API route for \`/api/download/bootstrap\`.
+  - GET (function) — Validate an approved download claim token and set invite-gating cookie for sign-in.
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/download/[token]/route.ts` — API route for \`/api/download/:token\`.
+  - GET (function) — Return metadata for an approved download claim (auth required).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/download/[token]/pdf/route.ts` — API route for \`/api/download/:token/pdf\`.
+  - GET (function) — Download PDF for an approved claim (auth required).
+  - runtime (const) — Next.js route configuration.
+- `src/app/api/download/[token]/save/route.ts` — API route for \`/api/download/:token/save\`.
+  - POST (function) — Save the shared doc into the signed-in user's account (auth required).
   - runtime (const) — Next.js route configuration.
 - `src/app/api/tags/[tag]/docs/route.ts` — API route for \`/api/tags/:tag/docs\`.
   - GET (function) — List docs that contain a specific AI tag (paged).
@@ -509,6 +531,7 @@
 - `src/app/client-upload/page.tsx` — Page for \`/client-upload\`.
 - `src/app/layout.tsx` — Layout for \`/\`.
 - `src/app/login/page.tsx` — Page for \`/login\`.
+- `src/app/download/[token]/page.tsx` — Page for \`/download/:token\` (approved share-download claim link; sign-in required).
 - `src/app/org/switch/route.ts` — Route for \`/org/switch\` (sets active org cookie + redirects).
 - `src/app/org/join/[token]/page.tsx` — Page for \`/org/join/:token\` (accept an org invite and join a workspace).
 - `src/app/page.tsx` — Page for \`/\`.
@@ -695,6 +718,9 @@
 - `src/lib/models/Review.ts` — Data model for the reviews collection.
   - Review (type) — Mongoose document type for the reviews collection.
   - ReviewModel (const) — Mongoose model for the reviews collection.
+- `src/lib/models/ShareDownloadRequest.ts` — Data model for share download requests collection.
+  - ShareDownloadRequest (type) — Mongoose document type for share download requests.
+  - ShareDownloadRequestModel (const) — Mongoose model for share download requests.
 - `src/lib/models/ShareView.ts` — Data model for the shareviews collection.
   - ShareView (type) — Mongoose document type for the shareviews collection.
   - ShareViewModel (const) — Mongoose model for the shareviews collection.
@@ -848,6 +874,7 @@
 - `db/migration/20260120_0001_fix_docs_replaceUploadToken_index.mjs`
 - `db/migration/20260121_0001_projects_list_indexes.mjs`
 - `db/migration/20260122_0001_share_visit_indexes.mjs`
+- `db/migration/20260129_0001_sharedownloadrequests_claimTokenHash_index.mjs`
 - `scripts/lib/time.mjs`
 - `scripts/mongo-clear.mjs`
 - `scripts/mongo-clear-ai-runs-and-requests.mjs`

@@ -1,7 +1,13 @@
+/**
+ * Root layout for `/` (App Router).
+ *
+ * Sets up global styles/metadata and bootstraps auth-aware client providers with an initial server session.
+ */
 import type { Metadata } from "next";
 import "./globals.css";
 import Providers from "@/app/providers";
 import { getServerSession } from "next-auth";
+import type { Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
 function getMetadataBase(): URL | undefined {
@@ -84,7 +90,17 @@ export default async function RootLayout({
     !!process.env.GOOGLE_CLIENT_ID &&
     !!process.env.GOOGLE_CLIENT_SECRET;
 
-  const initialSession = enableAuth ? await getServerSession(authOptions) : null;
+  let initialSession: Session | null = null;
+  if (enableAuth) {
+    try {
+      initialSession = await getServerSession(authOptions);
+    } catch (err) {
+      // NextAuth can throw if a stale/invalid JWT session cookie can't be decrypted
+      // (e.g. secret rotation). Treat that as "logged out" so the landing page renders.
+      console.warn("[auth] getServerSession failed; falling back to null session", err);
+      initialSession = null;
+    }
+  }
 
   return (
     <html lang="en" suppressHydrationWarning>

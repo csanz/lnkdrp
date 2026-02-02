@@ -13,12 +13,16 @@ const docSchema = new Schema(
     /** Organization tenancy boundary (used for org switching). */
     orgId: { type: Schema.Types.ObjectId, ref: "Org", index: true, default: null },
     userId: { type: Schema.Types.ObjectId, ref: "User", index: true },
-    projectId: { type: Schema.Types.ObjectId, ref: "Project", index: true, default: null },
     /**
      * Multi-project support:
-     * A doc can belong to many projects. `projectId` remains as a backward-compat
-     * "primary" pointer, while `projectIds` is the canonical membership list.
+     * A doc can belong to many projects.
+     * - `projectIds` is the canonical membership list.
+     * - `primaryProjectId` is the canonical "primary/default" project pointer (optional).
+     * - `projectId` remains as a backward-compat alias for the primary project pointer.
      */
+    primaryProjectId: { type: Schema.Types.ObjectId, ref: "Project", index: true, default: null },
+    // Backward-compat: legacy primary project pointer (prefer `primaryProjectId`).
+    projectId: { type: Schema.Types.ObjectId, ref: "Project", index: true, default: null },
     projectIds: {
       type: [{ type: Schema.Types.ObjectId, ref: "Project" }],
       index: true,
@@ -203,9 +207,17 @@ type DocCountSnap = {
 function isValidObjectIdString(id: string): boolean {
   return mongoose.Types.ObjectId.isValid(id);
 }
-/** Extract a set of project ids from doc fields (`projectId` + `projectIds`). */
-function extractProjectIdSet(doc: { projectId?: unknown; projectIds?: unknown }): Set<string> {
+/** Extract a set of project ids from doc fields (`primaryProjectId` + `projectId` + `projectIds`). */
+function extractProjectIdSet(doc: {
+  primaryProjectId?: unknown;
+  projectId?: unknown;
+  projectIds?: unknown;
+}): Set<string> {
   const ids: string[] = [];
+  if (doc.primaryProjectId) {
+    const s = String(doc.primaryProjectId);
+    if (isValidObjectIdString(s)) ids.push(s);
+  }
   if (doc.projectId) {
     const s = String(doc.projectId);
     if (isValidObjectIdString(s)) ids.push(s);
@@ -225,6 +237,7 @@ function snapDocForCounts(doc: unknown): DocCountSnap | null {
   const d = doc as {
     _id?: unknown;
     orgId?: unknown;
+    primaryProjectId?: unknown;
     projectId?: unknown;
     projectIds?: unknown;
     isArchived?: unknown;
@@ -248,9 +261,25 @@ function updateTouchesProjectCounts(update: unknown): boolean {
   const pull = (u.$pull && typeof u.$pull === "object" ? (u.$pull as Record<string, unknown>) : null) ?? null;
 
   // Direct assignment updates (rare in this codebase, but supported)
-  if ("projectId" in u || "projectIds" in u || "isArchived" in u || "isDeleted" in u || "orgId" in u) return true;
+  if (
+    "primaryProjectId" in u ||
+    "projectId" in u ||
+    "projectIds" in u ||
+    "isArchived" in u ||
+    "isDeleted" in u ||
+    "orgId" in u
+  )
+    return true;
   // Common modifier paths
-  if (set && ("projectId" in set || "projectIds" in set || "isArchived" in set || "isDeleted" in set || "orgId" in set))
+  if (
+    set &&
+    ("primaryProjectId" in set ||
+      "projectId" in set ||
+      "projectIds" in set ||
+      "isArchived" in set ||
+      "isDeleted" in set ||
+      "orgId" in set)
+  )
     return true;
   if (addToSet && "projectIds" in addToSet) return true;
   if (pull && "projectIds" in pull) return true;
@@ -311,7 +340,7 @@ for (const op of ["findOneAndUpdate", "updateOne"] as const) {
 
       const before = await (this as unknown as { model: Model<Doc> }).model
         .findOne((this as unknown as { getQuery: () => Record<string, unknown> }).getQuery())
-        .select({ _id: 1, orgId: 1, projectId: 1, projectIds: 1, isArchived: 1, isDeleted: 1 })
+        .select({ _id: 1, orgId: 1, primaryProjectId: 1, projectId: 1, projectIds: 1, isArchived: 1, isDeleted: 1 })
         .lean();
 
       (this as unknown as { _docCountBefore?: DocCountSnap | null })._docCountBefore = snapDocForCounts(before);
@@ -327,7 +356,7 @@ for (const op of ["findOneAndUpdate", "updateOne"] as const) {
 
       const afterDoc = await (this as unknown as { model: Model<Doc> }).model
         .findById(before.id)
-        .select({ _id: 1, orgId: 1, projectId: 1, projectIds: 1, isArchived: 1, isDeleted: 1 })
+        .select({ _id: 1, orgId: 1, primaryProjectId: 1, projectId: 1, projectIds: 1, isArchived: 1, isDeleted: 1 })
         .lean();
       const after = snapDocForCounts(afterDoc);
 
@@ -368,7 +397,7 @@ docSchema.pre("save", async function () {
 
     const beforeDoc = await (this.constructor as Model<Doc>)
       .findById(doc._id)
-      .select({ _id: 1, orgId: 1, projectId: 1, projectIds: 1, isArchived: 1, isDeleted: 1 })
+      .select({ _id: 1, orgId: 1, primaryProjectId: 1, projectId: 1, projectIds: 1, isArchived: 1, isDeleted: 1 })
       .lean();
     (doc as unknown as { _docCountBefore?: DocCountSnap | null })._docCountBefore = snapDocForCounts(beforeDoc);
   } catch {
@@ -419,12 +448,14 @@ export const DocModel: Model<Doc> = (() => {
     const hasShareAllowPdfDownload = Boolean(existing.schema.path("shareAllowPdfDownload"));
     const hasShareAllowRevisionHistory = Boolean(existing.schema.path("shareAllowRevisionHistory"));
     const hasReplaceUploadToken = Boolean(existing.schema.path("replaceUploadToken"));
+    const hasPrimaryProjectId = Boolean(existing.schema.path("primaryProjectId"));
     if (
       (!hasSharePassword ||
         !hasProjectIds ||
         !hasShareAllowPdfDownload ||
         !hasShareAllowRevisionHistory ||
-        !hasReplaceUploadToken) &&
+        !hasReplaceUploadToken ||
+        !hasPrimaryProjectId) &&
       process.env.NODE_ENV !== "production"
     ) {
       delete mongoose.models.Doc;

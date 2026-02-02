@@ -17,6 +17,12 @@ export function getPublicSiteBase(): string {
   const env = (process.env.NEXT_PUBLIC_SITE_URL || "").trim();
   if (env) return env;
 
+  // Local dev fallback: email flows often need an absolute URL even when
+  // `NEXT_PUBLIC_SITE_URL` isn't configured.
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:3001";
+  }
+
   if (typeof window !== "undefined") {
     const origin = (window.location?.origin || "").trim();
     if (origin) return origin;

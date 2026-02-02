@@ -476,7 +476,11 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
         open={inviteModalOpen}
         onClose={() => setInviteModalOpen(false)}
         ariaLabel="Invite code"
-        panelClassName="bg-[#0b0b0c] text-white border-white/10"
+        // Force dark styling even if the user selected Light theme (prevents white-on-white content).
+        panelClassName={[
+          "!bg-[#0b0b0c] !text-white !border-white/10",
+          "[--fg:#e7e7ea] [--muted:#b3b3bb] [--muted-2:#8b8b96] [--panel-hover:rgba(255,255,255,0.08)]",
+        ].join(" ")}
         contentClassName="px-8 pb-8 pt-7"
       >
         <div className="space-y-6">
@@ -576,7 +580,14 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
         open={aboutModalOpen}
         onClose={() => setAboutModalOpen(false)}
         ariaLabel="About"
-        panelClassName="w-[min(760px,calc(100vw-32px))]"
+        // Logged-out landing page is intentionally always dark → keep About modal dark too,
+        // even if the user selected Light theme globally.
+        panelClassName={[
+          "w-[min(760px,calc(100vw-32px))]",
+          "!bg-[#0b0b0c] !text-white !border-white/10",
+          // Override theme vars used by shared modal primitives (IconButton, borders, hover states).
+          "[--fg:#e7e7ea] [--muted:#b3b3bb] [--muted-2:#8b8b96] [--panel-hover:rgba(255,255,255,0.08)] [--panel-2:rgba(255,255,255,0.05)] [--border:rgba(255,255,255,0.10)] [--ring:rgba(255,255,255,0.20)]",
+        ].join(" ")}
       >
         <div className="flex items-center gap-3">
           <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/5">

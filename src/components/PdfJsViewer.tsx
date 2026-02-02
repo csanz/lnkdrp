@@ -7,6 +7,7 @@ import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { getOrCreateBotId } from "@/lib/botId";
+import { fetchJson } from "@/lib/http/fetchJson";
 
 const CATEGORY_LABELS: Record<string, string> = {
   fundraising_pitch: "Fundraising Pitch",
@@ -333,6 +334,14 @@ export function PdfJsViewer({
   const aiProvided = typeof ai !== "undefined";
   const shareIdSafe = typeof shareId === "string" && shareId.trim() ? shareId.trim() : null;
   const canDownload = Boolean(allowDownload && downloadUrl);
+  const [downloadRequestOpen, setDownloadRequestOpen] = useState(false);
+  const [downloadRequestEmail, setDownloadRequestEmail] = useState("");
+  const [downloadRequestBusy, setDownloadRequestBusy] = useState(false);
+  const [downloadRequestSent, setDownloadRequestSent] = useState(false);
+  const [downloadRequestResult, setDownloadRequestResult] = useState<
+    "created" | "resent" | "already_requested" | "download_already_enabled" | null
+  >(null);
+  const [downloadRequestError, setDownloadRequestError] = useState<string | null>(null);
   // Important for hydration: do not read/generate botId during render.
   // On the server, `window` is undefined and we'd produce a different `href` than the client.
   const [downloadHref, setDownloadHref] = useState<string | null>(() => {
@@ -1958,13 +1967,28 @@ export function PdfJsViewer({
                 null
               ) : null}
 
-              {canDownload ? (
-                <a
-                  href={(downloadHref ?? (downloadUrl as string)) as string}
-                  className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
-                >
-                  Download PDF
-                </a>
+              {shareIdSafe ? (
+                canDownload ? (
+                  <a
+                    href={(downloadHref ?? (downloadUrl as string)) as string}
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                  >
+                    Download PDF
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                    onClick={() => {
+                      setDownloadRequestOpen(true);
+                      setDownloadRequestSent(false);
+                      setDownloadRequestResult(null);
+                      setDownloadRequestError(null);
+                    }}
+                  >
+                    Download PDF
+                  </button>
+                )
               ) : null}
             </div>
           </div>
@@ -2219,6 +2243,165 @@ export function PdfJsViewer({
           </div>
         ) : (
           <div className="mt-5 text-sm text-white/75">No revisions yet.</div>
+        )}
+      </Modal>
+
+      <Modal
+        open={downloadRequestOpen}
+        onClose={() => {
+          if (downloadRequestBusy) return;
+          setDownloadRequestOpen(false);
+          setDownloadRequestError(null);
+          setDownloadRequestSent(false);
+          setDownloadRequestResult(null);
+        }}
+        ariaLabel="Request download"
+        panelClassName="border-white/15 bg-black/95 text-white ring-white/15"
+        contentClassName="px-6 pb-6 pt-5"
+      >
+        {downloadRequestSent ? (
+          <>
+            <div className="text-base font-semibold text-white">
+              {downloadRequestResult === "already_requested"
+                ? "Request already sent"
+                : downloadRequestResult === "resent"
+                  ? "Request resent"
+                : downloadRequestResult === "download_already_enabled"
+                  ? "Downloads are enabled"
+                  : "Request sent"}
+            </div>
+            <div className="mt-2 text-sm text-white/70">
+              {downloadRequestResult === "already_requested"
+                ? "A request for this email is already pending. Please wait a minute and try again if you need to resend."
+                : downloadRequestResult === "resent"
+                  ? "We resent your request to the owner."
+                : downloadRequestResult === "download_already_enabled"
+                  ? "This link currently allows downloads. Close this dialog and use the Download button."
+                  : "We sent your request to the owner. If it’s approved, you’ll get an email with a link to download or save it to your account (sign-in required)."}
+            </div>
+            <div className="mt-5 rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/85">
+              <span className="font-semibold text-white/90">Sent to:</span>{" "}
+              <span className="font-mono text-white/85">{downloadRequestEmail.trim() || "your email"}</span>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90"
+                onClick={() => setDownloadRequestOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-base font-semibold text-white">Request download</div>
+            <div className="mt-2 text-sm text-white/70">
+              Downloads are disabled for this link. Enter your email to request access. If approved, you’ll get an email with a link
+              to download or save it to your account (sign-in required).
+            </div>
+            <div className="mt-5">
+              <label className="text-xs font-medium text-white/70" htmlFor="download-request-email">
+                Email
+              </label>
+              <input
+                id="download-request-email"
+                type="email"
+                inputMode="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                value={downloadRequestEmail}
+                onChange={(e) => setDownloadRequestEmail(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const email = downloadRequestEmail.trim();
+                  if (!email || downloadRequestBusy) return;
+                  if (!shareIdSafe) {
+                    setDownloadRequestError("Missing share link context.");
+                    return;
+                  }
+                  setDownloadRequestBusy(true);
+                  setDownloadRequestError(null);
+                  void (async () => {
+                    try {
+                      const res = await fetchJson<{
+                        ok?: boolean;
+                        kind?: "created" | "resent" | "already_requested" | "download_already_enabled";
+                        retryAfterSeconds?: number;
+                      }>(`/api/share/${encodeURIComponent(shareIdSafe)}/download-requests`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ email }),
+                      });
+                      setDownloadRequestResult(res?.kind ?? "created");
+                      setDownloadRequestSent(true);
+                    } catch (err) {
+                      setDownloadRequestError(err instanceof Error ? err.message : "Failed to request download");
+                    } finally {
+                      setDownloadRequestBusy(false);
+                    }
+                  })();
+                }}
+                disabled={downloadRequestBusy}
+                className="mt-2 h-10 w-full rounded-xl border border-white/10 bg-black/40 px-3 text-sm text-white/90 placeholder:text-white/35 focus:outline-none focus:ring-2 focus:ring-white/20 disabled:opacity-60"
+              />
+            </div>
+
+            {downloadRequestError ? (
+              <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                {downloadRequestError}
+              </div>
+            ) : null}
+
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
+                disabled={downloadRequestBusy}
+                onClick={() => setDownloadRequestOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
+                disabled={downloadRequestBusy || !downloadRequestEmail.trim() || !shareIdSafe}
+                aria-busy={downloadRequestBusy}
+                onClick={() => {
+                  const email = downloadRequestEmail.trim();
+                  if (!email || downloadRequestBusy) return;
+                  if (!shareIdSafe) {
+                    setDownloadRequestError("Missing share link context.");
+                    return;
+                  }
+                  setDownloadRequestBusy(true);
+                  setDownloadRequestError(null);
+                  void (async () => {
+                    try {
+                      const res = await fetchJson<{
+                        ok?: boolean;
+                        kind?: "created" | "resent" | "already_requested" | "download_already_enabled";
+                        retryAfterSeconds?: number;
+                      }>(`/api/share/${encodeURIComponent(shareIdSafe)}/download-requests`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ email }),
+                      });
+                      setDownloadRequestResult(res?.kind ?? "created");
+                      setDownloadRequestSent(true);
+                    } catch (err) {
+                      setDownloadRequestError(err instanceof Error ? err.message : "Failed to request download");
+                    } finally {
+                      setDownloadRequestBusy(false);
+                    }
+                  })();
+                }}
+              >
+                {downloadRequestBusy ? "Sending…" : "Request"}
+              </button>
+            </div>
+          </>
         )}
       </Modal>
 

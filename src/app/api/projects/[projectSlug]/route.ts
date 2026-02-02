@@ -333,11 +333,12 @@ export async function DELETE(
         $or: [
           { receivedViaRequestProjectId: projectId },
           { guideForRequestProjectId: projectId },
+          { primaryProjectId: projectId },
           { projectId },
           { projectIds: projectId },
         ],
       })
-        .select({ _id: 1, projectId: 1 })
+        .select({ _id: 1, primaryProjectId: 1, projectId: 1 })
         .lean();
 
       if (requestDeleteMode === "copy_to_new_project") {
@@ -376,7 +377,9 @@ export async function DELETE(
           const docId = d && typeof d === "object" && "_id" in d ? (d as { _id?: unknown })._id : null;
           if (!docId) continue;
 
-          const currentPrimary = (d as unknown as { projectId?: unknown }).projectId;
+          const currentPrimary =
+            (d as unknown as { primaryProjectId?: unknown }).primaryProjectId ??
+            (d as unknown as { projectId?: unknown }).projectId;
           const primaryIsRequest = currentPrimary ? String(currentPrimary) === String(projectId) : false;
           const nextPrimary = primaryIsRequest || !currentPrimary ? newProjectId : currentPrimary;
 
@@ -384,6 +387,7 @@ export async function DELETE(
             { _id: docId, ...docTenant, isDeleted: { $ne: true } },
             {
               $set: {
+                primaryProjectId: nextPrimary,
                 projectId: nextPrimary,
                 receivedViaRequestProjectId: null,
                 guideForRequestProjectId: null,
@@ -401,6 +405,7 @@ export async function DELETE(
             { _id: docId, ...docTenant, isDeleted: { $ne: true } },
             {
               $set: {
+                primaryProjectId: null,
                 projectId: null,
                 projectIds: [],
                 receivedViaRequestProjectId: null,
@@ -421,6 +426,7 @@ export async function DELETE(
                 isDeleted: true,
                 deletedDate: now,
                 isDeletedDate: now,
+                primaryProjectId: null,
                 projectId: null,
                 projectIds: [],
                 receivedViaRequestProjectId: null,
@@ -434,8 +440,8 @@ export async function DELETE(
 
     // Remove project membership from docs (best-effort).
     await DocModel.updateMany(
-      { ...docTenant, projectId },
-      { $set: { projectId: null } },
+      { ...docTenant, $or: [{ projectId }, { primaryProjectId: projectId }] },
+      { $set: { primaryProjectId: null, projectId: null } },
     );
     await DocModel.updateMany(
       { ...docTenant, projectIds: projectId },
@@ -444,8 +450,13 @@ export async function DELETE(
     // If a doc lost its primary but still has membership, set primary to first remaining projectId.
     try {
       await DocModel.collection.updateMany(
-        { ...(docTenant as Record<string, unknown>), projectId: null, projectIds: { $exists: true, $ne: [] } },
-        [{ $set: { projectId: { $arrayElemAt: ["$projectIds", 0] } } }],
+        {
+          ...(docTenant as Record<string, unknown>),
+          primaryProjectId: null,
+          projectId: null,
+          projectIds: { $exists: true, $ne: [] },
+        },
+        [{ $set: { primaryProjectId: { $arrayElemAt: ["$projectIds", 0] }, projectId: { $arrayElemAt: ["$projectIds", 0] } } }],
       );
     } catch {
       // ignore; best-effort
