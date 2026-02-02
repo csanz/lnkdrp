@@ -153,6 +153,11 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - When enabled, recipients must unlock via `/api/share/:shareId/unlock` which sets a per-share cookie.
 - **Allow PDF download**:
   - Toggle whether recipients can download the PDF from the share page.
+  - When disabled, the share viewer still shows a **Download** button, but clicking it opens a **request download** modal:
+    - Receiver enters their email.
+    - Receiver gets a confirmation email that their request was sent.
+    - Owner receives an email to approve/deny.
+    - If approved, the receiver gets an email with a `/download/:token` link to **download** or **save into their account** (sign-in required).
 - **Allow recipients to view revision history**:
   - Toggle whether recipients can view a **light** revision history (version + date + summary) from the share page.
   - When available, each revision also includes **page-numbered change hints** so recipients can click a changed page and jump to it in the viewer.
