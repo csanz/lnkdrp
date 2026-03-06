@@ -4,35 +4,15 @@
  * Lists and creates projects (each gets a public `/p/:shareId`).
  */
 import { NextResponse } from "next/server";
-import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-/**
- * Generates a Base62 string using cryptographic randomness.
- *
- * Exists to mint public IDs (e.g. shareId) without sequential patterns.
- */
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
 
 /**
  * Creates a URL-friendly slug from user-provided text.
@@ -87,8 +67,7 @@ async function ensureUniqueSlug(opts: { orgId: Types.ObjectId; legacyUserId?: Ty
  * This is not secret; it is a URL slug used for public share paths.
  */
 function newProjectShareId() {
-  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
-  return randomBase62(12);
+  return newShareId();
 }
 
 /**

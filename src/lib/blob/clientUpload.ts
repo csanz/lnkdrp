@@ -103,6 +103,38 @@ export function buildDocExtractedTextPathname(params: {
 }
 
 /**
+ * Build a Blob pathname for a per-page (slide) image.
+ *
+ * Notes:
+ * - Page numbers are 1-indexed (matches PDF.js and UI conventions).
+ * - Stored under the Upload so history versions can retain their own slide assets.
+ */
+export function buildDocPageImagePathname(params: {
+  docId: string;
+  uploadId: string;
+  pageNumber: number;
+}): string {
+  const n = Math.max(1, Math.floor(params.pageNumber || 1));
+  const p = String(n).padStart(4, "0");
+  return `${DOC_BLOB_PREFIX}${params.docId}/uploads/${params.uploadId}/pages/p${p}/image.jpg`;
+}
+
+/**
+ * Build a Blob pathname for a per-page (slide) thumbnail image.
+ *
+ * The thumbnail is intended for UI grids and small vision inputs.
+ */
+export function buildDocPageThumbPathname(params: {
+  docId: string;
+  uploadId: string;
+  pageNumber: number;
+}): string {
+  const n = Math.max(1, Math.floor(params.pageNumber || 1));
+  const p = String(n).padStart(4, "0");
+  return `${DOC_BLOB_PREFIX}${params.docId}/uploads/${params.uploadId}/pages/p${p}/thumb.jpg`;
+}
+
+/**
  * Build a Blob pathname for an org avatar image.
  */
 export function buildOrgAvatarPathname(params: {

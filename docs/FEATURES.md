@@ -7,8 +7,8 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 ## Core concepts
 
 - **Organization (Org)**: The top-level tenancy boundary. Every user has a 1:1 **Personal org** and can create additional orgs. Most records (projects/docs/uploads) are scoped to an org, and the UI uses an **active org** context.
-- **Doc**: A PDF-backed document record with a title, processing status, extracted text, preview image, AI output, and a public `shareId` (alphanumeric only; so share URLs don’t expose Mongo `_id`).
-- **Upload**: An upload record representing an incoming file (or imported URL) and its processing pipeline (store in Blob, extract text, generate preview, run AI).
+- **Doc**: A PDF-backed document record with a title, processing status, extracted text, preview image, AI output, and a public `shareId` (alphanumeric only; so share URLs don’t expose Mongo `_id`). Docs also store per-page **slide nodes** (thumbnail/image URLs + hashes) for vision-assisted AI and visual diffs.
+- **Upload**: An upload record representing an incoming file (or imported URL) and its processing pipeline (store in Blob, extract text, generate preview, extract per-page slide nodes, run AI). Slide nodes are stored per upload version so history can compare visuals across replacements.
 - **Share link**: A public, recipient-facing page at `/s/:shareId` (legacy: `/share/:shareId`) that can optionally be password-protected and optionally allow PDF download.
 - **Project**: A container that groups docs; docs can belong to multiple projects (`projectIds`) with a backward-compatible “primary” `projectId`.
 - **Invite gating**: The unauthenticated experience is gated behind an invite cookie (invite code verification + request flow).
@@ -106,6 +106,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Upload a local PDF**:
   - On the new-doc upload screen (`/upload`), selecting a PDF immediately shows an in-browser preview; the user then clicks **Upload** to begin the background Blob client-upload + processing pipeline.
   - Implementation: create a doc record, create an upload record, then start a Blob client-upload + processing pipeline.
+  - Processing extracts per-page **slide thumbnails/images** into Blob and stores their URLs/hashes in the Upload + Doc records for downstream AI + history.
 - **Upload via URL (import a PDF link)**:
   - Create doc + upload, ask the server to fetch the PDF into the upload (`/api/uploads/:uploadId/import-url`), then trigger processing (`/api/uploads/:uploadId/process`).
   - After processing, the doc title may be **auto-renamed** using the AI-derived document name (so URL uploads don’t end up named like `view`/`uc`).
@@ -127,11 +128,13 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Viewer details also include a **Visits** view (best-effort per-tab sessions) which enables per-visit **time per page**, **revisited pages**, and a best-effort **page sequence** (path analysis).
 - **Doc replacement change history**:
   - When the owner replaces a doc file (creating a new upload version), the server stores a best-effort “what changed” record (previous text, new text, summary + changes list).
+  - Change hints can include best-effort **visual/graphics changes** using per-page slide node hashes, and may include previous/new slide thumbnail URLs for changed pages.
   - Changes are only accessible to users who have access to the doc (API: `/api/docs/:docId/changes`).
   - History UI: `/doc/:docId/history` (version badge links here).
   - History includes who uploaded each version (best-effort from user record).
   - If older versions are missing stored text snapshots, History still backfills a lightweight “replacement event” row so versions show up (diff summary may be unavailable).
-  - Performance: History initially loads a lightweight list (no large extracted text blobs) and fetches previous/new extracted text **on-demand** when a version is expanded.
+  - Performance: History renders a compact, expandable list; it fetches previous/new extracted text **on-demand** only when a version is expanded.
+  - History list supports simple **impact filtering**, **newest/oldest sorting**, and **cursor paging** (Load more).
   - History includes a best-effort **Recipients** preview for each version (workspace members + whether they opened that version), plus per-viewer **page timing** aggregates (internal-only; uses doc page timing events).
   - History UI includes a right-side overview panel with aggregate stats (replacements count, top editors, cadence, and best-effort impact/signals).
 - **Starred docs**:
@@ -187,11 +190,14 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Share view tracking**:
   - Server endpoints exist for share stats and admin inspection of share views.
   - Best-effort **time spent** and **per-page dwell time** are recorded for share viewers (counts foreground time only; increments on page changes and tab hide/close; periodic flush).
+- **Introduce yourself (optional)**:
+  - On the share page, viewers can optionally provide a **name + email** (“Introduce yourself”).
+  - The browser stores this info (best-effort) and includes it with share-view tracking so the owner’s Metrics page can label otherwise-anonymous viewers.
 
 ## AI & review features
 
 - **AI “snapshot” extraction**:
-  - The system can analyze extracted PDF text and store a structured AI output payload (used in both owner UI and share metadata).
+  - The system can analyze extracted PDF text (and best-effort per-page slide images) and store a structured AI output payload (used in both owner UI and share metadata).
   - Owner share panel surfaces a condensed “AI snapshot” and allows viewing the full snapshot.
 - **Doc reviews**:
   - `/doc/:docId/review` page and `/api/docs/:docId/reviews` API for listing reviews.

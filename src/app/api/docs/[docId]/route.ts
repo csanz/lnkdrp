@@ -5,7 +5,6 @@
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
-import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
@@ -13,30 +12,10 @@ import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { debugEnabled, debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-/**
- * Generates a Base62 string using cryptographic randomness.
- *
- * Exists to mint share IDs and capability tokens without leaking sequential patterns.
- * Assumptions: collisions are extremely unlikely but callers should still handle dupes.
- */
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
 
 /**
  * Validates that a string is a Mongo ObjectId.
@@ -69,22 +48,12 @@ function buildDocMatch(
 }
 
 /**
- * Generates a short public identifier for `/s/:shareId`.
- *
- * This is not secret; it is a URL slug. Callers must handle rare collisions on insert/update.
- */
-function newShareId() {
-  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
-  return randomBase62(12);
-}
-
-/**
  * Generate a secret token for a public "replace upload" link for a doc.
  *
  * This is a capability token (treat as secret) and should be long enough to be unguessable.
  */
 function newReplaceUploadToken() {
-  return randomBase62(24);
+  return newSecretToken(24);
 }
 
 /**
@@ -413,6 +382,9 @@ export async function GET(
                     pageSlugs: Array.isArray((uploadForRepair as any).pageSlugs)
                       ? (uploadForRepair as any).pageSlugs
                       : (isReplacement ? (docLean.pageSlugs ?? []) : []),
+                    slideNodes: Array.isArray((uploadForRepair as any).slideNodes)
+                      ? (uploadForRepair as any).slideNodes
+                      : (isReplacement ? ((docLean as any).slideNodes ?? []) : []),
                   }),
             },
           },
@@ -435,6 +407,9 @@ export async function GET(
           (docLean as any).pageSlugs = Array.isArray((uploadForRepair as any).pageSlugs)
             ? (uploadForRepair as any).pageSlugs
             : (isReplacement ? (docLean as any).pageSlugs ?? [] : []);
+          (docLean as any).slideNodes = Array.isArray((uploadForRepair as any).slideNodes)
+            ? (uploadForRepair as any).slideNodes
+            : (isReplacement ? (docLean as any).slideNodes ?? [] : []);
         }
       }
     }

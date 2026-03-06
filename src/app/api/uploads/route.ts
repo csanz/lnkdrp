@@ -11,39 +11,9 @@ import { UploadModel } from "@/lib/models/Upload";
 import { DocModel } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
-
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-/**
- * Random Base62 (uses randomBytes, max, ceil).
- */
-
-
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
-
-/**
- * Generate a short public identifier for `/s/:shareId`.
- *
- * This is a public slug (not a secret).
- */
-function newShareId() {
-  // Public, URL-safe identifier (avoid exposing Mongo `_id` in share URLs).
-  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
-  return randomBase62(12);
-}
 
 /**
  * List uploads (paged).
@@ -78,7 +48,7 @@ export async function GET(request: Request) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       const matchingDocs = await DocModel.find({ title: rx })
         .select({ _id: 1 })
-        .limit(500)
+        .limit(100)
         .lean();
       const docIds = matchingDocs.map((d) => d._id);
       filter.$or = [{ originalFileName: rx }, ...(docIds.length ? [{ docId: { $in: docIds } }] : [])];

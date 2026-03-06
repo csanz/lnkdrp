@@ -4,7 +4,6 @@
  * Lists and creates docs (ensures each doc has a public `/s/:shareId`).
  */
 import { NextResponse } from "next/server";
-import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
@@ -12,42 +11,10 @@ import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { randomBase62, newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-/**
- * Generates a Base62 string using cryptographic randomness.
- *
- * Exists to mint stable share slugs without leaking sequential patterns.
- * Assumptions: collisions are extremely unlikely but callers still handle dupes defensively.
- */
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
-
-/**
- * Generate a short public identifier for `/s/:shareId`.
- *
- * Notes:
- * - This is NOT a secret; it’s a public slug.
- * - Collisions are extremely unlikely, but callers should still handle dupes.
- */
-function newShareId() {
-  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
-  return randomBase62(12);
-}
 
 type CreateReturn = Awaited<ReturnType<typeof DocModel.create>>;
 type CreatedDoc = CreateReturn extends (infer U)[] ? U : CreateReturn;

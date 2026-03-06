@@ -4,36 +4,16 @@
  * Lists and creates inbound upload requests and returns a `/request/:token` upload path.
  */
 import { NextResponse } from "next/server";
-import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
 
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
 type Paged<T> = { items: T[]; total: number; page: number; limit: number };
-/**
- * Random Base62 (uses randomBytes, max, ceil).
- */
-
-
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
 /**
  * Slugify (uses slice, replace, toLowerCase).
  */
@@ -76,33 +56,24 @@ async function ensureUniqueSlug(opts: { orgId: Types.ObjectId; legacyUserId?: Ty
   return `${base}-${Date.now().toString(36)}`;
 }
 /**
- * New Project Share Id (uses randomBase62).
+ * New Project Share Id.
  */
-
-
 function newProjectShareId() {
-  // Public slug (not secret).
-  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
-  return randomBase62(12);
+  return newShareId();
 }
+
 /**
- * New Request Upload Token (uses randomBase62).
+ * New Request Upload Token.
  */
-
-
 function newRequestUploadToken() {
-  // Capability token (secret).
-  // Also used as `/request/:token`, so keep it alphanumeric-only (no dashes/special chars).
-  return randomBase62(32);
+  return newSecretToken(32);
 }
 
 /**
- * New Request View Token (uses randomBase62).
+ * New Request View Token.
  */
 function newRequestViewToken() {
-  // Capability token (secret) for view-only access.
-  // Also used in the URL path, so keep it alphanumeric-only (no dashes/special chars).
-  return randomBase62(32);
+  return newSecretToken(32);
 }
 
 /**

@@ -7,7 +7,7 @@ import SubscriptionCard from "./SubscriptionCard";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } from "@/lib/orgsCache";
 import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
@@ -136,6 +136,14 @@ function PlaceholderTile({ title, body }: { title: string; body: string }) {
 }
 
 export default function DashboardPage() {
+  return (
+    <Suspense>
+      <DashboardPageInner />
+    </Suspense>
+  );
+}
+
+function DashboardPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlTab = useMemo(() => tabFromSearchParams(searchParams), [searchParams]);

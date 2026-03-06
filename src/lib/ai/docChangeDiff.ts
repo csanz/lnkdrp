@@ -99,7 +99,15 @@ export async function runDocChangeDiff(input: {
    * Optional page-level context for changed pages.
    * When provided, the model should use it to populate `pagesThatChanged`.
    */
-  changedPages?: Array<{ pageNumber: number; previousText: string; newText: string }>;
+  changedPages?: Array<{
+    pageNumber: number;
+    previousText: string;
+    newText: string;
+    /** Optional slide thumbnails for vision-capable diffs. */
+    previousImageUrl?: string | null;
+    newImageUrl?: string | null;
+    imageChanged?: boolean | null;
+  }>;
   qualityTier?: "basic" | "standard" | "advanced";
 }): Promise<DocChangeDiff | null> {
   if (!process.env.OPENAI_API_KEY) return null;
@@ -119,10 +127,15 @@ export async function runDocChangeDiff(input: {
           if (!Number.isFinite(pageNumber) || pageNumber < 1) return null;
           const prev = normalizePageText(p.previousText);
           const next = normalizePageText(p.newText);
+          const imgHint =
+            typeof p.imageChanged === "boolean"
+              ? `IMAGE_CHANGED: ${p.imageChanged ? "yes" : "no"}`
+              : "";
           return [
             `Page ${pageNumber}:`,
             `PREVIOUS: ${prev || "[empty]"}`,
             `NEW: ${next || "[empty]"}`,
+            imgHint,
           ].join("\n");
         })
         .filter(Boolean)
@@ -134,10 +147,43 @@ export async function runDocChangeDiff(input: {
   const prompt = fillUserPrompt(prompts.user, { previousText, newText, changedPages: changedPagesText });
   if (!system || !prompt) return null;
 
+  const hasAnyImages = changedPages.some((p) => {
+    const a = typeof p?.previousImageUrl === "string" && p.previousImageUrl.trim();
+    const b = typeof p?.newImageUrl === "string" && p.newImageUrl.trim();
+    return Boolean(a || b);
+  });
+
+  const maxAttachedPages = qualityTier === "advanced" ? 10 : qualityTier === "basic" ? 4 : 7;
+  const messages: any[] | null = hasAnyImages
+    ? (() => {
+        const parts: any[] = [{ type: "text", text: prompt }];
+        let attachedPages = 0;
+        for (const p of changedPages.slice(0, MAX_PAGES_THAT_CHANGED)) {
+          if (attachedPages >= maxAttachedPages) break;
+          const pageNumber = Number.isFinite(p.pageNumber) ? Math.floor(p.pageNumber) : NaN;
+          if (!Number.isFinite(pageNumber) || pageNumber < 1) continue;
+          const prevImg = typeof p.previousImageUrl === "string" && p.previousImageUrl.trim() ? p.previousImageUrl.trim() : "";
+          const nextImg = typeof p.newImageUrl === "string" && p.newImageUrl.trim() ? p.newImageUrl.trim() : "";
+          if (!prevImg && !nextImg) continue;
+          parts.push({ type: "text", text: `Page ${pageNumber} images (previous then new):` });
+          if (prevImg) parts.push({ type: "image", image: prevImg });
+          if (nextImg) parts.push({ type: "image", image: nextImg });
+          attachedPages += 1;
+        }
+        if (attachedPages < changedPages.length) {
+          parts.push({
+            type: "text",
+            text: `Note: attached images for ${attachedPages} page(s) (cap=${maxAttachedPages}); remaining pages are provided as text-only context.`,
+          });
+        }
+        return [{ role: "user", content: parts }];
+      })()
+    : null;
+
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
     system,
-    prompt,
+    ...(messages ? { messages } : { prompt }),
     schema: DocChangeDiffSchema,
     temperature: 0,
     maxRetries: qualityTier === "advanced" ? 2 : qualityTier === "standard" ? 1 : 0,

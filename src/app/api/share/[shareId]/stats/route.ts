@@ -1,3 +1,12 @@
+/**
+ * Share stats ingest endpoint.
+ *
+ * Route:
+ * - GET `/api/share/:shareId/stats` — owner-only aggregate stats (views/pagesViewed)
+ * - POST `/api/share/:shareId/stats` — public, best-effort per-viewer tracking (views, pages, time)
+ *
+ * Also supports a lightweight "introduce yourself" payload (viewerName/viewerEmail) for anonymous viewers.
+ */
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
@@ -17,10 +26,18 @@ export const dynamic = "force-dynamic";
  */
 
 
-function asNonEmptyString(v: unknown): string | null {
+function asNonEmptyString(v: unknown, maxLen = 1024): string | null {
   if (typeof v !== "string") return null;
   const s = v.trim();
+  if (s.length > maxLen) return null;
   return s ? s : null;
+}
+
+function normalizeViewerName(v: string): string | null {
+  const s = v.replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  // Bound storage + UI.
+  return s.length > 80 ? s.slice(0, 80) : s;
 }
 /**
  * Pick First Forwarded Ip (uses trim, split).
@@ -189,6 +206,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const leftAtMs = asEpochMs((body as { leftAtMs?: unknown })?.leftAtMs);
       const viewerEmailRaw = asNonEmptyString((body as { viewerEmail?: unknown })?.viewerEmail);
       const viewerEmail = viewerEmailRaw ? normalizeEmail(viewerEmailRaw) : null;
+      const viewerNameRaw = asNonEmptyString((body as { viewerName?: unknown })?.viewerName, 160);
+      const viewerNameIntro = viewerNameRaw ? normalizeViewerName(viewerNameRaw) : null;
       if (!botId) {
         return NextResponse.json({ error: "Missing botId" }, { status: 400 });
       }
@@ -216,6 +235,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           if (viewerIp) setFields.viewerIp = viewerIp;
           if (viewerUserId) setFields.viewerUserId = viewerUserId;
           if (viewerEmail) setFields.viewerEmail = viewerEmail;
+          // Anonymous-only: allow "introduce yourself" name/email snapshots.
+          if (!viewerUserId && viewerNameIntro) setFields.viewerName = viewerNameIntro;
+          if (!viewerUserId && viewerEmail) setFields.viewerEmailSnapshot = viewerEmail;
 
           const upsert = await ShareViewModel.updateOne(
             { shareId, botIdHash },
@@ -302,6 +324,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               if (viewerIp) setFields.viewerIp = viewerIp;
               if (viewerUserId) setFields.viewerUserId = viewerUserId;
               if (viewerEmail) setFields.viewerEmail = viewerEmail;
+              if (!viewerUserId && viewerNameIntro) setFields.viewerName = viewerNameIntro;
+              if (!viewerUserId && viewerEmail) setFields.viewerEmailSnapshot = viewerEmail;
 
               // Keep the "best-known" viewer snapshots on the visit record too.
               let viewerName: string | null = null;

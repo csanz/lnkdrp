@@ -96,6 +96,29 @@ const uploadSchema = new Schema(
       default: [],
     },
 
+    /**
+     * Per-page (slide) nodes for this upload version.
+     *
+     * Stored on Upload so history versions retain their own slide thumbnails/images.
+     * Doc also denormalizes the latest upload's nodes for convenience.
+     */
+    slideNodes: {
+      type: [
+        {
+          pageNumber: { type: Number, min: 1 },
+          /** Public blob URL to a medium/large slide image (JPEG). */
+          imageUrl: { type: String, trim: true, default: null },
+          /** Public blob URL to a smaller slide thumbnail (JPEG). */
+          thumbUrl: { type: String, trim: true, default: null },
+          /** Best-effort perceptual hash derived from the thumbnail pixels (stable-ish across re-encodes). */
+          imageHash: { type: String, trim: true, default: null },
+          width: { type: Number, min: 0, default: null },
+          height: { type: Number, min: 0, default: null },
+        },
+      ],
+      default: [],
+    },
+
     isDeleted: { type: Boolean, default: false, index: true },
     // New canonical field name (kept alongside `isDeletedDate` for backward-compat).
     deletedDate: { type: Date, default: null },

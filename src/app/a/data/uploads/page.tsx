@@ -7,7 +7,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
 import DataTable from "@/components/ui/DataTable";
@@ -34,6 +34,14 @@ type AdminUploadDetailsResponse = {
 };
 
 export default function AdminDataUploadsPage() {
+  return (
+    <Suspense>
+      <AdminDataUploadsPageInner />
+    </Suspense>
+  );
+}
+
+function AdminDataUploadsPageInner() {
   const searchParams = useSearchParams();
   const { data: session, status } = useSession();
   const role = session?.user?.role ?? null;

@@ -218,9 +218,11 @@ const DEBUG_CONTROLS =
 const PLANE_LOCKED = DEBUG_CONTROLS ? false : CONFIG.PLANE_LOCKED;
 
 const statusEl = document.getElementById("status");
+const statusTextEl = document.getElementById("statusText");
 const setStatus = (msg) => {
-  if (!statusEl) return;
-  statusEl.textContent = msg;
+  if (statusTextEl) statusTextEl.textContent = msg;
+  // Fallback (older markup): statusEl was just a text node.
+  else if (statusEl) statusEl.textContent = msg;
 };
 
 // Land/continents loading state (helps avoid "silent blank globe").

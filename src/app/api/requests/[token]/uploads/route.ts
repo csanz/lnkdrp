@@ -14,28 +14,9 @@ import { debugError, debugLog } from "@/lib/debug";
 import { BOT_ID_HEADER } from "@/lib/botId";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { tryResolveUserActor } from "@/lib/gating/actor";
+import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
-
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-/**
- * Random Base62 (uses randomBytes, max, ceil).
- */
-
-
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
 
 /**
  * Generate a short public identifier for `/s/:shareId`.
@@ -43,8 +24,7 @@ function randomBase62(length: number): string {
  * This is a public slug (not a secret).
  */
 function newDocShareId() {
-  // Alphanumeric only (no dashes/special chars) for friendlier share URLs.
-  return randomBase62(12);
+  return newShareId();
 }
 
 /**
@@ -53,7 +33,7 @@ function newDocShareId() {
  * This is a capability token (treat as secret) and should be long enough to be unguessable.
  */
 function newReplaceUploadToken() {
-  return randomBase62(24);
+  return newSecretToken(24);
 }
 /**
  * New Upload Secret (uses toString, randomBytes).

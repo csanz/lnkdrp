@@ -2,31 +2,15 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { signIn } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
+import { useAuthEnabled } from "@/app/providers";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { getOrCreateBotId } from "@/lib/botId";
 import { fetchJson } from "@/lib/http/fetchJson";
-
-const CATEGORY_LABELS: Record<string, string> = {
-  fundraising_pitch: "Fundraising Pitch",
-  sales_pitch: "Sales Pitch",
-  product_overview: "Product Overview",
-  technical_whitepaper: "Technical Whitepaper",
-  business_plan: "Business Plan",
-  investor_update: "Investor Update",
-  financial_report: "Financial Report",
-  market_research: "Market Research",
-  internal_strategy: "Internal Strategy",
-  partnership_proposal: "Partnership Proposal",
-  marketing_material: "Marketing Material",
-  training_or_manual: "Training or Manual",
-  legal_document: "Legal Document",
-  resume_or_profile: "Resume or Profile",
-  academic_paper: "Academic Paper",
-  other: "Other",
-};
+import { CATEGORY_LABELS } from "@/lib/ai/constants";
 /**
  * Title From Enum (uses join, map, filter).
  */
@@ -121,9 +105,77 @@ type PdfPage = {
 const SHARE_LOCAL_STATS_PREFIX = "lnkdrp_share_local_stats_v1:";
 const SHARE_OWNER_STATS_PREFIX = "lnkdrp_share_owner_stats_v1:";
 const SHARE_VISIT_SESSION_PREFIX = "lnkdrp_share_visit_session_v1:";
+const SHARE_VIEWER_PROFILE_KEY = "lnkdrp_share_viewer_profile_v1";
 
 type OwnerStats = { views: number; pagesViewed: number };
 type ShareContext = { isOwner: boolean; stats?: OwnerStats };
+
+type ShareViewerProfile = {
+  name?: string;
+  email?: string;
+  updatedAt?: number;
+};
+
+function normalizeShareViewerName(v: string): string | null {
+  const s = v.replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  return s.length > 80 ? s.slice(0, 80) : s;
+}
+
+function normalizeShareViewerEmail(v: string): string | null {
+  const s = v.trim().toLowerCase();
+  if (!s) return null;
+  if (s.length > 254) return null;
+  if (!s.includes("@") || s.startsWith("@") || s.endsWith("@")) return null;
+  return s;
+}
+
+function readShareViewerProfile(): ShareViewerProfile | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(SHARE_VIEWER_PROFILE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object") return null;
+    const nameRaw = (parsed as any).name;
+    const emailRaw = (parsed as any).email;
+    const updatedAtRaw = (parsed as any).updatedAt;
+    const name = typeof nameRaw === "string" ? normalizeShareViewerName(nameRaw) : null;
+    const email = typeof emailRaw === "string" ? normalizeShareViewerEmail(emailRaw) : null;
+    const updatedAt = typeof updatedAtRaw === "number" && Number.isFinite(updatedAtRaw) ? Math.floor(updatedAtRaw) : undefined;
+    if (!name && !email) return null;
+    return { ...(name ? { name } : {}), ...(email ? { email } : {}), ...(updatedAt ? { updatedAt } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+function writeShareViewerProfile(next: { name: string | null; email: string | null }) {
+  if (typeof window === "undefined") return;
+  try {
+    const name = typeof next.name === "string" ? normalizeShareViewerName(next.name) : null;
+    const email = typeof next.email === "string" ? normalizeShareViewerEmail(next.email) : null;
+    if (!name && !email) {
+      window.localStorage.removeItem(SHARE_VIEWER_PROFILE_KEY);
+      return;
+    }
+    window.localStorage.setItem(
+      SHARE_VIEWER_PROFILE_KEY,
+      JSON.stringify({ ...(name ? { name } : {}), ...(email ? { email } : {}), updatedAt: Date.now() } satisfies ShareViewerProfile),
+    );
+  } catch {
+    // ignore (best-effort)
+  }
+}
+
+function clearShareViewerProfile() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(SHARE_VIEWER_PROFILE_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 type HistoryItem = {
   fromVersion: number | null;
@@ -316,6 +368,13 @@ export function PdfJsViewer({
   const [viewMode, setViewMode] = useState<"single" | "all" | "grid">("single");
   const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
+  const authEnabled = useAuthEnabled();
+  const [viewerProfile, setViewerProfile] = useState<ShareViewerProfile | null>(null);
+  const [introOpen, setIntroOpen] = useState(false);
+  const [introName, setIntroName] = useState("");
+  const [introEmail, setIntroEmail] = useState("");
+  const [introBusy, setIntroBusy] = useState(false);
+  const [introError, setIntroError] = useState<string | null>(null);
   const askText = useMemo(() => {
     const raw = (aiData?.ask ?? "").trim();
     if (!raw) return "";
@@ -334,6 +393,13 @@ export function PdfJsViewer({
   const aiProvided = typeof ai !== "undefined";
   const shareIdSafe = typeof shareId === "string" && shareId.trim() ? shareId.trim() : null;
   const canDownload = Boolean(allowDownload && downloadUrl);
+
+  function applyViewerProfileToStatsPayload(payload: Record<string, unknown>) {
+    const p = readShareViewerProfile();
+    if (p?.email) payload.viewerEmail = p.email;
+    if (p?.name) payload.viewerName = p.name;
+  }
+
   const [downloadRequestOpen, setDownloadRequestOpen] = useState(false);
   const [downloadRequestEmail, setDownloadRequestEmail] = useState("");
   const [downloadRequestBusy, setDownloadRequestBusy] = useState(false);
@@ -348,6 +414,15 @@ export function PdfJsViewer({
     if (!canDownload) return null;
     return downloadUrl as string;
   });
+
+  useEffect(() => {
+    if (!shareIdSafe) {
+      setViewerProfile(null);
+      return;
+    }
+    // Best-effort: hydrate intro state from localStorage.
+    setViewerProfile(readShareViewerProfile());
+  }, [shareIdSafe]);
 
   useEffect(() => {
     if (!canDownload) return;
@@ -370,7 +445,7 @@ export function PdfJsViewer({
   const ownerPagesLabel = `${ownerPagesViewed} ${ownerPagesViewed === 1 ? "page" : "pages"}`;
   const categoryLabel =
     aiData?.category
-      ? (CATEGORY_LABELS[aiData.category] ?? titleFromEnum(aiData.category))
+      ? (CATEGORY_LABELS[aiData.category as keyof typeof CATEGORY_LABELS] ?? titleFromEnum(aiData.category))
       : null;
   const canPrev = useMemo(() => pageNumber > 1, [pageNumber]);
   const canNext = useMemo(
@@ -1588,6 +1663,7 @@ export function PdfJsViewer({
       shareTimingEnteredAtMsRef.current = now;
 
       const payload: Record<string, unknown> = { botId, visitId, durationMs };
+      applyViewerProfileToStatsPayload(payload);
       if (includePage) {
         const p = shareTimingPageRef.current;
         if (typeof p === "number" && Number.isFinite(p) && p >= 1) payload.pageNumber = Math.floor(p);
@@ -1610,6 +1686,7 @@ export function PdfJsViewer({
           const durationMs = now - enteredAtMs;
           if (Number.isFinite(durationMs) && durationMs >= 1500) {
             const payload: Record<string, unknown> = { botId, visitId, durationMs };
+            applyViewerProfileToStatsPayload(payload);
             const p = shareTimingPageRef.current;
             if (typeof p === "number" && Number.isFinite(p) && p >= 1) {
               payload.pageNumber = Math.floor(p);
@@ -1693,18 +1770,20 @@ export function PdfJsViewer({
 
     const durationMs = now - enteredAt;
     if (Number.isFinite(durationMs) && durationMs >= 1500 && Number.isFinite(prevPage) && prevPage >= 1) {
+      const payload: Record<string, unknown> = {
+        botId,
+        visitId,
+        pageNumber: Math.floor(prevPage),
+        durationMs,
+        enteredAtMs: Math.floor(enteredAt),
+        leftAtMs: Math.floor(now),
+      };
+      applyViewerProfileToStatsPayload(payload);
       void fetchWithTempUser(`/api/share/${shareId}/stats`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         keepalive: true,
-        body: JSON.stringify({
-          botId,
-          visitId,
-          pageNumber: Math.floor(prevPage),
-          durationMs,
-          enteredAtMs: Math.floor(enteredAt),
-          leftAtMs: Math.floor(now),
-        }),
+        body: JSON.stringify(payload),
       }).catch(() => void 0);
     }
 
@@ -1730,10 +1809,12 @@ export function PdfJsViewer({
     // Record the view once per browser (localStorage) to reduce spam.
     if (!local.viewedAt) {
       scheduleAfterPaint(() => {
+        const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), pageNumber };
+        applyViewerProfileToStatsPayload(payload);
         void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ botId, ...(visitId ? { visitId } : {}), pageNumber }),
+          body: JSON.stringify(payload),
         }).catch(() => void 0);
       });
 
@@ -1748,10 +1829,12 @@ export function PdfJsViewer({
     // If we've already recorded a view, still record the initial page if it wasn't stored yet.
     if (!pagesSeen.has(pageNumber)) {
       scheduleAfterPaint(() => {
+        const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), pageNumber };
+        applyViewerProfileToStatsPayload(payload);
         void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ botId, ...(visitId ? { visitId } : {}), pageNumber }),
+          body: JSON.stringify(payload),
         }).catch(() => void 0);
       });
       pagesSeen.add(pageNumber);
@@ -1776,10 +1859,12 @@ export function PdfJsViewer({
     if (pagesSeen.has(pageNumber)) return;
 
     scheduleAfterPaint(() => {
+      const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), pageNumber };
+      applyViewerProfileToStatsPayload(payload);
       void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ botId, ...(visitId ? { visitId } : {}), pageNumber }),
+        body: JSON.stringify(payload),
       }).catch(() => void 0);
     });
 
@@ -1964,7 +2049,38 @@ export function PdfJsViewer({
               </div>
 
               {shareIdSafe && !shareContext?.isOwner ? (
-                null
+                viewerProfile?.name || viewerProfile?.email ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                    onClick={() => {
+                      setIntroError(null);
+                      setIntroName(viewerProfile?.name ?? "");
+                      setIntroEmail(viewerProfile?.email ?? "");
+                      setIntroOpen(true);
+                    }}
+                    title="Edit how you appear to the document owner"
+                  >
+                    Viewing as{" "}
+                    <span className="ml-1 max-w-[14ch] truncate text-white">
+                      {(viewerProfile?.name ?? viewerProfile?.email ?? "Viewer").trim()}
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                    onClick={() => {
+                      setIntroError(null);
+                      setIntroName("");
+                      setIntroEmail("");
+                      setIntroOpen(true);
+                    }}
+                    title="Tell the owner who you are"
+                  >
+                    Introduce yourself
+                  </button>
+                )
               ) : null}
 
               {shareIdSafe ? (
@@ -2163,6 +2279,160 @@ export function PdfJsViewer({
           </div>
         </>
       ) : null}
+
+      <Modal
+        open={introOpen}
+        onClose={() => {
+          if (introBusy) return;
+          setIntroOpen(false);
+          setIntroError(null);
+        }}
+        ariaLabel="Introduce yourself"
+        panelClassName="border-white/15 bg-black/95 text-white ring-white/15"
+        contentClassName="px-6 pb-6 pt-5"
+      >
+        <div className="text-base font-semibold text-white">Introduce yourself</div>
+        <div className="mt-2 text-sm text-white/70">
+          Your visit will show up as <span className="font-semibold text-white/90">anonymous</span> unless you add a name/email.
+          Adding one helps the owner interpret your view.
+        </div>
+
+        {introError ? (
+          <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+            {introError}
+          </div>
+        ) : null}
+
+        <div className="mt-5 grid gap-4">
+          <div>
+            <label className="text-xs font-medium text-white/70" htmlFor="share-intro-name">
+              Name (optional)
+            </label>
+            <input
+              id="share-intro-name"
+              className="mt-2 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/15"
+              placeholder="Your name"
+              value={introName}
+              onChange={(e) => setIntroName(e.target.value)}
+              autoComplete="name"
+              disabled={introBusy}
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-white/70" htmlFor="share-intro-email">
+              Email
+            </label>
+            <input
+              id="share-intro-email"
+              type="email"
+              inputMode="email"
+              className="mt-2 w-full rounded-xl border border-white/15 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-white/15"
+              placeholder="you@example.com"
+              value={introEmail}
+              onChange={(e) => setIntroEmail(e.target.value)}
+              autoComplete="email"
+              disabled={introBusy}
+            />
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/70">
+            This will be shown to the document owner (and may appear in their viewer metrics).
+          </div>
+        </div>
+
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            {viewerProfile?.name || viewerProfile?.email ? (
+              <button
+                type="button"
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
+                disabled={introBusy}
+                onClick={() => {
+                  clearShareViewerProfile();
+                  setViewerProfile(null);
+                  setIntroName("");
+                  setIntroEmail("");
+                  setIntroError(null);
+                  setIntroOpen(false);
+                }}
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {authEnabled ? (
+              <button
+                type="button"
+                className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
+                disabled={introBusy}
+                onClick={() => {
+                  if (introBusy) return;
+                  // Best-effort: authenticate; share pages are still readable without sign-in.
+                  void signIn("google", {
+                    callbackUrl:
+                      typeof window !== "undefined"
+                        ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+                        : "/",
+                  });
+                }}
+              >
+                Continue with Google
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
+              disabled={introBusy}
+              aria-busy={introBusy}
+              onClick={() => {
+                if (introBusy) return;
+                const email = normalizeShareViewerEmail(introEmail) ?? "";
+                const name = normalizeShareViewerName(introName);
+                if (!email) {
+                  setIntroError("Please enter a valid email.");
+                  return;
+                }
+                setIntroBusy(true);
+                setIntroError(null);
+
+                // Persist locally immediately (best-effort).
+                writeShareViewerProfile({ name, email });
+                const stored = readShareViewerProfile();
+                setViewerProfile(stored);
+
+                // Best-effort: persist to server so owner metrics show it.
+                void (async () => {
+                  try {
+                    if (!shareIdSafe) return;
+                    const botId = getOrCreateBotId();
+                    if (!botId) return;
+                    const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareIdSafe);
+                    if (visitId) shareVisitIdRef.current = visitId;
+                    const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), viewerEmail: email };
+                    if (name) payload.viewerName = name;
+                    await fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify(payload),
+                    });
+                  } catch {
+                    // ignore (best-effort)
+                  } finally {
+                    setIntroBusy(false);
+                    setIntroOpen(false);
+                  }
+                })();
+              }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={historyOpen}

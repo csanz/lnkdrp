@@ -26,8 +26,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const lite = url.searchParams.get("lite") === "1";
     const noText = url.searchParams.get("noText") === "1";
     const wantsDebug = url.searchParams.get("debug") === "1";
+    const sortParam = (url.searchParams.get("sort") ?? "").trim().toLowerCase();
+    const sort: "version_desc" | "version_asc" = sortParam === "version_asc" ? "version_asc" : "version_desc";
+    const cursorParam = (url.searchParams.get("cursor") ?? "").trim();
+    const cursorVersion = cursorParam ? Number(cursorParam) : NaN;
     const limitParam = url.searchParams.get("limit");
-    const limit = Math.max(1, Math.min(50, Number.isFinite(Number(limitParam)) ? Number(limitParam) : 50));
+    // NOTE: `URLSearchParams.get()` returns `null` when missing. `Number(null) === 0`,
+    // so we must treat null/empty as "unset" (default = 50).
+    const parsedLimit = typeof limitParam === "string" && limitParam.trim() ? Number(limitParam) : NaN;
+    const limit = Math.max(1, Math.min(50, Number.isFinite(parsedLimit) ? parsedLimit : 50));
 
     const { docId } = await ctx.params;
     if (!isObjectId(docId)) return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
@@ -201,11 +208,32 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       ...(includeText ? { previousText: 1, newText: 1 } : {}),
     } as const;
 
-    const changesAgg = (await DocChangeModel.find(changeFilter)
+    if (Number.isFinite(cursorVersion) && cursorVersion >= 1) {
+      // Cursor is always the `toVersion` boundary (fast + stable).
+      (changeFilter as any).toVersion =
+        sort === "version_asc" ? { $gt: Math.floor(cursorVersion) } : { $lt: Math.floor(cursorVersion) };
+    }
+
+    // Query optimization: `toVersion` is unique per doc; sorting by `{ toVersion }` is sufficient.
+    // Avoid secondary sorts (e.g. createdDate) so Mongo can use the `(docId, toVersion)` index.
+    const queryLimit = limit + 1; // fetch one extra to compute `nextCursor`
+    const sortSpec = sort === "version_asc" ? { toVersion: 1 as const } : { toVersion: -1 as const };
+
+    const changesAggRaw = (await DocChangeModel.find(changeFilter)
       .select(changeSelect)
-      .sort({ toVersion: -1, createdDate: -1 })
-      .limit(limit)
+      .sort(sortSpec)
+      .limit(queryLimit)
       .lean()) as Array<Record<string, any>>;
+
+    const hasMore = changesAggRaw.length > limit;
+    const changesAgg = hasMore ? changesAggRaw.slice(0, limit) : changesAggRaw;
+    const nextCursor = hasMore
+      ? (function () {
+          const last = changesAgg[changesAgg.length - 1];
+          const v = typeof last?.toVersion === "number" && Number.isFinite(last.toVersion) ? Math.floor(last.toVersion) : null;
+          return v && v >= 1 ? String(v) : null;
+        })()
+      : null;
 
     // Resolve createdBy in one query (faster than $lookup for large-ish result sets).
     const createdByMap: Map<string, { id: string; name: string | null; email: string | null }> = new Map();
@@ -283,6 +311,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 })(),
             createdDate: c.createdDate ? new Date(c.createdDate).toISOString() : null,
           })),
+          ...(includeChangeList ? { nextCursor } : {}),
           ...(debugInfo ? { debug: debugInfo } : {}),
         },
         { headers: { "cache-control": "no-store" } },

@@ -5,7 +5,6 @@
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
-import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
@@ -13,28 +12,10 @@ import { UploadModel } from "@/lib/models/Upload";
 import { ReviewModel } from "@/lib/models/Review";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import crypto from "node:crypto";
+import { randomBase62 } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
-
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-/**
- * Random Base62 (uses randomBytes, max, ceil).
- */
-
-
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
 /**
  * Escape Regex (uses replace).
  */

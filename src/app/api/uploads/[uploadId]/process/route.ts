@@ -19,7 +19,12 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { ReviewModel } from "@/lib/models/Review";
 import { DocChangeModel } from "@/lib/models/DocChange";
-import { buildDocExtractedTextPathname, buildDocPreviewPngPathname } from "@/lib/blob/clientUpload";
+import {
+  buildDocExtractedTextPathname,
+  buildDocPreviewPngPathname,
+  buildDocPageImagePathname,
+  buildDocPageThumbPathname,
+} from "@/lib/blob/clientUpload";
 import { analyzePdfText } from "@/lib/ai/analyzePdfText";
 import { runDocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
@@ -239,6 +244,74 @@ function normalizeForPageHash(input: string): string {
 function pageTextHash(input: string): string {
   const normalized = normalizeForPageHash(input);
   return crypto.createHash("sha256").update(normalized).digest("hex");
+}
+
+type SlideNode = {
+  pageNumber: number;
+  imageUrl: string | null;
+  thumbUrl: string | null;
+  imageHash: string | null;
+  width: number | null;
+  height: number | null;
+};
+
+let _cachedSharpPromise: Promise<any> | null = null;
+async function getSharp(): Promise<any> {
+  if (_cachedSharpPromise) return _cachedSharpPromise;
+  _cachedSharpPromise = (async () => {
+    const mod = await import("sharp");
+    return (mod as any).default ?? (mod as any);
+  })();
+  return _cachedSharpPromise;
+}
+
+async function imageHashFromThumbJpeg(thumbJpeg: Buffer): Promise<string | null> {
+  // Best-effort perceptual-ish hash:
+  // - decode
+  // - normalize to fixed 64x64 grayscale raw pixels
+  // - sha256 raw bytes
+  try {
+    const sharp = await getSharp();
+    const raw = await sharp(thumbJpeg)
+      .resize({ width: 64, height: 64, fit: "fill" })
+      .grayscale()
+      .raw()
+      .toBuffer();
+    return crypto.createHash("sha256").update(raw).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+async function renderPdfPageJpeg(params: {
+  pdfBytes: Uint8Array;
+  pageNumber: number;
+  maxWidth: number;
+  quality: number;
+}): Promise<{ jpeg: Buffer; width: number | null; height: number | null }> {
+  const pageNumber = Math.max(1, Math.floor(params.pageNumber || 1));
+  const maxWidth = Math.max(240, Math.floor(params.maxWidth || 1200));
+  const quality = Math.min(95, Math.max(40, Math.floor(params.quality || 75)));
+  const sharp = await getSharp();
+
+  // sharp uses 0-based page index for PDF input
+  const page = Math.max(0, pageNumber - 1);
+  const density = 180; // quality vs CPU; tuned for slide screenshots
+  const input = Buffer.from(params.pdfBytes);
+
+  const base = sharp(input, { density, page })
+    .resize({ width: maxWidth, withoutEnlargement: true })
+    // PDF render may contain transparency; flatten to keep JPEG stable.
+    .flatten({ background: "#ffffff" });
+
+  const meta = await base.metadata().catch(() => null);
+  const jpeg = await base
+    .jpeg({ quality, mozjpeg: true, progressive: true, chromaSubsampling: "4:4:4" })
+    .toBuffer();
+
+  const width = typeof meta?.width === "number" && Number.isFinite(meta.width) ? meta.width : null;
+  const height = typeof meta?.height === "number" && Number.isFinite(meta.height) ? meta.height : null;
+  return { jpeg, width, height };
 }
 
 async function fetchPdfBytes(url: string): Promise<Uint8Array> {
@@ -1163,6 +1236,7 @@ export async function POST(
           aiOutput: 1,
           docName: 1,
           pageSlugs: 1,
+          slideNodes: 1,
         })
         .lean();
       const existingDocObj = isRecord(existingDoc) ? existingDoc : null;
@@ -1193,6 +1267,8 @@ export async function POST(
         existingDocObj && typeof existingDocObj.docName === "string" ? existingDocObj.docName : null;
       const priorPageSlugs =
         existingDocObj && Array.isArray(existingDocObj.pageSlugs) ? existingDocObj.pageSlugs : null;
+      const priorSlideNodes =
+        existingDocObj && Array.isArray((existingDocObj as any).slideNodes) ? ((existingDocObj as any).slideNodes as unknown[]) : null;
       const priorPreviewUrl =
         existingDocObj && typeof (existingDocObj as { previewImageUrl?: unknown }).previewImageUrl === "string"
           ? String((existingDocObj as { previewImageUrl: string }).previewImageUrl ?? "").trim() || null
@@ -1258,7 +1334,7 @@ export async function POST(
         });
         const isReplacement = Number.isFinite(upload.version) && Number(upload.version) > 1;
         const existingDoc = await DocModel.findById(docId)
-          .select({ _id: 1, aiOutput: 1, docName: 1, pageSlugs: 1 })
+          .select({ _id: 1, aiOutput: 1, docName: 1, pageSlugs: 1, slideNodes: 1 })
           .lean();
         const existingDocObj = isRecord(existingDoc) ? existingDoc : null;
         const priorDocAiOutput = existingDocObj ? (existingDocObj.aiOutput ?? null) : null;
@@ -1266,6 +1342,8 @@ export async function POST(
           existingDocObj && typeof existingDocObj.docName === "string" ? existingDocObj.docName : null;
         const priorPageSlugs =
           existingDocObj && Array.isArray(existingDocObj.pageSlugs) ? existingDocObj.pageSlugs : null;
+        const priorSlideNodes =
+          existingDocObj && Array.isArray((existingDocObj as any).slideNodes) ? ((existingDocObj as any).slideNodes as unknown[]) : null;
 
         await DocModel.findByIdAndUpdate(docId, {
           status: "ready",
@@ -1279,6 +1357,9 @@ export async function POST(
           pageSlugs: Array.isArray(upload.pageSlugs)
             ? upload.pageSlugs
             : (isReplacement ? priorPageSlugs : []),
+          slideNodes: Array.isArray((upload as any).slideNodes) && (upload as any).slideNodes.length
+            ? (upload as any).slideNodes
+            : (isReplacement ? (priorSlideNodes ?? []) : []),
           firstPagePngUrl: upload.previewImageUrl ?? upload.firstPagePngUrl ?? null,
           pdfText: upload.rawExtractedText ?? upload.pdfText ?? null,
         });
@@ -1658,6 +1739,7 @@ export async function POST(
 
       let previewUrl: string | null = null;
       let extractedText: string | null = null;
+      let extractedPages: Array<{ page_number: number; text: string }> | null = null;
       let aiOutput: unknown = upload.aiOutput ?? null;
       const uploadObj = upload.toObject() as Record<string, unknown>;
       let docName: string | null = asString(uploadObj.docName);
@@ -1675,6 +1757,19 @@ export async function POST(
                 slug: asString(p.slug),
               }))
           : null;
+      let slideNodes: SlideNode[] | null = Array.isArray((uploadObj as any).slideNodes)
+        ? ((uploadObj as any).slideNodes as unknown[])
+            .map((p) => (isRecord(p) ? p : null))
+            .filter((p): p is Record<string, unknown> => Boolean(p))
+            .map((p) => ({
+              pageNumber: Math.max(1, Math.floor(asNumber(p.pageNumber ?? p.page_number) ?? 1)),
+              imageUrl: asString(p.imageUrl ?? p.image_url),
+              thumbUrl: asString(p.thumbUrl ?? p.thumb_url),
+              imageHash: asString(p.imageHash ?? p.image_hash),
+              width: asNumber(p.width),
+              height: asNumber(p.height),
+            }))
+        : null;
       let jobError: unknown = null;
       const warningDetails: Record<string, string> = {};
 
@@ -1746,6 +1841,7 @@ export async function POST(
               message: e instanceof Error ? e.message : String(e),
             });
             const pages = await extractPdfTextByPage(pdfBytes);
+            extractedPages = pages;
             extractedText = pages.map((p) => p.text).join("\n\n").trim();
           }
         }
@@ -1753,6 +1849,108 @@ export async function POST(
         jobError = jobError ?? e;
         warningDetails.text = e instanceof Error ? e.message : String(e);
         debugError(1, "[process] text extraction failed", {
+          uploadId,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
+
+      // Extract/render per-page slide nodes (retryable; best-effort)
+      try {
+        // If we already have slide nodes (from a previous run), keep them.
+        if (Array.isArray(slideNodes) && slideNodes.length) {
+          debugLog(2, "[process] slideNodes already exist", { uploadId, count: slideNodes.length });
+        } else {
+          // Ensure we have a page count (prefer the already-extracted per-page text).
+          if (!extractedPages) {
+            extractedPages = await extractPdfTextByPage(pdfBytes).catch(() => []);
+          }
+
+          let pageCount = 0;
+          if (Array.isArray(extractedPages) && extractedPages.length) {
+            const nums = extractedPages
+              .map((p) => (typeof p?.page_number === "number" ? Math.floor(p.page_number) : 0))
+              .filter((n) => Number.isFinite(n) && n >= 1);
+            pageCount = nums.length ? Math.max(...nums) : 0;
+          }
+          if (!pageCount) {
+            // Fallback: ask PDF.js for numPages.
+            try {
+              const pdfjsLib = await getPdfJsLib();
+              const data = new Uint8Array(pdfBytes);
+              const loadingTask = pdfjsLib.getDocument({ data, disableWorker: true });
+              const pdf = (await loadingTask.promise) as { numPages?: unknown };
+              const n = typeof pdf?.numPages === "number" && Number.isFinite(pdf.numPages) ? Math.floor(pdf.numPages) : 0;
+              pageCount = n > 0 ? n : 0;
+            } catch {
+              pageCount = 0;
+            }
+          }
+
+          debugLog(1, "[process] building slideNodes", { uploadId, pageCount });
+
+          const PAGE_IMAGE_MAX_WIDTH = 1200;
+          const PAGE_IMAGE_QUALITY = 78;
+          const PAGE_THUMB_MAX_WIDTH = 480;
+          const PAGE_THUMB_QUALITY = 65;
+
+          const sharp = await getSharp();
+          const nodes: SlideNode[] = [];
+
+          for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+            const { jpeg, width, height } = await renderPdfPageJpeg({
+              pdfBytes,
+              pageNumber,
+              maxWidth: PAGE_IMAGE_MAX_WIDTH,
+              quality: PAGE_IMAGE_QUALITY,
+            });
+
+            // Derive a smaller thumb from the rendered JPEG (cheaper than rendering twice).
+            const thumbJpeg = await sharp(jpeg)
+              .resize({ width: PAGE_THUMB_MAX_WIDTH, withoutEnlargement: true })
+              .jpeg({ quality: PAGE_THUMB_QUALITY, mozjpeg: true, progressive: true })
+              .toBuffer();
+            const imageHash = await imageHashFromThumbJpeg(thumbJpeg);
+
+            const imagePathname = buildDocPageImagePathname({
+              docId: String(docId),
+              uploadId,
+              pageNumber,
+            });
+            const thumbPathname = buildDocPageThumbPathname({
+              docId: String(docId),
+              uploadId,
+              pageNumber,
+            });
+
+            const [imageBlob, thumbBlob] = await Promise.all([
+              put(imagePathname, jpeg, {
+                access: "public",
+                contentType: "image/jpeg",
+                addRandomSuffix: false,
+              }),
+              put(thumbPathname, thumbJpeg, {
+                access: "public",
+                contentType: "image/jpeg",
+                addRandomSuffix: false,
+              }),
+            ]);
+
+            nodes.push({
+              pageNumber,
+              imageUrl: imageBlob.url,
+              thumbUrl: thumbBlob.url,
+              imageHash,
+              width,
+              height,
+            });
+          }
+
+          slideNodes = nodes;
+        }
+      } catch (e) {
+        jobError = jobError ?? e;
+        warningDetails.slides = e instanceof Error ? e.message : String(e);
+        debugError(1, "[process] slideNodes failed (will continue without slides)", {
           uploadId,
           message: e instanceof Error ? e.message : String(e),
         });
@@ -1768,7 +1966,10 @@ export async function POST(
             let changedPages: Array<{ pageNumber: number; previousText: string; newText: string }> = [];
             try {
               // New version: extract per-page text from the PDF we already fetched.
-              const newPages = await extractPdfTextByPage(pdfBytes).catch(() => []);
+              if (!extractedPages) {
+                extractedPages = await extractPdfTextByPage(pdfBytes).catch(() => []);
+              }
+              const newPages = extractedPages ?? [];
               const newByPage = new Map<number, string>(
                 newPages
                   .map((p) => ({ n: Math.floor(Number(p.page_number)), t: String(p.text ?? "") }))
@@ -1779,9 +1980,36 @@ export async function POST(
               // Previous version: fetch the previous upload PDF and extract per-page text.
               const prevUpload =
                 priorUploadId
-                  ? await UploadModel.findById(priorUploadId).select({ blobUrl: 1 }).lean()
+                  ? await UploadModel.findById(priorUploadId).select({ blobUrl: 1, slideNodes: 1 }).lean()
                   : null;
               const prevBlobUrl = prevUpload && typeof (prevUpload as any).blobUrl === "string" ? (prevUpload as any).blobUrl : "";
+              const prevSlideNodesRaw = prevUpload && Array.isArray((prevUpload as any).slideNodes) ? ((prevUpload as any).slideNodes as unknown[]) : [];
+              const prevSlideByPage = new Map<number, { imageHash: string | null; thumbUrl: string | null; imageUrl: string | null }>(
+                prevSlideNodesRaw
+                  .map((p: any) => (p && typeof p === "object" ? p : null))
+                  .filter(Boolean)
+                  .map((p: any) => ({
+                    n: Math.floor(Number(p.pageNumber ?? p.page_number)),
+                    imageHash: typeof p.imageHash === "string" && p.imageHash.trim() ? p.imageHash.trim() : null,
+                    thumbUrl: typeof p.thumbUrl === "string" && p.thumbUrl.trim() ? p.thumbUrl.trim() : null,
+                    imageUrl: typeof p.imageUrl === "string" && p.imageUrl.trim() ? p.imageUrl.trim() : null,
+                  }))
+                  .filter((p: any) => Number.isFinite(p.n) && p.n >= 1)
+                  .map((p: any) => [p.n, { imageHash: p.imageHash, thumbUrl: p.thumbUrl, imageUrl: p.imageUrl }]),
+              );
+
+              const nextSlideByPage = new Map<number, { imageHash: string | null; thumbUrl: string | null; imageUrl: string | null }>(
+                (Array.isArray(slideNodes) ? slideNodes : [])
+                  .map((p) => ({
+                    n: Math.floor(Number(p.pageNumber)),
+                    imageHash: typeof p.imageHash === "string" && p.imageHash.trim() ? p.imageHash.trim() : null,
+                    thumbUrl: typeof p.thumbUrl === "string" && p.thumbUrl.trim() ? p.thumbUrl.trim() : null,
+                    imageUrl: typeof p.imageUrl === "string" && p.imageUrl.trim() ? p.imageUrl.trim() : null,
+                  }))
+                  .filter((p) => Number.isFinite(p.n) && p.n >= 1)
+                  .map((p) => [p.n, { imageHash: p.imageHash, thumbUrl: p.thumbUrl, imageUrl: p.imageUrl }]),
+              );
+
               if (prevBlobUrl) {
                 const prevPdfBytes = await fetchPdfBytes(prevBlobUrl);
                 const prevPages = await extractPdfTextByPage(prevPdfBytes).catch(() => []);
@@ -1792,23 +2020,45 @@ export async function POST(
                     .map((p) => [p.n, p.t]),
                 );
 
-                const maxPages = Math.max(
-                  ...[...prevByPage.keys(), ...newByPage.keys(), 0],
-                );
+                const maxPages = Math.max(...[...prevByPage.keys(), ...newByPage.keys(), ...prevSlideByPage.keys(), ...nextSlideByPage.keys(), 0]);
                 const changedNums: number[] = [];
                 for (let p = 1; p <= maxPages; p++) {
                   const prevText = prevByPage.get(p) ?? "";
                   const nextText = newByPage.get(p) ?? "";
-                  if (pageTextHash(prevText) !== pageTextHash(nextText)) changedNums.push(p);
+                  const textChanged = pageTextHash(prevText) !== pageTextHash(nextText);
+
+                  const prevImg = prevSlideByPage.get(p) ?? null;
+                  const nextImg = nextSlideByPage.get(p) ?? null;
+                  const imgChanged = (() => {
+                    if (!prevImg && !nextImg) return false;
+                    const prevHash = prevImg?.imageHash ?? null;
+                    const nextHash = nextImg?.imageHash ?? null;
+                    if (prevHash && nextHash) return prevHash !== nextHash;
+                    const prevUrl = prevImg?.thumbUrl ?? prevImg?.imageUrl ?? "";
+                    const nextUrl = nextImg?.thumbUrl ?? nextImg?.imageUrl ?? "";
+                    return Boolean(prevUrl && nextUrl && prevUrl !== nextUrl);
+                  })();
+
+                  if (textChanged || imgChanged) changedNums.push(p);
                 }
 
                 // Cap page-level AI context to keep costs bounded.
                 const MAX_PAGE_CONTEXT = 12;
-                changedPages = changedNums.slice(0, MAX_PAGE_CONTEXT).map((p) => ({
-                  pageNumber: p,
-                  previousText: prevByPage.get(p) ?? "",
-                  newText: newByPage.get(p) ?? "",
-                }));
+                changedPages = changedNums.slice(0, MAX_PAGE_CONTEXT).map((p) => {
+                  const prevImg = prevSlideByPage.get(p) ?? null;
+                  const nextImg = nextSlideByPage.get(p) ?? null;
+                  const prevHash = prevImg?.imageHash ?? null;
+                  const nextHash = nextImg?.imageHash ?? null;
+                  const imageChanged = prevHash && nextHash ? prevHash !== nextHash : null;
+                  return {
+                    pageNumber: p,
+                    previousText: prevByPage.get(p) ?? "",
+                    newText: newByPage.get(p) ?? "",
+                    previousImageUrl: prevImg?.thumbUrl ?? prevImg?.imageUrl ?? null,
+                    newImageUrl: nextImg?.thumbUrl ?? nextImg?.imageUrl ?? null,
+                    imageChanged,
+                  } as any;
+                });
               }
             } catch (e) {
               warningDetails.historyPages = e instanceof Error ? e.message : String(e);
@@ -1855,6 +2105,68 @@ export async function POST(
                 diff = null;
               }
             }
+
+            // Best-effort: augment per-page diffs with slide image URLs + graphics-change hints.
+            try {
+              const changedPagesAny = Array.isArray(changedPages) ? (changedPages as any[]) : [];
+              const ctxByPage = new Map<
+                number,
+                { previousImageUrl: string | null; newImageUrl: string | null; imageChanged: boolean | null }
+              >(
+                changedPagesAny
+                  .map((p) => ({
+                    n: typeof p?.pageNumber === "number" ? Math.floor(p.pageNumber) : NaN,
+                    previousImageUrl:
+                      typeof p?.previousImageUrl === "string" && p.previousImageUrl.trim()
+                        ? p.previousImageUrl.trim()
+                        : null,
+                    newImageUrl:
+                      typeof p?.newImageUrl === "string" && p.newImageUrl.trim()
+                        ? p.newImageUrl.trim()
+                        : null,
+                    imageChanged: typeof p?.imageChanged === "boolean" ? Boolean(p.imageChanged) : null,
+                  }))
+                  .filter((p) => Number.isFinite(p.n) && p.n >= 1)
+                  .map((p) => [p.n, { previousImageUrl: p.previousImageUrl, newImageUrl: p.newImageUrl, imageChanged: p.imageChanged }]),
+              );
+
+              const basePages = Array.isArray(diff?.pagesThatChanged) ? (diff.pagesThatChanged as any[]) : [];
+              const seen = new Set<number>();
+              const augmented = basePages
+                .map((p) => {
+                  const n = typeof p?.pageNumber === "number" ? Math.floor(p.pageNumber) : NaN;
+                  if (!Number.isFinite(n) || n < 1) return p;
+                  seen.add(n);
+                  const ctx = ctxByPage.get(n) ?? null;
+                  return {
+                    ...p,
+                    previousImageUrl: ctx?.previousImageUrl ?? null,
+                    newImageUrl: ctx?.newImageUrl ?? null,
+                    imageChanged: ctx?.imageChanged ?? null,
+                  };
+                })
+                .filter(Boolean);
+
+              // Add "graphics changed" pages that the agent didn't include.
+              const imageOnly = [...ctxByPage.entries()]
+                .filter(([n, ctx]) => !seen.has(n) && ctx.imageChanged === true)
+                .slice(0, Math.max(0, 30 - augmented.length))
+                .map(([n, ctx]) => ({
+                  pageNumber: n,
+                  summary: "Graphics/visuals changed on this page.",
+                  previousImageUrl: ctx.previousImageUrl ?? null,
+                  newImageUrl: ctx.newImageUrl ?? null,
+                  imageChanged: true,
+                }));
+
+              const nextPagesThatChanged = [...augmented, ...imageOnly].slice(0, 30);
+              if (diff && typeof diff === "object") {
+                diff = { ...diff, pagesThatChanged: nextPagesThatChanged };
+              }
+            } catch {
+              // ignore; best-effort
+            }
+
             await DocChangeModel.updateOne(
               { docId, toUploadId: upload._id },
               {
@@ -1923,7 +2235,17 @@ export async function POST(
             debugLog(1, "[process] AI analysis skipped (missing OPENAI_API_KEY)", { uploadId });
           } else {
             debugLog(1, "[process] analyzing with AI", { uploadId });
-            const pages = await extractPdfTextByPage(pdfBytes).catch(() => []);
+            if (!extractedPages) {
+              extractedPages = await extractPdfTextByPage(pdfBytes).catch(() => []);
+            }
+            const pages = extractedPages ?? [];
+            const pageImages = Array.isArray(slideNodes)
+              ? slideNodes.map((p) => ({
+                  page_number: Math.max(1, Math.floor(Number(p.pageNumber) || 1)),
+                  image_url: typeof p.imageUrl === "string" && p.imageUrl.trim() ? p.imageUrl.trim() : null,
+                  thumb_url: typeof p.thumbUrl === "string" && p.thumbUrl.trim() ? p.thumbUrl.trim() : null,
+                }))
+              : [];
             // Credits: summary is automatic and defaults to Basic.
             const summaryTier = "basic" as const;
             const summaryCredits = creditsForRun({ actionType: "summary", qualityTier: summaryTier });
@@ -1951,6 +2273,7 @@ export async function POST(
                 const analyzed = await analyzePdfText({
                   fullText: extractedText,
                   pages,
+                  pageImages,
                   originalFileName: asString((uploadObj as { originalFileName?: unknown }).originalFileName),
                   projects: projectsContext,
                   existingProjectIds,
@@ -2191,6 +2514,7 @@ export async function POST(
         aiOutput: aiOutput ?? null,
         docName: docName ?? null,
         pageSlugs: pageSlugs ?? [],
+        slideNodes: Array.isArray(slideNodes) ? slideNodes : [],
         error: jobError
           ? {
               message:
@@ -2206,6 +2530,10 @@ export async function POST(
       const finalDocName = docName ?? (isReplacement ? priorDocName : null);
       const finalPageSlugs =
         pageSlugs ?? (isReplacement && priorPageSlugs ? (priorPageSlugs as unknown[]) : []);
+      const finalSlideNodes =
+        (Array.isArray(slideNodes) && slideNodes.length
+          ? slideNodes
+          : (isReplacement && Array.isArray(priorSlideNodes) ? priorSlideNodes : [])) as unknown[];
       const docUpdate: Record<string, unknown> = {
         status: failed ? "failed" : "ready",
         blobUrl,
@@ -2220,6 +2548,7 @@ export async function POST(
         aiOutput: finalDocAiOutput,
         docName: finalDocName,
         pageSlugs: finalPageSlugs,
+        slideNodes: finalSlideNodes,
       };
       // Auto-name the doc using AI once it has a recommendation.
       //

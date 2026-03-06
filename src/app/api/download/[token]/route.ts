@@ -66,8 +66,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 400 });
+    // Log the actual error server-side but return a generic message to avoid leaking implementation details
+    if (process.env.NODE_ENV !== "production") {
+      console.error("[api/download/:token] GET error:", err);
+    }
+    return NextResponse.json({ error: "Failed to fetch document" }, { status: 400 });
   }
 }
 

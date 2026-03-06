@@ -7,6 +7,7 @@
  */
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 import { ProjectModel } from "@/lib/models/Project";
+import { debugError } from "@/lib/debug";
 
 const docSchema = new Schema(
   {
@@ -73,6 +74,28 @@ const docSchema = new Schema(
         {
           pageNumber: { type: Number, min: 1 },
           slug: { type: String, trim: true, default: null },
+        },
+      ],
+      default: [],
+    },
+
+    /**
+     * Per-page (slide) nodes for the *current* upload version.
+     *
+     * Denormalized from `Upload.slideNodes` so the UI (and AI prompt assembly) can
+     * access the latest slide thumbnails without an extra Upload lookup.
+     *
+     * History versions should read from the Upload record.
+     */
+    slideNodes: {
+      type: [
+        {
+          pageNumber: { type: Number, min: 1 },
+          imageUrl: { type: String, trim: true, default: null },
+          thumbUrl: { type: String, trim: true, default: null },
+          imageHash: { type: String, trim: true, default: null },
+          width: { type: Number, min: 0, default: null },
+          height: { type: Number, min: 0, default: null },
         },
       ],
       default: [],
@@ -344,8 +367,10 @@ for (const op of ["findOneAndUpdate", "updateOne"] as const) {
         .lean();
 
       (this as unknown as { _docCountBefore?: DocCountSnap | null })._docCountBefore = snapDocForCounts(before);
-    } catch {
-      // ignore
+    } catch (err) {
+      debugError(2, "[Doc model] pre-hook failed to snapshot doc for count sync", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   });
 
@@ -361,8 +386,10 @@ for (const op of ["findOneAndUpdate", "updateOne"] as const) {
       const after = snapDocForCounts(afterDoc);
 
       await applyProjectCountDiff(before, after);
-    } catch {
-      // ignore (best-effort)
+    } catch (err) {
+      debugError(2, "[Doc model] post-hook failed to apply project count diff", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   });
 }
@@ -400,8 +427,10 @@ docSchema.pre("save", async function () {
       .select({ _id: 1, orgId: 1, primaryProjectId: 1, projectId: 1, projectIds: 1, isArchived: 1, isDeleted: 1 })
       .lean();
     (doc as unknown as { _docCountBefore?: DocCountSnap | null })._docCountBefore = snapDocForCounts(beforeDoc);
-  } catch {
-    // ignore
+  } catch (err) {
+    debugError(2, "[Doc model] pre-save failed to snapshot doc for count sync", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 });
 
@@ -419,8 +448,10 @@ docSchema.post("save", async function () {
     const before = doc._docCountBefore ?? null;
     const after = snapDocForCounts(doc);
     await applyProjectCountDiff(before, after);
-  } catch {
-    // ignore
+  } catch (err) {
+    debugError(2, "[Doc model] post-save failed to apply project count diff", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 });
 

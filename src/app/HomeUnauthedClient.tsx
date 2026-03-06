@@ -1,3 +1,8 @@
+/**
+ * Logged-out home page client UI for `/`.
+ *
+ * Purpose: Marketing/invite gating + login modal + short auth transition screen.
+ */
 "use client";
 
 import Image from "next/image";
@@ -396,48 +401,43 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
 
       {/* Overlay (real HTML text + buttons) */}
       <div className="relative z-10 h-full w-full">
-        {/* Full-width header: logo pinned left, auth links pinned right (match dashboard placement). */}
-        <header className="w-full">
-          <div className="flex h-14 items-center justify-between gap-3 px-3 md:h-auto md:items-start md:px-4 md:pb-7 md:pt-6">
-            <div className="flex min-w-0 items-center gap-2">
-              <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
-                <Image
-                  src="/icon-white.svg?v=3"
-                  alt="LinkDrop"
-                  width={31}
-                  height={31}
-                  priority
-                  className="block"
-                />
-              </Link>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-                onClick={() => setAboutModalOpen(true)}
-              >
-                About
-              </button>
-              <Link
-                href="/tos"
-                className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-              >
-                Terms
-              </Link>
-              <Link
-                href="/privacy"
-                className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-              >
-                Privacy
-              </Link>
-              <button
-                type="button"
-                className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-                onClick={() => void startAuthFlow()}
-              >
-                Log In
-              </button>
+        {/* Header placement intentionally matches share pages (`/s/:shareId`, `/p/:shareId`). */}
+        <header className="sticky top-0 z-20 w-full border-b border-white/10 bg-black/85 text-white/90 backdrop-blur-sm">
+          <div className="px-4 py-3 sm:px-6">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
+                  <Image src="/icon-white.svg?v=3" alt="LinkDrop" width={26} height={26} priority className="block" />
+                </Link>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
+                  onClick={() => setAboutModalOpen(true)}
+                >
+                  About
+                </button>
+                <Link
+                  href="/tos"
+                  className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
+                >
+                  Terms
+                </Link>
+                <Link
+                  href="/privacy"
+                  className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
+                >
+                  Privacy
+                </Link>
+                <button
+                  type="button"
+                  className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
+                  onClick={() => void startAuthFlow()}
+                >
+                  Log In
+                </button>
+              </div>
             </div>
           </div>
         </header>
@@ -445,13 +445,13 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
         <section className="mx-auto w-full max-w-6xl px-8 pt-12 sm:px-10 md:pt-16 lg:px-12">
           <div className="w-full md:w-[min(560px,54%)]">
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[64px]">
-              Sending docs should feel effortless to share
+              Share documents with context, not just links
             </h1>
 
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-              Doc and link sharing that gives the reader context before they commit time. AI agents create
-              summaries, review relevance, compare deep version history, and run deep search to understand
-              what matters, built for team collaboration.
+              AI agents analyze your documents to extract summaries, key points, and relevance signals.
+              Recipients understand what they&apos;re getting before they commit time. Track engagement and
+              collect submissions with intelligent review.
             </p>
             <p className="mt-4 text-xs font-medium text-white/45">{inviteNote}</p>
 

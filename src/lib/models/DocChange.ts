@@ -53,6 +53,13 @@ const docChangeSchema = new Schema(
           {
             pageNumber: { type: Number, min: 1, default: null },
             summary: { type: String, trim: true, default: "" },
+            /**
+             * Best-effort slide thumbnails for this page for visual diffs in history UIs.
+             * These are populated by the processing pipeline (not the AI agent output).
+             */
+            previousImageUrl: { type: String, trim: true, default: null },
+            newImageUrl: { type: String, trim: true, default: null },
+            imageChanged: { type: Boolean, default: null },
           },
         ],
         default: [],

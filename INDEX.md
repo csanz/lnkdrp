@@ -44,7 +44,7 @@
 - `src/components/modals/SidebarRequestsModal.tsx` — exports: SidebarRequestsModal
 - `src/components/modals/SidebarStarredModal.tsx` — exports: SidebarStarredModal
 - `src/components/modals/TempUserGateModal.tsx` — exports: TempUserGateModal
-- `src/components/PdfJsViewer.tsx` — exports: PdfJsViewer
+- `src/components/PdfJsViewer.tsx` — exports: PdfJsViewer. Share viewer: records view stats; supports optional "Introduce yourself" (name/email) for anonymous viewer labeling.
 - `src/components/RelevanceChecklist.tsx` — exports: RelevanceChecklist
 - `src/components/OutOfCreditsModal.tsx` — exports: OutOfCreditsModal (default)
 - `src/components/OutOfCreditsListener.tsx` — exports: OutOfCreditsListener (default)
@@ -595,6 +595,9 @@
   - buildTestBlobPathname (function) — Build test blob pathname.
   - buildDocBlobPathname (function) — Build doc blob pathname.
   - buildDocPreviewPngPathname (function) — Build doc preview PNG pathname.
+  - buildDocExtractedTextPathname (function) — Build doc extracted-text pathname.
+  - buildDocPageImagePathname (function) — Build per-page (slide) image pathname.
+  - buildDocPageThumbPathname (function) — Build per-page (slide) thumbnail pathname.
   - buildOrgAvatarPathname (function) — Build org avatar blob pathname.
   - fetchPublicFileAsFile (function) — Fetch public file as file.
   - BLOB_HANDLE_UPLOAD_URL (const) — URL constant.
@@ -896,7 +899,11 @@
 - `scripts/test-vercel-blob.mjs`
 - `scripts/gen-env-secrets.mjs` — Generate strong random env secrets for production (NextAuth, cron, token secrets).
 - `scripts/notifications-send-emails.ts` — Local runner for notification emails (dry-run by default).
+- `scripts/diagnose-cursor-credits.mjs` — Local-only diagnostic: scan Cursor logs/caches for “out of credits” signals (no network; no state changes).
+- `scripts/check-cursor-web-limits.jxa` — Pull Cursor web Limits page state from the active browser tab (reads `__NEXT_DATA__`; no network; no state changes).
+- `scripts/check-cursor-web-limits.mjs` — Node wrapper for `check-cursor-web-limits.jxa` (macOS).
 - `scripts/cookie.json`
+- `scripts/debug-doc-history.ts` — Debug script: print all Upload versions + DocChange history rows for a docId.
 - `scripts/tests-benchmark.ts`
 - `src/app/(app)/doc/[docId]/ai/page.tsx`
 - `src/app/(app)/doc/[docId]/page.tsx`

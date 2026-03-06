@@ -269,6 +269,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
                   timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
                   pageTimeMaps: { $push: { $ifNull: ["$pageTimeMsByPage", {}] } },
+                  viewerName: { $first: "$viewerName" },
+                  viewerEmailSnapshot: { $first: "$viewerEmailSnapshot" },
                 },
               },
               {
@@ -279,6 +281,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   lastSeen: 1,
                   views: 1,
                   timeSpentMs: 1,
+                  viewerName: 1,
+                  viewerEmailSnapshot: 1,
                   pageTimeItemsArrays: {
                     $map: {
                       input: "$pageTimeMaps",
@@ -318,6 +322,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 pagesSeen?: number[];
                 timeSpentMs?: number;
                 pageTimeMsByPage?: Record<string, number>;
+                viewerName?: string | null;
+                viewerEmailSnapshot?: string | null;
               }>
             >,
           ])
@@ -429,6 +435,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             : [];
           return {
             botIdHash: typeof v.botIdHash === "string" ? v.botIdHash : "",
+            name: typeof (v as any).viewerName === "string" ? (v as any).viewerName : null,
+            email: typeof (v as any).viewerEmailSnapshot === "string" ? (v as any).viewerEmailSnapshot : null,
             views: typeof v.views === "number" ? v.views : 0,
             timeSpentMs:
               typeof (v as any).timeSpentMs === "number" && Number.isFinite((v as any).timeSpentMs)

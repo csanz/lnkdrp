@@ -1,7 +1,10 @@
 (() => {
   const statusEl = document.getElementById("status");
+  const statusTextEl = document.getElementById("statusText");
   const setStatus = (msg) => {
-    if (statusEl) statusEl.textContent = msg;
+    if (statusTextEl) statusTextEl.textContent = msg;
+    // Fallback (older markup): statusEl was just a text node.
+    else if (statusEl) statusEl.textContent = msg;
   };
 
   console.log("[paperplane] boot.js loaded");

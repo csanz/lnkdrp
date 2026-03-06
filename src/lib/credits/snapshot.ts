@@ -7,6 +7,39 @@ import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
 import { debugLog } from "@/lib/debug";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
+import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
+
+/** Lean document shape from SubscriptionModel query */
+type SubscriptionDoc = {
+  status?: string;
+  stripeSubscriptionId?: string;
+  currentPeriodStart?: Date;
+  currentPeriodEnd?: Date;
+} | null;
+
+/** Lean document shape from WorkspaceCreditBalanceModel query */
+type WorkspaceCreditBalanceDoc = {
+  trialCreditsRemaining?: number;
+  subscriptionCreditsRemaining?: number;
+  purchasedCreditsRemaining?: number;
+  onDemandEnabled?: boolean;
+  onDemandMonthlyLimitCents?: number;
+  currentPeriodStart?: Date;
+  currentPeriodEnd?: Date;
+} | null;
+
+/** Lean document shape from UsageAggCycleModel query */
+type UsageAggCycleDoc = {
+  totalUsedCredits?: number;
+  onDemandUsedCredits?: number;
+} | null;
+
+/** Aggregation result shape from CreditLedgerModel */
+type CreditLedgerAggResult = {
+  _id: null;
+  sum?: number;
+  onDemandSum?: number;
+}[];
 
 export type CreditsSnapshot = {
   ok: true;
@@ -89,7 +122,7 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   const [sub, balRaw] = await Promise.all([
     SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
       .select({ status: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
-      .lean(),
+      .lean() as Promise<SubscriptionDoc>,
     WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
       .select({
         trialCreditsRemaining: 1,
@@ -100,56 +133,36 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
         currentPeriodStart: 1,
         currentPeriodEnd: 1,
       })
-      .lean(),
+      .lean() as Promise<WorkspaceCreditBalanceDoc>,
   ]);
   debugLog(2, "[credits:snapshot] base queries", { ms: Date.now() - t0, ops: 2 });
 
-  const pro = isProStatus((sub as any)?.status);
+  const pro = isProStatus(sub?.status);
 
   // Ensure a balance record exists so the dashboard can show Personal one-time credits
   // even before the first AI run triggers reservation initialization.
-  let bal = balRaw as any;
+  let bal: WorkspaceCreditBalanceDoc = balRaw;
   if (!bal) {
     const initTrialCredits = pro ? 0 : 50;
-    const init: Partial<{
-      trialCreditsRemaining: number;
-      subscriptionCreditsRemaining: number;
-      purchasedCreditsRemaining: number;
-      onDemandEnabled: boolean;
-      onDemandMonthlyLimitCents: number;
-      dailyCreditCap: number | null;
-      monthlyCreditCap: number | null;
-      perRunCreditCapBasic: number;
-      perRunCreditCapStandard: number;
-      perRunCreditCapAdvanced: number;
-      currentPeriodStart: Date | null;
-      currentPeriodEnd: Date | null;
-    }> = {
+    const initSeed = {
       trialCreditsRemaining: initTrialCredits,
       subscriptionCreditsRemaining: 0,
       purchasedCreditsRemaining: 0,
       onDemandEnabled: false,
       onDemandMonthlyLimitCents: 0,
-      dailyCreditCap: null,
-      monthlyCreditCap: null,
-      perRunCreditCapBasic: 20,
-      perRunCreditCapStandard: 60,
-      perRunCreditCapAdvanced: 150,
-      currentPeriodStart: null,
-      currentPeriodEnd: null,
     };
     try {
-      await WorkspaceCreditBalanceModel.updateOne({ workspaceId: orgId }, { $setOnInsert: init }, { upsert: true });
-      bal = init;
+      await WorkspaceCreditBalanceModel.updateOne({ workspaceId: orgId }, { $setOnInsert: initSeed }, { upsert: true });
+      bal = initSeed as WorkspaceCreditBalanceDoc;
     } catch {
       // best-effort; fall through with bal as null-ish
-      bal = init;
+      bal = initSeed as WorkspaceCreditBalanceDoc;
     }
   }
-  const subStart = (sub as any)?.currentPeriodStart instanceof Date ? (sub as any).currentPeriodStart : null;
-  const subEnd = (sub as any)?.currentPeriodEnd instanceof Date ? (sub as any).currentPeriodEnd : null;
-  const balStart = (bal as any)?.currentPeriodStart instanceof Date ? (bal as any).currentPeriodStart : null;
-  const balEnd = (bal as any)?.currentPeriodEnd instanceof Date ? (bal as any).currentPeriodEnd : null;
+  const subStart = sub?.currentPeriodStart instanceof Date ? sub.currentPeriodStart : null;
+  const subEnd = sub?.currentPeriodEnd instanceof Date ? sub.currentPeriodEnd : null;
+  const balStart = bal?.currentPeriodStart instanceof Date ? bal.currentPeriodStart : null;
+  const balEnd = bal?.currentPeriodEnd instanceof Date ? bal.currentPeriodEnd : null;
 
   // Cycle window:
   // - Prefer Stripe period boundaries when present.
@@ -158,22 +171,24 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   const cycleStart = subStart && subEnd ? subStart : balStart && balEnd ? balStart : startOfUtcMonth(now);
   const cycleEnd = subStart && subEnd ? subEnd : balStart && balEnd ? balEnd : startOfNextUtcMonth(now);
 
-  const subscriptionRemaining = clampNonNegInt((bal as any)?.subscriptionCreditsRemaining ?? 0);
-  const trialRemaining = clampNonNegInt((bal as any)?.trialCreditsRemaining ?? 0);
-  const purchasedRemaining = clampNonNegInt((bal as any)?.purchasedCreditsRemaining ?? 0);
+  const subscriptionRemaining = clampNonNegInt(bal?.subscriptionCreditsRemaining ?? 0);
+  const trialRemaining = clampNonNegInt(bal?.trialCreditsRemaining ?? 0);
+  const purchasedRemaining = clampNonNegInt(bal?.purchasedCreditsRemaining ?? 0);
 
   const includedRemaining = pro ? subscriptionRemaining : trialRemaining;
   const paidRemaining = purchasedRemaining;
 
-  const onDemandEnabled = Boolean((bal as any)?.onDemandEnabled);
-  const onDemandMonthlyLimitCents = clampNonNegInt((bal as any)?.onDemandMonthlyLimitCents ?? 0);
+  const onDemandEnabled = Boolean(bal?.onDemandEnabled);
+  const onDemandMonthlyLimitCents = clampNonNegInt(bal?.onDemandMonthlyLimitCents ?? 0);
   const centsPerCredit = USD_CENTS_PER_CREDIT;
   // We treat on-demand as "off" unless explicitly enabled with a positive limit.
   const onDemandAllowed = onDemandEnabled && onDemandMonthlyLimitCents > 0;
+  const onDemandUnlimited = onDemandAllowed && onDemandMonthlyLimitCents >= UNLIMITED_LIMIT_CENTS;
 
   // Used this cycle: sum charged credits within the resolved billing cycle window.
   let usedThisCycle = 0;
   let onDemandUsedCreditsThisCycle = 0;
+  let usageReliable = true;
   {
     const t1 = Date.now();
     const cycleKey = `${workspaceId}:${cycleStart.toISOString()}`;
@@ -181,21 +196,22 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
     // Prefer pre-aggregated cycle usage when available (fast path).
     const cycleAgg = await UsageAggCycleModel.findOne({ workspaceId: orgId, cycleKey })
       .select({ totalUsedCredits: 1, onDemandUsedCredits: 1 })
-      .lean();
+      .lean() as UsageAggCycleDoc;
 
     if (cycleAgg) {
-      usedThisCycle = clampNonNegInt((cycleAgg as any)?.totalUsedCredits ?? 0);
-      onDemandUsedCreditsThisCycle = clampNonNegInt((cycleAgg as any)?.onDemandUsedCredits ?? 0);
+      usedThisCycle = clampNonNegInt(cycleAgg.totalUsedCredits ?? 0);
+      onDemandUsedCreditsThisCycle = clampNonNegInt(cycleAgg.onDemandUsedCredits ?? 0);
       debugLog(2, "[credits:snapshot] cycle usage (agg)", { ms: Date.now() - t1, ops: 1 });
     } else if (fast) {
       // Fast mode (used by the dashboard header): do NOT fall back to ledger aggregation.
       // Ledger aggregation can be very expensive on large workspaces and isn't required for the header UX.
       //
-      // To avoid *overstating* remaining credits, we conservatively treat on-demand as fully used
-      // when aggregates are missing.
+      // NOTE: We intentionally avoid showing a false "blocked" state in fast mode.
+      // When aggregates are missing, on-demand usage is treated as unknown (assume 0 used).
       usedThisCycle = 0;
-      onDemandUsedCreditsThisCycle = onDemandAllowed ? Math.floor(onDemandMonthlyLimitCents / centsPerCredit) : 0;
-      debugLog(2, "[credits:snapshot] cycle usage (fast; missing agg)", { ms: Date.now() - t1, ops: 1 });
+      onDemandUsedCreditsThisCycle = 0;
+      usageReliable = false;
+      debugLog(2, "[credits:snapshot] cycle usage (fast; missing agg)", { ms: Date.now() - t1, ops: 1, usageReliable: false });
     } else {
       // Fallback: bounded aggregate over the ledger for correctness while aggregates backfill.
       const agg = await CreditLedgerModel.aggregate([
@@ -214,20 +230,33 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
             onDemandSum: { $sum: "$creditsFromOnDemand" },
           },
         },
-      ]);
-      usedThisCycle = clampNonNegInt((agg as any)?.[0]?.sum ?? 0);
-      onDemandUsedCreditsThisCycle = clampNonNegInt((agg as any)?.[0]?.onDemandSum ?? 0);
+      ]) as CreditLedgerAggResult;
+      usedThisCycle = clampNonNegInt(agg[0]?.sum ?? 0);
+      onDemandUsedCreditsThisCycle = clampNonNegInt(agg[0]?.onDemandSum ?? 0);
       debugLog(2, "[credits:snapshot] cycle usage (ledger agg)", { ms: Date.now() - t1, ops: 1 });
     }
   }
 
   // Blocked when no remaining credits and on-demand is off (or has no remaining headroom).
-  const onDemandRemainingCreditsThisCycle = onDemandAllowed
-    ? Math.max(0, Math.floor(onDemandMonthlyLimitCents / centsPerCredit) - onDemandUsedCreditsThisCycle)
-    : 0;
+  const onDemandRemainingCreditsThisCycle = onDemandUnlimited
+    ? 0
+    : onDemandAllowed
+      ? Math.max(0, Math.floor(onDemandMonthlyLimitCents / centsPerCredit) - onDemandUsedCreditsThisCycle)
+      : 0;
   const paidRemainingWithOnDemand = paidRemaining + onDemandRemainingCreditsThisCycle;
   const creditsRemaining = includedRemaining + paidRemainingWithOnDemand;
-  const blocked = creditsRemaining <= 0;
+
+  const baseRemaining = includedRemaining + paidRemaining;
+  const blocked =
+    baseRemaining > 0
+      ? false
+      : onDemandUnlimited
+        ? false
+        : onDemandAllowed
+          ? usageReliable
+            ? onDemandRemainingCreditsThisCycle <= 0
+            : false
+          : true;
 
   return {
     ok: true,

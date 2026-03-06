@@ -12,48 +12,13 @@ import { Types } from "mongoose";
 import { completeAiRun, failAiRun, startAiRun } from "@/lib/ai/aiRunRecorder";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-
-const CATEGORY_VALUES = [
-  "fundraising_pitch",
-  "sales_pitch",
-  "product_overview",
-  "technical_whitepaper",
-  "business_plan",
-  "investor_update",
-  "financial_report",
-  "market_research",
-  "internal_strategy",
-  "partnership_proposal",
-  "marketing_material",
-  "training_or_manual",
-  "legal_document",
-  "resume_or_profile",
-  "academic_paper",
-  "other",
-] as const;
-
-const INTENDED_AUDIENCE_VALUES = [
-  "investors",
-  "customers",
-  "partners",
-  "internal",
-  "general",
-  "unknown",
-] as const;
-
-const STAGE_VALUES = [
-  "idea",
-  "pre-seed",
-  "seed",
-  "series_a",
-  "growth",
-  "mature",
-  "unknown",
-] as const;
-
-const TONE_VALUES = ["formal", "persuasive", "technical", "marketing", "internal", "mixed"] as const;
-
-const CONFIDENCE_VALUES = ["low", "medium", "high"] as const;
+import {
+  CATEGORY_VALUES,
+  INTENDED_AUDIENCE_VALUES,
+  STAGE_VALUES,
+  TONE_VALUES,
+  CONFIDENCE_VALUES,
+} from "@/lib/ai/constants";
 
 /**
  * Strict validated shape of persisted AI doc analysis output.
@@ -451,6 +416,14 @@ function buildProjectsContextBlock(params: {
 export async function analyzePdfText(input: {
   fullText?: string | null;
   pages?: Array<{ page_number: number; text: string }>;
+  /**
+   * Optional per-page slide images for vision-capable extraction.
+   *
+   * Notes:
+   * - URLs should be publicly accessible Blob URLs.
+   * - Page numbers are 1-indexed.
+   */
+  pageImages?: Array<{ page_number: number; image_url?: string | null; thumb_url?: string | null }>;
   originalFileName?: string | null;
   projects?: ProjectPromptContext[] | null;
   existingProjectIds?: string[] | null;
@@ -510,6 +483,78 @@ export async function analyzePdfText(input: {
     meta,
   });
 
+  // Optional slide image URLs. We:
+  // - include the full index as TEXT so the model can reference it in output reasoning
+  // - attach a capped number of thumbnails as IMAGE parts to enable vision
+  const pageImages = Array.isArray(input.pageImages) ? input.pageImages : [];
+  const imageUrlByPage = new Map<number, { imageUrl: string | null; thumbUrl: string | null }>(
+    pageImages
+      .map((p) => ({
+        n: typeof p?.page_number === "number" ? Math.floor(p.page_number) : NaN,
+        imageUrl: typeof p?.image_url === "string" && p.image_url.trim() ? p.image_url.trim() : null,
+        thumbUrl: typeof p?.thumb_url === "string" && p.thumb_url.trim() ? p.thumb_url.trim() : null,
+      }))
+      .filter((p) => Number.isFinite(p.n) && p.n >= 1)
+      .map((p) => [p.n, { imageUrl: p.imageUrl, thumbUrl: p.thumbUrl }]),
+  );
+
+  const maxAttachedImages =
+    qualityTier === "advanced" ? 45 : qualityTier === "standard" ? 25 : 12;
+
+  const slideImageIndexLines = (() => {
+    const entries = [...imageUrlByPage.entries()].sort((a, b) => a[0] - b[0]);
+    if (!entries.length) return "";
+    const lines: string[] = [];
+    lines.push("Slide image URLs (public):");
+    for (const [n, v] of entries) {
+      const url = v.thumbUrl ?? v.imageUrl;
+      if (!url) continue;
+      lines.push(`- Page ${n}: ${url}`);
+    }
+    return lines.join("\n");
+  })();
+
+  // Build a multi-part "user" message for vision-capable models.
+  // We use `as any` to avoid tight coupling to the AI SDK content-part types in this repo.
+  const messages: any[] = (() => {
+    const parts: any[] = [];
+    const headerLines: string[] = [];
+    headerLines.push(
+      "You will receive PDF-extracted text and (optionally) slide images per page.",
+      "Use images to infer details beyond text (logos, charts, diagrams) when helpful.",
+      "",
+    );
+    if (slideImageIndexLines) headerLines.push(slideImageIndexLines, "");
+    // Include the original userPrompt (filename + full combined text) as a baseline.
+    // This keeps behavior stable even if image parts are dropped by the provider.
+    headerLines.push(userPrompt);
+    parts.push({ type: "text", text: headerLines.join("\n").trim() });
+
+    const pages = Array.isArray(input.pages) ? input.pages : [];
+    if (pages.length && imageUrlByPage.size) {
+      // Attach thumbnails for the first N pages that have them.
+      let attached = 0;
+      for (const p of pages) {
+        const n = typeof p?.page_number === "number" ? Math.floor(p.page_number) : NaN;
+        if (!Number.isFinite(n) || n < 1) continue;
+        if (attached >= maxAttachedImages) break;
+        const url = imageUrlByPage.get(n)?.thumbUrl ?? imageUrlByPage.get(n)?.imageUrl ?? null;
+        if (!url) continue;
+        parts.push({ type: "text", text: `Attached image for page ${n}:` });
+        parts.push({ type: "image", image: url });
+        attached += 1;
+      }
+      if (attached < imageUrlByPage.size) {
+        parts.push({
+          type: "text",
+          text: `Note: attached ${attached} page image(s) (cap=${maxAttachedImages}); remaining pages are provided as URLs above.`,
+        });
+      }
+    }
+
+    return [{ role: "user", content: parts }];
+  })();
+
   try {
     const { object } = await generateObject({
       model: openai(cfg.model),
@@ -522,7 +567,8 @@ export async function analyzePdfText(input: {
             ? 1
             : 0,
       system,
-      prompt: userPrompt,
+      // Prefer multimodal messages when slide images are provided; otherwise fall back to the plain prompt.
+      ...(imageUrlByPage.size ? { messages } : { prompt: userPrompt }),
       ...(typeof maxTokensCfg === "number" ? { maxTokens: maxTokensCfg } : {}),
     });
     const normalized = normalizeAiDocAnalysis(object, input.pages);
@@ -541,7 +587,7 @@ export async function analyzePdfText(input: {
         temperature: 0,
         maxRetries: 0,
         system,
-        prompt: userPrompt,
+        ...(imageUrlByPage.size ? { messages } : { prompt: userPrompt }),
         ...(typeof maxTokensRetry === "number" ? { maxTokens: maxTokensRetry } : {}),
       });
       const normalized = normalizeAiDocAnalysis(object, input.pages);

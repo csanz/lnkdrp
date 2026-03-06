@@ -6,6 +6,7 @@
 
 import WorkspaceManager from "./WorkspaceManager";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
+import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/cn";
 import Link from "next/link";
@@ -73,6 +74,14 @@ function PlaceholderTile({ title, body }: { title: string; body: string }) {
 }
 
 export default function PreferencesPage() {
+  return (
+    <Suspense>
+      <PreferencesPageInner />
+    </Suspense>
+  );
+}
+
+function PreferencesPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tab = tabFromSearchParams(searchParams);

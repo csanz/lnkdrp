@@ -209,7 +209,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
     return NextResponse.json({
       ok: true,
-      kind: (existingPending ? "resent" : "created") as const,
+      kind: existingPending ? "resent" as const : "created" as const,
       emailedOwner,
       emailedRequester,
     });

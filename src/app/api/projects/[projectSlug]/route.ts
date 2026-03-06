@@ -4,32 +4,17 @@
  * Update/delete a project. For request repos, also supports updating request review settings.
  */
 import { NextResponse } from "next/server";
-import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
 
 const MAX_PROJECT_NAME_LENGTH = 80;
-
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
 
 function slugify(input: string) {
   return input
@@ -92,7 +77,7 @@ async function ensureUniqueProjectName(opts: { orgId: Types.ObjectId; legacyUser
 }
 
 function newProjectShareId() {
-  return randomBase62(12);
+  return newShareId();
 }
 /**
  * Escape Regex (uses replace).

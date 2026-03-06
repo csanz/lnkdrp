@@ -6,30 +6,16 @@
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
-import crypto from "node:crypto";
 import { resolveActor } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
 import { UserModel } from "@/lib/models/User";
 import { ProjectModel } from "@/lib/models/Project";
+import { newSecretToken } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
 
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      // 62 * 4 = 248, so values 0..247 map evenly to base62.
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
 function newRequestUploadToken() {
-  return randomBase62(32);
+  return newSecretToken(32);
 }
 
 function isLocalhostRequest(request: Request) {

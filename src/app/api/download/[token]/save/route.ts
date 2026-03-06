@@ -11,30 +11,12 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
+import { newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
 
-const BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-
 function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
-}
-
-function randomBase62(length: number): string {
-  let out = "";
-  while (out.length < length) {
-    const remaining = length - out.length;
-    const buf = crypto.randomBytes(Math.max(8, Math.ceil(remaining * 1.25)));
-    for (const b of buf) {
-      if (b < 248) out += BASE62_ALPHABET[b % 62];
-      if (out.length >= length) break;
-    }
-  }
-  return out;
-}
-
-function newShareId() {
-  return randomBase62(12);
 }
 
 export async function POST(request: Request, ctx: { params: Promise<{ token: string }> }) {

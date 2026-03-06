@@ -40,6 +40,8 @@ type MetricsResponse = {
   }>;
   anonymousViewers?: Array<{
     botIdHash: string;
+    name?: string | null;
+    email?: string | null;
     views: number;
     timeSpentMs?: number;
     pageTimeMsByPage?: Record<string, number>;
@@ -518,6 +520,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   function openAnonViewerDetail(v: NonNullable<MetricsResponse["anonymousViewers"]>[number]) {
     const botIdHash = typeof v.botIdHash === "string" ? v.botIdHash : "";
     const shortId = formatShortId(botIdHash);
+    const name = typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
+    const email = typeof (v as any).email === "string" ? String((v as any).email).trim() : "";
+    const title = name || email || "Anonymous viewer";
+    const subtitle = name && email ? email : shortId ? `Device ${shortId}` : undefined;
     const pagesSeen = Array.isArray(v.pagesSeen)
       ? v.pagesSeen
           .filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1)
@@ -539,8 +545,8 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     setViewerDetail({
       kind: "anon",
       key: botIdHash || "anon",
-      title: "Anonymous viewer",
-      subtitle: shortId ? `Device ${shortId}` : undefined,
+      title,
+      subtitle,
       views: typeof v.views === "number" && Number.isFinite(v.views) ? Math.max(0, Math.floor(v.views)) : 0,
       pagesViewed,
       pagesSeen,
@@ -934,11 +940,25 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                             title="View details"
                           >
                             <div className="min-w-0">
-                              <div className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--fg)]">
-                                <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                                <span className="truncate">Anonymous viewer</span>
-                              </div>
-                              <div className="mt-0.5 text-xs text-[var(--muted-2)]">First seen {formatDateTime(v.firstSeen)}</div>
+                              {(() => {
+                                const name = typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
+                                const email = typeof (v as any).email === "string" ? String((v as any).email).trim() : "";
+                                const title = name || email || "Anonymous viewer";
+                                const showEmailLine = Boolean(name && email);
+                                return (
+                                  <>
+                                    <div className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--fg)]">
+                                      <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                                      <span className="truncate">{title}</span>
+                                    </div>
+                                    {showEmailLine ? (
+                                      <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">{email}</div>
+                                    ) : (
+                                      <div className="mt-0.5 text-xs text-[var(--muted-2)]">First seen {formatDateTime(v.firstSeen)}</div>
+                                    )}
+                                  </>
+                                );
+                              })()}
                             </div>
                             <div className="shrink-0 sm:text-right">
                               <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
@@ -1069,11 +1089,25 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                     title="View details"
                   >
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--fg)]">
-                        <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                        <span className="truncate">Anonymous viewer</span>
-                      </div>
-                      <div className="mt-0.5 text-xs text-[var(--muted-2)]">First seen {formatDateTime(v.firstSeen)}</div>
+                      {(() => {
+                        const name = typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
+                        const email = typeof (v as any).email === "string" ? String((v as any).email).trim() : "";
+                        const title = name || email || "Anonymous viewer";
+                        const showEmailLine = Boolean(name && email);
+                        return (
+                          <>
+                            <div className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--fg)]">
+                              <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                              <span className="truncate">{title}</span>
+                            </div>
+                            {showEmailLine ? (
+                              <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">{email}</div>
+                            ) : (
+                              <div className="mt-0.5 text-xs text-[var(--muted-2)]">First seen {formatDateTime(v.firstSeen)}</div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                     <div className="shrink-0 sm:text-right">
                       <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">

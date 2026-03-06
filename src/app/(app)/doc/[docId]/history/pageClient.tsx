@@ -5,7 +5,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Modal from "@/components/modals/Modal";
@@ -122,6 +122,12 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [docCurrentVersion, setDocCurrentVersion] = useState<number | null>(null);
   const [items, setItems] = useState<DocChangeItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [expandedById, setExpandedById] = useState<Record<string, boolean>>({});
+  const [impactFilter, setImpactFilter] = useState<"all" | "none" | "minor" | "medium" | "major">("all");
+  const [sort, setSort] = useState<"version_desc" | "version_asc">("version_desc");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState<number>(20);
   const [recipientsByVersion, setRecipientsByVersion] = useState<Record<string, RecipientRow[]>>({});
   const [recipientsLoadingByVersion, setRecipientsLoadingByVersion] = useState<Record<string, boolean>>({});
   const [viewerStatsOpen, setViewerStatsOpen] = useState<null | { version: number; userId: string; name: string | null; email: string | null }>(null);
@@ -153,53 +159,100 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     };
   }, []);
 
-  async function refresh() {
-    const changesRes = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/changes?noText=1`, { cache: "no-store" });
-
-    if (changesRes.ok) {
-      const json = (await changesRes.json()) as any;
-      const t = typeof json?.docTitle === "string" ? json.docTitle.trim() : "";
-      if (t) setDocTitle(t);
-      const v = typeof json?.currentUploadVersion === "number" && Number.isFinite(json.currentUploadVersion) ? json.currentUploadVersion : null;
-      setDocCurrentVersion(v);
-      const arr = json && typeof json === "object" && Array.isArray((json as any).changes) ? ((json as any).changes as any[]) : [];
-      const next: DocChangeItem[] = arr
-        .map((c) => {
-          const id = typeof c?.id === "string" ? c.id : "";
-          const summary = typeof c?.summary === "string" ? c.summary : "";
-          const changes = Array.isArray(c?.changes) ? c.changes : [];
-          const createdDate = typeof c?.createdDate === "string" ? c.createdDate : null;
-          const impact = inferImpactLevel({ summary, changes });
-          const tags = inferTags({ summary, changes });
-          const timeLabel = createdDate ? formatRelativeAge(createdDate) : null;
-          return {
-            id,
-            fromVersion: typeof c?.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
-            toVersion: typeof c?.toVersion === "number" && Number.isFinite(c.toVersion) ? c.toVersion : null,
-            summary,
-            changes,
-            previousText: typeof c?.previousText === "string" ? c.previousText : "",
-            newText: typeof c?.newText === "string" ? c.newText : "",
-            createdBy:
-              c?.createdBy && typeof c.createdBy === "object"
-                ? {
-                    id: typeof c.createdBy.id === "string" ? c.createdBy.id : null,
-                    name: typeof c.createdBy.name === "string" ? c.createdBy.name : null,
-                    email: typeof c.createdBy.email === "string" ? c.createdBy.email : null,
-                  }
-                : null,
-            createdDate,
-            impact,
-            tags,
-            timeLabel,
-          } satisfies DocChangeItem;
-        })
-        .filter((c) => Boolean(c.id));
-      setItems(next);
-    } else {
-      setItems([]);
-    }
+  function parseChangeListPayload(json: any): { items: DocChangeItem[]; nextCursor: string | null } {
+    const arr = json && typeof json === "object" && Array.isArray((json as any).changes) ? ((json as any).changes as any[]) : [];
+    const parsedNextCursor = typeof json?.nextCursor === "string" && json.nextCursor.trim() ? json.nextCursor.trim() : null;
+    const next: DocChangeItem[] = arr
+      .map((c) => {
+        const id = typeof c?.id === "string" ? c.id : "";
+        const summary = typeof c?.summary === "string" ? c.summary : "";
+        const changes = Array.isArray(c?.changes) ? c.changes : [];
+        const createdDate = typeof c?.createdDate === "string" ? c.createdDate : null;
+        const impact = inferImpactLevel({ summary, changes });
+        const tags = inferTags({ summary, changes });
+        const timeLabel = createdDate ? formatRelativeAge(createdDate) : null;
+        return {
+          id,
+          fromVersion: typeof c?.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
+          toVersion: typeof c?.toVersion === "number" && Number.isFinite(c.toVersion) ? c.toVersion : null,
+          summary,
+          changes,
+          previousText: typeof c?.previousText === "string" ? c.previousText : "",
+          newText: typeof c?.newText === "string" ? c.newText : "",
+          createdBy:
+            c?.createdBy && typeof c.createdBy === "object"
+              ? {
+                  id: typeof c.createdBy.id === "string" ? c.createdBy.id : null,
+                  name: typeof c.createdBy.name === "string" ? c.createdBy.name : null,
+                  email: typeof c.createdBy.email === "string" ? c.createdBy.email : null,
+                }
+              : null,
+          createdDate,
+          impact,
+          tags,
+          timeLabel,
+        } satisfies DocChangeItem;
+      })
+      .filter((c) => Boolean(c.id));
+    return { items: next, nextCursor: parsedNextCursor };
   }
+
+  const refreshFirstPage = useCallback(
+    async (params?: { keepExpanded?: boolean }) => {
+      const changesRes = await fetchWithTempUser(
+        `/api/docs/${encodeURIComponent(docId)}/changes?noText=1&sort=${encodeURIComponent(sort)}&limit=${encodeURIComponent(
+          String(pageSize),
+        )}`,
+        { cache: "no-store" },
+      );
+
+      if (changesRes.ok) {
+        const json = (await changesRes.json()) as any;
+        const t = typeof json?.docTitle === "string" ? json.docTitle.trim() : "";
+        if (t) setDocTitle(t);
+        const v = typeof json?.currentUploadVersion === "number" && Number.isFinite(json.currentUploadVersion) ? json.currentUploadVersion : null;
+        setDocCurrentVersion(v);
+        const parsed = parseChangeListPayload(json);
+        setItems(parsed.items);
+        setNextCursor(parsed.nextCursor);
+        if (!params?.keepExpanded) setExpandedById({});
+      } else {
+        setItems([]);
+        setNextCursor(null);
+        if (!params?.keepExpanded) setExpandedById({});
+      }
+    },
+    [docId, pageSize, sort],
+  );
+
+  const loadMore = useCallback(async () => {
+    if (!nextCursor) return;
+    if (loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetchWithTempUser(
+        `/api/docs/${encodeURIComponent(docId)}/changes?noText=1&sort=${encodeURIComponent(sort)}&limit=${encodeURIComponent(
+          String(pageSize),
+        )}&cursor=${encodeURIComponent(nextCursor)}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) return;
+      const json = (await res.json().catch(() => null)) as any;
+      const parsed = parseChangeListPayload(json);
+      setItems((prev) => {
+        const seen = new Set(prev.map((x) => x.id));
+        const merged = [...prev];
+        for (const it of parsed.items) {
+          if (seen.has(it.id)) continue;
+          merged.push(it);
+        }
+        return merged;
+      });
+      setNextCursor(parsed.nextCursor);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [docId, loadingMore, nextCursor, pageSize, sort]);
 
   async function ensureChangeText(changeId: string) {
     const id = (changeId ?? "").toString().trim();
@@ -232,7 +285,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     async function load() {
       setLoading(true);
       try {
-        await refresh();
+        await refreshFirstPage();
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -241,9 +294,21 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [docId]);
+  }, [refreshFirstPage]);
 
   const hasHistory = items.length > 0;
+  const filteredItems = useMemo(() => {
+    if (impactFilter === "all") return items;
+    const want =
+      impactFilter === "none"
+        ? "None"
+        : impactFilter === "minor"
+          ? "Minor"
+          : impactFilter === "medium"
+            ? "Medium"
+            : "Major";
+    return items.filter((it) => it.impact.label === want);
+  }, [items, impactFilter]);
   const newestToVersion = useMemo(() => {
     const vs = items.map((x) => x.toVersion).filter((v): v is number => typeof v === "number" && Number.isFinite(v));
     return vs.length ? Math.max(...vs) : null;
@@ -437,7 +502,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                       {loading
                         ? "Loading…"
                         : hasHistory
-                          ? `Showing ${items.length} change ${items.length === 1 ? "record" : "records"}`
+                          ? `Showing ${filteredItems.length} change ${filteredItems.length === 1 ? "record" : "records"}`
                           : "No replacement history yet"}
                     </div>
                   </div>
@@ -448,20 +513,64 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   ) : null}
                 </div>
 
-                <div className="px-5 py-4" id="versions">
+                <div className="px-5 py-3" id="versions">
                   {!loading && !hasHistory ? (
                     <div className="text-sm text-[var(--muted)]">
                       Replace the file to generate a version change summary.
                     </div>
                   ) : null}
 
-                  <div className="space-y-4">
-                    {items.map((it) => {
+                  {/* Controls */}
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <div className="text-[11px] font-semibold text-[var(--muted)]">Filter</div>
+                    <select
+                      className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                      value={impactFilter}
+                      onChange={(e) => setImpactFilter(e.target.value as any)}
+                      aria-label="Filter by impact"
+                      title="Filter by impact"
+                    >
+                      <option value="all">All</option>
+                      <option value="none">None</option>
+                      <option value="minor">Minor</option>
+                      <option value="medium">Medium</option>
+                      <option value="major">Major</option>
+                    </select>
+
+                    <div className="ml-2 text-[11px] font-semibold text-[var(--muted)]">Sort</div>
+                    <select
+                      className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                      value={sort}
+                      onChange={(e) => setSort(e.target.value as any)}
+                      aria-label="Sort versions"
+                      title="Sort versions"
+                    >
+                      <option value="version_desc">Newest first</option>
+                      <option value="version_asc">Oldest first</option>
+                    </select>
+
+                    <div className="ml-2 text-[11px] font-semibold text-[var(--muted)]">Page size</div>
+                    <select
+                      className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                      value={String(pageSize)}
+                      onChange={(e) => setPageSize(Math.max(5, Math.min(50, Number(e.target.value) || 20)))}
+                      aria-label="Page size"
+                      title="Page size"
+                    >
+                      <option value="10">10</option>
+                      <option value="20">20</option>
+                      <option value="30">30</option>
+                      <option value="50">50</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-2">
+                    {filteredItems.map((it) => {
                       const toV = it.toVersion;
                       const fromV = it.fromVersion;
                       const anchorId = toV ? `v-${toV}` : it.id;
                       const impact = it.impact;
-                      const tags = it.tags;
+                      const isExpanded = Boolean(expandedById[it.id]);
                       const uploaderLabel = it.createdBy?.name ?? it.createdBy?.email ?? null;
                       const timeLabel = it.timeLabel;
                       const absoluteLabel = it.createdDate
@@ -475,261 +584,272 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                         : null;
                       return (
                         <div key={it.id} id={anchorId} className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-semibold text-[var(--fg)]">
-                                {toV ? `v${toV}` : "Version"}
-                              </span>
-                              {fromV && toV ? (
-                                <span className="text-xs text-[var(--muted)]">from v{fromV} → v{toV}</span>
+                          <div className="flex items-start justify-between gap-3 px-4 py-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <span className="text-xs font-semibold text-[var(--fg)]">{toV ? `v${toV}` : "Version"}</span>
+                                {fromV && toV ? (
+                                  <span className="text-[11px] text-[var(--muted)]">from v{fromV} → v{toV}</span>
+                                ) : null}
+                                <span
+                                  className={[
+                                    "rounded-md px-2 py-0.5 text-[11px] font-medium",
+                                    impact.tone === "muted"
+                                      ? "bg-[var(--panel-hover)] text-[var(--muted-2)]"
+                                      : impact.tone === "ok"
+                                        ? "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-0"
+                                        : "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-0",
+                                  ].join(" ")}
+                                  title="Best-effort impact estimate (derived from change list)"
+                                >
+                                  {impact.label}
+                                </span>
+                              </div>
+                              <div className="mt-1 line-clamp-2 text-sm text-[var(--fg)]">
+                                {it.summary?.trim() ? it.summary.trim() : "Change summary unavailable."}
+                              </div>
+                              {(uploaderLabel || timeLabel) ? (
+                                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--muted)]">
+                                  {uploaderLabel ? (
+                                    <span>
+                                      by <span className="font-medium text-[var(--fg)]">{uploaderLabel}</span>
+                                    </span>
+                                  ) : null}
+                                  {timeLabel ? (
+                                    <span title={absoluteLabel ?? undefined}>
+                                      updated <span className="font-medium text-[var(--fg)]">{timeLabel}</span>
+                                    </span>
+                                  ) : null}
+                                </div>
                               ) : null}
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span
-                                className={[
-                                  "rounded-md px-2 py-0.5 text-[11px] font-medium",
-                                  impact.tone === "muted"
-                                    ? "bg-[var(--panel-hover)] text-[var(--muted-2)]"
-                                    : impact.tone === "ok"
-                                      ? "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-0"
-                                      : "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-0",
-                                ].join(" ")}
-                                title="Best-effort impact estimate (derived from change list)"
-                              >
-                                {impact.label}
-                              </span>
-                            </div>
-                          </div>
 
-                          <div className="px-4 py-4">
-                            {(uploaderLabel || timeLabel) ? (
-                              <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--muted)]">
-                                {uploaderLabel ? (
-                                  <span>
-                                    by{" "}
-                                    <span className="font-medium text-[var(--fg)]">
-                                      {uploaderLabel}
-                                    </span>
-                                  </span>
-                                ) : null}
-                                {timeLabel ? (
-                                  <span title={absoluteLabel ?? undefined}>
-                                    updated{" "}
-                                    <span className="font-medium text-[var(--fg)]">{timeLabel}</span>
-                                  </span>
-                                ) : null}
-                                {tags.length ? (
-                                  <span className="flex flex-wrap items-center gap-1.5">
-                                    {tags.map((t) => (
-                                      <span
-                                        key={t}
-                                        className="rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
-                                      >
-                                        {t}
-                                      </span>
-                                    ))}
-                                  </span>
-                                ) : null}
-                              </div>
-                            ) : null}
-
-                            <div className="text-sm leading-relaxed text-[var(--fg)]">
-                              {it.summary?.trim() ? it.summary.trim() : "Change summary unavailable."}
-                            </div>
-
-                            {Array.isArray(it.changes) && it.changes.length ? (
-                              <ul className="mt-4 list-disc space-y-1.5 pl-5 text-sm text-[var(--muted)]">
-                                {it.changes.map((c, idx) => (
-                                  <li key={idx}>
-                                    <span className="font-medium text-[var(--fg)]">{(c?.title ?? "").toString()}</span>
-                                    {c?.detail ? (
-                                      <span className="text-[var(--muted)]"> — {String(c.detail)}</span>
-                                    ) : null}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : null}
-
-                            <div className="mt-4 flex flex-wrap items-center gap-2">
+                            <div className="shrink-0">
                               <button
                                 type="button"
-                                className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                                onClick={() => {
-                                  const text = (it.summary ?? "").toString().trim();
-                                  if (!text) return;
-                                  void navigator.clipboard?.writeText(text);
-                                }}
-                                title="Copy summary"
-                              >
-                                Copy summary
-                              </button>
-
-                              <select
-                                className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                                value={rerunTierById[it.id] ?? defaultHistoryTier}
-                                onChange={(e) =>
-                                  setRerunTierById((m) => ({ ...m, [it.id]: e.target.value as any }))
+                                className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                                onClick={() =>
+                                  setExpandedById((m) => ({ ...m, [it.id]: !Boolean(m[it.id]) }))
                                 }
-                                aria-label="History quality"
-                                title="Choose quality for history regeneration"
+                                aria-expanded={isExpanded}
+                                aria-label={isExpanded ? "Collapse details" : "Expand details"}
                               >
-                                <option value="basic">Basic (2 credits)</option>
-                                <option value="standard">Standard (5 credits)</option>
-                                <option value="advanced">Advanced (12 credits)</option>
-                              </select>
-                              <button
-                                type="button"
-                                className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
-                                disabled={Boolean(rerunBusyById[it.id])}
-                                onClick={() => {
-                                  void (async () => {
-                                    const tier = rerunTierById[it.id] ?? "standard";
-                                    const idKey =
-                                      typeof crypto !== "undefined" && "randomUUID" in crypto
-                                        ? (crypto as any).randomUUID()
-                                        : String(Date.now());
-                                    setRerunBusyById((m) => ({ ...m, [it.id]: true }));
-                                    setRerunErrorById((m) => ({ ...m, [it.id]: "" }));
-                                    try {
-                                      const res = await fetchWithTempUser(
-                                        `/api/docs/${encodeURIComponent(docId)}/changes/${encodeURIComponent(it.id)}/rerun`,
-                                        {
-                                          method: "POST",
-                                          headers: { "content-type": "application/json", "x-idempotency-key": idKey },
-                                          body: JSON.stringify({ qualityTier: tier }),
-                                        },
-                                      );
-                                      if (res.status === 402) {
-                                        dispatchOutOfCredits();
-                                        return;
-                                      }
-                                      const json = (await res.json().catch(() => null)) as any;
-                                      if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
-                                      await refresh();
-                                    } catch (e) {
-                                      setRerunErrorById((m) => ({ ...m, [it.id]: e instanceof Error ? e.message : "Failed" }));
-                                    } finally {
-                                      setRerunBusyById((m) => ({ ...m, [it.id]: false }));
-                                    }
-                                  })();
-                                }}
-                                title="Regenerate this change summary"
-                              >
-                                {rerunBusyById[it.id] ? "Regenerating…" : "Regenerate"}
+                                {isExpanded ? "Collapse" : "Expand"}
                               </button>
                             </div>
-                            {rerunErrorById[it.id] ? (
-                              <div className="mt-2 text-xs font-medium text-red-700">{rerunErrorById[it.id]}</div>
-                            ) : null}
-
-                            <details
-                              className="mt-4"
-                              onToggle={(e) => {
-                                const el = e.currentTarget;
-                                if (!el.open) return;
-                                void ensureChangeText(it.id);
-                              }}
-                            >
-                              <summary className="cursor-pointer select-none text-xs font-medium text-[var(--muted)] hover:text-[var(--fg)]">
-                                View extracted text (previous vs new)
-                              </summary>
-                              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                                <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
-                                  <div className="text-xs font-semibold text-[var(--fg)]">Previous</div>
-                                  <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--muted)]">
-                                    {it.previousText || "(empty)"}
-                                  </pre>
-                                </div>
-                                <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
-                                  <div className="text-xs font-semibold text-[var(--fg)]">New</div>
-                                  <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--muted)]">
-                                    {it.newText || "(empty)"}
-                                  </pre>
-                                </div>
-                              </div>
-                            </details>
-
-                            {/* Notification recipients (preview) */}
-                            {toV ? (
-                              <div className="mt-5 rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
-                                <div className="flex items-center justify-between gap-3">
-                                  <div className="text-xs font-semibold text-[var(--fg)]">Recipients</div>
-                                  <button
-                                    type="button"
-                                    className="text-[11px] font-semibold text-[var(--muted)] hover:text-[var(--fg)]"
-                                    onClick={() => void ensureRecipients(toV)}
-                                    title="Refresh recipients"
-                                  >
-                                    {recipientsLoadingByVersion[String(toV)] ? "Loading…" : "Load"}
-                                  </button>
-                                </div>
-
-                                {(() => {
-                                  const rows = recipientsByVersion[String(toV)] ?? [];
-                                  const shown = rows.slice(0, 5);
-                                  const more = rows.length > 5 ? rows.length - 5 : 0;
-                                  if (!rows.length) {
-                                    return (
-                                      <div className="mt-2 text-xs text-[var(--muted)]">
-                                        {recipientsLoadingByVersion[String(toV)]
-                                          ? "Loading recipients…"
-                                          : "Load to see who will be notified and who opened this version."}
-                                      </div>
-                                    );
-                                  }
-                                  return (
-                                    <>
-                                      <div className="mt-2 divide-y divide-[var(--border)] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--bg)]">
-                                        {shown.map((r) => (
-                                          <div key={r.userId} className="flex items-center justify-between gap-3 px-3 py-2">
-                                            <div className="min-w-0">
-                                              <div className="truncate text-xs font-medium text-[var(--fg)]">
-                                                {r.name ?? r.email ?? "Unknown"}
-                                              </div>
-                                              {r.name && r.email ? (
-                                                <div className="truncate text-[11px] text-[var(--muted)]">{r.email}</div>
-                                              ) : null}
-                                            </div>
-                                            <div className="flex shrink-0 items-center gap-2">
-                                              <span
-                                                className={[
-                                                  "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold",
-                                                  r.opened
-                                                    ? "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-0"
-                                                    : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
-                                                ].join(" ")}
-                                                title={r.opened ? "Opened (viewed any page)" : "Not opened yet"}
-                                              >
-                                                {r.opened ? "Opened ✓" : "Not opened"}
-                                              </span>
-                                              <button
-                                                type="button"
-                                                className="text-[11px] font-semibold text-[var(--muted)] hover:text-[var(--fg)]"
-                                                onClick={() =>
-                                                  void openViewerStats({ version: toV, userId: r.userId, name: r.name, email: r.email })
-                                                }
-                                              >
-                                                Stats
-                                              </button>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                      {more ? (
-                                        <div className="mt-2 text-xs text-[var(--muted)]">
-                                          +{more} more (See more coming next)
-                                        </div>
-                                      ) : null}
-                                    </>
-                                  );
-                                })()}
-                              </div>
-                            ) : null}
                           </div>
+
+                          {isExpanded ? (
+                            <div className="border-t border-[var(--border)] px-4 py-4">
+                              {Array.isArray(it.changes) && it.changes.length ? (
+                                <ul className="list-disc space-y-1.5 pl-5 text-sm text-[var(--muted)]">
+                                  {it.changes.map((c, idx) => (
+                                    <li key={idx}>
+                                      <span className="font-medium text-[var(--fg)]">{(c?.title ?? "").toString()}</span>
+                                      {c?.detail ? (
+                                        <span className="text-[var(--muted)]"> — {String(c.detail)}</span>
+                                      ) : null}
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div className="text-sm text-[var(--muted)]">No detailed change list available.</div>
+                              )}
+
+                              <div className="mt-4 flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                                  onClick={() => {
+                                    const text = (it.summary ?? "").toString().trim();
+                                    if (!text) return;
+                                    void navigator.clipboard?.writeText(text);
+                                  }}
+                                  title="Copy summary"
+                                >
+                                  Copy summary
+                                </button>
+
+                                <select
+                                  className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                                  value={rerunTierById[it.id] ?? defaultHistoryTier}
+                                  onChange={(e) =>
+                                    setRerunTierById((m) => ({ ...m, [it.id]: e.target.value as any }))
+                                  }
+                                  aria-label="History quality"
+                                  title="Choose quality for history regeneration"
+                                >
+                                  <option value="basic">Basic (2 credits)</option>
+                                  <option value="standard">Standard (5 credits)</option>
+                                  <option value="advanced">Advanced (12 credits)</option>
+                                </select>
+                                <button
+                                  type="button"
+                                  className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
+                                  disabled={Boolean(rerunBusyById[it.id])}
+                                  onClick={() => {
+                                    void (async () => {
+                                      const tier = rerunTierById[it.id] ?? "standard";
+                                      const idKey =
+                                        typeof crypto !== "undefined" && "randomUUID" in crypto
+                                          ? (crypto as any).randomUUID()
+                                          : String(Date.now());
+                                      setRerunBusyById((m) => ({ ...m, [it.id]: true }));
+                                      setRerunErrorById((m) => ({ ...m, [it.id]: "" }));
+                                      try {
+                                        const res = await fetchWithTempUser(
+                                          `/api/docs/${encodeURIComponent(docId)}/changes/${encodeURIComponent(it.id)}/rerun`,
+                                          {
+                                            method: "POST",
+                                            headers: { "content-type": "application/json", "x-idempotency-key": idKey },
+                                            body: JSON.stringify({ qualityTier: tier }),
+                                          },
+                                        );
+                                        if (res.status === 402) {
+                                          dispatchOutOfCredits();
+                                          return;
+                                        }
+                                        const json = (await res.json().catch(() => null)) as any;
+                                        if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+                                        await refreshFirstPage({ keepExpanded: true });
+                                      } catch (e) {
+                                        setRerunErrorById((m) => ({ ...m, [it.id]: e instanceof Error ? e.message : "Failed" }));
+                                      } finally {
+                                        setRerunBusyById((m) => ({ ...m, [it.id]: false }));
+                                      }
+                                    })();
+                                  }}
+                                  title="Regenerate this change summary"
+                                >
+                                  {rerunBusyById[it.id] ? "Regenerating…" : "Regenerate"}
+                                </button>
+                              </div>
+                              {rerunErrorById[it.id] ? (
+                                <div className="mt-2 text-xs font-medium text-red-700">{rerunErrorById[it.id]}</div>
+                              ) : null}
+
+                              <details
+                                className="mt-4"
+                                onToggle={(e) => {
+                                  const el = e.currentTarget;
+                                  if (!el.open) return;
+                                  void ensureChangeText(it.id);
+                                }}
+                              >
+                                <summary className="cursor-pointer select-none text-xs font-medium text-[var(--muted)] hover:text-[var(--fg)]">
+                                  View extracted text (previous vs new)
+                                </summary>
+                                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                                  <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+                                    <div className="text-xs font-semibold text-[var(--fg)]">Previous</div>
+                                    <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--muted)]">
+                                      {it.previousText || "(empty)"}
+                                    </pre>
+                                  </div>
+                                  <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+                                    <div className="text-xs font-semibold text-[var(--fg)]">New</div>
+                                    <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--muted)]">
+                                      {it.newText || "(empty)"}
+                                    </pre>
+                                  </div>
+                                </div>
+                              </details>
+
+                              {/* Notification recipients (preview) */}
+                              {toV ? (
+                                <div className="mt-5 rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+                                  <div className="flex items-center justify-between gap-3">
+                                    <div className="text-xs font-semibold text-[var(--fg)]">Recipients</div>
+                                    <button
+                                      type="button"
+                                      className="text-[11px] font-semibold text-[var(--muted)] hover:text-[var(--fg)]"
+                                      onClick={() => void ensureRecipients(toV)}
+                                      title="Refresh recipients"
+                                    >
+                                      {recipientsLoadingByVersion[String(toV)] ? "Loading…" : "Load"}
+                                    </button>
+                                  </div>
+
+                                  {(() => {
+                                    const rows = recipientsByVersion[String(toV)] ?? [];
+                                    const shown = rows.slice(0, 5);
+                                    const more = rows.length > 5 ? rows.length - 5 : 0;
+                                    if (!rows.length) {
+                                      return (
+                                        <div className="mt-2 text-xs text-[var(--muted)]">
+                                          {recipientsLoadingByVersion[String(toV)]
+                                            ? "Loading recipients…"
+                                            : "Load to see who will be notified and who opened this version."}
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <>
+                                        <div className="mt-2 divide-y divide-[var(--border)] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                                          {shown.map((r) => (
+                                            <div key={r.userId} className="flex items-center justify-between gap-3 px-3 py-2">
+                                              <div className="min-w-0">
+                                                <div className="truncate text-xs font-medium text-[var(--fg)]">
+                                                  {r.name ?? r.email ?? "Unknown"}
+                                                </div>
+                                                {r.name && r.email ? (
+                                                  <div className="truncate text-[11px] text-[var(--muted)]">{r.email}</div>
+                                                ) : null}
+                                              </div>
+                                              <div className="flex shrink-0 items-center gap-2">
+                                                <span
+                                                  className={[
+                                                    "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold",
+                                                    r.opened
+                                                      ? "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-0"
+                                                      : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
+                                                  ].join(" ")}
+                                                  title={r.opened ? "Opened (viewed any page)" : "Not opened yet"}
+                                                >
+                                                  {r.opened ? "Opened ✓" : "Not opened"}
+                                                </span>
+                                                <button
+                                                  type="button"
+                                                  className="text-[11px] font-semibold text-[var(--muted)] hover:text-[var(--fg)]"
+                                                  onClick={() =>
+                                                    void openViewerStats({ version: toV, userId: r.userId, name: r.name, email: r.email })
+                                                  }
+                                                >
+                                                  Stats
+                                                </button>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                        {more ? (
+                                          <div className="mt-2 text-xs text-[var(--muted)]">
+                                            +{more} more (See more coming next)
+                                          </div>
+                                        ) : null}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
                   </div>
+
+                  {nextCursor ? (
+                    <div className="mt-4 flex items-center justify-center">
+                      <button
+                        type="button"
+                        className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
+                        disabled={loadingMore}
+                        onClick={() => void loadMore()}
+                      >
+                        {loadingMore ? "Loading…" : "Load more"}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
