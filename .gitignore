@@ -22,6 +22,7 @@
 
 # misc
 .DS_Store
+.__mtime_ref
 *.pem
 ACCESS.md
 
@@ -49,6 +50,14 @@ next-env.d.ts
 
 # AI context files
 .aicontext/
+
+# IDE config (personal)
+.cursorrules
+
+# test/sample assets (not deployed)
+/public/sample/
+/public/images/archive/
+/src/app/test/
 
 # local auth cookies (benchmark scripts)
 /scripts/cookie.json
