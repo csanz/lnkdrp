@@ -1,12 +1,15 @@
 import { describe, expect, test, vi } from "vitest";
 
+const mockActor = {
+  kind: "user",
+  userId: "507f1f77bcf86cd799439012",
+  orgId: "507f1f77bcf86cd799439011",
+  personalOrgId: "507f1f77bcf86cd799439013",
+};
+
 vi.mock("@/lib/gating/actor", () => ({
-  resolveActor: vi.fn(async () => ({
-    kind: "user",
-    userId: "507f1f77bcf86cd799439012",
-    orgId: "507f1f77bcf86cd799439011",
-    personalOrgId: "507f1f77bcf86cd799439013",
-  })),
+  resolveActor: vi.fn(async () => mockActor),
+  resolveActorForStats: vi.fn(async () => mockActor),
 }));
 
 vi.mock("@/lib/mongodb", () => ({
@@ -35,5 +38,3 @@ describe("/api/billing/invoices", () => {
     expect(json.selectedMonth).toBe("2026-01");
   });
 });
-
-

@@ -83,7 +83,7 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ uploadId
   const now = new Date();
   const res = await UploadModel.updateOne(
     { _id: new Types.ObjectId(uploadId) },
-    { $set: { isDeleted: true, deletedDate: now, isDeletedDate: now } },
+    { $set: { isDeleted: true, deletedDate: now } },
   );
   if (!res.matchedCount) return NextResponse.json({ error: "Upload not found" }, { status: 404 });
 

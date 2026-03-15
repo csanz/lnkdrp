@@ -112,26 +112,11 @@ async function getPdfJsLib(): Promise<PdfJsLib> {
 
       pkgRoot = pkgJsonPath ? path.dirname(pkgJsonPath) : "";
 
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[process][pdfjs] resolved package", {
-          cwd: process.cwd(),
-          importMetaUrl: import.meta.url,
-          pkgJsonPath,
-          pkgRoot,
-        });
-      }
+      debugLog(2, "[process][pdfjs] resolved package", { pkgJsonPath, pkgRoot });
     } catch (e) {
       debugError(1, "[process] pdfjs resolve failed", {
         message: e instanceof Error ? e.message : String(e),
       });
-      if (process.env.NODE_ENV !== "production") {
-        console.error("[process][pdfjs] resolve failed", {
-          cwd: process.cwd(),
-          importMetaUrl: import.meta.url,
-          message: e instanceof Error ? e.message : String(e),
-          stack: e instanceof Error ? e.stack : null,
-        });
-      }
       throw e;
     }
     if (!pkgRoot) throw new Error("Failed to resolve pdfjs-dist package root");
@@ -154,12 +139,6 @@ async function getPdfJsLib(): Promise<PdfJsLib> {
         pkgRoot,
         candidates: entryCandidates,
       });
-      if (process.env.NODE_ENV !== "production") {
-        console.error("[process][pdfjs] no entry found under package root", {
-          pkgRoot,
-          candidates: entryCandidates,
-        });
-      }
       throw new Error(`pdfjs-dist entry not found under ${pkgRoot}`);
     }
 
@@ -170,9 +149,7 @@ async function getPdfJsLib(): Promise<PdfJsLib> {
       /* webpackIgnore: true */ pathToFileURL(pdfPath).href
     )) as unknown as PdfJsLib;
 
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[process][pdfjs] imported", { pdfPath });
-    }
+    debugLog(2, "[process][pdfjs] imported", { pdfPath });
 
     // pdfjs-dist on Node uses a "fake worker" implementation that still needs access to the worker module.
     // In Next dev, the default worker resolution can point at a non-existent `.next/.../pdf.worker.mjs` chunk.
@@ -195,9 +172,7 @@ async function getPdfJsLib(): Promise<PdfJsLib> {
         if (workerPath) {
           // Use a file:// URL so Node can import it regardless of how Next rewrites module ids.
           pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-          if (process.env.NODE_ENV !== "production") {
-            console.log("[process][pdfjs] workerSrc set", { workerPath });
-          }
+          debugLog(2, "[process][pdfjs] workerSrc set", { workerPath });
         }
       }
     } catch {
@@ -1119,7 +1094,7 @@ export async function POST(
   const { uploadId } = await ctx.params;
   const traceId = crypto.randomBytes(6).toString("base64url");
   if (!Types.ObjectId.isValid(uploadId)) {
-    console.warn("[process] invalid uploadId", { traceId, uploadId });
+    debugLog(1, "[process] invalid uploadId", { traceId, uploadId });
     return NextResponse.json({ error: "Invalid uploadId", traceId }, { status: 400 });
   }
 
@@ -1130,15 +1105,13 @@ export async function POST(
     qualityRaw === "advanced" ? ("advanced" as const) : qualityRaw === "basic" ? ("basic" as const) : ("standard" as const);
   const requestIdempotencyKey = idempotencyKeyFromRequest(request);
 
-  // Unconditional server logs (debugging aid even when DEBUG_LEVEL=0 / prod builds).
-  console.log("[process] queued", {
+  debugLog(1, "[process] queued", {
     traceId,
     uploadId,
     forceReviewRequested,
     quality: forceReviewQualityTier,
     idempotencyKey: requestIdempotencyKey ? "[set]" : "",
   });
-  debugLog(1, "[process] queued", { traceId, uploadId });
 
   await connectMongo();
   const uploadSecret = header(request, "x-upload-secret");
@@ -1186,7 +1159,7 @@ export async function POST(
       }
     } catch {
       // Best-effort: if snapshot fails, fall back to per-action reservation enforcement inside the job.
-      console.warn("[process] credits snapshot failed (continuing)", { traceId, uploadId });
+      debugLog(1, "[process] credits snapshot failed (continuing)", { traceId, uploadId });
     }
   }
 
@@ -1194,7 +1167,6 @@ export async function POST(
   after(async () => {
     const startedAt = Date.now();
     try {
-      console.log("[process] start", { traceId, uploadId });
       debugLog(1, "[process] start", { traceId, uploadId });
       await connectMongo();
       // Allow rerunning the review agent for signed-in users, and also for temp-user
@@ -1775,9 +1747,7 @@ export async function POST(
 
       // Preview PNG (retryable)
       try {
-        if (process.env.NODE_ENV !== "production") {
-          console.log("[process] preview begin", { uploadId, isReplacement, uploadVersion });
-        }
+        debugLog(2, "[process] preview begin", { uploadId, isReplacement, uploadVersion });
         const existingPreview =
           upload.previewImageUrl ?? upload.firstPagePngUrl ?? null;
 
@@ -1802,9 +1772,7 @@ export async function POST(
             addRandomSuffix: false,
           });
           previewUrl = blob.url;
-          if (process.env.NODE_ENV !== "production") {
-            console.log("[process] preview uploaded", { uploadId, previewPathname, previewUrlSet: Boolean(previewUrl) });
-          }
+          debugLog(2, "[process] preview uploaded", { uploadId, previewPathname });
         }
       } catch (e) {
         jobError = jobError ?? e;
@@ -1813,13 +1781,6 @@ export async function POST(
           uploadId,
           message: e instanceof Error ? e.message : String(e),
         });
-        if (process.env.NODE_ENV !== "production") {
-          console.error("[process] preview failed", {
-            uploadId,
-            message: e instanceof Error ? e.message : String(e),
-            stack: e instanceof Error ? e.stack : null,
-          });
-        }
       }
 
       // Extract text (retryable)
@@ -2608,11 +2569,9 @@ export async function POST(
 
       // Project.docCount is maintained at the model level (Doc middleware).
 
-      debugLog(1, "[process] done", { uploadId, ms: Date.now() - startedAt });
-      console.log("[process] done", { traceId, uploadId, ms: Date.now() - startedAt });
+      debugLog(1, "[process] done", { traceId, uploadId, ms: Date.now() - startedAt });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error("[process] crashed", { traceId, uploadId, ms: Date.now() - startedAt, message });
       debugError(1, "[process] crashed", {
         traceId,
         uploadId,

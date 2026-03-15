@@ -410,7 +410,6 @@ export async function DELETE(
               $set: {
                 isDeleted: true,
                 deletedDate: now,
-                isDeletedDate: now,
                 primaryProjectId: null,
                 projectId: null,
                 projectIds: [],

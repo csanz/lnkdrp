@@ -23,8 +23,11 @@ vi.mock("../../src/lib/debug", () => {
   return { debugLog: debugLogMock, debugError: debugErrorMock };
 });
 
-async function flushMicrotasks(times = 10) {
-  for (let i = 0; i < times; i += 1) await Promise.resolve();
+async function flushAsync(times = 10) {
+  for (let i = 0; i < times; i += 1) {
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+  }
 }
 
 describe("docUploadPipeline.startBlobUploadAndProcess", () => {
@@ -50,7 +53,7 @@ describe("docUploadPipeline.startBlobUploadAndProcess", () => {
     const file = new File([new Uint8Array([1, 2, 3])], "test.pdf", { type: "application/pdf" });
     startBlobUploadAndProcess({ docId: "doc1", uploadId: "u1", file });
 
-    await flushMicrotasks();
+    await flushAsync();
 
     expect(blobUploadMock).toHaveBeenCalledTimes(1);
     expect(blobUploadMock.mock.calls[0]?.[1]).toBe(file);
@@ -88,7 +91,7 @@ describe("docUploadPipeline.startBlobUploadAndProcess", () => {
     const file = new File([new Uint8Array([1])], "x.pdf", { type: "application/pdf" });
     startBlobUploadAndProcess({ docId: "doc1", uploadId: "u1", file, onFailure });
 
-    await flushMicrotasks();
+    await flushAsync();
 
     expect(onFailure).toHaveBeenCalledTimes(1);
     expect(String(onFailure.mock.calls[0]?.[0] ?? "")).toMatch(/blob down/i);
@@ -98,5 +101,3 @@ describe("docUploadPipeline.startBlobUploadAndProcess", () => {
     expect(notifyDocsChangedMock).toHaveBeenCalledTimes(1);
   });
 });
-
-

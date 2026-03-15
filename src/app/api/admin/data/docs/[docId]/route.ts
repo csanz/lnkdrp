@@ -117,7 +117,7 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ docId: s
   const now = new Date();
   const res = await DocModel.updateOne(
     { _id: new Types.ObjectId(docId) },
-    { $set: { isDeleted: true, deletedDate: now, isDeletedDate: now } },
+    { $set: { isDeleted: true, deletedDate: now } },
   );
   if (!res.matchedCount) return NextResponse.json({ error: "Doc not found" }, { status: 404 });
 

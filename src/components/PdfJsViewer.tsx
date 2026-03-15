@@ -14,8 +14,6 @@ import { CATEGORY_LABELS } from "@/lib/ai/constants";
 /**
  * Title From Enum (uses join, map, filter).
  */
-
-
 function titleFromEnum(value: string) {
   return value
     .split("_")
@@ -194,8 +192,6 @@ function normalizePdfRotation(page: { rotate?: number } | null | undefined): num
 /**
  * Return whether browser.
  */
-
-
 function isBrowser() {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
@@ -241,8 +237,6 @@ function getOrCreateShareVisitId(shareId: string): string | null {
 /**
  * Read Local Share Stats (uses isBrowser, getItem, parse).
  */
-
-
 function readLocalShareStats(shareId: string): LocalShareStats {
   if (!isBrowser()) return {};
   try {
@@ -265,8 +259,6 @@ function readLocalShareStats(shareId: string): LocalShareStats {
 /**
  * Write Local Share Stats (uses isBrowser, setItem, stringify).
  */
-
-
 function writeLocalShareStats(shareId: string, next: LocalShareStats) {
   if (!isBrowser()) return;
   try {
@@ -278,8 +270,6 @@ function writeLocalShareStats(shareId: string, next: LocalShareStats) {
 /**
  * Write Owner Stats To Local Storage (uses isBrowser, setItem, stringify).
  */
-
-
 function writeOwnerStatsToLocalStorage(shareId: string, stats: OwnerStats) {
   if (!isBrowser()) return;
   try {
@@ -291,8 +281,6 @@ function writeOwnerStatsToLocalStorage(shareId: string, stats: OwnerStats) {
 /**
  * Render the PdfJsViewer UI (uses effects, memoized values, local state).
  */
-
-
 export function PdfJsViewer({
   url,
   initialPage = 1,
@@ -2996,8 +2984,6 @@ export function PdfJsViewer({
 /**
  * Render the SparklesIcon UI.
  */
-
-
 function SparklesIcon() {
   return (
     <svg
@@ -3067,8 +3053,6 @@ function HistoryIcon() {
 /**
  * Render the MinusIcon UI.
  */
-
-
 function MinusIcon() {
   return (
     <svg
@@ -3091,8 +3075,6 @@ function MinusIcon() {
 /**
  * Render the PlusIcon UI.
  */
-
-
 function PlusIcon() {
   return (
     <svg
@@ -3115,8 +3097,6 @@ function PlusIcon() {
 /**
  * Render the FullscreenIcon UI.
  */
-
-
 function FullscreenIcon({ isFullscreen }: { isFullscreen: boolean }) {
   return isFullscreen ? (
     <svg

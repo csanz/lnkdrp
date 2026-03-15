@@ -12,6 +12,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
+import { debugError } from "@/lib/debug";
 
 export const runtime = "nodejs";
 
@@ -66,10 +67,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
       },
     });
   } catch (err) {
-    // Log the actual error server-side but return a generic message to avoid leaking implementation details
-    if (process.env.NODE_ENV !== "production") {
-      console.error("[api/download/:token] GET error:", err);
-    }
+    debugError(1, "[api/download/:token] GET error", { message: err instanceof Error ? err.message : String(err) });
     return NextResponse.json({ error: "Failed to fetch document" }, { status: 400 });
   }
 }

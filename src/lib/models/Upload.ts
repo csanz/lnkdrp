@@ -120,8 +120,8 @@ const uploadSchema = new Schema(
     },
 
     isDeleted: { type: Boolean, default: false, index: true },
-    // New canonical field name (kept alongside `isDeletedDate` for backward-compat).
     deletedDate: { type: Date, default: null },
+    // Legacy field; no longer written. Kept in schema for existing documents.
     isDeletedDate: { type: Date, default: null },
   },
   {

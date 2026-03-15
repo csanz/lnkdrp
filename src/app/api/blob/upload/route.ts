@@ -29,11 +29,7 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   const traceId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   try {
-    // Unconditional dev log: if blob token minting breaks, uploads fail silently client-side.
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[api/blob/upload] POST begin", { traceId });
-    }
-    debugLog(2, "[api/blob/upload] POST", { traceId });
+    debugLog(2, "[api/blob/upload] POST begin", { traceId });
     // The SDK expects a JSON body in one of two event formats:
     // - blob.generate-client-token
     // - blob.upload-completed (callback)
@@ -46,9 +42,6 @@ export async function POST(request: Request) {
         // Safety gate: only allow uploads under our test prefix.
         assertAllowedTestPathname(pathname);
 
-        if (process.env.NODE_ENV !== "production") {
-          console.log("[api/blob/upload] mint token", { traceId, pathname });
-        }
         debugLog(1, "[api/blob/upload] mint token", { traceId, pathname });
         return {
           allowedContentTypes: [...CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES],
@@ -63,10 +56,7 @@ export async function POST(request: Request) {
     return NextResponse.json(jsonResponse);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("[api/blob/upload] failed", { traceId, message });
     debugError(1, "[api/blob/upload] failed", { traceId, message });
     return NextResponse.json({ error: message, traceId }, { status: 400 });
   }
 }
-
-

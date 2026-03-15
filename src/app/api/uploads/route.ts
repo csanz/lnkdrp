@@ -109,12 +109,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const traceId = crypto.randomBytes(6).toString("base64url");
   try {
-    // Unconditional dev logs so upload issues are debuggable even when DEBUG_LEVEL=0.
-    // (These routes are on the critical path for uploads.)
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[api/uploads] POST begin", { traceId });
-    }
-    debugLog(1, "[api/uploads] POST", { traceId });
+    debugLog(1, "[api/uploads] POST begin", { traceId });
     const actor = await resolveActor(request);
     const body = (await request.json().catch(() => ({}))) as Partial<{
       docId: string;
@@ -125,9 +120,7 @@ export async function POST(request: Request) {
     }>;
 
     if (!body.docId || !Types.ObjectId.isValid(body.docId)) {
-      if (process.env.NODE_ENV !== "production") {
-        console.warn("[api/uploads] POST invalid docId", { traceId });
-      }
+      debugLog(1, "[api/uploads] POST invalid docId", { traceId });
       return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
     }
 
@@ -143,9 +136,7 @@ export async function POST(request: Request) {
 
     // Ensure the doc has a public shareId at upload time.
     if (!doc.shareId) {
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[api/uploads] ensure shareId", { traceId, docId: body.docId });
-      }
+      debugLog(2, "[api/uploads] ensure shareId", { traceId, docId: body.docId });
       for (let i = 0; i < 3; i++) {
         try {
           doc.shareId = newShareId();
@@ -222,9 +213,7 @@ export async function POST(request: Request) {
         size: typeof sizeBytes === "number" ? sizeBytes : undefined,
       },
     });
-    if (process.env.NODE_ENV !== "production") {
-      console.log("[api/uploads] created upload", { traceId, uploadId: String(upload._id), docId: body.docId, version });
-    }
+    debugLog(1, "[api/uploads] created upload", { traceId, uploadId: String(upload._id), docId: body.docId, version });
 
     // Move doc into preparing immediately (post-share flow)
     await DocModel.findByIdAndUpdate(body.docId, {
@@ -255,8 +244,6 @@ export async function POST(request: Request) {
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    // Always emit server-side failure logs (even when DEBUG_LEVEL=0).
-    console.error("[api/uploads] POST failed", { traceId, message });
     debugError(1, "[api/uploads] POST failed", { traceId, message });
     return NextResponse.json({ error: message, traceId }, { status: 400 });
   }

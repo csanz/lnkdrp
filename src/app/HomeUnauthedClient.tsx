@@ -23,8 +23,6 @@ const AUTH_TRANSITION_MAX_AGE_SECONDS = 30;
 /**
  * Normalize Invite Code (uses toUpperCase, trim, replace).
  */
-
-
 function normalizeInviteCode(input: string) {
   // Accept common copy/paste formats (spaces/dashes) and normalize for matching.
   return input.replace(/[^a-z0-9]/gi, "").trim().toUpperCase();
@@ -32,8 +30,6 @@ function normalizeInviteCode(input: string) {
 /**
  * Read Stored Invite Code (uses getItem, normalizeInviteCode).
  */
-
-
 function readStoredInviteCode(): string {
   try {
     const raw = localStorage.getItem(INVITE_CODE_STORAGE_KEY) ?? "";
@@ -45,8 +41,6 @@ function readStoredInviteCode(): string {
 /**
  * Write Stored Invite Code (uses normalizeInviteCode, setItem).
  */
-
-
 function writeStoredInviteCode(code: string) {
   try {
     const normalized = normalizeInviteCode(code);
@@ -59,8 +53,6 @@ function writeStoredInviteCode(code: string) {
 /**
  * Render the HomeUnauthedClient UI (uses effects, memoized values, local state).
  */
-
-
 export default function HomeUnauthedClient({ authTransitionHint }: { authTransitionHint?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();

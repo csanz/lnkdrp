@@ -5,6 +5,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
+import { debugError } from "@/lib/debug";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,9 +39,7 @@ function logSharePasswordError(args: {
   docId: string | null;
   err: unknown;
 }) {
-  // Always log to server console in dev so we can correlate "silent redirects".
-  // eslint-disable-next-line no-console
-  console.error("[api/docs/:docId/share-password] error", {
+  debugError(1, "[api/docs/:docId/share-password] error", {
     method: args.method,
     docId: args.docId,
     actorUserId: args.actor?.userId ?? null,

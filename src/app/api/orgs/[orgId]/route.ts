@@ -160,7 +160,7 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ orgId: s
   await ProjectModel.updateMany({ orgId: orgObjectId, isDeleted: { $ne: true } }, { $set: { isDeleted: true, updatedDate: now } });
   await DocModel.updateMany(
     { orgId: orgObjectId, isDeleted: { $ne: true } },
-    { $set: { isDeleted: true, deletedDate: now, isDeletedDate: now, updatedDate: now } },
+    { $set: { isDeleted: true, deletedDate: now, updatedDate: now } },
   );
   await UploadModel.updateMany({ orgId: orgObjectId, isDeleted: { $ne: true } }, { $set: { isDeleted: true, updatedDate: now } });
 

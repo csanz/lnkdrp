@@ -274,5 +274,3 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
     blocked,
   };
 }
-
-
