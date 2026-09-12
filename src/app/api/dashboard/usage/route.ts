@@ -8,11 +8,10 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActorForStats, tryResolveAuthUserId } from "@/lib/gating/actor";
+import { resolveActorForStats, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
-import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 
 export const runtime = "nodejs";
@@ -25,44 +24,19 @@ function clampDays(v: string | null): 1 | 7 | 30 {
   return 30;
 }
 
-function readCookie(cookieHeader: string, name: string): string | null {
-  const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    const idx = p.indexOf("=");
-    if (idx < 0) continue;
-    const k = p.slice(0, idx).trim();
-    if (k !== name) continue;
-    return decodeURIComponent(p.slice(idx + 1));
-  }
-  return null;
-}
-
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
     try {
-      const session = await tryResolveAuthUserId(request);
-      if (!session?.userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      if (!Types.ObjectId.isValid(session.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
+      // Org context: the active-org cookie / JWT claim, but only after a (cached) membership check.
+      // A stale cookie pointing at a workspace this user is not a member of must not become the scope,
+      // so fall back to the full resolver (personal org) instead of trusting it.
+      const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActorForStats(request));
+      if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+      const orgId = new Types.ObjectId(actor.orgId);
 
-      const cookieHeader = request.headers.get("cookie") ?? "";
-      const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
-      const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
-      const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
-      const orgIdStr = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
-
-      // Fallback (rare): if org context is missing, resolve via the full stats actor resolver.
-      const actorOrgId = orgIdStr && Types.ObjectId.isValid(orgIdStr) ? orgIdStr : null;
-      let orgId: Types.ObjectId;
-      if (actorOrgId) {
-        orgId = new Types.ObjectId(actorOrgId);
-      } else {
-        const actor = await resolveActorForStats(request);
-        if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
-        orgId = new Types.ObjectId(actor.orgId);
-      }
-
-      const userId = new Types.ObjectId(session.userId);
+      if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
+      const userId = new Types.ObjectId(actor.userId);
 
       const url = new URL(request.url);
       const days = clampDays(url.searchParams.get("days"));
@@ -73,16 +47,7 @@ export async function GET(request: Request) {
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
       // Validate membership once; also yields role for "Spend" permission.
-      let membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean();
-      if (!membership) {
-        // Stale active-org cookie / JWT claim (workspace deleted, membership revoked, or a dev-bypass
-        // workspace left in the cookie from before sign-in): re-resolve with membership validation.
-        const actor = await resolveActorForStats(request);
-        if (actor.kind === "user" && Types.ObjectId.isValid(actor.orgId) && String(actor.orgId) !== String(orgId)) {
-          orgId = new Types.ObjectId(actor.orgId);
-          membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean();
-        }
-      }
+      const membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean();
       if (!membership) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       const canViewSpend = includeSpend && (role === "owner" || role === "admin");

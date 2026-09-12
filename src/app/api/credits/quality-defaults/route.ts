@@ -8,11 +8,10 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
+import { resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
-import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,35 +31,10 @@ function parseTier(v: unknown): Tier | null {
   return null;
 }
 
-function readCookie(cookieHeader: string, name: string): string | null {
-  const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    const idx = p.indexOf("=");
-    if (idx < 0) continue;
-    const k = p.slice(0, idx).trim();
-    if (k !== name) continue;
-    return decodeURIComponent(p.slice(idx + 1));
-  }
-  return null;
-}
-
 async function resolveUserAndOrgForWorkspaceRoute(request: Request): Promise<{ ok: true; userId: Types.ObjectId; orgId: Types.ObjectId } | { ok: false; status: number; error: string }> {
-  const session = await tryResolveAuthUserId(request);
-  if (!session?.userId) return { ok: false, status: 401, error: "Unauthorized" };
-  if (!Types.ObjectId.isValid(session.userId)) return { ok: false, status: 400, error: "Invalid user" };
-
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
-  const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
-  const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
-
-  const orgIdStr = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
-  if (orgIdStr && Types.ObjectId.isValid(orgIdStr)) {
-    return { ok: true, userId: new Types.ObjectId(session.userId), orgId: new Types.ObjectId(orgIdStr) };
-  }
-
-  // Fallback: full actor resolution (ensures org context exists).
-  const actor = await resolveActor(request);
+  // Membership-validated fast path (cookie / JWT claim + one cached membership check), then the full
+  // resolver. Never trust the cookie alone: a stale one pointing at another workspace used to 403 here.
+  const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
   if (actor.kind !== "user") return { ok: false, status: 401, error: "Unauthorized" };
   if (!Types.ObjectId.isValid(actor.userId)) return { ok: false, status: 400, error: "Invalid user" };
   if (!Types.ObjectId.isValid(actor.orgId)) return { ok: false, status: 400, error: "Invalid org" };

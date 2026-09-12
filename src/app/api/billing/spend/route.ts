@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActor, resolveActorForStats, tryResolveAuthUserId } from "@/lib/gating/actor";
+import { resolveActor, resolveActorForStats, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
@@ -19,7 +19,6 @@ import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
 import { ALLOWED_LIMITS, UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
-import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,36 +56,12 @@ function startOfNextUtcMonth(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0));
 }
 
-function readCookie(cookieHeader: string, name: string): string | null {
-  const parts = cookieHeader.split(";").map((s) => s.trim()).filter(Boolean);
-  for (const p of parts) {
-    const idx = p.indexOf("=");
-    if (idx < 0) continue;
-    const k = p.slice(0, idx).trim();
-    if (k !== name) continue;
-    return decodeURIComponent(p.slice(idx + 1));
-  }
-  return null;
-}
-
 async function resolveUserAndOrgForWorkspaceRoute(
   request: Request,
 ): Promise<{ ok: true; userId: string; orgId: string } | { ok: false; status: number; error: string }> {
-  const session = await tryResolveAuthUserId(request);
-  if (!session?.userId) return { ok: false, status: 401, error: "Unauthorized" };
-  const userId = String(session.userId);
-  if (!Types.ObjectId.isValid(userId)) return { ok: false, status: 400, error: "Invalid user" };
-
-  const cookieHeader = request.headers.get("cookie") ?? "";
-  const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
-  const cookieOrgId = typeof cookieOrgIdRaw === "string" ? cookieOrgIdRaw.trim() : "";
-  const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
-
-  const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
-  if (orgId && Types.ObjectId.isValid(orgId)) return { ok: true, userId, orgId };
-
-  // Fallback: full actor resolution (ensures org context exists).
-  const actor = await resolveActor(request);
+  // Membership-validated fast path (cookie / JWT claim + one cached membership check), then the full
+  // resolver. Never trust the cookie alone: a stale one pointing at another workspace used to 403 here.
+  const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
   if (actor.kind !== "user") return { ok: false, status: 401, error: "Unauthorized" };
   if (!Types.ObjectId.isValid(actor.userId)) return { ok: false, status: 400, error: "Invalid user" };
   if (!Types.ObjectId.isValid(actor.orgId)) return { ok: false, status: 400, error: "Invalid org" };
