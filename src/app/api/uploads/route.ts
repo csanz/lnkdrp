@@ -8,12 +8,14 @@ import { Types } from "mongoose";
 import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { UploadModel } from "@/lib/models/Upload";
-import { DocModel } from "@/lib/models/Doc";
+import { DocModel, allocateDocUploadVersion } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 /**
  * List uploads (paged).
@@ -111,6 +113,9 @@ export async function POST(request: Request) {
   try {
     debugLog(1, "[api/uploads] POST begin", { traceId });
     const actor = await resolveActor(request);
+    // Viewers can read a workspace but must not add uploads to it.
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
     const body = (await request.json().catch(() => ({}))) as Partial<{
       docId: string;
       originalFileName: string;
@@ -162,7 +167,7 @@ export async function POST(request: Request) {
       });
     }
 
-    // Monotonic per-doc version number (1 = initial upload, 2+ = re-uploads)
+    // Temp-user gating only (the version number itself is allocated atomically below).
     const existingUploads = await UploadModel.countDocuments({
       docId: new Types.ObjectId(body.docId),
       userId: new Types.ObjectId(actor.userId),
@@ -198,7 +203,9 @@ export async function POST(request: Request) {
       }
     }
 
-    const version = existingUploads + 1;
+    // Monotonic per-doc version number (1 = initial upload, 2+ = re-uploads).
+    // Allocated via an atomic `$inc` so concurrent uploads never share a version.
+    const version = await allocateDocUploadVersion(new Types.ObjectId(body.docId));
 
     const upload = await UploadModel.create({
       userId: new Types.ObjectId(actor.userId),

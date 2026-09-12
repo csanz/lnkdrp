@@ -219,8 +219,59 @@ describe("credits/serviceCore", () => {
         actionType: "review",
         qualityTier: "standard", // fixed schedule: 5 credits
         initBalanceIfMissing: async () => baseBalance(),
+        isOnDemandEligible: async () => true,
       }),
     ).rejects.toThrow(/On-demand monthly limit exceeded/i);
+  });
+
+  test("on-demand requires an active/trialing subscription even when enabled on the balance", async () => {
+    const { store } = makeStore({
+      balance: { ...baseBalance(), onDemandEnabled: true, onDemandMonthlyLimitCents: 10_000 },
+    });
+    const svc = createCreditService(store);
+    let checked = 0;
+
+    await expect(
+      svc.reserveCreditsOrThrow({
+        workspaceId: "w1",
+        userId: "u1",
+        docId: null,
+        idempotencyKey: "k1",
+        actionType: "review",
+        qualityTier: "standard",
+        initBalanceIfMissing: async () => baseBalance(),
+        isOnDemandEligible: async () => {
+          checked += 1;
+          return false; // e.g. subscription canceled / past_due
+        },
+      }),
+    ).rejects.toThrow(/Insufficient credits/i);
+    expect(checked).toBe(1);
+  });
+
+  test("on-demand eligibility is not queried when prepaid credits cover the run", async () => {
+    const { store, getBalance } = makeStore({
+      balance: { ...baseBalance(), subscriptionCreditsRemaining: 50, onDemandEnabled: true, onDemandMonthlyLimitCents: 10_000 },
+    });
+    const svc = createCreditService(store);
+    let checked = 0;
+
+    const res = await svc.reserveCreditsOrThrow({
+      workspaceId: "w1",
+      userId: "u1",
+      docId: null,
+      idempotencyKey: "k1",
+      actionType: "review",
+      qualityTier: "standard",
+      initBalanceIfMissing: async () => baseBalance(),
+      isOnDemandEligible: async () => {
+        checked += 1;
+        return true;
+      },
+    });
+    expect(res.status).toBe("pending");
+    expect(checked).toBe(0);
+    expect(getBalance().subscriptionCreditsRemaining).toBe(50 - res.creditsReserved);
   });
 });
 

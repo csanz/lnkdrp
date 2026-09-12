@@ -16,6 +16,7 @@ import { fetchJson } from "@/lib/http/fetchJson";
 import { apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
 import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { debugLog } from "@/lib/debug";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
@@ -641,8 +642,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         ].join("|");
         if (key !== lastDocPollLogKeyRef.current) {
           lastDocPollLogKeyRef.current = key;
-          // eslint-disable-next-line no-console
-          console.log("[lnkdrp][doc] poll", {
+          debugLog(1, "[lnkdrp][doc] poll", {
             docId: data.doc?.id ?? docRef.current.id,
             docStatus,
             docCurrentUploadId: docUploadId || null,
@@ -651,8 +651,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
             uploadId: uploadId || null,
             uploadVersion,
           });
-          // eslint-disable-next-line no-console
-          if ((data as any)?.debug?.derived) console.log("[lnkdrp][doc] poll debug", (data as any).debug);
+          if ((data as any)?.debug?.derived) debugLog(2, "[lnkdrp][doc] poll debug", (data as any).debug);
         }
 
         // Safety net:
@@ -1327,8 +1326,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       const logKey = `${nextStatus}:${String(nextVersion ?? "")}`;
       if (logKey && logKey !== lastReviewLogKeyRef.current) {
         lastReviewLogKeyRef.current = logKey;
-        // eslint-disable-next-line no-console
-        console.log("[lnkdrp][review] latest", {
+        debugLog(1, "[lnkdrp][review] latest", {
           docId: doc.id,
           status: nextStatus,
           version: nextVersion,
@@ -1425,23 +1423,20 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       updatedDate: null,
     });
     try {
-      // eslint-disable-next-line no-console
-      console.log("[lnkdrp][review] rerun request review clicked", {
+      debugLog(1, "[lnkdrp][review] rerun request review clicked", {
         docId: doc.id,
         uploadId: doc.currentUploadId,
         requestProjectId,
       });
 
-      // eslint-disable-next-line no-console
-      console.log("[lnkdrp][review] calling /process?forceReview=1", {
+      debugLog(2, "[lnkdrp][review] calling /process?forceReview=1", {
         uploadId: doc.currentUploadId,
       });
       await fetchJson(`/api/uploads/${encodeURIComponent(doc.currentUploadId)}/process?forceReview=1`, {
         method: "POST",
       });
 
-      // eslint-disable-next-line no-console
-      console.log("[lnkdrp][review] forceReview POST complete; polling /reviews?latest=1", { docId: doc.id });
+      debugLog(2, "[lnkdrp][review] forceReview POST complete; polling /reviews?latest=1", { docId: doc.id });
       void refreshQualityReview();
     } catch (e) {
       // Show the error in the Intel panel (modal is already closed).

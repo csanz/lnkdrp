@@ -9,6 +9,26 @@ import { SubscriptionModel } from "@/lib/models/Subscription";
 
 export const runtime = "nodejs";
 
+function appUrlFromRequest(request: Request): string {
+  const configured = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim();
+  if (configured) return configured.replace(/\/+$/, "");
+  return new URL(request.url).origin;
+}
+
+/**
+ * Resolve the Checkout endpoint the client should POST to (`/api/stripe/checkout`).
+ *
+ * Returns `checkoutUrl: null` plus a clear `checkoutError` when Stripe is not configured, so the UI
+ * can disable the Upgrade button instead of sending users to a broken/static link.
+ */
+function checkoutEndpoint(request: Request): { checkoutUrl: string | null; checkoutError: string | null } {
+  const missing = ["STRIPE_SECRET_KEY", "STRIPE_PRICE_ID"].filter((name) => !(process.env[name] ?? "").trim());
+  if (missing.length) {
+    return { checkoutUrl: null, checkoutError: `Stripe is not configured (missing ${missing.join(", ")})` };
+  }
+  return { checkoutUrl: `${appUrlFromRequest(request)}/api/stripe/checkout`, checkoutError: null };
+}
+
 export async function GET(request: Request) {
   // Hot path (dashboard): prefer fast resolver (cookie/JWT + single membership check).
   const actor = (await tryResolveUserActorFast(request)) ?? (await resolveActor(request));
@@ -39,7 +59,9 @@ export async function GET(request: Request) {
     const planNameRaw = typeof (sub as any)?.planName === "string" ? String((sub as any).planName).trim() : "";
     const planName = planNameRaw || (status === "free" ? "Free" : "Paid");
 
-    const checkoutUrl = "https://buy.stripe.com/test_3cI3cueBb4xA7zxfPk7g400";
+    // Checkout is always driven through our own route (which creates a per-workspace Checkout
+    // Session with metadata/orgId); never hand out a static Payment Link.
+    const { checkoutUrl, checkoutError } = checkoutEndpoint(request);
 
     return NextResponse.json({
       ok: true,
@@ -50,7 +72,9 @@ export async function GET(request: Request) {
         cancelAtPeriodEnd: Boolean((sub as any)?.cancelAtPeriodEnd),
         canManage: Boolean((sub as any)?.stripeCustomerId),
       },
+      /** POST here to obtain a Stripe Checkout Session URL (`{ url }`); `null` when Stripe is not configured. */
       checkoutUrl,
+      checkoutError,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

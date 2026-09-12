@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
+import { DocModel, allocateDocUploadVersion } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
@@ -65,12 +65,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ code: stri
         ? new Types.ObjectId(String(docOrgIdRaw))
         : (await ensurePersonalOrgForUserId({ userId: ownerUserId })).orgId;
 
-    const existingUploads = await UploadModel.countDocuments({
-      docId,
-      userId: ownerUserId,
-      isDeleted: { $ne: true },
-    });
-    const version = existingUploads + 1;
+    // Monotonic per-doc version number, allocated atomically (no count-then-insert race).
+    const version = await allocateDocUploadVersion(docId);
 
     const uploadSecret = newUploadSecret();
     const upload = await UploadModel.create({

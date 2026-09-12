@@ -9,6 +9,7 @@
  */
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
+import net from "node:net";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
@@ -18,8 +19,14 @@ import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
 import { UserModel } from "@/lib/models/User";
+import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
+
+/** Public ingest budget per IP per minute (viewer heartbeats are a few per page). */
+const STATS_POST_LIMIT = 120;
+const STATS_POST_WINDOW_MS = 60 * 1000;
 export const dynamic = "force-dynamic";
 /**
  * As Non Empty String (uses trim).
@@ -61,15 +68,17 @@ function normalizeIp(raw: string): string | null {
   // Handle bracketed IPv6 like "[::1]:1234"
   if (s.startsWith("[") && s.includes("]")) {
     const inside = s.slice(1, s.indexOf("]")).trim();
-    return inside || null;
+    return inside && net.isIP(inside) ? inside : null;
   }
 
   // Strip port for "1.2.3.4:5678"
+  let ip = s;
   if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(s)) {
-    return s.slice(0, s.lastIndexOf(":"));
+    ip = s.slice(0, s.lastIndexOf(":"));
   }
 
-  return s;
+  // Only ever store a real IP literal (proxy headers are client-influenced text).
+  return net.isIP(ip) ? ip : null;
 }
 /**
  * Get client ip.
@@ -211,6 +220,17 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       if (!botId) {
         return NextResponse.json({ error: "Missing botId" }, { status: 400 });
       }
+
+      // Public endpoint: bound write volume per IP. The limiter key uses only proxy-set headers
+      // (`x-forwarded-for` first hop / `x-real-ip`): `getClientIp` also honours `cf-connecting-ip` /
+      // `true-client-ip`, which a direct caller could set to rotate buckets. Keep that one for
+      // analytics attribution only.
+      const rl = await rateLimit({
+        key: `sharestats:ip:${clientIpFromRequest(request)}`,
+        limit: STATS_POST_LIMIT,
+        windowMs: STATS_POST_WINDOW_MS,
+      });
+      if (!rl.ok) return rateLimitedResponse(rl);
 
       await connectMongo();
       const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
@@ -405,8 +425,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       // Do NOT return stats here (owner-only); POST is used by public viewers.
       return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      return errorJson(err, { status: 400, publicMessage: "Could not record view", context: "[api/share/:shareId/stats] POST failed" });
     }
   });
 }

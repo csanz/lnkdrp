@@ -317,10 +317,14 @@ export default function RequestUploadPageClient(props: {
       });
 
       setStatus({ step: "uploading" });
+      // The upload is owned by the doc owner, not the recipient: the token-minting route
+      // authorizes it via the upload secret, so it must travel with every Blob call.
+      const uploadAuthHeaders = { "x-upload-secret": uploadSecret };
       const blob = await blobUpload(pathname, file, {
         access: "public",
         handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
         contentType: file.type || undefined,
+        headers: uploadAuthHeaders,
       });
       blobUrl = blob.url;
 
@@ -336,6 +340,7 @@ export default function RequestUploadPageClient(props: {
             access: "public",
             handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
             contentType: "image/png",
+            headers: uploadAuthHeaders,
           });
           previewImageUrl = preview.url;
         }

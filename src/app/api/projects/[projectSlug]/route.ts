@@ -11,6 +11,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
+import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 
 export const runtime = "nodejs";
 
@@ -102,6 +103,11 @@ export async function PATCH(
 
     debugLog(1, "[api/projects/:id] PATCH", { projectId: projectIdParam });
     const actor = await resolveActor(request);
+    // Viewers can read a workspace but must not edit it.
+    const roleCheck = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "member" });
+    if (!roleCheck.ok) {
+      return applyTempUserHeaders(NextResponse.json({ error: roleCheck.error }, { status: roleCheck.status }), actor);
+    }
     const body = (await request.json().catch(() => ({}))) as Partial<{
       name: string;
       description: string;
@@ -253,6 +259,11 @@ export async function DELETE(
 
     debugLog(1, "[api/projects/:id] DELETE", { projectId: projectIdParam });
     const actor = await resolveActor(request);
+    // Viewers can read a workspace but must not delete from it.
+    const roleCheck = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "member" });
+    if (!roleCheck.ok) {
+      return applyTempUserHeaders(NextResponse.json({ error: roleCheck.error }, { status: roleCheck.status }), actor);
+    }
     await connectMongo();
 
     const orgId = new Types.ObjectId(actor.orgId);

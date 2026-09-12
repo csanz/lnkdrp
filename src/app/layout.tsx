@@ -9,28 +9,7 @@ import Providers from "@/app/providers";
 import { getServerSession } from "next-auth";
 import type { Session } from "next-auth";
 import { authOptions } from "@/lib/auth";
-
-function getMetadataBase(): URL | undefined {
-  const raw =
-    (process.env.NEXT_PUBLIC_SITE_URL || "").trim() ||
-    (process.env.NEXT_PUBLIC_APP_URL || "").trim() ||
-    (process.env.NEXTAUTH_URL || "").trim() ||
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "") ||
-    (process.env.NODE_ENV === "development" ? "http://localhost:3001" : "");
-
-  if (!raw) return undefined;
-  try {
-    return new URL(raw);
-  } catch {
-    // Handle scheme-less inputs like "localhost:3001" or "myapp.com".
-    try {
-      const withProto = raw.startsWith("localhost") ? `http://${raw}` : `https://${raw}`;
-      return new URL(withProto);
-    } catch {
-      return undefined;
-    }
-  }
-}
+import { getMetadataBaseUrl } from "@/lib/urls";
 
 export const metadata: Metadata = {
   title: {
@@ -38,7 +17,10 @@ export const metadata: Metadata = {
     template: "%s - LinkDrop",
   },
   description: "Share your docs with a simple link.",
-  metadataBase: getMetadataBase(),
+  // Absolute base for relative OG/Twitter image URLs. Resolved from
+  // NEXT_PUBLIC_SITE_URL / NEXT_PUBLIC_APP_URL / NEXTAUTH_URL / VERCEL_URL,
+  // falling back to the local dev origin (never throws on a malformed value).
+  metadataBase: getMetadataBaseUrl(),
   openGraph: {
     title: "LinkDrop - Share Docs",
     description: "Share your docs with a simple link.",

@@ -42,7 +42,7 @@ import {
   upsertStarredDocMeta,
   type StarredDoc,
 } from "@/lib/starredDocs";
-import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { fetchWithTempUser, tempUserHeaders } from "@/lib/gating/tempUserClient";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import {
@@ -1284,6 +1284,8 @@ export default function LeftSidebar({
               access: "public",
               handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
               contentType: file.type || undefined,
+              // Token minting checks upload ownership; temp users are only identified by headers.
+              headers: tempUserHeaders(),
             });
 
             // 4) Persist blob metadata + trigger processing.

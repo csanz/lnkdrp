@@ -1,8 +1,11 @@
 /**
- * Cron route: `POST /api/cron/usage-agg-reconcile`
+ * Cron route: `GET|POST /api/cron/usage-agg-reconcile`
  *
  * Recomputes usage aggregates from source-of-truth `CreditLedger` events for a date range.
  * Idempotent: overwrites deterministic totals via upserts (safe to re-run).
+ *
+ * Vercel Cron invokes this with `GET` + `Authorization: Bearer $CRON_SECRET`;
+ * `POST` is kept for manual/dev invocation. Auth: `requireCronAuth`.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -11,8 +14,10 @@ import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { reconcileUsageAggsFromLedger } from "@/lib/usage/reconcile";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
+import { requireCronAuth } from "@/lib/cron/auth";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 function startOfUtcDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
@@ -34,19 +39,14 @@ function asPositiveInt(v: string | null): number | null {
   return i >= 1 ? i : null;
 }
 
-export async function POST(request: Request) {
-  const url = new URL(request.url);
-  const secret = process.env.LNKDRP_CRON_SECRET;
-  if (secret) {
-    const provided =
-      request.headers.get("x-cron-secret") ??
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-      url.searchParams.get("secret");
-    if (!provided || provided !== secret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+/**
+ * Shared handler for GET (Vercel Cron) and POST (manual) invocations.
+ */
+async function handle(request: Request) {
+  const unauthorized = requireCronAuth(request);
+  if (unauthorized) return unauthorized;
 
+  const url = new URL(request.url);
   const jobKey = "usage-agg-reconcile";
   const startedAt = new Date();
 
@@ -169,4 +169,7 @@ export async function POST(request: Request) {
   }
 }
 
-
+/** Vercel Cron entrypoint. */
+export const GET = handle;
+/** Manual/dev entrypoint. */
+export const POST = handle;

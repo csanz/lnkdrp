@@ -24,8 +24,13 @@ const orgSchema = new Schema(
      * (or null to render an initials avatar).
      */
     avatarUrl: { type: String, trim: true, default: null },
-    /** For team orgs only: public-ish identifier used for deep links later (unique, sparse). */
-    slug: { type: String, trim: true, default: null },
+    /**
+     * For team orgs only: public-ish identifier used for deep links later.
+     *
+     * Personal orgs omit this field entirely (no `null` default) so the partial unique index
+     * below only ever sees string values. An explicit `null` would be indexed and collide.
+     */
+    slug: { type: String, trim: true },
     createdByUserId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
 
     /**
@@ -47,8 +52,9 @@ const orgSchema = new Schema(
 
 // One personal org per user.
 orgSchema.index({ personalForUserId: 1 }, { unique: true, sparse: true });
-// Team org slugs are unique (personal orgs keep slug null).
-orgSchema.index({ slug: 1 }, { unique: true, sparse: true });
+// Team org slugs are unique. Personal orgs omit `slug`; the partial filter (rather than `sparse`)
+// guarantees only string slugs participate, since `sparse` still indexes an explicit `null`.
+orgSchema.index({ slug: 1 }, { unique: true, partialFilterExpression: { slug: { $type: "string" } } });
 
 export type Org = InferSchemaType<typeof orgSchema>;
 
@@ -100,7 +106,7 @@ export async function ensurePersonalOrgForUserId(opts: {
     type: "personal",
     personalForUserId: userId,
     name,
-    slug: null,
+    // Intentionally no `slug`: personal orgs must not participate in the partial unique slug index.
     createdByUserId: userId,
     isDeleted: false,
     createdDate: now,

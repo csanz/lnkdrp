@@ -4,6 +4,12 @@
  * Security:
  * - Requires an authenticated user.
  * - Returns only a Stripe-hosted URL; does not grant access (webhook-only).
+ * - Refuses (409) when the workspace already has an active/trialing subscription; the client
+ *   should send the user to the billing portal (`POST /api/stripe/portal`) instead.
+ *
+ * Line items:
+ * - `STRIPE_PRICE_ID` (recurring Pro plan, quantity 1)
+ * - `STRIPE_AI_CREDITS_PRICE_ID` (metered AI credits; no quantity — metered prices reject it) when configured
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -14,6 +20,7 @@ import { resolveActor } from "@/lib/gating/actor";
 import { UserModel } from "@/lib/models/User";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
 
 export const runtime = "nodejs";
 
@@ -29,6 +36,12 @@ function appUrlFromRequest(request: Request): string {
   if (configured) return configured.replace(/\/+$/, "");
   // Fallback: derive from request origin (dev-friendly).
   return new URL(request.url).origin;
+}
+
+/** Subscription statuses that already entitle the workspace to Pro (no second Checkout allowed). */
+function isActiveSubscriptionStatus(statusRaw: unknown): boolean {
+  const s = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
+  return s === "active" || s === "trialing";
 }
 
 function checkoutRedirects(request: Request): { successUrl: string; cancelUrl: string } {
@@ -62,6 +75,7 @@ export async function POST(request: Request) {
 
       const stripeKey = mustGetEnv("STRIPE_SECRET_KEY");
       const priceId = mustGetEnv("STRIPE_PRICE_ID");
+      const aiCreditsPriceId = getAiCreditsPriceId();
       const stripe = new Stripe(stripeKey);
 
       await connectMongo();
@@ -74,8 +88,23 @@ export async function POST(request: Request) {
 
       // Workspace-bound billing: one Stripe customer per org/workspace (SubscriptionModel is per-org).
       const existingSub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-        .select({ _id: 1, stripeCustomerId: 1 })
+        .select({ _id: 1, stripeCustomerId: 1, stripeSubscriptionId: 1, status: 1 })
         .lean();
+
+      // Guard: never create a second subscription for a workspace that already has one.
+      if (isActiveSubscriptionStatus((existingSub as any)?.status)) {
+        const appUrl = appUrlFromRequest(request);
+        return NextResponse.json(
+          {
+            error: "This workspace already has an active subscription. Manage it from the billing portal.",
+            code: "SUBSCRIPTION_ALREADY_ACTIVE",
+            status: String((existingSub as any).status),
+            // Hint for clients: POST here to obtain a Stripe billing portal URL.
+            portalUrl: `${appUrl}/api/stripe/portal`,
+          },
+          { status: 409 },
+        );
+      }
 
       let customerId =
         typeof (existingSub as any)?.stripeCustomerId === "string"
@@ -104,7 +133,11 @@ export async function POST(request: Request) {
       const session = await stripe.checkout.sessions.create({
         mode: "subscription",
         customer: customerId,
-        line_items: [{ price: priceId, quantity: 1 }],
+        line_items: [
+          { price: priceId, quantity: 1 },
+          // Metered prices must be added WITHOUT a quantity (Stripe rejects it).
+          ...(aiCreditsPriceId ? [{ price: aiCreditsPriceId }] : []),
+        ],
         success_url: successUrl,
         cancel_url: cancelUrl,
         // Use orgId here so Checkout completion can be mapped even if metadata is missing.

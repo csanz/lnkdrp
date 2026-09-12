@@ -63,7 +63,10 @@ export async function rollupDocMetrics(opts?: {
     query._id = new Types.ObjectId(opts.docId);
   }
 
+  // Stalest snapshot first (MongoDB sorts null/missing before dates ascending),
+  // so every doc is eventually rolled up instead of the same `limit` docs each run.
   const docs = await DocModel.find(query)
+    .sort({ "metricsSnapshot.updatedAt": 1, _id: 1 })
     .select({ _id: 1, shareAllowPdfDownload: 1 })
     .limit(limit)
     .lean();

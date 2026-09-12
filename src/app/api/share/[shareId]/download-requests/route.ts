@@ -12,11 +12,16 @@ import { UserModel } from "@/lib/models/User";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
 import { getPublicSiteBase } from "@/lib/urls";
-import { debugError, debugLog, debugWarn } from "@/lib/debug";
+import { debugLog, debugWarn } from "@/lib/debug";
+import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 
 const DEDUPE_WINDOW_MS = 60 * 1000;
+/** Download requests per hour, enforced independently per IP and per requester email (each sends 2 emails). */
+const REQUEST_LIMIT = 5;
+const REQUEST_WINDOW_MS = 60 * 60 * 1000;
 
 function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
@@ -45,6 +50,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     }
 
     debugLog(2, "[api/share/*/download-requests] POST", { shareId, email: "[redacted]" });
+
+    const ip = clientIpFromRequest(request);
+    const rlIp = await rateLimit({ key: `dlreq:ip:${ip}`, limit: REQUEST_LIMIT, windowMs: REQUEST_WINDOW_MS });
+    if (!rlIp.ok) return rateLimitedResponse(rlIp);
+    const rlEmail = await rateLimit({ key: `dlreq:email:${sha256Hex(email)}`, limit: REQUEST_LIMIT, windowMs: REQUEST_WINDOW_MS });
+    if (!rlEmail.ok) return rateLimitedResponse(rlEmail);
 
     await connectMongo();
     const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
@@ -214,9 +225,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       emailedRequester,
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/share/*/download-requests] POST failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, {
+      status: 400,
+      publicMessage: "Could not submit download request",
+      context: "[api/share/*/download-requests] POST failed",
+    });
   }
 }
 

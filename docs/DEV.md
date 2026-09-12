@@ -46,6 +46,10 @@ NEXTAUTH_URL=http://localhost:3001              # Must match your browser URL
 
 # Vercel Blob (file storage)
 BLOB_READ_WRITE_TOKEN=your-vercel-blob-token
+# Optional: public base URL of *your* Blob store (https://<storeId>.public.blob.vercel-storage.com).
+# Used to verify client-reported blob URLs belong to our store. When unset, the store id is derived
+# from BLOB_READ_WRITE_TOKEN; if neither identifies the store, production rejects all blob URLs.
+BLOB_BASE_URL=https://your-store-id.public.blob.vercel-storage.com
 ```
 
 ### Stripe (Billing)
@@ -54,7 +58,9 @@ BLOB_READ_WRITE_TOKEN=your-vercel-blob-token
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...                 # From Stripe CLI or Dashboard
 STRIPE_PRICE_ID=price_...                       # Pro plan recurring price
-STRIPE_AI_CREDITS_PRICE_ID=price_...            # Metered price for AI credits
+STRIPE_AI_CREDITS_PRICE_ID=price_...            # Metered price for AI credits (canonical name)
+# STRIPE_USAGE_PRICE_ID=price_...               # Legacy alias for STRIPE_AI_CREDITS_PRICE_ID (still honoured; prefer the canonical name)
+STRIPE_CREDITS_METER_EVENT_NAME=ai_credits      # Billing Meter event_name attached to the metered price (default: ai_credits)
 
 # Optional Stripe overrides
 STRIPE_SUCCESS_URL=http://localhost:3001/billing/success?session_id={CHECKOUT_SESSION_ID}
@@ -202,7 +208,9 @@ User clicks Upgrade → POST /api/stripe/checkout → Stripe Checkout
 STRIPE_SECRET_KEY=sk_test_...                   # Test or live secret key
 STRIPE_WEBHOOK_SECRET=whsec_...                 # From Stripe CLI or Dashboard
 STRIPE_PRICE_ID=price_...                       # Pro plan recurring price ID
-STRIPE_AI_CREDITS_PRICE_ID=price_...            # Metered price for AI credits usage
+STRIPE_AI_CREDITS_PRICE_ID=price_...            # Metered price for AI credits usage (canonical)
+# STRIPE_USAGE_PRICE_ID=price_...               # Legacy alias; read only when STRIPE_AI_CREDITS_PRICE_ID is unset
+STRIPE_CREDITS_METER_EVENT_NAME=ai_credits      # Billing Meter event_name for the metered price (default: ai_credits)
 
 # Optional overrides (defaults derive from NEXT_PUBLIC_APP_URL)
 STRIPE_SUCCESS_URL=http://localhost:3001/billing/success?session_id={CHECKOUT_SESSION_ID}
@@ -332,9 +340,13 @@ The app handles these Stripe webhook events:
 | `checkout.session.completed` | Create/update subscription, link to workspace |
 | `customer.subscription.created` | Store subscription details |
 | `customer.subscription.updated` | Update period dates, handle cancel/resume |
-| `customer.subscription.deleted` | Mark subscription inactive |
+| `customer.subscription.deleted` | Mark subscription inactive; disable on-demand overage |
 | `invoice.paid` | Confirm payment, trigger credit grants |
-| `invoice.payment_failed` | Log failure (access continues until period end) |
+| `invoice.payment_failed` | Log failure; disable on-demand overage (access continues until period end) |
+
+Webhook idempotency: a `StripeEvent` row (unique `eventId`) is inserted before processing and `processedAt` is set afterwards. A retry of an event whose first attempt failed (`processedAt=null`) is processed again; a retry of a processed event is ACKed without side effects.
+
+Stripe API version note (stripe@20 → `2025-12-15.clover`): `current_period_start/end` live on **subscription items** and `invoice.subscription` moved to `invoice.parent.subscription_details.subscription`. Always read them via `getSubscriptionPeriod()` / `getInvoiceSubscriptionId()` from `src/lib/billing/stripePeriods.ts`.
 
 ### Key Stripe Routes
 
@@ -359,7 +371,16 @@ Cycle Key = ${stripeSubscriptionId}:${currentPeriodStartUnixSeconds}
 1. Webhook receives `invoice.paid` with new period dates
 2. System generates `cycleKey` from subscription + period start
 3. Idempotent grant of 300 included credits (no duplicates)
-4. On-demand usage is reported to Stripe via metered billing
+4. On-demand usage is reported to Stripe via metered billing (Billing Meter events)
+
+**On-demand (overage) rules:**
+- Requires `onDemandEnabled=true` and a positive `onDemandMonthlyLimitCents` on the workspace balance **and** an `active`/`trialing` subscription (checked at reservation time).
+- `customer.subscription.deleted` and `invoice.payment_failed` webhooks flip `onDemandEnabled=false`.
+
+**Metered reporting (`/api/cron/stripe-credits-report`):**
+- Checkout adds `STRIPE_AI_CREDITS_PRICE_ID` as a second (metered, no quantity) line item, so every Pro subscription carries the metered item.
+- Usage is sent with `stripe.billing.meterEvents.create({ event_name: STRIPE_CREDITS_METER_EVENT_NAME, payload: { stripe_customer_id, value } })`. In the Stripe dashboard create a **Billing Meter** with that `event_name` (default `ai_credits`, sum aggregation) and attach it to the metered price.
+- Claim-then-report: ledger rows are first stamped with `reportBatchId` + `reportClaimedAt`, then reported (batch id = meter event `identifier`, so Stripe de-duplicates retries), then `stripeUsageReportedAt` is set. Claims older than 30 minutes are treated as stale and re-claimed.
 
 **Test credit grants:**
 ```bash

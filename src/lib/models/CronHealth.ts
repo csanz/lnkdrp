@@ -31,6 +31,11 @@ const cronHealthSchema = new Schema(
     // Error info from the most recent errored run
     lastErrorAt: { type: Date, default: null },
     lastError: { type: String, default: null },
+
+    // Overlap lease (see `src/lib/cron/lease.ts`). A run holds the lease until
+    // `leaseUntil`; a new run may only start when this is null or in the past.
+    leaseUntil: { type: Date, default: null },
+    leaseToken: { type: String, default: null },
   },
   {
     timestamps: { createdAt: "createdDate", updatedAt: "updatedDate" },

@@ -5,6 +5,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
+import { isBlobPathnameForUpload, isBlobUrlForUpload } from "@/lib/blob/serverClientUploadRoute";
 
 export const runtime = "nodejs";
 /**
@@ -106,6 +107,71 @@ export async function GET(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
+
+/**
+ * Statuses a client is allowed to set. Pipeline-owned states (`processing`, `completed`)
+ * are only ever written by the process route.
+ */
+const CLIENT_SETTABLE_STATUSES = new Set(["uploaded", "failed"]);
+
+/**
+ * Build the sanitized `$set` update from a client PATCH body.
+ *
+ * Blob URLs/pathnames are only accepted when they point at our Blob store *and* live under
+ * this upload's own folder (`docs/{docId}/uploads/{uploadId}/`), so a client cannot attach
+ * an arbitrary remote file (or another upload's file) to this record.
+ *
+ * Returns `{ error }` on validation failures.
+ */
+function buildPatchUpdate(
+  body: Partial<{
+    status: string;
+    blobUrl: string;
+    blobPathname: string;
+    previewImageUrl: string | null;
+    rawExtractedText: string | null;
+    error: unknown;
+    metadata: { pages?: number; size?: number; checksum?: string };
+  }>,
+  scope: { docId: string; uploadId: string },
+): { update: Record<string, unknown> } | { error: string } {
+  const update: Record<string, unknown> = {};
+  if (typeof body.status === "string") {
+    if (!CLIENT_SETTABLE_STATUSES.has(body.status)) {
+      return { error: `Invalid status (allowed: ${[...CLIENT_SETTABLE_STATUSES].join(", ")})` };
+    }
+    update.status = body.status;
+  }
+  if (typeof body.blobUrl === "string") {
+    if (!scope.docId || !isBlobUrlForUpload(body.blobUrl, scope)) {
+      return { error: "Invalid blobUrl (must point at this upload's blob folder)" };
+    }
+    update.blobUrl = body.blobUrl;
+  }
+  if (typeof body.blobPathname === "string") {
+    if (!scope.docId || !isBlobPathnameForUpload(body.blobPathname, scope)) {
+      return { error: "Invalid blobPathname (must be under this upload's blob folder)" };
+    }
+    update.blobPathname = body.blobPathname;
+  }
+  if (typeof body.previewImageUrl === "string" || body.previewImageUrl === null) {
+    if (typeof body.previewImageUrl === "string" && (!scope.docId || !isBlobUrlForUpload(body.previewImageUrl, scope))) {
+      return { error: "Invalid previewImageUrl (must point at this upload's blob folder)" };
+    }
+    update.previewImageUrl = body.previewImageUrl;
+    // keep compat field in sync
+    update.firstPagePngUrl = body.previewImageUrl;
+  }
+  if (typeof body.rawExtractedText === "string" || body.rawExtractedText === null) {
+    update.rawExtractedText = body.rawExtractedText;
+    // keep compat field in sync
+    update.pdfText = body.rawExtractedText;
+  }
+  if (body.error !== undefined) update.error = body.error;
+  if (body.metadata && typeof body.metadata === "object") update.metadata = body.metadata;
+  return { update };
+}
+
 /**
  * Handle PATCH requests.
  */
@@ -123,7 +189,7 @@ export async function PATCH(
 
     debugLog(1, "[api/uploads/:uploadId] PATCH", { uploadId });
     const body = (await request.json().catch(() => ({}))) as Partial<{
-      status: "uploading" | "uploaded" | "processing" | "completed" | "failed";
+      status: string;
       blobUrl: string;
       blobPathname: string;
       previewImageUrl: string | null;
@@ -134,24 +200,6 @@ export async function PATCH(
 
     await connectMongo();
 
-    const update: Record<string, unknown> = {};
-    if (typeof body.status === "string") update.status = body.status;
-    if (typeof body.blobUrl === "string") update.blobUrl = body.blobUrl;
-    if (typeof body.blobPathname === "string")
-      update.blobPathname = body.blobPathname;
-    if (typeof body.previewImageUrl === "string" || body.previewImageUrl === null) {
-      update.previewImageUrl = body.previewImageUrl;
-      // keep compat field in sync
-      update.firstPagePngUrl = body.previewImageUrl;
-    }
-    if (typeof body.rawExtractedText === "string" || body.rawExtractedText === null) {
-      update.rawExtractedText = body.rawExtractedText;
-      // keep compat field in sync
-      update.pdfText = body.rawExtractedText;
-    }
-    if (body.error !== undefined) update.error = body.error;
-    if (body.metadata && typeof body.metadata === "object") update.metadata = body.metadata;
-
     const uploadSecret = header(request, "x-upload-secret");
     if (typeof uploadSecret === "string" && uploadSecret.trim()) {
       const trimmed = uploadSecret.trim();
@@ -160,12 +208,6 @@ export async function PATCH(
         hasSecret: true,
         secretLen: trimmed.length,
       });
-      if ("previewImageUrl" in update) {
-        debugLog(1, "[api/uploads/:uploadId] PATCH previewImageUrl (secret)", {
-          uploadId,
-          hasPreview: Boolean(update.previewImageUrl),
-        });
-      }
 
       // Debug-friendly behavior: distinguish between missing upload vs secret mismatch.
       // (This route is used by capability flows; returning a clearer error helps diagnose issues.)
@@ -173,7 +215,7 @@ export async function PATCH(
         _id: new Types.ObjectId(uploadId),
         isDeleted: { $ne: true },
       })
-        .select({ _id: 1, uploadSecret: 1 })
+        .select({ _id: 1, uploadSecret: 1, docId: 1 })
         .lean();
       if (!exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -183,6 +225,16 @@ export async function PATCH(
       }
       if (stored !== trimmed) {
         return NextResponse.json({ error: "UPLOAD_SECRET_MISMATCH" }, { status: 403 });
+      }
+
+      const built = buildPatchUpdate(body, { docId: exists.docId ? String(exists.docId) : "", uploadId });
+      if ("error" in built) return NextResponse.json({ error: built.error }, { status: 400 });
+      const update = built.update;
+      if ("previewImageUrl" in update) {
+        debugLog(1, "[api/uploads/:uploadId] PATCH previewImageUrl (secret)", {
+          uploadId,
+          hasPreview: Boolean(update.previewImageUrl),
+        });
       }
 
       const upload = await UploadModel.findOneAndUpdate(
@@ -206,6 +258,22 @@ export async function PATCH(
     }
 
     const actor = await resolveActor(request);
+    const owned = await UploadModel.findOne({
+      _id: new Types.ObjectId(uploadId),
+      userId: new Types.ObjectId(actor.userId),
+      isDeleted: { $ne: true },
+    })
+      .select({ _id: 1, docId: 1 })
+      .lean();
+    if (!owned) {
+      return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+    }
+
+    const built = buildPatchUpdate(body, { docId: owned.docId ? String(owned.docId) : "", uploadId });
+    if ("error" in built) {
+      return applyTempUserHeaders(NextResponse.json({ error: built.error }, { status: 400 }), actor);
+    }
+    const update = built.update;
     if ("previewImageUrl" in update) {
       debugLog(1, "[api/uploads/:uploadId] PATCH previewImageUrl (actor)", {
         uploadId,
@@ -213,7 +281,7 @@ export async function PATCH(
       });
     }
     const upload = await UploadModel.findOneAndUpdate(
-      { _id: new Types.ObjectId(uploadId), userId: new Types.ObjectId(actor.userId) },
+      { _id: new Types.ObjectId(uploadId), userId: new Types.ObjectId(actor.userId), isDeleted: { $ne: true } },
       update,
       { new: true },
     ).lean();
@@ -241,8 +309,3 @@ export async function PATCH(
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
-
-
-
-
-

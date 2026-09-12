@@ -4,6 +4,12 @@
  * Security-sensitive:
  * - Verifies the Stripe signature using the raw request body.
  * - Updates MongoDB to grant/revoke access; the client redirect is NOT trusted.
+ *
+ * Idempotency (see `StripeEventModel`):
+ * - A `StripeEvent` row is inserted (unique `eventId`) BEFORE processing.
+ * - `processedAt` is set only after processing succeeds.
+ * - On a retry: a row with `processedAt` set is ACKed without re-processing; a row without it
+ *   (previous attempt threw → 400) is processed again.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -13,7 +19,10 @@ import { connectMongo } from "@/lib/mongodb";
 import { debugLog } from "@/lib/debug";
 import { StripeEventModel } from "@/lib/models/StripeEvent";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { grantCycleIncludedCredits, buildCycleKey } from "@/lib/credits/grants";
+import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
+import { getInvoiceSubscriptionId, getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
 import {
   logErrorEvent,
   ERROR_CODE_STRIPE_WEBHOOK_INVALID_SIGNATURE,
@@ -37,12 +46,6 @@ function asIdString(v: unknown): string {
   if (!v) return "";
   if (typeof v === "string") return v.trim();
   if (typeof v === "object" && v && "id" in (v as any) && typeof (v as any).id === "string") return String((v as any).id).trim();
-  return "";
-}
-
-function userIdFromSession(session: Stripe.Checkout.Session): string {
-  const metaId = typeof session?.metadata?.userId === "string" ? session.metadata.userId.trim() : "";
-  if (metaId) return metaId;
   return "";
 }
 
@@ -90,22 +93,371 @@ function parseStripeBool(v: unknown): boolean | null {
   return null;
 }
 
-function parseUnixSecondsToDateStrict(v: unknown): Date | null {
-  // Prefer unix seconds; tolerate strings for safety.
-  if (typeof v === "number" && Number.isFinite(v)) return new Date(v * 1000);
-  if (typeof v === "bigint") return new Date(Number(v) * 1000);
-  if (typeof v === "string") {
-    const s = v.trim();
-    if (!s) return null;
-    const n = Number(s);
-    if (Number.isFinite(n)) return new Date(n * 1000);
-  }
-  return null;
-}
-
 function priceIdFromSubscriptionItem(it: any): string {
   const pid = it?.price?.id;
   return typeof pid === "string" ? pid.trim() : "";
+}
+
+/** Find the metered AI-credits subscription item id (by configured price id), or `null`. */
+function creditsSubscriptionItemId(sub: unknown): string | null {
+  const creditsPriceId = getAiCreditsPriceId();
+  const items = (sub as any)?.items?.data;
+  if (!creditsPriceId || !Array.isArray(items)) return null;
+  const match = (items as any[]).find((it) => priceIdFromSubscriptionItem(it) === creditsPriceId);
+  const itemId = match?.id;
+  return typeof itemId === "string" && itemId.trim() ? itemId.trim() : null;
+}
+
+/**
+ * Safety valve: disable on-demand (overage) spending for a workspace when its subscription is
+ * deleted or a payment fails. Reservation also re-checks subscription status, but flipping the
+ * flag makes the state visible in the UI and keeps reconcile jobs consistent.
+ */
+async function disableOnDemandForSubscription(params: {
+  query: Record<string, unknown>;
+  reason: string;
+  eventId: string;
+}): Promise<void> {
+  const sub = await SubscriptionModel.findOne({ ...params.query, isDeleted: { $ne: true } })
+    .select({ orgId: 1 })
+    .lean();
+  const orgId = (sub as any)?.orgId;
+  if (!orgId) {
+    debugLog(2, "[stripe:webhook] on-demand disable skipped (no workspace match)", {
+      id: params.eventId,
+      reason: params.reason,
+      query: params.query,
+    });
+    return;
+  }
+  const res = await WorkspaceCreditBalanceModel.updateOne(
+    { workspaceId: orgId, onDemandEnabled: true },
+    { $set: { onDemandEnabled: false } },
+  );
+  debugLog(1, "[stripe:webhook] on-demand disabled", {
+    id: params.eventId,
+    reason: params.reason,
+    orgId: String(orgId),
+    modified: (res as any)?.modifiedCount ?? null,
+  });
+}
+
+/**
+ * Process one verified Stripe event.
+ *
+ * Throwing here yields a 400 so Stripe retries; the `StripeEvent` row stays with
+ * `processedAt=null` and the retry re-runs this function.
+ */
+async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<void> {
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    const orgIdRaw = orgIdFromSession(session);
+    if (!orgIdRaw || !Types.ObjectId.isValid(orgIdRaw)) {
+      debugLog(2, "[stripe:webhook] checkout.session.completed missing orgId", {
+        id: event.id,
+        orgIdRaw,
+        customer: asIdString(session.customer) || null,
+        subscription: asIdString(session.subscription) || null,
+      });
+      return;
+    }
+    const orgId = new Types.ObjectId(orgIdRaw);
+    const customerId = asIdString(session.customer);
+    const subscriptionId = asIdString(session.subscription);
+
+    // Workspace-bound: persist identifiers on the org subscription row.
+    // NOTE: We do NOT grant access here; access is based on subscription status webhooks.
+    const res = await SubscriptionModel.updateOne(
+      { orgId, isDeleted: { $ne: true } },
+      {
+        $setOnInsert: { orgId, isDeleted: false },
+        $set: {
+          ...(customerId ? { stripeCustomerId: customerId } : {}),
+          ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
+        },
+      },
+      { upsert: true },
+    );
+    debugLog(1, "[stripe:webhook] checkout.session.completed → subscription pointers saved", {
+      id: event.id,
+      orgId: String(orgId),
+      customerId: customerId || null,
+      subscriptionId: subscriptionId || null,
+      matched: (res as any)?.matchedCount ?? null,
+      modified: (res as any)?.modifiedCount ?? null,
+      upsertedId: (res as any)?.upsertedId ?? null,
+    });
+    return;
+  }
+
+  if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated") {
+    const sub = event.data.object as Stripe.Subscription;
+    const subscriptionId = asIdString(sub.id);
+    const customerId = asIdString(sub.customer);
+    const payloadPeriod = getSubscriptionPeriod(sub);
+    debugLog(2, "[stripe:webhook] raw subscription payload (subset)", {
+      id: event.id,
+      type: event.type,
+      sub: {
+        id: subscriptionId || null,
+        customer: customerId || null,
+        status: typeof (sub as any)?.status === "string" ? String((sub as any).status) : null,
+        cancel_at: (sub as any)?.cancel_at ?? null,
+        cancel_at_period_end: (sub as any)?.cancel_at_period_end ?? null,
+        current_period_start: payloadPeriod.start ? payloadPeriod.start.toISOString() : null,
+        current_period_end: payloadPeriod.end ? payloadPeriod.end.toISOString() : null,
+        metadata: (sub as any)?.metadata ?? null,
+        // Include price ids only (useful for confirming which plan/price is being updated).
+        priceIds: Array.isArray((sub as any)?.items?.data)
+          ? (sub as any).items.data
+              .map((it: any) => it?.price?.id)
+              .filter((v: any) => typeof v === "string" && v)
+          : [],
+      },
+    });
+    let status = typeof sub.status === "string" ? sub.status : "";
+    let currentPeriodStart = payloadPeriod.start;
+    let currentPeriodEnd = payloadPeriod.end;
+    // When a subscription is set to cancel at a specific time, Stripe uses `cancel_at` (unix seconds).
+    // Some portal flows set `cancel_at` (date) instead of toggling `cancel_at_period_end=true`.
+    let cancelAt = parseUnixSecondsToDate((sub as any)?.cancel_at);
+    let cancelAtPeriodEnd = parseStripeBool((sub as any)?.cancel_at_period_end) ?? false;
+    let stripeSubscriptionItemId = creditsSubscriptionItemId(sub);
+    let usedStripeFetch = false;
+
+    // Robustness: if the webhook payload is missing key fields (API version differences),
+    // fetch the subscription from Stripe by id to get authoritative values.
+    if (
+      subscriptionId &&
+      (!currentPeriodStart || !currentPeriodEnd || !cancelAt || parseStripeBool((sub as any)?.cancel_at_period_end) === null)
+    ) {
+      try {
+        const fresh = await stripe.subscriptions.retrieve(subscriptionId);
+        usedStripeFetch = true;
+        const freshPeriod = getSubscriptionPeriod(fresh);
+        debugLog(2, "[stripe:webhook] stripe.subscriptions.retrieve (subset)", {
+          id: event.id,
+          subscriptionId,
+          fresh: {
+            status: typeof (fresh as any)?.status === "string" ? String((fresh as any).status) : null,
+            cancel_at: (fresh as any)?.cancel_at ?? null,
+            cancel_at_period_end: (fresh as any)?.cancel_at_period_end ?? null,
+            current_period_start: freshPeriod.start ? freshPeriod.start.toISOString() : null,
+            current_period_end: freshPeriod.end ? freshPeriod.end.toISOString() : null,
+            metadata: (fresh as any)?.metadata ?? null,
+          },
+        });
+        status = typeof fresh.status === "string" ? fresh.status : status;
+        currentPeriodStart = freshPeriod.start ?? currentPeriodStart;
+        currentPeriodEnd = freshPeriod.end ?? currentPeriodEnd;
+        cancelAt = parseUnixSecondsToDate((fresh as any)?.cancel_at) ?? cancelAt;
+        cancelAtPeriodEnd = parseStripeBool((fresh as any)?.cancel_at_period_end) ?? cancelAtPeriodEnd;
+        stripeSubscriptionItemId = creditsSubscriptionItemId(fresh) ?? stripeSubscriptionItemId;
+      } catch {
+        // ignore; fall back to webhook payload best-effort
+      }
+    }
+
+    // If Stripe provided a concrete cancellation timestamp, treat it as the effective end date.
+    // This allows the UI to show “Cancels on <date>” even when `cancel_at_period_end` is false.
+    const effectivePeriodEnd = cancelAt ?? currentPeriodEnd;
+    const effectiveCancels = cancelAtPeriodEnd || Boolean(cancelAt);
+
+    // Prefer orgId from subscription metadata (best), then subscriptionId, then customerId.
+    const orgIdRaw = orgIdFromSubscription(sub);
+    const orgId = orgIdRaw && Types.ObjectId.isValid(orgIdRaw) ? new Types.ObjectId(orgIdRaw) : null;
+    const query = orgId
+      ? { orgId, isDeleted: { $ne: true } }
+      : subscriptionId
+        ? { stripeSubscriptionId: subscriptionId, isDeleted: { $ne: true } }
+        : customerId
+          ? { stripeCustomerId: customerId, isDeleted: { $ne: true } }
+          : null;
+    if (!query) {
+      debugLog(2, "[stripe:webhook] subscription update missing mapping keys", {
+        id: event.id,
+        subscriptionId: subscriptionId || null,
+        customerId: customerId || null,
+        orgIdRaw: orgIdRaw || null,
+        status: status || null,
+        cancelAtPeriodEnd,
+        cancelAt: cancelAt ? cancelAt.toISOString() : null,
+        currentPeriodEnd: currentPeriodEnd ? currentPeriodEnd.toISOString() : null,
+      });
+      return;
+    }
+
+    const pro = isProStatus(status);
+    const setFields: Record<string, unknown> = {
+      status: status || "free",
+      planName: pro ? "Pro" : "Free",
+      cancelAtPeriodEnd: effectiveCancels,
+      ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
+      ...(customerId ? { stripeCustomerId: customerId } : {}),
+      ...(stripeSubscriptionItemId ? { stripeSubscriptionItemId } : {}),
+    };
+    if (currentPeriodStart) setFields.currentPeriodStart = currentPeriodStart;
+    // Only overwrite the stored period end when we have a real date. This avoids losing the date
+    // in cases where Stripe sends `current_period_end=null` while still clearing/setting cancel schedules.
+    if (effectivePeriodEnd) setFields.currentPeriodEnd = effectivePeriodEnd;
+
+    const res = await SubscriptionModel.updateOne(
+      query,
+      {
+        $setOnInsert: orgId ? { orgId, isDeleted: false } : {},
+        $set: {
+          ...setFields,
+        },
+      },
+      { upsert: Boolean(orgId) },
+    );
+    debugLog(1, "[stripe:webhook] subscription updated → org subscription saved", {
+      id: event.id,
+      type: event.type,
+      orgId: orgId ? String(orgId) : null,
+      subscriptionId: subscriptionId || null,
+      customerId: customerId || null,
+      status: status || null,
+      cancelAtPeriodEnd: effectiveCancels,
+      effectivePeriodEnd: effectivePeriodEnd ? effectivePeriodEnd.toISOString() : null,
+      rawCancelAtPeriodEnd: cancelAtPeriodEnd,
+      rawCancelAt: cancelAt ? cancelAt.toISOString() : null,
+      currentPeriodStart: currentPeriodStart ? currentPeriodStart.toISOString() : null,
+      rawCurrentPeriodEnd: currentPeriodEnd ? currentPeriodEnd.toISOString() : null,
+      stripeSubscriptionItemId,
+      usedStripeFetch,
+      matched: (res as any)?.matchedCount ?? null,
+      modified: (res as any)?.modifiedCount ?? null,
+      upsertedId: (res as any)?.upsertedId ?? null,
+    });
+
+    // Subscription no longer pro (e.g. canceled/unpaid/past_due) → on-demand overage must stop.
+    if (!pro) {
+      await disableOnDemandForSubscription({ query, reason: `subscription.${status || "unknown"}`, eventId: event.id });
+    }
+
+    // Idempotent cycle grant: reset included credits to 300 on new billing cycle.
+    try {
+      const orgIdStr = orgId ? String(orgId) : null;
+      const start = currentPeriodStart;
+      if (pro && orgIdStr && start) {
+        const cycleKey = buildCycleKey({ stripeSubscriptionId: subscriptionId, currentPeriodStart: start });
+        await grantCycleIncludedCredits({
+          workspaceId: orgIdStr,
+          stripeSubscriptionId: subscriptionId,
+          currentPeriodStart: start,
+          currentPeriodEnd: effectivePeriodEnd ?? null,
+        });
+        debugLog(1, "[stripe:webhook] cycle grant ensured", { orgId: orgIdStr, cycleKey });
+      }
+    } catch (e) {
+      debugLog(2, "[stripe:webhook] cycle grant failed (non-fatal)", { message: e instanceof Error ? e.message : String(e) });
+    }
+
+    return;
+  }
+
+  if (event.type === "invoice.paid") {
+    // Authoritative renewal signal; sync subscription from Stripe and ensure cycle grant.
+    const invoice = event.data.object as Stripe.Invoice;
+    const subscriptionId = getInvoiceSubscriptionId(invoice);
+    if (!subscriptionId) return;
+    try {
+      const fresh = await stripe.subscriptions.retrieve(subscriptionId);
+      const orgIdRaw = orgIdFromSubscription(fresh);
+      const orgId = orgIdRaw && Types.ObjectId.isValid(orgIdRaw) ? new Types.ObjectId(orgIdRaw) : null;
+      const status = typeof fresh.status === "string" ? fresh.status : "";
+      const pro = isProStatus(status);
+      const { start: currentPeriodStart, end: currentPeriodEnd } = getSubscriptionPeriod(fresh);
+      const stripeSubscriptionItemId = creditsSubscriptionItemId(fresh);
+
+      if (orgId) {
+        await SubscriptionModel.updateOne(
+          { orgId, isDeleted: { $ne: true } },
+          {
+            $setOnInsert: { orgId, isDeleted: false },
+            $set: {
+              status: status || "free",
+              planName: pro ? "Pro" : "Free",
+              stripeSubscriptionId: subscriptionId,
+              ...(currentPeriodStart ? { currentPeriodStart } : {}),
+              ...(currentPeriodEnd ? { currentPeriodEnd } : {}),
+              ...(stripeSubscriptionItemId ? { stripeSubscriptionItemId } : {}),
+            },
+          },
+          { upsert: true },
+        );
+        if (pro && currentPeriodStart) {
+          const cycleKey = buildCycleKey({ stripeSubscriptionId: subscriptionId, currentPeriodStart });
+          await grantCycleIncludedCredits({
+            workspaceId: String(orgId),
+            stripeSubscriptionId: subscriptionId,
+            currentPeriodStart,
+            currentPeriodEnd: currentPeriodEnd ?? null,
+          });
+          debugLog(1, "[stripe:webhook] invoice.paid → cycle grant ensured", { orgId: String(orgId), cycleKey });
+        }
+      }
+    } catch (e) {
+      debugLog(2, "[stripe:webhook] invoice.paid handling failed (non-fatal)", { message: e instanceof Error ? e.message : String(e) });
+    }
+    return;
+  }
+
+  if (event.type === "invoice.payment_failed") {
+    // Policy: access state stays driven by subscription status; on-demand overage is disabled as a
+    // safety so a workspace with a failing payment method cannot keep accruing metered charges.
+    const invoice = event.data.object as Stripe.Invoice;
+    const subscriptionId = getInvoiceSubscriptionId(invoice);
+    const customerId = asIdString((invoice as any)?.customer);
+    debugLog(1, "[stripe:webhook] invoice.payment_failed received", {
+      id: event.id,
+      subscriptionId: subscriptionId || null,
+      customerId: customerId || null,
+    });
+    const query = subscriptionId
+      ? { stripeSubscriptionId: subscriptionId }
+      : customerId
+        ? { stripeCustomerId: customerId }
+        : null;
+    if (query) {
+      await disableOnDemandForSubscription({ query, reason: "invoice.payment_failed", eventId: event.id });
+    }
+    return;
+  }
+
+  if (event.type === "customer.subscription.deleted") {
+    const sub = event.data.object as Stripe.Subscription;
+    const subscriptionId = asIdString(sub.id);
+    if (!subscriptionId) {
+      debugLog(2, "[stripe:webhook] subscription.deleted missing subscriptionId", { id: event.id });
+      return;
+    }
+
+    const query = { stripeSubscriptionId: subscriptionId, isDeleted: { $ne: true } };
+    // Disable on-demand first (needs the workspace mapping, which the row still holds).
+    await disableOnDemandForSubscription({ query, reason: "customer.subscription.deleted", eventId: event.id });
+
+    const res = await SubscriptionModel.updateOne(query, {
+      $set: {
+        status: "free",
+        planName: "Free",
+        currentPeriodEnd: null,
+        cancelAtPeriodEnd: false,
+        stripeSubscriptionItemId: null,
+      },
+    });
+    debugLog(1, "[stripe:webhook] subscription.deleted → downgraded workspace", {
+      id: event.id,
+      subscriptionId,
+      matched: (res as any)?.matchedCount ?? null,
+      modified: (res as any)?.modifiedCount ?? null,
+    });
+    return;
+  }
+
+  // Ignore other event types (but still ACK so Stripe stops retrying).
+  debugLog(2, "[stripe:webhook] ignored event type", { id: event.id, type: event.type });
 }
 
 export async function POST(request: Request) {
@@ -141,319 +493,29 @@ export async function POST(request: Request) {
 
     debugLog(1, "[stripe:webhook] received", { id: event.id, type: event.type });
 
-    // Idempotency: record the event id once. If Stripe retries, the duplicate insert is skipped.
+    // Idempotency: insert the event row first (unique on eventId). If it already exists:
+    // - processedAt set   → already handled; ACK without re-processing
+    // - processedAt unset → a previous attempt failed (we returned 400); process again
     try {
-      await StripeEventModel.create({ eventId: event.id, type: event.type, createdAt: new Date() });
+      await StripeEventModel.create({ eventId: event.id, type: event.type, createdAt: new Date(), processedAt: null });
     } catch (err) {
-      if (isDuplicateKeyError(err)) {
-        debugLog(2, "[stripe:webhook] duplicate (skipping)", { id: event.id, type: event.type });
-        return NextResponse.json({ received: true });
+      if (!isDuplicateKeyError(err)) throw err;
+      const existing = await StripeEventModel.findOne({ eventId: event.id }).select({ processedAt: 1 }).lean();
+      if ((existing as any)?.processedAt) {
+        debugLog(2, "[stripe:webhook] duplicate (already processed; skipping)", { id: event.id, type: event.type });
+        return NextResponse.json({ received: true, alreadyProcessed: true });
       }
-      throw err;
+      debugLog(1, "[stripe:webhook] retry of unprocessed event (re-processing)", { id: event.id, type: event.type });
     }
 
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object as Stripe.Checkout.Session;
-      const orgIdRaw = orgIdFromSession(session);
-      if (!orgIdRaw || !Types.ObjectId.isValid(orgIdRaw)) {
-        debugLog(2, "[stripe:webhook] checkout.session.completed missing orgId", {
-          id: event.id,
-          orgIdRaw,
-          customer: asIdString(session.customer) || null,
-          subscription: asIdString(session.subscription) || null,
-        });
-        return NextResponse.json({ received: true });
-      }
-      const orgId = new Types.ObjectId(orgIdRaw);
-      const customerId = asIdString(session.customer);
-      const subscriptionId = asIdString(session.subscription);
+    await processStripeEvent(event, stripe);
 
-      // Workspace-bound: persist identifiers on the org subscription row.
-      // NOTE: We do NOT grant access here; access is based on subscription status webhooks.
-      const res = await SubscriptionModel.updateOne(
-        { orgId, isDeleted: { $ne: true } },
-        {
-          $setOnInsert: { orgId, isDeleted: false },
-          $set: {
-            ...(customerId ? { stripeCustomerId: customerId } : {}),
-            ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
-          },
-        },
-        { upsert: true },
-      );
-      debugLog(1, "[stripe:webhook] checkout.session.completed → subscription pointers saved", {
-        id: event.id,
-        orgId: String(orgId),
-        customerId: customerId || null,
-        subscriptionId: subscriptionId || null,
-        matched: (res as any)?.matchedCount ?? null,
-        modified: (res as any)?.modifiedCount ?? null,
-        upsertedId: (res as any)?.upsertedId ?? null,
-      });
-
-      return NextResponse.json({ received: true });
-    }
-
-    if (event.type === "customer.subscription.created" || event.type === "customer.subscription.updated") {
-      const sub = event.data.object as Stripe.Subscription;
-      const subscriptionId = asIdString(sub.id);
-      const customerId = asIdString(sub.customer);
-      debugLog(2, "[stripe:webhook] raw subscription payload (subset)", {
-        id: event.id,
-        type: event.type,
-        sub: {
-          id: subscriptionId || null,
-          customer: customerId || null,
-          status: typeof (sub as any)?.status === "string" ? String((sub as any).status) : null,
-          cancel_at: (sub as any)?.cancel_at ?? null,
-          cancel_at_period_end: (sub as any)?.cancel_at_period_end ?? null,
-          current_period_end: (sub as any)?.current_period_end ?? null,
-          metadata: (sub as any)?.metadata ?? null,
-          // Include price ids only (useful for confirming which plan/price is being updated).
-          priceIds: Array.isArray((sub as any)?.items?.data)
-            ? (sub as any).items.data
-                .map((it: any) => it?.price?.id)
-                .filter((v: any) => typeof v === "string" && v)
-            : [],
-        },
-      });
-      let status = typeof sub.status === "string" ? sub.status : "";
-      let currentPeriodStart = parseUnixSecondsToDateStrict((sub as any)?.current_period_start);
-      let currentPeriodEnd = parseUnixSecondsToDate((sub as any)?.current_period_end);
-      // When a subscription is set to cancel at a specific time, Stripe uses `cancel_at` (unix seconds).
-      // Some portal flows set `cancel_at` (date) instead of toggling `cancel_at_period_end=true`.
-      let cancelAt = parseUnixSecondsToDate((sub as any)?.cancel_at);
-      let cancelAtPeriodEnd = parseStripeBool((sub as any)?.cancel_at_period_end) ?? false;
-      let usedStripeFetch = false;
-
-      // Robustness: if the webhook payload is missing key fields (API version differences),
-      // fetch the subscription from Stripe by id to get authoritative values.
-      if (
-        subscriptionId &&
-        (!currentPeriodStart || !currentPeriodEnd || !cancelAt || parseStripeBool((sub as any)?.cancel_at_period_end) === null)
-      ) {
-        try {
-          const fresh = await stripe.subscriptions.retrieve(subscriptionId);
-          usedStripeFetch = true;
-          debugLog(2, "[stripe:webhook] stripe.subscriptions.retrieve (subset)", {
-            id: event.id,
-            subscriptionId,
-            fresh: {
-              status: typeof (fresh as any)?.status === "string" ? String((fresh as any).status) : null,
-              cancel_at: (fresh as any)?.cancel_at ?? null,
-              cancel_at_period_end: (fresh as any)?.cancel_at_period_end ?? null,
-              current_period_end: (fresh as any)?.current_period_end ?? null,
-              metadata: (fresh as any)?.metadata ?? null,
-            },
-          });
-          status = typeof fresh.status === "string" ? fresh.status : status;
-          currentPeriodStart = parseUnixSecondsToDateStrict((fresh as any)?.current_period_start) ?? currentPeriodStart;
-          currentPeriodEnd = parseUnixSecondsToDate((fresh as any)?.current_period_end) ?? currentPeriodEnd;
-          cancelAt = parseUnixSecondsToDate((fresh as any)?.cancel_at) ?? cancelAt;
-          cancelAtPeriodEnd =
-            parseStripeBool((fresh as any)?.cancel_at_period_end) ?? cancelAtPeriodEnd;
-        } catch {
-          // ignore; fall back to webhook payload best-effort
-        }
-      }
-
-      // If Stripe provided a concrete cancellation timestamp, treat it as the effective end date.
-      // This allows the UI to show “Cancels on <date>” even when `cancel_at_period_end` is false.
-      const effectivePeriodEnd = cancelAt ?? currentPeriodEnd;
-      const effectiveCancels = cancelAtPeriodEnd || Boolean(cancelAt);
-
-      // Prefer orgId from subscription metadata (best), then subscriptionId, then customerId.
-      const orgIdRaw = orgIdFromSubscription(sub);
-      const orgId = orgIdRaw && Types.ObjectId.isValid(orgIdRaw) ? new Types.ObjectId(orgIdRaw) : null;
-      const query = orgId
-        ? { orgId, isDeleted: { $ne: true } }
-        : subscriptionId
-          ? { stripeSubscriptionId: subscriptionId, isDeleted: { $ne: true } }
-          : customerId
-            ? { stripeCustomerId: customerId, isDeleted: { $ne: true } }
-            : null;
-      if (!query) {
-        debugLog(2, "[stripe:webhook] subscription update missing mapping keys", {
-          id: event.id,
-          subscriptionId: subscriptionId || null,
-          customerId: customerId || null,
-          orgIdRaw: orgIdRaw || null,
-          status: status || null,
-          cancelAtPeriodEnd,
-          cancelAt: cancelAt ? cancelAt.toISOString() : null,
-          currentPeriodEnd: currentPeriodEnd ? currentPeriodEnd.toISOString() : null,
-        });
-        return NextResponse.json({ received: true });
-      }
-
-      const pro = isProStatus(status);
-      const setFields: Record<string, unknown> = {
-        status: status || "free",
-        planName: pro ? "Pro" : "Free",
-        cancelAtPeriodEnd: effectiveCancels,
-        ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
-        ...(customerId ? { stripeCustomerId: customerId } : {}),
-      };
-      if (currentPeriodStart) setFields.currentPeriodStart = currentPeriodStart;
-      // Only overwrite the stored period end when we have a real date. This avoids losing the date
-      // in cases where Stripe sends `current_period_end=null` while still clearing/setting cancel schedules.
-      if (effectivePeriodEnd) setFields.currentPeriodEnd = effectivePeriodEnd;
-
-      // Identify the metered subscription item for ai_credits by price id.
-      const creditsPriceId = (process.env.STRIPE_AI_CREDITS_PRICE_ID ?? "").trim();
-      if (creditsPriceId && Array.isArray((sub as any)?.items?.data)) {
-        const items = (sub as any).items.data as any[];
-        const match = items.find((it) => priceIdFromSubscriptionItem(it) === creditsPriceId);
-        const itemId = match?.id;
-        if (typeof itemId === "string" && itemId.trim()) {
-          (setFields as any).stripeSubscriptionItemId = itemId.trim();
-        }
-      }
-
-      const res = await SubscriptionModel.updateOne(
-        query,
-        {
-          $setOnInsert: orgId ? { orgId, isDeleted: false } : {},
-          $set: {
-            ...setFields,
-          },
-        },
-        { upsert: Boolean(orgId) },
-      );
-      debugLog(1, "[stripe:webhook] subscription updated → org subscription saved", {
-        id: event.id,
-        type: event.type,
-        orgId: orgId ? String(orgId) : null,
-        subscriptionId: subscriptionId || null,
-        customerId: customerId || null,
-        status: status || null,
-        cancelAtPeriodEnd: effectiveCancels,
-        effectivePeriodEnd: effectivePeriodEnd ? effectivePeriodEnd.toISOString() : null,
-        rawCancelAtPeriodEnd: cancelAtPeriodEnd,
-        rawCancelAt: cancelAt ? cancelAt.toISOString() : null,
-        currentPeriodStart: currentPeriodStart ? currentPeriodStart.toISOString() : null,
-        rawCurrentPeriodEnd: currentPeriodEnd ? currentPeriodEnd.toISOString() : null,
-        usedStripeFetch,
-        matched: (res as any)?.matchedCount ?? null,
-        modified: (res as any)?.modifiedCount ?? null,
-        upsertedId: (res as any)?.upsertedId ?? null,
-      });
-
-      // Idempotent cycle grant: reset included credits to 300 on new billing cycle.
-      try {
-        const orgIdStr = orgId ? String(orgId) : null;
-        const start = currentPeriodStart;
-        if (pro && orgIdStr && start) {
-          const cycleKey = buildCycleKey({ stripeSubscriptionId: subscriptionId, currentPeriodStart: start });
-          await grantCycleIncludedCredits({
-            workspaceId: orgIdStr,
-            stripeSubscriptionId: subscriptionId,
-            currentPeriodStart: start,
-            currentPeriodEnd: effectivePeriodEnd ?? null,
-          });
-          debugLog(1, "[stripe:webhook] cycle grant ensured", { orgId: orgIdStr, cycleKey });
-        }
-      } catch (e) {
-        debugLog(2, "[stripe:webhook] cycle grant failed (non-fatal)", { message: e instanceof Error ? e.message : String(e) });
-      }
-
-      return NextResponse.json({ received: true });
-    }
-
-    if (event.type === "invoice.paid") {
-      // Authoritative renewal signal; sync subscription from Stripe and ensure cycle grant.
-      const invoice = event.data.object as Stripe.Invoice;
-      const subscriptionId = asIdString((invoice as any)?.subscription);
-      if (!subscriptionId) return NextResponse.json({ received: true });
-      try {
-        const fresh = await stripe.subscriptions.retrieve(subscriptionId);
-        const orgIdRaw = orgIdFromSubscription(fresh);
-        const orgId = orgIdRaw && Types.ObjectId.isValid(orgIdRaw) ? new Types.ObjectId(orgIdRaw) : null;
-        const status = typeof fresh.status === "string" ? fresh.status : "";
-        const pro = isProStatus(status);
-        const currentPeriodStart = parseUnixSecondsToDateStrict((fresh as any)?.current_period_start);
-        const currentPeriodEnd = parseUnixSecondsToDate((fresh as any)?.current_period_end);
-        const creditsPriceId = (process.env.STRIPE_AI_CREDITS_PRICE_ID ?? "").trim();
-        let stripeSubscriptionItemId: string | null = null;
-        if (creditsPriceId && Array.isArray((fresh as any)?.items?.data)) {
-          const items = (fresh as any).items.data as any[];
-          const match = items.find((it) => priceIdFromSubscriptionItem(it) === creditsPriceId);
-          stripeSubscriptionItemId = typeof match?.id === "string" ? match.id.trim() : null;
-        }
-
-        if (orgId) {
-          await SubscriptionModel.updateOne(
-            { orgId, isDeleted: { $ne: true } },
-            {
-              $set: {
-                status: status || "free",
-                planName: pro ? "Pro" : "Free",
-                ...(currentPeriodStart ? { currentPeriodStart } : {}),
-                ...(currentPeriodEnd ? { currentPeriodEnd } : {}),
-                ...(stripeSubscriptionItemId ? { stripeSubscriptionItemId } : {}),
-              },
-            },
-            { upsert: true },
-          );
-          if (pro && currentPeriodStart) {
-            const cycleKey = buildCycleKey({ stripeSubscriptionId: subscriptionId, currentPeriodStart });
-            await grantCycleIncludedCredits({
-              workspaceId: String(orgId),
-              stripeSubscriptionId: subscriptionId,
-              currentPeriodStart,
-              currentPeriodEnd: currentPeriodEnd ?? null,
-            });
-            debugLog(1, "[stripe:webhook] invoice.paid → cycle grant ensured", { orgId: String(orgId), cycleKey });
-          }
-        }
-      } catch (e) {
-        debugLog(2, "[stripe:webhook] invoice.paid handling failed (non-fatal)", { message: e instanceof Error ? e.message : String(e) });
-      }
-      return NextResponse.json({ received: true });
-    }
-
-    if (event.type === "invoice.payment_failed") {
-      // Minimal policy: keep access state driven by subscription status; disable on-demand as a safety.
-      // (Workspace on-demand settings are stored on WorkspaceCreditBalance; handled in reconcile/cron.)
-      debugLog(1, "[stripe:webhook] invoice.payment_failed received", { id: event.id });
-      return NextResponse.json({ received: true });
-    }
-
-    if (event.type === "customer.subscription.deleted") {
-      const sub = event.data.object as Stripe.Subscription;
-      const subscriptionId = asIdString(sub.id);
-      if (!subscriptionId) {
-        debugLog(2, "[stripe:webhook] subscription.deleted missing subscriptionId", { id: event.id });
-        return NextResponse.json({ received: true });
-      }
-
-      const res = await SubscriptionModel.updateOne(
-        { stripeSubscriptionId: subscriptionId, isDeleted: { $ne: true } },
-        {
-          $set: {
-            status: "free",
-            planName: "Free",
-            currentPeriodEnd: null,
-            cancelAtPeriodEnd: false,
-          },
-        },
-      );
-      debugLog(1, "[stripe:webhook] subscription.deleted → downgraded workspace", {
-        id: event.id,
-        subscriptionId,
-        matched: (res as any)?.matchedCount ?? null,
-        modified: (res as any)?.modifiedCount ?? null,
-      });
-
-      return NextResponse.json({ received: true });
-    }
-
-    // Ignore other event types (but still ACK so Stripe stops retrying).
-    debugLog(2, "[stripe:webhook] ignored event type", { id: event.id, type: event.type });
+    await StripeEventModel.updateOne({ eventId: event.id }, { $set: { processedAt: new Date() } });
     return NextResponse.json({ received: true });
   } catch (err) {
     // Stripe expects a 2xx when received; however, we return 400 for unexpected processing errors
-    // so we get retries during transient DB issues.
+    // so we get retries during transient DB issues. The StripeEvent row keeps `processedAt=null`,
+    // so the retry is processed instead of being short-circuited as a duplicate.
     const message = err instanceof Error ? err.message : "Webhook processing failed";
     void logErrorEvent({
       severity: "error",
@@ -470,5 +532,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }
-
-

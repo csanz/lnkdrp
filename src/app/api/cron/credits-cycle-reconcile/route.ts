@@ -1,5 +1,8 @@
 /**
- * Cron route: `POST /api/cron/credits-cycle-reconcile`
+ * Cron route: `GET|POST /api/cron/credits-cycle-reconcile`
+ *
+ * Vercel Cron invokes this with `GET` + `Authorization: Bearer $CRON_SECRET`;
+ * `POST` is kept for manual/dev invocation. Auth: `requireCronAuth`.
  *
  * Hourly safety net for credit cycle grants:
  * - Scans paid workspaces (Stripe subscription status active/trialing)
@@ -18,17 +21,11 @@ import { SubscriptionModel } from "@/lib/models/Subscription";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { buildCycleKey, grantCycleIncludedCredits } from "@/lib/credits/grants";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
+import { getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
+import { requireCronAuth } from "@/lib/cron/auth";
 
 export const runtime = "nodejs";
-
-function parseUnixSecondsToDateStrict(v: unknown): Date | null {
-  if (typeof v === "number" && Number.isFinite(v)) return new Date(v * 1000);
-  if (typeof v === "string") {
-    const n = Number(v.trim());
-    if (Number.isFinite(n)) return new Date(n * 1000);
-  }
-  return null;
-}
+export const maxDuration = 300;
 
 function asPositiveInt(v: unknown): number | null {
   const n = typeof v === "number" ? v : Number(v);
@@ -42,18 +39,14 @@ function isProStatus(statusRaw: unknown): boolean {
   return s === "active" || s === "trialing";
 }
 
-export async function POST(request: Request) {
+/**
+ * Shared handler for GET (Vercel Cron) and POST (manual) invocations.
+ */
+async function handle(request: Request) {
+  const unauthorized = requireCronAuth(request);
+  if (unauthorized) return unauthorized;
+
   const url = new URL(request.url);
-  const secret = process.env.LNKDRP_CRON_SECRET;
-  if (secret) {
-    const provided =
-      request.headers.get("x-cron-secret") ??
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-      url.searchParams.get("secret");
-    if (!provided || provided !== secret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
 
   const startedAt = new Date();
   const jobKey = "credits-cycle-reconcile";
@@ -170,8 +163,8 @@ export async function POST(request: Request) {
       try {
         fetchedFromStripe += 1;
         const fresh = await stripe.subscriptions.retrieve(row.subId);
-        const start = parseUnixSecondsToDateStrict((fresh as any)?.current_period_start);
-        const end = parseUnixSecondsToDateStrict((fresh as any)?.current_period_end);
+        // stripe@20 (API 2025-12-15) reports the period on subscription items, not the top level.
+        const { start, end } = getSubscriptionPeriod(fresh);
         const status = typeof fresh.status === "string" ? fresh.status : "";
         if (!start || !end) continue;
         if (!isProStatus(status)) continue;
@@ -268,4 +261,7 @@ export async function POST(request: Request) {
   }
 }
 
-
+/** Vercel Cron entrypoint. */
+export const GET = handle;
+/** Manual/dev entrypoint. */
+export const POST = handle;

@@ -8,7 +8,8 @@ Server (required):
 - `STRIPE_SECRET_KEY` — Stripe secret key (test/live).
 - `STRIPE_WEBHOOK_SECRET` — webhook signing secret (`whsec_...` from Stripe CLI or Dashboard).
 - `STRIPE_PRICE_ID` — recurring price id (`price_...`) for the Pro plan.
-- `STRIPE_AI_CREDITS_PRICE_ID` — metered price id (`price_...`) used to bill **AI credits** (usage records are reported in credits only).
+- `STRIPE_AI_CREDITS_PRICE_ID` — metered price id (`price_...`) used to bill **AI credits** (usage is reported in credits only). Canonical name; `STRIPE_USAGE_PRICE_ID` is accepted as a legacy alias (resolved by `getAiCreditsPriceId()` in `src/lib/credits/stripeReporting.ts`). Added automatically as a second, quantity-less line item on Checkout.
+- `STRIPE_CREDITS_METER_EVENT_NAME` — Billing Meter `event_name` the metered price is attached to (default `ai_credits`). Optional.
 
 Redirect URLs (optional overrides; otherwise derived from `NEXT_PUBLIC_APP_URL`):
 - `STRIPE_SUCCESS_URL` — e.g. `https://your-domain/billing/success?session_id={CHECKOUT_SESSION_ID}`
@@ -30,6 +31,9 @@ Public (optional, pricing-table embed component only):
 1) **Upgrade** button calls `POST /api/stripe/checkout`
 - Creates/reuses a Stripe customer stored on the workspace subscription record (`SubscriptionModel` for the active org).
 - Creates a Stripe Checkout Session (`mode=subscription`) with `metadata.orgId` and `subscription_data.metadata.orgId`.
+- Line items: `STRIPE_PRICE_ID` (qty 1) plus `STRIPE_AI_CREDITS_PRICE_ID` (metered; no quantity) when configured.
+- Returns **409** (`code: "SUBSCRIPTION_ALREADY_ACTIVE"`, with a `portalUrl` hint) when the workspace already has an `active`/`trialing` subscription — use the billing portal instead.
+- `GET /api/billing/subscription` returns `checkoutUrl` pointing at this route (or `null` + `checkoutError` when Stripe is not configured); there is no static Payment Link.
 
 2) Stripe redirects to `/billing/success`
 - UI shows “Processing…” and polls `GET /api/billing/status` until webhooks update MongoDB.
@@ -40,7 +44,9 @@ Public (optional, pricing-table embed component only):
   - `stripeSubscriptionId`, `stripeCustomerId`
   - `currentPeriodStart`, `currentPeriodEnd`
 - For portal cancellation schedules, Stripe may send `cancel_at` (timestamp). We treat `cancel_at` as “Cancels on <date>” and persist it into the workspace subscription period end.
-- Webhook idempotency is enforced via a tiny `StripeEvent` collection (unique Stripe `event.id`).
+- Webhook idempotency is enforced via a tiny `StripeEvent` collection (unique Stripe `event.id`): the row is inserted **before** processing and `processedAt` is set **after**. A retry for an event with `processedAt=null` (previous attempt failed → 400) is processed again; a retry for a processed event is ACKed with no side effects.
+- `customer.subscription.deleted` and `invoice.payment_failed` also set `WorkspaceCreditBalance.onDemandEnabled=false` (no overage on a dead/failing subscription).
+- Stripe API `2025-12-15.clover` (stripe@20): billing periods are read from subscription **items** (`items.data[0].current_period_start/end`) and the invoice's subscription from `invoice.parent.subscription_details.subscription`, via `src/lib/billing/stripePeriods.ts` (`getSubscriptionPeriod`, `getInvoiceSubscriptionId`).
 - Debug logging is available via `DEBUG_LEVEL=2` (logs safe subsets of payload fields + update outcomes).
 
 ## Credits (Stripe billing cycle)
@@ -53,8 +59,16 @@ Public (optional, pricing-table embed component only):
 ## Stripe usage reporting (metered credits)
 
 - The system reports usage to Stripe as **credits** (no tokens/cost exposed in customer UI).
-- Reporting is batched and idempotent via a cron backstop endpoint:
-  - `POST /api/cron/stripe-credits-report`
+- Only **on-demand/overage** credits are reported; on-demand requires the workspace toggle, a positive monthly limit, and an `active`/`trialing` subscription.
+- Reporting uses **Billing Meter events** (`stripe.billing.meterEvents.create`) — `subscriptionItems.createUsageRecord` no longer exists in this API version:
+  - `event_name`: `STRIPE_CREDITS_METER_EVENT_NAME` (default `ai_credits`)
+  - `payload`: `{ stripe_customer_id, value: "<credits>" }`
+  - `identifier`: deterministic batch id (Stripe de-duplicates within 24h)
+- Dashboard setup: create a Billing Meter with that `event_name` (sum of `value`) and attach it to `STRIPE_AI_CREDITS_PRICE_ID`.
+- Reporting is batched and crash-safe via a cron backstop endpoint (`POST /api/cron/stripe-credits-report`):
+  1. **Claim** eligible ledger rows (`status=charged`, `eventType=ai_run`, `stripeUsageReportedAt=null`, unclaimed or claim older than 30 min): `$set { reportBatchId, reportClaimedAt }`
+  2. **Report** one meter event per Stripe customer with `identifier = reportBatchId`
+  3. **Mark** `stripeUsageReportedAt` on the claimed rows
 
 ## Local testing (Stripe CLI)
 

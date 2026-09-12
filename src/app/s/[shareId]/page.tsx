@@ -10,6 +10,7 @@ import type { AiOutput } from "@/components/PdfJsViewer";
 import ShareViewerClient from "./ShareViewerClient";
 import PasswordGate from "./PasswordGate";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { getMetadataBaseUrl } from "@/lib/urls";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,10 +103,21 @@ export async function generateMetadata(props: {
   const title = meta.title || og.title || doc?.title || "Shared document";
   const description = meta.description || og.description || "Shared with LinkDrop.";
 
+  // Prefer the request origin (correct for preview deployments / custom domains); a malformed
+  // host header must not 500 the share page, so fall back to the configured site URL.
   const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
   const proto = h.get("x-forwarded-proto") ?? "https";
-  const metadataBase = new URL(`${proto}://${host}`);
+  const metadataBase = (() => {
+    if (host) {
+      try {
+        return new URL(`${proto}://${host}`);
+      } catch {
+        // fall through to configured site URL
+      }
+    }
+    return getMetadataBaseUrl();
+  })();
 
   // Prefer the doc preview thumbnail (if it's a real URL). Fall back to the site default OG image.
   const previewCandidate =

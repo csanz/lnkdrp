@@ -12,8 +12,16 @@ import { UploadModel } from "@/lib/models/Upload";
 import { buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
+import { safeFetchUrl, SafeFetchError } from "@/lib/http/safeFetchUrl";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
+
+/** Keep a conservative download limit to avoid memory pressure. */
+const IMPORT_MAX_BYTES = 25 * 1024 * 1024; // 25MB
+/** Per-download timeout (DNS + connect + body). */
+const IMPORT_TIMEOUT_MS = 60_000;
 /**
  * Safe File Name From Url (uses trim, pop, filter).
  */
@@ -167,25 +175,27 @@ function extractDriveConfirmTokenFromHtml(html: string): string | null {
   return null;
 }
 
+/**
+ * Download a user-supplied URL through the SSRF-safe fetcher (manual, re-validated redirects;
+ * bounded body size + timeout).
+ *
+ * `allowPrivateNetwork` is only honored outside production (used for same-origin `/s/:id/pdf`
+ * proxy fetches against a `localhost` dev server).
+ */
 async function fetchBytesFollowRedirects(
   url: string,
   headers: Record<string, string>,
+  opts?: { allowPrivateNetwork?: boolean },
 ): Promise<{ res: Response; buf: Buffer; contentType: string; contentDisposition: string | null; setCookies: string[] }> {
-  const res = await fetch(url, { redirect: "follow", headers });
+  const { response: res, body: buf, setCookies } = await safeFetchUrl(url, {
+    maxBytes: IMPORT_MAX_BYTES,
+    timeoutMs: IMPORT_TIMEOUT_MS,
+    headers,
+    maxRedirects: 3,
+    allowPrivateNetwork: Boolean(opts?.allowPrivateNetwork) && process.env.NODE_ENV !== "production",
+  });
   const contentType = (res.headers.get("content-type") ?? "").toLowerCase();
   const contentDisposition = res.headers.get("content-disposition");
-
-  const ab = await res.arrayBuffer();
-  const buf = Buffer.from(ab);
-
-  const hAny = res.headers as unknown as { getSetCookie?: () => string[] };
-  const setCookies = typeof hAny.getSetCookie === "function"
-    ? hAny.getSetCookie()
-    : (() => {
-        const single = res.headers.get("set-cookie");
-        return single ? [single] : [];
-      })();
-
   return { res, buf, contentType, contentDisposition, setCookies };
 }
 /**
@@ -210,6 +220,9 @@ export async function POST(
   try {
     const { uploadId } = await ctx.params;
     actor = await resolveActor(request);
+    // Viewers must not import files (creates uploads + owner-billed processing).
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
     if (!Types.ObjectId.isValid(uploadId)) {
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid uploadId" }, { status: 400 }), actor);
     }
@@ -275,7 +288,8 @@ export async function POST(
     if (internal) fetchUrl = internal.pdfUrl.toString();
 
     debugLog(1, "[import-url] fetching", { uploadId, isDrive: !!driveFileId });
-    let first = await fetchBytesFollowRedirects(fetchUrl, baseHeaders);
+    // Same-origin proxy fetches may target a loopback dev server; never relaxed in production.
+    let first = await fetchBytesFollowRedirects(fetchUrl, baseHeaders, { allowPrivateNetwork: Boolean(internal) });
 
     // If the share is password-protected, our `/s/:shareId/pdf` proxy will 401 without a share auth cookie.
     // For *owner-owned* shares, allow import by resolving the underlying blobUrl directly from DB.
@@ -330,12 +344,10 @@ export async function POST(
     }
 
     const sizeBytes = buf.byteLength;
-    // Keep a conservative limit to avoid memory pressure.
-    const maxBytes = 25 * 1024 * 1024; // 25MB
     if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
       return applyTempUserHeaders(NextResponse.json({ error: "Empty PDF" }, { status: 400 }), actor);
     }
-    if (sizeBytes > maxBytes) {
+    if (sizeBytes > IMPORT_MAX_BYTES) {
       return applyTempUserHeaders(
         NextResponse.json({ error: "PDF is too large (max 25MB)" }, { status: 400 }),
         actor,
@@ -385,8 +397,18 @@ export async function POST(
     return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[import-url] failed", { message });
-    const res = NextResponse.json({ error: message }, { status: 400 });
+    debugError(1, "[import-url] failed", { message, code: err instanceof SafeFetchError ? err.code : undefined });
+    const friendly =
+      err instanceof SafeFetchError
+        ? err.code === "BODY_TOO_LARGE"
+          ? "PDF is too large (max 25MB)"
+          : err.code === "PRIVATE_ADDRESS" || err.code === "UNSUPPORTED_PROTOCOL"
+            ? "URL is not allowed"
+            : err.code === "TIMEOUT"
+              ? "Timed out fetching URL"
+              : message
+        : message;
+    const res = NextResponse.json({ error: friendly }, { status: 400 });
     return actor ? applyTempUserHeaders(res, actor) : res;
   }
 }

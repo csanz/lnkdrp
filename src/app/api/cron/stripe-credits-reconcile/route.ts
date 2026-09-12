@@ -1,12 +1,20 @@
 /**
- * Cron route: `POST /api/cron/stripe-credits-reconcile`
+ * Cron route: `GET|POST /api/cron/stripe-credits-reconcile`
  *
  * Backstop job for credit cycles:
- * - fetch active Stripe subscriptions
+ * - fetch active Stripe subscriptions (stalest stored period end first)
  * - sync currentPeriodStart/currentPeriodEnd onto our `Subscription` record
  * - ensure included credits reset/grant is applied once per cycleKey
  *
- * Auth: optional `LNKDRP_CRON_SECRET` (same as other cron routes).
+ * Vercel Cron invokes this with `GET` + `Authorization: Bearer $CRON_SECRET`;
+ * `POST` is kept for manual/dev invocation. Auth: `requireCronAuth`.
+ *
+ * Bounded by `?limit=` (default 200, max 1000). Subscriptions are ordered by
+ * `currentPeriodEnd` ascending (nulls first) so the most out-of-date rows are
+ * processed first and every subscription is eventually visited across runs.
+ *
+ * Overlap protection: holds a `CronHealth` lease for the duration of the run and
+ * returns `{ skipped: "locked" }` (200) when another run is in progress.
  */
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
@@ -14,18 +22,26 @@ import Stripe from "stripe";
 import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-import { grantCycleIncludedCredits, buildCycleKey } from "@/lib/credits/grants";
+import { grantCycleIncludedCredits } from "@/lib/credits/grants";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
+import { getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
+import { debugError } from "@/lib/debug";
+import { requireCronAuth } from "@/lib/cron/auth";
+import { acquireCronLease, releaseCronLease } from "@/lib/cron/lease";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
-function parseUnixSecondsToDateStrict(v: unknown): Date | null {
-  if (typeof v === "number" && Number.isFinite(v)) return new Date(v * 1000);
-  if (typeof v === "string") {
-    const n = Number(v.trim());
-    if (Number.isFinite(n)) return new Date(n * 1000);
-  }
-  return null;
+/** Lease TTL: slightly above `maxDuration` so a crashed run auto-expires. */
+const LEASE_TTL_MS = 6 * 60 * 1000;
+const DEFAULT_LIMIT = 200;
+const MAX_LIMIT = 1000;
+
+function asPositiveInt(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return null;
+  const i = Math.floor(n);
+  return i >= 1 ? i : null;
 }
 
 function isProStatus(statusRaw: unknown): boolean {
@@ -33,21 +49,22 @@ function isProStatus(statusRaw: unknown): boolean {
   return s === "active" || s === "trialing";
 }
 
-export async function POST(request: Request) {
-  const url = new URL(request.url);
-  const secret = process.env.LNKDRP_CRON_SECRET;
-  if (secret) {
-    const provided =
-      request.headers.get("x-cron-secret") ??
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-      url.searchParams.get("secret");
-    if (!provided || provided !== secret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
+/**
+ * Shared handler for GET (Vercel Cron) and POST (manual) invocations.
+ */
+async function handle(request: Request) {
+  const unauthorized = requireCronAuth(request);
+  if (unauthorized) return unauthorized;
 
+  const url = new URL(request.url);
   const startedAt = new Date();
   const jobKey = "stripe-credits-reconcile";
+  const limit = Math.min(MAX_LIMIT, asPositiveInt(url.searchParams.get("limit")) ?? DEFAULT_LIMIT);
+
+  const lease = await acquireCronLease({ jobKey, ttlMs: LEASE_TTL_MS });
+  if (!lease) {
+    return NextResponse.json({ ok: true, skipped: "locked", jobKey });
+  }
 
   try {
     await connectMongo();
@@ -58,7 +75,7 @@ export async function POST(request: Request) {
           status: "running",
           lastStartedAt: startedAt,
           lastRunAt: startedAt,
-          lastParams: {},
+          lastParams: { limit },
           lastError: null,
         },
       },
@@ -74,17 +91,22 @@ export async function POST(request: Request) {
     const stripe = new Stripe(stripeKey);
 
     await connectMongo();
+    // Stalest stored period end first. MongoDB sorts null/missing before dates in
+    // ascending order, so never-synced rows are visited first.
     const subs = await SubscriptionModel.find({
       isDeleted: { $ne: true },
       status: { $in: ["active", "trialing"] },
       stripeSubscriptionId: { $ne: null },
     })
+      .sort({ currentPeriodEnd: 1, _id: 1 })
+      .limit(limit)
       .select({ orgId: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1, status: 1 })
       .lean();
 
     let processed = 0;
     let updated = 0;
     let granted = 0;
+    let errors = 0;
 
     for (const s of subs) {
       processed += 1;
@@ -92,47 +114,55 @@ export async function POST(request: Request) {
       const orgId = (s as any)?.orgId ? String((s as any).orgId) : "";
       if (!subId || !orgId) continue;
 
-      let fresh: Stripe.Subscription | null = null;
+      // Per-subscription isolation: one bad Stripe/DB call must not abort the run.
       try {
-        fresh = await stripe.subscriptions.retrieve(subId);
-      } catch {
-        continue;
-      }
+        const fresh: Stripe.Subscription = await stripe.subscriptions.retrieve(subId);
 
-      const status = typeof fresh.status === "string" ? fresh.status : "";
-      const pro = isProStatus(status);
-      const currentPeriodStart = parseUnixSecondsToDateStrict((fresh as any)?.current_period_start);
-      const currentPeriodEnd = parseUnixSecondsToDateStrict((fresh as any)?.current_period_end);
-      if (!currentPeriodStart || !currentPeriodEnd) continue;
+        const status = typeof fresh.status === "string" ? fresh.status : "";
+        const pro = isProStatus(status);
+        // stripe@20 (API 2025-12-15) reports the period on subscription items, not the top level.
+        const { start: currentPeriodStart, end: currentPeriodEnd } = getSubscriptionPeriod(fresh);
+        if (!currentPeriodStart || !currentPeriodEnd) continue;
 
-      const prevStart = (s as any)?.currentPeriodStart instanceof Date ? (s as any).currentPeriodStart : null;
-      const prevEnd = (s as any)?.currentPeriodEnd instanceof Date ? (s as any).currentPeriodEnd : null;
+        const prevStart = (s as any)?.currentPeriodStart instanceof Date ? (s as any).currentPeriodStart : null;
+        const prevEnd = (s as any)?.currentPeriodEnd instanceof Date ? (s as any).currentPeriodEnd : null;
 
-      const changed =
-        !prevStart || prevStart.getTime() !== currentPeriodStart.getTime() || !prevEnd || prevEnd.getTime() !== currentPeriodEnd.getTime();
+        const changed =
+          !prevStart ||
+          prevStart.getTime() !== currentPeriodStart.getTime() ||
+          !prevEnd ||
+          prevEnd.getTime() !== currentPeriodEnd.getTime();
 
-      if (changed) {
-        await SubscriptionModel.updateOne(
-          { _id: (s as any)._id },
-          { $set: { status: status || (s as any).status, currentPeriodStart, currentPeriodEnd } },
-        );
-        updated += 1;
-      }
+        if (changed) {
+          await SubscriptionModel.updateOne(
+            { _id: (s as any)._id },
+            { $set: { status: status || (s as any).status, currentPeriodStart, currentPeriodEnd } },
+          );
+          updated += 1;
+        }
 
-      if (pro) {
-        const cycleKey = buildCycleKey({ stripeSubscriptionId: subId, currentPeriodStart });
-        const res = await grantCycleIncludedCredits({
-          workspaceId: orgId,
-          stripeSubscriptionId: subId,
-          currentPeriodStart,
-          currentPeriodEnd,
+        if (pro) {
+          const res = await grantCycleIncludedCredits({
+            workspaceId: orgId,
+            stripeSubscriptionId: subId,
+            currentPeriodStart,
+            currentPeriodEnd,
+          });
+          if (!res.alreadyGranted) granted += 1;
+        }
+      } catch (err) {
+        errors += 1;
+        debugError(1, "[cron:stripe-credits-reconcile] subscription failed", {
+          subId,
+          orgId,
+          message: err instanceof Error ? err.message : String(err),
         });
-        if (!res.alreadyGranted) granted += 1;
       }
     }
 
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
+    const result = { processed, updated, granted, errors, limit };
     try {
       await connectMongo();
       await CronHealthModel.updateOne(
@@ -143,7 +173,7 @@ export async function POST(request: Request) {
             lastFinishedAt: finishedAt,
             lastRunAt: finishedAt,
             lastDurationMs: durationMs,
-            lastResult: { processed, updated, granted },
+            lastResult: result,
           },
         },
         { upsert: true },
@@ -152,7 +182,7 @@ export async function POST(request: Request) {
       // ignore
     }
 
-    return NextResponse.json({ ok: true, processed, updated, granted });
+    return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
@@ -165,7 +195,7 @@ export async function POST(request: Request) {
       err,
       request,
       statusCode: 500,
-      meta: { jobKey, durationMs },
+      meta: { jobKey, params: { limit }, durationMs },
     });
     try {
       await connectMongo();
@@ -187,7 +217,12 @@ export async function POST(request: Request) {
       // ignore
     }
     return NextResponse.json({ error: message }, { status: 500 });
+  } finally {
+    await releaseCronLease(lease);
   }
 }
 
-
+/** Vercel Cron entrypoint. */
+export const GET = handle;
+/** Manual/dev entrypoint. */
+export const POST = handle;

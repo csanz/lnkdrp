@@ -569,7 +569,8 @@ export async function analyzePdfText(input: {
       system,
       // Prefer multimodal messages when slide images are provided; otherwise fall back to the plain prompt.
       ...(imageUrlByPage.size ? { messages } : { prompt: userPrompt }),
-      ...(typeof maxTokensCfg === "number" ? { maxTokens: maxTokensCfg } : {}),
+      // AI SDK v5: `maxOutputTokens` (the v4 `maxTokens` option is ignored).
+      ...(typeof maxTokensCfg === "number" ? { maxOutputTokens: maxTokensCfg } : {}),
     });
     const normalized = normalizeAiDocAnalysis(object, input.pages);
     await completeAiRun(aiRunId, {
@@ -588,7 +589,7 @@ export async function analyzePdfText(input: {
         maxRetries: 0,
         system,
         ...(imageUrlByPage.size ? { messages } : { prompt: userPrompt }),
-        ...(typeof maxTokensRetry === "number" ? { maxTokens: maxTokensRetry } : {}),
+        ...(typeof maxTokensRetry === "number" ? { maxOutputTokens: maxTokensRetry } : {}),
       });
       const normalized = normalizeAiDocAnalysis(object, input.pages);
       await completeAiRun(aiRunId, {

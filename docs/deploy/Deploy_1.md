@@ -18,7 +18,7 @@ If/when you do a future “big” deployment (architecture change, billing revam
 #### Generate strong secrets locally (recommended)
 - For these env vars, you should generate **new random secrets** for production:
   - `NEXTAUTH_SECRET`
-  - `LNKDRP_CRON_SECRET`
+  - `CRON_SECRET` (preferred; `LNKDRP_CRON_SECRET` is the legacy fallback)
   - `LNKDRP_SHARE_PASSWORD_SECRET`
   - `LNKDRP_ORG_INVITE_TOKEN_SECRET`
 
@@ -82,6 +82,7 @@ Alternatively, one-off commands:
 
 #### Storage (Vercel Blob)
 - [ ] `BLOB_READ_WRITE_TOKEN`
+- [ ] `BLOB_BASE_URL` (recommended: `https://<storeId>.public.blob.vercel-storage.com`; blob URL validation derives the store from the token when unset and **fails closed** in production if neither identifies the store)
 
 #### Billing (Stripe)
 - [ ] `STRIPE_SECRET_KEY`
@@ -92,8 +93,10 @@ Alternatively, one-off commands:
 - [ ] `NEXT_PUBLIC_STRIPE_PRICING_TABLE_ID` (if using pricing table embed)
 - [ ] Optional: `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` (override redirect URLs)
 
-#### Cron auth (recommended)
-- [ ] `LNKDRP_CRON_SECRET`
+#### Cron auth (required in production)
+- [ ] `CRON_SECRET` (preferred — Vercel Cron sends it automatically as `Authorization: Bearer $CRON_SECRET`)
+- [ ] or `LNKDRP_CRON_SECRET` (legacy fallback; used only when `CRON_SECRET` is unset)
+- Note: with **neither** set, all `/api/cron/*` routes return `401` in production (fail closed).
 
 #### App-specific secrets (recommended)
 - [ ] `LNKDRP_SHARE_PASSWORD_SECRET` (falls back to `NEXTAUTH_SECRET` if unset)
@@ -115,10 +118,12 @@ Alternatively, one-off commands:
 
 ### Cron jobs (production schedules + auth)
 - [ ] Confirm cron schedules in `vercel.json` match desired production behavior (source of truth).
-- [ ] Set `LNKDRP_CRON_SECRET` and configure cron invocations to send it:
-  - [ ] Header `x-cron-secret: <LNKDRP_CRON_SECRET>`, **or**
-  - [ ] Header `authorization: Bearer <LNKDRP_CRON_SECRET>`, **or**
-  - [ ] Query `?secret=<LNKDRP_CRON_SECRET>`
+- [ ] Set `CRON_SECRET` in Vercel (Production). Vercel Cron invokes each route with **`GET`** and `Authorization: Bearer $CRON_SECRET`; nothing else to configure.
+  - Routes accept both `GET` and `POST` (same handler; `POST` is for manual runs).
+  - Manual invocations may also use `x-cron-secret: <secret>` or `?secret=<secret>`.
+  - `LNKDRP_CRON_SECRET` is still honored as a legacy fallback when `CRON_SECRET` is unset.
+  - Without any secret configured, production cron routes **fail closed** (401).
+- [ ] Overlap lease: `notification-emails` and `stripe-credits-reconcile` take a `CronHealth.leaseUntil` lease; a `200 { skipped: "locked" }` response means a previous run is still in progress (auto-expires after ~6 min).
 - [ ] Verify cron inventory/behavior in `docs/CRON.md`.
 
 ### Database migrations
@@ -140,7 +145,7 @@ Alternatively, one-off commands:
 - [ ] Create/open a doc or dashboard view (confirms Mongo connectivity).
 - [ ] Upload a file and verify the upload → process pipeline completes (Blob + server processing).
 - [ ] If billing enabled: start an upgrade flow and confirm Stripe webhook updates state.
-- [ ] Trigger one cron route manually (auth header if enabled) and confirm it returns `200` and updates `CronHealth`.
+- [ ] Trigger one cron route manually (`GET` or `POST` with `Authorization: Bearer $CRON_SECRET`) and confirm it returns `200` and updates `CronHealth`.
 - [ ] Check `/a/cron-health` to confirm heartbeat snapshots exist and status is `ok`.
 
 ### Monitoring (first 24–48h)
@@ -156,7 +161,7 @@ Alternatively, one-off commands:
 - **Auth**: NextAuth (Google OAuth).
 - **Billing**: Stripe Checkout + `/api/stripe/webhook` as source of truth.
 - **Storage**: Vercel Blob.
-- **Background jobs**: Vercel Cron → `POST /api/cron/*` (see `docs/CRON.md` + `vercel.json`).
+- **Background jobs**: Vercel Cron → `GET /api/cron/*` with `Authorization: Bearer $CRON_SECRET` (routes also accept `POST`; see `docs/CRON.md` + `vercel.json`).
 
 ### Release workflow (repeatable)
 - **Preflight**: `npm ci` → `npm run lint` → `npm run build` (and tests as needed).
@@ -167,6 +172,6 @@ Alternatively, one-off commands:
 
 ### Rollback plan
 - **App rollback**: redeploy/promote last known-good Vercel deployment.
-- **Cron**: temporarily disable cron jobs (Vercel) or rotate `LNKDRP_CRON_SECRET`.
+- **Cron**: temporarily disable cron jobs (Vercel) or rotate `CRON_SECRET`.
 - **DB**: treat migrations as forward-only unless you explicitly implement reversals; prefer hotfix compatibility over DB rollback.
 

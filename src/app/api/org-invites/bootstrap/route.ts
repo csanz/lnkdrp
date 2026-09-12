@@ -9,10 +9,11 @@ import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { withApiErrorLogging } from "@/lib/errors/withApiErrorLogging";
+import { INVITE_COOKIE_NAME, signInviteCookieValue } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-const INVITE_COOKIE_NAME = "ld_invite_ok";
+const INVITE_COOKIE_TTL_SEC = 60 * 60 * 24 * 3; // 3 days
 
 function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
@@ -41,13 +42,13 @@ export const GET = withApiErrorLogging(async (request: NextRequest) => {
   // Allow auth endpoints to proceed for invite recipients.
   res.cookies.set({
     name: INVITE_COOKIE_NAME,
-    value: "1",
+    value: signInviteCookieValue({ inviteId: String(invite._id), ttlSec: INVITE_COOKIE_TTL_SEC }),
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     // Short-ish: recipients can still log in later, but this shouldn't be a permanent bypass.
-    maxAge: 60 * 60 * 24 * 3, // 3 days
+    maxAge: INVITE_COOKIE_TTL_SEC,
   });
   return res;
 });

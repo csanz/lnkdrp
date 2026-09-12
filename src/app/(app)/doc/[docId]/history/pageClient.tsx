@@ -689,7 +689,8 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                   disabled={Boolean(rerunBusyById[it.id])}
                                   onClick={() => {
                                     void (async () => {
-                                      const tier = rerunTierById[it.id] ?? "standard";
+                                      // Must match the tier the <select> above displays when no explicit choice was made.
+                                      const tier = rerunTierById[it.id] ?? defaultHistoryTier;
                                       const idKey =
                                         typeof crypto !== "undefined" && "randomUUID" in crypto
                                           ? (crypto as any).randomUUID()

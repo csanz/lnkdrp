@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { InviteModel } from "@/lib/models/Invite";
+import { INVITE_COOKIE_NAME, INVITE_COOKIE_MAX_AGE_SEC, signInviteCookieValue } from "@/lib/auth";
+import { errorJson } from "@/lib/http/errorResponse";
+import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 
 export const runtime = "nodejs";
 
-const INVITE_COOKIE_NAME = "ld_invite_ok";
+/**
+ * Invite codes are short (5 chars, A-Z0-9) and long-lived, so guessing must be expensive:
+ * a handful of attempts per IP per window. Every attempt counts (valid or not).
+ */
+const VERIFY_LIMIT = 10;
+const VERIFY_WINDOW_MS = 15 * 60 * 1000;
 /**
  * Normalize Code (uses toUpperCase, trim, replace).
  */
@@ -35,6 +43,13 @@ export async function POST(request: Request) {
     const rawCode = asNonEmptyString((body as { code?: unknown }).code);
     if (!rawCode) return NextResponse.json({ error: "Missing code" }, { status: 400 });
 
+    const rl = await rateLimit({
+      key: `invite-verify:ip:${clientIpFromRequest(request)}`,
+      limit: VERIFY_LIMIT,
+      windowMs: VERIFY_WINDOW_MS,
+    });
+    if (!rl.ok) return rateLimitedResponse(rl);
+
     // Support older/manual formats by trying multiple normalized variants.
     const trimmed = rawCode.trim();
     const upperTrimmed = trimmed.toUpperCase();
@@ -52,20 +67,21 @@ export async function POST(request: Request) {
 
     if (!invite) return NextResponse.json({ error: "Invalid invite code" }, { status: 401 });
 
+    // Signed value (`<inviteId>.<expiresUnix>.<hmac>`): the NextAuth gate verifies signature + expiry,
+    // so a hand-crafted cookie cannot bypass invite gating.
     const res = NextResponse.json({ ok: true });
     res.cookies.set({
       name: INVITE_COOKIE_NAME,
-      value: "1",
+      value: signInviteCookieValue({ inviteId: String(invite._id), ttlSec: INVITE_COOKIE_MAX_AGE_SEC }),
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
       path: "/",
-      maxAge: 60 * 60 * 24 * 14, // 14 days
+      maxAge: INVITE_COOKIE_MAX_AGE_SEC, // 14 days
     });
     return res;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 400, publicMessage: "Could not verify invite code", context: "[api/invites/verify] POST failed" });
   }
 }
 

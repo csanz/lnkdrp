@@ -10,6 +10,7 @@ import { ProjectModel } from "@/lib/models/Project";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -248,6 +249,9 @@ export async function POST(request: Request) {
   try {
     debugLog(1, "[api/projects] POST");
     const actor = await resolveActor(request);
+    // Viewers can read a workspace but must not create projects in it.
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
     const body = (await request.json().catch(() => ({}))) as Partial<{
       name: string;
       description: string;

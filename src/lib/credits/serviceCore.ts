@@ -2,6 +2,27 @@ import type { ActionType, CreditBucket, LedgerStatus, QualityTier } from "@/lib/
 import { creditsForRun } from "@/lib/credits/schedule";
 import type { CreditStore, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
+import { SubscriptionModel } from "@/lib/models/Subscription";
+
+/** Subscription statuses under which on-demand (metered overage) spending is permitted. */
+function isOnDemandEligibleStatus(statusRaw: unknown): boolean {
+  const s = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
+  return s === "active" || s === "trialing";
+}
+
+/**
+ * Default on-demand eligibility check: the workspace subscription must be `active` or `trialing`.
+ *
+ * Only invoked when the balance has on-demand enabled AND the run would actually spill into
+ * on-demand credits, so the extra query is paid rarely. Callers (tests) may inject their own
+ * check via `isOnDemandEligible`.
+ */
+async function defaultIsOnDemandEligible(workspaceId: string): Promise<boolean> {
+  const sub = await SubscriptionModel.findOne({ orgId: workspaceId, isDeleted: { $ne: true } })
+    .select({ status: 1 })
+    .lean();
+  return isOnDemandEligibleStatus((sub as any)?.status);
+}
 
 function startOfUtcDay(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
@@ -75,6 +96,11 @@ export function createCreditService(store: CreditStore) {
     idempotencyKey: string;
     requestId?: string | null;
     initBalanceIfMissing: () => Promise<WorkspaceBalanceSnapshot>;
+    /**
+     * Optional override for the on-demand eligibility check (defaults to a workspace subscription
+     * status lookup requiring `active`/`trialing`). Injected by tests.
+     */
+    isOnDemandEligible?: (workspaceId: string) => Promise<boolean>;
   }): Promise<{
     ledgerId: string;
     status: LedgerStatus;
@@ -140,7 +166,20 @@ export function createCreditService(store: CreditStore) {
         }
       }
 
-      const onDemandAllowed = Boolean(nextBalance.onDemandEnabled) && clampNonNegInt(nextBalance.onDemandMonthlyLimitCents) > 0;
+      // On-demand requires: workspace toggle on, a positive monthly limit, AND an active/trialing
+      // subscription (a canceled/unpaid workspace must never accrue metered overage). The
+      // subscription lookup is only made when the run would actually need on-demand credits.
+      const onDemandConfigured =
+        Boolean(nextBalance.onDemandEnabled) && clampNonNegInt(nextBalance.onDemandMonthlyLimitCents) > 0;
+      const prepaidAvailable =
+        clampNonNegInt(nextBalance.trialCreditsRemaining) +
+        clampNonNegInt(nextBalance.subscriptionCreditsRemaining) +
+        clampNonNegInt(nextBalance.purchasedCreditsRemaining);
+      const needsOnDemand = creditsReserved > prepaidAvailable;
+      const onDemandAllowed =
+        onDemandConfigured &&
+        needsOnDemand &&
+        (await (params.isOnDemandEligible ?? defaultIsOnDemandEligible)(params.workspaceId));
       const alloc = allocateBuckets({
         credits: creditsReserved,
         balance: {

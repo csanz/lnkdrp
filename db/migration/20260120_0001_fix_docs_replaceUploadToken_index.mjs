@@ -17,7 +17,7 @@ export async function up({ db }) {
 
   let indexes = [];
   try {
-    indexes = await coll.indexes();
+    indexes = await coll.indexes().catch((e) => (e?.code === 26 || /ns does not exist/i.test(String(e?.message)) ? [] : Promise.reject(e))); // fresh DB: collection may not exist yet
   } catch {
     // ignore
   }

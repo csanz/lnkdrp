@@ -20,7 +20,8 @@ const subscriptionSchema = new Schema(
     /**
      * Metered subscription item id for reporting ai_credits usage.
      *
-     * Identified by matching `STRIPE_AI_CREDITS_PRICE_ID` against subscription items.
+     * Identified by matching `STRIPE_AI_CREDITS_PRICE_ID` (legacy alias: `STRIPE_USAGE_PRICE_ID`)
+     * against subscription items — see `getAiCreditsPriceId()`.
      */
     stripeSubscriptionItemId: { type: String, trim: true, default: null },
 

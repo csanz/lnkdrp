@@ -76,6 +76,18 @@ export function withTempUserHeaders(init?: RequestInit): RequestInit {
 }
 
 /**
+ * Temp-user identity as a plain header map (empty when no temp user is stored).
+ *
+ * For callers that cannot go through `fetchWithTempUser`, e.g. `@vercel/blob/client`'s
+ * `upload()` which sends only `options.headers` to `/api/blob/upload` (cookies aside).
+ */
+export function tempUserHeaders(): Record<string, string> {
+  const tu = getTempUser();
+  if (!tu) return {};
+  return { [TEMP_USER_ID_HEADER]: tu.id, [TEMP_USER_SECRET_HEADER]: tu.secret };
+}
+
+/**
  * Capture temp-user headers from a response and persist them to localStorage.
  * This is how the browser learns about a newly-created temp user.
  */

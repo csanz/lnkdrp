@@ -2,8 +2,14 @@ import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { shareAuthCookieName, shareAuthCookieValue, verifySharePassword } from "@/lib/sharePassword";
+import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
+
+/** Password attempts per IP per share (brute-force protection). */
+const UNLOCK_LIMIT = 10;
+const UNLOCK_WINDOW_MS = 5 * 60 * 1000;
 /**
  * As Non Empty String (uses trim).
  */
@@ -27,6 +33,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     const body = (await request.json().catch(() => ({}))) as unknown;
     const password = asNonEmptyString((body as { password?: unknown }).password);
     if (!password) return NextResponse.json({ error: "Missing password" }, { status: 400 });
+
+    // Count every attempt (valid or not) so guessing is bounded per IP + share.
+    const ip = clientIpFromRequest(request);
+    const rl = await rateLimit({ key: `unlock:${ip}:${shareId}`, limit: UNLOCK_LIMIT, windowMs: UNLOCK_WINDOW_MS });
+    if (!rl.ok) return rateLimitedResponse(rl, "Too many attempts. Please try again later.");
 
     await connectMongo();
     const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
@@ -60,8 +71,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     });
     return res;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 400, publicMessage: "Could not unlock this share", context: "[api/share/:shareId/unlock] POST failed" });
   }
 }
 

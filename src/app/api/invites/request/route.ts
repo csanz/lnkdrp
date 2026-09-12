@@ -8,8 +8,14 @@ import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { InviteModel } from "@/lib/models/Invite";
 import { UserModel } from "@/lib/models/User";
+import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
+
+/** Invite requests per IP per hour (each one can trigger admin review + email work). */
+const REQUEST_LIMIT_PER_IP = 5;
+const REQUEST_WINDOW_MS = 60 * 60 * 1000;
 /**
  * As Non Empty String (uses trim).
  */
@@ -44,6 +50,10 @@ export async function POST(request: Request) {
     if (!description) return NextResponse.json({ error: "Missing description" }, { status: 400 });
 
     const email = normalizeEmail(rawEmail);
+
+    const ip = clientIpFromRequest(request);
+    const rl = await rateLimit({ key: `invite-request:ip:${ip}`, limit: REQUEST_LIMIT_PER_IP, windowMs: REQUEST_WINDOW_MS });
+    if (!rl.ok) return rateLimitedResponse(rl);
 
     await connectMongo();
 
@@ -90,8 +100,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, kind: "created" satisfies InviteRequestResultKind });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 400, publicMessage: "Could not submit invite request", context: "[api/invites/request] POST failed" });
   }
 }
 

@@ -10,58 +10,65 @@ If you add/rename a cron route, you must update `vercel.json` and `docs/CRON.md`
 
 ### Running manually
 
-All cron routes can be triggered manually in dev/staging via `POST` requests (auth-gated if applicable), e.g. `POST /api/cron/<job>`.
+All cron routes accept both **`GET`** and **`POST`** (same handler). Vercel Cron invokes them with `GET`; `POST` is kept for manual/dev invocation, e.g. `curl -X POST /api/cron/<job>`. Both are auth-gated (see "Secure the endpoints" below).
 
 ## Cron inventory (current)
 
 This document lives at **`./docs/CRON.md`**.
 
-All cron endpoints are **`POST`** routes under `/api/cron/*` and write a `CronHealth` heartbeat (best-effort) keyed by `jobKey`.
+All cron endpoints are **`GET`/`POST`** routes under `/api/cron/*` (`runtime = "nodejs"`, `maxDuration = 300`) and write a `CronHealth` heartbeat (best-effort) keyed by `jobKey`.
+Auth is enforced by the shared helper `src/lib/cron/auth.ts` (`requireCronAuth`).
 When enabled via env, failures are also recorded as an `ErrorEvent` (sanitized, TTL-retained) for queryable debugging.
 
 Frequencies below are from `vercel.json` `"crons"` (production source of truth).
 
 - **Doc metrics rollup**
-  - **Route**: `POST /api/cron/doc-metrics`
+  - **Route**: `GET|POST /api/cron/doc-metrics`
   - **Schedule**: `0 */6 * * *` (every 6 hours)
   - **Purpose**: roll up per-doc metrics into a cached snapshot for fast UI rendering.
   - **Writes**: `Doc.metricsSnapshot` (rollup) + `CronHealth(jobKey="doc-metrics")`
   - **Idempotency**: safe to rerun; rollup overwrites the cached snapshot deterministically.
 - **Credits cycle reconcile (hourly backstop)**
-  - **Route**: `POST /api/cron/credits-cycle-reconcile`
+  - **Route**: `GET|POST /api/cron/credits-cycle-reconcile`
   - **Schedule**: `10 * * * *` (hourly)
   - **Purpose**: hourly safety net to ensure each active paid workspace has received its included credit grant for the current Stripe billing cycle.
   - **Reads**: `Subscription` (active/trialing, `stripeSubscriptionId`, stored period boundaries), `CreditLedger` (`cycle_grant_included`), Stripe subscription (best-effort when stale/missing)
   - **Writes**: `CreditLedger(eventType="cycle_grant_included")` + `WorkspaceCreditBalance` via `grantCycleIncludedCredits`; `CronHealth(jobKey="credits-cycle-reconcile")`
   - **Idempotency**: uses `cycleKey = ${stripeSubscriptionId}:${current_period_start_unix_seconds}`; grant helper is safe under retries and concurrent webhook/cron execution.
 - **Stripe credits reconcile (cycle backstop)**
-  - **Route**: `POST /api/cron/stripe-credits-reconcile`
+  - **Route**: `GET|POST /api/cron/stripe-credits-reconcile`
   - **Schedule**: `15 */6 * * *` (every 6 hours)
   - **Purpose**: heavier backstop that fetches Stripe subscription objects, syncs stored billing-cycle boundaries, and ensures the included credit grant exists.
   - **Writes**: `Subscription.currentPeriodStart/currentPeriodEnd` (best-effort sync) + `CreditLedger`/`WorkspaceCreditBalance` via `grantCycleIncludedCredits`; `CronHealth(jobKey="stripe-credits-reconcile")`
+  - **Bounds**: `?limit=` (default `200`, max `1000`); subscriptions are processed **stalest stored `currentPeriodEnd` first** (nulls first) so every row is eventually visited. Per-subscription errors are isolated and counted in `errors`.
+  - **Overlap**: holds a `CronHealth` lease (see "Overlap lease" below); returns `200 { skipped: "locked" }` if a run is already in progress.
   - **Idempotency**: cycle grant is keyed by `cycleKey` and is safe under retries.
 - **Stripe credits report (metered usage)**
-  - **Route**: `POST /api/cron/stripe-credits-report`
+  - **Route**: `GET|POST /api/cron/stripe-credits-report`
   - **Schedule**: `30 * * * *` (hourly)
   - **Purpose**: report metered **on-demand/overage credits only** to Stripe for Pro workspaces.
   - **Reads**: `CreditLedger(status="charged", creditsFromOnDemand>0, stripeUsageReportedAt=null)` + `Subscription.stripeSubscriptionItemId`
-  - **Writes**: marks `CreditLedger.stripeUsageReportedAt` after reporting; `CronHealth(jobKey="stripe-credits-report")`
-  - **Idempotency**: Stripe idempotency keys per batch + ledger `stripeUsageReportedAt` marking prevents duplicates across retries.
+  - **Writes**: claims rows (`reportBatchId`, `reportClaimedAt`), then marks `CreditLedger.stripeUsageReportedAt` after reporting; `CronHealth(jobKey="stripe-credits-report")`
+  - **Bounds**: `?limit=` (default `200`, max `500`) rows per step.
+  - **Overlap**: holds a `CronHealth` lease (see "Overlap lease" below); returns `200 { skipped: "locked" }` if a run is already in progress.
+  - **Idempotency**: claim-then-report. Rows are claimed under a deterministic `reportBatchId`, which is also the Stripe meter event `identifier` (+ request idempotency key). A run that crashed after claiming leaves stale claims (>30 min); the next run **replays** them under their stored `reportBatchId` (Stripe de-duplicates) and only then claims fresh, never-claimed rows, so a partial failure can never re-batch already-reported credits under a new identifier.
 - **Usage aggregates reconcile (hourly)**
-  - **Route**: `POST /api/cron/usage-agg-reconcile`
+  - **Route**: `GET|POST /api/cron/usage-agg-reconcile`
   - **Schedule**: `20 * * * *` (hourly)
   - **Purpose**: recompute pre-aggregated usage totals for fast dashboard/credits reporting.
   - **Reads**: `CreditLedger(status="charged", eventType="ai_run")`
   - **Writes**: `UsageAggDaily`, `UsageAggCycle`, `CronHealth(jobKey="usage-agg-reconcile")`
   - **Idempotency**: deterministic recompute via upserts; safe to re-run for the same date range.
 - **Notification emails (doc updates + request repos)**
-  - **Route**: `POST /api/cron/notification-emails`
+  - **Route**: `GET|POST /api/cron/notification-emails`
   - **Schedule**: `*/5 * * * *` (every 5 minutes)
   - **Purpose**:
     - Send **doc update** emails based on `OrgMembership.docUpdateEmailMode` (off/daily/immediate).
     - Send **repo link request** emails when request-repo uploads complete, based on `OrgMembership.repoLinkRequestEmailMode`.
   - **Reads**: `OrgMembership`, `DocChange` (doc replacements), `Upload` (completed v1 request uploads), `Doc`, `Project`, `User`
   - **Writes**: `NotificationEmailCursor` (per-user cursor), `CronHealth(jobKey="notification-emails")`
+  - **Failure handling**: each recipient send is isolated; a failed send is logged, counted (`sendFailures`, per-category `failed`) and that user's cursor is **not** advanced, so the events are retried next run.
+  - **Overlap**: holds a `CronHealth` lease (see "Overlap lease" below); returns `200 { skipped: "locked" }` if a run is already in progress.
   - **Idempotency**: safe under retries; per-user cursors prevent duplicates.
 
 ## Doc metrics rollup (cached snapshot)
@@ -76,7 +83,8 @@ Frequencies below are from `vercel.json` `"crons"` (production source of truth).
 
 ### Code locations
 - **Rollup logic**: `src/lib/metrics/rollupDocMetrics.ts` (`rollupDocMetrics`)
-- **Cron endpoint**: `src/app/api/cron/doc-metrics/route.ts` (`POST /api/cron/doc-metrics`)
+- **Cron endpoint**: `src/app/api/cron/doc-metrics/route.ts` (`GET|POST /api/cron/doc-metrics`)
+- **Rollup ordering**: docs are processed by `metricsSnapshot.updatedAt` ascending (never-rolled-up docs first), so `limit` bounds each run without starving any doc.
 - **Local runner script**: `scripts/rollup-doc-metrics.ts`
 - **Doc API includes snapshot**: `src/app/api/docs/[docId]/route.ts` (returns `doc.metricsSnapshot`)
 - **Doc page uses snapshot (no extra query)**: `src/app/(app)/doc/[docId]/pageClient.tsx`
@@ -97,6 +105,16 @@ Cron endpoints can upsert a small “health” record in MongoDB so we can see w
 ### How it’s written
 - Cron endpoints should write `"running"` at the start and `"ok"`/`"error"` at the end (best-effort).
 
+## Overlap lease
+
+Jobs that must not run concurrently (`notification-emails`, `stripe-credits-reconcile`) take a lease before doing work.
+
+- **Implementation**: `src/lib/cron/lease.ts` (`acquireCronLease({ jobKey, ttlMs })` / `releaseCronLease(lease)`).
+- **Storage**: `CronHealth.leaseUntil` (+ `leaseToken`) on the job's heartbeat row.
+- **Semantics**: an atomic `findOneAndUpdate` succeeds only when `leaseUntil` is `null` or in the past. If it fails the route returns `200 { ok: true, skipped: "locked", jobKey }` and does nothing.
+- **Expiry**: `ttlMs` (6 minutes, slightly above `maxDuration = 300s`) guarantees a crashed run releases the lease automatically. `releaseCronLease` clears it early on normal completion (in a `finally`), and only when the holder's token still matches.
+- **Manual unblock**: if a job appears stuck as `locked` for longer than the TTL, clear `leaseUntil` on that `CronHealth` row.
+
 ## Vercel configuration
 
 ### Recommended production schedules
@@ -111,16 +129,22 @@ Cron endpoints can upsert a small “health” record in MongoDB so we can see w
 If you deploy on Vercel, these are configured in `vercel.json` under `"crons"` so schedules are committed in-repo (recommended).
 You can also manage schedules from Vercel UI (Project → Settings → Cron Jobs), but `vercel.json` is the source of truth for production in this repo.
 
-### Secure the endpoints (recommended)
-Set an environment variable in Vercel:
-- `LNKDRP_CRON_SECRET`: a random secret string
+### Secure the endpoints (required in production)
 
-Then configure the cron job to send **one** of the following:
-- Header `x-cron-secret: <LNKDRP_CRON_SECRET>`
-- OR header `authorization: Bearer <LNKDRP_CRON_SECRET>`
-- OR include `?secret=<LNKDRP_CRON_SECRET>` in the cron URL
+Auth is handled by `src/lib/cron/auth.ts` (`requireCronAuth`). Set **one** of these env vars in Vercel (Production):
+- `CRON_SECRET` (**preferred** — Vercel Cron automatically sends this one)
+- `LNKDRP_CRON_SECRET` (legacy fallback; only used when `CRON_SECRET` is unset)
 
-If `LNKDRP_CRON_SECRET` is not set, the endpoint will run **without auth**.
+**Vercel Cron** invokes each route with `GET` and the header `Authorization: Bearer $CRON_SECRET`. No extra configuration is needed beyond setting `CRON_SECRET` on the project.
+
+For manual/dev invocations the helper also accepts:
+- Header `authorization: Bearer <secret>`
+- Header `x-cron-secret: <secret>` (legacy)
+- Query `?secret=<secret>`
+
+Comparison is constant-time (`crypto.timingSafeEqual`).
+
+**Fail closed**: if **no** secret is configured, requests are allowed only when `VERCEL_ENV !== "production"` **and** `NODE_ENV !== "production"`. In production with no secret every cron route returns `401`, so `CRON_SECRET` (or `LNKDRP_CRON_SECRET`) **must** be set in production.
 
 ### Optional query params
 - `days`: day window (default `15`, max `60`)
@@ -165,17 +189,17 @@ npm run metrics:rollup:dev -- --interval 5000
 ```
 
 ### Calling the cron endpoint locally
-If you already have the dev server running on port `3001`, you can call:
+If you already have the dev server running on port `3001`, you can call (GET or POST both work):
 
 ```bash
-curl -X POST "http://localhost:3001/api/cron/doc-metrics?limit=50&days=15"
+curl "http://localhost:3001/api/cron/doc-metrics?limit=50&days=15"
 ```
 
-If `LNKDRP_CRON_SECRET` is set locally, include it:
+If `CRON_SECRET` (or `LNKDRP_CRON_SECRET`) is set locally, include it the way Vercel does:
 
 ```bash
 curl -X POST \
-  -H "x-cron-secret: $LNKDRP_CRON_SECRET" \
+  -H "Authorization: Bearer $CRON_SECRET" \
   "http://localhost:3001/api/cron/doc-metrics?limit=50&days=15"
 ```
 
@@ -186,7 +210,8 @@ curl -X POST \
 - Ensures the included credits reset/grant is applied **once per billing cycle** (idempotent by `cycleKey`).
 
 ### Code locations
-- **Cron endpoint**: `src/app/api/cron/stripe-credits-reconcile/route.ts` (`POST /api/cron/stripe-credits-reconcile`)
+- **Cron endpoint**: `src/app/api/cron/stripe-credits-reconcile/route.ts` (`GET|POST /api/cron/stripe-credits-reconcile`)
+- **Overlap lease**: `src/lib/cron/lease.ts` (`CronHealth.leaseUntil`)
 - **Credit cycle grant helper**: `src/lib/credits/grants.ts` (`grantCycleIncludedCredits`, `cycleKey`)
 - **Cron health**: `CronHealth.jobKey = "stripe-credits-reconcile"`
 
@@ -198,7 +223,7 @@ curl -X POST \
 - Reports **on-demand overage credits only** (not included credits).
 
 ### Code locations
-- **Cron endpoint**: `src/app/api/cron/stripe-credits-report/route.ts` (`POST /api/cron/stripe-credits-report`)
+- **Cron endpoint**: `src/app/api/cron/stripe-credits-report/route.ts` (`GET|POST /api/cron/stripe-credits-report`)
 - **Cron health**: `CronHealth.jobKey = "stripe-credits-report"`
 
 ## Credits (cycle grants + metered reporting)
@@ -217,7 +242,7 @@ curl -X POST \
 
 ### Credits cycle reconcile (hourly backstop)
 
-- **Route**: `POST /api/cron/credits-cycle-reconcile`
+- **Route**: `GET|POST /api/cron/credits-cycle-reconcile`
 - **Purpose**: Ensure each active paid workspace has received its included credits grant for the current billing cycle (within ≤ 1 hour).
 - **Reads**:
   - `SubscriptionModel` (active/trialing, `stripeSubscriptionId`, stored period boundaries)
@@ -231,6 +256,6 @@ curl -X POST \
 
 ### Stripe credits report (metered on-demand only)
 - Reports **on-demand/overage credits only** (not included plan credits).
-- **Route**: `POST /api/cron/stripe-credits-report`
+- **Route**: `GET|POST /api/cron/stripe-credits-report`
 
 

@@ -9,10 +9,11 @@ import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { withApiErrorLogging } from "@/lib/errors/withApiErrorLogging";
+import { INVITE_COOKIE_NAME, signInviteCookieValue } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
-const INVITE_COOKIE_NAME = "ld_invite_ok";
+const INVITE_COOKIE_TTL_SEC = 60 * 60 * 24 * 3; // 3 days
 
 function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
@@ -43,13 +44,13 @@ export const GET = withApiErrorLogging(async (request: NextRequest) => {
   const res = NextResponse.json({ ok: true });
   res.cookies.set({
     name: INVITE_COOKIE_NAME,
-    value: "1",
+    value: signInviteCookieValue({ inviteId: String(reqDoc._id), ttlSec: INVITE_COOKIE_TTL_SEC }),
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     // Short-ish: this is only to help the recipient complete sign-in.
-    maxAge: 60 * 60 * 24 * 3, // 3 days
+    maxAge: INVITE_COOKIE_TTL_SEC,
   });
   return res;
 });

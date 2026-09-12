@@ -22,25 +22,12 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-## Vercel Blob: test upload script
-
-1. Ensure you have a `BLOB_READ_WRITE_TOKEN` in `.env.local`.
-2. Run:
-
-```bash
-npm run blob:test
-```
-
-This uploads `public/sample/skycatch.jpg` and `public/sample/usavx.pdf` to Vercel Blob (as **public** blobs) and prints the resulting URLs.
-
 ## Vercel Blob: client uploads (browser → Blob)
 
-This implements the “client upload” flow described in the Vercel docs ([Client Uploads](https://vercel.com/docs/vercel-blob/client-upload)):
+Uploads use the “client upload” flow described in the Vercel docs ([Client Uploads](https://vercel.com/docs/vercel-blob/client-upload)):
 
-- Page: `/test/client-upload` (with a redirect from `/client-upload`)
-- Route: `/api/blob/upload` (uses `handleUpload()` to mint client tokens)
-
-Run your dev server and open `/test/client-upload` to upload either a local file or the two bundled samples.
+- Route: `/api/blob/upload` (uses `handleUpload()` to mint short-lived client tokens)
+- Requires `BLOB_READ_WRITE_TOKEN` in `.env.local`
 
 ## Stripe subscriptions (Checkout + webhooks)
 

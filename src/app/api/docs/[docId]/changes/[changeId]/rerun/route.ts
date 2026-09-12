@@ -16,8 +16,21 @@ import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger } from "@
 import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest, generateIdempotencyKey } from "@/lib/credits/idempotency";
 import { isOutOfCreditsError, OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 
 export const runtime = "nodejs";
+// Diff generation can take a while for long docs; allow the function to outlive the 90s AI timeout.
+export const maxDuration = 300;
+
+/** Hard timeout for the AI diff call; on abort the reservation is refunded and a 503 is returned. */
+const DIFF_TIMEOUT_MS = 90_000;
+
+function isAbortError(e: unknown): boolean {
+  const name = (e as { name?: unknown } | null)?.name;
+  if (name === "AbortError" || name === "TimeoutError") return true;
+  const msg = e instanceof Error ? e.message : "";
+  return /aborted|timed? ?out/i.test(msg);
+}
 
 function isObjectId(id: string) {
   return Types.ObjectId.isValid(id);
@@ -26,6 +39,9 @@ function isObjectId(id: string) {
 export async function POST(request: Request, ctx: { params: Promise<{ docId: string; changeId: string }> }) {
   const actor = await resolveActor(request);
   try {
+    // Viewers must not trigger owner-billed processing.
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
     const { docId, changeId } = await ctx.params;
     if (!isObjectId(docId)) return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
     if (!isObjectId(changeId)) return NextResponse.json({ error: "Invalid changeId" }, { status: 400 });
@@ -98,7 +114,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     }
 
     try {
-      const diff = await runDocChangeDiff({ previousText, newText, qualityTier });
+      const diff = await runDocChangeDiff({
+        previousText,
+        newText,
+        qualityTier,
+        abortSignal: AbortSignal.timeout(DIFF_TIMEOUT_MS),
+      });
       if (!diff) {
         await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: reserved.ledgerId });
         return applyTempUserHeaders(NextResponse.json({ ok: false, error: "Diff generation unavailable" }, { status: 503 }), actor);
@@ -112,7 +133,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       await markLedgerCharged({ workspaceId: actor.orgId, ledgerId: reserved.ledgerId, creditsCharged: credits });
       return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
     } catch (e) {
+      // Any failure (including the 90s abort) refunds the reservation; nothing was charged.
       await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: reserved.ledgerId });
+      if (isAbortError(e)) {
+        return applyTempUserHeaders(
+          NextResponse.json({ ok: false, error: "Diff generation timed out", code: "DIFF_TIMEOUT" }, { status: 503 }),
+          actor,
+        );
+      }
       const message = e instanceof Error ? e.message : "Diff generation failed";
       return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
     }

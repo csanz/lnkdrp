@@ -109,6 +109,11 @@ export async function runDocChangeDiff(input: {
     imageChanged?: boolean | null;
   }>;
   qualityTier?: "basic" | "standard" | "advanced";
+  /**
+   * Optional abort signal (e.g. `AbortSignal.timeout(90_000)`); the AI call rejects with an
+   * AbortError/TimeoutError when it fires. Callers must refund any credit reservation on failure.
+   */
+  abortSignal?: AbortSignal;
 }): Promise<DocChangeDiff | null> {
   if (!process.env.OPENAI_API_KEY) return null;
 
@@ -187,6 +192,7 @@ export async function runDocChangeDiff(input: {
     schema: DocChangeDiffSchema,
     temperature: 0,
     maxRetries: qualityTier === "advanced" ? 2 : qualityTier === "standard" ? 1 : 0,
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
   });
 
   // Extra guardrail: ensure summary is always <= MAX_SUMMARY_CHARS.

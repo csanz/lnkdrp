@@ -1,45 +1,40 @@
 /**
- * Cron route: `POST /api/cron/doc-metrics`
+ * Cron route: `GET|POST /api/cron/doc-metrics`
  *
  * Rolls up per-doc metrics into `Doc.metricsSnapshot` and writes a health heartbeat
  * to `CronHealth` so admins can see the last run status/duration.
+ *
+ * Vercel Cron invokes this with `GET` + `Authorization: Bearer $CRON_SECRET`;
+ * `POST` is kept for manual/dev invocation. Auth: `requireCronAuth`.
  */
 import { NextResponse } from "next/server";
 import { rollupDocMetrics } from "@/lib/metrics/rollupDocMetrics";
 import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
+import { requireCronAuth } from "@/lib/cron/auth";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
+
 /**
  * As Positive Int (uses Number, isFinite, floor).
  */
-
-
 function asPositiveInt(v: unknown): number | null {
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) return null;
   const i = Math.floor(n);
   return i >= 1 ? i : null;
 }
+
 /**
- * Handle POST requests.
+ * Shared handler for GET (Vercel Cron) and POST (manual) invocations.
  */
+async function handle(request: Request) {
+  const unauthorized = requireCronAuth(request);
+  if (unauthorized) return unauthorized;
 
-
-export async function POST(request: Request) {
   const url = new URL(request.url);
-  const secret = process.env.LNKDRP_CRON_SECRET;
-  if (secret) {
-    const provided =
-      request.headers.get("x-cron-secret") ??
-      request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-      url.searchParams.get("secret");
-    if (!provided || provided !== secret) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-  }
-
   const docId = url.searchParams.get("docId") ?? undefined;
   const limit = asPositiveInt(url.searchParams.get("limit"));
   const days = asPositiveInt(url.searchParams.get("days"));
@@ -142,4 +137,7 @@ export async function POST(request: Request) {
   }
 }
 
-
+/** Vercel Cron entrypoint. */
+export const GET = handle;
+/** Manual/dev entrypoint. */
+export const POST = handle;

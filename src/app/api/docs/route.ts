@@ -10,7 +10,9 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
+import { errorJson } from "@/lib/http/errorResponse";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { randomBase62, newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
@@ -318,9 +320,7 @@ export async function GET(request: Request) {
       actor,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/docs] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 400, publicMessage: "Could not load docs", context: "[api/docs] GET failed" });
   }
 }
 
@@ -335,6 +335,9 @@ export async function POST(request: Request) {
   try {
     debugLog(1, "[api/docs] POST");
     const actor = await resolveActor(request);
+    // Viewers can read a workspace but must not create docs in it.
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
     await connectMongo();
 
     const body = (await request.json().catch(() => ({}))) as Partial<{
@@ -390,11 +393,16 @@ export async function POST(request: Request) {
       }
     }
     if (!doc) {
-      const details = describeMongoError(lastErr);
-      throw new Error(
-        `Failed to create doc${
-          details.dupKeyFields ? ` (dupKeyFields=${JSON.stringify(details.dupKeyFields)})` : ""
-        }`,
+      // Retries exhausted on a shareId/title collision. Keep a stable machine-readable code for the
+      // client (the generic catch below would hide it in production) without leaking the raw error.
+      const dupKeyFields = getDupKeyFields(lastErr);
+      debugError(1, "[api/docs] POST create retries exhausted", describeMongoError(lastErr));
+      return applyTempUserHeaders(
+        NextResponse.json(
+          { error: "Could not create doc", code: "DOC_CREATE_RETRY_EXHAUSTED", dupKeyFields },
+          { status: 409, headers: { "cache-control": "no-store" } },
+        ),
+        actor,
       );
     }
 
@@ -422,9 +430,12 @@ export async function POST(request: Request) {
       actor,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/docs] POST failed", { message, ...(describeMongoError(err) as Record<string, unknown>) });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, {
+      status: 400,
+      publicMessage: "Could not create doc",
+      context: "[api/docs] POST failed",
+      logMeta: describeMongoError(err),
+    });
   }
 }
 

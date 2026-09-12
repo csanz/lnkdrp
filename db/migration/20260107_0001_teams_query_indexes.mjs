@@ -15,7 +15,7 @@ export async function up({ db }) {
   async function ensureIndex(coll, key, options) {
     const name = options?.name;
     const wantPartial = options?.partialFilterExpression ?? null;
-    const indexes = await coll.indexes();
+    const indexes = await coll.indexes().catch((e) => (e?.code === 26 || /ns does not exist/i.test(String(e?.message)) ? [] : Promise.reject(e))); // fresh DB: collection may not exist yet
     const existing = name ? indexes.find((i) => i?.name === name) : null;
     if (existing) {
       const sameKey = JSON.stringify(existing.key ?? null) === JSON.stringify(key ?? null);

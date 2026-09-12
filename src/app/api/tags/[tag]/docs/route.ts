@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { debugError, debugLog } from "@/lib/debug";
+import { debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 /**
@@ -46,12 +47,24 @@ export async function GET(
     const actor = await resolveActor(request);
     await connectMongo();
 
+    // Scope to the active workspace (with legacy personal-doc fallback), mirroring `/api/docs`.
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+
     // aiOutput.tags is an array of strings; match case-insensitively on the whole tag value.
     const rx = new RegExp(`^${escapeRegex(decodedTag)}$`, "i");
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
-      userId: new Types.ObjectId(actor.userId),
       "aiOutput.tags": rx,
+      ...(allowLegacyByUserId
+        ? {
+            $or: [
+              { orgId },
+              { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+            ],
+          }
+        : { orgId }),
     };
 
     const total = await DocModel.countDocuments(filter);
@@ -79,9 +92,7 @@ export async function GET(
       actor,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/tags/:tag/docs] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 400, publicMessage: "Could not load docs for tag", context: "[api/tags/:tag/docs] GET failed" });
   }
 }
 

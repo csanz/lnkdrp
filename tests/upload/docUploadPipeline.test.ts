@@ -13,8 +13,9 @@ vi.mock("@vercel/blob/client", () => {
 vi.mock("../../src/lib/http/fetchJson", () => {
   return { fetchJson: fetchJsonMock };
 });
+const TEMP_HEADERS = { "x-temp-user-id": "tmp1", "x-temp-user-secret": "s3cret" };
 vi.mock("../../src/lib/gating/tempUserClient", () => {
-  return { fetchWithTempUser: fetchWithTempUserMock };
+  return { fetchWithTempUser: fetchWithTempUserMock, tempUserHeaders: () => TEMP_HEADERS };
 });
 vi.mock("../../src/lib/sidebarCache", () => {
   return { notifyDocsChanged: notifyDocsChangedMock };
@@ -63,6 +64,8 @@ describe("docUploadPipeline.startBlobUploadAndProcess", () => {
       access: "public",
       handleUploadUrl: "/api/blob/upload",
       contentType: "application/pdf",
+      // Temp-user identity must reach the token-minting route (the Blob client sends no app headers itself).
+      headers: TEMP_HEADERS,
     });
 
     expect(fetchJsonMock).toHaveBeenCalledTimes(1);

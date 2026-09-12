@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
-import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { resolveExistingActor } from "@/lib/gating/actor";
+import { errorJson } from "@/lib/http/errorResponse";
 import { PageTimingModel } from "@/lib/models/PageTiming";
 import { ProjectClickModel } from "@/lib/models/ProjectClick";
 import { ProjectViewModel } from "@/lib/models/ProjectView";
@@ -79,22 +80,25 @@ type MetricsEvent =
 
 
 export async function POST(request: Request) {
-  const actor = await resolveActor(request);
   try {
     const body = (await request.json().catch(() => ({}))) as unknown as Partial<MetricsEvent>;
     const type = asNonEmptyString(body?.type, 64);
     if (!type) {
-      return applyTempUserHeaders(NextResponse.json({ error: "Missing type" }, { status: 400 }), actor);
+      return NextResponse.json({ error: "Missing type" }, { status: 400 });
     }
 
-    if (!Types.ObjectId.isValid(actor.userId)) {
-      return applyTempUserHeaders(NextResponse.json({ error: "Invalid actor" }, { status: 400 }), actor);
+    // Never mint identities from a fire-and-forget analytics call: only a signed-in user or an
+    // already-existing temp user (via headers) is attributed. Every event model requires a
+    // `viewerUserId`, so events from unknown visitors are accepted and dropped.
+    const actor = await resolveExistingActor(request);
+    if (!actor || !Types.ObjectId.isValid(actor.userId)) {
+      return NextResponse.json({ ok: true, ignored: true });
     }
     const viewerUserId = new Types.ObjectId(actor.userId);
 
     const sessionIdRaw = asNonEmptyString((body as { sessionId?: unknown })?.sessionId, 256);
     if (!sessionIdRaw) {
-      return applyTempUserHeaders(NextResponse.json({ error: "Missing sessionId" }, { status: 400 }), actor);
+      return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
     }
     const sessionIdHash = hashSessionId(sessionIdRaw);
 
@@ -106,10 +110,10 @@ export async function POST(request: Request) {
       const enteredAtMs = asFiniteNumber((body as { enteredAtMs?: unknown })?.enteredAtMs);
       const leftAtMs = asFiniteNumber((body as { leftAtMs?: unknown })?.leftAtMs);
       if (!path || enteredAtMs === null || leftAtMs === null) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Invalid page_timing payload" }, { status: 400 }), actor);
+        return NextResponse.json({ error: "Invalid page_timing payload" }, { status: 400 });
       }
       if (leftAtMs < enteredAtMs) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Invalid timing range" }, { status: 400 }), actor);
+        return NextResponse.json({ error: "Invalid timing range" }, { status: 400 });
       }
       const durationMs = Math.max(0, Math.min(24 * 60 * 60 * 1000, Math.round(leftAtMs - enteredAtMs)));
       await PageTimingModel.create({
@@ -121,7 +125,7 @@ export async function POST(request: Request) {
         leftAt: new Date(leftAtMs),
         durationMs,
       });
-      return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
+      return NextResponse.json({ ok: true });
     }
 
     if (type === "doc_page_timing") {
@@ -131,7 +135,7 @@ export async function POST(request: Request) {
       const enteredAtMs = asFiniteNumber((body as { enteredAtMs?: unknown })?.enteredAtMs);
       const leftAtMs = asFiniteNumber((body as { leftAtMs?: unknown })?.leftAtMs);
       if (!docIdRaw || !Types.ObjectId.isValid(docIdRaw)) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Invalid docId" }, { status: 400 }), actor);
+        return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
       }
       if (
         version === null ||
@@ -143,13 +147,10 @@ export async function POST(request: Request) {
         enteredAtMs === null ||
         leftAtMs === null
       ) {
-        return applyTempUserHeaders(
-          NextResponse.json({ error: "Invalid doc_page_timing payload" }, { status: 400 }),
-          actor,
-        );
+        return NextResponse.json({ error: "Invalid doc_page_timing payload" }, { status: 400 });
       }
       if (leftAtMs < enteredAtMs) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Invalid timing range" }, { status: 400 }), actor);
+        return NextResponse.json({ error: "Invalid timing range" }, { status: 400 });
       }
 
       // Ensure the doc is visible in the actor's active org (with legacy personal-org fallback).
@@ -174,7 +175,7 @@ export async function POST(request: Request) {
       });
       if (!ok) {
         // Mirror other doc APIs: 404 for "not found / not authorized".
-        return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
 
       const durationMs = Math.max(0, Math.min(24 * 60 * 60 * 1000, Math.round(leftAtMs - enteredAtMs)));
@@ -189,14 +190,14 @@ export async function POST(request: Request) {
         leftAt: new Date(leftAtMs),
         durationMs,
       });
-      return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
+      return NextResponse.json({ ok: true });
     }
 
     if (type === "project_view") {
       const projectIdRaw = asNonEmptyString((body as { projectId?: unknown })?.projectId, 64);
       const path = asNonEmptyString((body as { path?: unknown })?.path, 2048) ?? "";
       if (!projectIdRaw || !Types.ObjectId.isValid(projectIdRaw)) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Invalid projectId" }, { status: 400 }), actor);
+        return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
       }
       const projectId = new Types.ObjectId(projectIdRaw);
 
@@ -206,7 +207,7 @@ export async function POST(request: Request) {
         { $setOnInsert: { projectId, viewerUserId, sessionIdHash, path } },
         { upsert: true },
       );
-      return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
+      return NextResponse.json({ ok: true });
     }
 
     if (type === "project_click") {
@@ -215,10 +216,10 @@ export async function POST(request: Request) {
       const toPath = asNonEmptyString((body as { toPath?: unknown })?.toPath, 2048);
       const toDocIdRaw = asNonEmptyString((body as { toDocId?: unknown })?.toDocId, 64);
       if (!projectIdRaw || !Types.ObjectId.isValid(projectIdRaw)) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Invalid projectId" }, { status: 400 }), actor);
+        return NextResponse.json({ error: "Invalid projectId" }, { status: 400 });
       }
       if (!toPath) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Invalid toPath" }, { status: 400 }), actor);
+        return NextResponse.json({ error: "Invalid toPath" }, { status: 400 });
       }
       const projectId = new Types.ObjectId(projectIdRaw);
       const toDocId = toDocIdRaw && Types.ObjectId.isValid(toDocIdRaw) ? new Types.ObjectId(toDocIdRaw) : null;
@@ -231,13 +232,12 @@ export async function POST(request: Request) {
         toPath,
         ...(toDocId ? { toDocId } : {}),
       });
-      return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
+      return NextResponse.json({ ok: true });
     }
 
-    return applyTempUserHeaders(NextResponse.json({ error: "Unknown type" }, { status: 400 }), actor);
+    return NextResponse.json({ error: "Unknown type" }, { status: 400 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
+    return errorJson(err, { status: 400, publicMessage: "Could not record event", context: "[api/metrics/events] POST failed" });
   }
 }
 

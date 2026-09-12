@@ -55,9 +55,14 @@ export async function connectMongoose(): Promise<typeof mongoose> {
         // Enable driver command monitoring only when verbose debugging is on.
         // (This is used by dev-only request instrumentation; keep it off in production.)
         monitorCommands: process.env.NODE_ENV !== "production" && Number(process.env.DEBUG_LEVEL ?? 0) >= 2,
-        // Fail fast in dev so the UI doesn't sit "Saving…" for ~30s.
-        serverSelectionTimeoutMS: 5_000,
+        // Fail fast so the UI doesn't sit "Saving…" for ~30s.
+        serverSelectionTimeoutMS: 10_000,
         connectTimeoutMS: 5_000,
+        // Serverless-friendly pool: small, and release idle sockets quickly so
+        // many concurrent lambdas don't exhaust Atlas connection limits.
+        maxPoolSize: 10,
+        minPoolSize: 0,
+        maxIdleTimeMS: 30_000,
       })
       .catch((err) => {
         // Allow retries after a failed attempt.

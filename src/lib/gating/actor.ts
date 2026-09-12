@@ -381,55 +381,73 @@ export async function tryResolveUserActorFastWithPersonalOrg(request: Request): 
 }
 
 /**
- * Resolve the current "actor" for an API request:
- * - signed-in user (NextAuth session), else
- * - temp user (by headers), else
- * - create a new temp user.
+ * Dev/test-only auth bypass for route testing.
+ *
+ * Only applies when there is NO authenticated session user and is intentionally blocked in
+ * production environments. Returns `null` when the bypass is not active.
  */
-export async function resolveActor(request: Request): Promise<Actor> {
-  const cached = ACTOR_CACHE.get(request);
-  if (cached) return await cached;
-  const p: Promise<Actor> = (async () => {
-  // 1) Authenticated user (preferred)
-  const userActor = await tryResolveUserActor(request);
-  if (userActor) return userActor;
-
-  // Dev/test-only bypass for route testing:
-  // Only applies when there is NO authenticated session user.
-  // This is intentionally blocked in production environments.
+async function tryResolveTestBypassActor(): Promise<Actor | null> {
   const bypass =
     (process.env.API_TEST_BYPASS_AUTH ?? "").trim().toLowerCase() === "1" ||
     (process.env.API_TEST_BYPASS_AUTH ?? "").trim().toLowerCase() === "true";
   const testUserId = (process.env.API_TEST_USER_ID ?? "").trim();
-  if (bypass && process.env.NODE_ENV !== "production" && testUserId && Types.ObjectId.isValid(testUserId)) {
-    await connectMongo();
-    const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(testUserId) });
-    const personalOrgId = String(orgId);
-    return { kind: "user", userId: testUserId, orgId: personalOrgId, personalOrgId };
+  if (!bypass || process.env.NODE_ENV === "production" || !testUserId || !Types.ObjectId.isValid(testUserId)) {
+    return null;
   }
+  await connectMongo();
+  const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(testUserId) });
+  const personalOrgId = String(orgId);
+  return { kind: "user", userId: testUserId, orgId: personalOrgId, personalOrgId };
+}
 
-  // 2) Temp user via headers
+/**
+ * Resolve an **existing** temp user from the temp-user headers.
+ *
+ * Returns `null` when the headers are missing/invalid or the temp user does not exist.
+ * Never creates a temp user.
+ */
+async function tryResolveExistingTempActor(request: Request): Promise<Actor | null> {
   const tempId = header(request, TEMP_USER_ID_HEADER);
   const tempSecret = header(request, TEMP_USER_SECRET_HEADER);
-  if (tempId && tempSecret && Types.ObjectId.isValid(tempId)) {
-    await connectMongo();
-    const u = await UserModel.findOne({ _id: new Types.ObjectId(tempId), isTemp: true })
-      .select({ _id: 1, tempSecretHash: 1 })
-      .lean();
+  if (!tempId || !tempSecret || !Types.ObjectId.isValid(tempId)) return null;
 
-    if (u && verifyTempUserSecret({ secret: tempSecret, secretHash: u.tempSecretHash ?? null })) {
-      const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(String(u._id)) });
-      const personalOrgId = String(orgId);
-      return {
-        kind: "temp",
-        userId: String(u._id),
-        orgId: personalOrgId,
-        personalOrgId,
-        temp: { id: String(u._id) },
-        isNew: false,
-      };
-    }
-  }
+  await connectMongo();
+  const u = await UserModel.findOne({ _id: new Types.ObjectId(tempId), isTemp: true })
+    .select({ _id: 1, tempSecretHash: 1 })
+    .lean();
+  if (!u || !verifyTempUserSecret({ secret: tempSecret, secretHash: u.tempSecretHash ?? null })) return null;
+
+  const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(String(u._id)) });
+  const personalOrgId = String(orgId);
+  return {
+    kind: "temp",
+    userId: String(u._id),
+    orgId: personalOrgId,
+    personalOrgId,
+    temp: { id: String(u._id) },
+    isNew: false,
+  };
+}
+
+/**
+ * Uncached actor resolution (see `resolveActor()` for the contract).
+ *
+ * This never reads or writes `ACTOR_CACHE`, which makes it safe to call from inside another
+ * cached resolver's pending promise. Calling `resolveActor()` from such a promise would find the
+ * caller's own promise in the cache and await itself, hanging the request forever.
+ */
+async function resolveActorUncached(request: Request): Promise<Actor> {
+  // 1) Authenticated user (preferred)
+  const userActor = await tryResolveUserActor(request);
+  if (userActor) return userActor;
+
+  // Dev/test-only bypass for route testing (no-op in production).
+  const bypassActor = await tryResolveTestBypassActor();
+  if (bypassActor) return bypassActor;
+
+  // 2) Temp user via headers
+  const tempActor = await tryResolveExistingTempActor(request);
+  if (tempActor) return tempActor;
 
   // 3) Create a new temp user
   await connectMongo();
@@ -444,9 +462,48 @@ export async function resolveActor(request: Request): Promise<Actor> {
     temp: { id: created.id, secret: created.secret },
     isNew: true,
   };
-  })();
+}
+
+/**
+ * Resolve the current "actor" for an API request:
+ * - signed-in user (NextAuth session), else
+ * - temp user (by headers), else
+ * - create a new temp user.
+ *
+ * The result is cached per `Request` so multiple resolvers on the same request share one
+ * resolution (and mint at most one temp user).
+ */
+export async function resolveActor(request: Request): Promise<Actor> {
+  const cached = ACTOR_CACHE.get(request);
+  if (cached) return await cached;
+  const p = resolveActorUncached(request);
   ACTOR_CACHE.set(request, p);
   return await p;
+}
+
+/**
+ * Resolve an actor that **already exists**, or `null`.
+ *
+ * Intended for fire-and-forget / public endpoints (e.g. metrics ingestion) that must never mint
+ * identities: this returns the signed-in user actor, or the temp actor identified by the
+ * temp-user headers when that temp user exists, and otherwise returns `null` WITHOUT creating a
+ * new temp user, org or membership. (In non-production, the `API_TEST_BYPASS_AUTH` test bypass
+ * is honored the same way `resolveActor()` honors it.)
+ *
+ * If `resolveActor()` already ran for this `Request`, its cached result is reused; this function
+ * never writes the cache itself.
+ */
+export async function resolveExistingActor(request: Request): Promise<Actor | null> {
+  const cached = ACTOR_CACHE.get(request);
+  if (cached) return await cached;
+
+  const userActor = await tryResolveUserActor(request);
+  if (userActor) return userActor;
+
+  const bypassActor = await tryResolveTestBypassActor();
+  if (bypassActor) return bypassActor;
+
+  return await tryResolveExistingTempActor(request);
 }
 
 /**
@@ -456,7 +513,9 @@ export async function resolveActor(request: Request): Promise<Actor> {
  * - active-org cookie (set only after membership validation)
  * - NextAuth JWT claim `activeOrgId`
  *
- * Falls back to full `resolveActor()` when we can't safely determine org context.
+ * Falls back to the full (uncached) resolver when we can't safely determine org context.
+ * NOTE: fallbacks must call `resolveActorUncached()`, not `resolveActor()`: this function stores
+ * its own pending promise in `ACTOR_CACHE`, so `resolveActor()` would await that same promise.
  */
 export async function resolveActorForStats(request: Request): Promise<Actor> {
   const cached = ACTOR_CACHE.get(request);
@@ -464,7 +523,7 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
 
   const p: Promise<Actor> = (async () => {
     const session = await tryGetSessionClaims(request);
-    if (!session?.userId) return await resolveActor(request);
+    if (!session?.userId) return await resolveActorUncached(request);
 
     const cookieHeader = request.headers.get("cookie") ?? "";
     const cookieOrgIdRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
@@ -475,7 +534,7 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
     const orgId = cookieOrgId && Types.ObjectId.isValid(cookieOrgId) ? cookieOrgId : claimOrgId;
     if (!orgId || !Types.ObjectId.isValid(orgId)) {
       // If org context is missing, fall back to the full resolver (ensures personal org exists).
-      return await resolveActor(request);
+      return await resolveActorUncached(request);
     }
 
     // Security: membership can change after a cookie is minted. Validate membership once (1 query).
@@ -494,7 +553,7 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
             }),
           );
     if (typeof cachedOk !== "boolean") setCachedMembershipExists(cacheKey, ok);
-    if (!ok) return await resolveActor(request);
+    if (!ok) return await resolveActorUncached(request);
 
     // For stats endpoints we don't need personalOrgId for legacy access checks.
     // Keep it stable without extra DB reads.
@@ -504,7 +563,3 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
   ACTOR_CACHE.set(request, p);
   return await p;
 }
-
-
-
-

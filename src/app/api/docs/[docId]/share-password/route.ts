@@ -6,9 +6,13 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
 import { debugError } from "@/lib/debug";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** Minimum share password length (share links are public; short passwords are guessable). */
+const MIN_SHARE_PASSWORD_LENGTH = 8;
 /**
  * Return whether object id.
  */
@@ -82,6 +86,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid docId" }, { status: 400 }), actor);
     }
 
+    // Viewers can read a workspace but must not change share settings.
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
+
     const body = (await request.json().catch(() => ({}))) as unknown;
     const password = asPassword((body as { password?: unknown }).password);
     const orgId = new Types.ObjectId(actor.orgId);
@@ -117,9 +125,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     }
 
     const trimmed = password.trim();
-    if (trimmed.length < 4) {
+    if (trimmed.length < MIN_SHARE_PASSWORD_LENGTH) {
       return applyTempUserHeaders(
-        NextResponse.json({ error: "Password must be at least 4 characters." }, { status: 400 }),
+        NextResponse.json({ error: `Password must be at least ${MIN_SHARE_PASSWORD_LENGTH} characters.` }, { status: 400 }),
         actor,
       );
     }

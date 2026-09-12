@@ -35,6 +35,15 @@ const docSchema = new Schema(
     currentUploadId: { type: Schema.Types.ObjectId, ref: "Upload", index: true },
 
     /**
+     * Monotonic per-doc upload version allocator.
+     *
+     * Always allocate via `allocateDocUploadVersion()` (atomic `$inc`) instead of counting
+     * uploads, which races when two uploads start concurrently. Absent on legacy docs; it is
+     * lazily initialized from the highest existing `Upload.version`.
+     */
+    versionCounter: { type: Number, min: 0 },
+
+    /**
      * Canonical object status.
      */
     status: {
@@ -480,13 +489,15 @@ export const DocModel: Model<Doc> = (() => {
     const hasShareAllowRevisionHistory = Boolean(existing.schema.path("shareAllowRevisionHistory"));
     const hasReplaceUploadToken = Boolean(existing.schema.path("replaceUploadToken"));
     const hasPrimaryProjectId = Boolean(existing.schema.path("primaryProjectId"));
+    const hasVersionCounter = Boolean(existing.schema.path("versionCounter"));
     if (
       (!hasSharePassword ||
         !hasProjectIds ||
         !hasShareAllowPdfDownload ||
         !hasShareAllowRevisionHistory ||
         !hasReplaceUploadToken ||
-        !hasPrimaryProjectId) &&
+        !hasPrimaryProjectId ||
+        !hasVersionCounter) &&
       process.env.NODE_ENV !== "production"
     ) {
       delete mongoose.models.Doc;
@@ -496,4 +507,48 @@ export const DocModel: Model<Doc> = (() => {
   }
   return mongoose.model<Doc>("Doc", docSchema);
 })();
+
+/**
+ * Allocate the next upload version number for a doc (1 = initial upload, 2+ = re-uploads).
+ *
+ * Atomic: uses `$inc` on `Doc.versionCounter`, so concurrent upload creations for the same
+ * doc never receive the same version (which would collide on `DocChange`'s unique
+ * `(docId, toVersion)` index).
+ *
+ * Legacy docs without a counter are initialized from the highest existing `Upload.version`
+ * via `$max`, which is itself safe under concurrent initialization.
+ */
+export async function allocateDocUploadVersion(docId: mongoose.Types.ObjectId): Promise<number> {
+  const current = await DocModel.findById(docId).select({ _id: 1, versionCounter: 1 }).lean();
+  if (!current) throw new Error("Doc not found");
+
+  const counter = (current as { versionCounter?: unknown }).versionCounter;
+  if (typeof counter !== "number" || !Number.isFinite(counter)) {
+    // Lazy import to avoid a module cycle at load time (Upload -> Doc is not a dependency today,
+    // but keep the models decoupled at import time).
+    const { UploadModel } = await import("@/lib/models/Upload");
+    const latest = await UploadModel.findOne({ docId })
+      .sort({ version: -1 })
+      .select({ version: 1 })
+      .lean();
+    const maxVersion =
+      latest && typeof (latest as { version?: unknown }).version === "number"
+        ? Math.max(0, Math.floor((latest as { version: number }).version))
+        : 0;
+    await DocModel.updateOne({ _id: docId }, { $max: { versionCounter: maxVersion } });
+  }
+
+  const updated = await DocModel.findOneAndUpdate(
+    { _id: docId },
+    { $inc: { versionCounter: 1 } },
+    { new: true },
+  )
+    .select({ _id: 1, versionCounter: 1 })
+    .lean();
+  const next = updated ? (updated as { versionCounter?: unknown }).versionCounter : null;
+  if (typeof next !== "number" || !Number.isFinite(next) || next < 1) {
+    throw new Error("Failed to allocate upload version");
+  }
+  return next;
+}
 

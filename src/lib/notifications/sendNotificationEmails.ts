@@ -22,6 +22,7 @@ import {
   type NotificationEmailCursorKey,
 } from "@/lib/models/NotificationEmailCursor";
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { debugError } from "@/lib/debug";
 
 type Mode = "off" | "daily" | "immediate";
 
@@ -52,13 +53,18 @@ export type SendNotificationEmailsResult = {
   dryRun: boolean;
   workspacesProcessed: number;
   membersProcessed: number;
+  /**
+   * Total recipient sends that threw. Each failure is logged and the affected
+   * user's cursor is NOT advanced, so the events are retried on the next run.
+   */
+  sendFailures: number;
   docUpdate: {
-    immediate: { members: number; emails: number; events: number };
-    daily: { members: number; emails: number; events: number; sentTodayUtc: boolean };
+    immediate: { members: number; emails: number; events: number; failed: number };
+    daily: { members: number; emails: number; events: number; failed: number; sentTodayUtc: boolean };
   };
   repoLinkRequests: {
-    immediate: { members: number; emails: number; events: number };
-    daily: { members: number; emails: number; events: number; sentTodayUtc: boolean };
+    immediate: { members: number; emails: number; events: number; failed: number };
+    daily: { members: number; emails: number; events: number; failed: number; sentTodayUtc: boolean };
   };
 };
 
@@ -128,6 +134,33 @@ async function upsertCursor(params: {
   );
 }
 
+/**
+ * Send one recipient email, isolating failures.
+ *
+ * Returns `true` on success (or dry run), `false` when the send threw. A failure
+ * is logged via `debugError` and must NOT advance the recipient's cursor, so the
+ * same events are retried on the next run instead of being silently dropped.
+ */
+async function trySendEmail(params: {
+  dryRun: boolean;
+  to: string;
+  subject: string;
+  text: string;
+  context: { orgId: string; userId: string; key: NotificationEmailCursorKey; mode: Mode };
+}): Promise<boolean> {
+  if (params.dryRun) return true;
+  try {
+    await sendTextEmail({ to: params.to, subject: params.subject, text: params.text });
+    return true;
+  } catch (err) {
+    debugError(1, "[notification-emails] send failed", {
+      ...params.context,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
 export async function sendNotificationEmails(
   params: SendNotificationEmailsParams = {},
 ): Promise<SendNotificationEmailsResult> {
@@ -180,13 +213,14 @@ export async function sendNotificationEmails(
     dryRun,
     workspacesProcessed: 0,
     membersProcessed: 0,
+    sendFailures: 0,
     docUpdate: {
-      immediate: { members: 0, emails: 0, events: 0 },
-      daily: { members: 0, emails: 0, events: 0, sentTodayUtc: allowDaily },
+      immediate: { members: 0, emails: 0, events: 0, failed: 0 },
+      daily: { members: 0, emails: 0, events: 0, failed: 0, sentTodayUtc: allowDaily },
     },
     repoLinkRequests: {
-      immediate: { members: 0, emails: 0, events: 0 },
-      daily: { members: 0, emails: 0, events: 0, sentTodayUtc: allowDaily },
+      immediate: { members: 0, emails: 0, events: 0, failed: 0 },
+      daily: { members: 0, emails: 0, events: 0, failed: 0, sentTodayUtc: allowDaily },
     },
   };
 
@@ -292,8 +326,17 @@ export async function sendNotificationEmails(
           }
           lines.push("", "- LinkDrop");
 
-          if (!dryRun) {
-            await sendTextEmail({ to: recipient.email, subject, text: lines.join("\n") });
+          const sent = await trySendEmail({
+            dryRun,
+            to: recipient.email,
+            subject,
+            text: lines.join("\n"),
+            context: { orgId: orgIdStr, userId: m.userId, key: "doc_updates", mode: "daily" },
+          });
+          if (!sent) {
+            totals.sendFailures += 1;
+            totals.docUpdate.daily.failed += 1;
+            continue;
           }
 
           totals.docUpdate.daily.members += 1;
@@ -330,8 +373,17 @@ export async function sendNotificationEmails(
           }
           lines.push("", "- LinkDrop");
 
-          if (!dryRun) {
-            await sendTextEmail({ to: recipient.email, subject, text: lines.join("\n") });
+          const sent = await trySendEmail({
+            dryRun,
+            to: recipient.email,
+            subject,
+            text: lines.join("\n"),
+            context: { orgId: orgIdStr, userId: m.userId, key: "doc_updates", mode: "immediate" },
+          });
+          if (!sent) {
+            totals.sendFailures += 1;
+            totals.docUpdate.immediate.failed += 1;
+            continue;
           }
 
           totals.docUpdate.immediate.members += 1;
@@ -478,8 +530,17 @@ export async function sendNotificationEmails(
           }
           lines.push("", `Requests: ${buildRequestsUrl()}`, "", "- LinkDrop");
 
-          if (!dryRun) {
-            await sendTextEmail({ to: recipient.email, subject, text: lines.join("\n") });
+          const sent = await trySendEmail({
+            dryRun,
+            to: recipient.email,
+            subject,
+            text: lines.join("\n"),
+            context: { orgId: orgIdStr, userId: m.userId, key: "repo_link_requests", mode: "daily" },
+          });
+          if (!sent) {
+            totals.sendFailures += 1;
+            totals.repoLinkRequests.daily.failed += 1;
+            continue;
           }
 
           totals.repoLinkRequests.daily.members += 1;
@@ -510,8 +571,17 @@ export async function sendNotificationEmails(
           }
           lines.push("", `Requests: ${buildRequestsUrl()}`, "", "- LinkDrop");
 
-          if (!dryRun) {
-            await sendTextEmail({ to: recipient.email, subject, text: lines.join("\n") });
+          const sent = await trySendEmail({
+            dryRun,
+            to: recipient.email,
+            subject,
+            text: lines.join("\n"),
+            context: { orgId: orgIdStr, userId: m.userId, key: "repo_link_requests", mode: "immediate" },
+          });
+          if (!sent) {
+            totals.sendFailures += 1;
+            totals.repoLinkRequests.immediate.failed += 1;
+            continue;
           }
 
           totals.repoLinkRequests.immediate.members += 1;

@@ -15,7 +15,7 @@ import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname, buildDocPreviewPngPathname } from "@/lib/blob/clientUpload";
 import { debugError, debugLog } from "@/lib/debug";
 import { fetchJson } from "@/lib/http/fetchJson";
-import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { fetchWithTempUser, tempUserHeaders } from "@/lib/gating/tempUserClient";
 import { notifyDocsChanged } from "@/lib/sidebarCache";
 import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
 import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
@@ -156,10 +156,14 @@ export function startBlobUploadAndProcess(params: {
       const name = (file.name || "").toLowerCase();
       const inferredContentType =
         file.type || (name.endsWith(".pdf") ? "application/pdf" : undefined);
+      // `/api/blob/upload` authorizes the token by upload ownership; signed-out callers are
+      // identified only by the temp-user headers, which the Blob client does not send on its own.
+      const identityHeaders = tempUserHeaders();
       const blob = await blobUpload(pathname, file, {
         access: "public",
         handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
         contentType: inferredContentType,
+        headers: identityHeaders,
       });
 
       // Best-effort: generate a server-independent PDF thumbnail and attach it to the Upload.
@@ -179,6 +183,7 @@ export function startBlobUploadAndProcess(params: {
             access: "public",
             handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
             contentType: "image/png",
+            headers: identityHeaders,
           });
           previewImageUrl = preview.url;
           debugLog(1, "[docUploadPipeline] pdf preview uploaded", { docId, uploadId });

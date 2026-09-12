@@ -8,10 +8,6 @@ import { after } from "next/server";
 import { Types } from "mongoose";
 import { put } from "@vercel/blob";
 import pdfParse from "pdf-parse";
-import { createRequire } from "module";
-import { fileURLToPath, pathToFileURL } from "url";
-import path from "node:path";
-import fs from "node:fs";
 import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { UploadModel } from "@/lib/models/Upload";
@@ -31,14 +27,21 @@ import { reviewDocText } from "@/lib/ai/reviewDocText";
 import { runRequestReviewInvestorFocused } from "@/lib/ai/requestReviewInvestorFocused";
 import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger } from "@/lib/credits/creditService";
 import { creditsForRun } from "@/lib/credits/schedule";
-import { idempotencyKeyFromRequest, generateIdempotencyKey } from "@/lib/credits/idempotency";
+import { idempotencyKeyFromRequest } from "@/lib/credits/idempotency";
 import { getCreditsSnapshot } from "@/lib/credits/snapshot";
 import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
+import { openPdfDocument, renderPdfPageToPng, type PdfJsDocument } from "@/lib/pdf/renderPage";
 
 export const runtime = "nodejs";
+// PDF rasterization + AI passes can take minutes for large decks (Vercel Pro/Enterprise cap).
+export const maxDuration = 300;
+
+/** An upload stuck in `processing` longer than this is considered abandoned and may be re-claimed. */
+const PROCESSING_STALE_MS = 20 * 60 * 1000;
 /**
  * Header (uses get, toLowerCase).
  */
@@ -48,142 +51,6 @@ function header(request: Request, name: string) {
   return request.headers.get(name) ?? request.headers.get(name.toLowerCase());
 }
 
-type PdfJsLib = {
-  getDocument: (opts: { data: Uint8Array; disableWorker?: boolean }) => { promise: Promise<unknown> };
-  GlobalWorkerOptions?: { workerSrc?: string };
-};
-
-let _cachedPdfJsLibPromise: Promise<PdfJsLib> | null = null;
-/**
- * Lazy-load PDF.js at runtime.
- *
- * Next's App Router bundling can choke on the ESM `pdf.mjs` entrypoint in certain dev builds
- * (seen as `Object.defineProperty called on non-object`). Using `createRequire` keeps this
- * as a Node-side runtime dependency instead of a webpack-bundled module.
- */
-async function getPdfJsLib(): Promise<PdfJsLib> {
-  if (_cachedPdfJsLibPromise) return _cachedPdfJsLibPromise;
-
-  _cachedPdfJsLibPromise = (async () => {
-    // IMPORTANT: keep `createRequire()` argument statically analyzable by Next,
-    // otherwise dev builds can warn/error with:
-    //   "module.createRequire failed parsing argument."
-    // Using `import.meta.url` avoids bundler parsing issues.
-    const require = createRequire(import.meta.url);
-
-    // Resolve the pdfjs-dist package root, then pick a concrete entrypoint inside it.
-    // This avoids issues with Node `exports` restrictions and Next dev `(rsc)` resolution quirks.
-    let pkgRoot = "";
-
-    function findPdfjsPackageJson(startDir: string): string | null {
-      let dir = startDir;
-      for (let i = 0; i < 25; i++) {
-        const candidate = path.join(dir, "node_modules", "pdfjs-dist", "package.json");
-        try {
-          if (fs.existsSync(candidate)) return candidate;
-        } catch {
-          // ignore
-        }
-        const parent = path.dirname(dir);
-        if (parent === dir) break;
-        dir = parent;
-      }
-      return null;
-    }
-
-    try {
-      const starts = Array.from(
-        new Set([
-          process.cwd(),
-          path.dirname(fileURLToPath(import.meta.url)),
-        ]),
-      );
-
-      let pkgJsonPath: string | null = null;
-      for (const s of starts) {
-        pkgJsonPath = findPdfjsPackageJson(s);
-        if (pkgJsonPath) break;
-      }
-
-      // Last resort: try Node resolution (can fail in Next dev `(rsc)` contexts).
-      if (!pkgJsonPath) {
-        pkgJsonPath = require.resolve("pdfjs-dist/package.json");
-      }
-
-      pkgRoot = pkgJsonPath ? path.dirname(pkgJsonPath) : "";
-
-      debugLog(2, "[process][pdfjs] resolved package", { pkgJsonPath, pkgRoot });
-    } catch (e) {
-      debugError(1, "[process] pdfjs resolve failed", {
-        message: e instanceof Error ? e.message : String(e),
-      });
-      throw e;
-    }
-    if (!pkgRoot) throw new Error("Failed to resolve pdfjs-dist package root");
-
-    const entryCandidates = [
-      path.join(pkgRoot, "legacy/build/pdf.mjs"),
-      path.join(pkgRoot, "build/pdf.mjs"),
-      path.join(pkgRoot, "legacy/build/pdf.js"),
-      path.join(pkgRoot, "build/pdf.js"),
-    ];
-    const pdfPath = entryCandidates.find((p) => {
-      try {
-        return fs.existsSync(p);
-      } catch {
-        return false;
-      }
-    });
-    if (!pdfPath) {
-      debugError(1, "[process] pdfjs resolve failed (no entry found)", {
-        pkgRoot,
-        candidates: entryCandidates,
-      });
-      throw new Error(`pdfjs-dist entry not found under ${pkgRoot}`);
-    }
-
-    // IMPORTANT: the import target is a runtime-resolved file:// URL. Without `webpackIgnore`,
-    // Next/Webpack can error during bundling with "Cannot find module as expression is too dynamic".
-    // We want this to remain a pure runtime import.
-    const pdfjs = (await import(
-      /* webpackIgnore: true */ pathToFileURL(pdfPath).href
-    )) as unknown as PdfJsLib;
-
-    debugLog(2, "[process][pdfjs] imported", { pdfPath });
-
-    // pdfjs-dist on Node uses a "fake worker" implementation that still needs access to the worker module.
-    // In Next dev, the default worker resolution can point at a non-existent `.next/.../pdf.worker.mjs` chunk.
-    // Resolve the worker from node_modules explicitly to make preview rendering reliable in local dev.
-    try {
-      if (pdfjs.GlobalWorkerOptions) {
-        const workerCandidates = [
-          path.join(pkgRoot, "legacy/build/pdf.worker.mjs"),
-          path.join(pkgRoot, "build/pdf.worker.mjs"),
-          path.join(pkgRoot, "legacy/build/pdf.worker.js"),
-          path.join(pkgRoot, "build/pdf.worker.js"),
-        ];
-        const workerPath = workerCandidates.find((p) => {
-          try {
-            return fs.existsSync(p);
-          } catch {
-            return false;
-          }
-        });
-        if (workerPath) {
-          // Use a file:// URL so Node can import it regardless of how Next rewrites module ids.
-          pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-          debugLog(2, "[process][pdfjs] workerSrc set", { workerPath });
-        }
-      }
-    } catch {
-      // Best-effort: if this fails for any reason, preview generation will fall back to the existing try/catch.
-    }
-
-    return pdfjs;
-  })();
-
-  return _cachedPdfJsLibPromise;
-}
 /**
  * Return whether record.
  */
@@ -258,8 +125,16 @@ async function imageHashFromThumbJpeg(thumbJpeg: Buffer): Promise<string | null>
   }
 }
 
+/**
+ * Render one PDF page to JPEG.
+ *
+ * The prebuilt npm `sharp` cannot decode PDF input, so the page is rasterized with
+ * pdfjs + @napi-rs/canvas first (see `@/lib/pdf/renderPage`) and sharp only handles
+ * resize/flatten/encode. Pass `pdfDocument` to avoid re-parsing the PDF per page.
+ */
 async function renderPdfPageJpeg(params: {
   pdfBytes: Uint8Array;
+  pdfDocument?: PdfJsDocument;
   pageNumber: number;
   maxWidth: number;
   quality: number;
@@ -269,23 +144,31 @@ async function renderPdfPageJpeg(params: {
   const quality = Math.min(95, Math.max(40, Math.floor(params.quality || 75)));
   const sharp = await getSharp();
 
-  // sharp uses 0-based page index for PDF input
-  const page = Math.max(0, pageNumber - 1);
-  const density = 180; // quality vs CPU; tuned for slide screenshots
-  const input = Buffer.from(params.pdfBytes);
+  const { png, width: pngWidth, height: pngHeight } = await renderPdfPageToPng({
+    pdfBytes: params.pdfBytes,
+    pdfDocument: params.pdfDocument,
+    pageNumber,
+    maxWidth,
+    scale: 2.5, // ~180dpi for a 72pt page; tuned for slide screenshots
+  });
 
-  const base = sharp(input, { density, page })
+  const base = sharp(png)
     .resize({ width: maxWidth, withoutEnlargement: true })
     // PDF render may contain transparency; flatten to keep JPEG stable.
     .flatten({ background: "#ffffff" });
 
-  const meta = await base.metadata().catch(() => null);
-  const jpeg = await base
+  const { data: jpeg, info } = await base
     .jpeg({ quality, mozjpeg: true, progressive: true, chromaSubsampling: "4:4:4" })
-    .toBuffer();
+    .toBuffer({ resolveWithObject: true });
 
-  const width = typeof meta?.width === "number" && Number.isFinite(meta.width) ? meta.width : null;
-  const height = typeof meta?.height === "number" && Number.isFinite(meta.height) ? meta.height : null;
+  const width =
+    typeof info?.width === "number" && Number.isFinite(info.width)
+      ? info.width
+      : Number.isFinite(pngWidth) ? pngWidth : null;
+  const height =
+    typeof info?.height === "number" && Number.isFinite(info.height)
+      ? info.height
+      : Number.isFinite(pngHeight) ? pngHeight : null;
   return { jpeg, width, height };
 }
 
@@ -955,37 +838,34 @@ async function ensureReviewForUpload(params: {
 async function extractPdfTextByPage(pdfBytes: Uint8Array): Promise<
   Array<{ page_number: number; text: string }>
 > {
-  const pdfjsLib = await getPdfJsLib();
-  // NOTE: pdfjs transfers `data.buffer` to its (fake) worker even on Node, which detaches it.
-  // Always pass a copy so callers can safely reuse their original `pdfBytes`.
-  const data = new Uint8Array(pdfBytes);
-  const loadingTask = pdfjsLib.getDocument({ data, disableWorker: true });
-  const pdf = (await loadingTask.promise) as {
-    numPages: number;
-    getPage: (pageNumber: number) => Promise<unknown>;
-  };
-  const pages: Array<{ page_number: number; text: string }> = [];
-  const n = Number(pdf.numPages) || 0;
-  for (let i = 1; i <= n; i++) {
-    const page = await pdf.getPage(i);
-    if (!isRecord(page) || typeof page.getTextContent !== "function") {
-      pages.push({ page_number: i, text: "" });
-      continue;
+  // `openPdfDocument` copies the bytes (pdfjs detaches the buffer it is given).
+  const pdf = await openPdfDocument(pdfBytes);
+  try {
+    const pages: Array<{ page_number: number; text: string }> = [];
+    const n = Number(pdf.numPages) || 0;
+    for (let i = 1; i <= n; i++) {
+      const page = await pdf.getPage(i);
+      if (!isRecord(page) || typeof page.getTextContent !== "function") {
+        pages.push({ page_number: i, text: "" });
+        continue;
+      }
+      const content = (await (page.getTextContent as () => Promise<unknown>)()) as unknown;
+      const contentObj = isRecord(content) ? content : null;
+      const items = (contentObj?.items ?? []) as unknown;
+      const itemArr = Array.isArray(items) ? items : [];
+      const text = itemArr
+        .map((it: unknown) => {
+          if (!isRecord(it)) return "";
+          return typeof it.str === "string" ? it.str : "";
+        })
+        .filter(Boolean)
+        .join(" ");
+      pages.push({ page_number: i, text });
     }
-    const content = (await (page.getTextContent as () => Promise<unknown>)()) as unknown;
-    const contentObj = isRecord(content) ? content : null;
-    const items = (contentObj?.items ?? []) as unknown;
-    const itemArr = Array.isArray(items) ? items : [];
-    const text = itemArr
-      .map((it: unknown) => {
-        if (!isRecord(it)) return "";
-        return typeof it.str === "string" ? it.str : "";
-      })
-      .filter(Boolean)
-      .join(" ");
-    pages.push({ page_number: i, text });
+    return pages;
+  } finally {
+    await pdf.destroy?.().catch(() => undefined);
   }
-  return pages;
 }
 /**
  * Render Pdf First Page Png (uses getDocument, getPage, isRecord).
@@ -1002,84 +882,14 @@ async function renderPdfFirstPagePng(params: {
   const page = params.page ?? 1;
   const maxWidth = params.maxWidth ?? 1200;
 
-  // Primary path: pdfjs + @napi-rs/canvas (fast; preserves vector text well).
+  // pdfjs + @napi-rs/canvas (fast; preserves vector text well). The prebuilt npm `sharp`
+  // has no PDF decoder, so there is no sharp-based fallback: if this fails, callers keep
+  // the prior preview (important for replacement uploads).
   try {
-    const pdfjsLib = await getPdfJsLib();
-    /**
-     * NOTE: `@napi-rs/canvas` ships native bindings per-platform.
-     * In some local dev setups, optionalDependencies can fail to install the correct
-     * binary (npm issue). Import it dynamically so the *route module* still loads,
-     * and we can gracefully fall back if the binding is unavailable.
-     */
-    const { createCanvas } = await import("@napi-rs/canvas");
-
-    // NOTE: pdfjs transfers `data.buffer` to its (fake) worker even on Node, which detaches it.
-    // Always pass a copy so callers can safely reuse their original `pdfBytes`.
-    const data = new Uint8Array(params.pdfBytes);
-    const loadingTask = pdfjsLib.getDocument({ data, disableWorker: true });
-    // pdfjs-dist types are intentionally loose in our repo; narrow just enough for TS.
-    const pdf = (await loadingTask.promise) as {
-      getPage: (pageNumber: number) => Promise<unknown>;
-    };
-    const pdfPage = await pdf.getPage(page);
-    if (
-      !isRecord(pdfPage) ||
-      typeof pdfPage.getViewport !== "function" ||
-      typeof pdfPage.render !== "function"
-    ) {
-      throw new Error("pdfjs page missing expected methods");
-    }
-
-    const baseViewport = (pdfPage.getViewport as (opts: { scale: number }) => {
-      width: number;
-      height: number;
-    })({ scale });
-    const finalScale =
-      baseViewport.width > maxWidth ? scale * (maxWidth / baseViewport.width) : scale;
-    const viewport = (pdfPage.getViewport as (opts: { scale: number }) => {
-      width: number;
-      height: number;
-    })({ scale: finalScale });
-
-    const width = Math.ceil(viewport.width);
-    const height = Math.ceil(viewport.height);
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-
-    const renderResult = (pdfPage.render as (opts: {
-      canvasContext: unknown;
-      viewport: unknown;
-    }) => { promise: Promise<unknown> })({ canvasContext: ctx, viewport });
-    await renderResult.promise;
-    const png = canvas.toBuffer("image/png");
-
-    return { png, width, height };
+    return await renderPdfPageToPng({ pdfBytes: params.pdfBytes, pageNumber: page, maxWidth, scale });
   } catch (e) {
-    // Fall back: sharp PDF render (more robust across environments).
-    // This matters a lot for replacements: if preview rendering fails, we intentionally keep the prior preview.
-    try {
-      const sharpModule = await import("sharp");
-      const sharp = (sharpModule as any).default ?? (sharpModule as any);
-
-      const density = 180; // balance quality vs CPU
-      const input = Buffer.from(params.pdfBytes);
-      const pipeline = sharp(input, {
-        density,
-        // sharp uses 0-based page index for PDF input
-        page: Math.max(0, Math.floor(page - 1)),
-      }).resize({ width: maxWidth, withoutEnlargement: true });
-
-      const meta = await pipeline.metadata().catch(() => null);
-      const png = await pipeline.png().toBuffer();
-      const width = typeof meta?.width === "number" ? meta.width : 0;
-      const height = typeof meta?.height === "number" ? meta.height : 0;
-
-      return { png, width, height };
-    } catch (e2) {
-      const primaryMsg = e instanceof Error ? e.message : String(e);
-      const fallbackMsg = e2 instanceof Error ? e2.message : String(e2);
-      throw new Error(`pdf preview failed (pdfjs): ${primaryMsg} (sharp): ${fallbackMsg}`);
-    }
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`pdf preview failed (pdfjs): ${msg}`);
   }
 }
 /**
@@ -1101,27 +911,27 @@ export async function POST(
   const url = new URL(request.url);
   const forceReviewRequested = url.searchParams.get("forceReview") === "1";
   const qualityRaw = (url.searchParams.get("quality") ?? "").trim().toLowerCase();
-  const forceReviewQualityTier =
+  const requestedQualityTier =
     qualityRaw === "advanced" ? ("advanced" as const) : qualityRaw === "basic" ? ("basic" as const) : ("standard" as const);
-  const requestIdempotencyKey = idempotencyKeyFromRequest(request);
-
-  debugLog(1, "[process] queued", {
-    traceId,
-    uploadId,
-    forceReviewRequested,
-    quality: forceReviewQualityTier,
-    idempotencyKey: requestIdempotencyKey ? "[set]" : "",
-  });
 
   await connectMongo();
   const uploadSecret = header(request, "x-upload-secret");
 
+  /**
+   * Capability (upload-secret) callers are link recipients acting *inside the owner's workspace*.
+   * They must never be able to trigger owner-billed actions, so when `viaUploadSecret` is true:
+   * - `forceReview` is ignored,
+   * - quality is forced to the workspace default (standard),
+   * - the caller-supplied idempotency key is ignored (derived server-side from uploadId+version).
+   */
+  const viaUploadSecret = typeof uploadSecret === "string" && Boolean(uploadSecret.trim());
+
   let actor: Actor;
-  if (typeof uploadSecret === "string" && uploadSecret.trim()) {
+  if (viaUploadSecret) {
     // Secret-authorized processing (used by request upload links).
     const upload = await UploadModel.findOne({
       _id: new Types.ObjectId(uploadId),
-      uploadSecret: uploadSecret.trim(),
+      uploadSecret: (uploadSecret as string).trim(),
       isDeleted: { $ne: true },
     })
       .select({ userId: 1 })
@@ -1133,6 +943,9 @@ export async function POST(
     actor = { kind: "user", userId: ownerUserId, orgId: personalOrgId, personalOrgId };
   } else {
     actor = await resolveActor(request);
+    // Viewers must not trigger owner-billed processing.
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
 
     // Authorization: upload must belong to the actor.
     const allowed = await UploadModel.exists({
@@ -1145,9 +958,41 @@ export async function POST(
     }
   }
 
+  const forceReviewQualityTier = viaUploadSecret ? ("standard" as const) : requestedQualityTier;
+  const requestIdempotencyKey = viaUploadSecret ? null : idempotencyKeyFromRequest(request);
+  // Allow rerunning the review agent for signed-in users, and also for temp-user
+  // environments where auth isn't configured (common in dev). Never for secret callers.
+  const authConfigured = Boolean(process.env.NEXTAUTH_SECRET);
+  const forceReview = forceReviewRequested && !viaUploadSecret && (actor.kind === "user" || !authConfigured);
+
+  debugLog(1, "[process] queued", {
+    traceId,
+    uploadId,
+    viaUploadSecret,
+    forceReviewRequested,
+    forceReview,
+    quality: forceReviewQualityTier,
+    idempotencyKey: requestIdempotencyKey ? "[set]" : "",
+  });
+
+  // Load the upload once for state checks. The background job uses the claimed document below.
+  const initialUpload = await UploadModel.findOne({ _id: new Types.ObjectId(uploadId), isDeleted: { $ne: true } });
+  if (!initialUpload) {
+    return applyTempUserHeaders(NextResponse.json({ error: "Not found", traceId }, { status: 404 }), actor);
+  }
+  // The client PATCHes `status: "uploaded"` (+ blobUrl) before triggering processing. If the
+  // POST races ahead of that, do not fail the upload/doc; tell the client to retry instead.
+  if (initialUpload.status === "uploading") {
+    debugLog(1, "[process] upload not ready (still uploading)", { traceId, uploadId });
+    return applyTempUserHeaders(
+      NextResponse.json({ error: "UPLOAD_NOT_READY", status: "uploading", traceId }, { status: 409 }),
+      actor,
+    );
+  }
+
   // Server-side enforcement: if AI tools are blocked for this workspace, reject before scheduling work.
   // Note: this route always runs in the background via `after()`, so we must preflight here.
-  const needsAi = forceReviewRequested || Boolean(process.env.OPENAI_API_KEY);
+  const needsAi = forceReview || Boolean(process.env.OPENAI_API_KEY);
   if (needsAi) {
     try {
       const snap = await getCreditsSnapshot({ workspaceId: actor.orgId });
@@ -1163,22 +1008,47 @@ export async function POST(
     }
   }
 
+  /**
+   * Atomically claim the upload for processing (`uploaded|failed -> processing`).
+   *
+   * Only one caller wins; concurrent/duplicate POSTs get `alreadyProcessing: true` and do nothing.
+   * A run stuck in `processing` for longer than `PROCESSING_STALE_MS` (crash/timeout) is treated as
+   * abandoned and can be re-claimed. Completed uploads are not claimed: their path below is an
+   * idempotent doc sync (plus optional forced review re-run).
+   */
+  let claimedUpload: typeof initialUpload | null = null;
+  if (initialUpload.status !== "completed") {
+    const now = new Date();
+    const staleBefore = new Date(now.getTime() - PROCESSING_STALE_MS);
+    claimedUpload = await UploadModel.findOneAndUpdate(
+      {
+        _id: new Types.ObjectId(uploadId),
+        isDeleted: { $ne: true },
+        $or: [
+          { status: { $in: ["uploaded", "failed"] } },
+          { status: "processing", processingStartedAt: { $lt: staleBefore } },
+          // Legacy rows claimed before `processingStartedAt` existed: fall back to updatedDate.
+          { status: "processing", processingStartedAt: null, updatedDate: { $lt: staleBefore } },
+        ],
+      },
+      { $set: { status: "processing", processingStartedAt: now } },
+      { new: true },
+    );
+    if (!claimedUpload) {
+      debugLog(1, "[process] already processing; skipping", { traceId, uploadId, status: initialUpload.status ?? null });
+      return applyTempUserHeaders(NextResponse.json({ ok: true, alreadyProcessing: true, traceId }), actor);
+    }
+    debugLog(1, "[process] claimed (status=processing)", { traceId, uploadId });
+  }
+
   // Respond immediately; do the work in the background.
   after(async () => {
     const startedAt = Date.now();
     try {
       debugLog(1, "[process] start", { traceId, uploadId });
       await connectMongo();
-      // Allow rerunning the review agent for signed-in users, and also for temp-user
-      // environments where auth isn't configured (common in dev).
-      const authConfigured = Boolean(process.env.NEXTAUTH_SECRET);
-      const forceReview = forceReviewRequested && (actor.kind === "user" || !authConfigured);
 
-      const upload = await UploadModel.findById(uploadId);
-      if (!upload) {
-        debugError(1, "[process] missing upload", { uploadId });
-        return;
-      }
+      const upload = claimedUpload ?? initialUpload;
 
       const docId = upload.docId as Types.ObjectId | null;
       if (!docId) {
@@ -1679,8 +1549,8 @@ export async function POST(
         return;
       }
 
-      debugLog(1, "[process] set status=processing", { uploadId });
-      await UploadModel.findByIdAndUpdate(uploadId, { status: "processing" });
+      // Status was already flipped to `processing` by the atomic claim above.
+      debugLog(2, "[process] processing claimed upload", { uploadId, isReplacement, uploadVersion });
       // IMPORTANT: for replacement uploads, keep the Doc pointing at the last good version
       // until processing succeeds. The client tracks replacement progress via the Upload.
       if (!isReplacement) {
@@ -1766,10 +1636,12 @@ export async function POST(
             uploadId,
           });
           debugLog(1, "[process] uploading preview png", { uploadId, previewPathname });
+          // Deterministic pathname: allow overwrite so retries succeed.
           const blob = await put(previewPathname, png, {
             access: "public",
             contentType: "image/png",
             addRandomSuffix: false,
+            allowOverwrite: true,
           });
           previewUrl = blob.url;
           debugLog(2, "[process] preview uploaded", { uploadId, previewPathname });
@@ -1833,18 +1705,13 @@ export async function POST(
               .filter((n) => Number.isFinite(n) && n >= 1);
             pageCount = nums.length ? Math.max(...nums) : 0;
           }
+          // Open the document once for the whole slide pass (avoids re-parsing per page).
+          const slidePdf = await openPdfDocument(pdfBytes);
+          try {
           if (!pageCount) {
             // Fallback: ask PDF.js for numPages.
-            try {
-              const pdfjsLib = await getPdfJsLib();
-              const data = new Uint8Array(pdfBytes);
-              const loadingTask = pdfjsLib.getDocument({ data, disableWorker: true });
-              const pdf = (await loadingTask.promise) as { numPages?: unknown };
-              const n = typeof pdf?.numPages === "number" && Number.isFinite(pdf.numPages) ? Math.floor(pdf.numPages) : 0;
-              pageCount = n > 0 ? n : 0;
-            } catch {
-              pageCount = 0;
-            }
+            const n = typeof slidePdf?.numPages === "number" && Number.isFinite(slidePdf.numPages) ? Math.floor(slidePdf.numPages) : 0;
+            pageCount = n > 0 ? n : 0;
           }
 
           debugLog(1, "[process] building slideNodes", { uploadId, pageCount });
@@ -1860,6 +1727,7 @@ export async function POST(
           for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
             const { jpeg, width, height } = await renderPdfPageJpeg({
               pdfBytes,
+              pdfDocument: slidePdf,
               pageNumber,
               maxWidth: PAGE_IMAGE_MAX_WIDTH,
               quality: PAGE_IMAGE_QUALITY,
@@ -1883,16 +1751,19 @@ export async function POST(
               pageNumber,
             });
 
+            // Deterministic pathnames: allow overwrite so retries after a partial run succeed.
             const [imageBlob, thumbBlob] = await Promise.all([
               put(imagePathname, jpeg, {
                 access: "public",
                 contentType: "image/jpeg",
                 addRandomSuffix: false,
+                allowOverwrite: true,
               }),
               put(thumbPathname, thumbJpeg, {
                 access: "public",
                 contentType: "image/jpeg",
                 addRandomSuffix: false,
+                allowOverwrite: true,
               }),
             ]);
 
@@ -1907,6 +1778,9 @@ export async function POST(
           }
 
           slideNodes = nodes;
+          } finally {
+            await slidePdf.destroy?.().catch(() => undefined);
+          }
         }
       } catch (e) {
         jobError = jobError ?? e;
@@ -2166,10 +2040,12 @@ export async function POST(
               docId: String(docId),
               uploadId,
             });
+            // Deterministic pathname: allow overwrite so retries succeed.
             const blob = await put(textPathname, buf, {
               access: "public",
               contentType: "text/plain; charset=utf-8",
               addRandomSuffix: false,
+              allowOverwrite: true,
             });
             extractedTextBlobUrl = blob.url;
             extractedTextBlobPathname = blob.pathname;

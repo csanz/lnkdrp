@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __getLastMongoRequestLog } from "@/lib/db/mongoRequestLogger";
 
@@ -7,10 +7,15 @@ function canRun() {
 }
 
 describe("stats endpoints mongo op guardrails (dev-only)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it.skipIf(!canRun())("dashboard stats stays under a mongo command budget", async () => {
-    process.env.DEBUG_LEVEL = "2";
-    process.env.NODE_ENV = "test";
-    process.env.API_TEST_BYPASS_AUTH = "1";
+    vi.stubEnv("DEBUG_LEVEL", "2");
+    // NODE_ENV is typed read-only in @types/node; stubEnv is the supported way to set it in tests.
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("API_TEST_BYPASS_AUTH", "1");
 
     const { GET } = await import("@/app/api/dashboard/stats/route");
     const req = new Request("http://localhost:3001/api/dashboard/stats");
@@ -24,9 +29,9 @@ describe("stats endpoints mongo op guardrails (dev-only)", () => {
   });
 
   it.skipIf(!canRun())("credits snapshot stays under a mongo command budget", async () => {
-    process.env.DEBUG_LEVEL = "2";
-    process.env.NODE_ENV = "test";
-    process.env.API_TEST_BYPASS_AUTH = "1";
+    vi.stubEnv("DEBUG_LEVEL", "2");
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("API_TEST_BYPASS_AUTH", "1");
 
     const { GET } = await import("@/app/api/credits/snapshot/route");
     const req = new Request("http://localhost:3001/api/credits/snapshot");

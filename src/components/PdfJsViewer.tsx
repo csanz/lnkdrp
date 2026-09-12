@@ -53,8 +53,7 @@ type Props = {
   relevancyEnabled?: boolean;
   /**
    * Optional AI output for this specific document.
-   * - If omitted (undefined), the viewer falls back to the sample JSON fetch (used by the test page).
-   * - If provided as null, the viewer will show "Summary unavailable."
+   * - If omitted (undefined) or provided as null, the viewer shows "Summary unavailable."
    */
   ai?: AiOutput | null;
 };
@@ -89,6 +88,20 @@ export type AiOutput = {
 type PdfDoc = {
   numPages: number;
   getPage: (pageNumber: number) => Promise<PdfPage>;
+  /** Releases worker/transport resources for this document (pdf.js `PDFDocumentProxy.destroy`). */
+  destroy?: () => Promise<void>;
+};
+
+type PdfRenderTask = {
+  promise: Promise<unknown>;
+  /** Cancels an in-flight render; the task promise rejects with `RenderingCancelledException`. */
+  cancel?: () => void;
+};
+
+type PdfLoadingTask = {
+  promise: Promise<PdfDoc>;
+  /** Aborts loading and destroys the underlying document/transport. */
+  destroy?: () => Promise<void>;
 };
 
 type PdfPage = {
@@ -97,8 +110,13 @@ type PdfPage = {
   render: (opts: {
     canvasContext: CanvasRenderingContext2D;
     viewport: { width: number; height: number };
-  }) => { promise: Promise<unknown> };
+  }) => PdfRenderTask;
 };
+
+/** Return whether a pdf.js error is the expected "render was cancelled" rejection. */
+function isRenderingCancelled(e: unknown): boolean {
+  return Boolean(e && typeof e === "object" && (e as { name?: unknown }).name === "RenderingCancelledException");
+}
 
 const SHARE_LOCAL_STATS_PREFIX = "lnkdrp_share_local_stats_v1:";
 const SHARE_OWNER_STATS_PREFIX = "lnkdrp_share_owner_stats_v1:";
@@ -297,6 +315,11 @@ export function PdfJsViewer({
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const pdfRef = useRef<PdfDoc | null>(null);
+  // Pending teardown of the previous document. pdf.js refuses to reuse a shared worker port while a
+  // destroy is still in flight, so the next load awaits this before calling `getDocument`.
+  const pdfTeardownRef = useRef<Promise<unknown> | null>(null);
+  // In-flight single-page render (cancelled on cleanup so page/zoom changes never overlap on one canvas).
+  const singleRenderTaskRef = useRef<PdfRenderTask | null>(null);
   const aiButtonRef = useRef<HTMLButtonElement | null>(null);
   const aiPopoverRef = useRef<HTMLDivElement | null>(null);
 
@@ -354,7 +377,7 @@ export function PdfJsViewer({
   const shareTimingPageEnteredAtMsRef = useRef<number | null>(null);
   const shareVisitIdRef = useRef<string | null>(null);
   const [viewMode, setViewMode] = useState<"single" | "all" | "grid">("single");
-  const [aiData, setAiData] = useState<AiOutput | null>(ai ?? null);
+  const [aiData] = useState<AiOutput | null>(ai ?? null);
   const [shareContext, setShareContext] = useState<ShareContext | null>(null);
   const authEnabled = useAuthEnabled();
   const [viewerProfile, setViewerProfile] = useState<ShareViewerProfile | null>(null);
@@ -378,7 +401,6 @@ export function PdfJsViewer({
     | { kind: "error"; message: string }
   >({ kind: "idle" });
 
-  const aiProvided = typeof ai !== "undefined";
   const shareIdSafe = typeof shareId === "string" && shareId.trim() ? shareId.trim() : null;
   const canDownload = Boolean(allowDownload && downloadUrl);
 
@@ -628,34 +650,6 @@ export function PdfJsViewer({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
-/**
- * Load Summary (updates state (setAiData); uses fetch, json, setAiData).
- */
-
-    async function loadSummary() {
-      // If AI output was provided (including null), never load the sample.
-      if (aiProvided) return;
-      if (!aiOpen || aiData !== null) return;
-      try {
-        const res = await fetch("/sample/sample-ai-output.json", {
-          cache: "no-store",
-        });
-        const data = (await res.json()) as AiOutput;
-        if (cancelled) return;
-        setAiData(data ?? {});
-      } catch {
-        if (cancelled) return;
-        setAiData({ summary: "Summary unavailable." });
-      }
-    }
-    loadSummary();
-    return () => {
-      cancelled = true;
-    };
-  }, [aiData, aiOpen, aiProvided]);
-
-  useEffect(() => {
     if (!aiOpen) return;
 /**
  * Handle pointer down events; updates state (setAiOpen); uses contains, setAiOpen.
@@ -889,6 +883,17 @@ export function PdfJsViewer({
 
   useEffect(() => {
     let cancelled = false;
+    // The pdf.js loading task owned by this effect run (destroyed on cleanup, which also destroys the
+    // loaded document/transport).
+    let activeLoadingTask: PdfLoadingTask | null = null;
+    let loadedPdf: PdfDoc | null = null;
+
+    const destroyLoadingTask = (task: PdfLoadingTask | null): Promise<unknown> | null => {
+      if (!task || typeof task.destroy !== "function") return null;
+      return Promise.resolve()
+        .then(() => task.destroy?.())
+        .catch(() => undefined);
+    };
 /**
  * Load (updates state (setStatus, setNumPages, setPageNumber); uses setStatus, getDocument, setNumPages).
  */
@@ -1105,17 +1110,32 @@ export function PdfJsViewer({
             }
           }
 
-          const loadingTask =
+          // Wait for the previous document's teardown to settle: pdf.js throws
+          // "the worker is being destroyed" if `getDocument` reuses the shared worker port mid-destroy.
+          const pendingTeardown = pdfTeardownRef.current;
+          if (pendingTeardown) {
+            await pendingTeardown;
+            if (pdfTeardownRef.current === pendingTeardown) pdfTeardownRef.current = null;
+          }
+          if (cancelled) throw new Error("PDF load cancelled");
+
+          // A failed earlier attempt (e.g. worker mode) still owns transport resources; release it
+          // before starting the next attempt.
+          void destroyLoadingTask(activeLoadingTask);
+          const loadingTask = (
             mode === "public-esm"
               ? (pdfjs as any).getDocument({ url })
-              : (pdfjs as any).getDocument({ url, disableWorker: true } as any);
-          return (await loadingTask.promise) as PdfDoc;
+              : (pdfjs as any).getDocument({ url, disableWorker: true } as any)
+          ) as PdfLoadingTask;
+          activeLoadingTask = loadingTask;
+          return await loadingTask.promise;
         };
 
         let pdf: PdfDoc;
         try {
           pdf = await tryLoad("public-esm");
         } catch (e) {
+          if (cancelled) return;
           const msg = e instanceof Error ? e.message : String(e ?? "");
           const stack = e instanceof Error ? e.stack : null;
           // eslint-disable-next-line no-console
@@ -1125,6 +1145,7 @@ export function PdfJsViewer({
             try {
               pdf = await tryLoad("public-esm-no-worker");
             } catch (e2) {
+              if (cancelled) return;
               const msg2 = e2 instanceof Error ? e2.message : String(e2 ?? "");
               const stack2 = e2 instanceof Error ? e2.stack : null;
               // eslint-disable-next-line no-console
@@ -1147,6 +1168,7 @@ export function PdfJsViewer({
           }
         }
         if (cancelled) return;
+        loadedPdf = pdf;
         setUseNativePdf(false);
         setNativePdfLoaded(false);
         setNativePdfError(null);
@@ -1169,6 +1191,17 @@ export function PdfJsViewer({
     load();
     return () => {
       cancelled = true;
+      // Release the previous document (worker transport, page caches) when the URL changes,
+      // the user retries, or the viewer unmounts. `loadingTask.destroy()` also destroys the
+      // `PDFDocumentProxy` it produced (including a still in-flight load).
+      if (loadedPdf && pdfRef.current === loadedPdf) pdfRef.current = null;
+      const teardown = destroyLoadingTask(activeLoadingTask);
+      activeLoadingTask = null;
+      loadedPdf = null;
+      if (teardown) {
+        const prior = pdfTeardownRef.current;
+        pdfTeardownRef.current = prior ? Promise.all([prior, teardown]) : teardown;
+      }
     };
   }, [url, reloadKey]);
 
@@ -1212,13 +1245,20 @@ export function PdfJsViewer({
         canvas.height = Math.floor(viewport.height);
 
         const renderTask = page.render({ canvasContext: context, viewport });
-        await renderTask.promise;
+        singleRenderTaskRef.current = renderTask;
+        try {
+          await renderTask.promise;
+        } finally {
+          if (singleRenderTaskRef.current === renderTask) singleRenderTaskRef.current = null;
+        }
 
         if (cancelled) return;
         markFirstPainted();
         setStatus({ kind: "idle" });
       } catch (e: unknown) {
         if (cancelled) return;
+        // A cancelled render (page/zoom changed mid-paint) is expected, not an error.
+        if (isRenderingCancelled(e)) return;
         const message =
           e instanceof Error
             ? e.message
@@ -1233,6 +1273,17 @@ export function PdfJsViewer({
     render();
     return () => {
       cancelled = true;
+      // Cancel the in-flight render so the next effect run never overlaps it on the same canvas
+      // (pdf.js throws "Cannot use the same canvas during multiple render() operations").
+      const task = singleRenderTaskRef.current;
+      singleRenderTaskRef.current = null;
+      if (task) {
+        try {
+          task.cancel?.();
+        } catch {
+          // ignore
+        }
+      }
     };
   }, [pageNumber, pdfVersion, viewportSize.h, viewportSize.w, viewMode, zoom]);
 
@@ -2142,10 +2193,8 @@ export function PdfJsViewer({
                   <Markdown tone="dark" className="leading-7">
                     {aiData.summary}
                   </Markdown>
-                ) : aiProvided ? (
-                  "Summary unavailable."
                 ) : (
-                  "Loading…"
+                  "Summary unavailable."
                 )}
               </div>
 
@@ -2899,10 +2948,11 @@ export function PdfJsViewer({
           <button
             type="button"
             aria-label="Previous page"
+            title="Previous page (←)"
             onClick={goPrev}
             aria-disabled={!canPrev}
             disabled={status.kind === "loading"}
-            className={`pointer-events-auto absolute left-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100 ${
+            className={`pointer-events-auto absolute left-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-0 group-hover:opacity-100 ${
               canPrev ? "" : "text-white/70"
             }`}
           >
@@ -2928,10 +2978,11 @@ export function PdfJsViewer({
           <button
             type="button"
             aria-label="Next page"
+            title="Next page (→)"
             onClick={goNext}
             aria-disabled={!canNext}
             disabled={status.kind === "loading"}
-            className={`pointer-events-auto absolute right-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 disabled:opacity-0 group-hover:opacity-100 ${
+            className={`pointer-events-auto absolute right-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-0 group-hover:opacity-100 ${
               canNext ? "" : "text-white/70"
             }`}
           >

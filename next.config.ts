@@ -5,7 +5,9 @@ const nextConfig: NextConfig = {
    * Native / binary deps must remain external for Turbopack builds.
    * (Otherwise Turbopack tries to place native assets into ESM chunks.)
    */
-  serverExternalPackages: ["@napi-rs/canvas"],
+  // `pdfjs-dist` is loaded via a static `import("pdfjs-dist/legacy/build/pdf.mjs")` on the server;
+  // keeping it external lets Node resolve its fake worker / asset files from node_modules.
+  serverExternalPackages: ["@napi-rs/canvas", "pdfjs-dist"],
   // Disable all in-browser dev indicators (including the "Rendering/Compiling" HUD).
   devIndicators: false,
   /**

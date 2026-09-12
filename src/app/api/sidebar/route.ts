@@ -12,7 +12,8 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
-import { debugError, debugLog } from "@/lib/debug";
+import { debugLog } from "@/lib/debug";
+import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -255,9 +256,7 @@ export async function GET(request: Request) {
       actor,
     );
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    debugError(1, "[api/sidebar] GET failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    return errorJson(err, { status: 400, publicMessage: "Could not load sidebar", context: "[api/sidebar] GET failed" });
   }
 }
 

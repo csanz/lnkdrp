@@ -15,7 +15,7 @@ import {
   Square2StackIcon,
 } from "@heroicons/react/24/outline";
 import { StarIcon as StarSolidIcon } from "@heroicons/react/24/solid";
-import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { fetchWithTempUser, tempUserHeaders } from "@/lib/gating/tempUserClient";
 import { trackProjectClick, trackProjectView } from "@/lib/metrics/client";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import ProjectSharePanel from "@/components/ProjectSharePanel";
@@ -689,6 +689,8 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
             access: "public",
             handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
             contentType: file.type || undefined,
+            // Token minting checks upload ownership; temp users are only identified by headers.
+            headers: tempUserHeaders(),
           });
           await fetchWithTempUser(`/api/uploads/${encodeURIComponent(guideUploadId)}`, {
             method: "PATCH",

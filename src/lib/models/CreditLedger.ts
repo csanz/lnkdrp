@@ -64,6 +64,14 @@ const creditLedgerSchema = new Schema(
     idempotencyKey: { type: String, trim: true, required: true },
 
     stripeUsageReportedAt: { type: Date, default: null, index: true },
+    /**
+     * Claim-then-report markers for Stripe metered reporting (`/api/cron/stripe-credits-report`).
+     *
+     * - `reportBatchId`: deterministic batch key; also used as the Stripe meter event `identifier`
+     * - `reportClaimedAt`: when the batch claimed this row; stale claims (>30 min) may be re-claimed
+     */
+    reportBatchId: { type: String, trim: true, default: null, index: true },
+    reportClaimedAt: { type: Date, default: null },
 
     /**
      * Internal telemetry (admin-only later; never returned in customer APIs).
@@ -112,6 +120,8 @@ creditLedgerSchema.index(
   { unique: true, partialFilterExpression: { eventType: "cycle_grant_included", cycleKey: { $type: "string" } } } as any,
 );
 creditLedgerSchema.index({ status: 1, eventType: 1, stripeUsageReportedAt: 1, creditsFromOnDemand: 1, createdDate: -1 });
+// Claim-then-report scan for the Stripe metered reporting cron.
+creditLedgerSchema.index({ status: 1, eventType: 1, stripeUsageReportedAt: 1, reportBatchId: 1, reportClaimedAt: 1 });
 // Speed up on-demand usage aggregates on hot paths (e.g. `/api/billing/spend` fallback).
 creditLedgerSchema.index(
   { workspaceId: 1, eventType: 1, status: 1, cycleKey: 1, creditsFromOnDemand: 1 },
@@ -141,6 +151,12 @@ if (ExistingCreditLedgerModel && !ExistingCreditLedgerModel.schema.path("eventTy
   ExistingCreditLedgerModel.schema.add({
     eventType: { type: String, trim: true, default: "ai_run", index: true },
     cycleKey: { type: String, trim: true, default: null, index: true },
+  } as any);
+}
+if (ExistingCreditLedgerModel && !ExistingCreditLedgerModel.schema.path("reportBatchId")) {
+  ExistingCreditLedgerModel.schema.add({
+    reportBatchId: { type: String, trim: true, default: null, index: true },
+    reportClaimedAt: { type: Date, default: null },
   } as any);
 }
 if (ExistingCreditLedgerModel && !ExistingCreditLedgerModel.schema.path("adminReason")) {

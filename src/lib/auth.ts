@@ -1,11 +1,97 @@
 import type { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import crypto from "node:crypto";
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { UserModel } from "@/lib/models/User";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
+
+/**
+ * Invite-gating cookie.
+ *
+ * Set by `/api/invites/verify` after a valid invite code is entered; read by the NextAuth route
+ * gate and by the `signIn` callback below. The value is HMAC-signed so a caller cannot mint one:
+ * `<inviteId>.<expiresUnix>.<hmacHex>`.
+ */
+export const INVITE_COOKIE_NAME = "ld_invite_ok";
+/** Lifetime of a freshly issued invite cookie (seconds). */
+export const INVITE_COOKIE_MAX_AGE_SEC = 60 * 60 * 24 * 14; // 14 days
+
+/** Return the secret used to sign invite cookies (throws in production if missing). */
+function inviteCookieSecret(): string {
+  const s = process.env.LNKDRP_ORG_INVITE_TOKEN_SECRET || process.env.NEXTAUTH_SECRET || "";
+  if (s) return s;
+  // Dev fallback so local envs don't crash (mirrors org-invite token handling).
+  if (process.env.NODE_ENV !== "production") return "dev-lnkrdp-org-invite-token-secret";
+  throw new Error("Missing LNKDRP_ORG_INVITE_TOKEN_SECRET (or NEXTAUTH_SECRET) for invite cookies");
+}
+
+/** Compute the HMAC-SHA256 (hex) over the signed portion of an invite cookie. */
+function inviteCookieHmac(payload: string): string {
+  return crypto.createHmac("sha256", inviteCookieSecret()).update(payload).digest("hex");
+}
+
+/**
+ * Build a signed invite cookie value: `<inviteId>.<expiresUnix>.<hmac>`.
+ *
+ * `inviteId` must not contain `.`; ObjectId strings never do.
+ */
+export function signInviteCookieValue(opts: { inviteId: string; ttlSec?: number; now?: number }): string {
+  const inviteId = String(opts.inviteId ?? "").trim();
+  if (!inviteId || inviteId.includes(".")) throw new Error("Invalid inviteId for invite cookie");
+  const now = typeof opts.now === "number" && Number.isFinite(opts.now) ? opts.now : Date.now();
+  const ttlSec = typeof opts.ttlSec === "number" && opts.ttlSec > 0 ? Math.floor(opts.ttlSec) : INVITE_COOKIE_MAX_AGE_SEC;
+  const expiresUnix = Math.floor(now / 1000) + ttlSec;
+  const payload = `${inviteId}.${expiresUnix}`;
+  return `${payload}.${inviteCookieHmac(payload)}`;
+}
+
+/**
+ * Verify a signed invite cookie value (signature + expiry) in constant time.
+ *
+ * Returns `{ ok: false }` for anything malformed, tampered, expired, or legacy (`"1"`).
+ */
+export function verifyInviteCookieValue(
+  value: string | null | undefined,
+  now: number = Date.now(),
+): { ok: true; inviteId: string; expiresAt: Date } | { ok: false } {
+  if (typeof value !== "string" || !value) return { ok: false };
+  const parts = value.split(".");
+  if (parts.length !== 3) return { ok: false };
+  const [inviteId, expiresRaw, sig] = parts;
+  if (!inviteId || !/^\d+$/.test(expiresRaw) || !/^[0-9a-f]{64}$/i.test(sig)) return { ok: false };
+
+  const expiresUnix = Number(expiresRaw);
+  if (!Number.isFinite(expiresUnix) || expiresUnix * 1000 <= now) return { ok: false };
+
+  let expected: string;
+  try {
+    expected = inviteCookieHmac(`${inviteId}.${expiresRaw}`);
+  } catch {
+    return { ok: false };
+  }
+  const a = Buffer.from(sig.toLowerCase(), "hex");
+  const b = Buffer.from(expected, "hex");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return { ok: false };
+
+  return { ok: true, inviteId, expiresAt: new Date(expiresUnix * 1000) };
+}
+
+/**
+ * Read the invite cookie for the request currently being handled (NextAuth callbacks don't receive
+ * the request). Returns `null` outside a request scope.
+ */
+async function readInviteCookieFromRequestScope(): Promise<string | null> {
+  try {
+    const { cookies } = await import("next/headers");
+    const store = await cookies();
+    return store.get(INVITE_COOKIE_NAME)?.value ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Best-effort backfill of `NEXTAUTH_URL` in development.
@@ -95,6 +181,14 @@ export const authOptions: NextAuthOptions = {
         .select({ _id: 1, isActive: 1 })
         .lean();
       if (existing && existing.isActive === false) return false;
+
+      // Invite gate for NEW users: the `/api/auth/*` route gate checks the same cookie, but the
+      // callback is the last line of defense (e.g. a cookie that expired mid-OAuth-dance).
+      // Existing users may always sign in. Mirrors the route gate: enforced in production only.
+      if (!existing && process.env.NODE_ENV === "production") {
+        const inviteCookie = await readInviteCookieFromRequestScope();
+        if (!verifyInviteCookieValue(inviteCookie).ok) return false;
+      }
 
       const now = new Date();
 
