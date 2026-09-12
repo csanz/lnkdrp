@@ -169,7 +169,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       const session = await tryResolveAuthUserId(request);
 
       await connectMongo();
-      const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+      const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
         .select({ userId: 1, orgId: 1, title: 1, numberOfViews: 1, numberOfPagesViewed: 1 })
         .lean();
       if (!doc) {
@@ -235,7 +235,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       if (!rl.ok) return rateLimitedResponse(rl);
 
       await connectMongo();
-      const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+      const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
         .select({ _id: 1, userId: 1, orgId: 1, title: 1 })
         .lean();
       if (!doc) {

@@ -130,7 +130,8 @@ export default async function PricingPage() {
                 ]}
               />
               <p className="mt-4 text-[12px] leading-5 text-white/45">
-                Not on Free: version history, AI compare, and AI review.
+                Archive a document any time to free up a link slot. Not on Free: version history, AI compare, and AI
+                review.
               </p>
               <div className="mt-8 flex-1" />
               <PricingCta plan="free" variant="dark" helper="Sign in with Google. No card needed." />
@@ -315,11 +316,11 @@ export default async function PricingPage() {
               {[
                 {
                   q: "What counts as an active link?",
-                  a: "A document with sharing switched on. Turn sharing off and the link stops resolving and no longer counts. Your document and its stats stay in your workspace.",
+                  a: "A document with sharing switched on. Turn sharing off, or archive the document, and the link stops resolving and no longer counts. Your document and its stats stay in your workspace, and you can bring it back any time a slot is free.",
                 },
                 {
                   q: "What happens when I hit the Free limit?",
-                  a: "Existing links keep working. To share a new document you disable an old link or upgrade the workspace to Pro. Your agent gets the same answer over MCP, so it can tell you.",
+                  a: "Existing links keep working. To share a new document, archive an old one or turn its sharing off to free the slot, or upgrade the workspace to Pro. Archived documents keep their stats and can come back whenever a slot is free. Your agent gets the same answer over MCP, so it can tell you.",
                 },
                 {
                   q: "Is Pro per person or per workspace?",

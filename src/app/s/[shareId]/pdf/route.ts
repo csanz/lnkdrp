@@ -156,7 +156,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   const viewerIp = getClientIp(request);
 
   await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
     .select({
       _id: 1,
       userId: 1,

@@ -85,7 +85,7 @@ export async function generateMetadata(props: {
   if (!shareId) return { title: "Shared document" };
 
   await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
     .select({
       title: 1,
       // Perf: only pull the minimal metadata-related AI fields (avoid huge aiOutput JSON).
@@ -178,7 +178,7 @@ export default async function SharePage(props: {
   if (!shareId) notFound();
 
   await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
     .select({
       title: 1,
       blobUrl: 1,

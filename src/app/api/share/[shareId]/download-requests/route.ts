@@ -84,7 +84,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     if (!rlEmail.ok) return rateLimitedResponse(rlEmail);
 
     await connectMongo();
-    const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+    const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
       .select({ _id: 1, userId: 1, orgId: 1, title: 1, shareEnabled: 1, shareAllowPdfDownload: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });

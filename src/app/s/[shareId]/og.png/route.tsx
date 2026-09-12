@@ -28,7 +28,7 @@ export async function GET(
   if (!shareId) notFound();
 
   await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } }).lean();
+  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } }).lean();
   if (!doc) notFound();
 
   const title =

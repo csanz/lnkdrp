@@ -725,11 +725,14 @@ export async function PATCH(
     // Share-setting changes are recorded as activity; we need the prior values to diff against.
     const wantsShareChange = SHARE_ACTIVITY_FIELDS.some((k) => typeof body[k] === "boolean");
 
+    // Un-archiving can bring a live link back, so the prior archived state is needed for the cap check.
+    const wantsArchiveChange = typeof body.isArchived === "boolean";
     const before =
-      wantsProjectChange || wantsShareChange
+      wantsProjectChange || wantsShareChange || wantsArchiveChange
         ? await DocModel.findOne({ ...docMatch })
             .select({
               _id: 1,
+              isArchived: 1,
               primaryProjectId: 1,
               projectId: 1,
               projectIds: 1,
@@ -744,10 +747,20 @@ export async function PATCH(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Free plan: turning sharing back on adds an active link. Legacy docs without the field are
-    // already enabled, so only an explicit `false → true` flip counts. Disabling never checks.
+    // Free plan: turning sharing back on, or un-archiving a shared document, adds an active link.
+    // Legacy docs without the field are already enabled, so only an explicit `false → true` flip
+    // counts. Disabling or archiving never checks.
     let limitCheck: LimitCheck | null = null;
-    if (body.shareEnabled === true && before && (before as { shareEnabled?: unknown }).shareEnabled === false) {
+    const beforeState = (before ?? {}) as { shareEnabled?: unknown; isArchived?: unknown };
+    const turningSharingOn = body.shareEnabled === true && Boolean(before) && beforeState.shareEnabled === false;
+    // Un-archiving a shared document brings its link back to life, so it counts like enabling sharing.
+    const unarchivingSharedDoc =
+      body.isArchived === false &&
+      Boolean(before) &&
+      beforeState.isArchived === true &&
+      beforeState.shareEnabled !== false &&
+      body.shareEnabled !== false;
+    if (turningSharingOn || unarchivingSharedDoc) {
       limitCheck = await checkLimit(actor.orgId, "active_links");
       if (!limitCheck.ok) {
         void recordActivity({

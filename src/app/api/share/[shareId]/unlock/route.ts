@@ -40,7 +40,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     if (!rl.ok) return rateLimitedResponse(rl, "Too many attempts. Please try again later.");
 
     await connectMongo();
-    const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
+    const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
       .select({ sharePasswordHash: 1, sharePasswordSalt: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
