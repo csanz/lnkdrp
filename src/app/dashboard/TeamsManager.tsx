@@ -14,6 +14,9 @@ import {
 } from "@/lib/orgsCache";
 import { useNavigationLocked } from "@/app/providers";
 import Pill from "@/components/ui/Pill";
+import PlanLimitNotice from "@/components/PlanLimitNotice";
+import { planLimitPrompt } from "@/lib/client/planLimit";
+import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 
 type OrgRow = { id: string; name: string; type: string; role: string; avatarUrl?: string | null };
@@ -151,6 +154,12 @@ export default function TeamsManager() {
   // Personal workspaces are single-user; teams + invites are not allowed.
   const canAdminTeams = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
   const canInvite = canAdminTeams;
+  // Plan gate: Free workspaces are single-user (the invite form renders disabled with an upgrade
+  // prompt instead of a 402); Pro includes one collaborator and points at contact for more seats.
+  const { plan } = usePlan();
+  const inviteBlockedByPlan = plan?.plan === "free";
+  const proSeatsFull = plan?.plan === "pro" && plan.atLimit.collaborators;
+  const proSeatsPrompt = planLimitPrompt("collaborators", { max: plan?.limits.collaborators ?? 1 });
   // Avoid flashing "no permission" while org/role context is still loading.
   // Only show unauthorized once we have a resolved org + role.
   const teamsAuthResolved = Boolean(activeOrgId) && Boolean(currentOrg) && Boolean(activeOrgRole);
@@ -343,6 +352,7 @@ export default function TeamsManager() {
     if (!session?.user) return;
     if (!activeOrgId) return;
     if (!canInvite) return;
+    if (inviteBlockedByPlan) return;
     if (navLocked) return;
     if (inviteBusy) return;
     setInviteBusy(true);
@@ -367,17 +377,19 @@ export default function TeamsManager() {
       }
 
       await loadExistingInvites({ force: true });
+      refreshPlan();
     } catch (e) {
       setInviteError(e instanceof Error ? e.message : "Failed to create invite");
     } finally {
       setInviteBusy(false);
     }
-  }, [session?.user, activeOrgId, canInvite, navLocked, inviteBusy, inviteRole, loadExistingInvites]);
+  }, [session?.user, activeOrgId, canInvite, inviteBlockedByPlan, navLocked, inviteBusy, inviteRole, loadExistingInvites]);
 
   const sendInviteEmail = useCallback(async () => {
     if (!session?.user) return;
     if (!activeOrgId) return;
     if (!canInvite) return;
+    if (inviteBlockedByPlan) return;
     if (navLocked) return;
     if (inviteEmailBusy) return;
     const email = inviteEmail.trim().toLowerCase();
@@ -399,12 +411,23 @@ export default function TeamsManager() {
       if (url) setInviteLink(url);
       setInviteEmailSentTo(to);
       await loadExistingInvites({ force: true });
+      refreshPlan();
     } catch (e) {
       setInviteEmailError(e instanceof Error ? e.message : "Failed to send invite email");
     } finally {
       setInviteEmailBusy(false);
     }
-  }, [session?.user, activeOrgId, canInvite, navLocked, inviteEmailBusy, inviteEmail, inviteRole, loadExistingInvites]);
+  }, [
+    session?.user,
+    activeOrgId,
+    canInvite,
+    inviteBlockedByPlan,
+    navLocked,
+    inviteEmailBusy,
+    inviteEmail,
+    inviteRole,
+    loadExistingInvites,
+  ]);
 
   const revokeMember = useCallback(
     async (userId: string) => {
@@ -420,6 +443,8 @@ export default function TeamsManager() {
           method: "POST",
         });
         await loadMembers();
+        // Removing a member frees a collaborator seat.
+        refreshPlan();
       } catch (e) {
         setMembersError(e instanceof Error ? e.message : "Failed to remove member");
       }
@@ -628,10 +653,10 @@ export default function TeamsManager() {
                   </label>
                   <select
                     id="invite-role"
-                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)] sm:w-[180px]"
+                    className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)] disabled:opacity-60 sm:w-[180px]"
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value as "member" | "viewer" | "admin")}
-                    disabled={inviteBusy || inviteEmailBusy}
+                    disabled={inviteBusy || inviteEmailBusy || inviteBlockedByPlan}
                   >
                     <option value="member">Member</option>
                     <option value="viewer">Viewer</option>
@@ -640,7 +665,9 @@ export default function TeamsManager() {
                   <button
                     type="button"
                     className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
-                    disabled={inviteBusy || inviteEmailBusy}
+                    disabled={inviteBusy || inviteEmailBusy || inviteBlockedByPlan}
+                    aria-disabled={inviteBusy || inviteEmailBusy || inviteBlockedByPlan}
+                    title={inviteBlockedByPlan ? "Collaborators are a Pro feature" : undefined}
                     onClick={() => void createInvite()}
                   >
                     {inviteBusy ? "Generating…" : inviteLink ? "Generate new link" : "Generate link"}
@@ -655,6 +682,26 @@ export default function TeamsManager() {
 
             {inviteError ? <div className="text-[12px] text-red-500">{inviteError}</div> : null}
 
+            {canInvite && inviteBlockedByPlan ? (
+              <PlanLimitNotice limit="collaborators" secondaryLabel="Compare plans" secondaryHref="/pricing" />
+            ) : canInvite && proSeatsFull ? (
+              <div
+                role="status"
+                className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3 text-[12px] leading-5 text-[var(--muted-2)]"
+              >
+                <div className="text-[13px] font-semibold text-[var(--fg)]">{proSeatsPrompt.title}</div>
+                <div className="mt-0.5">
+                  {proSeatsPrompt.message}{" "}
+                  <a
+                    className="font-semibold text-[var(--fg)] underline underline-offset-2"
+                    href="mailto:hi@lnkdrp.com?subject=LinkDrop%20seats"
+                  >
+                    Contact us
+                  </a>
+                </div>
+              </div>
+            ) : null}
+
             {canInvite ? (
               <div className="rounded-xl bg-[var(--panel-2)] p-3">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -665,7 +712,7 @@ export default function TeamsManager() {
                       value={inviteEmail}
                       onChange={(e) => setInviteEmail(e.target.value)}
                       placeholder="name@company.com"
-                      disabled={inviteEmailBusy}
+                      disabled={inviteEmailBusy || inviteBlockedByPlan}
                     />
                     {inviteEmailError ? <div className="mt-1 text-[12px] text-red-500">{inviteEmailError}</div> : null}
                     {inviteEmailSentTo ? (
@@ -675,7 +722,8 @@ export default function TeamsManager() {
                   <button
                     type="button"
                     className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                    disabled={inviteEmailBusy || !isValidEmail(inviteEmail)}
+                    disabled={inviteEmailBusy || inviteBlockedByPlan || !isValidEmail(inviteEmail)}
+                    aria-disabled={inviteEmailBusy || inviteBlockedByPlan || !isValidEmail(inviteEmail)}
                     onClick={() => void sendInviteEmail()}
                   >
                     {inviteEmailBusy ? "Sending…" : "Send invite"}

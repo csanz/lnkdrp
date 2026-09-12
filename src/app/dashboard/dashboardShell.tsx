@@ -1,5 +1,8 @@
 /**
  * Client shell for `/dashboard/*` — top bar (logo left, account menu right) + auth redirect.
+ *
+ * Credits are a Pro concept: the header credits pill, the out-of-credits banner, and the snapshot
+ * fetch behind them only run once `/api/billing/status` reports `plan: "pro"`.
  */
 "use client";
 
@@ -56,6 +59,9 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const [creditsOpen, setCreditsOpen] = useState(false);
   const creditsBusyRef = useRef(false);
   const pendingCreditsRefreshRef = useRef(false);
+  // Workspace plan; credits UI (pill, banner, snapshot fetch) is Pro-only. null = unknown.
+  const [plan, setPlan] = useState<"free" | "pro" | null>(null);
+  const isProRef = useRef(false);
   // null = unknown (avoid flicker), boolean = known
   const [bannerDismissed, setBannerDismissed] = useState<boolean | null>(null);
 
@@ -141,6 +147,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   async function refreshCredits(includeSpend = false, opts: { bust?: boolean } = {}) {
     // Credits UI is hidden at launch (AI is free); skip the snapshot fetch entirely.
     if (!FEATURE_CREDITS_ENABLED) return;
+    // Free workspaces have no credits; skip so a 0 balance never surfaces as "AI unavailable".
+    if (!isProRef.current) return;
     setCreditsBusy(true);
     setCreditsError(null);
     creditsBusyRef.current = true;
@@ -191,11 +199,29 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   }
 
   useEffect(() => {
-    // Dashboard header fast-path: defer credits fetch so initial paint isn't blocked by network.
-    // Still fetch soon after mount so the header value populates without requiring hover.
-    const id = typeof window !== "undefined" ? window.setTimeout(() => void refreshCredits(false), 400) : null;
+    // Dashboard header fast-path: defer the plan + credits fetch so initial paint isn't blocked by
+    // network. Still fetch soon after mount so the header value populates without requiring hover.
+    if (!FEATURE_CREDITS_ENABLED) return;
+    let cancelled = false;
+    const id = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const res = await fetch("/api/billing/status", { method: "GET" });
+          const json = (await res.json().catch(() => null)) as { plan?: unknown } | null;
+          const p = res.ok && json && typeof json.plan === "string" ? json.plan.trim().toLowerCase() : "";
+          if (cancelled) return;
+          const isPro = p === "pro";
+          isProRef.current = isPro;
+          setPlan(isPro ? "pro" : "free");
+          if (isPro) void refreshCredits(false);
+        } catch {
+          // Unknown plan: leave the credits UI hidden rather than guess.
+        }
+      })();
+    }, 400);
     return () => {
-      if (id != null) window.clearTimeout(id);
+      cancelled = true;
+      window.clearTimeout(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -243,6 +269,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   }, [activeOrgId, orgReady, credits?.cycleEnd, credits?.blocked]);
 
   const blockedBanner = useMemo(() => {
+    if (plan !== "pro") return null;
     if (!credits) return null;
     if (!credits.blocked) return null;
     // Avoid flicker: don't render until dismissal status is known.
@@ -279,7 +306,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         </div>
       </div>
     );
-  }, [credits, bannerDismissed, activeOrgId]);
+  }, [credits, bannerDismissed, activeOrgId, plan]);
 
   function formatShortDate(iso: string): string {
     const d = new Date(iso);
@@ -342,7 +369,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 
           <div className="min-w-0">
             <div className="flex min-w-0 items-center justify-end gap-2">
-              {FEATURE_CREDITS_ENABLED ? (
+              {FEATURE_CREDITS_ENABLED && plan === "pro" ? (
                 <Link
                   href="/dashboard?tab=usage"
                   className={`inline-flex h-[34px] min-w-0 max-w-[52vw] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] sm:max-w-none truncate ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}

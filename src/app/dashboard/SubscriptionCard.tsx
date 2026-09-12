@@ -3,7 +3,9 @@
  *
  * Shows current plan status and lets a signed-in user upgrade via Stripe Checkout (server-created session),
  * then manage billing via Stripe's customer portal. Plan details link out to `/pricing` so the comparison
- * has a single source of truth.
+ * has a single source of truth. Credits are a Pro concept, so the Free panel never reads the credits
+ * snapshot; it shows live usage meters from `GET /api/plan` (links, projects, analytics window, members)
+ * and names version history, AI compare and credits as Pro features instead.
  */
 "use client";
 
@@ -13,8 +15,10 @@ import { useRouter } from "next/navigation";
 import Alert from "@/components/ui/Alert";
 import SpendLimitModule from "./SpendLimitModule";
 import { formatShortDate } from "@/lib/format/date";
+import PlanUsageMeter from "@/components/PlanUsageMeter";
 import { openBillingPortal, startCheckout as startCheckoutAction } from "@/lib/billing/clientActions";
 import { FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY } from "@/lib/client/planLimit";
+import { usePlan } from "@/lib/client/usePlan";
 
 type BillingStatusResponse = {
   plan?: string;
@@ -25,18 +29,10 @@ type BillingStatusResponse = {
   error?: string;
 };
 
-type CreditsSnapshotResponse = {
-  ok: true;
-  creditsRemaining: number;
-  blocked?: boolean;
-  error?: string;
-};
-
-// Small in-memory caches to avoid visible "loading" states on first render and
+// Small in-memory cache to avoid visible "loading" states on first render and
 // when navigating between dashboard tabs (tab switches can unmount/remount cards).
 const BILLING_STATUS_CACHE_TTL_MS = 30_000;
 let billingStatusCache: { data: BillingStatusResponse; at: number } | null = null;
-let creditsBlockedCache: { blocked: boolean; at: number } | null = null;
 
 function normalizePlan(raw: string): "free" | "pro" {
   const v = raw.trim().toLowerCase();
@@ -45,13 +41,14 @@ function normalizePlan(raw: string): "free" | "pro" {
 
 export default function SubscriptionCard() {
   const router = useRouter();
+  // Live limits/usage for the Free meters. Rows render (with empty bars) before the snapshot lands.
+  const { plan: planSnapshot } = usePlan();
 
   const [busy, setBusy] = useState(false);
   const [upgradeBusy, setUpgradeBusy] = useState(false);
   const [manageBusy, setManageBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BillingStatusResponse | null>(() => billingStatusCache?.data ?? null);
-  const [creditsBlocked, setCreditsBlocked] = useState<boolean | null>(() => creditsBlockedCache?.blocked ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,32 +67,6 @@ export default function SubscriptionCard() {
         if (!billingJson) throw new Error("Invalid response");
         if (!cancelled) setData(billingJson);
         billingStatusCache = { data: billingJson, at: Date.now() };
-
-        // Only fetch credits snapshot when needed (Free plan uses it to show the "blocked" hint) and
-        // only while the credits UI is enabled (AI is free at launch).
-        const planRaw = typeof billingJson?.plan === "string" ? billingJson.plan.trim().toLowerCase() : "";
-        const isFree = !planRaw || planRaw === "free";
-        if (isFree && FEATURE_CREDITS_ENABLED) {
-          const cachedBlockedAt = creditsBlockedCache?.at ?? 0;
-          const cachedBlockedFresh =
-            typeof creditsBlockedCache?.blocked === "boolean" && Date.now() - cachedBlockedAt < BILLING_STATUS_CACHE_TTL_MS;
-          if (cachedBlockedFresh && !cancelled) {
-            setCreditsBlocked(Boolean(creditsBlockedCache?.blocked));
-          }
-          try {
-            const creditsRes = await fetch("/api/credits/snapshot", { method: "GET" });
-            const creditsJson = (await creditsRes.json().catch(() => null)) as CreditsSnapshotResponse | null;
-            if (creditsRes.ok && creditsJson && (creditsJson as any).ok === true) {
-              const blocked = Boolean((creditsJson as any).blocked);
-              creditsBlockedCache = { blocked, at: Date.now() };
-              if (!cancelled) setCreditsBlocked(blocked);
-            }
-          } catch {
-            // ignore (best-effort)
-          }
-        } else {
-          if (!cancelled) setCreditsBlocked(false);
-        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load subscription";
         // If we already have cached data rendered, keep it and avoid surfacing a transient error.
@@ -127,7 +98,7 @@ export default function SubscriptionCard() {
     if (busy) return "Loading billing details…";
     if (error) return error;
     if (plan === "pro") return "Manage billing, invoices, and payment method.";
-    return FEATURE_CREDITS_ENABLED ? "Your current plan and credit status." : "Your current plan and its limits.";
+    return "Your current plan and its limits.";
   }, [busy, error, plan]);
 
   async function startCheckout() {
@@ -190,17 +161,44 @@ export default function SubscriptionCard() {
     );
   }
 
-  const outOfCredits = FEATURE_CREDITS_ENABLED && creditsBlocked === true;
-
-  /** Free plan: the three launch limits, with `/pricing` as the single source of truth. */
+  /**
+   * Free plan: live meters for the launch limits plus the Pro-only features, with `/pricing` as the
+   * single source of truth. Values are `null` (dash + empty bar) until `usePlan` resolves so the
+   * card keeps its height.
+   */
+  const freeSnapshot = planSnapshot?.plan === "free" ? planSnapshot : null;
+  const freeAnalyticsDays = freeSnapshot?.limits.analyticsDays ?? FREE_PLAN_LIMITS_COPY.analyticsDays;
   const freeLimitsSubtitle = (
-    <span>
-      {FREE_PLAN_LIMITS_COPY.activeLinks} active share links · {FREE_PLAN_LIMITS_COPY.projects} project · last{" "}
-      {FREE_PLAN_LIMITS_COPY.analyticsDays} days of analytics.{" "}
-      <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
-        Compare plans
-      </Link>
-    </span>
+    <div>
+      <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+        <PlanUsageMeter
+          label="Links"
+          used={freeSnapshot ? freeSnapshot.usage.activeLinks : null}
+          max={freeSnapshot ? freeSnapshot.limits.activeLinks : FREE_PLAN_LIMITS_COPY.activeLinks}
+          warn={Boolean(freeSnapshot?.atLimit.activeLinks)}
+        />
+        <PlanUsageMeter
+          label="Projects"
+          used={freeSnapshot ? freeSnapshot.usage.projects : null}
+          max={freeSnapshot ? freeSnapshot.limits.projects : FREE_PLAN_LIMITS_COPY.projects}
+        />
+        <div className="flex items-center justify-between gap-2 text-[12px] leading-4 text-[var(--muted-2)]">
+          <span>Analytics</span>
+          <span className="text-[var(--muted)]">Last {freeAnalyticsDays} days</span>
+        </div>
+        <PlanUsageMeter
+          label="Members"
+          used={freeSnapshot ? freeSnapshot.usage.members : null}
+          max={freeSnapshot ? freeSnapshot.limits.collaborators + 1 : 1}
+        />
+      </div>
+      <div className="mt-3">
+        Includes 50 starter credits, one time. Version history and AI compare are Pro features.{" "}
+        <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
+          Compare plans
+        </Link>
+      </div>
+    </div>
   );
 
   return (
@@ -234,8 +232,8 @@ export default function SubscriptionCard() {
             price={proPriceLabel || undefined}
             subtitle={
               <span>
-                {periodHint ? periodHint : "Your subscription is active."} Includes 1 collaborator. Need more seats? Contact
-                us and we will add them to your workspace.
+                {periodHint ? periodHint : "Your subscription is active."} Unlimited links · Unlimited projects · Full
+                history · 1 collaborator included.
               </span>
             }
             cta={
@@ -262,13 +260,7 @@ export default function SubscriptionCard() {
         ) : (
           <PlanPanel
             planLabel="Free"
-            subtitle={
-              outOfCredits
-                ? "AI tools are currently unavailable due to credit limits."
-                : FEATURE_CREDITS_ENABLED
-                  ? "Includes 50 starter credits. They don’t reset monthly; upgrade to Pro for 300 credits every billing cycle."
-                  : freeLimitsSubtitle
-            }
+            subtitle={freeLimitsSubtitle}
             cta={
               <div className="flex flex-col items-stretch gap-2 md:flex-row md:flex-wrap md:items-center">
                 <button

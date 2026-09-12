@@ -19,7 +19,9 @@ import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { debugLog } from "@/lib/debug";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
+import ProPill from "@/components/ProPill";
 import { markPlanLimitHit, parsePlanLimitError, type PlanLimitError } from "@/lib/client/planLimit";
+import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
@@ -224,6 +226,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [isCopying, setIsCopying] = useState(false);
   /** Set when enabling sharing was refused with `402 plan_limit`; cleared on the next attempt or dismiss. */
   const [shareLimitError, setShareLimitError] = useState<PlanLimitError | null>(null);
+  /** `402 plan_limit` from the revision-history toggle (version history is a Pro feature). */
+  const [revisionHistoryLimitError, setRevisionHistoryLimitError] = useState<PlanLimitError | null>(null);
+  // Workspace plan snapshot: drives the "Pro" pill on history links and the pre-402 share hint.
+  const { plan } = usePlan();
+  const isFreePlan = plan?.plan === "free";
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
   const [replaceCopyDone, setReplaceCopyDone] = useState(false);
@@ -1252,12 +1259,23 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
     // Optimistic update
     setDoc((d) => ({ ...d, shareAllowRevisionHistory: next }));
+    setRevisionHistoryLimitError(null);
     try {
-      await fetchJson(`/api/docs/${doc.id}`, {
+      const res = await fetchWithTempUser(`/api/docs/${doc.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ shareAllowRevisionHistory: next }),
       });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as unknown;
+        const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
+        if (limitErr) {
+          // Version history is Pro: keep the switch off and show the upgrade prompt under it.
+          setRevisionHistoryLimitError(limitErr);
+          markPlanLimitHit(limitErr.limit);
+        }
+        throw new Error(`Request failed (${res.status})`);
+      }
     } catch {
       // Revert on failure
       setDoc((d) => ({ ...d, shareAllowRevisionHistory: prev }));
@@ -1290,6 +1308,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         }
         throw new Error(`Request failed (${res.status})`);
       }
+      // Sharing on/off changes the active-link count shown in plan meters.
+      refreshPlan();
     } catch {
       // Revert on failure
       setDoc((d) => ({ ...d, shareEnabled: prev }));
@@ -1793,6 +1813,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           </Link>
                         )
                       ) : null}
+                      {displayVersion != null && isFreePlan ? <ProPill /> : null}
                     </div>
                   ) : (
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -1864,6 +1885,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           </Link>
                         )
                       ) : null}
+                      {displayVersion != null && isFreePlan ? <ProPill /> : null}
 
                       {projectsInline.length ? (
                         <div className="inline-flex shrink-0 flex-wrap items-center gap-1 text-sm font-medium text-[var(--muted-2)]">
@@ -2208,6 +2230,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           ].join(" ")}
                         >
                           {replaceNotice.toVersion ? `View v${replaceNotice.toVersion} changes` : "View version history"}
+                          {isFreePlan ? <ProPill className="ml-1.5" /> : null}
                         </Link>
                       </div>
                     </div>
@@ -2342,6 +2365,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 {doc.status === "ready" && !isReceivedViaRequest && !isReplacing ? (
                   <DocSharePanel
                     docId={doc.id}
+                    showProPill={isFreePlan}
                     shareUrl={shareUrl}
                     shareInputRef={shareInputRef}
                     isCopying={isCopying}
@@ -2357,6 +2381,17 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           secondaryHref="/search?scope=documents"
                           onDismiss={() => setShareLimitError(null)}
                         />
+                      ) : isFreePlan && plan && doc.shareEnabled === false && plan.atLimit.activeLinks ? (
+                        // Pre-empt the 402: the workspace has no free link slot for this doc.
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[12px] leading-5 text-[var(--muted-2)]">
+                          <span>
+                            Turning this on needs a free link slot ({plan.usage.activeLinks} of {plan.limits.activeLinks ?? 3}{" "}
+                            used).
+                          </span>
+                          <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
+                            Upgrade
+                          </Link>
+                        </div>
                       ) : null
                     }
                     relevancyEnabled={Boolean(doc.receiverRelevanceChecklist)}
@@ -2365,6 +2400,15 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     onPdfDownloadEnabledChange={(next) => void setShareAllowPdfDownload(next)}
                     revisionHistoryEnabled={Boolean(doc.shareAllowRevisionHistory)}
                     onRevisionHistoryEnabledChange={(next) => void setShareAllowRevisionHistory(next)}
+                    revisionHistoryNotice={
+                      revisionHistoryLimitError ? (
+                        <PlanLimitNotice
+                          error={revisionHistoryLimitError}
+                          secondaryHref="/pricing"
+                          onDismiss={() => setRevisionHistoryLimitError(null)}
+                        />
+                      ) : null
+                    }
                     sharePasswordEnabled={Boolean(doc.sharePasswordEnabled)}
                     onSharePasswordEnabledChange={(enabled) =>
                       setDoc((d) => ({ ...d, sharePasswordEnabled: enabled }))

@@ -48,6 +48,8 @@ type ProjectDTO = {
   slug: string;
   description: string;
   autoAddFiles: boolean;
+  /** Whether `/p/:shareId` resolves; absent on old cached payloads = enabled. */
+  shareEnabled?: boolean;
   isRequest?: boolean;
   request?: {
     uploadPath: string | null;
@@ -193,6 +195,8 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [nameSaveBusy, setNameSaveBusy] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
   const [nameSaveError, setNameSaveError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [docs, setDocs] = useState<Paged<DocListItem>>({ items: [], total: 0, page: 1, limit: 25 });
@@ -391,6 +395,32 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
  * Save Name (updates state (setNameDraft, setEditingName, setNameSaveError); uses trim, setNameDraft, setEditingName).
  */
 
+
+  /**
+   * Toggle the public project link. Optimistic: flip locally, PATCH `{ shareEnabled }` only, roll back on error.
+   */
+  async function setProjectShareEnabled(next: boolean) {
+    if (!project || shareBusy) return;
+    const prev = project.shareEnabled !== false;
+    setShareBusy(true);
+    setShareError(null);
+    setProject((p) => (p ? { ...p, shareEnabled: next } : p));
+    try {
+      const res = await fetchWithTempUser(`/api/projects/${encodeURIComponent(projectSlug)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ shareEnabled: next }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { project?: ProjectDTO; error?: string };
+      if (!res.ok) throw new Error(json?.error || "Failed to update sharing.");
+      if (json?.project) setProject(json.project);
+    } catch (e) {
+      setProject((p) => (p ? { ...p, shareEnabled: prev } : p));
+      setShareError(e instanceof Error ? e.message : "Failed to update sharing.");
+    } finally {
+      setShareBusy(false);
+    }
+  }
 
   async function saveName(nextRaw: string) {
     if (!project) return;
@@ -1205,10 +1235,20 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                   ) : null}
                 </div>
               ) : (
-                <ProjectSharePanel
-                  projectShareId={(project as unknown as { shareId?: string | null })?.shareId ?? null}
-                  projectName={title}
-                />
+                <div className="grid gap-2">
+                  <ProjectSharePanel
+                    projectShareId={(project as unknown as { shareId?: string | null })?.shareId ?? null}
+                    projectName={title}
+                    shareEnabled={project?.shareEnabled !== false}
+                    shareBusy={shareBusy}
+                    onShareEnabledChange={(next) => void setProjectShareEnabled(next)}
+                  />
+                  {shareError ? (
+                    <div className="text-[12px] text-red-600 dark:text-red-400" role="alert">
+                      {shareError}
+                    </div>
+                  ) : null}
+                </div>
               )}
             </div>
           )}

@@ -1,4 +1,5 @@
 import { Types } from "mongoose";
+import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 
 import { connectMongo } from "@/lib/mongodb";
 import { SubscriptionModel } from "@/lib/models/Subscription";
@@ -143,7 +144,8 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   // even before the first AI run triggers reservation initialization.
   let bal: WorkspaceCreditBalanceDoc = balRaw;
   if (!bal) {
-    const initTrialCredits = pro ? 0 : 50;
+    // Free workspaces get no starter credits at launch (credits are a Pro concept).
+    const initTrialCredits = pro ? 0 : FREE_STARTER_CREDITS;
     const initSeed = {
       trialCreditsRemaining: initTrialCredits,
       subscriptionCreditsRemaining: 0,
@@ -266,7 +268,7 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
     usedThisCycle,
     cycleStart: cycleStart ? cycleStart.toISOString() : null,
     cycleEnd: cycleEnd ? cycleEnd.toISOString() : null,
-    includedThisCycle: pro ? 300 : trialRemaining ? 50 : null,
+    includedThisCycle: pro ? INCLUDED_CREDITS_PER_CYCLE : trialRemaining ? FREE_STARTER_CREDITS : null,
     onDemandEnabled,
     onDemandMonthlyLimitCents,
     onDemandUsedCreditsThisCycle,

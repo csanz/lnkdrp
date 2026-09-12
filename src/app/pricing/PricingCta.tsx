@@ -74,7 +74,7 @@ function SignedOutCta({ plan, variant, helper }: Required<Props>) {
       >
         {busy ? "Opening Google…" : label}
       </button>
-      <p className={cn("mt-3 text-center text-[11px]", HELPER[variant])}>{helper}</p>
+      <p className={cn("mt-3 min-h-[2.75rem] text-center text-[11px] leading-[1.4]", HELPER[variant])}>{helper}</p>
     </>
   );
 }
@@ -167,7 +167,7 @@ function SignedInCta({ plan, variant }: Required<Props>) {
   return (
     <>
       {control}
-      <p className={cn("mt-3 text-center text-[11px]", HELPER[variant])}>{error ?? helperText}</p>
+      <p className={cn("mt-3 min-h-[2.75rem] text-center text-[11px] leading-[1.4]", HELPER[variant])}>{error ?? helperText}</p>
     </>
   );
 }
@@ -190,7 +190,7 @@ export default function PricingCta({ plan, variant = "dark", helper }: Props) {
         <button type="button" className={cn(BASE, VARIANT[variant])} disabled>
           {plan === "pro" ? "Upgrade to Pro" : "Get started"}
         </button>
-        <p className={cn("mt-3 text-center text-[11px]", HELPER[variant])}>{helper}</p>
+        <p className={cn("mt-3 min-h-[2.75rem] text-center text-[11px] leading-[1.4]", HELPER[variant])}>{helper}</p>
       </>
     );
   }

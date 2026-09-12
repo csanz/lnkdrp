@@ -1,10 +1,11 @@
 /**
  * Public pricing page.
  *
- * Free vs Pro side by side. Links, projects, analytics and collaborators are the product; AI
- * summaries and version compares are included on every plan (2026-09-12 decision, see
- * docs/prds/lnkdrp-credit-features.md), so there is no credit table here. The Pro price label is
- * the same MongoDB-backed value the dashboard shows.
+ * Free vs Pro side by side. Links, projects, analytics and collaborators are the product; the AI
+ * summary is included on every plan, while version history, AI compare and credits are Pro
+ * (2026-09-12 decision, see docs/prds/lnkdrp-credit-features.md). A compact "How credits work"
+ * block explains the per-action prices without a full credit table. The Pro price label is the
+ * same MongoDB-backed value the dashboard shows.
  *
  * Plan limits are imported from `src/lib/billing/planLimits.ts`, the same module the API routes
  * enforce with, so the numbers here always match what users hit.
@@ -20,6 +21,7 @@ import {
   PRO_INCLUDED_COLLABORATORS,
 } from "@/lib/billing/planLimits";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
+import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 import { cn } from "@/lib/cn";
 import PricingCta from "./PricingCta";
 
@@ -28,11 +30,8 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "Three links free, forever. Upgrade when your agent needs more.",
+  description: "Free to send a few. Pro to send every day. Three links free, forever; unlimited links, version history and AI compare on Pro.",
 };
-
-/** Plan limits come from `planLimits.ts` (the enforcement source of truth) so the copy cannot drift. */
-const EXTRA_COLLABORATOR_LABEL = "$5/mo";
 
 /** Read the Pro price label without letting a database hiccup take the page down. */
 async function readProPriceLabel(): Promise<string | null> {
@@ -92,11 +91,13 @@ export default async function PricingPage() {
           <div className="max-w-2xl">
             <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Pricing</p>
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[56px]">
-              Three links free. Upgrade when your agent needs more.
+              Free to send a few.
+              <br className="hidden sm:block" />
+              Pro to send every day.
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-              You pay for links, projects, and the people you work with. The AI that makes each link
-              worth opening, the summary and the version compare, is included on every plan.
+              You pay for links, projects, and the people you work with. The summary that makes each
+              link worth opening is included on every plan. Version history and AI compare are Pro.
             </p>
           </div>
 
@@ -122,12 +123,15 @@ export default async function PricingPage() {
                   `${FREE_PROJECTS} project`,
                   `Last ${FREE_ANALYTICS_DAYS} days of viewer analytics`,
                   "AI summary and key points on every link",
-                  "Version history and compare",
                   "Password protection and download control",
                   "Works with Claude Code, Cursor, Codex, and any MCP client",
+                  `${FREE_STARTER_CREDITS} credits to start, one time`,
                   "Single user",
                 ]}
               />
+              <p className="mt-4 text-[12px] leading-5 text-white/45">
+                Not on Free: version history, AI compare, and AI review.
+              </p>
               <div className="mt-8 flex-1" />
               <PricingCta plan="free" variant="dark" helper="Sign in with Google. No card needed." />
             </div>
@@ -159,57 +163,17 @@ export default async function PricingPage() {
                   "Unlimited active share links",
                   "Unlimited projects",
                   "Full viewer analytics history",
-                  "Collaborators on one shared workspace",
+                  "Version history and AI compare",
+                  "300 credits a month, more at $0.10 each",
+                  `${PRO_INCLUDED_COLLABORATORS} collaborator included · more on request`,
                   "Agents never take a seat",
                   "AI summary and key points on every link",
-                  "Version history and compare",
                   "Password protection and download control",
                   "Works with Claude Code, Cursor, Codex, and any MCP client",
                 ]}
               />
               <div className="mt-8 flex-1" />
-              <PricingCta plan="pro" variant="light" helper="Stripe checkout · Invoices in the portal · Cancel anytime, Pro stays active until the cycle ends" />
-            </div>
-          </div>
-
-          {/* Enterprise: sold, not bought. No price; every item here is delivered by hand at first. */}
-          <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] px-7 py-7 md:px-9">
-            <div className="grid gap-8 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.3fr)_auto] md:items-center">
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">Enterprise</div>
-                <h2 className="mt-2 font-serif text-2xl leading-snug tracking-tight text-white">
-                  Your domain, your seats, and someone to call.
-                </h2>
-                <p className="mt-2 text-sm leading-6 text-white/60">
-                  For teams that send documents at volume and need the paperwork to match.
-                </p>
-              </div>
-              <ul className="grid gap-x-8 gap-y-2.5 text-sm leading-6 text-white/75 sm:grid-cols-2">
-                {[
-                  "Share links on your own domain",
-                  "As many seats as you need, one invoice",
-                  "Private workspaces per team, one admin view",
-                  "Higher file size and retention limits",
-                  "Priority support and a DPA",
-                  "Everything in Pro",
-                ].map((item) => (
-                  <li key={item} className="flex gap-2.5">
-                    <Check />
-                    <span>{item}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="md:min-w-[200px]">
-                <a
-                  href="mailto:hi@lnkdrp.com?subject=LinkDrop%20Enterprise"
-                  className="inline-flex w-full items-center justify-center rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10"
-                >
-                  Talk to us
-                </a>
-                <div className="mt-2 text-center text-[11px] leading-5 text-white/40">
-                  Pricing based on seats and volume. We reply within a business day.
-                </div>
-              </div>
+              <PricingCta plan="pro" variant="light" helper="Stripe checkout · Cancel anytime, Pro stays active until the cycle ends" />
             </div>
           </div>
 
@@ -241,6 +205,108 @@ export default async function PricingPage() {
             </div>
           </div>
 
+          {/* How credits work: tier table. Costs mirror creditsForRun in src/lib/credits/schedule.ts. */}
+          <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] p-7 sm:p-8">
+            <div className="grid gap-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] md:gap-14">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">How credits work</div>
+                <h2 className="mt-2 max-w-md text-balance font-serif text-2xl leading-snug tracking-tight text-white sm:text-[26px]">
+                  Pick a level, pay per run.
+                </h2>
+                <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
+                  Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits every billing cycle. Higher levels run a deeper
+                  analysis and cost more per run. The summary on every link never uses credits.
+                </p>
+                <p className="mt-3 max-w-md text-[12px] leading-5 text-white/45">
+                  Need more? Turn on on-demand: $0.10 per credit, billed through Stripe, under a hard spend limit
+                  you set. Unused included credits do not roll over.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-white/50">
+                      <th className="pb-3 pr-4 font-semibold">Per run</th>
+                      <th className="w-[15%] whitespace-nowrap pb-3 pr-4 text-right font-semibold">Basic</th>
+                      <th className="w-[15%] whitespace-nowrap pb-3 pr-4 text-right font-semibold">Standard</th>
+                      <th className="w-[15%] whitespace-nowrap pb-3 text-right font-semibold">Advanced</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10 text-white/80">
+                    {[
+                      { label: "Summary and key points", sub: "Automatic on every link", costs: ["Included", "Included", "Included"], soon: false },
+                      { label: "AI compare", sub: "What changed between two versions", costs: ["2", "5", "12"], soon: false },
+                      { label: "AI review", sub: "Scores a document someone sent you against the criteria you set, and explains the score. Priced per document.", costs: ["2", "5", "12"], soon: true },
+                      { label: "Viewer follow-up briefs", sub: "A short brief on one viewer: which pages they lingered on, whether they came back, and a suggested next step. Priced per brief.", costs: ["1", "1", "1"], soon: true },
+                      { label: "Recipient Q&A", sub: "Readers ask the document questions on the share page. You set a cap per reader and per link, so nobody can run up your credits. Priced per answered question.", costs: ["1", "2", "5"], soon: true },
+                    ].map((row) => (
+                      <tr key={row.label} className={row.soon ? "text-white/45" : undefined}>
+                        <td className="py-3 pr-6 align-top">
+                          <div className={row.soon ? "font-medium text-white/60" : "font-medium text-white/90"}>{row.label}</div>
+                          <div className="text-[12px] text-white/45">
+                            {row.soon ? <span className="mr-1.5 rounded-full border border-white/15 px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.1em] text-white/45">Not released yet</span> : null}
+                            {row.sub}
+                          </div>
+                        </td>
+                        {row.costs.map((c, i) => (
+                          <td key={i} className={["whitespace-nowrap py-3 text-right tabular-nums align-top", i < 2 ? "pr-4" : ""].join(" ")}>
+                            {c === "Included" ? (
+                              <span className="text-white/50">Included</span>
+                            ) : (
+                              <span>
+                                {c} <span className="text-white/45">{c === "1" ? "credit" : "credits"}</span>
+                              </span>
+                            )}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Enterprise: sold, not bought. No price; every item here is delivered by hand at first. */}
+          <div className="mt-16 rounded-2xl border border-white/10 bg-white/[0.03] p-7 sm:p-8">
+            <div className="grid gap-6 md:grid-cols-2 md:gap-[84px]">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">Enterprise</div>
+                <h2 className="mt-2 max-w-md text-balance font-serif text-2xl leading-snug tracking-tight text-white sm:text-[26px]">
+                  Your domain, your seats, and someone to call.
+                </h2>
+                <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
+                  For teams that send documents at volume and need the paperwork to match.
+                </p>
+              </div>
+              <div className="flex flex-col justify-end">
+                <a
+                  href="mailto:hi@lnkdrp.com?subject=LinkDrop%20Enterprise"
+                  className="inline-flex w-full items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black transition hover:bg-white/90"
+                >
+                  Talk to us
+                </a>
+                <div className="mt-3 text-center text-[11px] leading-[1.4] text-white/40">
+                  Priced on seats and volume · We reply within a business day
+                </div>
+              </div>
+            </div>
+            <ul className="mt-7 grid gap-x-8 gap-y-3 border-t border-white/10 pt-6 text-sm leading-6 text-white/75 sm:grid-cols-2 md:grid-cols-3">
+              {[
+                "Share links on your own domain",
+                "Single sign-on (SAML or OIDC)",
+                "Unlimited seats, one invoice",
+                "Private workspaces, one admin view",
+                "Priority support and a DPA",
+              ].map((item) => (
+                <li key={item} className="flex items-start gap-2.5">
+                  <Check />
+                  <span className="whitespace-nowrap">{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
           {/* FAQ */}
           <div className="mt-20 max-w-3xl">
             <h2 className="font-serif text-3xl tracking-tight text-white">Questions</h2>
@@ -256,15 +322,19 @@ export default async function PricingPage() {
                 },
                 {
                   q: "Is Pro per person or per workspace?",
-                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} collaborator; additional seats are added per member from your workspace settings.`,
+                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} collaborator; contact us to add more seats to a workspace.`,
                 },
                 {
                   q: "I already have more than 3 links. What happens?",
                   a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new links and projects wait until you disable some or upgrade. Existing links never stop working.",
                 },
                 {
-                  q: "Do I need credits for the AI?",
-                  a: "No. The summary on every link and the version compare are included on both plans. If we add AI features that cost credits, they will be listed here with a fixed price before they run.",
+                  q: "What do credits pay for?",
+                  a: "AI compare of two versions, which explains what changed: 2 credits for basic, 5 for standard, 12 for advanced, and reviews when you enable them. Pro includes 300 credits per billing cycle; they reset each cycle and do not roll over. If you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set. The summary on every link never uses credits.",
+                },
+                {
+                  q: "Can I replace a file on Free?",
+                  a: "Yes. Replacing keeps the same link and recipients always see the latest file. Version history, the revision list recipients can view, and the AI compare are Pro.",
                 },
                 {
                   q: "Which files can I share?",

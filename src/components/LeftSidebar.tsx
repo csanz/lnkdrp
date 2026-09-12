@@ -36,6 +36,7 @@ import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
 import CreateProjectModal from "@/components/modals/CreateProjectModal";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
+import PlanUsageMeter from "@/components/PlanUsageMeter";
 import {
   PLAN_LIMIT_HIT_EVENT,
   markPlanLimitHit,
@@ -44,6 +45,7 @@ import {
   type PlanLimitError,
   type PlanLimitKey,
 } from "@/lib/client/planLimit";
+import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import { buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getPublicSiteBase } from "@/lib/urls";
 import {
   getStarredDocs,
@@ -348,8 +350,10 @@ export default function LeftSidebar({
 
   const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
   const [newProjectLimitError, setNewProjectLimitError] = useState<PlanLimitError | null>(null);
-  // Plan-limit nudge: `/api/billing/status` carries no usage, so the sidebar only knows the workspace
-  // is at a Free cap after a `402 plan_limit` was seen in this session (see `markPlanLimitHit`).
+  // Plan meter: Free workspaces get a proactive "Links 2 of 3 · Projects 1 of 1" block above the
+  // account menu. The session flag below (`markPlanLimitHit`) is only a fallback for when the
+  // snapshot could not be loaded.
+  const { plan, loading: planLoading } = usePlan();
   const [planLimitHit, setPlanLimitHit] = useState<PlanLimitKey | null>(null);
   const [planLimitNudgeDismissed, setPlanLimitNudgeDismissed] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -627,6 +631,8 @@ export default function LeftSidebar({
 
 
     function onProjectsChanged() {
+      // Project counts feed the Free-plan meter; refetch it alongside the sidebar cache.
+      refreshPlan();
       void refresh();
     }
 
@@ -673,6 +679,8 @@ export default function LeftSidebar({
 
 
     function onDocsChanged() {
+      // Active-link counts feed the Free-plan meter; refetch it alongside the sidebar cache.
+      refreshPlan();
       void refresh();
     }
 
@@ -2227,7 +2235,38 @@ export default function LeftSidebar({
           </div>
         </nav>
 
-        {planLimitHit && !planLimitNudgeDismissed ? (
+        {plan?.plan === "free" ? (
+          // Free plan: proactive usage meters. Hidden on Pro and until the snapshot has loaded.
+          <div className="px-3 pb-3">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3.5 pb-3 pt-3.5">
+              <PlanUsageMeter
+                label="Links"
+                used={plan.usage.activeLinks}
+                max={plan.limits.activeLinks}
+                warn={plan.atLimit.activeLinks}
+                compact
+              />
+              <PlanUsageMeter
+                label="Projects"
+                used={plan.usage.projects}
+                max={plan.limits.projects}
+                compact
+                className="mt-3"
+              />
+              <div className="mt-3.5 flex items-center justify-between gap-2 border-t border-[var(--border)] pt-3 text-[11px] leading-4">
+                {plan.atLimit.activeLinks ? (
+                  <span className="truncate font-semibold text-amber-700 dark:text-amber-300">At your link limit</span>
+                ) : (
+                  <span className="truncate text-[var(--muted-2)]">Free plan</span>
+                )}
+                <Link href="/pricing" className="shrink-0 font-semibold text-[var(--fg)] hover:underline underline-offset-2">
+                  Upgrade to Pro
+                </Link>
+              </div>
+            </div>
+          </div>
+        ) : !plan && !planLoading && planLimitHit && !planLimitNudgeDismissed ? (
+          // Fallback when the plan snapshot failed to load: nudge once a 402 has been seen this session.
           <div className="px-3 pb-2">
             <PlanLimitNotice
               limit={planLimitHit}

@@ -30,6 +30,7 @@ import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest } from "@/lib/credits/idempotency";
 import { getCreditsSnapshot } from "@/lib/credits/snapshot";
 import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
+import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -1001,8 +1002,12 @@ export async function POST(
 
   // Server-side enforcement: if AI tools are blocked for this workspace, reject before scheduling work.
   // Note: this route always runs in the background via `after()`, so we must preflight here.
-  const needsAi = forceReview || Boolean(process.env.OPENAI_API_KEY);
-  if (needsAi) {
+  //
+  // Only a user-initiated paid action (forced review) is preflighted. The automatic summary costs 0
+  // credits and the replacement compare is skipped by plan below, so Free workspaces (which hold no
+  // credits at all) must still be able to upload; their in-job reservations fail soft if ever needed.
+  const needsPaidAi = forceReview && creditsForRun({ actionType: "review", qualityTier: forceReviewQualityTier }) > 0;
+  if (needsPaidAi) {
     try {
       const snap = await getCreditsSnapshot({ workspaceId: actor.orgId });
       if (snap.blocked) {
@@ -1240,18 +1245,28 @@ export async function POST(
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
             const historyIdempotencyKey = `history:auto:${String(docId)}:to:${toVersion}:${historyTier}`;
             let historyLedgerId: string | null = null;
-            try {
-              const reserved = await reserveCreditsOrThrow({
-                workspaceId: actor.orgId,
-                userId: actor.userId,
-                docId: String(docId),
-                actionType: "history",
-                qualityTier: historyTier,
-                idempotencyKey: historyIdempotencyKey,
-              });
-              historyLedgerId = reserved.ledgerId;
-            } catch {
-              historyLedgerId = null;
+            // Pro feature gate: the AI compare is part of version history. Free workspaces keep the
+            // DocChange row (so versions still list) but no credits are reserved and no diff is run.
+            const historyAllowed = await getWorkspacePlan(actor.orgId)
+              .then((plan) => plan === "pro")
+              .catch(() => false);
+            if (!historyAllowed) {
+              debugLog(1, "[process] history compare skipped (Pro feature)", { uploadId, docId: String(docId), version: toVersion });
+            }
+            if (historyAllowed) {
+              try {
+                const reserved = await reserveCreditsOrThrow({
+                  workspaceId: actor.orgId,
+                  userId: actor.userId,
+                  docId: String(docId),
+                  actionType: "history",
+                  qualityTier: historyTier,
+                  idempotencyKey: historyIdempotencyKey,
+                });
+                historyLedgerId = reserved.ledgerId;
+              } catch {
+                historyLedgerId = null;
+              }
             }
 
             let diff = null as any;
@@ -1918,20 +1933,32 @@ export async function POST(
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
             const historyIdempotencyKey = `history:auto:${String(docId)}:to:${uploadVersion}:${historyTier}`;
             let historyLedgerId: string | null = null;
-            try {
-              const reserved = await reserveCreditsOrThrow({
-                workspaceId: String(existingDocOrgId),
-                userId: actor.userId,
-                docId: String(docId),
-                actionType: "history",
-                qualityTier: historyTier,
-                idempotencyKey: historyIdempotencyKey,
-              });
-              historyLedgerId = reserved.ledgerId;
-            } catch (e) {
-              warningDetails.historyCredits = e instanceof Error ? e.message : String(e);
-              // Skip history diff generation if we can't reserve credits.
-              historyLedgerId = null;
+            // Pro feature gate: the AI compare is part of version history. Free workspaces keep the
+            // DocChange row (versions still list, page thumbnails still attach) but no credits are
+            // reserved and no diff is generated.
+            const historyAllowed = await getWorkspacePlan(String(existingDocOrgId))
+              .then((plan) => plan === "pro")
+              .catch(() => false);
+            if (!historyAllowed) {
+              warningDetails.historyPlan = "version_history is a Pro feature; AI compare skipped";
+              debugLog(1, "[process] history compare skipped (Pro feature)", { uploadId, docId: String(docId), version: uploadVersion });
+            }
+            if (historyAllowed) {
+              try {
+                const reserved = await reserveCreditsOrThrow({
+                  workspaceId: String(existingDocOrgId),
+                  userId: actor.userId,
+                  docId: String(docId),
+                  actionType: "history",
+                  qualityTier: historyTier,
+                  idempotencyKey: historyIdempotencyKey,
+                });
+                historyLedgerId = reserved.ledgerId;
+              } catch (e) {
+                warningDetails.historyCredits = e instanceof Error ? e.message : String(e);
+                // Skip history diff generation if we can't reserve credits.
+                historyLedgerId = null;
+              }
             }
 
             let diff = null as any;

@@ -1,7 +1,9 @@
 /**
  * Credits summary card for `/dashboard?tab=usage`.
  *
- * Shows remaining credits and billing cycle reset date (Stripe period end).
+ * Shows remaining credits and billing cycle reset date (Stripe period end). Credits are a Pro
+ * concept: a Free workspace (plan read from `/api/billing/status`) sees a short upsell instead of
+ * the numbers.
  */
 "use client";
 
@@ -30,6 +32,9 @@ type CreditsSnapshot = {
   onDemandUsedCreditsThisCycle?: number;
 };
 
+/** Workspace plan from `/api/billing/status`; `null` while loading, `"unknown"` when the read failed. */
+type PlanState = "free" | "pro" | "unknown" | null;
+
 /**
  * Credits summary card; renders nothing unless `NEXT_PUBLIC_FEATURE_CREDITS=1` (AI is free at launch).
  */
@@ -47,6 +52,26 @@ function CreditsSummaryCardInner({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<CreditsSnapshot | null>(null);
+  const [plan, setPlan] = useState<PlanState>(null);
+
+  // Plan gate: Free workspaces have no credits, so show the upsell instead of numbers. A failed
+  // read falls back to the numbers ("unknown") rather than hiding a Pro workspace's balance.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/billing/status", { method: "GET" });
+        const json = (await res.json().catch(() => null)) as { plan?: unknown } | null;
+        const p = res.ok && json && typeof json.plan === "string" ? json.plan.trim().toLowerCase() : "";
+        if (!cancelled) setPlan(p === "free" || p === "pro" ? p : "unknown");
+      } catch {
+        if (!cancelled) setPlan("unknown");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,6 +116,48 @@ function CreditsSummaryCardInner({
 
   const centsPerCredit = USD_CENTS_PER_CREDIT;
   const usedCentsThisCycle = usedThisCycle !== null ? usedThisCycle * centsPerCredit : null;
+
+  if (plan === "free") {
+    return (
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="text-[13px] font-semibold text-[var(--fg)]">Credits</div>
+            <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Credits are a Pro feature.</div>
+          </div>
+          {headerRightSlot ? <div className="shrink-0">{headerRightSlot}</div> : null}
+        </div>
+        <div className="mt-5 rounded-xl bg-[var(--panel-2)] p-4">
+          <div className="text-[12px] font-semibold text-[var(--fg)]">Credits power AI compare on Pro.</div>
+          <div className="mt-1 text-[12px] text-[var(--muted-2)]">300 a month, plus on-demand.</div>
+          <div className="mt-3">
+            <Link
+              href="/pricing"
+              className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-[12px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+            >
+              Compare plans
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (plan === null) {
+    // Plan still loading: keep the header and a quiet placeholder so Free never flashes the numbers.
+    return (
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="text-[13px] font-semibold text-[var(--fg)]">Credits</div>
+            <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Loading…</div>
+          </div>
+          {headerRightSlot ? <div className="shrink-0">{headerRightSlot}</div> : null}
+        </div>
+        <div className="mt-5 h-[76px] animate-pulse rounded-xl bg-[var(--panel-2)]" aria-hidden="true" />
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">

@@ -7,11 +7,12 @@ import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance
 export const INCLUDED_CREDITS_PER_CYCLE = 300;
 
 /**
- * One-time starter credits (no cycle reset).
+ * One-time starter credits for Free workspaces (no cycle reset).
  *
- * Granted once per user, on their personal workspace only, the first time that workspace's credit
- * balance is initialized (see `defaultInitBalanceIfMissing` in `creditService.ts`). Team workspaces
- * start at 0 so a user cannot farm starter credits by creating orgs.
+ * Credits are a Pro concept: Free workspaces get none, so this is `0` and the grant is skipped
+ * entirely in `defaultInitBalanceIfMissing` (`creditService.ts`). The export stays so callers and
+ * copy can keep referencing one constant; set it above 0 to reinstate a personal-workspace starter
+ * grant (team workspaces always start at 0 so a user cannot farm credits by creating orgs).
  */
 export const FREE_STARTER_CREDITS = 50;
 

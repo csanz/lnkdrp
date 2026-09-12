@@ -639,7 +639,9 @@ export async function GET(
  * Side effects: may update project membership fields and keep legacy pointers (`uploadId`) in sync.
  * Plan limits: re-enabling sharing (`shareEnabled: false → true`) is checked against the Free
  * active-link cap; disabling never is. Inside a grace window the update succeeds with `planWarning`.
- * Errors: 400 for invalid IDs/body, 402 (`code: "plan_limit"`) when the link cap blocks, 404 when doc not found.
+ * Turning on `shareAllowRevisionHistory` is gated by the `version_history` Pro feature (no grace).
+ * Errors: 400 for invalid IDs/body, 402 (`code: "plan_limit"`) when the link cap or the
+ * version-history gate blocks, 404 when doc not found.
  */
 export async function PATCH(
   request: Request,
@@ -758,6 +760,28 @@ export async function PATCH(
           request,
         });
         return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
+      }
+    }
+
+    // Pro feature gate: letting recipients see revision history is part of version history.
+    // Only turning it on is checked (turning it off, or echoing an already-on value, never is).
+    if (
+      body.shareAllowRevisionHistory === true &&
+      before &&
+      (before as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory !== true
+    ) {
+      const gate = await checkLimit(actor.orgId, "version_history");
+      if (!gate.ok) {
+        void recordActivity({
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "plan.limit_reached",
+          docId: docObjectId,
+          meta: { limit: gate.limit, used: gate.used, max: gate.max },
+          request,
+        });
+        return applyTempUserHeaders(planLimitResponse(gate), actor);
       }
     }
 

@@ -7,8 +7,11 @@
  * session flag so the sidebar can nudge once a limit has been hit.
  */
 
-/** Which Free-plan limit was hit. Mirrors `LimitKey` in `src/lib/billing/planLimits.ts`. */
-export type PlanLimitKey = "active_links" | "projects" | "collaborators";
+/**
+ * Which Free-plan limit was hit. Mirrors `LimitKey` in `src/lib/billing/planLimits.ts`.
+ * `version_history` is a Pro feature gate (no count; `used`/`max` are 0).
+ */
+export type PlanLimitKey = "active_links" | "projects" | "collaborators" | "version_history";
 
 /** Grace window for workspaces that were over the limits at launch (ISO strings). */
 export type PlanLimitGrace = { startedAt: string; endsAt: string; blockedAt: string | null } | null;
@@ -34,7 +37,7 @@ export const FREE_PLAN_LIMITS_COPY = {
  * Launch flag: AI is free at launch, so credit surfaces (dashboard credits pill, Usage/Limits cards,
  * spend-limit editor) are hidden unless `NEXT_PUBLIC_FEATURE_CREDITS=1`. Routes keep working.
  */
-export const FEATURE_CREDITS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_CREDITS === "1";
+export const FEATURE_CREDITS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_CREDITS !== "0";
 
 /** `sessionStorage` key set once a plan-limit 402 has been seen in this browser session. */
 export const PLAN_LIMIT_HIT_STORAGE_KEY = "lnkdrp_plan_limit_hit";
@@ -42,7 +45,7 @@ export const PLAN_LIMIT_HIT_STORAGE_KEY = "lnkdrp_plan_limit_hit";
 /** Window event fired when a plan-limit 402 is seen (lets the sidebar nudge appear without a reload). */
 export const PLAN_LIMIT_HIT_EVENT = "lnkdrp:plan-limit-hit";
 
-const LIMIT_KEYS: ReadonlySet<string> = new Set(["active_links", "projects", "collaborators"]);
+const LIMIT_KEYS: ReadonlySet<string> = new Set(["active_links", "projects", "collaborators", "version_history"]);
 
 /** Coerce an unknown value to a non-negative integer, or `null` when it is not a finite number. */
 function asFiniteInt(v: unknown): number | null {
@@ -128,6 +131,13 @@ export function planLimitPrompt(limit: PlanLimitKey, opts: { used?: number; max?
             message: "Free workspaces are single-user. Upgrade to Pro to invite a collaborator.",
             secondaryLabel: "Manage members",
           };
+    case "version_history":
+      return {
+        title: "Version history is a Pro feature",
+        message:
+          "See every version, let recipients view revision history, and get an AI compare of what changed. Upgrade to Pro.",
+        secondaryLabel: "Compare plans",
+      };
     default:
       return { title: "Plan limit reached", message: "Upgrade to Pro to keep going.", secondaryLabel: "Manage" };
   }

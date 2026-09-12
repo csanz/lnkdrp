@@ -17,6 +17,8 @@ const projectSchema = new Schema(
      * This is NOT secret; it’s just a public slug.
      */
     shareId: { type: String, trim: true, index: true, unique: true },
+    /** Whether `/p/:shareId` resolves. Off = visitors see "This project is no longer shared". */
+    shareEnabled: { type: Boolean, default: true },
     name: { type: String, trim: true, required: true },
     slug: { type: String, trim: true, required: true },
     description: { type: String, trim: true, default: "" },

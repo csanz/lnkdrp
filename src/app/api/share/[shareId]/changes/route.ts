@@ -3,11 +3,18 @@
  *
  * Returns a *light* revision history for a shared doc (version + date + summary),
  * gated by doc settings and share password (when enabled).
+ *
+ * Plan gate: revision history is a Pro feature of the *owner's* workspace. When the owner is on
+ * Free the route answers exactly as if the doc had revision history disabled (`403`), so
+ * recipients never see a paywall or any Pro-only data.
  */
 import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { DocChangeModel } from "@/lib/models/DocChange";
+import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
+import { getWorkspacePlan } from "@/lib/billing/planLimits";
+import { debugError } from "@/lib/debug";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { Types } from "mongoose";
@@ -44,6 +51,27 @@ function encodeCursor(c: { toVersion: number; createdDate: string; id: string })
   return Buffer.from(JSON.stringify(c), "utf8").toString("base64url");
 }
 
+/**
+ * True when the workspace that owns the doc is on Pro.
+ *
+ * Legacy docs may carry no `orgId`; those belong to the uploader's personal workspace. Any failure
+ * (malformed ids, DB errors) reads as "not Pro" so a paywalled feature never leaks by accident.
+ */
+async function ownerIsPro(doc: { orgId?: unknown; userId?: unknown }): Promise<boolean> {
+  try {
+    let orgId: Types.ObjectId | null =
+      doc.orgId && Types.ObjectId.isValid(String(doc.orgId)) ? new Types.ObjectId(String(doc.orgId)) : null;
+    if (!orgId && doc.userId && Types.ObjectId.isValid(String(doc.userId))) {
+      orgId = (await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(String(doc.userId)) })).orgId;
+    }
+    if (!orgId) return false;
+    return (await getWorkspacePlan(orgId)) === "pro";
+  } catch (e) {
+    debugError(1, "[api/share/:shareId/changes] plan lookup failed", { message: e instanceof Error ? e.message : String(e) });
+    return false;
+  }
+}
+
 function getCookie(request: Request, name: string): string | null {
   const raw = request.headers.get("cookie");
   if (!raw) return null;
@@ -71,6 +99,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
         .select({
           _id: 1,
+          orgId: 1,
+          userId: 1,
           shareAllowRevisionHistory: 1,
           sharePasswordHash: 1,
           sharePasswordSalt: 1,
@@ -80,7 +110,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
 
-      const enabled = Boolean((doc as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory);
+      // A Free owner (e.g. after a downgrade with the toggle still on) reads as "disabled":
+      // the recipient response is identical, so nothing about the owner's plan is exposed.
+      const enabled =
+        Boolean((doc as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory) &&
+        (await ownerIsPro(doc as { orgId?: unknown; userId?: unknown }));
       if (!enabled) {
         return NextResponse.json({ error: "Revision history disabled" }, { status: 403 });
       }

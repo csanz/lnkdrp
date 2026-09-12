@@ -20,25 +20,37 @@ function isProSubscriptionStatus(statusRaw: unknown): boolean {
 }
 
 /**
- * Default initializer for a missing workspace balance snapshot.
+ * Decide whether a workspace qualifies for the one-time Free starter grant.
  *
- * Exists so the credit service can operate even before a workspace has ever run an AI action.
- * Starter credits (`FREE_STARTER_CREDITS`) are granted once per user, on their personal workspace
- * only; team workspaces start at 0. The grant is idempotent because the store only calls this
- * initializer when no balance row exists yet, and a personal org is 1:1 with its user.
- * Side effects: reads the org type and subscription status.
+ * Only a personal, non-Pro workspace ever qualifies (team workspaces start at 0 so a user cannot
+ * farm credits by creating orgs). Returns the credits to seed, or 0.
+ * Side effects: reads the org type and subscription status; skipped entirely when
+ * `FREE_STARTER_CREDITS` is 0 (credits are a Pro concept, so Free gets none).
  */
-async function defaultInitBalanceIfMissing(params: { workspaceId: string }): Promise<WorkspaceBalanceSnapshot> {
-  const orgId = new Types.ObjectId(params.workspaceId);
+async function starterCreditsFor(orgId: Types.ObjectId): Promise<number> {
+  if (FREE_STARTER_CREDITS <= 0) return 0;
   const [org, sub] = await Promise.all([
     OrgModel.findOne({ _id: orgId, isDeleted: { $ne: true } }).select({ type: 1 }).lean(),
     SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean(),
   ]);
   const isPersonal = (org as { type?: unknown } | null)?.type === "personal";
   const isPro = isProSubscriptionStatus((sub as any)?.status);
+  return isPersonal && !isPro ? FREE_STARTER_CREDITS : 0;
+}
+
+/**
+ * Default initializer for a missing workspace balance snapshot.
+ *
+ * Exists so the credit service can operate even before a workspace has ever run an AI action.
+ * Every bucket starts at 0; the only exception is the Free starter grant (`FREE_STARTER_CREDITS`,
+ * currently 0 and therefore skipped, see `starterCreditsFor`). Pro included credits arrive via
+ * `grantCycleIncludedCredits` when Stripe opens a billing cycle. The initializer is idempotent
+ * because the store only calls it when no balance row exists yet.
+ */
+async function defaultInitBalanceIfMissing(params: { workspaceId: string }): Promise<WorkspaceBalanceSnapshot> {
+  const orgId = new Types.ObjectId(params.workspaceId);
   return {
-    // Free "trial" credits are one-time starter credits for the user's personal workspace only.
-    trialCreditsRemaining: isPersonal && !isPro ? FREE_STARTER_CREDITS : 0,
+    trialCreditsRemaining: await starterCreditsFor(orgId),
     subscriptionCreditsRemaining: 0,
     purchasedCreditsRemaining: 0,
     onDemandEnabled: false,

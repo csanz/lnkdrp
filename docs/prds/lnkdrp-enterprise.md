@@ -22,12 +22,12 @@ Qualify and close enterprise leads through a conversation, then deliver the prom
 2. Plan id `enterprise` in `src/lib/billing/planLimits.ts`: unlimited links, projects, analytics and collaborators; set manually on the workspace subscription (`Subscription.plan = "enterprise"`, Stripe optional) until self-serve exists.
 3. Custom domain = one hostname per workspace (CNAME to the app) resolved on `/s/:shareId`, `/p/:shareId`, `/r/:token` and the PDF/OG routes; the primary domain keeps working for every link.
 4. Enterprise workspaces are ordinary team workspaces that share a billing owner; an "org group" is a later abstraction, not v1.
-5. Nothing on the card that is not buildable in a week: no SSO, no SLA numbers, no audit exports until they exist.
+5. Enterprise authentication (SSO via SAML or OIDC) is on the card (decision 2026-09-12) and delivered per customer through the identity provider they name; no SLA numbers or audit exports on the card until they exist.
 
 ## Approach
 
 ### Card copy (pricing page)
-Own domain on share links · As many seats as you need, on one invoice · Private workspaces per team with an admin who sees all of them · Higher file-size and retention limits · Priority support and a DPA · Button "Talk to us" · Helper "Pricing based on seats and volume. We reply within a business day."
+Own domain on share links · Single sign-on (SAML or OIDC) · As many seats as you need, on one invoice · Private workspaces per team with an admin who sees all of them · Priority support and a DPA · Button "Talk to us" · Helper "Pricing based on seats and volume. We reply within a business day."
 
 ### Custom domains
 - `Org.customDomain: { hostname, verifiedAt, txtToken }` + unique index on hostname.
@@ -45,7 +45,7 @@ Own domain on share links · As many seats as you need, on one invoice · Privat
 - `Org.billingOwnerUserId` (nullable) marks workspaces under one enterprise owner; dashboard Teams tab lists them for that user. Deeper org-group features deferred.
 
 ## Non-goals (v1)
-- SSO / SAML, audit log exports, SLA credits, per-workspace data residency.
+- Audit log exports, SLA credits, per-workspace data residency.
 - Self-serve enterprise checkout.
 
 ## Milestones
@@ -63,7 +63,8 @@ Own domain on share links · As many seats as you need, on one invoice · Privat
 - Vercel domain provisioning runbook in `docs/deploy/` (manual in v1).
 - Proves: a link on docs.customer.com opens the viewer with summary and records views to the right workspace
 
-### M3 — Enterprise admin
+### M3 — Enterprise admin and SSO
+- SSO: NextAuth provider per enterprise workspace (SAML via a broker such as WorkOS/BoxyHQ, or OIDC directly), `Org.sso: { provider, issuer, clientId, domain }`, sign-in routed by email domain; members provisioned on first login.
 - `Org.billingOwnerUserId`; Teams tab lists all workspaces for that owner with member counts.
 - Manual invoicing notes in `docs/SUBSCRIPTION.md`; Stripe bespoke price when required.
 - Proves: one owner administers several workspaces from one dashboard

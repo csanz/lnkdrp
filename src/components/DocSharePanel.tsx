@@ -6,6 +6,7 @@ import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { CopyButton } from "@/components/CopyButton";
+import ProPill from "@/components/ProPill";
 
 type Props = {
   docId: string;
@@ -30,7 +31,12 @@ type Props = {
   quickStats?: ReactNode;
   /** Optional notice rendered directly under the "Share enabled" switch (e.g. a plan-limit prompt). */
   shareNotice?: ReactNode;
+  /** Optional notice rendered under the revision-history switch (the Pro gate's plan-limit prompt). */
+  revisionHistoryNotice?: ReactNode;
+  /** Show the "Pro" pill next to the revision-history switch (Free workspaces only; Pro sees nothing). */
+  showProPill?: boolean;
 };
+
 /**
  * Render the DocSharePanel UI (uses local state).
  */
@@ -57,6 +63,8 @@ export default function DocSharePanel({
   uploadError,
   quickStats,
   shareNotice,
+  revisionHistoryNotice,
+  showProPill = false,
 }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
 
@@ -308,7 +316,10 @@ export default function DocSharePanel({
 
         <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
           <div className="min-w-0">
-            <div className="text-[12px] font-medium text-[var(--fg)]">Enable revision history viewing</div>
+            <div className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium text-[var(--fg)]">
+              <span>Enable revision history viewing</span>
+              {showProPill ? <ProPill /> : null}
+            </div>
             <div className="mt-0.5 text-[12px] text-[var(--muted)]">
               Show a light revision history to recipients (version + date + summary).
             </div>
@@ -342,6 +353,8 @@ export default function DocSharePanel({
             />
           </button>
         </div>
+
+        {revisionHistoryNotice ? <div className="mt-2">{revisionHistoryNotice}</div> : null}
 
         {/* a11y: announce copy state */}
         <div className="sr-only" aria-live="polite">

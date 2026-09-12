@@ -5,9 +5,11 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import UploadButton, { UploadIcon } from "@/components/UploadButton";
+import { usePlan } from "@/lib/client/usePlan";
 import {
   apiCreateDoc,
   apiCreateUpload,
@@ -36,6 +38,10 @@ function titleFromFileName(name: string) {
 export default function UploadPageClient() {
   const router = useRouter();
   const { pendingFile, setPendingFile } = usePendingUpload();
+  // Free workspaces at the link cap can still upload: `POST /api/docs` creates the doc unshared and
+  // the doc page's share switch explains the missing slot. Say so up front (only once the plan is known).
+  const { plan } = usePlan();
+  const atLinkLimit = plan?.plan === "free" && plan.atLimit.activeLinks;
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -204,11 +210,26 @@ export default function UploadPageClient() {
               onClick={() => void handleUpload()}
             >
               <UploadIcon />
-              {busy ? "Uploading…" : "Upload & create link"}
+              {busy ? "Uploading…" : atLinkLimit ? "Upload" : "Upload & create link"}
             </button>
           ) : null}
         </div>
       </div>
+
+      {atLinkLimit && plan ? (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] leading-5 text-[var(--muted-2)] md:px-6"
+        >
+          <span>
+            This workspace is at its {plan.limits.activeLinks ?? 3}-link limit. You can still upload; sharing stays off until
+            you free a link or upgrade.
+          </span>
+          <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
+            Upgrade
+          </Link>
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1">
         <div

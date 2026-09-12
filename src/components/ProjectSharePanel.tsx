@@ -8,13 +8,24 @@ import { useMemo, useRef, useState } from "react";
 type Props = {
   projectShareId: string | null;
   projectName?: string;
+  /** Whether `/p/:shareId` resolves. Mirrors the document "Share enabled" switch. */
+  shareEnabled: boolean;
+  /** Called with the next value when the switch is toggled; the parent persists it. */
+  onShareEnabledChange: (next: boolean) => void;
+  /** Disables the switch while a save is in flight. */
+  shareBusy?: boolean;
 };
+
 /**
- * Render the ProjectSharePanel UI (uses memoized values, local state).
+ * Render the ProjectSharePanel UI: the public project link, copy button, and the visibility switch.
  */
-
-
-export default function ProjectSharePanel({ projectShareId, projectName }: Props) {
+export default function ProjectSharePanel({
+  projectShareId,
+  projectName,
+  shareEnabled,
+  onShareEnabledChange,
+  shareBusy = false,
+}: Props) {
   const shareInputRef = useRef<HTMLInputElement | null>(null);
   const [isCopying, setIsCopying] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
@@ -24,11 +35,8 @@ export default function ProjectSharePanel({ projectShareId, projectName }: Props
     if (!projectShareId) return "";
     return `${window.location.origin}/p/${encodeURIComponent(projectShareId)}`;
   }, [projectShareId]);
-/**
- * Copy Link (updates state (setIsCopying, setCopyDone); uses setIsCopying, setCopyDone, writeText).
- */
 
-
+  /** Copy the public link to the clipboard and flash the check icon. */
   async function copyLink() {
     if (!shareUrl) return;
     setIsCopying(true);
@@ -43,6 +51,8 @@ export default function ProjectSharePanel({ projectShareId, projectName }: Props
       setIsCopying(false);
     }
   }
+
+  const switchDisabled = !projectShareId || shareBusy;
 
   return (
     <aside className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
@@ -75,24 +85,60 @@ export default function ProjectSharePanel({ projectShareId, projectName }: Props
         </button>
       </div>
 
-      <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-        <div className="text-[12px] font-medium text-[var(--fg)]">Sharing (placeholder)</div>
-        <div className="mt-1 text-[12px] leading-relaxed text-[var(--muted)]">
-          Anyone with this link can view this project and open each document via its share page.
+      {/* Same shape as the document panel's "Share enabled" row so the two surfaces read alike. */}
+      <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
+        <div className="min-w-0">
+          <div className="text-[12px] font-medium text-[var(--fg)]">Share enabled</div>
+          <div className="mt-0.5 text-[12px] text-[var(--muted)]">
+            {shareEnabled
+              ? "Anyone with the link can view this project and open each shared document."
+              : "Sharing is disabled. Visitors will see “This project is no longer shared.”"}
+          </div>
         </div>
-        <div className="mt-3">
-          <Link
-            href={projectShareId ? `/p/${encodeURIComponent(projectShareId)}` : "#"}
-            target="_blank"
+
+        <button
+          type="button"
+          role="switch"
+          aria-checked={shareEnabled}
+          aria-label="Share enabled"
+          aria-busy={shareBusy}
+          disabled={switchDisabled}
+          className={[
+            "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
+            "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+            shareEnabled ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
+            switchDisabled ? "opacity-50" : "cursor-pointer",
+          ].join(" ")}
+          onClick={() => onShareEnabledChange(!shareEnabled)}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            onShareEnabledChange(!shareEnabled);
+          }}
+        >
+          <span
+            aria-hidden="true"
             className={[
-              "text-[12px] font-medium text-[var(--muted)] hover:text-[var(--fg)] hover:underline underline-offset-4",
-              !projectShareId ? "pointer-events-none opacity-50" : "",
+              "inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform",
+              shareEnabled ? "translate-x-5" : "translate-x-0.5",
             ].join(" ")}
-            aria-label={`Open public share page${projectName ? ` for ${projectName}` : ""}`}
-          >
-            Open public share page
-          </Link>
-        </div>
+          />
+        </button>
+      </div>
+
+      <div className="mt-3">
+        <Link
+          href={projectShareId ? `/p/${encodeURIComponent(projectShareId)}` : "#"}
+          target="_blank"
+          className={[
+            "text-[12px] font-medium text-[var(--muted)] hover:text-[var(--fg)] hover:underline underline-offset-4",
+            !projectShareId || !shareEnabled ? "pointer-events-none opacity-50" : "",
+          ].join(" ")}
+          aria-disabled={!projectShareId || !shareEnabled}
+          aria-label={`Open public share page${projectName ? ` for ${projectName}` : ""}`}
+        >
+          Open public share page
+        </Link>
       </div>
 
       {/* a11y: announce copy state */}
@@ -102,5 +148,3 @@ export default function ProjectSharePanel({ projectShareId, projectName }: Props
     </aside>
   );
 }
-
-

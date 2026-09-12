@@ -23,7 +23,7 @@ type SpendStatus = {
 };
 
 /**
- * On-demand usage card; renders nothing unless `NEXT_PUBLIC_FEATURE_CREDITS=1` (AI is free at launch).
+ * On-demand usage card; hidden only when `NEXT_PUBLIC_FEATURE_CREDITS=0` (credits are live at launch).
  */
 export default function OnDemandUsageCard() {
   if (!FEATURE_CREDITS_ENABLED) return null;

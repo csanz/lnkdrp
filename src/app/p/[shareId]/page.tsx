@@ -80,14 +80,18 @@ export default async function PublicProjectSharePlaceholderPage(props: {
 
   await connectMongo();
   const project = await ProjectModel.findOne({ shareId, isDeleted: { $ne: true } })
-    .select({ _id: 1, name: 1, description: 1, orgId: 1 })
+    .select({ _id: 1, name: 1, description: 1, orgId: 1, shareEnabled: 1 })
     .lean();
   if (!project) notFound();
+  // Owner switched the project link off (see ProjectSharePanel); legacy rows without the field stay on.
+  if ((project as { shareEnabled?: unknown }).shareEnabled === false) notFound();
 
   const docs = await DocModel.find({
     ...((project as any).orgId ? { orgId: (project as any).orgId } : null),
     isDeleted: { $ne: true },
     isArchived: { $ne: true },
+    // Docs whose own share link is off would 404 anyway; keep them out of the public list.
+    shareEnabled: { $ne: false },
     $or: [{ projectId: project._id }, { projectIds: project._id }],
   })
     .select({

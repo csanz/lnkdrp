@@ -3,6 +3,9 @@
  *
  * Regenerates a doc change summary (history diff) for a specific replacement record.
  * Customer-facing: charges credits (history action) and never returns internal telemetry.
+ *
+ * Plan gate: the AI compare is a Pro feature (`checkLimit(orgId, "version_history")`). Free
+ * workspaces get a `402 plan_limit` before any credits are reserved.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -16,6 +19,8 @@ import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger } from "@
 import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest, generateIdempotencyKey } from "@/lib/credits/idempotency";
 import { isOutOfCreditsError, OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
+import { recordActivity } from "@/lib/activity/log";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 
 export const runtime = "nodejs";
@@ -88,6 +93,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     const newText = (change as any).newText?.toString?.() ?? "";
     if (!previousText.trim() || !newText.trim()) {
       return applyTempUserHeaders(NextResponse.json({ error: "Missing extracted text for diff" }, { status: 400 }), actor);
+    }
+
+    // Pro feature gate: decided before any credits are reserved so Free never pays for a compare.
+    const planCheck = await checkLimit(actor.orgId, "version_history");
+    if (!planCheck.ok) {
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: "plan.limit_reached",
+        docId: docObjectId,
+        meta: { limit: planCheck.limit, used: planCheck.used, max: planCheck.max },
+        request,
+      });
+      return applyTempUserHeaders(planLimitResponse(planCheck), actor);
     }
 
     const idKey = idempotencyKeyFromRequest(request) ?? generateIdempotencyKey(`history:${docId}:${changeId}`);

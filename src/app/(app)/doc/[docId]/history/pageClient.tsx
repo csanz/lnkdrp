@@ -1,6 +1,10 @@
 /**
  * Client component for owner doc history page.
  * Route: `/doc/:docId/history`
+ *
+ * Version history is a Pro feature: the workspace plan comes from `usePlan()` and a Free workspace
+ * sees the `version_history` plan-limit notice in place of the list (header intact). Nothing below
+ * the header renders (and no history request fires) until the plan is known, so there is no jump.
  */
 "use client";
 
@@ -9,7 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Modal from "@/components/modals/Modal";
+import PlanLimitNotice from "@/components/PlanLimitNotice";
 import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
+import { usePlan } from "@/lib/client/usePlan";
 
 type DocChangeItem = {
   id: string;
@@ -138,6 +144,10 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [defaultHistoryTier, setDefaultHistoryTier] = useState<"basic" | "standard" | "advanced">("standard");
   const [rerunBusyById, setRerunBusyById] = useState<Record<string, boolean>>({});
   const [rerunErrorById, setRerunErrorById] = useState<Record<string, string>>({});
+  // Version history is a Pro feature. `plan` is null until the shared snapshot resolves; the list
+  // (and its request) only mounts on Pro, and the API gates the list too.
+  const { plan: planSnapshot } = usePlan();
+  const plan: "free" | "pro" | null = planSnapshot?.plan ?? null;
 
   // Load workspace defaults (best-effort). Falls back to "standard".
   useEffect(() => {
@@ -281,6 +291,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   }
 
   useEffect(() => {
+    if (plan !== "pro") return;
     let cancelled = false;
     async function load() {
       setLoading(true);
@@ -294,7 +305,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [refreshFirstPage]);
+  }, [plan, refreshFirstPage]);
 
   const hasHistory = items.length > 0;
   const filteredItems = useMemo(() => {
@@ -491,6 +502,11 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
         <div className="mx-auto w-full max-w-[1700px] px-6 py-6">
+          {plan === null ? null : plan === "free" ? (
+            <div className="max-w-xl">
+              <PlanLimitNotice limit="version_history" />
+            </div>
+          ) : (
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_440px]">
             {/* Left: history list */}
             <div className="min-w-0">
@@ -953,6 +969,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
               </div>
             </div>
           </div>
+          )}
         </div>
       </div>
 

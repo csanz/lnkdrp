@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { buildCycleKey } from "@/lib/credits/grants";
+import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE, buildCycleKey } from "@/lib/credits/grants";
 
 describe("credits/grants", () => {
   test("cycleKey uses unix seconds (stable, UTC)", () => {
@@ -8,6 +8,9 @@ describe("credits/grants", () => {
     const key = buildCycleKey({ stripeSubscriptionId: "sub_123", currentPeriodStart: d });
     expect(key).toBe(`sub_123:${Math.floor(d.getTime() / 1000)}`);
   });
+
+  test("Free gets a one-time 50-credit starter grant, Pro gets 300 per cycle", () => {
+    expect(FREE_STARTER_CREDITS).toBe(50);
+    expect(INCLUDED_CREDITS_PER_CYCLE).toBe(300);
+  });
 });
-
-

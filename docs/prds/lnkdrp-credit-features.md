@@ -6,7 +6,7 @@
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-mcp](./lnkdrp-mcp.md) · [SUBSCRIPTION](../SUBSCRIPTION.md) · [METRICS](../METRICS.md) · [REQUEST](../REQUEST.md)
 
-> **Decision (2026-09-12).** At launch, no AI feature costs credits. The automatic summary and the
+> **Decision (2026-09-12, revised same day).** At launch the automatic summary is free; the history compare and reviews are charged (2/5/12 by tier). Earlier text below that says "no AI feature costs credits" is superseded. The automatic summary and the
 > history compare are included on every plan, and an agent sharing over MCP can supply its own
 > summary so ours is skipped. The credit ledger keeps running underneath as a fair-use meter but is
 > not shown on the pricing page. Credits come back only for features that pass the test below.
@@ -63,7 +63,7 @@ Each milestone is independent and can ship in any order. Ordered here by expecte
 ### M2 — Recipient Q&A on the share page
 
 - Add an "Ask about this document" panel on `/s/:shareId`, scoped to the document text and page images already extracted.
-- Meter per answered question against the sender's workspace, with a per-share cap the sender sets.
+- Meter per answered question against the sender’s workspace, with caps the sender sets per reader and per link (defaults on), so a single recipient cannot run up credits; the pricing page promises this.
 - Log questions to the owner (untrusted content) so the sender sees what recipients asked.
 - Expose per-share toggle and cap in `lnkdrp_set_share_access`.
 

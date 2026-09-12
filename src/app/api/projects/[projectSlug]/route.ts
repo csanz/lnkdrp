@@ -12,6 +12,7 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -115,8 +116,12 @@ export async function PATCH(
       requestReviewEnabled: boolean;
       requestReviewPrompt: string;
       requestRequireAuthToUpload: boolean;
+      shareEnabled: boolean;
     }>;
 
+    // `{ shareEnabled }` on its own is a visibility toggle: it must not require or overwrite the
+    // name/description/autoAddFiles the full settings form sends.
+    const shareOnly = body.name === undefined && typeof body.shareEnabled === "boolean";
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "";
     const autoAddFiles = typeof body.autoAddFiles === "boolean" ? body.autoAddFiles : false;
@@ -126,7 +131,7 @@ export async function PATCH(
       typeof body.requestReviewPrompt === "string" ? body.requestReviewPrompt.trim() : "";
     const requestRequireAuthToUploadRaw =
       typeof body.requestRequireAuthToUpload === "boolean" ? body.requestRequireAuthToUpload : null;
-    if (!name) return NextResponse.json({ error: "Project name is required" }, { status: 400 });
+    if (!shareOnly && !name) return NextResponse.json({ error: "Project name is required" }, { status: 400 });
     if (name.length > MAX_PROJECT_NAME_LENGTH) {
       return NextResponse.json(
         { error: `Project name must be ${MAX_PROJECT_NAME_LENGTH} characters or less` },
@@ -160,11 +165,16 @@ export async function PATCH(
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
 
-    project.name = name;
-    project.description = description;
-    project.autoAddFiles = autoAddFiles;
+    if (typeof body.shareEnabled === "boolean") {
+      (project as unknown as { shareEnabled?: boolean }).shareEnabled = body.shareEnabled;
+    }
+    if (!shareOnly) {
+      project.name = name;
+      project.description = description;
+      project.autoAddFiles = autoAddFiles;
+    }
     const isRequest = Boolean((project as unknown as { isRequest?: unknown }).isRequest);
-    if (isRequest) {
+    if (isRequest && !shareOnly) {
       debugLog(1, "[api/projects/:id] PATCH request review settings", {
         projectId: projectIdParam,
         requestReviewEnabled,
@@ -179,6 +189,18 @@ export async function PATCH(
       }
     }
     await project.save();
+    if (typeof body.shareEnabled === "boolean") {
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: "share.updated",
+        projectId: project._id,
+        title: project.name ?? null,
+        meta: { scope: "project", shareEnabled: body.shareEnabled },
+        request,
+      });
+    }
     if (isRequest) {
       debugLog(1, "[api/projects/:id] PATCH request review saved", {
         projectId: projectIdParam,
@@ -199,6 +221,7 @@ export async function PATCH(
         project: {
           id: String(project._id),
           shareId: (project as unknown as { shareId?: unknown }).shareId ?? null,
+          shareEnabled: (project as unknown as { shareEnabled?: unknown }).shareEnabled !== false,
           name: project.name ?? "",
           slug: project.slug ?? "",
           description: project.description ?? "",

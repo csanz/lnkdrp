@@ -3,12 +3,15 @@
 import Modal from "@/components/modals/Modal";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
 import type { PlanLimitError } from "@/lib/client/planLimit";
+import { usePlan } from "@/lib/client/usePlan";
 
 /**
  * Create Project modal (used from the left sidebar).
  *
  * When the create call is refused with `402 plan_limit` (Free project cap), the caller passes the
  * parsed body as `limitError` and the modal shows an upgrade prompt instead of a plain error line.
+ * When the plan snapshot already says the Free workspace is at its project cap, the same prompt is
+ * shown up front and the primary button is disabled, so the user never has to hit the 402.
  */
 export default function CreateProjectModal({
   open,
@@ -34,6 +37,10 @@ export default function CreateProjectModal({
   description: string;
   setDescription: (v: string) => void;
 }) {
+  const { plan } = usePlan();
+  const atProjectLimit = plan?.plan === "free" && plan.atLimit.projects;
+  const showLimitNotice = Boolean(limitError) || atProjectLimit;
+
   return (
     <Modal
       open={open}
@@ -78,8 +85,13 @@ export default function CreateProjectModal({
           />
         </div>
 
-        {limitError ? (
-          <PlanLimitNotice error={limitError} secondaryLabel="Manage projects" secondaryHref="/search?scope=projects" />
+        {showLimitNotice ? (
+          <PlanLimitNotice
+            error={limitError}
+            limit="projects"
+            secondaryLabel="Manage projects"
+            secondaryHref="/search?scope=projects"
+          />
         ) : error ? (
           <div className="text-sm font-medium text-red-700">{error}</div>
         ) : null}
@@ -96,7 +108,9 @@ export default function CreateProjectModal({
           <button
             type="button"
             className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
-            disabled={busy}
+            disabled={busy || atProjectLimit}
+            aria-disabled={busy || atProjectLimit}
+            title={atProjectLimit ? "Project limit reached" : undefined}
             onClick={onCreate}
           >
             {busy ? "Creating…" : "Create project"}
@@ -106,5 +120,3 @@ export default function CreateProjectModal({
     </Modal>
   );
 }
-
-

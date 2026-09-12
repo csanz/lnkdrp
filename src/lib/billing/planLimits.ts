@@ -5,9 +5,14 @@
  * workspaces are capped on active share links, projects, and collaborators, and their viewer
  * analytics window is clamped. Pro workspaces are unlimited on all three counts.
  *
+ * Feature gates: some `LimitKey`s are not counts but Pro-only features (`version_history`: the
+ * owner history page, recipient revision history, and the AI compare). They never carry usage or
+ * grace; Free is simply blocked and Pro is always ok.
+ *
  * Grace: a workspace that was already over a Free limit when enforcement shipped (or that just
  * dropped from Pro to Free) gets `LIMIT_GRACE_DAYS` before it is blocked. Grace state is stored on
- * `Org.planGrace` and managed by the grace cron; this module only reads it.
+ * `Org.planGrace` and managed by the grace cron; this module only reads it. Grace never applies to
+ * feature gates.
  *
  * Client contract: a `402` with `code: "plan_limit"` (see `planLimitResponse`) is the signal to
  * show an upgrade prompt; the JSON body carries everything needed to render it.
@@ -43,7 +48,22 @@ export type PlanLimits = {
   collaborators: number;
 };
 
-export type LimitKey = "active_links" | "projects" | "collaborators";
+/**
+ * What `checkLimit` can enforce. The first three are counts against a cap; `version_history` is a
+ * Pro feature gate (blocked on Free regardless of usage, never subject to grace).
+ */
+export type LimitKey = "active_links" | "projects" | "collaborators" | "version_history";
+
+/** Limits that gate a Pro feature rather than count usage. */
+export type FeatureGateKey = Extract<LimitKey, "version_history">;
+
+/** Limits that count usage against a cap. */
+export type CountedLimitKey = Exclude<LimitKey, FeatureGateKey>;
+
+/** True for limits that gate a Pro feature rather than count usage. */
+function isFeatureGate(limit: LimitKey): limit is FeatureGateKey {
+  return limit === "version_history";
+}
 
 /** Grace window for a workspace over a Free limit (ISO strings), or `null` when none. */
 export type GraceState = { startedAt: string; endsAt: string; blockedAt: string | null } | null;
@@ -192,6 +212,8 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
       return max === 0
         ? "Free workspaces are single-user. Upgrade to Pro to invite collaborators."
         : `Free workspaces can have ${max} collaborator${max === 1 ? "" : "s"}. Upgrade to Pro to invite more.`;
+    case "version_history":
+      return "Version history and AI compare are Pro features.";
   }
 }
 
@@ -202,6 +224,9 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
  * (`collaborators` counts members minus the owner). Over the cap, a workspace inside an
  * unblocked grace window gets `ok: true` with a `warning`; otherwise it gets the blocked shape
  * that `planLimitResponse()` turns into a 402.
+ *
+ * Feature gates (`version_history`) skip counting entirely: Pro → ok, Free → blocked with
+ * `used: 0`, `max: 0`, `grace: null` (grace never applies to a gate).
  */
 export async function checkLimit(
   orgId: string | Types.ObjectId,
@@ -209,6 +234,22 @@ export async function checkLimit(
   opts?: { adding?: number },
 ): Promise<LimitCheck> {
   const plan = await getWorkspacePlan(orgId);
+
+  // Feature gates are decided by plan alone: no usage query, no grace window.
+  if (isFeatureGate(limit)) {
+    if (plan === "pro") return { ok: true, warning: null };
+    return {
+      ok: false,
+      code: "plan_limit",
+      limit,
+      used: 0,
+      max: 0,
+      grace: null,
+      upgradeUrl: UPGRADE_URL,
+      message: limitMessage(limit, 0, plan),
+    };
+  }
+
   // Pro is unlimited on links and projects; collaborators are still capped at the included count
   // (additional seats are an in-product upsell), so only that limit is evaluated for Pro.
   if (plan === "pro" && limit !== "collaborators") return { ok: true, warning: null };
