@@ -55,6 +55,7 @@ import {
   FREE_PROJECTS,
   LIMIT_GRACE_DAYS,
   PRO_INCLUDED_COLLABORATORS,
+  analyticsTierForPlan,
   checkLimit,
   clampAnalyticsDays,
   getWorkspaceUsage,
@@ -294,6 +295,71 @@ describe("billing/planLimits checkLimit version_history (feature gate)", () => {
     expect(body.code).toBe("plan_limit");
     expect(body.limit).toBe("version_history");
     expect(body.error).toBe("Version history and AI compare are Pro features.");
+  });
+});
+
+describe("billing/planLimits checkLimit analytics_history (feature gate)", () => {
+  test("free → blocked with the deep-analytics message, no usage, no grace", async () => {
+    const check = await checkLimit(ORG_ID, "analytics_history");
+    expect(check).toEqual({
+      ok: false,
+      code: "plan_limit",
+      limit: "analytics_history",
+      used: 0,
+      max: 0,
+      grace: null,
+      upgradeUrl: "/pricing",
+      message: "Deep analytics are a Pro feature.",
+    });
+  });
+
+  test("free inside an active grace window is still blocked (grace never applies to a gate)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-12T12:00:00.000Z"));
+    const startedAt = new Date("2026-09-10T00:00:00.000Z");
+    const endsAt = new Date(startedAt.getTime() + LIMIT_GRACE_DAYS * DAY_MS);
+    state.planGrace = { startedAt, endsAt, blockedAt: null };
+
+    const check = await checkLimit(ORG_ID, "analytics_history");
+    expect(check.ok).toBe(false);
+    if (check.ok) throw new Error("expected blocked");
+    expect(check.grace).toBeNull();
+  });
+
+  test("free: `adding` is ignored (not a count)", async () => {
+    const check = await checkLimit(ORG_ID, "analytics_history", { adding: 3 });
+    expect(check.ok).toBe(false);
+    if (check.ok) throw new Error("expected blocked");
+    expect(check.used).toBe(0);
+    expect(check.max).toBe(0);
+  });
+
+  test.each(["active", "trialing"])("pro (%s) → ok without warning", async (status) => {
+    state.subscriptionStatus = status;
+    expect(await checkLimit(ORG_ID, "analytics_history")).toEqual({ ok: true, warning: null });
+  });
+
+  test.each(["canceled", "past_due"])("non-pro status (%s) is blocked", async (status) => {
+    state.subscriptionStatus = status;
+    expect((await checkLimit(ORG_ID, "analytics_history")).ok).toBe(false);
+  });
+
+  test("blocked check turns into a 402 via planLimitResponse", async () => {
+    const check = await checkLimit(ORG_ID, "analytics_history");
+    if (check.ok) throw new Error("expected blocked");
+    const res = planLimitResponse(check);
+    expect(res.status).toBe(402);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.code).toBe("plan_limit");
+    expect(body.limit).toBe("analytics_history");
+    expect(body.error).toBe("Deep analytics are a Pro feature.");
+  });
+});
+
+describe("billing/planLimits analyticsTierForPlan", () => {
+  test("free is basic, pro is deep", () => {
+    expect(analyticsTierForPlan("free")).toBe("basic");
+    expect(analyticsTierForPlan("pro")).toBe("deep");
   });
 });
 

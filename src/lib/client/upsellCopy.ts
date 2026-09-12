@@ -72,12 +72,12 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     secondaryLabel: "Compare plans",
   },
   analytics_history: {
-    title: "Full analytics history is a Pro feature",
-    reason: "Free shows the last 7 days of viewer analytics; Pro keeps the full history.",
+    title: "Deep analytics are a Pro feature",
+    reason: "Free shows how many people opened a document in the last 7 days. Pro shows who they were and what they did.",
     bullets: [
-      "Full analytics history on every link",
-      "Unlimited active share links",
-      "Version history and AI compare",
+      "Who opened it, with names and emails",
+      "Time on each page and return visits",
+      "The full history, not just 7 days",
     ],
     secondaryLabel: "Compare plans",
   },
@@ -104,6 +104,7 @@ export function upsellKeyForLimit(limit: string): UpsellKey {
     case "projects":
     case "collaborators":
     case "version_history":
+    case "analytics_history":
       return limit as UpsellKey;
     default:
       return "active_links";

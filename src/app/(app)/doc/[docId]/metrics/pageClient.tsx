@@ -7,12 +7,16 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftIcon, UserIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, LockClosedIcon, UserIcon } from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { usePlan } from "@/lib/client/usePlan";
 import { Area, AreaChart, CartesianGrid, Tooltip, YAxis } from "recharts";
+
+/** Free = basic (totals, chart, unique viewer count); Pro = deep (identities, per-page time, visits). */
+type AnalyticsTier = "basic" | "deep";
 
 type MetricsResponse = {
   ok: true;
@@ -20,6 +24,10 @@ type MetricsResponse = {
   days: number;
   /** Present when the workspace plan clamps the analytics window (Free = 7 days). */
   analyticsDaysLimit?: number;
+  /** Which tier the server rendered; on `"basic"` the viewer arrays are empty and per-page maps are omitted. */
+  analyticsTier?: AnalyticsTier;
+  /** Unique viewers (signed-in + anonymous) inside the window; the only per-viewer fact Free receives. */
+  viewerCount?: number;
   totals: {
     views: number;
     downloads: number;
@@ -271,11 +279,95 @@ function Check() {
     </svg>
   );
 }
+/** Placeholder row widths (name / email / views / last-seen) so the blurred list reads as real data. */
+const LOCKED_ROW_WIDTHS: ReadonlyArray<[string, string, string, string]> = [
+  ["w-40", "w-56", "w-24", "w-32"],
+  ["w-32", "w-48", "w-20", "w-32"],
+  ["w-44", "w-52", "w-24", "w-28"],
+];
+
+/**
+ * Free-tier stand-in for the viewer lists: the unique viewer count, three blurred placeholder rows
+ * and a quiet Pro prompt whose button opens the `analytics_history` upsell. `pending` reserves the
+ * same footprint (plain skeleton, no prompt) while the plan snapshot is still loading, so the page
+ * does not jump once it resolves.
+ */
+function LockedViewersBlock({
+  pending,
+  loading,
+  count,
+  days,
+  onUpgrade,
+}: {
+  pending: boolean;
+  loading: boolean;
+  count: number;
+  days: number;
+  onUpgrade: () => void;
+}) {
+  const countLine =
+    count <= 0
+      ? `No one has viewed this document in the last ${days} days.`
+      : count === 1
+        ? `1 person viewed this document in the last ${days} days.`
+        : `${count.toLocaleString()} people viewed this document in the last ${days} days.`;
+
+  return (
+    <section className="mt-1" aria-label="Viewers" aria-busy={pending || loading}>
+      <div className="text-sm font-semibold text-[var(--fg)]">Viewers</div>
+      {pending || loading ? (
+        <div className="mt-1.5 h-4 w-64 rounded bg-[var(--panel-hover)] motion-safe:animate-pulse" aria-hidden="true" />
+      ) : (
+        <div className="mt-1 text-sm text-[var(--muted)]">{countLine}</div>
+      )}
+
+      <div className="relative mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+        <ul
+          aria-hidden="true"
+          className={[
+            "divide-y divide-[var(--border)]",
+            pending ? "motion-safe:animate-pulse" : "select-none blur-[3px]",
+          ].join(" ")}
+        >
+          {LOCKED_ROW_WIDTHS.map(([name, email, views, seen], idx) => (
+            <li key={`locked:${idx}`} className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4">
+              <div className="min-w-0">
+                <div className={`h-4 max-w-full rounded bg-[var(--panel-hover)] ${name}`} />
+                <div className={`mt-1.5 h-3 max-w-full rounded bg-[var(--panel-hover)] ${email}`} />
+              </div>
+              <div className="shrink-0">
+                <div className={`h-3 rounded bg-[var(--panel-hover)] sm:ml-auto ${views}`} />
+                <div className={`mt-1.5 h-3 rounded bg-[var(--panel-hover)] sm:ml-auto ${seen}`} />
+              </div>
+            </li>
+          ))}
+        </ul>
+
+        {pending ? null : (
+          <div className="absolute inset-0 flex items-center justify-center p-4">
+            <div className="max-w-md rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-center shadow-lg">
+              <LockClosedIcon className="mx-auto h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                See who they are, how long they spent on each page, and the full history on Pro
+              </p>
+              <Button variant="solid" size="sm" className="mt-3" onClick={onUpgrade}>
+                Upgrade
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 /**
  * Render the MetricsPageClient UI (uses effects, local state).
+ *
+ * Free workspaces get the basic tier: totals, the views-by-day charts and the unique viewer
+ * count, with the viewer lists replaced by `LockedViewersBlock`. The visits endpoints answer
+ * `402` on Free, so they are never requested unless the tier is deep.
  */
-
-
 export default function MetricsPageClient({ docId }: { docId: string }) {
   const router = useRouter();
   const [docTitle, setDocTitle] = useState<string>("");
@@ -293,6 +385,18 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [rangeOpen, setRangeOpen] = useState(false);
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
   const { openUpgrade } = useUpgradeModal();
+  const { plan } = usePlan();
+  // The response is authoritative (Free gets `analyticsTier: "basic"`); the plan snapshot answers
+  // before it lands. `null` until either arrives, which keeps the viewer block reserved.
+  const analyticsTier: AnalyticsTier | null =
+    data?.analyticsTier === "basic" || data?.analyticsTier === "deep"
+      ? data.analyticsTier
+      : plan
+        ? plan.plan === "free"
+          ? "basic"
+          : "deep"
+        : null;
+  const deepAnalytics = analyticsTier === "deep";
   // Free workspaces are clamped server-side; the response says so and the picker follows.
   const analyticsDaysLimit =
     typeof data?.analyticsDaysLimit === "number" && Number.isFinite(data.analyticsDaysLimit) && data.analyticsDaysLimit > 0
@@ -423,9 +527,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     };
   }, [docId, days]);
 
-  // Auto-load the viewers list after the lightweight payload returns (no button).
+  // Auto-load the viewers list after the lightweight payload returns (no button). Basic tier gets
+  // no identities back, so the request is skipped entirely there.
   useEffect(() => {
-    if (!data?.ok) return;
+    if (!data?.ok || !deepAnalytics) return;
     if (viewersLoading || viewersLoaded) return;
     let cancelled = false;
     setViewersLoading(true);
@@ -466,13 +571,18 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId, days, data?.ok]);
+  }, [docId, days, data?.ok, deepAnalytics]);
 
   const views = data?.totals?.views ?? 0;
   const downloads = data?.totals?.downloads ?? 0;
   const pagesViewed = data?.totals?.pagesViewed ?? 0;
   const authedViewers = data?.totals?.authenticatedViewers ?? 0;
   const anonViewers = data?.totals?.anonymousViewers ?? 0;
+  // Unique people in the window; the basic tier's only per-viewer fact. Older responses lack it.
+  const viewerCount =
+    typeof data?.viewerCount === "number" && Number.isFinite(data.viewerCount)
+      ? Math.max(0, Math.floor(data.viewerCount))
+      : authedViewers + anonViewers;
   const downloadsEnabled = Boolean(data?.downloadsEnabled);
   const series = Array.isArray(data?.series) ? data!.series : [];
   const hasData = Boolean(data && data.ok);
@@ -592,6 +702,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
 
   async function openVisitsForViewer() {
     if (!viewerDetail) return;
+    // Visits are deep-tier only (the endpoint answers 402 on Free); never request them there.
+    if (!deepAnalytics) {
+      openUpgrade("analytics_history");
+      return;
+    }
     setVisitsModalOpen(true);
     setVisitsError(null);
     setVisits([]);
@@ -619,6 +734,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   }
 
   async function openVisitDetail(visitId: string) {
+    if (!deepAnalytics) {
+      openUpgrade("analytics_history");
+      return;
+    }
     setVisitDetail(null);
     setVisitDetailError(null);
     setVisitDetailLoading(true);
@@ -761,7 +880,16 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                     ) : (
                       <>
                         <span className="tabular-nums">{pagesViewed}</span> pages viewed ·{" "}
-                        {viewersLoading ? (
+                        {analyticsTier === null ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="h-3 w-12 rounded bg-[var(--panel-hover)] motion-safe:animate-pulse" aria-hidden="true" />
+                            <span>viewers</span>
+                          </span>
+                        ) : !deepAnalytics ? (
+                          <>
+                            <span className="tabular-nums">{viewerCount}</span> {viewerCount === 1 ? "person" : "people"}
+                          </>
+                        ) : viewersLoading ? (
                           <span className="inline-flex items-center gap-1.5">
                             <span className="h-3 w-12 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
                             <span>authenticated viewers</span>
@@ -855,171 +983,183 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               </div>
             </div>
 
-            <div className="mt-1">
-              <div className="text-sm font-semibold text-[var(--fg)]">Authenticated viewers</div>
-              <div className="mt-1 text-sm text-[var(--muted)]">Only signed-in viewers are listed here.</div>
+            {!deepAnalytics ? (
+              <LockedViewersBlock
+                pending={analyticsTier === null}
+                loading={loading || !hasData}
+                count={viewerCount}
+                days={days}
+                onUpgrade={() => openUpgrade("analytics_history")}
+              />
+            ) : (
+              <>
+                <div className="mt-1">
+                  <div className="text-sm font-semibold text-[var(--fg)]">Authenticated viewers</div>
+                  <div className="mt-1 text-sm text-[var(--muted)]">Only signed-in viewers are listed here.</div>
 
-              <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-                <div>
-                  {loading ? (
-                    <div className="p-4">
-                      <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                      <div className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                      <div className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                  <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                    <div>
+                      {loading ? (
+                        <div className="p-4">
+                          <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                          <div className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                          <div className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                        </div>
+                      ) : error ? (
+                        <div className="p-4 text-sm text-red-700">{error}</div>
+                      ) : !hasData ? (
+                        <div className="p-4 text-sm text-[var(--muted)]">No data yet.</div>
+                      ) : viewersLoading ? (
+                        <div className="p-4 text-sm text-[var(--muted)]">Loading authenticated viewers…</div>
+                      ) : !data?.viewers?.length ? (
+                        <div className="p-4 text-sm text-[var(--muted)]">No authenticated viewers yet.</div>
+                      ) : (
+                        <ul className="divide-y divide-[var(--border)]">
+                          {authedViewersTop.map((v) => (
+                            <li key={v.userId} className="hover:bg-[var(--panel-hover)]">
+                              <button
+                                type="button"
+                                onClick={() => openAuthedViewerDetail(v)}
+                                className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
+                                title="View details"
+                              >
+                                <div className="min-w-0">
+                                  {(() => {
+                                    const name = typeof v.name === "string" ? v.name.trim() : "";
+                                    const email = typeof v.email === "string" ? v.email.trim() : "";
+                                    const title = name || email || "Signed-in user";
+                                    const showEmailLine = Boolean(name && email);
+                                    const shortId = formatShortId(v.userId);
+                                    const showIdLine = !showEmailLine && !email && shortId;
+                                    return (
+                                      <>
+                                        <div className="truncate text-sm font-semibold text-[var(--fg)]">{title}</div>
+                                        {showEmailLine ? (
+                                          <div className="truncate text-xs text-[var(--muted-2)]">{email}</div>
+                                        ) : showIdLine ? (
+                                          <div className="truncate text-xs text-[var(--muted-2)]">User ID {shortId}</div>
+                                        ) : null}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                                <div className="shrink-0 sm:text-right">
+                                  <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
+                                    {v.views} views
+                                    {typeof v.pagesViewed === "number" ? <> · {v.pagesViewed} pages</> : null}
+                                  </div>
+                                  <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
+                                </div>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
-                  ) : error ? (
-                    <div className="p-4 text-sm text-red-700">{error}</div>
-                  ) : !hasData ? (
-                    <div className="p-4 text-sm text-[var(--muted)]">No data yet.</div>
-                  ) : viewersLoading ? (
-                    <div className="p-4 text-sm text-[var(--muted)]">Loading authenticated viewers…</div>
-                  ) : !data?.viewers?.length ? (
-                    <div className="p-4 text-sm text-[var(--muted)]">No authenticated viewers yet.</div>
-                  ) : (
-                    <ul className="divide-y divide-[var(--border)]">
-                      {authedViewersTop.map((v) => (
-                        <li key={v.userId} className="hover:bg-[var(--panel-hover)]">
-                          <button
-                            type="button"
-                            onClick={() => openAuthedViewerDetail(v)}
-                            className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
-                            title="View details"
-                          >
-                            <div className="min-w-0">
-                              {(() => {
-                                const name = typeof v.name === "string" ? v.name.trim() : "";
-                                const email = typeof v.email === "string" ? v.email.trim() : "";
-                                const title = name || email || "Signed-in user";
-                                const showEmailLine = Boolean(name && email);
-                                const shortId = formatShortId(v.userId);
-                                const showIdLine = !showEmailLine && !email && shortId;
-                                return (
-                                  <>
-                                    <div className="truncate text-sm font-semibold text-[var(--fg)]">{title}</div>
-                                    {showEmailLine ? (
-                                      <div className="truncate text-xs text-[var(--muted-2)]">{email}</div>
-                                    ) : showIdLine ? (
-                                      <div className="truncate text-xs text-[var(--muted-2)]">User ID {shortId}</div>
-                                    ) : null}
-                                  </>
-                                );
-                              })()}
-                            </div>
-                            <div className="shrink-0 sm:text-right">
-                              <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
-                                {v.views} views
-                                {typeof v.pagesViewed === "number" ? <> · {v.pagesViewed} pages</> : null}
-                              </div>
-                              <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
-                            </div>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-              {authedViewersList.length > 5 ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setAuthedViewersModalPage(0);
-                      setAuthedViewersModalOpen(true);
-                    }}
-                  >
-                    See more
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="mt-6">
-              <div className="text-sm font-semibold text-[var(--fg)]">Anonymous viewers</div>
-              <div className="mt-1 text-sm text-[var(--muted)]">
-                Anonymous viewers are tracked per browser/device (best-effort).
-              </div>
-
-              <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-                <div>
-                  {loading ? (
-                    <div className="p-4">
-                      <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                      <div className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                      <div className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                  </div>
+                  {authedViewersList.length > 5 ? (
+                    <div className="mt-3 flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAuthedViewersModalPage(0);
+                          setAuthedViewersModalOpen(true);
+                        }}
+                      >
+                        See more
+                      </Button>
                     </div>
-                  ) : error ? (
-                    <div className="p-4 text-sm text-red-700">{error}</div>
-                  ) : !hasData ? (
-                    <div className="p-4 text-sm text-[var(--muted)]">No data yet.</div>
-                  ) : viewersLoading ? (
-                    <div className="p-4 text-sm text-[var(--muted)]">Loading anonymous viewers…</div>
-                  ) : !anonymousViewersList.length ? (
-                    <div className="p-4 text-sm text-[var(--muted)]">No anonymous viewers yet.</div>
-                  ) : (
-                    <ul className="divide-y divide-[var(--border)]">
-                      {anonViewersTop.map((v) => (
-                        <li
-                          key={typeof v.botIdHash === "string" ? v.botIdHash : "anon"}
-                          className="hover:bg-[var(--panel-hover)]"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => openAnonViewerDetail(v)}
-                            className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
-                            title="View details"
-                          >
-                            <div className="min-w-0">
-                              {(() => {
-                                const name = typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
-                                const email = typeof (v as any).email === "string" ? String((v as any).email).trim() : "";
-                                const title = name || email || "Anonymous viewer";
-                                const showEmailLine = Boolean(name && email);
-                                return (
-                                  <>
-                                    <div className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--fg)]">
-                                      <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                                      <span className="truncate">{title}</span>
-                                    </div>
-                                    {showEmailLine ? (
-                                      <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">{email}</div>
-                                    ) : (
-                                      <div className="mt-0.5 text-xs text-[var(--muted-2)]">First seen {formatDateTime(v.firstSeen)}</div>
-                                    )}
-                                  </>
-                                );
-                              })()}
-                            </div>
-                            <div className="shrink-0 sm:text-right">
-                              <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
-                                {v.views} views
-                                {typeof v.pagesViewed === "number" ? <> · {v.pagesViewed} pages</> : null}
-                              </div>
-                              <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
-                            </div>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  ) : null}
                 </div>
-              </div>
-              {anonymousViewersList.length > 5 ? (
-                <div className="mt-3 flex justify-end">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setAnonViewersModalPage(0);
-                      setAnonViewersModalOpen(true);
-                    }}
-                  >
-                    See more
-                  </Button>
+
+                <div className="mt-6">
+                  <div className="text-sm font-semibold text-[var(--fg)]">Anonymous viewers</div>
+                  <div className="mt-1 text-sm text-[var(--muted)]">
+                    Anonymous viewers are tracked per browser/device (best-effort).
+                  </div>
+
+                  <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                    <div>
+                      {loading ? (
+                        <div className="p-4">
+                          <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                          <div className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                          <div className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                        </div>
+                      ) : error ? (
+                        <div className="p-4 text-sm text-red-700">{error}</div>
+                      ) : !hasData ? (
+                        <div className="p-4 text-sm text-[var(--muted)]">No data yet.</div>
+                      ) : viewersLoading ? (
+                        <div className="p-4 text-sm text-[var(--muted)]">Loading anonymous viewers…</div>
+                      ) : !anonymousViewersList.length ? (
+                        <div className="p-4 text-sm text-[var(--muted)]">No anonymous viewers yet.</div>
+                      ) : (
+                        <ul className="divide-y divide-[var(--border)]">
+                          {anonViewersTop.map((v) => (
+                            <li
+                              key={typeof v.botIdHash === "string" ? v.botIdHash : "anon"}
+                              className="hover:bg-[var(--panel-hover)]"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => openAnonViewerDetail(v)}
+                                className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
+                                title="View details"
+                              >
+                                <div className="min-w-0">
+                                  {(() => {
+                                    const name = typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
+                                    const email = typeof (v as any).email === "string" ? String((v as any).email).trim() : "";
+                                    const title = name || email || "Anonymous viewer";
+                                    const showEmailLine = Boolean(name && email);
+                                    return (
+                                      <>
+                                        <div className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--fg)]">
+                                          <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                                          <span className="truncate">{title}</span>
+                                        </div>
+                                        {showEmailLine ? (
+                                          <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">{email}</div>
+                                        ) : (
+                                          <div className="mt-0.5 text-xs text-[var(--muted-2)]">First seen {formatDateTime(v.firstSeen)}</div>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                                <div className="shrink-0 sm:text-right">
+                                  <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
+                                    {v.views} views
+                                    {typeof v.pagesViewed === "number" ? <> · {v.pagesViewed} pages</> : null}
+                                  </div>
+                                  <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
+                                </div>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                  {anonymousViewersList.length > 5 ? (
+                    <div className="mt-3 flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAnonViewersModalPage(0);
+                          setAnonViewersModalOpen(true);
+                        }}
+                      >
+                        See more
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
+              </>
+            )}
           </div>
         </div>
       </div>

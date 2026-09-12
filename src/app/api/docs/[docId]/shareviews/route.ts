@@ -1,6 +1,13 @@
 /**
  * Owner doc share-view metrics API (views/downloads + viewer breakdown).
  * Route: `/api/docs/:docId/shareviews`
+ *
+ * Analytics tiers (see `src/lib/billing/planLimits.ts`):
+ * - `analyticsTier: "basic"` (Free): totals, views-by-day series, total time on document and a
+ *   unique `viewerCount` for the (clamped) window. `viewers` / `anonymousViewers` are always `[]`
+ *   and per-page maps are omitted, so no viewer identity, per-viewer row or per-page time leaves
+ *   the server. Identities are still recorded; upgrading reveals them retroactively.
+ * - `analyticsTier: "deep"` (Pro): everything, including viewer rows with `?viewers=1`.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -11,7 +18,7 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
-import { clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
+import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,7 +96,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       }
 
       const requestedDays = Math.min(60, asPositiveInt(url.searchParams.get("days")) ?? 15);
-      const includeViewers = url.searchParams.get("viewers") === "1";
+      const wantsViewers = url.searchParams.get("viewers") === "1";
       const viewersOnly = url.searchParams.get("viewersOnly") === "1";
 
       await connectMongo();
@@ -132,6 +139,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const plan = await getWorkspacePlan(docOrgIdRaw ? String(docOrgIdRaw) : actor.orgId);
       const days = clampAnalyticsDays(plan, requestedDays);
       const analyticsDaysLimit = limitsForPlan(plan).analyticsDays;
+      // Basic (Free) never runs the identity aggregates: viewer rows are withheld, not just hidden.
+      const analyticsTier = analyticsTierForPlan(plan);
+      const includeViewers = analyticsTier === "deep" && wantsViewers;
 
       const docObjectId = new Types.ObjectId(docId);
 
@@ -338,8 +348,41 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           ])
         : [[], []];
 
-      const uniqueAuthedViewers = includeViewers ? viewersAgg.length : 0;
-      const uniqueAnonymousViewers = includeViewers ? anonymousAgg.length : 0;
+      // Window summary (both tiers): unique viewers and total time on the document within `days`.
+      // Groups by viewer identity without projecting it, so it is safe to run on Basic.
+      const windowAgg = (await ShareViewModel.aggregate([
+        { $match: { docId: docObjectId, createdDate: { $gte: start } } },
+        {
+          $group: {
+            _id: {
+              $cond: [
+                { $ne: [{ $ifNull: ["$viewerUserId", null] }, null] },
+                { kind: "user", key: { $toString: "$viewerUserId" } },
+                { kind: "anon", key: { $ifNull: ["$botIdHash", ""] } },
+              ],
+            },
+            timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
+          },
+        },
+        { $group: { _id: "$_id.kind", viewers: { $sum: 1 }, timeSpentMs: { $sum: "$timeSpentMs" } } },
+      ])) as Array<{ _id: "user" | "anon"; viewers?: number; timeSpentMs?: number }>;
+      let windowAuthedViewers = 0;
+      let windowAnonymousViewers = 0;
+      let windowTimeSpentMs = 0;
+      for (const row of windowAgg) {
+        const n = typeof row.viewers === "number" && Number.isFinite(row.viewers) ? row.viewers : 0;
+        if (row._id === "user") windowAuthedViewers += n;
+        else windowAnonymousViewers += n;
+        windowTimeSpentMs += typeof row.timeSpentMs === "number" && Number.isFinite(row.timeSpentMs) ? row.timeSpentMs : 0;
+      }
+      const viewerCount = windowAuthedViewers + windowAnonymousViewers;
+
+      // Deep keeps the all-time breakdown from the viewer rows (when requested); Basic reports the
+      // window counts so the UI can still say "4 people viewed this" without any identity.
+      const uniqueAuthedViewers =
+        analyticsTier === "deep" ? (includeViewers ? viewersAgg.length : 0) : windowAuthedViewers;
+      const uniqueAnonymousViewers =
+        analyticsTier === "deep" ? (includeViewers ? anonymousAgg.length : 0) : windowAnonymousViewers;
 
       // Best-effort background backfill for older ShareView rows that predate denormalized snapshots.
       // Keeps the read path join-free while allowing names/emails to appear over time.
@@ -404,15 +447,23 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         days,
         /** Plan cap on the window (`null` = unlimited); when `days < requested`, the UI can explain the clamp. */
         analyticsDaysLimit,
+        /** `"basic"` (Free: no viewer identities / per-page data) or `"deep"` (Pro: everything). */
+        analyticsTier,
+        /** Unique viewers (signed-in + anonymous) within the window; available on both tiers. */
+        viewerCount,
         totals: {
           views: totalViews,
           downloads: totalDownloads,
           pagesViewed,
+          /** Total time on the document within the window (ms), summed across all viewers. */
+          timeSpentMs: Math.max(0, Math.floor(windowTimeSpentMs)),
           authenticatedViewers: uniqueAuthedViewers,
           anonymousViewers: uniqueAnonymousViewers,
         },
         downloadsEnabled,
         series,
+        // On Basic both viewer arrays are `[]` (the aggregates never run), which also omits the
+        // per-viewer `pageTimeMsByPage` / `pagesSeen` maps.
         viewers: viewersAgg.map((v) => {
           const pagesSeen = Array.isArray((v as any).pagesSeen)
             ? ((v as any).pagesSeen as unknown[])

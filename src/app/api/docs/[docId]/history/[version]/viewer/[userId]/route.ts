@@ -3,11 +3,15 @@
  *
  * Returns per-page timing aggregates for a given viewer on a specific doc version.
  * Auth required; any org member with access to the doc can call this.
+ *
+ * Deep analytics: per-viewer, per-page time is Pro-only. Free workspaces get `402 plan_limit`
+ * (`analytics_history`).
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor, applyTempUserHeaders } from "@/lib/gating/actor";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { DocModel } from "@/lib/models/Doc";
 import { DocPageTimingModel } from "@/lib/models/DocPageTiming";
 import { UserModel } from "@/lib/models/User";
@@ -65,6 +69,10 @@ export async function GET(
     if (!docExists) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
+
+    // Per-viewer page time is deep analytics (Pro). Checked after ownership so foreign docs stay 404.
+    const gate = await checkLimit(actor.orgId, "analytics_history");
+    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
 
     const viewerUserId = new Types.ObjectId(userId);
     const viewer = await UserModel.findById(viewerUserId).select({ _id: 1, name: 1, email: 1 }).lean();

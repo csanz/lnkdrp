@@ -108,7 +108,7 @@ Conventions: prefix `lnkdrp_`; zod v4 `inputSchema`; `title`, `description`, `an
 
 **`lnkdrp_list_request_uploads`** — In `{projectId?, slug? (one required), since?, limit? 1–100=25, cursor?}`. Out `{items:[{docId, shareId, title:untrusted, status, version, receivedAt, shareUrl, reviewScore?, latestReviewSummary?:untrusted}], nextCursor?}`. Read. Errors `not_found`. Uses `requests.listReceivedDocs`.
 
-**`lnkdrp_get_share_stats`** — In `{docId?, shareId?, days? 1–60=15 (the shareviews route clamps to 60), includeViewers?=false}`. Out `{docId, shareId, days, totals:{views, downloads, pagesViewed, authenticatedViewers, anonymousViewers}, series:[{date, views, downloads}], viewers?:[{name:untrusted, email:untrusted, views, lastSeen, pagesSeen, timeSpentMs}], snapshot:{lastDaysViews, lastDaysDownloads, downloadsTotal}}`. Read. Errors `not_found`. Uses `stats.getShareStats`.
+**`lnkdrp_get_share_stats`** — In `{docId?, shareId?, days? 1–60=15 (the shareviews route clamps to 60), includeViewers?=false}`. Out `{docId, shareId, days, totals:{views, downloads, pagesViewed, authenticatedViewers, anonymousViewers}, series:[{date, views, downloads}], viewers?:[{name:untrusted, email:untrusted, views, lastSeen, pagesSeen, timeSpentMs}], snapshot:{lastDaysViews, lastDaysDownloads, downloadsTotal}}`. Read. Errors `not_found`. Uses `stats.getShareStats`. Follows the web analytics tiers: on Free the window is clamped to 7 days and `viewers` is always `[]` (`analyticsTier: "basic"`, plus `viewerCount`), on Pro `includeViewers` returns the full rows (`analyticsTier: "deep"`).
 
 ### Resources and prompts
 

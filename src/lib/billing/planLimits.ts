@@ -6,8 +6,14 @@
  * analytics window is clamped. Pro workspaces are unlimited on all three counts.
  *
  * Feature gates: some `LimitKey`s are not counts but Pro-only features (`version_history`: the
- * owner history page, recipient revision history, and the AI compare). They never carry usage or
- * grace; Free is simply blocked and Pro is always ok.
+ * owner history page, recipient revision history, and the AI compare; `analytics_history`: deep
+ * analytics, i.e. viewer identities, per-viewer rows, per-page time and visit timelines). They never
+ * carry usage or grace; Free is simply blocked and Pro is always ok.
+ *
+ * Analytics tiers: Free gets BASIC analytics (totals, views-by-day series, total time on document,
+ * a unique-viewer count, last `FREE_ANALYTICS_DAYS` days). Pro gets DEEP analytics (everything,
+ * full history). Viewer identities are still recorded on Free; they are only withheld from Free
+ * responses, so upgrading reveals them retroactively.
  *
  * Grace: a workspace that was already over a Free limit when enforcement shipped (or that just
  * dropped from Pro to Free) gets `LIMIT_GRACE_DAYS` before it is blocked. Grace state is stored on
@@ -49,20 +55,24 @@ export type PlanLimits = {
 };
 
 /**
- * What `checkLimit` can enforce. The first three are counts against a cap; `version_history` is a
- * Pro feature gate (blocked on Free regardless of usage, never subject to grace).
+ * What `checkLimit` can enforce. The first three are counts against a cap; `version_history` and
+ * `analytics_history` are Pro feature gates (blocked on Free regardless of usage, never subject to
+ * grace).
  */
-export type LimitKey = "active_links" | "projects" | "collaborators" | "version_history";
+export type LimitKey = "active_links" | "projects" | "collaborators" | "version_history" | "analytics_history";
 
 /** Limits that gate a Pro feature rather than count usage. */
-export type FeatureGateKey = Extract<LimitKey, "version_history">;
+export type FeatureGateKey = Extract<LimitKey, "version_history" | "analytics_history">;
 
 /** Limits that count usage against a cap. */
 export type CountedLimitKey = Exclude<LimitKey, FeatureGateKey>;
 
+/** Analytics depth a workspace is entitled to: Free → `"basic"`, Pro → `"deep"`. */
+export type AnalyticsTier = "basic" | "deep";
+
 /** True for limits that gate a Pro feature rather than count usage. */
 function isFeatureGate(limit: LimitKey): limit is FeatureGateKey {
-  return limit === "version_history";
+  return limit === "version_history" || limit === "analytics_history";
 }
 
 /** Grace window for a workspace over a Free limit (ISO strings), or `null` when none. */
@@ -214,6 +224,8 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
         : `Free workspaces can have ${max} collaborator${max === 1 ? "" : "s"}. Upgrade to Pro to invite more.`;
     case "version_history":
       return "Version history and AI compare are Pro features.";
+    case "analytics_history":
+      return "Deep analytics are a Pro feature.";
   }
 }
 
@@ -225,8 +237,8 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
  * unblocked grace window gets `ok: true` with a `warning`; otherwise it gets the blocked shape
  * that `planLimitResponse()` turns into a 402.
  *
- * Feature gates (`version_history`) skip counting entirely: Pro → ok, Free → blocked with
- * `used: 0`, `max: 0`, `grace: null` (grace never applies to a gate).
+ * Feature gates (`version_history`, `analytics_history`) skip counting entirely: Pro → ok, Free →
+ * blocked with `used: 0`, `max: 0`, `grace: null` (grace never applies to a gate).
  */
 export async function checkLimit(
   orgId: string | Types.ObjectId,
@@ -306,6 +318,14 @@ export function planLimitResponse(check: PlanLimitBlocked): NextResponse {
     { error: check.message, ...check },
     { status: 402, headers: { "cache-control": "no-store" } },
   );
+}
+
+/**
+ * Analytics depth for a plan: Free → `"basic"` (totals, series, total time, viewer count only),
+ * Pro → `"deep"` (viewer identities, per-viewer rows, per-page time, visit timelines).
+ */
+export function analyticsTierForPlan(plan: PlanId): AnalyticsTier {
+  return plan === "pro" ? "deep" : "basic";
 }
 
 /** Clamp a requested analytics window to the plan's cap (Free → at most `FREE_ANALYTICS_DAYS`). */

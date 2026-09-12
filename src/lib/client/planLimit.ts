@@ -10,9 +10,10 @@ import { UPSELL_COPY, upsellKeyForLimit } from "@/lib/client/upsellCopy";
 
 /**
  * Which Free-plan limit was hit. Mirrors `LimitKey` in `src/lib/billing/planLimits.ts`.
- * `version_history` is a Pro feature gate (no count; `used`/`max` are 0).
+ * `version_history` and `analytics_history` (deep analytics: viewer identities, per-page time,
+ * visit timelines) are Pro feature gates (no count; `used`/`max` are 0).
  */
-export type PlanLimitKey = "active_links" | "projects" | "collaborators" | "version_history";
+export type PlanLimitKey = "active_links" | "projects" | "collaborators" | "version_history" | "analytics_history";
 
 /** Grace window for workspaces that were over the limits at launch (ISO strings). */
 export type PlanLimitGrace = { startedAt: string; endsAt: string; blockedAt: string | null } | null;
@@ -46,7 +47,13 @@ export const PLAN_LIMIT_HIT_STORAGE_KEY = "lnkdrp_plan_limit_hit";
 /** Window event fired when a plan-limit 402 is seen (lets the sidebar nudge appear without a reload). */
 export const PLAN_LIMIT_HIT_EVENT = "lnkdrp:plan-limit-hit";
 
-const LIMIT_KEYS: ReadonlySet<string> = new Set(["active_links", "projects", "collaborators", "version_history"]);
+const LIMIT_KEYS: ReadonlySet<string> = new Set([
+  "active_links",
+  "projects",
+  "collaborators",
+  "version_history",
+  "analytics_history",
+]);
 
 /** Coerce an unknown value to a non-negative integer, or `null` when it is not a finite number. */
 function asFiniteInt(v: unknown): number | null {
@@ -112,7 +119,9 @@ export function planLimitUsageSuffix(opts: { used?: number; max?: number } = {})
  * Title and reason come from the shared `UPSELL_COPY` registry so the inline notice and the
  * upgrade modal never drift. `used`/`max` are optional; when present they are folded into the
  * message. The one non-Free case (Pro with its included collaborator already in place) keeps its
- * own "contact us for seats" copy.
+ * own "contact us for seats" copy. `analytics_history` (a `402` from the deep-analytics routes)
+ * reads the registry's `analytics_history` entry directly, since it is a feature gate and not
+ * a counted cap.
  */
 export function planLimitPrompt(limit: PlanLimitKey, opts: { used?: number; max?: number } = {}): PlanLimitPrompt {
   const max = typeof opts.max === "number" && Number.isFinite(opts.max) ? Math.max(0, Math.floor(opts.max)) : null;
@@ -123,7 +132,7 @@ export function planLimitPrompt(limit: PlanLimitKey, opts: { used?: number; max?
       secondaryLabel: "Manage members",
     };
   }
-  const copy = UPSELL_COPY[upsellKeyForLimit(limit)];
+  const copy = limit === "analytics_history" ? UPSELL_COPY.analytics_history : UPSELL_COPY[upsellKeyForLimit(limit)];
   const suffix = planLimitUsageSuffix(opts);
   return {
     title: copy.title,

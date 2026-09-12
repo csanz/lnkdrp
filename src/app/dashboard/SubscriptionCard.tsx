@@ -186,7 +186,7 @@ export default function SubscriptionCard() {
         />
         <div className="flex items-center justify-between gap-2 text-[12px] leading-4 text-[var(--muted-2)]">
           <span>Analytics</span>
-          <span className="text-[var(--muted)]">Last {freeAnalyticsDays} days</span>
+          <span className="text-[var(--muted)]">Basic analytics · {freeAnalyticsDays} days</span>
         </div>
         <PlanUsageMeter
           label="Members"
@@ -250,8 +250,8 @@ export default function SubscriptionCard() {
             price={proPriceLabel || undefined}
             subtitle={
               <span>
-                {periodHint ? periodHint : "Your subscription is active."} Unlimited links · Unlimited projects · Full
-                history · 1 collaborator included.
+                {periodHint ? periodHint : "Your subscription is active."} Unlimited links · Unlimited projects · Deep
+                analytics · full history · 1 collaborator included.
               </span>
             }
             cta={

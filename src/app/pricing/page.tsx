@@ -121,7 +121,7 @@ export default async function PricingPage() {
                 items={[
                   `${FREE_ACTIVE_LINKS} active share links`,
                   `${FREE_PROJECTS} project`,
-                  `Last ${FREE_ANALYTICS_DAYS} days of viewer analytics`,
+                  `Basic analytics: views and downloads, last ${FREE_ANALYTICS_DAYS} days`,
                   "AI summary and key points on every link",
                   "Password protection and download control",
                   "Works with Claude Code, Cursor, Codex, and any MCP client",
@@ -163,7 +163,7 @@ export default async function PricingPage() {
                 items={[
                   "Unlimited active share links",
                   "Unlimited projects",
-                  "Full viewer analytics history",
+                  "Deep analytics: who opened it, time per page, full history",
                   "Version history and AI compare",
                   "300 credits a month, more at $0.10 each",
                   `${PRO_INCLUDED_COLLABORATORS} collaborator included · more on request`,
@@ -191,9 +191,9 @@ export default async function PricingPage() {
             <div>
               <h2 className="font-serif text-2xl tracking-tight text-white">Know who read it</h2>
               <p className="mt-3 text-sm leading-6 text-white/60">
-                Every open is recorded: who it was, how long they stayed, which pages held them, and
-                whether they downloaded. Free keeps the last {FREE_ANALYTICS_DAYS} days. Pro keeps the whole
-                history.
+                Every open is recorded. Free shows how many people opened it and the totals for the last{" "}
+                {FREE_ANALYTICS_DAYS} days. Pro shows who they were, how long they spent on each page, whether
+                they came back, and the whole history.
               </p>
             </div>
             <div>

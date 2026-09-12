@@ -6,6 +6,7 @@ import { Area, AreaChart, CartesianGrid, Tooltip, YAxis } from "recharts";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { usePlan } from "@/lib/client/usePlan";
 
 /**
  * Quick engagement stats for the owner's document page side panel.
@@ -13,6 +14,10 @@ import { useUpgradeModal } from "@/components/UpgradeModalProvider";
  * Renders instantly from the denormalized `Doc.metricsSnapshot` (rolled up by the doc-metrics
  * cron), then refreshes from `/api/docs/:docId/shareviews?lite=1` for live totals and the
  * views-by-day series that feeds the chart. Single series, so no legend; the title names it.
+ *
+ * Free workspaces get the basic tier: the Viewers tile still shows how many people opened the
+ * document (`viewerCount`) with a small "see who · Pro" link, and the footer names the 7-day
+ * window; both open the `analytics_history` upsell.
  */
 
 type Snapshot = {
@@ -28,6 +33,10 @@ type StatsResponse = {
   days?: number;
   /** Present when the workspace plan clamps the analytics window (Free = 7 days). */
   analyticsDaysLimit?: number;
+  /** Which tier the server rendered; `"basic"` on Free (no identities, per-page maps omitted). */
+  analyticsTier?: "basic" | "deep";
+  /** Unique viewers (signed-in + anonymous) in the window. */
+  viewerCount?: number;
   totals?: {
     views?: number;
     downloads?: number;
@@ -136,6 +145,7 @@ function ViewsSparkline({ series }: { series: Array<{ date: string; views: numbe
   );
 }
 
+/** Quick stats card for the owner doc page: four tiles, a views sparkline, and the plan footer. */
 export default function DocQuickStats({
   docId,
   snapshot,
@@ -148,6 +158,14 @@ export default function DocQuickStats({
   const [live, setLive] = useState<StatsResponse | null>(null);
   const [failed, setFailed] = useState(false);
   const { openUpgrade } = useUpgradeModal();
+  const { plan } = usePlan();
+  // The response is authoritative once it lands; the (usually cached) plan snapshot answers first.
+  const basicTier: boolean | null =
+    live?.analyticsTier === "basic" || live?.analyticsTier === "deep"
+      ? live.analyticsTier === "basic"
+      : plan
+        ? plan.plan === "free"
+        : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -170,7 +188,8 @@ export default function DocQuickStats({
 
   const stats = useMemo(() => {
     const t = live?.totals;
-    const viewers = t ? num(t.authenticatedViewers) + num(t.anonymousViewers) : null;
+    // `viewerCount` is the unique-people figure every tier receives; older responses only carry the split.
+    const viewers = typeof live?.viewerCount === "number" ? num(live.viewerCount) : t ? num(t.authenticatedViewers) + num(t.anonymousViewers) : null;
     const views = t ? num(t.views) : snapshot ? num(snapshot.lastDaysViews) : null;
     const downloads = t ? num(t.downloads) : snapshot ? num(snapshot.downloadsTotal) : null;
     const pages = t ? num(t.pagesViewed) : null;
@@ -191,14 +210,32 @@ export default function DocQuickStats({
   const clamped = analyticsDaysLimit !== null && analyticsDaysLimit < DAYS;
   const shownDays = clamped ? Math.min(analyticsDaysLimit, num(live?.days) || analyticsDaysLimit) : DAYS;
 
-  const tile = (label: string, value: number | null | string) => (
+  const tile = (label: string, value: number | null | string, sub?: React.ReactNode) => (
     <div className="min-w-0">
       <div className="text-[11px] font-medium text-[var(--muted)]">{label}</div>
       <div className="mt-0.5 truncate text-lg font-semibold tabular-nums text-[var(--fg)]">
         {value === null ? "–" : typeof value === "number" ? value.toLocaleString() : value}
       </div>
+      {sub ? <div className="mt-0.5 min-h-[14px] text-[10px] leading-[14px]">{sub}</div> : null}
     </div>
   );
+
+  // Free: the count stays, the identities are Pro. Reserve the line while the plan is unknown.
+  const viewersSub =
+    basicTier === null ? (
+      <span className="invisible" aria-hidden="true">
+        see who · Pro
+      </span>
+    ) : basicTier ? (
+      <button
+        type="button"
+        className="font-medium text-[var(--muted-2)] underline-offset-2 hover:text-[var(--fg)] hover:underline"
+        onClick={() => openUpgrade("analytics_history")}
+        title="See who opened it on Pro"
+      >
+        see who · Pro
+      </button>
+    ) : undefined;
 
   return (
     <section aria-label="Quick stats" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
@@ -208,7 +245,7 @@ export default function DocQuickStats({
       </div>
 
       <div className="mt-3 grid grid-cols-4 gap-3">
-        {tile("Viewers", stats.viewers)}
+        {tile("Viewers", stats.viewers, viewersSub)}
         {tile("Views", stats.views)}
         {tile("Downloads", downloadsEnabled ? stats.downloads : "Off")}
         {tile("Pages", stats.pages)}
@@ -238,15 +275,15 @@ export default function DocQuickStats({
         </Link>
       </div>
 
-      {clamped ? (
+      {clamped || basicTier ? (
         <div className="mt-2 text-[11px] text-[var(--muted-2)]">
-          Free shows the last {analyticsDaysLimit} days ·{" "}
+          Basic analytics · last {analyticsDaysLimit ?? shownDays} days ·{" "}
           <button
             type="button"
             className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
             onClick={() => openUpgrade("analytics_history")}
           >
-            Upgrade for full history
+            Upgrade for who and how long
           </button>
         </div>
       ) : null}

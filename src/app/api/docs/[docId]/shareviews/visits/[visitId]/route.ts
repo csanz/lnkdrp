@@ -1,6 +1,8 @@
 /**
  * Owner doc share-view visit details API.
  * Route: `/api/docs/:docId/shareviews/visits/:visitId`
+ *
+ * Deep analytics: Free workspaces get `402 plan_limit` (`analytics_history`); Pro gets the visit.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -8,6 +10,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,6 +51,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     if (!docExists) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
+
+    // Visit timelines are deep analytics (Pro). Checked after ownership so foreign docs stay 404.
+    const gate = await checkLimit(actor.orgId, "analytics_history");
+    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
 
     const visit = await ShareVisitModel.findOne({ _id: new Types.ObjectId(visitId), docId: docObjectId })
       .select({

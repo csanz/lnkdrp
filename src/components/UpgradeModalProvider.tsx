@@ -27,7 +27,7 @@ export type UpgradeModalApi = {
 const UpgradeModalContext = createContext<UpgradeModalApi | null>(null);
 
 /** Upsell keys that mirror an API `LimitKey` (and so feed `markPlanLimitHit`). */
-const LIMIT_KEYS: ReadonlySet<UpsellKey> = new Set<UpsellKey>(["active_links", "projects", "collaborators", "version_history"]);
+const LIMIT_KEYS: ReadonlySet<UpsellKey> = new Set<UpsellKey>(["active_links", "projects", "collaborators", "version_history", "analytics_history"]);
 
 /** Provide the upgrade-modal API and render the modal after `children` so it stacks above other modals. */
 export function UpgradeModalProvider({

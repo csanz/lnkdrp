@@ -3,11 +3,15 @@
  *
  * Returns (org members) + whether each has "opened" the given doc version (any page timing).
  * Auth required; any org member with access to the doc can call this.
+ *
+ * Deep analytics: recipient identity lists are Pro-only. Free workspaces get `402 plan_limit`
+ * (`analytics_history`).
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor, applyTempUserHeaders } from "@/lib/gating/actor";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { DocModel } from "@/lib/models/Doc";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
@@ -60,6 +64,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     if (!docExists) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
+
+    // Recipient identities are deep analytics (Pro). Checked after ownership so foreign docs stay 404.
+    const gate = await checkLimit(actor.orgId, "analytics_history");
+    if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
 
     // Members (all org members for now).
     const memberships = await OrgMembershipModel.find({ orgId, isDeleted: { $ne: true } })
