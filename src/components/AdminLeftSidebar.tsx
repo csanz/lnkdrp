@@ -33,7 +33,6 @@ export default function AdminLeftSidebar() {
   const sections: NavSection[] = useMemo(
     () => [
       { label: "Home", items: [{ label: "Home", href: "/a", exact: true }] },
-      { label: "Users", items: [{ label: "Invites", href: "/a/invitecodes", exact: true }] },
       { label: "Metrics", items: [{ label: "Share views", href: "/a/shareviews", exact: false }] },
       { label: "AI", items: [{ label: "Runs", href: "/a/ai-runs", exact: true }] },
       { label: "Billing", items: [{ label: "Credits", href: "/a/credits", exact: true }] },
@@ -70,7 +69,7 @@ export default function AdminLeftSidebar() {
   }
 
   return (
-    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
+    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
         <div className="px-4 pb-5 pt-5">
           <div className="flex min-w-0 min-h-[34px] items-center gap-2">

@@ -19,7 +19,6 @@ import { DocModel } from "@/lib/models/Doc";
 import { DocPageTimingModel } from "@/lib/models/DocPageTiming";
 import { DocReportModel } from "@/lib/models/DocReport";
 import { ErrorEventModel } from "@/lib/models/ErrorEvent";
-import { InviteModel } from "@/lib/models/Invite";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { OrgModel } from "@/lib/models/Org";
@@ -567,27 +566,6 @@ async function main() {
       localField: "redeemedByUserId",
       sampleSize,
       childMatch: { redeemedByUserId: { $ne: null } },
-    }),
-  );
-
-  reports.push(
-    await countMissingParent({
-      label: "Invite.approvedByUserId -> missing User",
-      child: InviteModel,
-      parent: UserModel,
-      localField: "approvedByUserId",
-      sampleSize,
-      childMatch: { approvedByUserId: { $ne: null } },
-    }),
-  );
-  reports.push(
-    await countMissingParent({
-      label: "Invite.approvedInviteId -> missing Invite",
-      child: InviteModel,
-      parent: InviteModel,
-      localField: "approvedInviteId",
-      sampleSize,
-      childMatch: { approvedInviteId: { $ne: null } },
     }),
   );
 

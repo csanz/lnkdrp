@@ -11,6 +11,7 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -362,6 +363,17 @@ export async function POST(request: Request) {
     if (!persistedViewToken) {
       throw new Error("Invariant failed: request repo must be created with requestViewToken");
     }
+
+    void recordActivity({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      actorKind: actor.kind,
+      type: "request_repo.created",
+      projectId: p._id,
+      title: name,
+      meta: { requireAuthToUpload, reviewEnabled },
+      request,
+    });
 
     return applyTempUserHeaders(
       NextResponse.json(

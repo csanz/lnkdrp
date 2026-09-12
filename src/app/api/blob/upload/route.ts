@@ -23,8 +23,8 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import {
-  CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES,
   CLIENT_UPLOAD_MAX_SIZE_BYTES,
+  allowedContentTypesForPathname,
   assertAllowedTestPathname,
   parseDocUploadBlobPathname,
   parseOrgAvatarBlobPathname,
@@ -142,9 +142,11 @@ export async function POST(request: Request) {
         // Fine-grained gate: the caller must own (or hold the secret for) the target.
         await authorizePathname(request, pathname, clientPayload);
 
-        debugLog(1, "[api/blob/upload] mint token", { traceId, pathname });
+        // Per-prefix allowlist: documents are PDF-only, workspace avatars are image-only.
+        const allowedContentTypes = allowedContentTypesForPathname(pathname);
+        debugLog(1, "[api/blob/upload] mint token", { traceId, pathname, allowedContentTypes });
         return {
-          allowedContentTypes: [...CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES],
+          allowedContentTypes,
           maximumSizeInBytes: CLIENT_UPLOAD_MAX_SIZE_BYTES,
         };
       },

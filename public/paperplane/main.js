@@ -22,17 +22,44 @@ const CONFIG = {
   CAMERA_FAR: 1000,
   CAMERA_INITIAL_POS: { x: 0, y: 1.2, z: 4.2 },
   CAMERA_DISTANCE_MULT: 2.15, // bigger => smaller on screen
+  // The vertical FOV is fixed, so a portrait-ish viewport (md tablets) would render the plane
+  // much larger relative to its width. Pull the camera back until the view is at least this
+  // wide relative to its height (1.15 => no change on 16:10 / 16:9 desktops; an 834x1194 md
+  // tablet is pulled back ~1.6x instead of ~2.1x so the plane reads at ~130px, not a speck).
+  CAMERA_MIN_ASPECT: 1.15,
+  // World y the framed camera looks at. The camera itself stays slightly above the plane, so
+  // pitching it down (negative) lifts the whole scene in the frame without changing the angle
+  // the plane is seen from: -0.92 puts the plane in the upper-right quadrant beside the headline.
+  CAMERA_LOOK_Y: -0.92,
   // Used to shift the framed camera left/right after model load.
   // 0 = centered.
   RIGHT_OFFSET_MULT: 0.0,
 
   // Plane pose + placement
-  PLANE_BASE_POS: { x: 0.876, y: -0.096, z: 0 },
+  // x is only a fallback: the runtime derives it from PLANE_VIEW_X_FRAC so the plane sits at
+  // the same horizontal fraction of the viewport at every width.
+  PLANE_BASE_POS: { x: 1.65, y: -0.096, z: 0 },
+  // Horizontal placement as a fraction of the visible width, measured from the viewport centre
+  // (0.22 => plane centre at ~72% of the viewport width, so the nose stays within ~300px of
+  // the headline's right edge even on a 1920-wide frame).
+  PLANE_VIEW_X_FRAC: 0.2,
+  // Vertical placement in CSS pixels from the top of the viewport to the plane's centre. The
+  // headline is pixel-fixed, so anchoring the plane in pixels (not a fraction of the height) keeps
+  // it beside headline lines 2-3 on 800-, 900- and 1080-tall frames alike.
+  PLANE_VIEW_Y_PX: 700,
+  // Fraction of the frame height the tuned PLANE_BASE_POS.y lands at on a desktop (16:10 / 16:9)
+  // frame; the runtime offsets from this reference to reach PLANE_VIEW_Y_PX.
+  PLANE_BASE_VIEW_Y_FRAC: 0.334,
   // Small global nudge down for nicer framing on the home page.
   PLANE_HEIGHT_OFFSET: -0.035,
   LOCKED_YAW: 1.183009,
   BASE_PITCH: 0.310812,
   BASE_ROLL: -0.25,
+  // Plane-only orientation offsets (radians) on top of BASE_PITCH / LOCKED_YAW / BASE_ROLL.
+  // The globe follows the BASE_* angles but NOT these, so you can tilt the plane without moving
+  // the horizon. pitch > 0 lowers the nose; roll toward 0 (from -0.25) leans the plane left.
+  // Tune live at /paperplane/index.html?debug=1 (arrow keys / [ ] then press C to copy).
+  PLANE_ROT_OFFSET: { pitch: -0.33, yaw: -0.18, roll: 0.18 },
   // Lock the airplane in place (disable user move/rotate). Globe drag (alt/option) still works.
   PLANE_LOCKED: true,
 
@@ -60,7 +87,23 @@ const CONFIG = {
   PLANE_WOBBLE_INTENSITY: 0.32, // lower = less motion
 
   // Globe
-  GLOBE_POS: { x: 4, y: -7.5, z: 0 },
+  // y follows CAMERA_LOOK_Y (the -7.5 the scene was tuned at, shifted by the camera pitch) so
+  // the rim reads as a lower-right horizon inside the first viewport.
+  // x: the text column's right edge is at viewport centre + ~32px at every desktop width, so the
+  // rim needs a fixed world offset large enough that it crosses that edge only inside the horizon
+  // fade. The offset scales with viewport *height* in px, so an 800-tall fold is the tightest:
+  // 5.6 keeps the rim (including its faded tail) >= 100px right of the install panel's corner
+  // there (versus the 4.0 the scene was tuned at).
+  GLOBE_POS: { x: 5.6, y: -8.4, z: 0 },
+  // On narrow (portrait-ish) frames the camera is pulled back; drop the globe faster than that
+  // pull-back (exponent on the pull-back factor) so its rim stays in the bottom-right corner
+  // instead of rising behind the text column. 1 = same fraction of the frame as on desktop (the
+  // rim then enters ~70% down an 834x1194 md frame, beside the install panel, rather than leaving
+  // the right half of the fold empty).
+  GLOBE_NARROW_DROP: 1.0,
+  // ...and push it right on those frames (world units per unit of camera pull-back) so the rim
+  // that the smaller drop keeps above the horizon fade stays clear of the column.
+  GLOBE_NARROW_PUSH: 0.4,
   GLOBE_SCALE: 6,
   // Higher segments => smoother horizon/rim line (less "uneven" faceting).
   GLOBE_WIDTH_SEGMENTS: 160,
@@ -169,6 +212,7 @@ const PLANE_HEIGHT_OFFSET = CONFIG.PLANE_HEIGHT_OFFSET;
 let LOCKED_YAW = CONFIG.LOCKED_YAW;
 let BASE_PITCH = CONFIG.BASE_PITCH;
 let BASE_ROLL = CONFIG.BASE_ROLL;
+const PLANE_ROT = { ...CONFIG.PLANE_ROT_OFFSET };
 
 const SPEED_MODE = CONFIG.SPEED_MODE;
 function speedMultFromMode(mode) {
@@ -216,6 +260,161 @@ const DEBUG_CONTROLS =
   })();
 // Keep plane locked on the home page, but allow interactive tuning in debug mode.
 const PLANE_LOCKED = DEBUG_CONTROLS ? false : CONFIG.PLANE_LOCKED;
+
+// ---------------------------------------------------------------------------------------------
+// Debug gizmo (only active with ?debug=1 on /paperplane/index.html; inert on the home page).
+// - Query overrides for quick trials: ?debug=1&yaw=1.18&pitch=0.31&roll=-0.25&y=560&xfrac=0.22
+// - Keys: ←/→ yaw · ↑/↓ pitch · [ / ] roll · W/S plane height (px) · A/D plane x (fraction)
+//         Shift = 5× step · R = reset to CONFIG · C = copy the CONFIG lines to the clipboard
+// - A readout in the bottom-left corner mirrors the values; paste them into CONFIG above.
+// ---------------------------------------------------------------------------------------------
+const DEBUG_QUERY = (() => {
+  try {
+    return new URL(window.location.href).searchParams;
+  } catch {
+    return null;
+  }
+})();
+function debugNum(name) {
+  const v = DEBUG_QUERY ? DEBUG_QUERY.get(name) : null;
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+const GIZMO_DEFAULTS = {
+  yaw: CONFIG.LOCKED_YAW,
+  pitch: CONFIG.BASE_PITCH,
+  roll: CONFIG.BASE_ROLL,
+  y: CONFIG.PLANE_VIEW_Y_PX,
+  xfrac: CONFIG.PLANE_VIEW_X_FRAC,
+  rot: { ...CONFIG.PLANE_ROT_OFFSET },
+};
+if (DEBUG_CONTROLS) {
+  const yaw = debugNum("yaw");
+  const pitch = debugNum("pitch");
+  const roll = debugNum("roll");
+  const y = debugNum("y");
+  const xfrac = debugNum("xfrac");
+  const dpitch = debugNum("dpitch");
+  const dyaw = debugNum("dyaw");
+  const droll = debugNum("droll");
+  if (dpitch != null) PLANE_ROT.pitch = dpitch;
+  if (dyaw != null) PLANE_ROT.yaw = dyaw;
+  if (droll != null) PLANE_ROT.roll = droll;
+  if (yaw != null) LOCKED_YAW = yaw;
+  if (pitch != null) BASE_PITCH = pitch;
+  if (roll != null) BASE_ROLL = roll;
+  if (y != null) CONFIG.PLANE_VIEW_Y_PX = y;
+  if (xfrac != null) CONFIG.PLANE_VIEW_X_FRAC = xfrac;
+}
+// Placement overrides that work WITHOUT debug mode, so an embedding page can pick a frame-
+// relative position: /paperplane/index.html?yfrac=0.45&xfrac=0.02 (fractions of the frame).
+// The mobile home page uses this to put the plane in a short frame at the bottom of the page.
+const PLACE = { yfrac: debugNum("yfrac"), xfrac: debugNum("xfrac"), minaspect: debugNum("minaspect") };
+let gizmoEl = null;
+function gizmoConfigLines() {
+  return (
+    `  LOCKED_YAW: ${+LOCKED_YAW.toFixed(6)},\n` +
+    `  BASE_PITCH: ${+BASE_PITCH.toFixed(6)},\n` +
+    `  BASE_ROLL: ${+BASE_ROLL.toFixed(6)},\n` +
+    `  PLANE_VIEW_Y_PX: ${Math.round(CONFIG.PLANE_VIEW_Y_PX)},\n` +
+    `  PLANE_VIEW_X_FRAC: ${+CONFIG.PLANE_VIEW_X_FRAC.toFixed(3)},\n` +
+    `  PLANE_ROT_OFFSET: { pitch: ${+PLANE_ROT.pitch.toFixed(3)}, yaw: ${+PLANE_ROT.yaw.toFixed(3)}, roll: ${+PLANE_ROT.roll.toFixed(3)} },`
+  );
+}
+function updateGizmo(note) {
+  if (!gizmoEl) return;
+  gizmoEl.textContent =
+    `gizmo  plane offsets: pitch ${PLANE_ROT.pitch.toFixed(3)}  yaw ${PLANE_ROT.yaw.toFixed(3)}  roll ${PLANE_ROT.roll.toFixed(3)}   (base ${BASE_PITCH.toFixed(2)}/${LOCKED_YAW.toFixed(2)}/${BASE_ROLL.toFixed(2)})  ` +
+    `y ${Math.round(CONFIG.PLANE_VIEW_Y_PX)}px  x ${CONFIG.PLANE_VIEW_X_FRAC.toFixed(3)}` +
+    (note ? `   · ${note}` : "") +
+    `\n←→ yaw   ↑↓ pitch   [ ] roll   W/S height   A/D x   shift ×5   R reset   C copy CONFIG lines`;
+}
+if (DEBUG_CONTROLS) {
+  gizmoEl = document.createElement("pre");
+  gizmoEl.id = "gizmo";
+  gizmoEl.style.cssText =
+    "position:fixed;left:12px;bottom:12px;margin:0;padding:8px 10px;font:12px/1.5 ui-monospace,Menlo,monospace;" +
+    "color:rgba(255,255,255,.85);background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.15);" +
+    "border-radius:6px;pointer-events:none;white-space:pre;z-index:10";
+  document.body.appendChild(gizmoEl);
+  setTimeout(() => updateGizmo(), 300);
+  window.addEventListener("keydown", (e) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    let handled = true;
+    let note = "";
+    switch (e.key) {
+      case "ArrowLeft":
+        PLANE_ROT.yaw -= step;
+        break;
+      case "ArrowRight":
+        PLANE_ROT.yaw += step;
+        break;
+      case "ArrowUp":
+        PLANE_ROT.pitch -= step;
+        break;
+      case "ArrowDown":
+        PLANE_ROT.pitch += step;
+        break;
+      case "[":
+        PLANE_ROT.roll -= step;
+        break;
+      case "]":
+        PLANE_ROT.roll += step;
+        break;
+      case "w":
+      case "W":
+        CONFIG.PLANE_VIEW_Y_PX -= e.shiftKey ? 50 : 10;
+        placePlane();
+        break;
+      case "s":
+      case "S":
+        CONFIG.PLANE_VIEW_Y_PX += e.shiftKey ? 50 : 10;
+        placePlane();
+        break;
+      case "a":
+      case "A":
+        CONFIG.PLANE_VIEW_X_FRAC -= e.shiftKey ? 0.05 : 0.01;
+        placePlane();
+        break;
+      case "d":
+      case "D":
+        CONFIG.PLANE_VIEW_X_FRAC += e.shiftKey ? 0.05 : 0.01;
+        placePlane();
+        break;
+      case "r":
+      case "R":
+        LOCKED_YAW = GIZMO_DEFAULTS.yaw;
+        BASE_PITCH = GIZMO_DEFAULTS.pitch;
+        BASE_ROLL = GIZMO_DEFAULTS.roll;
+        CONFIG.PLANE_VIEW_Y_PX = GIZMO_DEFAULTS.y;
+        CONFIG.PLANE_VIEW_X_FRAC = GIZMO_DEFAULTS.xfrac;
+        Object.assign(PLANE_ROT, GIZMO_DEFAULTS.rot);
+        placePlane();
+        note = "reset";
+        break;
+      case "c":
+      case "C": {
+        const lines = gizmoConfigLines();
+        try {
+          navigator.clipboard.writeText(lines);
+          note = "copied";
+        } catch {
+          note = "copy failed (see console)";
+        }
+        console.log("[paperplane] CONFIG lines:\n" + lines);
+        break;
+      }
+      default:
+        handled = false;
+    }
+    if (!handled) return;
+    e.preventDefault();
+    BASE_PITCH = THREE.MathUtils.clamp(BASE_PITCH, -1.25, 1.25);
+    updateGizmo(note);
+    printParams();
+  });
+}
 
 const statusEl = document.getElementById("status");
 const statusTextEl = document.getElementById("statusText");
@@ -302,7 +501,7 @@ const planePivot = new THREE.Group();
 // Orientation tuning (these set the *base* direction; animation adds subtle motion on top).
 // Yaw: left/right, Pitch: up/down, Roll: bank.
 // Defaults captured from your preferred pose.
-planePivot.rotation.set(BASE_PITCH, LOCKED_YAW, BASE_ROLL);
+planePivot.rotation.set(BASE_PITCH + PLANE_ROT.pitch, LOCKED_YAW + PLANE_ROT.yaw, BASE_ROLL + PLANE_ROT.roll);
 scene.add(planePivot);
 
 // Wind streaks around the plane (tiny "strings" that drift past it).
@@ -688,6 +887,75 @@ let plane = null;
 const basePos = new THREE.Vector3(PLANE_BASE_POS.x, PLANE_BASE_POS.y, PLANE_BASE_POS.z);
 const globeBasePos = new THREE.Vector3(GLOBE_POS.x, GLOBE_POS.y, GLOBE_POS.z);
 
+// Bounding-sphere radius of the (normalized) plane; set once the GLB loads.
+let planeFrameRadius = 0;
+
+// How much the camera is pulled back on narrow viewports (1 on desktop; see CAMERA_MIN_ASPECT).
+function aspectComp() {
+  const minAspect = PLACE.minaspect != null ? PLACE.minaspect : CONFIG.CAMERA_MIN_ASPECT;
+  return Math.max(1, minAspect / camera.aspect);
+}
+
+// Frame the camera around the plane's bounding sphere so it is always visible.
+// Narrow viewports pull the camera back (see CAMERA_MIN_ASPECT).
+function frameCamera() {
+  if (!planeFrameRadius) return;
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  const dist = (planeFrameRadius / Math.sin(fov / 2)) * CAMERA_DISTANCE_MULT * aspectComp();
+  // Use RIGHT_OFFSET_MULT to shift the framed camera horizontally.
+  camera.position.set(planeFrameRadius * RIGHT_OFFSET_MULT, planeFrameRadius * 0.55, dist);
+  camera.near = Math.max(0.01, dist / 100);
+  camera.far = dist * 100;
+  camera.updateProjectionMatrix();
+  camera.lookAt(0, CONFIG.CAMERA_LOOK_Y, 0);
+}
+
+// Keep the globe's horizon (its top edge) low in the frame when the camera is pulled back on
+// narrow viewports, so it never rides up behind the text column (see GLOBE_NARROW_DROP), and
+// nudge it right on those frames so the rim stays clear of the column (see GLOBE_NARROW_PUSH).
+function placeGlobe() {
+  const comp = aspectComp();
+  const horizon = GLOBE_POS.y + GLOBE_SCALE - CONFIG.CAMERA_LOOK_Y;
+  const drop = Math.pow(comp, CONFIG.GLOBE_NARROW_DROP);
+  globeBasePos.x = GLOBE_POS.x + (comp - 1) * CONFIG.GLOBE_NARROW_PUSH;
+  globeBasePos.y = CONFIG.CAMERA_LOOK_Y + horizon * drop - GLOBE_SCALE;
+}
+
+// Visible world-space height / width at the plane's depth (z = 0).
+function viewHeightAtPlane() {
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  return 2 * camera.position.z * Math.tan(fov / 2);
+}
+function viewWidthAtPlane() {
+  return viewHeightAtPlane() * camera.aspect;
+}
+
+// Keep the plane at the same horizontal fraction of the viewport regardless of aspect ratio, and
+// at the same pixel distance from the top regardless of viewport height.
+function placePlane() {
+  if (!planeFrameRadius) return;
+  const viewH = viewHeightAtPlane();
+  // Narrow md frames (tablets) render the plane small, so nudge it a little further right there
+  // to keep clearance from the headline's ragged edge; lg+ desktops are unchanged.
+  const xFrac =
+    PLACE.xfrac != null
+      ? PLACE.xfrac
+      : window.innerWidth < 1024
+        ? CONFIG.PLANE_VIEW_X_FRAC + 0.05
+        : CONFIG.PLANE_VIEW_X_FRAC;
+  const yPx = PLACE.yfrac != null ? PLACE.yfrac * window.innerHeight : CONFIG.PLANE_VIEW_Y_PX;
+  basePos.x = viewWidthAtPlane() * xFrac;
+  // PLANE_BASE_POS.y was tuned to land PLANE_BASE_VIEW_Y_FRAC down a desktop frame, whose view
+  // height is viewH / aspectComp() (narrow frames pull the camera back, which would otherwise
+  // drag the plane toward the frame centre). Re-derive the offset so the centre lands at
+  // PLANE_VIEW_Y_PX at any height or aspect.
+  const desktopViewH = viewH / aspectComp();
+  basePos.y =
+    PLANE_BASE_POS.y +
+    (0.5 - yPx / window.innerHeight) * viewH -
+    (0.5 - CONFIG.PLANE_BASE_VIEW_Y_FRAC) * desktopViewH;
+}
+
 // Drag tool:
 // - drag = move plane
 // - alt/option + drag = move globe
@@ -710,6 +978,8 @@ function worldPerPixelAt(targetWorldPos) {
 function printParams() {
   const params = {
     PLANE_BASE_POS: { x: +basePos.x.toFixed(3), y: +basePos.y.toFixed(3), z: +basePos.z.toFixed(3) },
+    // Fraction of the visible width the current plane x corresponds to (paste into PLANE_VIEW_X_FRAC).
+    PLANE_VIEW_X_FRAC: +(basePos.x / viewWidthAtPlane()).toFixed(3),
     GLOBE_POS: { x: +globeBasePos.x.toFixed(3), y: +globeBasePos.y.toFixed(3), z: +globeBasePos.z.toFixed(3) },
     LOCKED_YAW: +LOCKED_YAW.toFixed(6),
     BASE_PITCH: +BASE_PITCH.toFixed(6),
@@ -796,6 +1066,7 @@ function endDrag(e) {
     // ignore
   }
   printParams();
+  updateGizmo();
 }
 renderer.domElement.addEventListener("pointerup", endDrag);
 renderer.domElement.addEventListener("pointercancel", endDrag);
@@ -901,18 +1172,14 @@ loader.load(
     const framedBox = new THREE.Box3().setFromObject(planePivot);
     const sphere = new THREE.Sphere();
     framedBox.getBoundingSphere(sphere);
-    const fov = THREE.MathUtils.degToRad(camera.fov);
-    const dist = (sphere.radius / Math.sin(fov / 2)) * CAMERA_DISTANCE_MULT;
-    // Use RIGHT_OFFSET_MULT to shift the framed camera horizontally.
-    camera.position.set(sphere.radius * RIGHT_OFFSET_MULT, sphere.radius * 0.55, dist);
-    camera.near = Math.max(0.01, dist / 100);
-    camera.far = dist * 100;
-    camera.updateProjectionMatrix();
-    camera.lookAt(0, 0, 0);
+    planeFrameRadius = sphere.radius;
+    frameCamera();
 
-    // Apply default placement captured from drag.
+    // Apply default placement captured from drag; plane x/y and globe x/y are viewport-derived.
     basePos.set(PLANE_BASE_POS.x, PLANE_BASE_POS.y, PLANE_BASE_POS.z);
     globeBasePos.set(GLOBE_POS.x, GLOBE_POS.y, GLOBE_POS.z);
+    placePlane();
+    placeGlobe();
 
     // Only hide the status banner if the land layer successfully loaded.
     // If land load failed, keep it visible so the issue is obvious.
@@ -1117,14 +1384,14 @@ function animate() {
 
     // Keep yaw fixed (backwards), only add roll/pitch.
     // Lock pitch so it doesn't "nod" up/down (paper planes glide more than they bob).
-    planePivot.rotation.x = BASE_PITCH;
+    planePivot.rotation.x = BASE_PITCH + PLANE_ROT.pitch;
     // Bank into the side-to-side sway (paper-plane feel).
     const bankFromSway = swaySide * 0.18; // swaySide is in world units; keep this subtle
     planePivot.rotation.z =
-      BASE_ROLL + Math.sin(tw * 0.75 + 0.2) * 0.07 * CONFIG.PLANE_WOBBLE_INTENSITY + bankFromSway;
+      BASE_ROLL + PLANE_ROT.roll + Math.sin(tw * 0.75 + 0.2) * 0.07 * CONFIG.PLANE_WOBBLE_INTENSITY + bankFromSway;
     // Tiny yaw wiggle + a touch of "follow through" from sway.
     planePivot.rotation.y =
-      LOCKED_YAW + Math.sin(tw * 0.6 + 0.4) * 0.020 * CONFIG.PLANE_WOBBLE_INTENSITY + bankFromSway * 0.22;
+      LOCKED_YAW + PLANE_ROT.yaw + Math.sin(tw * 0.6 + 0.4) * 0.020 * CONFIG.PLANE_WOBBLE_INTENSITY + bankFromSway * 0.22;
 
     // Globe stays fixed in position; align it to the plane's *base* direction (no wobble).
     globePivot.position.copy(globeBasePos);
@@ -1157,6 +1424,10 @@ animate();
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  // Re-frame + re-place so the plane keeps its viewport-relative position after a resize.
+  frameCamera();
+  placePlane();
+  placeGlobe();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 

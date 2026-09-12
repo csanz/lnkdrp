@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
 import UploadButton from "@/components/UploadButton";
 import DocSharePanel from "@/components/DocSharePanel";
+import DocQuickStats from "@/components/DocQuickStats";
 import TempUserGateModal from "@/components/modals/TempUserGateModal";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import DocProjectsModal, { type DocProjectListItem } from "@/components/modals/DocProjectsModal";
@@ -2345,6 +2346,15 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     }
                     aiOutput={doc.aiOutput ?? null}
                     uploadError={currentUpload?.error ?? null}
+                    quickStats={
+                      hasHydratedFromServer && doc.status === "ready" ? (
+                        <DocQuickStats
+                          docId={doc.id}
+                          snapshot={doc.metricsSnapshot ?? null}
+                          downloadsEnabled={Boolean(doc.shareAllowPdfDownload)}
+                        />
+                      ) : null
+                    }
                   />
                 ) : isReplacing ? (
                   <aside className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">

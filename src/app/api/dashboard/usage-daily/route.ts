@@ -105,13 +105,25 @@ export async function GET(request: Request) {
       }
 
       // Permission for "Spend" (owner/admin only), consistent with /api/dashboard/usage.
-      const membership = await OrgMembershipModel.findOne({
+      let membership = await OrgMembershipModel.findOne({
         orgId,
         userId,
         isDeleted: { $ne: true },
       })
         .select({ role: 1 })
         .lean();
+      if (!membership) {
+        // The active-org cookie / JWT claim can go stale (workspace deleted, membership revoked, or a
+        // dev-bypass workspace left in the cookie from before sign-in). Re-resolve with membership
+        // validation instead of failing the whole page.
+        const actor = await resolveActorForStats(request);
+        if (actor.kind === "user" && Types.ObjectId.isValid(actor.orgId) && String(actor.orgId) !== String(orgId)) {
+          orgId = new Types.ObjectId(actor.orgId);
+          membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } })
+            .select({ role: 1 })
+            .lean();
+        }
+      }
       if (!membership) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       const canViewSpend = role === "owner" || role === "admin";

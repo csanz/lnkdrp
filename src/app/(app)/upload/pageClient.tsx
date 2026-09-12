@@ -8,7 +8,13 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import UploadButton, { UploadIcon } from "@/components/UploadButton";
-import { apiCreateDoc, apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
+import {
+  apiCreateDoc,
+  apiCreateUpload,
+  isPdfFile,
+  PDF_ONLY_MESSAGE,
+  startBlobUploadAndProcess,
+} from "@/lib/client/docUploadPipeline";
 import { usePendingUpload } from "@/lib/pendingUpload";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
@@ -25,11 +31,6 @@ const PdfJsViewer = dynamic(async () => (await import("@/components/PdfJsViewer"
 function titleFromFileName(name: string) {
   const base = (name ?? "").trim().replace(/\.[a-z0-9]+$/i, "");
   return base || "Untitled document";
-}
-
-function isPdfFile(file: File) {
-  const name = (file.name ?? "").toLowerCase();
-  return file.type === "application/pdf" || name.endsWith(".pdf");
 }
 
 export default function UploadPageClient() {
@@ -203,7 +204,10 @@ export default function UploadPageClient() {
             setDragActive(false);
             const file = e.dataTransfer?.files?.[0] ?? null;
             if (!file) return;
-            if (!isPdfFile(file)) return;
+            if (!isPdfFile(file)) {
+              setError(PDF_ONLY_MESSAGE);
+              return;
+            }
             setPreviewLoading(true);
             setSelectedFile(file);
             setError(null);
@@ -238,8 +242,12 @@ export default function UploadPageClient() {
                       accept="pdf"
                       variant="cta"
                       disabled={busy}
+                      onFileRejected={setError}
                       onFileSelected={(file) => {
-                        if (!isPdfFile(file)) return;
+                        if (!isPdfFile(file)) {
+                          setError(PDF_ONLY_MESSAGE);
+                          return;
+                        }
                         setPreviewLoading(true);
                         setSelectedFile(file);
                         setError(null);
@@ -284,8 +292,12 @@ export default function UploadPageClient() {
                   accept="pdf"
                   variant="link"
                   disabled={busy}
+                  onFileRejected={setError}
                   onFileSelected={(file) => {
-                    if (!isPdfFile(file)) return;
+                    if (!isPdfFile(file)) {
+                      setError(PDF_ONLY_MESSAGE);
+                      return;
+                    }
                     setPreviewLoading(true);
                     setSelectedFile(file);
                     setError(null);

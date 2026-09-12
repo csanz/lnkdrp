@@ -1,9 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  allowedContentTypesForPathname,
   assertAllowedTestPathname,
+  AVATAR_UPLOAD_ALLOWED_CONTENT_TYPES,
+  CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES,
   CLIENT_UPLOAD_MAX_SIZE_BYTES,
+  DOC_UPLOAD_ALLOWED_CONTENT_TYPES,
   getBlobStoreHost,
+  isPdfUploadMeta,
   isBlobPathnameForUpload,
   isBlobStoreHost,
   isBlobUrlForUpload,
@@ -33,6 +38,58 @@ describe("serverClientUploadRoute", () => {
 
   it("exposes a reasonable max size constant (sanity)", () => {
     expect(CLIENT_UPLOAD_MAX_SIZE_BYTES).toBeGreaterThan(1_000_000);
+  });
+
+  describe("allowedContentTypesForPathname", () => {
+    it("documents are PDF-only; workspace avatars are image-only", () => {
+      expect([...DOC_UPLOAD_ALLOWED_CONTENT_TYPES]).toEqual(["application/pdf"]);
+      expect([...AVATAR_UPLOAD_ALLOWED_CONTENT_TYPES]).toContain("image/png");
+      expect([...AVATAR_UPLOAD_ALLOWED_CONTENT_TYPES]).not.toContain("application/pdf");
+    });
+
+    it("docs/… rejects image/png and org-avatars/… accepts it", () => {
+      const docTypes = allowedContentTypesForPathname(`${DOC_BLOB_PREFIX}${DOC_ID}/uploads/${UPLOAD_ID}/ts-deck.png`);
+      expect(docTypes).not.toContain("image/png");
+      expect(docTypes).toEqual(["application/pdf"]);
+
+      const avatarTypes = allowedContentTypesForPathname(`${ORG_AVATAR_PREFIX}${ORG_ID}/ts-avatar.png`);
+      expect(avatarTypes).toContain("image/png");
+      expect(avatarTypes).not.toContain("application/pdf");
+    });
+
+    it("only the client-rendered preview.png may be an image under docs/", () => {
+      expect(allowedContentTypesForPathname(`${DOC_BLOB_PREFIX}${DOC_ID}/uploads/${UPLOAD_ID}/preview.png`)).toEqual([
+        "image/png",
+      ]);
+      // A leading slash does not change the decision.
+      expect(allowedContentTypesForPathname(`/${DOC_BLOB_PREFIX}${DOC_ID}/uploads/${UPLOAD_ID}/ts-deck.pdf`)).toEqual([
+        "application/pdf",
+      ]);
+    });
+
+    it("unknown prefixes get an empty allowlist; the deprecated union still covers both", () => {
+      expect(allowedContentTypesForPathname(`${TEST_BLOB_PREFIX}x.png`)).toEqual([]);
+      expect([...CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES]).toEqual([
+        ...DOC_UPLOAD_ALLOWED_CONTENT_TYPES,
+        ...AVATAR_UPLOAD_ALLOWED_CONTENT_TYPES,
+      ]);
+    });
+  });
+
+  describe("isPdfUploadMeta", () => {
+    it("accepts application/pdf and .pdf names (case-insensitive, empty type tolerated)", () => {
+      expect(isPdfUploadMeta({ contentType: "application/pdf", fileName: "deck.pdf" })).toBe(true);
+      expect(isPdfUploadMeta({ contentType: "application/pdf; charset=binary", fileName: "Deck.PDF" })).toBe(true);
+      expect(isPdfUploadMeta({ contentType: "", fileName: "deck.pdf" })).toBe(true);
+      expect(isPdfUploadMeta({ contentType: "application/pdf", fileName: null })).toBe(true);
+    });
+
+    it("rejects images, mismatched extensions and empty metadata", () => {
+      expect(isPdfUploadMeta({ contentType: "image/png", fileName: "photo.png" })).toBe(false);
+      expect(isPdfUploadMeta({ contentType: "image/png", fileName: "photo.pdf" })).toBe(false);
+      expect(isPdfUploadMeta({ contentType: "application/pdf", fileName: "photo.jpg" })).toBe(false);
+      expect(isPdfUploadMeta({ contentType: null, fileName: null })).toBe(false);
+    });
   });
 
   describe("parseDocUploadBlobPathname", () => {

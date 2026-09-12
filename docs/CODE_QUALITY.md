@@ -121,17 +121,17 @@ export async function POST(req: Request) {
 Bad:
 
 ```ts
-function normalizeInviteCode(code: string) {
-  return code.trim().toLowerCase().replace(/-/g, "");
+function normalizeShareSlug(slug: string) {
+  return slug.trim().toLowerCase().replace(/-/g, "");
 }
 ```
 
 Good:
 
 ```ts
-// Normalize invite codes to a canonical format so we can dedupe requests and avoid “looks the same” bugs.
-function normalizeInviteCode(code: string) {
-  return code.trim().toLowerCase().replace(/-/g, "");
+// Normalize share slugs to a canonical format so we can dedupe lookups and avoid “looks the same” bugs.
+function normalizeShareSlug(slug: string) {
+  return slug.trim().toLowerCase().replace(/-/g, "");
 }
 ```
 

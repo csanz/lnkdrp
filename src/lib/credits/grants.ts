@@ -6,6 +6,9 @@ import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance
 
 export const INCLUDED_CREDITS_PER_CYCLE = 300;
 
+/** One-time starter credits granted to a Free workspace (no cycle reset). */
+export const FREE_STARTER_CREDITS = 50;
+
 /**
  * cycleKey = `${stripeSubscriptionId}:${currentPeriodStartUnixSeconds}`
  */

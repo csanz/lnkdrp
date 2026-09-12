@@ -12,14 +12,71 @@
 import { DOC_BLOB_PREFIX, ORG_AVATAR_PREFIX } from "./clientUpload";
 
 /**
- * Content types we allow for the client upload route.
- * - `image/*` covers jpeg/png/webp/etc.
- * - `application/pdf` covers PDFs.
+ * Content types allowed for document uploads (`docs/{docId}/uploads/{uploadId}/...`).
+ *
+ * Documents are PDF-only for now: the processing pipeline (text extraction, page rendering,
+ * AI passes) only understands PDFs, so anything else is rejected at token-mint time.
+ */
+export const DOC_UPLOAD_ALLOWED_CONTENT_TYPES = ["application/pdf"] as const;
+
+/**
+ * Content types allowed for workspace avatar uploads (`org-avatars/{orgId}/...`).
+ */
+export const AVATAR_UPLOAD_ALLOWED_CONTENT_TYPES = ["image/png", "image/jpeg", "image/webp"] as const;
+
+/**
+ * @deprecated Use `allowedContentTypesForPathname(pathname)` so each prefix gets its own
+ * allowlist. Kept as the union of both lists for callers that have not migrated yet.
  */
 export const CLIENT_UPLOAD_ALLOWED_CONTENT_TYPES = [
-  "image/*",
-  "application/pdf",
+  ...DOC_UPLOAD_ALLOWED_CONTENT_TYPES,
+  ...AVATAR_UPLOAD_ALLOWED_CONTENT_TYPES,
 ] as const;
+
+/**
+ * The one image the browser may write under `docs/`: the client-rendered first-page preview
+ * (`docs/{docId}/uploads/{uploadId}/preview.png`, see `buildDocPreviewPngPathname`).
+ */
+const DOC_PREVIEW_PNG_SUFFIX = "/preview.png";
+export const DOC_PREVIEW_ALLOWED_CONTENT_TYPES = ["image/png"] as const;
+
+/**
+ * Return the content-type allowlist for a client upload `pathname`, chosen by its prefix:
+ * `docs/` gets the PDF-only document list (except the `preview.png` artifact, which is PNG-only)
+ * and `org-avatars/` gets the image list.
+ *
+ * Unknown prefixes get an empty list (deny everything); `assertAllowedTestPathname` rejects
+ * those earlier, so this is only a belt-and-braces default.
+ */
+export function allowedContentTypesForPathname(pathname: string): string[] {
+  const p = (pathname ?? "").replace(/^\/+/, "");
+  if (p.startsWith(DOC_BLOB_PREFIX)) {
+    if (p.endsWith(DOC_PREVIEW_PNG_SUFFIX)) return [...DOC_PREVIEW_ALLOWED_CONTENT_TYPES];
+    return [...DOC_UPLOAD_ALLOWED_CONTENT_TYPES];
+  }
+  if (p.startsWith(ORG_AVATAR_PREFIX)) return [...AVATAR_UPLOAD_ALLOWED_CONTENT_TYPES];
+  return [];
+}
+
+/** User-facing message returned (with `UNSUPPORTED_FILE_TYPE_CODE`) when a non-PDF document is submitted. */
+export const PDF_ONLY_ERROR_MESSAGE = "Only PDF files are supported right now.";
+/** Machine-readable error code paired with `PDF_ONLY_ERROR_MESSAGE` (HTTP 415). */
+export const UNSUPPORTED_FILE_TYPE_CODE = "UNSUPPORTED_FILE_TYPE";
+
+/**
+ * Return whether upload metadata describes a PDF.
+ *
+ * Accepts when the content type is `application/pdf` or the file name ends in `.pdf`
+ * (browsers sometimes report an empty type for PDFs), and rejects when either signal is
+ * present and explicitly says otherwise (e.g. `image/png`, `photo.jpg`).
+ */
+export function isPdfUploadMeta(params: { contentType?: string | null; fileName?: string | null }): boolean {
+  const ct = ((params.contentType ?? "").trim().toLowerCase().split(";")[0] ?? "").trim();
+  const name = (params.fileName ?? "").trim().toLowerCase();
+  if (ct && ct !== "application/pdf") return false;
+  if (name && !name.endsWith(".pdf")) return false;
+  return ct === "application/pdf" || name.endsWith(".pdf");
+}
 
 /**
  * Max file size for client uploads (client uploads can support large files,

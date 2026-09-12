@@ -1,7 +1,7 @@
 "use client";
 
 import { LockClosedIcon, LockOpenIcon, SparklesIcon, Square2StackIcon } from "@heroicons/react/24/outline";
-import { useState, type RefObject } from "react";
+import { useState, type RefObject, type ReactNode } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { fetchJson } from "@/lib/http/fetchJson";
@@ -26,6 +26,8 @@ type Props = {
   onSharePasswordEnabledChange: (enabled: boolean) => void;
   aiOutput?: unknown | null;
   uploadError?: unknown | null;
+  /** Optional quick-stats card rendered between the share controls and the Snapshot. */
+  quickStats?: ReactNode;
 };
 /**
  * Render the DocSharePanel UI (uses local state).
@@ -51,6 +53,7 @@ export default function DocSharePanel({
   onSharePasswordEnabledChange,
   aiOutput,
   uploadError,
+  quickStats,
 }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
 
@@ -340,6 +343,9 @@ export default function DocSharePanel({
           {copyDone ? "Copied to clipboard" : ""}
         </div>
       </div>
+
+      {/* 1b) Quick stats (owner engagement glimpse) */}
+      {quickStats ? <div className="mt-4">{quickStats}</div> : null}
 
       {/* 2) Snapshot */}
       {hasSnapshot ? (

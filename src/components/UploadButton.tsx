@@ -1,15 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { isPdfFile, PDF_ONLY_MESSAGE } from "@/lib/client/docUploadPipeline";
 
 type Props = {
   label?: string;
   onFileSelected?: (file: File) => void;
   /**
+   * Called when the picked/dropped file is rejected (not a PDF). The button already shows the
+   * message inline; use this to mirror it elsewhere (e.g. a page-level error slot).
+   */
+  onFileRejected?: (message: string) => void;
+  /**
    * Called right before opening the OS file picker.
    * Return `false` to prevent the picker from opening (used for gating/upsell flows).
    */
   onBeforeOpen?: () => void | boolean;
+  /**
+   * Documents are PDF-only for now; `"pdfOrImage"` is kept for source compatibility but behaves
+   * exactly like `"pdf"`.
+   */
   accept?: "pdf" | "pdfOrImage";
   variant?: "pill" | "link" | "cta";
   className?: string;
@@ -17,20 +27,11 @@ type Props = {
   buttonId?: string;
   disabled?: boolean;
 };
-/**
- * Return whether accepted file.
- */
 
-
-function isAcceptedFile(file: File, accept: Props["accept"]) {
-  if (accept === "pdf") {
-    // Some platforms/drivers may provide an empty/unknown MIME type, so fall back
-    // to filename extension while still enforcing "PDF only".
-    const name = (file.name ?? "").toLowerCase();
-    return file.type === "application/pdf" || name.endsWith(".pdf");
-  }
-  return file.type === "application/pdf" || file.type.startsWith("image/");
-}
+/** `accept` attribute for every document picker (MIME + extension for platforms that report neither well). */
+const PDF_ACCEPT = "application/pdf,.pdf";
+/** How long the inline "PDF only" hint stays visible. */
+const REJECT_HINT_MS = 5_000;
 /**
  * Render the UploadButton UI (uses effects).
  */
@@ -39,6 +40,7 @@ function isAcceptedFile(file: File, accept: Props["accept"]) {
 export default function UploadButton({
   label = "Upload",
   onFileSelected,
+  onFileRejected,
   onBeforeOpen,
   accept = "pdf",
   variant = "pill",
@@ -49,17 +51,32 @@ export default function UploadButton({
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const openedViaPointerDownRef = useRef(false);
+  const [rejectMessage, setRejectMessage] = useState<string | null>(null);
+  const rejectTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (rejectTimerRef.current) window.clearTimeout(rejectTimerRef.current);
+    };
+  }, []);
 
   /**
-   * Validate a file and forward it to the consumer callback.
+   * Validate a file and forward it to the consumer callback; non-PDFs show a short inline hint.
    */
   const handleFile = useCallback(
     (file: File | null) => {
       if (!file) return;
-      if (!isAcceptedFile(file, accept)) return;
+      if (!isPdfFile(file)) {
+        setRejectMessage(PDF_ONLY_MESSAGE);
+        onFileRejected?.(PDF_ONLY_MESSAGE);
+        if (rejectTimerRef.current) window.clearTimeout(rejectTimerRef.current);
+        rejectTimerRef.current = window.setTimeout(() => setRejectMessage(null), REJECT_HINT_MS);
+        return;
+      }
+      setRejectMessage(null);
       onFileSelected?.(file);
     },
-    [accept, onFileSelected],
+    [onFileRejected, onFileSelected],
   );
 /**
  * Open Picker (uses onBeforeOpen, click).
@@ -121,12 +138,15 @@ export default function UploadButton({
     };
   }, [handleFile]);
 
+  // `accept` is intentionally unused beyond the prop type: documents are PDF-only.
+  void accept;
+
   return (
-    <div className="inline-flex items-center">
+    <div className="inline-flex flex-col items-center">
       <input
         ref={inputRef}
         type="file"
-        accept={accept === "pdf" ? "application/pdf,.pdf" : "application/pdf,image/*"}
+        accept={PDF_ACCEPT}
         className="sr-only"
         onChange={(e) => {
           const file = e.target.files?.[0] ?? null;
@@ -168,6 +188,11 @@ export default function UploadButton({
         {icon ? icon : variant === "link" ? <AddNewIcon /> : null}
         {label}
       </button>
+      {rejectMessage ? (
+        <div role="alert" className="mt-2 text-xs font-medium text-red-600">
+          {rejectMessage}
+        </div>
+      ) : null}
     </div>
   );
 }

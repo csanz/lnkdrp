@@ -14,9 +14,27 @@ import { debugEnabled, debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** Share-link settings whose changes are recorded as `share.updated` activity. */
+const SHARE_ACTIVITY_FIELDS = ["shareEnabled", "shareAllowPdfDownload", "shareAllowRevisionHistory"] as const;
+
+/**
+ * Normalize a doc's share settings to booleans (legacy docs default `shareEnabled` to true).
+ *
+ * Exists so the activity diff below compares effective values, not raw/missing fields.
+ */
+function shareSettingsOf(doc: Record<string, unknown> | null | undefined): Record<string, boolean> {
+  const d = doc ?? {};
+  return {
+    shareEnabled: d.shareEnabled !== false,
+    shareAllowPdfDownload: Boolean(d.shareAllowPdfDownload),
+    shareAllowRevisionHistory: Boolean(d.shareAllowRevisionHistory),
+  };
+}
 
 /**
  * Validates that a string is a Mongo ObjectId.
@@ -699,11 +717,23 @@ export async function PATCH(
       typeof body.addProjectId === "string" ||
       typeof body.removeProjectId === "string";
 
-    const before = wantsProjectChange
-      ? await DocModel.findOne({ ...docMatch })
-          .select({ _id: 1, primaryProjectId: 1, projectId: 1, projectIds: 1 })
-          .lean()
-      : null;
+    // Share-setting changes are recorded as activity; we need the prior values to diff against.
+    const wantsShareChange = SHARE_ACTIVITY_FIELDS.some((k) => typeof body[k] === "boolean");
+
+    const before =
+      wantsProjectChange || wantsShareChange
+        ? await DocModel.findOne({ ...docMatch })
+            .select({
+              _id: 1,
+              primaryProjectId: 1,
+              projectId: 1,
+              projectIds: 1,
+              shareEnabled: 1,
+              shareAllowPdfDownload: 1,
+              shareAllowRevisionHistory: 1,
+            })
+            .lean()
+        : null;
 
     if (wantsProjectChange && !before) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -809,6 +839,27 @@ export async function PATCH(
       { new: true },
     ).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    if (wantsShareChange) {
+      const prev = shareSettingsOf(before as Record<string, unknown> | null);
+      const next = shareSettingsOf(doc as unknown as Record<string, unknown>);
+      const changed: Record<string, boolean> = {};
+      for (const k of SHARE_ACTIVITY_FIELDS) {
+        if (prev[k] !== next[k]) changed[k] = next[k]!;
+      }
+      if (Object.keys(changed).length) {
+        void recordActivity({
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "share.updated",
+          docId: doc._id,
+          title: doc.title ?? null,
+          meta: { changed },
+          request,
+        });
+      }
+    }
 
     // If we removed the primary, pick a new primary from remaining membership (best-effort).
     if (removedPrimary) {
@@ -939,13 +990,27 @@ export async function DELETE(
     const docObjectId = new Types.ObjectId(docId);
     const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
 
-    const res = await DocModel.updateOne(
+    // `findOneAndUpdate` (returning the pre-update doc) so the activity row gets the title without a second query.
+    const deleted = await DocModel.findOneAndUpdate(
       { ...docMatch },
       {
         $set: { isDeleted: true, deletedDate: new Date() },
       },
-    );
-    if (!res.matchedCount) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      { new: false },
+    )
+      .select({ _id: 1, title: 1 })
+      .lean();
+    if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    void recordActivity({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      actorKind: actor.kind,
+      type: "doc.deleted",
+      docId: docObjectId,
+      title: (deleted as { title?: unknown }).title as string | null | undefined,
+      request,
+    });
 
     return applyTempUserHeaders(NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } }), actor);
   } catch (err) {

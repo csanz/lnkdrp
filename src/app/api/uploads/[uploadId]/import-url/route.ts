@@ -14,6 +14,8 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { safeFetchUrl, SafeFetchError } from "@/lib/http/safeFetchUrl";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { PDF_ONLY_ERROR_MESSAGE, UNSUPPORTED_FILE_TYPE_CODE } from "@/lib/blob/serverClientUploadRoute";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -75,6 +77,26 @@ function sanitizeFileName(name: string): string {
     .replace(/\s+/g, " ");
   const base = cleaned || "document.pdf";
   return base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
+}
+
+/**
+ * Return whether the upstream `Content-Type` is acceptable for a PDF import.
+ *
+ * Accepts `application/pdf` (and the legacy `application/x-pdf`), `application/octet-stream` or a
+ * missing type when the URL/filename ends in `.pdf`, and the Google Drive / lnkdrp share-proxy
+ * flows that already produce PDFs. The magic-byte check (`looksLikePdfBytes`) is the real gate;
+ * this only stops obviously-wrong responses (HTML error pages, images) earlier.
+ */
+function isAcceptablePdfContentType(params: {
+  contentType: string;
+  nameLooksPdf: boolean;
+  trustedPdfFlow: boolean;
+}): boolean {
+  const base = (params.contentType.split(";")[0] ?? "").trim().toLowerCase();
+  if (base === "application/pdf" || base === "application/x-pdf") return true;
+  if (params.trustedPdfFlow) return true;
+  if ((base === "application/octet-stream" || base === "") && params.nameLooksPdf) return true;
+  return false;
 }
 
 function looksLikePdfBytes(buf: Buffer): boolean {
@@ -357,15 +379,24 @@ export async function POST(
     const headerName = fileNameFromContentDisposition(contentDisposition);
     const fileName = sanitizeFileName(headerName || safeFileNameFromUrl(parsed.toString()));
 
-    // IMPORTANT: filename/path suffix is not a reliable signal (many "pdf" links return HTML/XML errors).
-    // Require real PDF bytes.
-    const looksLikePdf = looksLikePdfBytes(buf) || contentType.includes("application/pdf");
-    if (!looksLikePdf) {
+    // Documents are PDF-only: the upstream content-type must be plausible for a PDF *and* the body
+    // must carry the "%PDF-" signature. Filename/path suffix alone is not trusted (many "pdf" links
+    // return HTML/XML error pages). Nothing is written to Blob unless both checks pass.
+    const nameLooksPdf = /\.pdf$/i.test(headerName ?? "") || /\.pdf$/i.test(parsed.pathname);
+    const contentTypeOk = isAcceptablePdfContentType({
+      contentType,
+      nameLooksPdf,
+      trustedPdfFlow: Boolean(driveFileId) || Boolean(internal),
+    });
+    if (!contentTypeOk || !looksLikePdfBytes(buf)) {
+      debugLog(1, "[import-url] rejected non-PDF response", {
+        uploadId,
+        contentType: contentType || "unknown",
+        contentTypeOk,
+        pdfSignature: looksLikePdfBytes(buf),
+      });
       return applyTempUserHeaders(
-        NextResponse.json(
-          { error: `URL did not return a valid PDF (content-type: ${contentType || "unknown"})` },
-          { status: 400 },
-        ),
+        NextResponse.json({ error: PDF_ONLY_ERROR_MESSAGE, code: UNSUPPORTED_FILE_TYPE_CODE }, { status: 415 }),
         actor,
       );
     }
@@ -392,6 +423,30 @@ export async function POST(
       blobPathname: blob.pathname,
       metadata: { size: sizeBytes },
       error: null,
+    });
+
+    // Activity (best-effort, after the primary write).
+    const activityDoc = await DocModel.findById(docId).select({ orgId: 1, title: 1 }).lean().catch(() => null);
+    const activityDocOrgId =
+      activityDoc && (activityDoc as { orgId?: unknown }).orgId ? String((activityDoc as { orgId?: unknown }).orgId) : null;
+    void recordActivity({
+      orgId: activityDocOrgId ?? actor.orgId,
+      userId: actor.userId,
+      actorKind: actor.kind,
+      type: "doc.imported_url",
+      docId,
+      uploadId,
+      title:
+        activityDoc && typeof (activityDoc as { title?: unknown }).title === "string"
+          ? (activityDoc as { title: string }).title
+          : null,
+      meta: {
+        sourceHost: parsed.hostname,
+        fileName,
+        sizeBytes,
+        version: Number.isFinite(upload.version) ? Number(upload.version) : null,
+      },
+      request,
     });
 
     return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);

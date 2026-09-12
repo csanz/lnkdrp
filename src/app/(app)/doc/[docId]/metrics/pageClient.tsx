@@ -656,7 +656,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-        <div className="mx-auto w-full max-w-[1400px] px-6 py-6">
+        <div className="w-full px-6 py-6">
           <div className="mt-1 grid gap-5">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">

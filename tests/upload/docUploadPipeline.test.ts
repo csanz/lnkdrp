@@ -85,6 +85,31 @@ describe("docUploadPipeline.startBlobUploadAndProcess", () => {
     expect(notifyDocsChangedMock).toHaveBeenCalledTimes(1);
   });
 
+  it("apiCreateUpload fails fast on non-PDF metadata without creating an Upload", async () => {
+    const { apiCreateUpload } = await import("../../src/lib/client/docUploadPipeline");
+
+    await expect(
+      apiCreateUpload({ docId: "doc1", originalFileName: "photo.png", contentType: "image/png", sizeBytes: 3 }),
+    ).rejects.toThrow(/Only PDF files are supported right now\./);
+    expect(fetchJsonMock).not.toHaveBeenCalled();
+    expect(notifyDocsChangedMock).not.toHaveBeenCalled();
+  });
+
+  it("startBlobUploadAndProcess rejects non-PDF files before touching Blob", async () => {
+    const onFailure = vi.fn();
+    const { startBlobUploadAndProcess } = await import("../../src/lib/client/docUploadPipeline");
+
+    const file = new File([new Uint8Array([1])], "photo.png", { type: "image/png" });
+    startBlobUploadAndProcess({ docId: "doc1", uploadId: "u1", file, onFailure });
+
+    await flushAsync();
+
+    expect(blobUploadMock).not.toHaveBeenCalled();
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(String(onFailure.mock.calls[0]?.[0] ?? "")).toMatch(/Only PDF files are supported right now\./);
+    expect(notifyDocsChangedMock).toHaveBeenCalledTimes(1);
+  });
+
   it("failure path: if blob upload fails, it calls onFailure and still notifies docs changed", async () => {
     blobUploadMock.mockRejectedValueOnce(new Error("blob down"));
 

@@ -12,6 +12,7 @@ import { DocModel, allocateDocUploadVersion } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -50,7 +51,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ code: stri
       replaceUploadToken: replaceToken,
       isDeleted: { $ne: true },
     })
-      .select({ _id: 1, userId: 1, orgId: 1 })
+      .select({ _id: 1, userId: 1, orgId: 1, title: 1 })
       .lean();
 
     if (!doc || !doc._id || !(doc as { userId?: unknown }).userId) {
@@ -91,6 +92,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ code: stri
       status: "preparing",
       currentUploadId: uploadId,
       uploadId, // backward compat
+    });
+
+    void recordActivity({
+      orgId: effectiveOrgId,
+      userId: null,
+      actorKind: "secret",
+      type: "doc.replaced",
+      docId,
+      uploadId,
+      title: (doc as { title?: unknown }).title as string | null | undefined,
+      meta: { version, fileName: originalFileName },
+      request,
     });
 
     return NextResponse.json(

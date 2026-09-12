@@ -73,7 +73,16 @@ export async function GET(request: Request) {
       const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
       // Validate membership once; also yields role for "Spend" permission.
-      const membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean();
+      let membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean();
+      if (!membership) {
+        // Stale active-org cookie / JWT claim (workspace deleted, membership revoked, or a dev-bypass
+        // workspace left in the cookie from before sign-in): re-resolve with membership validation.
+        const actor = await resolveActorForStats(request);
+        if (actor.kind === "user" && Types.ObjectId.isValid(actor.orgId) && String(actor.orgId) !== String(orgId)) {
+          orgId = new Types.ObjectId(actor.orgId);
+          membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean();
+        }
+      }
       if (!membership) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       const canViewSpend = includeSpend && (role === "owner" || role === "admin");

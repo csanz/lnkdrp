@@ -31,6 +31,30 @@ export type CreateUploadInput = {
   sizeBytes: number;
 };
 
+/** User-facing message shown when a non-PDF file is picked (documents are PDF-only for now). */
+export const PDF_ONLY_MESSAGE = "Only PDF files are supported right now.";
+
+/**
+ * Return whether a picked `File` is a PDF.
+ *
+ * Accepts `application/pdf` or a `.pdf` extension (some platforms report an empty MIME type),
+ * and rejects when either signal explicitly says otherwise.
+ */
+export function isPdfFile(file: Pick<File, "name" | "type">): boolean {
+  return isPdfMeta({ contentType: file.type, fileName: file.name });
+}
+
+/**
+ * Same rule as `isPdfFile`, for callers that only have the name/type strings.
+ */
+export function isPdfMeta(params: { contentType?: string | null; fileName?: string | null }): boolean {
+  const ct = ((params.contentType ?? "").trim().toLowerCase().split(";")[0] ?? "").trim();
+  const name = (params.fileName ?? "").trim().toLowerCase();
+  if (ct && ct !== "application/pdf") return false;
+  if (name && !name.endsWith(".pdf")) return false;
+  return ct === "application/pdf" || name.endsWith(".pdf");
+}
+
 /**
  * Best-effort client-side PDF thumbnail renderer (first page → PNG).
  *
@@ -108,11 +132,16 @@ export async function apiCreateDoc(params: { title: string }): Promise<string> {
  *
  * Exists to allocate a server-side Upload id before uploading bytes to Blob (so paths are stable).
  * Side effects: broadcasts `docs changed` since doc status/currentUpload pointers often change.
- * Errors: throws on non-2xx responses from the API.
+ * Errors: throws `PDF_ONLY_MESSAGE` before any request when the metadata is not a PDF (documents are
+ * PDF-only); otherwise throws on non-2xx responses from the API.
  */
 export async function apiCreateUpload(
   input: CreateUploadInput,
 ): Promise<{ id: string; version: number | null }> {
+  // Fail fast: never allocate an Upload (and flip the doc to `preparing`) for a non-PDF.
+  if (!isPdfMeta({ contentType: input.contentType, fileName: input.originalFileName })) {
+    throw new Error(PDF_ONLY_MESSAGE);
+  }
   const json = await fetchJson<CreateUploadResponse>("/api/uploads", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -146,6 +175,7 @@ export function startBlobUploadAndProcess(params: {
 
   void (async () => {
     try {
+      if (!isPdfFile(file)) throw new Error(PDF_ONLY_MESSAGE);
       const pathname = buildDocBlobPathname({
         docId,
         uploadId,

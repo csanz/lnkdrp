@@ -32,15 +32,25 @@ type UploadStatusResponse = {
   doc: { id: string | null; status: string | null };
 };
 
-function isAcceptedPdfOrImage(file: File) {
+/** Documents are PDF-only for now; shown inline when a non-PDF is picked. */
+const PDF_ONLY_MESSAGE = "Only PDF files are supported right now.";
+/** `accept` for the document picker (MIME + extension, since some platforms report an empty type). */
+const PDF_ACCEPT = "application/pdf,.pdf";
+
+/**
+ * Return whether a picked file is a PDF (by MIME type, or `.pdf` extension when the type is empty).
+ */
+function isPdfFile(file: File) {
   const t = (file.type || "").toLowerCase();
-  return t === "application/pdf" || t.startsWith("image/");
+  const name = (file.name || "").toLowerCase();
+  if (t && t !== "application/pdf") return false;
+  if (name && !name.endsWith(".pdf")) return false;
+  return t === "application/pdf" || name.endsWith(".pdf");
 }
 
 async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null> {
   try {
-    const ct = (file.type || "").toLowerCase();
-    if (ct !== "application/pdf") return null;
+    if (!isPdfFile(file)) return null;
 
     const pdfBytes = new Uint8Array(await file.arrayBuffer());
 
@@ -117,7 +127,7 @@ export default function DocUpdatePageClient(props: { code: string }) {
   >({ step: "idle" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const accept = useMemo(() => "application/pdf,image/*", []);
+  const accept = PDF_ACCEPT;
   const statusLabel = useMemo(() => {
     return status.step === "starting"
       ? "Starting upload…"
@@ -177,7 +187,7 @@ export default function DocUpdatePageClient(props: { code: string }) {
     try {
       if (!code) throw new Error("Invalid link.");
       if (!file) throw new Error("Choose a file to upload.");
-      if (!isAcceptedPdfOrImage(file)) throw new Error("Please upload a PDF or an image.");
+      if (!isPdfFile(file)) throw new Error(PDF_ONLY_MESSAGE);
 
       setStatus({ step: "starting" });
       const init = await fetchJsonDirect<StartReplaceUploadResponse>(`/api/doc/update/${encodeURIComponent(code)}/uploads`, {
@@ -207,7 +217,7 @@ export default function DocUpdatePageClient(props: { code: string }) {
       const blob = await blobUpload(pathname, file, {
         access: "public",
         handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
-        contentType: file.type || undefined,
+        contentType: file.type || "application/pdf",
         headers: uploadAuthHeaders,
       });
 
@@ -216,23 +226,17 @@ export default function DocUpdatePageClient(props: { code: string }) {
       // even if server-side rendering fails (server will still keep the old preview on failures).
       let previewImageUrl: string | null = null;
       try {
-        const isImage = (file.type || "").toLowerCase().startsWith("image/");
-        if (isImage) {
-          // The uploaded blob is already an image; use it directly as the preview.
-          previewImageUrl = blob.url;
-        } else {
-          const pngBlob = await renderPdfFirstPagePngBestEffort(file);
-          if (pngBlob) {
-            const previewPathname = buildDocPreviewPngPathname({ docId, uploadId });
-            const previewFile = new File([pngBlob], "preview.png", { type: "image/png" });
-            const preview = await blobUpload(previewPathname, previewFile, {
-              access: "public",
-              handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
-              contentType: "image/png",
-              headers: uploadAuthHeaders,
-            });
-            previewImageUrl = preview.url;
-          }
+        const pngBlob = await renderPdfFirstPagePngBestEffort(file);
+        if (pngBlob) {
+          const previewPathname = buildDocPreviewPngPathname({ docId, uploadId });
+          const previewFile = new File([pngBlob], "preview.png", { type: "image/png" });
+          const preview = await blobUpload(previewPathname, previewFile, {
+            access: "public",
+            handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
+            contentType: "image/png",
+            headers: uploadAuthHeaders,
+          });
+          previewImageUrl = preview.url;
         }
       } catch {
         // ignore (best-effort)
@@ -361,7 +365,7 @@ export default function DocUpdatePageClient(props: { code: string }) {
         </div>
 
         <div className="mt-8">
-          <label className="block text-sm font-medium text-[var(--fg)]">Upload new version</label>
+          <label className="block text-sm font-medium text-[var(--fg)]">Upload new version (PDF only)</label>
           <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center">
             <input
               ref={fileInputRef}
@@ -370,6 +374,12 @@ export default function DocUpdatePageClient(props: { code: string }) {
               disabled={busy}
               onChange={(e) => {
                 const f = e.target.files?.[0] ?? null;
+                if (f && !isPdfFile(f)) {
+                  // Friendly inline error; keep the previous selection untouched.
+                  setError(PDF_ONLY_MESSAGE);
+                  e.target.value = "";
+                  return;
+                }
                 setFile(f);
                 setDone(false);
                 setError(null);

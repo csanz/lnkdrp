@@ -6,6 +6,7 @@
  */
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
+import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { UserModel } from "@/lib/models/User";
@@ -15,6 +16,8 @@ import { getPublicSiteBase } from "@/lib/urls";
 import { debugLog, debugWarn } from "@/lib/debug";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
+import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -35,6 +38,29 @@ function looksLikeEmail(email: string): boolean {
   // Minimal check: keep this permissive to avoid rejecting legitimate addresses.
   const s = email.trim();
   return s.includes("@") && s.includes(".") && s.length <= 320;
+}
+
+/** Mask an email for the activity feed: first char + domain (`c***@example.com`). */
+function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return "***";
+  return `${email.charAt(0)}***@${email.slice(at + 1)}`;
+}
+
+/**
+ * Best-effort org for a doc's activity row: `doc.orgId`, else the owner's personal org (legacy docs).
+ *
+ * Returns null (activity skipped) when neither can be resolved; never throws.
+ */
+async function resolveDocOrgIdForActivity(doc: { orgId?: unknown; userId?: unknown }): Promise<string | null> {
+  if (doc.orgId) return String(doc.orgId);
+  if (!doc.userId) return null;
+  try {
+    const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(String(doc.userId)) });
+    return String(orgId);
+  } catch {
+    return null;
+  }
 }
 
 export async function POST(request: Request, ctx: { params: Promise<{ shareId: string }> }) {
@@ -59,7 +85,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
     await connectMongo();
     const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
-      .select({ _id: 1, userId: 1, title: 1, shareEnabled: 1, shareAllowPdfDownload: 1 })
+      .select({ _id: 1, userId: 1, orgId: 1, title: 1, shareEnabled: 1, shareAllowPdfDownload: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
     if ((doc as { shareEnabled?: unknown }).shareEnabled === false) {
@@ -121,6 +147,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       // an immediate index rebuild, we set a unique placeholder value up-front and overwrite it on approval.
       claimTokenHash: requestTokenHash,
     });
+
+    // Activity (best-effort): the requester is anonymous, so attribute the row to the doc's org only.
+    const activityOrgId = await resolveDocOrgIdForActivity(doc as { orgId?: unknown; userId?: unknown });
+    if (activityOrgId) {
+      void recordActivity({
+        orgId: activityOrgId,
+        userId: null,
+        actorKind: "secret",
+        type: "download_request.created",
+        docId: docId as Types.ObjectId,
+        title: typeof (doc as { title?: unknown }).title === "string" ? (doc as { title: string }).title : null,
+        meta: { email: maskEmail(email), shareId, requestId: String(created._id) },
+        request,
+      });
+    }
 
     // Best-effort: email the requester (receipt/ack).
     // (Do this only when we create a new request record to avoid spamming on within-window dupes.)

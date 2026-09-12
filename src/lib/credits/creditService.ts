@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
 import { createCreditService } from "@/lib/credits/serviceCore";
 import { createMongooseCreditStore } from "@/lib/credits/mongooseStore";
 import type { ActionType, LedgerStatus, QualityTier } from "@/lib/credits/types";
@@ -29,7 +30,7 @@ async function defaultInitBalanceIfMissing(params: { workspaceId: string }): Pro
   const isPro = isProSubscriptionStatus((sub as any)?.status);
   return {
     // Free "trial" credits are one-time starter credits.
-    trialCreditsRemaining: isPro ? 0 : 50,
+    trialCreditsRemaining: isPro ? 0 : FREE_STARTER_CREDITS,
     subscriptionCreditsRemaining: 0,
     purchasedCreditsRemaining: 0,
     onDemandEnabled: false,

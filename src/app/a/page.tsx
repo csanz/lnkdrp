@@ -111,14 +111,6 @@ export default function AdminHomePage() {
 
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
           <Link
-            href="/a/invitecodes"
-            className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 transition hover:bg-[var(--panel-hover)]"
-          >
-            <div className="text-sm font-semibold text-[var(--fg)]">Invites</div>
-            <div className="mt-1 text-sm text-[var(--muted)]">Approve requests and manage codes.</div>
-          </Link>
-
-          <Link
             href="/a/shareviews"
             className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 transition hover:bg-[var(--panel-hover)]"
           >

@@ -101,6 +101,9 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
 # Testing bypass (development only!)
 API_TEST_BYPASS_AUTH=1
 API_TEST_USER_ID=<mongo-user-id>
+
+# Feature flags
+NEXT_PUBLIC_FEATURE_REQUESTS=1                  # Re-enables the "Requests" item in the app sidebar (hidden by default)
 ```
 
 ---

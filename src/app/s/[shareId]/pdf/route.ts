@@ -1,4 +1,7 @@
 import { NextResponse } from "next/server";
+import { Types } from "mongoose";
+import { recordActivity } from "@/lib/activity/log";
+import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
@@ -118,6 +121,31 @@ function safePdfFilename(input: string | null | undefined): string {
  * - If password-protected, requires the share auth cookie.
  * - If `?download=1`, enforces `doc.shareAllowPdfDownload` and sets attachment headers.
  */
+/** Activity feed: "downloaded" event for the owner's workspace (best-effort, never blocks the download). */
+async function recordDownloadActivity(doc: Record<string, unknown>, shareId: string, request: Request) {
+  try {
+    const ownerUserId = doc.userId ? new Types.ObjectId(String(doc.userId)) : null;
+    const orgId = doc.orgId
+      ? String(doc.orgId)
+      : ownerUserId
+        ? String((await ensurePersonalOrgForUserId({ userId: ownerUserId })).orgId)
+        : null;
+    if (!orgId) return;
+    await recordActivity({
+      orgId,
+      userId: null,
+      actorKind: "viewer",
+      type: "share.downloaded",
+      docId: String(doc._id),
+      title: typeof doc.title === "string" ? doc.title : null,
+      meta: { shareId },
+      request,
+    });
+  } catch {
+    // best-effort
+  }
+}
+
 export async function GET(request: Request, ctx: { params: Promise<{ shareId: string }> }) {
   const { shareId } = await ctx.params;
   if (!shareId) return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
@@ -131,6 +159,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
     .select({
       _id: 1,
+      userId: 1,
+      orgId: 1,
       blobUrl: 1,
       title: 1,
       fileName: 1,
@@ -190,6 +220,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         },
         { upsert: true },
       );
+      void recordDownloadActivity(doc as Record<string, unknown>, shareId, request);
     } catch (e) {
       // Ignore tracking failures (never block download).
       // If a duplicate key race occurs, retry once without upsert.

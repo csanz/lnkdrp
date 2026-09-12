@@ -1,7 +1,7 @@
 /**
  * Login page for `/login`.
  *
- * Provides a direct NextAuth Google sign-in entrypoint (invite-gated by `/api/auth/*`).
+ * Provides a direct NextAuth Google sign-in entrypoint.
  */
 "use client";
 
@@ -13,10 +13,12 @@ import { useAuthEnabled } from "@/app/providers";
 const AUTH_TRANSITION_STORAGE_KEY = "ld_auth_transition";
 const AUTH_TRANSITION_COOKIE_NAME = "ld_auth_transition";
 
+/**
+ * Render the login page (single "Continue with Google" entrypoint).
+ */
 export default function LoginPage() {
   const authEnabled = useAuthEnabled();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Ensure the "auth transition" interstitial can't trap the user if they navigated here.
@@ -34,7 +36,7 @@ export default function LoginPage() {
 
   const helperText = useMemo(() => {
     if (!authEnabled) return "Login isn’t available (auth is disabled).";
-    return "Continue to LinkDrop with Google. (Access may require an invite.)";
+    return "Continue to LinkDrop with Google.";
   }, [authEnabled]);
 
   return (
@@ -43,8 +45,6 @@ export default function LoginPage() {
         <h1 className="text-xl font-semibold tracking-tight">Log in</h1>
         <p className="mt-3 text-sm leading-6 text-white/60">{helperText}</p>
 
-        {error ? <div className="mt-4 text-sm font-medium text-red-300">{error}</div> : null}
-
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <button
             type="button"
@@ -52,35 +52,9 @@ export default function LoginPage() {
             disabled={!authEnabled || busy}
             aria-busy={busy}
             onClick={() => {
-              if (!authEnabled) return;
-              if (busy) return;
+              if (!authEnabled || busy) return;
               setBusy(true);
-              setError(null);
-              void (async () => {
-                try {
-                  // Use redirect:false so we can surface invite gating errors (403 from /api/auth/signin).
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  const res = await signIn(
-                    "google",
-                    { callbackUrl: "/", redirect: false },
-                    { prompt: "select_account" } as any,
-                  );
-                  if (!res) {
-                    setError("Couldn’t start sign-in. Please try again.");
-                    return;
-                  }
-                  if (res.error) {
-                    setError(res.error === "Invite required" ? "Invite required to sign in." : res.error);
-                    return;
-                  }
-                  if (res.url) window.location.assign(res.url);
-                  else setError("Couldn’t start sign-in. Please try again.");
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : "Couldn’t start sign-in. Please try again.");
-                } finally {
-                  setBusy(false);
-                }
-              })();
+              void signIn("google", { callbackUrl: "/" });
             }}
           >
             {busy ? "Opening Google…" : "Continue with Google"}
@@ -97,8 +71,3 @@ export default function LoginPage() {
     </main>
   );
 }
-
-
-
-
-

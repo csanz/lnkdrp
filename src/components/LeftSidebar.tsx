@@ -9,6 +9,8 @@ import {
   ClipboardDocumentCheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
+  ClockIcon,
+  DocumentIcon,
   DocumentPlusIcon,
   EllipsisHorizontalIcon,
   FolderIcon,
@@ -85,6 +87,14 @@ type StarredDetails = {
   status: string | null;
 };
 type StarredDetailsById = Record<string, StarredDetails>;
+
+/**
+ * Feature flag: request repositories ("Request" action + "Received" section).
+ *
+ * Hidden by default; set `NEXT_PUBLIC_FEATURE_REQUESTS=1` to show the nav entries. The
+ * `/requests` and `/request/:token` routes keep working regardless (existing inboxes stay reachable).
+ */
+const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
 
 const STARRED_META_CACHE_KEY_BASE = "lnkdrp-starred-meta-cache-v2";
 const STARRED_META_CACHE_KEY_LEGACY = "lnkdrp.starredMetaCache.v1";
@@ -1615,14 +1625,14 @@ export default function LeftSidebar({
   }, [deleteDocOpen, deleteDocTarget?.id]);
 
   return (
-    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[280px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
+    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
         <div className="flex min-w-0 items-center gap-2 px-4 pb-5 pt-5">
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
             <Image src={logoSrc} alt="LinkDrop" width={28} height={28} className="block" />
           </Link>
           <ActiveWorkspacePill
-            maxWidthClassName="max-w-[240px]"
+            maxWidthClassName="max-w-[272px]"
             textClassName="text-[13px]"
             // On doc pages, avoid extra network work competing with the viewer/history UI.
             disableNetwork={isDocRoute}
@@ -1635,7 +1645,7 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
                 navLocked ? "cursor-not-allowed opacity-50" : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -1656,7 +1666,7 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group relative w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group relative w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
                 navLocked ? "cursor-not-allowed opacity-50" : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
                 isAddNewDropActive ? "bg-[var(--sidebar-hover)] text-[var(--fg)]" : "",
               ].join(" ")}
@@ -1712,36 +1722,63 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
-                navLocked ? "cursor-not-allowed opacity-50" : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                navLocked
+                  ? "cursor-not-allowed opacity-50"
+                  : pathname === "/activity"
+                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
                 if (navLocked) return;
-                setShowRequestModal(true);
-                setRequestError(null);
-                setCreatedRequestUploadUrl(null);
-                setCreatedRequestProjectId(null);
+                router.push("/activity");
               }}
-              aria-label="Request"
-              title={navLocked ? "Disabled while uploading" : "Request"}
+              aria-label="Activity"
+              aria-current={pathname === "/activity" ? "page" : undefined}
+              title={navLocked ? "Disabled while uploading" : "Activity"}
             >
               <div className="flex items-center gap-2">
-                <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
-                <span>Request</span>
+                <ClockIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
+                <span>Activity</span>
               </div>
             </button>
+
+            {FEATURE_REQUESTS_ENABLED ? (
+              <button
+                type="button"
+                disabled={navLocked}
+                className={[
+                  "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                  navLocked ? "cursor-not-allowed opacity-50" : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
+                ].join(" ")}
+                onClick={() => {
+                  if (navLocked) return;
+                  setShowRequestModal(true);
+                  setRequestError(null);
+                  setCreatedRequestUploadUrl(null);
+                  setCreatedRequestProjectId(null);
+                }}
+                aria-label="Request"
+                title={navLocked ? "Disabled while uploading" : "Request"}
+              >
+                <div className="flex items-center gap-2">
+                  <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
+                  <span>Request</span>
+                </div>
+              </button>
+            ) : null}
           </div>
         </div>
 
         <nav
           // Force a stable scrollbar presence to avoid horizontal layout shift when sections collapse/expand.
           // (Some browsers ignore `scrollbar-gutter`, so `overflow-y-scroll` is the reliable backstop.)
-          className="mt-2 flex-1 overflow-y-scroll overflow-x-hidden pl-3 pr-12 pb-4"
+          className="mt-1 flex-1 overflow-y-scroll overflow-x-hidden border-t border-[var(--border)] pl-3 pr-12 pb-4 pt-4"
           style={{ scrollbarGutter: "stable" }}
         >
-          <div className="grid gap-3">
+          <div className="grid gap-4">
             <section>
-              <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[13px] font-medium leading-5 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]">
+              <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="inline-flex h-6 items-center gap-1.5 rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -1750,7 +1787,7 @@ export default function LeftSidebar({
                     setStarredCollapsed((v) => !v);
                   }}
                 >
-                  <StarIcon className="h-4 w-4 text-amber-400" filled />
+                  <StarIcon className="h-3.5 w-3.5 text-amber-400" filled />
                   <span>Starred</span>
                 </button>
                 <IconButton
@@ -1759,7 +1796,7 @@ export default function LeftSidebar({
                   size="sm"
                   className={[
                     // Keep inline next to the title (avoids overlay scrollbar issues).
-                    "h-6 w-6 rounded-md p-0 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]",
+                    "h-6 w-6 rounded-md p-0 text-[var(--muted-2)] hover:text-[var(--fg)]",
                     "opacity-100",
                   ].join(" ")}
                   onClick={() => {
@@ -1773,7 +1810,7 @@ export default function LeftSidebar({
 
               {(starredCollapsedLoaded ? starredCollapsed : true) ? (
                 !starredValid.length ? (
-                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">
+                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">
                     {starredSyncing ? "Loading starred…" : "No starred docs yet."}
                   </div>
                 ) : (
@@ -1796,7 +1833,7 @@ export default function LeftSidebar({
                   </div>
                 )
               ) : !starredForSidebar.length ? (
-                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">
+                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">
                   {starredSyncing ? "Loading starred…" : "No starred docs yet."}
                 </div>
               ) : (
@@ -1805,7 +1842,7 @@ export default function LeftSidebar({
                     const href = `/doc/${d.id}`;
                     const details = starredDetailsById[d.id] ?? null;
                     const sidebarMeta = sidebarDocMetaById.get(d.id) ?? null;
-                    const title = truncateEnd(d.title, 32);
+                    const title = truncateEnd(d.title, 36);
                     return (
                       <li key={d.id}>
                         <Link
@@ -1814,13 +1851,13 @@ export default function LeftSidebar({
                             // Expand highlight into the sidebar's right padding so left/right gutters match.
                             // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
-                            "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px]",
-                            activeDocId === d.id ? "bg-[var(--sidebar-hover)]" : "hover:bg-[var(--sidebar-hover)]",
+                            "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
+                            activeDocId === d.id ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                         >
-                          <div className="flex min-w-0 items-center gap-1.5">
+                          <div className="flex min-w-0 items-center gap-2">
                             <StarIcon className="h-3.5 w-3.5 shrink-0 text-amber-400 opacity-70" />
-                            <span className="block min-w-0 max-w-[188px] flex-1 truncate font-medium text-[var(--fg)]">
+                            <span className="block min-w-0 max-w-[220px] flex-1 truncate text-[var(--fg)]">
                               {title}
                             </span>
                           </div>
@@ -1851,8 +1888,10 @@ export default function LeftSidebar({
               )}
             </section>
 
+            {/* Received (request inboxes): hidden behind the requests flag unless this workspace already has inboxes. */}
+            {FEATURE_REQUESTS_ENABLED || requests.items.length > 0 ? (
             <section>
-              <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[13px] font-medium leading-5 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]">
+              <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="inline-flex h-6 items-center gap-1.5 rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -1869,7 +1908,7 @@ export default function LeftSidebar({
                   size="sm"
                   className={[
                     // Keep inline next to the title (avoids overlay scrollbar issues).
-                    "h-6 w-6 rounded-md p-0 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]",
+                    "h-6 w-6 rounded-md p-0 text-[var(--muted-2)] hover:text-[var(--fg)]",
                     "opacity-100",
                   ].join(" ")}
                   onClick={() => {
@@ -1883,9 +1922,9 @@ export default function LeftSidebar({
 
               {(requestsCollapsedLoaded ? requestsCollapsed : true) ? (
                 !requestsLoaded ? (
-                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">Loading…</div>
+                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
                 ) : !requests.total && !requests.items.length ? (
-                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">Nothing received yet.</div>
+                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
                 ) : (
                   <div className="mt-2 flex items-center gap-3 pl-3 pr-2 py-1.5">
                     <div className="text-[13px] font-medium text-[var(--muted)]">
@@ -1908,9 +1947,9 @@ export default function LeftSidebar({
                   </div>
                 )
               ) : !requestsLoaded ? (
-                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">Loading…</div>
+                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
               ) : !requestFoldersForSidebar.length ? (
-                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">Nothing received yet.</div>
+                <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Nothing received yet.</div>
               ) : (
                 <ul className="mt-2 space-y-1">
                   {requestFoldersForSidebar.map((p) => (
@@ -1919,7 +1958,7 @@ export default function LeftSidebar({
                         <div
                           role="link"
                           tabIndex={0}
-                          className="w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[13px] hover:bg-[var(--sidebar-hover)]"
+                          className="w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] hover:bg-[var(--sidebar-hover)]"
                           onClick={() => {
                             setOpenProjectMenuId(null);
                             setOpenDocMenuId(null);
@@ -1936,10 +1975,10 @@ export default function LeftSidebar({
                           }}
                           title={p.description || undefined}
                         >
-                          <div className="flex min-w-0 items-center gap-1.5 pr-10">
-                            <InboxArrowDownIcon className="h-4 w-4 shrink-0 text-[var(--muted)]" />
-                              <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">
-                                {truncateEnd(p.name || "Request", 27)}
+                          <div className="flex min-w-0 items-center gap-2 pr-10">
+                            <InboxArrowDownIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" />
+                              <span className="block min-w-0 flex-1 truncate text-[var(--fg)]">
+                                {truncateEnd(p.name || "Request", 30)}
                               </span>
                           </div>
                         </div>
@@ -2009,6 +2048,7 @@ export default function LeftSidebar({
                 </ul>
               )}
             </section>
+            ) : null}
 
             <section>
               <SidebarProjectsSection
@@ -2040,7 +2080,7 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[13px] font-medium leading-5 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]">
+              <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="inline-flex h-6 items-center rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -2057,7 +2097,7 @@ export default function LeftSidebar({
                   size="sm"
                   className={[
                     // Keep this control right next to the title so overlay scrollbars can't cover it.
-                    "h-6 w-6 rounded-md p-0 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]",
+                    "h-6 w-6 rounded-md p-0 text-[var(--muted-2)] hover:text-[var(--fg)]",
                     "opacity-100",
                   ].join(" ")}
                   onClick={() => {
@@ -2071,7 +2111,7 @@ export default function LeftSidebar({
 
               {(docsCollapsedLoaded ? docsCollapsed : true) ? (
                 docs.total <= 0 && !docs.items.length ? (
-                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">No docs/links yet.</div>
+                  <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No docs/links yet.</div>
                 ) : (
                   <div className="mt-2 flex items-center justify-between gap-3 pl-3 pr-2 py-1.5">
                     <div className="text-[13px] font-medium text-[var(--muted)]">
@@ -2102,7 +2142,7 @@ export default function LeftSidebar({
                   const when = mounted ? formatRelative(d.updatedDate ?? d.createdDate) : "";
                   // Explicit character cap so long titles never crowd out right-side controls.
                   // Keep this conservative since we also show version pills + hover actions on the right.
-                  const title = truncateEnd(d.title, 32);
+                  const title = truncateEnd(d.title, 36);
                   return (
                     <li key={d.id}>
                       <div className="group relative">
@@ -2112,13 +2152,14 @@ export default function LeftSidebar({
                             // Expand highlight into the sidebar's right padding so left/right gutters match.
                             // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
-                            "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px]",
-                            activeDocId === d.id ? "bg-[var(--sidebar-hover)]" : "hover:bg-[var(--sidebar-hover)]",
+                            "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
+                            activeDocId === d.id ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                           title={when ? `Updated ${when}` : undefined}
                         >
-                          <div className="flex min-w-0 items-center gap-1.5 text-[15px] font-medium leading-normal text-[var(--fg)]">
-                            <span className="block min-w-0 max-w-[188px] flex-1 truncate">{title}</span>
+                          <div className="flex min-w-0 items-center gap-2 leading-normal text-[var(--fg)]">
+                            <DocumentIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                            <span className="block min-w-0 max-w-[220px] flex-1 truncate">{title}</span>
                           </div>
                         </Link>
                       </div>
@@ -2139,7 +2180,7 @@ export default function LeftSidebar({
                 ) : null}
 
                 {!docsForSidebar.length ? (
-                  <li className="pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">No docs/links yet.</li>
+                  <li className="pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No docs/links yet.</li>
                 ) : null}
                 </ul>
               )}

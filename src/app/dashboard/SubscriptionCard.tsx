@@ -2,13 +2,14 @@
  * Subscription summary card for `/dashboard?tab=overview`.
  *
  * Shows current plan status and lets a signed-in user upgrade via Stripe Checkout (server-created session),
- * then manage billing via Stripe's customer portal.
+ * then manage billing via Stripe's customer portal. Plan details link out to `/pricing` so the comparison
+ * has a single source of truth.
  */
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
 import SpendLimitModule from "./SpendLimitModule";
 import { formatShortDate } from "@/lib/format/date";
@@ -47,7 +48,6 @@ export default function SubscriptionCard() {
   const [busy, setBusy] = useState(false);
   const [upgradeBusy, setUpgradeBusy] = useState(false);
   const [manageBusy, setManageBusy] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BillingStatusResponse | null>(() => billingStatusCache?.data ?? null);
   const [creditsBlocked, setCreditsBlocked] = useState<boolean | null>(() => creditsBlockedCache?.blocked ?? null);
@@ -197,13 +197,9 @@ export default function SubscriptionCard() {
           <div className="text-[13px] font-semibold text-[var(--fg)]">Plan</div>
           <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
             {topHint}{" "}
-            <button
-              type="button"
-              className="font-semibold text-[var(--fg)] underline underline-offset-2"
-              onClick={() => setDetailsOpen(true)}
-            >
+            <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
               See plan details
-            </button>
+            </Link>
           </div>
         </div>
         {showStatusPill ? <div className="text-[11px] font-semibold text-[var(--muted-2)]">Status: {status}</div> : null}
@@ -251,7 +247,7 @@ export default function SubscriptionCard() {
             subtitle={
               outOfCredits
                 ? "AI tools are currently unavailable due to credit limits."
-                : "Includes limited credits for this billing cycle."
+                : "Includes 50 starter credits. They don’t reset monthly; upgrade to Pro for 300 credits every billing cycle."
             }
             cta={
               <div className="flex flex-col items-stretch gap-2 md:flex-row md:flex-wrap md:items-center">
@@ -263,13 +259,12 @@ export default function SubscriptionCard() {
                 >
                   {upgradeBusy ? "Opening…" : "Upgrade to Pro"}
                 </button>
-                <button
-                  type="button"
+                <Link
+                  href="/pricing"
                   className="w-full whitespace-normal rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] md:w-auto"
-                  onClick={() => setDetailsOpen(true)}
                 >
                   View plan details
-                </button>
+                </Link>
               </div>
             }
           />
@@ -282,64 +277,6 @@ export default function SubscriptionCard() {
         </Alert>
       ) : null}
 
-      <Modal open={detailsOpen} onClose={() => setDetailsOpen(false)} ariaLabel="Plan details">
-        <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Plan details</div>
-        <div className="mt-2 text-[13px] text-[var(--muted-2)]">
-          You&apos;re currently on the{" "}
-          <span className="font-semibold text-[var(--fg)]">{plan === "pro" ? "Pro" : plan === "free" ? "Free" : "…"}</span>{" "}
-          plan.
-        </div>
-
-        <div className="mt-5 rounded-xl bg-[var(--panel-2)] p-4">
-          <div className="text-[12px] font-semibold text-[var(--fg)]">What&apos;s included</div>
-          <ul className="mt-2 grid gap-1 text-[13px] leading-6 text-[var(--muted-2)]">
-            <li>• Upload and organize PDFs in your workspace.</li>
-            <li>• Share documents with optional password protection.</li>
-            <li>• Access the Stripe billing portal for invoices and payment method (Pro only).</li>
-            <li>• Usage limits and detailed usage reporting (coming soon).</li>
-          </ul>
-        </div>
-
-        <div className="mt-4 rounded-xl bg-[var(--panel-2)] p-4">
-          <div className="text-[12px] font-semibold text-[var(--fg)]">Plan comparison</div>
-          <div className="mt-2 grid gap-2 text-[13px] text-[var(--muted-2)] sm:grid-cols-2">
-            <div className="rounded-lg bg-[var(--panel)] p-3">
-              <div className="font-semibold text-[var(--fg)]">Free</div>
-              <ul className="mt-1 grid gap-1">
-                <li>• Limited credits per cycle.</li>
-                <li>• Core doc upload + sharing.</li>
-              </ul>
-            </div>
-            <div className="rounded-lg bg-[var(--panel)] p-3">
-              <div className="font-semibold text-[var(--fg)]">Pro{proPriceLabel ? <span className="text-[var(--muted-2)]"> · {proPriceLabel}</span> : null}</div>
-              <ul className="mt-1 grid gap-1">
-                <li>• Higher limits + advanced features.</li>
-                <li>• Billing portal access + on-demand controls.</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-5 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            className="rounded-xl bg-[var(--panel-hover)] px-4 py-2 text-[13px] font-semibold text-[var(--fg)]"
-            onClick={() => setDetailsOpen(false)}
-          >
-            Close
-          </button>
-          <button
-            type="button"
-            className="rounded-xl bg-[var(--fg)] px-4 py-2 text-[13px] font-semibold text-[var(--bg)]"
-            onClick={() => {
-              setDetailsOpen(false);
-              router.push("/dashboard?tab=billing", { scroll: false });
-            }}
-          >
-            Billing
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }

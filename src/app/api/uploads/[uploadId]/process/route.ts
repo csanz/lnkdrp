@@ -35,6 +35,7 @@ import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/act
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { openPdfDocument, renderPdfPageToPng, type PdfJsDocument } from "@/lib/pdf/renderPage";
+import { agentFromRequest, recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 // PDF rasterization + AI passes can take minutes for large decks (Vercel Pro/Enterprise cap).
@@ -934,13 +935,21 @@ export async function POST(
       uploadSecret: (uploadSecret as string).trim(),
       isDeleted: { $ne: true },
     })
-      .select({ userId: 1 })
+      .select({ userId: 1, docId: 1 })
       .lean();
     const ownerUserId = upload?.userId ? String(upload.userId) : "";
     if (!ownerUserId) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(ownerUserId) });
     const personalOrgId = String(orgId);
-    actor = { kind: "user", userId: ownerUserId, orgId: personalOrgId, personalOrgId };
+    // Bill the workspace the document belongs to (request repos can live in a team workspace whose
+    // members share one credit pool); fall back to the owner's personal workspace for legacy docs.
+    let billingOrgId = personalOrgId;
+    if (upload?.docId) {
+      const docOrg = await DocModel.findById(upload.docId).select({ orgId: 1 }).lean();
+      const docOrgId = (docOrg as { orgId?: unknown } | null)?.orgId;
+      if (docOrgId && Types.ObjectId.isValid(String(docOrgId))) billingOrgId = String(docOrgId);
+    }
+    actor = { kind: "user", userId: ownerUserId, orgId: billingOrgId, personalOrgId };
   } else {
     actor = await resolveActor(request);
     // Viewers must not trigger owner-billed processing.
@@ -1040,6 +1049,10 @@ export async function POST(
     }
     debugLog(1, "[process] claimed (status=processing)", { traceId, uploadId });
   }
+
+  // Agent attribution for the activity row is resolved now (headers are cheap to read here and the
+  // background job below outlives the response).
+  const activityAgent = agentFromRequest(request);
 
   // Respond immediately; do the work in the background.
   after(async () => {
@@ -2422,6 +2435,33 @@ export async function POST(
       // Only flip the doc over once we have enough artifacts to consider the replacement successful.
       if (!isReplacement || !failed) {
         await DocModel.findByIdAndUpdate(docId, docUpdate);
+      }
+
+      // Activity: the pipeline finished and the doc flipped to `ready` (best-effort, after the write).
+      // Attributed to the same workspace the credits were billed to (`existingDocOrgId`).
+      if (!failed) {
+        const existingTitle =
+          existingDocObj && typeof (existingDocObj as { title?: unknown }).title === "string"
+            ? String((existingDocObj as { title: string }).title)
+            : null;
+        void recordActivity({
+          orgId: existingDocOrgId,
+          userId: actor.userId,
+          actorKind: viaUploadSecret ? "secret" : actor.kind,
+          agent: activityAgent,
+          type: "doc.processed",
+          docId,
+          uploadId,
+          title: typeof docUpdate.title === "string" ? docUpdate.title : existingTitle,
+          meta: {
+            version: uploadVersion,
+            review: forceReviewRequested,
+            quality: forceReviewQualityTier,
+            replacement: isReplacement,
+            warnings: Object.keys(warningDetails),
+          },
+          request,
+        });
       }
 
       // Debug breadcrumb: confirm the doc record actually flipped and points at this upload.

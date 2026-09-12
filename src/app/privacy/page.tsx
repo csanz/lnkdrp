@@ -1,42 +1,27 @@
 /**
  * Privacy Policy page.
  *
- * Public privacy policy page accessible from the logged-out homepage.
+ * Public privacy policy page, linked from the shared public footer.
+ *
+ * Every claim here should be backed by the code. Notable facts this page reflects: Google-only
+ * sign-in, anonymous browser identities, share-viewer tracking (including IP addresses), OpenAI as
+ * the AI processor (text and page images), Vercel Blob + MongoDB storage, Resend email, Stripe
+ * billing, no third-party analytics, soft deletes, and no self-service deletion or export yet.
+ * `LAST_UPDATED` is a fixed date, bumped by hand whenever the wording changes.
  */
 /* eslint-disable react/no-unescaped-entities */
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { useCallback } from "react";
-import { signIn } from "next-auth/react";
-import { useAuthEnabled } from "@/app/providers";
-import Modal from "@/components/modals/Modal";
-import AboutCopy from "@/components/AboutCopy";
-import { useState } from "react";
+import PublicFooter from "@/components/PublicFooter";
+import PublicHeader from "@/components/PublicHeader";
+
+const LAST_UPDATED = "September 12, 2026";
 
 /**
  * Render the PrivacyPolicyPage UI.
  */
 export default function PrivacyPolicyPage() {
-  const router = useRouter();
-  const authEnabled = useAuthEnabled();
-  const [aboutModalOpen, setAboutModalOpen] = useState(false);
-  const [isSigningIn, setIsSigningIn] = useState(false);
-
-  const startAuthFlow = useCallback(async () => {
-    if (!authEnabled) return;
-    setIsSigningIn(true);
-    try {
-      await signIn("google", { callbackUrl: "/" });
-    } catch {
-      router.push("/login");
-    } finally {
-      setIsSigningIn(false);
-    }
-  }, [authEnabled, router]);
-
   return (
     <main className="relative min-h-[100svh] w-full overflow-hidden bg-[#050506] text-white">
       {/* Soft lighting background effect */}
@@ -50,62 +35,20 @@ export default function PrivacyPolicyPage() {
 
       {/* Content overlay */}
       <div className="relative z-10 min-h-[100svh] w-full">
-        {/* Full-width header: logo pinned left, auth links pinned right */}
-        <header className="w-full">
-        <div className="flex h-14 items-center justify-between gap-3 px-3 md:h-auto md:items-start md:px-4 md:pb-7 md:pt-6">
-          <div className="flex min-w-0 items-center gap-2">
-            <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
-              <Image
-                src="/icon-white.svg?v=3"
-                alt="LinkDrop"
-                width={31}
-                height={31}
-                priority
-                className="block"
-              />
-            </Link>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-              onClick={() => setAboutModalOpen(true)}
-            >
-              About
-            </button>
-            <Link
-              href="/tos"
-              className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-            >
-              Terms
-            </Link>
-            <Link
-              href="/privacy"
-              className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-            >
-              Privacy
-            </Link>
-            <button
-              type="button"
-              className="rounded-xl px-3 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white"
-              onClick={() => void startAuthFlow()}
-              disabled={isSigningIn}
-            >
-              Log In
-            </button>
-          </div>
-        </div>
-      </header>
+        <PublicHeader />
 
-        <div className="mx-auto w-full max-w-3xl px-6 py-12">
+        <div className="mx-auto w-full max-w-3xl px-6 pb-12 pt-12 md:pt-16">
         <h1 className="mb-2 text-3xl font-semibold tracking-tight text-white">Privacy Policy</h1>
-        <p className="mb-12 text-sm text-white/60">Last updated: {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</p>
+        <p className="mb-12 text-sm text-white/60">Last updated: {LAST_UPDATED}</p>
 
-        <div className="prose prose-sm max-w-none space-y-8 text-white/80">
+        <div className="space-y-8 text-sm leading-7 text-[#b3b3bb]">
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">1. Introduction</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">1. Introduction</h2>
             <p className="mb-4 leading-7">
-              LinkDrop (“we”, “us”, or “our”) is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our document sharing platform and related services (collectively, the “Service”).
+              LinkDrop ("we", "us", or "our") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard information when you use our document sharing platform and related services (collectively, the "Service").
+            </p>
+            <p className="mb-4 leading-7">
+              It applies to two kinds of people: <strong>account holders</strong> who upload and share documents, and <strong>viewers</strong> who open a link someone shared with them or submit a document through a request link. Section 5 is written for viewers.
             </p>
             <p className="leading-7">
               By using the Service, you agree to the collection and use of information in accordance with this Privacy Policy. If you do not agree with our policies and practices, please do not use the Service.
@@ -113,174 +56,180 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">2. Information We Collect</h2>
-            
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-white">2.1 Information You Provide</h3>
-            <p className="mb-4 leading-7">
-              We collect information that you provide directly to us, including:
-            </p>
+            <h2 className="mb-3 text-base font-semibold text-white">2. Information We Collect</h2>
+
+            <h3 className="mb-2 mt-4 text-sm font-semibold text-white">2.1 Information You Provide</h3>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li><strong>Account Information:</strong> When you create an account, we collect your name, email address, and profile information. We use Google Sign-In for authentication, which provides us with your Google account email and name.</li>
-              <li><strong>Documents and Content:</strong> We store the PDF documents you upload to the Service, along with extracted text, preview images, and any metadata associated with your documents.</li>
-              <li><strong>Organization Information:</strong> If you create or join an organization, we collect organization names, member information, and workspace settings.</li>
-              <li><strong>Communication:</strong> When you contact us for support or request an invite, we collect your email address and any information you provide in your message.</li>
-              <li><strong>Payment Information:</strong> If you purchase a subscription, payment information is processed by third-party payment processors (such as Stripe). We do not store your full payment card details.</li>
+              <li><strong>Account Information:</strong> Sign-in is through Google only. When you sign in, Google gives us your email address, name, Google account identifier, and profile picture URL. We store these and the time of your last sign-in. We do not store a password.</li>
+              <li><strong>Documents and Content:</strong> We store the PDF documents you upload or import from a URL, along with the text we extract from them, a preview image, an image of each page, and your document titles and settings.</li>
+              <li><strong>AI Output:</strong> Summaries, key points, reviews, and version comparisons generated for your documents are stored with them. We also keep a record of each AI run, including the prompt sent and the response received, so we can show you results, count credits, and debug problems.</li>
+              <li><strong>Workspace Information:</strong> If you create or join a workspace, we store the workspace name, optional icon, its members and their roles, and any invitation you send (including the invitee's email address if you enter one).</li>
+              <li><strong>Preferences:</strong> Notification settings, starred documents, and similar choices you make in the app.</li>
+              <li><strong>Communication:</strong> When you contact us for support, we collect your email address and any information you provide in your message.</li>
+              <li><strong>Payment Information:</strong> If a workspace upgrades to Pro, you enter your card details on Stripe's checkout page. Stripe gives us a customer identifier, subscription status, billing period dates, and metered usage totals. We never see or store your full card number.</li>
             </ul>
 
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-white">2.2 Information Automatically Collected</h3>
-            <p className="mb-4 leading-7">
-              When you use the Service, we automatically collect certain information, including:
-            </p>
+            <h3 className="mb-2 mt-4 text-sm font-semibold text-white">2.2 Information Collected Automatically</h3>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li><strong>Usage Data:</strong> Information about how you interact with the Service, such as pages viewed, documents accessed, share links created, and features used.</li>
-              <li><strong>Device Information:</strong> Device type, operating system, browser type and version, IP address, and device identifiers.</li>
-              <li><strong>Log Data:</strong> Server logs, including timestamps, request URLs, error messages, and performance metrics.</li>
-              <li><strong>Analytics:</strong> Aggregated usage statistics, document view counts, share link analytics, and engagement metrics.</li>
+              <li><strong>Anonymous Identity:</strong> If you use parts of the Service without signing in, we create a random identifier and secret stored in your browser so your uploads stay attached to that browser until you sign in and claim them. We store only a hash of the secret.</li>
+              <li><strong>Product Usage (signed-in users):</strong> Which pages of the app you visit, the page that referred you, and how long you stay, tied to a hashed per-session identifier. We use this to understand which features are used.</li>
+              <li><strong>Viewer Activity on Share Links:</strong> Described in section 5. This includes the viewer's IP address.</li>
+              <li><strong>Error and Security Logs:</strong> When something fails we record the route, the error message and stack trace, your user identifier if you were signed in, and a sanitized copy of the request context. Error records are deleted automatically after 14 days. Our rate-limiting records key on IP address (and, for download requests, a hash of the email entered) and expire automatically after the limit window.</li>
+              <li><strong>Hosting Logs:</strong> Our hosting provider keeps standard request logs (IP address, timestamp, URL, browser type) for a limited period as part of operating the Service.</li>
             </ul>
-
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-white">2.3 Information from Third Parties</h3>
-            <p className="leading-7">
-              We may receive information about you from third-party services:
+            <p className="mb-4 leading-7">
+              We do not fingerprint devices, we do not store browser user-agent strings in our own database, and we do not run any third-party analytics or advertising trackers.
             </p>
+
+            <h3 className="mb-2 mt-4 text-sm font-semibold text-white">2.3 Information from Third Parties</h3>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li><strong>Authentication Providers:</strong> When you sign in with Google, we receive your Google account information (email, name) as permitted by your Google account settings.</li>
-              <li><strong>Payment Processors:</strong> Payment processors provide us with transaction information, subscription status, and billing details necessary to process payments.</li>
+              <li><strong>Google:</strong> Your email, name, account identifier, and profile picture URL when you sign in.</li>
+              <li><strong>Stripe:</strong> Transaction and subscription status, billing period dates, and invoice availability needed to run your plan.</li>
             </ul>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">3. How We Use Your Information</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">3. How We Use Your Information</h2>
             <p className="mb-4 leading-7">
               We use the information we collect to:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li>Provide, maintain, and improve the Service</li>
-              <li>Process and store your documents, including AI-powered analysis and review features</li>
-              <li>Create and manage your account, organizations, and workspace settings</li>
-              <li>Enable document sharing, including generating shareable links and managing access controls</li>
-              <li>Process payments and manage subscriptions</li>
-              <li>Send you service-related communications, such as account updates, security alerts, and support responses</li>
-              <li>Monitor and analyze usage patterns to improve the Service and develop new features</li>
-              <li>Detect, prevent, and address technical issues, security threats, and fraudulent activity</li>
+              <li>Store, process, and display your documents, including sending document text and page images to our AI provider to generate summaries, reviews, and comparisons</li>
+              <li>Show you who viewed your shared documents and how they engaged with them</li>
+              <li>Create and manage your account, workspaces, memberships, and settings</li>
+              <li>Generate share links and request links and enforce the access controls you set on them</li>
+              <li>Meter credits, process payments, and manage subscriptions</li>
+              <li>Send service emails: workspace invitations, document activity notifications and digests you have opted into, request-link submissions, and download-request and approval messages</li>
+              <li>Detect, prevent, and address technical issues, abuse, and security threats, including rate limiting</li>
               <li>Comply with legal obligations and enforce our Terms of Service</li>
             </ul>
+            <p className="leading-7">
+              We do not use your information for advertising, and we do not sell it.
+            </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">4. How We Share Your Information</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">4. How We Share Your Information</h2>
             <p className="mb-4 leading-7">
-              We do not sell your personal information. We may share your information in the following circumstances:
+              We do not sell your personal information. We share information only in the following circumstances:
             </p>
 
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-white">4.1 With Your Consent</h3>
+            <h3 className="mb-2 mt-4 text-sm font-semibold text-white">4.1 With People You Choose</h3>
             <p className="mb-4 leading-7">
-              We share information when you explicitly consent, such as when you share a document link with others or invite members to your organization.
+              When you share a document link, recipients see the document, its AI summary and key points, and the title you gave it. When you invite someone to a workspace, they see the documents, projects, and members in it. When you approve a download request, the requester receives the file.
             </p>
 
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-white">4.2 Service Providers</h3>
+            <h3 className="mb-2 mt-4 text-sm font-semibold text-white">4.2 Service Providers</h3>
             <p className="mb-4 leading-7">
-              We may share information with third-party service providers who perform services on our behalf, including:
+              We rely on the following providers to operate the Service. Each receives only what it needs for its role:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li><strong>Cloud Storage:</strong> We use Vercel Blob Storage to store your documents and files.</li>
-              <li><strong>Payment Processing:</strong> Payment processors (such as Stripe) handle subscription billing and payment transactions.</li>
-              <li><strong>Authentication:</strong> Google Sign-In provides authentication services.</li>
-              <li><strong>Analytics:</strong> We may use analytics services to understand how the Service is used (aggregated and anonymized data).</li>
-              <li><strong>Hosting and Infrastructure:</strong> We use cloud hosting providers to operate the Service.</li>
+              <li><strong>Google (Google LLC):</strong> Sign-in. Receives your sign-in requests.</li>
+              <li><strong>Vercel (Vercel Inc.):</strong> Hosting, request logs, scheduled jobs, and file storage. Your PDFs, page images, preview images, extracted text, and workspace icons are stored in Vercel Blob storage at addresses that are not listed publicly.</li>
+              <li><strong>MongoDB (MongoDB Atlas):</strong> Our database. Holds account, workspace, document text, AI output, viewer activity, billing, and log records.</li>
+              <li><strong>OpenAI (OpenAI, L.L.C.):</strong> AI processing. Receives the extracted text of your documents and images of their pages when a summary, review, or version comparison is generated. See section 6.</li>
+              <li><strong>Stripe (Stripe, Inc.):</strong> Payments and subscriptions. Receives your email address and workspace identifier when you upgrade, and metered usage totals for on-demand credits.</li>
+              <li><strong>Resend (Resend, Inc.):</strong> Sends our transactional email. Receives the recipient address and message content of each email we send.</li>
             </ul>
-            <p className="leading-7">
-              These service providers are contractually obligated to protect your information and use it only for the purposes we specify.
+            <p className="mb-4 leading-7">
+              Our public homepage loads a world map dataset from a public CDN (jsDelivr or unpkg) to draw its animation; that request exposes your IP address to the CDN, as any web resource load does. No such requests are made inside the signed-in app.
             </p>
 
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-white">4.3 Legal Requirements</h3>
+            <h3 className="mb-2 mt-4 text-sm font-semibold text-white">4.3 Legal Requirements</h3>
             <p className="mb-4 leading-7">
               We may disclose your information if required by law, regulation, legal process, or governmental request, or to protect our rights, property, or safety, or that of our users or others.
             </p>
 
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-white">4.4 Business Transfers</h3>
+            <h3 className="mb-2 mt-4 text-sm font-semibold text-white">4.4 Business Transfers</h3>
             <p className="leading-7">
               In the event of a merger, acquisition, reorganization, or sale of assets, your information may be transferred as part of that transaction. We will notify you of any such change in ownership or control.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">5. Document Sharing and Public Links</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">5. If Someone Shared a Document With You</h2>
             <p className="mb-4 leading-7">
-              When you create a shareable link for a document, you control who can access it. We provide tools to:
+              This section is for people who open a LinkDrop share link or submit a document through a request link. You do not need an account to do either, but the document owner can see how you interacted with what they shared.
+            </p>
+            <p className="mb-4 leading-7">
+              When you open a share link we record the following. Everything except your IP address is shown to the document owner:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li>Set password protection on share links</li>
-              <li>Control whether recipients can download PDFs</li>
-              <li>Track who has viewed your shared documents (when available)</li>
+              <li>That the document was opened, which pages you viewed, how long you spent on each page, and how many times you returned to a page</li>
+              <li>Whether you downloaded the PDF, if the owner enabled downloads</li>
+              <li>Your IP address, which we keep for security and abuse prevention. It is not shown to the document owner.</li>
+              <li>Your name and email address, <strong>only if you choose to enter them</strong> when the viewer asks you to introduce yourself. You can decline. If you are signed in to LinkDrop, your account identity is used instead.</li>
             </ul>
             <p className="mb-4 leading-7">
-              <strong>Important:</strong> Share links may be accessible to anyone who has the link (unless password-protected). You are responsible for:
+              To tell repeat visits apart we store a random identifier in your browser's local storage. On our side we keep only a hash of it. It is not shared with anyone else and is not linked across different owners' documents. Clearing your browser storage removes it.
             </p>
-            <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li>Keeping your share links secure and not sharing them publicly unless intended</li>
-              <li>Ensuring you have the right to share the documents you upload</li>
-              <li>Complying with any confidentiality obligations related to shared documents</li>
-            </ul>
+            <p className="mb-4 leading-7">
+              If the owner has not enabled downloads, you can request one by entering your email address. We email the owner to ask for approval; if they approve, we email you a link, and you must sign in with Google to receive the file. Your email address is stored with that request.
+            </p>
+            <p className="mb-4 leading-7">
+              If you submit a document through a request link, the document becomes part of the requester's workspace and is treated as their content. If the requester has enabled AI review, our AI provider processes your document and may extract details from it, such as a company name, contact name, email address, or website, and present them to the requester.
+            </p>
             <p className="leading-7">
-              We are not responsible for unauthorized access to your documents that results from your failure to secure your share links or account credentials.
+              Password protection on a share link is set by the owner. When you enter a correct password we set a cookie so you do not have to re-enter it for 14 days on that browser.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">6. AI-Powered Features</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">6. AI Processing</h2>
             <p className="mb-4 leading-7">
-              The Service uses artificial intelligence to analyze, summarize, and review your documents. When you use AI features:
+              We use OpenAI's API to generate summaries, key points, reviews, and version comparisons. When an AI feature runs, we send the extracted text of the document and, for some features, images of its pages, together with our instructions. For version comparisons we send page images from both versions.
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li>We process your document content through AI services to generate summaries, reviews, and insights</li>
-              <li>AI-generated content is stored on our servers and associated with your account</li>
-              <li>We may use aggregated, anonymized data to improve our AI models and features</li>
-              <li>AI-generated content is provided for informational purposes only and should not be relied upon as professional advice</li>
+              <li>A summary is generated automatically when a document finishes uploading. Reviews and comparisons run when you or someone in your workspace asks for them.</li>
+              <li>AI output is stored with the document and shown to you; summaries and key points are also shown to viewers of the share link.</li>
+              <li>We keep the prompt and response of each run to display results, meter credits, and investigate failures.</li>
+              <li>We do not train AI models. Under OpenAI's API data usage policy, content sent through the API is not used to train OpenAI's models. We have not opted in to any data-sharing program.</li>
+              <li>AI output is provided for informational purposes only and can be inaccurate. It is not professional advice.</li>
             </ul>
             <p className="leading-7">
-              We do not use your document content to train third-party AI models without your explicit consent, except in aggregated and anonymized form.
+              Uploading a document means its content will be processed this way. If you do not want a document sent to our AI provider, do not upload it.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">7. Data Security</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">7. Data Security</h2>
             <p className="mb-4 leading-7">
-              We implement technical and organizational measures to protect your information, including:
+              We implement technical measures to protect your information, including:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li>Encryption of data in transit (HTTPS/TLS)</li>
-              <li>Secure storage of documents and data</li>
-              <li>Access controls and authentication mechanisms</li>
-              <li>Regular security assessments and updates</li>
-              <li>Employee training on data protection</li>
+              <li>Sign-in delegated to Google; no passwords are stored by us</li>
+              <li>Share passwords stored as salted hashes; invitation, download, and request tokens stored as hashes; anonymous-identity secrets stored as hashes</li>
+              <li>Files stored at unlisted addresses, with access through the app controlled by the owner's share settings</li>
+              <li>Role-based access to workspaces and rate limiting on public endpoints</li>
+              <li>Automatic redaction of secrets from error logs</li>
             </ul>
             <p className="leading-7">
-              However, no method of transmission over the internet or electronic storage is 100% secure. While we strive to protect your information, we cannot guarantee absolute security.
+              No method of transmission over the internet or electronic storage is completely secure. While we strive to protect your information, we cannot guarantee absolute security.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">8. Data Retention</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">8. Data Retention and Deletion</h2>
             <p className="mb-4 leading-7">
-              We retain your information for as long as necessary to provide the Service and fulfill the purposes described in this Privacy Policy, unless a longer retention period is required or permitted by law.
-            </p>
-            <p className="mb-4 leading-7">
-              When you delete your account or documents:
+              We retain your information for as long as your account exists and as needed to provide the Service, unless a longer period is required by law. Specifically:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li>We will delete your account information and associated documents from our active systems</li>
-              <li>Some information may remain in backup systems for a limited period</li>
-              <li>We may retain certain information as required by law or for legitimate business purposes (e.g., transaction records, security logs)</li>
+              <li><strong>Deleting a document, project, or workspace</strong> in the app removes it from your view and disables its share links immediately. The underlying records and files are marked deleted rather than erased right away, and may remain in our systems and backups until they are purged. Contact us if you need a document permanently erased.</li>
+              <li><strong>Viewer activity</strong> is kept for as long as the related document exists.</li>
+              <li><strong>Error records</strong> are deleted automatically after 14 days. Rate-limit records expire after their window.</li>
+              <li><strong>Billing records</strong> are kept as required for tax and accounting purposes.</li>
             </ul>
             <p className="leading-7">
-              If you wish to delete your account or request deletion of specific information, please contact us at hi@lnkdrp.com.
+              We do not yet offer self-service account deletion or data export. To close your account, delete specific information, or receive a copy of your data, email hi@lnkdrp.com and we will handle it manually.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">9. Your Rights and Choices</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">9. Your Rights and Choices</h2>
             <p className="mb-4 leading-7">
-              Depending on your location, you may have certain rights regarding your personal information, including:
+              Depending on your location, you may have rights regarding your personal information, including:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li><strong>Access:</strong> Request access to the personal information we hold about you</li>
@@ -291,32 +240,32 @@ export default function PrivacyPolicyPage() {
               <li><strong>Restriction:</strong> Request restriction of processing in certain circumstances</li>
             </ul>
             <p className="mb-4 leading-7">
-              To exercise these rights, please contact us at hi@lnkdrp.com. We will respond to your request within a reasonable timeframe and in accordance with applicable law.
+              To exercise these rights, contact us at hi@lnkdrp.com. We will respond within a reasonable timeframe and in accordance with applicable law. If you were a viewer of someone else's document, we may need to confirm the request with the document owner.
             </p>
             <p className="leading-7">
-              You can also manage certain aspects of your information through your account settings, such as updating your profile information, managing organization memberships, and controlling notification preferences.
+              In the app you can change your display name, leave workspaces, remove members from workspaces you administer, delete documents, and turn document activity and request-link emails off, to a daily digest, or to immediate in your notification settings.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">10. Children’s Privacy</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">10. Children's Privacy</h2>
             <p className="leading-7">
               The Service is not intended for individuals under the age of 13 (or the minimum age in your jurisdiction). We do not knowingly collect personal information from children. If you believe we have collected information from a child, please contact us immediately at hi@lnkdrp.com, and we will take steps to delete such information.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">11. International Data Transfers</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">11. International Data Transfers</h2>
             <p className="mb-4 leading-7">
-              The Service is operated from the United States. If you are located outside the United States, please be aware that your information may be transferred to, stored, and processed in the United States and other countries where our service providers operate.
+              The Service is operated from the United States, and our service providers listed in section 4.2 process data in the United States and other countries. If you are located elsewhere, your information will be transferred to, stored, and processed in those locations, which may have different data protection laws than your country of residence.
             </p>
             <p className="leading-7">
-              By using the Service, you consent to the transfer of your information to the United States and other countries, which may have different data protection laws than your country of residence.
+              By using the Service, you consent to these transfers.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">12. California Privacy Rights</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">12. California Privacy Rights</h2>
             <p className="mb-4 leading-7">
               If you are a California resident, you have additional rights under the California Consumer Privacy Act (CCPA), including:
             </p>
@@ -332,7 +281,7 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">13. European Privacy Rights</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">13. European Privacy Rights</h2>
             <p className="mb-4 leading-7">
               If you are located in the European Economic Area (EEA) or United Kingdom, you have additional rights under the General Data Protection Regulation (GDPR), including:
             </p>
@@ -344,35 +293,37 @@ export default function PrivacyPolicyPage() {
               <li>The right to lodge a complaint with a supervisory authority</li>
             </ul>
             <p className="leading-7">
-              Our legal basis for processing your personal data includes: (1) your consent, (2) performance of a contract, (3) compliance with legal obligations, (4) protection of vital interests, and (5) legitimate interests.
+              Our legal bases for processing are: performance of our contract with you (providing the Service you signed up for), our legitimate interests (securing the Service, preventing abuse, understanding how features are used, and showing document owners how their shared documents are viewed), compliance with legal obligations, and your consent where you give it, for example by entering your name and email as a viewer.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">14. Cookies and Tracking Technologies</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">14. Cookies and Browser Storage</h2>
             <p className="mb-4 leading-7">
-              We use cookies and similar tracking technologies to:
+              We set a small number of first-party cookies, all needed to run the Service:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li>Maintain your session and authenticate your account</li>
-              <li>Remember your preferences and settings</li>
-              <li>Analyze how you use the Service</li>
-              <li>Provide and improve the Service</li>
+              <li><strong>Session cookie:</strong> Keeps you signed in and records which workspace you are working in.</li>
+              <li><strong>Active workspace cookie:</strong> Remembers the workspace you last switched to.</li>
+              <li><strong>Share-unlock cookie:</strong> Set after you enter a correct share password so you are not asked again for 14 days. It contains a signed token, not the password.</li>
             </ul>
+            <p className="mb-4 leading-7">
+              We also use your browser's local storage for the anonymous identifiers described in sections 2.2 and 5, for the name and email you chose to enter as a viewer so they can be prefilled next time, and for caches that make the app load faster (your workspace list, sidebar, and starred documents).
+            </p>
             <p className="leading-7">
-              You can control cookies through your browser settings. However, disabling cookies may limit your ability to use certain features of the Service.
+              We do not use third-party cookies, advertising cookies, or analytics cookies. You can clear or block cookies and site data in your browser, but the Service will not work signed in without the session cookie.
             </p>
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">15. Changes to This Privacy Policy</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">15. Changes to This Privacy Policy</h2>
             <p className="mb-4 leading-7">
               We may update this Privacy Policy from time to time. We will notify you of material changes by:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li>Posting the updated Privacy Policy on our website</li>
-              <li>Updating the “Last updated” date</li>
-              <li>Sending you an email notification (for significant changes)</li>
+              <li>Updating the "Last updated" date</li>
+              <li>Emailing account holders about significant changes</li>
             </ul>
             <p className="leading-7">
               Your continued use of the Service after such modifications constitutes your acceptance of the updated Privacy Policy. If you do not agree to the modified Privacy Policy, you must stop using the Service.
@@ -380,15 +331,15 @@ export default function PrivacyPolicyPage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-xl font-semibold text-white">16. Contact Us</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">16. Contact Us</h2>
             <p className="mb-4 leading-7">
               If you have questions, concerns, or requests regarding this Privacy Policy or our privacy practices, please contact us at:
             </p>
-            <p className="leading-7">
+            <p className="mb-4 leading-7">
               <strong>Email:</strong> hi@lnkdrp.com
             </p>
             <p className="leading-7">
-              We will respond to your inquiry within a reasonable timeframe.
+              We will respond to your inquiry within a reasonable timeframe. Our <Link href="/tos" className="text-white/80 underline hover:text-white">Terms of Service</Link> describe the rules for using the Service.
             </p>
           </section>
         </div>
@@ -399,25 +350,8 @@ export default function PrivacyPolicyPage() {
           </Link>
         </div>
         </div>
+        <PublicFooter className="relative pb-6" containerClassName="mx-auto w-full max-w-3xl px-6" />
       </div>
-
-      <Modal
-        open={aboutModalOpen}
-        onClose={() => setAboutModalOpen(false)}
-        ariaLabel="About"
-        panelClassName="bg-[#0b0b0c] text-white border-white/10"
-        contentClassName="px-8 pb-8 pt-7"
-      >
-        <div className="flex items-center gap-3">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/5">
-            <Image src="/icon-white.svg?v=3" alt="" width={18} height={18} />
-          </div>
-          <div className="text-base font-semibold text-white">About</div>
-        </div>
-        <div className="mt-3">
-          <AboutCopy />
-        </div>
-      </Modal>
     </main>
   );
 }

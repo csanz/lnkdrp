@@ -8,6 +8,8 @@
  * Also supports a lightweight "introduce yourself" payload (viewerName/viewerEmail) for anonymous viewers.
  */
 import { NextResponse } from "next/server";
+import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
+import { recordActivity } from "@/lib/activity/log";
 import crypto from "node:crypto";
 import net from "node:net";
 import { Types } from "mongoose";
@@ -168,7 +170,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
       await connectMongo();
       const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
-        .select({ userId: 1, numberOfViews: 1, numberOfPagesViewed: 1 })
+        .select({ userId: 1, orgId: 1, title: 1, numberOfViews: 1, numberOfPagesViewed: 1 })
         .lean();
       if (!doc) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -234,7 +236,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
       await connectMongo();
       const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true } })
-        .select({ _id: 1 })
+        .select({ _id: 1, userId: 1, orgId: 1, title: 1 })
         .lean();
       if (!doc) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -276,6 +278,35 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           const created = Boolean((upsert as any)?.upsertedCount);
           if (created) {
             await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
+            // Activity feed: one "viewed" event per new viewer of this share (not per page/visit).
+            void (async () => {
+              try {
+                const ownerUserId = (doc as any)?.userId ? new Types.ObjectId(String((doc as any).userId)) : null;
+                const docOrgId = (doc as any)?.orgId
+                  ? String((doc as any).orgId)
+                  : ownerUserId
+                    ? String((await ensurePersonalOrgForUserId({ userId: ownerUserId })).orgId)
+                    : null;
+                if (!docOrgId) return;
+                await recordActivity({
+                  orgId: docOrgId,
+                  userId: viewerUserId ? String(viewerUserId) : null,
+                  actorKind: "viewer",
+                  type: "share.viewed",
+                  docId: String(docId),
+                  title: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
+                  meta: {
+                    authenticated: Boolean(viewerUserId),
+                    viewerName: viewerNameIntro ?? null,
+                    viewerEmail: viewerEmail ?? null,
+                    shareId,
+                  },
+                  request,
+                });
+              } catch {
+                // best-effort
+              }
+            })();
           }
 
           // Denormalize viewer name/email for fast owner metrics reads (avoid $lookup).

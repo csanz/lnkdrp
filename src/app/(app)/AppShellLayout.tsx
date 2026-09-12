@@ -41,7 +41,7 @@ function AuthRedirector() {
  * Wraps app pages in a responsive shell with sidebar navigation.
  *
  * Side effects: prefetches dashboard routes (best-effort) and locks body scroll when the mobile
- * drawer is open. Certain routes (review/invite) intentionally render full-width without sidebar.
+ * drawer is open. Certain routes (review) intentionally render full-width without sidebar.
  */
 export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -75,10 +75,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   const logoSrc = mounted && resolvedTheme === "dark" ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
 
   // Keep `/doc/:id/review` full-width (no sidebar), matching previous behavior.
-  const hideSidebar = useMemo(
-    () => pathname.includes("/review") || pathname.startsWith("/invitecodes"),
-    [pathname],
-  );
+  const hideSidebar = useMemo(() => pathname.includes("/review"), [pathname]);
 
   // Close the mobile drawer on navigation.
   useEffect(() => {
@@ -160,7 +157,7 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
             aria-label="Close menu"
             onClick={() => setMobileSidebarOpen(false)}
           />
-          <div className="absolute left-0 top-0 h-full w-[280px] shadow-xl">
+          <div className="absolute left-0 top-0 h-full w-[312px] shadow-xl">
             <LeftSidebar
               onAddNewFile={(file) => {
                 setPendingFile(file);

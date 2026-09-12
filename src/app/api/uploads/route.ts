@@ -13,6 +13,11 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import {
+  isPdfUploadMeta,
+  PDF_ONLY_ERROR_MESSAGE,
+  UNSUPPORTED_FILE_TYPE_CODE,
+} from "@/lib/blob/serverClientUploadRoute";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -127,6 +132,18 @@ export async function POST(request: Request) {
     if (!body.docId || !Types.ObjectId.isValid(body.docId)) {
       debugLog(1, "[api/uploads] POST invalid docId", { traceId });
       return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
+    }
+
+    // Documents are PDF-only for now (the processing pipeline only understands PDFs).
+    if (!isPdfUploadMeta({ contentType: body.contentType, fileName: body.originalFileName })) {
+      debugLog(1, "[api/uploads] POST unsupported file type", {
+        traceId,
+        contentType: typeof body.contentType === "string" ? body.contentType : null,
+      });
+      return applyTempUserHeaders(
+        NextResponse.json({ error: PDF_ONLY_ERROR_MESSAGE, code: UNSUPPORTED_FILE_TYPE_CODE }, { status: 415 }),
+        actor,
+      );
     }
 
     await connectMongo();

@@ -1,5 +1,12 @@
 "use client";
 
+/**
+ * pdf.js switches from one streaming download to HTTP range requests when the file is at least twice
+ * this size. The default (64 KB) makes every share open fetch the PDF twice (full request aborted,
+ * then ranges). 4 MB keeps documents under 8 MB to a single request; larger ones still range-load.
+ */
+const PDF_RANGE_CHUNK_BYTES = 4 * 1024 * 1024;
+
 import Image from "next/image";
 import Link from "next/link";
 import { signIn } from "next-auth/react";
@@ -1124,8 +1131,8 @@ export function PdfJsViewer({
           void destroyLoadingTask(activeLoadingTask);
           const loadingTask = (
             mode === "public-esm"
-              ? (pdfjs as any).getDocument({ url })
-              : (pdfjs as any).getDocument({ url, disableWorker: true } as any)
+              ? (pdfjs as any).getDocument({ url, rangeChunkSize: PDF_RANGE_CHUNK_BYTES })
+              : (pdfjs as any).getDocument({ url, disableWorker: true, rangeChunkSize: PDF_RANGE_CHUNK_BYTES } as any)
           ) as PdfLoadingTask;
           activeLoadingTask = loadingTask;
           return await loadingTask.promise;

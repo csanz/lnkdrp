@@ -117,6 +117,7 @@ This route is **unauthenticated by default**, but can be configured to require s
   - `originalFileName`
   - `contentType`
   - `sizeBytes`
+- Only PDF files are accepted: `PATCH /api/uploads/:uploadId` (status `uploaded`) and the Blob token route reject anything else with `415 { error: "Only PDF files are supported right now.", code: "UNSUPPORTED_FILE_TYPE" }`, and the recipient picker is `accept="application/pdf,.pdf"`.
 
 Response:
 - `doc.id`

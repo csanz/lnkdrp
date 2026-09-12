@@ -7,6 +7,7 @@ import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@
 import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
 import { debugError } from "@/lib/debug";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -115,6 +116,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       if (!updated) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: "share.password_cleared",
+        docId: docObjectId,
+        title: (updated as { title?: unknown }).title as string | null | undefined,
+        request,
+      });
       return applyTempUserHeaders(
         NextResponse.json(
           { sharePasswordEnabled: Boolean((updated as { sharePasswordHash?: unknown }).sharePasswordHash) },
@@ -158,6 +168,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     if (!updated) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
+
+    void recordActivity({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      actorKind: actor.kind,
+      type: "share.password_set",
+      docId: docObjectId,
+      title: (updated as { title?: unknown }).title as string | null | undefined,
+      request,
+    });
 
     return applyTempUserHeaders(
       NextResponse.json(

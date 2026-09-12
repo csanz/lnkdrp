@@ -7,9 +7,18 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
+import { DocModel } from "@/lib/models/Doc";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
+
+/** Mask an email for the activity feed: first char + domain (`c***@example.com`). */
+function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return "***";
+  return `${email.charAt(0)}***@${email.slice(at + 1)}`;
+}
 
 function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
@@ -41,14 +50,14 @@ function htmlPage(title: string, body: string) {
   return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
 }
 
-export async function GET(_request: Request, ctx: { params: Promise<{ shareId: string; token: string }> }) {
+export async function GET(request: Request, ctx: { params: Promise<{ shareId: string; token: string }> }) {
   const { shareId, token } = await ctx.params;
   if (!shareId || !token) return NextResponse.json({ error: "Missing params" }, { status: 400 });
 
   await connectMongo();
   const requestTokenHash = sha256Hex(token);
   const reqDoc = await ShareDownloadRequestModel.findOne({ shareId, requestTokenHash })
-    .select({ _id: 1, status: 1 })
+    .select({ _id: 1, status: 1, docId: 1, ownerUserId: 1, requesterEmail: 1 })
     .lean();
   if (!reqDoc) {
     return htmlPage("Not found", `<div style="font-weight:700;">Request not found</div><div class="muted" style="margin-top:10px;">This denial link is invalid or expired.</div>`);
@@ -62,10 +71,36 @@ export async function GET(_request: Request, ctx: { params: Promise<{ shareId: s
     return htmlPage("Already denied", `<div style="font-weight:700;">Already denied</div><div class="muted" style="margin-top:10px;">This request has already been denied.</div>`);
   }
 
-  await ShareDownloadRequestModel.updateOne(
+  const updateRes = await ShareDownloadRequestModel.updateOne(
     { _id: (reqDoc as { _id: unknown })._id, status: "pending" },
     { $set: { status: "denied", deniedAt: new Date() } },
   );
+
+  // Activity (best-effort): one doc lookup for org + title; the owner acted via an emailed capability link.
+  if (updateRes.modifiedCount === 1) {
+    const docId = (reqDoc as { docId?: unknown }).docId;
+    const doc = docId
+      ? await DocModel.findOne({ _id: docId }).select({ title: 1, orgId: 1 }).lean().catch(() => null)
+      : null;
+    const docOrgId = (doc as { orgId?: unknown } | null)?.orgId;
+    if (docOrgId) {
+      const requesterEmail = (reqDoc as { requesterEmail?: unknown }).requesterEmail;
+      void recordActivity({
+        orgId: String(docOrgId),
+        userId: (reqDoc as { ownerUserId?: unknown }).ownerUserId ? String((reqDoc as { ownerUserId: unknown }).ownerUserId) : null,
+        actorKind: "secret",
+        type: "download_request.denied",
+        docId: String(docId),
+        title: typeof (doc as { title?: unknown } | null)?.title === "string" ? String((doc as { title: string }).title) : null,
+        meta: {
+          email: typeof requesterEmail === "string" ? maskEmail(requesterEmail) : null,
+          shareId,
+          requestId: String((reqDoc as { _id: unknown })._id),
+        },
+        request,
+      });
+    }
+  }
 
   return htmlPage("Denied", `<div style="font-weight:700;">Denied</div><div class="muted" style="margin-top:10px;">This download request has been denied.</div>`);
 }

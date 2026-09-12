@@ -41,19 +41,25 @@ type UploadStatusResponse = {
   upload: { id: string; docId: string | null; status: string | null };
   doc: { id: string | null; status: string | null };
 };
-/**
- * Return whether accepted pdf or image.
- */
+/** Documents are PDF-only for now; shown inline when a recipient picks anything else. */
+const PDF_ONLY_MESSAGE = "Only PDF files are supported right now.";
+/** `accept` for the document picker (MIME + extension, since some platforms report an empty type). */
+const PDF_ACCEPT = "application/pdf,.pdf";
 
-function isAcceptedPdfOrImage(file: File) {
+/**
+ * Return whether a picked file is a PDF (by MIME type, or `.pdf` extension when the type is empty).
+ */
+function isPdfFile(file: File) {
   const t = (file.type || "").toLowerCase();
-  return t === "application/pdf" || t.startsWith("image/");
+  const name = (file.name || "").toLowerCase();
+  if (t && t !== "application/pdf") return false;
+  if (name && !name.endsWith(".pdf")) return false;
+  return t === "application/pdf" || name.endsWith(".pdf");
 }
 
 async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null> {
   try {
-    const ct = (file.type || "").toLowerCase();
-    if (ct !== "application/pdf") return null;
+    if (!isPdfFile(file)) return null;
 
     // Use the already-selected file bytes to avoid any CORS complications.
     const pdfBytes = new Uint8Array(await file.arrayBuffer());
@@ -209,7 +215,7 @@ export default function RequestUploadPageClient(props: {
   >({ step: "idle" });
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const accept = useMemo(() => "application/pdf,image/*", []);
+  const accept = PDF_ACCEPT;
   const showSuccess = useMemo(() => !busy && (done || Boolean(savedPreview?.uploaded)), [busy, done, savedPreview?.uploaded]);
   const statusLabel = useMemo(() => {
     return status.step === "starting"
@@ -246,6 +252,12 @@ export default function RequestUploadPageClient(props: {
 
 
   function setNextFile(f: File | null) {
+    if (f && !isPdfFile(f)) {
+      // Friendly inline error; keep the previous selection untouched.
+      setError(PDF_ONLY_MESSAGE);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
     setFile(f);
     setDone(false);
     setError(null);
@@ -279,7 +291,7 @@ export default function RequestUploadPageClient(props: {
     let blobUrl: string | null = null;
     try {
       if (!file) throw new Error("Choose a file to upload.");
-      if (!isAcceptedPdfOrImage(file)) throw new Error("Please upload a PDF or an image.");
+      if (!isPdfFile(file)) throw new Error(PDF_ONLY_MESSAGE);
 
       setStatus({ step: "starting" });
       const init = await fetchJson<StartRequestUploadResponse>(
@@ -323,7 +335,7 @@ export default function RequestUploadPageClient(props: {
       const blob = await blobUpload(pathname, file, {
         access: "public",
         handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
-        contentType: file.type || undefined,
+        contentType: file.type || "application/pdf",
         headers: uploadAuthHeaders,
       });
       blobUrl = blob.url;
@@ -499,9 +511,9 @@ export default function RequestUploadPageClient(props: {
   function UploadControls() {
     return (
       <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-        <div className="text-sm font-semibold">Upload a file</div>
+        <div className="text-sm font-semibold">Upload a PDF</div>
         <div className="mt-2 text-sm text-[var(--muted)]">
-          Drag & drop a PDF or image here, or click to choose a file. Your upload will be added to the requester’s request repository.
+          Drag & drop a PDF here, or click to choose a file. Only PDF files are supported right now. Your upload will be added to the requester’s request repository.
         </div>
 
         <div className="mt-4 grid gap-3">
@@ -572,7 +584,7 @@ export default function RequestUploadPageClient(props: {
                 : "border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)]",
               busy ? "opacity-60" : "",
             ].join(" ")}
-            aria-label="Drag and drop a file, or click to choose"
+            aria-label="Drag and drop a PDF, or click to choose"
           >
             <div className="flex items-start gap-4">
               <div
@@ -585,7 +597,7 @@ export default function RequestUploadPageClient(props: {
                 <ArrowUpTrayIcon className="h-5 w-5" aria-hidden="true" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-semibold text-[var(--fg)]">{file ? file.name : "Drop file here"}</div>
+                <div className="text-sm font-semibold text-[var(--fg)]">{file ? file.name : "Drop a PDF here"}</div>
                 <div className="mt-1 text-sm text-[var(--muted)]">
                   {file ? (
                     <span>
@@ -593,7 +605,7 @@ export default function RequestUploadPageClient(props: {
                     </span>
                   ) : (
                     <span className="underline decoration-transparent underline-offset-4 transition-colors group-hover:decoration-[var(--border)]">
-                      Click to choose a file
+                      Click to choose a PDF
                     </span>
                   )}
                 </div>

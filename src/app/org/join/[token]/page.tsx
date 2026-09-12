@@ -2,8 +2,7 @@
  * Page for `/org/join/:token`.
  *
  * Invite join flow:
- * - Bootstraps invite-gating cookie (so NextAuth sign-in can proceed)
- * - Ensures the user is signed in
+ * - Ensures the user is signed in (Google)
  * - Claims the invite into an org membership
  * - Switches to the org
  */
@@ -14,13 +13,13 @@ import { useParams } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { fetchJson } from "@/lib/http/fetchJson";
 
-type Step = "bootstrapping" | "auth" | "claiming" | "done" | "error";
+type Step = "auth" | "claiming" | "done" | "error";
 
 export default function OrgJoinPage() {
   const params = useParams<{ token: string }>();
   const token = useMemo(() => decodeURIComponent(params?.token ?? "").trim(), [params?.token]);
   const { status } = useSession();
-  const [step, setStep] = useState<Step>("bootstrapping");
+  const [step, setStep] = useState<Step>("auth");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,12 +36,8 @@ export default function OrgJoinPage() {
     let cancelled = false;
     void (async () => {
       try {
-        setStep("bootstrapping");
         setError(null);
-        // 1) Allow auth endpoints to proceed if invite-gated.
-        await fetchJson(`/api/org-invites/bootstrap?token=${encodeURIComponent(token)}`, { method: "GET" });
-
-        // 2) Ensure signed in.
+        // Ensure signed in.
         if (cancelled) return;
         if (status !== "authenticated") {
           setStep("auth");
@@ -56,7 +51,7 @@ export default function OrgJoinPage() {
           return; // redirect
         }
 
-        // 3) Claim invite.
+        // Claim invite.
         if (cancelled) return;
         setStep("claiming");
         const claim = await fetchJson<{ ok?: boolean; orgId?: string }>("/api/org-invites/claim", {
@@ -67,7 +62,7 @@ export default function OrgJoinPage() {
         const orgId = typeof claim?.orgId === "string" ? claim.orgId : "";
         if (!orgId) throw new Error("Invite claim failed.");
 
-        // 4) Switch workspace (sets httpOnly cookie + redirects home).
+        // Switch workspace (sets httpOnly cookie + redirects home).
         if (cancelled) return;
         setStep("done");
         if (typeof window !== "undefined") {
@@ -90,15 +85,13 @@ export default function OrgJoinPage() {
       <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 px-8 py-7">
         <div className="text-lg font-semibold tracking-tight">Joining workspace…</div>
         <div className="mt-2 text-sm text-white/60">
-          {step === "bootstrapping"
-            ? "Preparing sign-in…"
-            : step === "auth"
-              ? "Redirecting to Google…"
-              : step === "claiming"
-                ? "Accepting invite…"
-                : step === "done"
-                  ? "Switching workspace…"
-                  : "Couldn’t join."}
+          {step === "auth"
+            ? "Redirecting to Google…"
+            : step === "claiming"
+              ? "Accepting invite…"
+              : step === "done"
+                ? "Switching workspace…"
+                : "Couldn’t join."}
         </div>
         {error ? <div className="mt-4 text-sm font-medium text-red-300">{error}</div> : null}
       </div>

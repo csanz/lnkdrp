@@ -14,6 +14,7 @@ import { errorJson } from "@/lib/http/errorResponse";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { randomBase62, newShareId } from "@/lib/crypto/randomBase62";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -405,6 +406,16 @@ export async function POST(request: Request) {
         actor,
       );
     }
+
+    void recordActivity({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      actorKind: actor.kind,
+      type: "doc.created",
+      docId: doc._id,
+      title: doc.title ?? null,
+      request,
+    });
 
     return applyTempUserHeaders(
       NextResponse.json(

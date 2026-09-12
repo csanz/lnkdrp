@@ -2,8 +2,7 @@
  * Page for `/download/:token`.
  *
  * Approved download claim flow:
- * - Bootstraps invite-gating cookie (so NextAuth sign-in can proceed)
- * - Ensures the user is signed in
+ * - Ensures the user is signed in (Google)
  * - Allows downloading the PDF or saving it into their account
  */
 "use client";
@@ -13,14 +12,14 @@ import { useParams } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { fetchJson } from "@/lib/http/fetchJson";
 
-type Step = "bootstrapping" | "auth" | "loading" | "ready" | "saving" | "error";
+type Step = "auth" | "loading" | "ready" | "saving" | "error";
 
 export default function DownloadClaimPage() {
   const params = useParams<{ token: string }>();
   const token = useMemo(() => decodeURIComponent(params?.token ?? "").trim(), [params?.token]);
   const { status } = useSession();
 
-  const [step, setStep] = useState<Step>("bootstrapping");
+  const [step, setStep] = useState<Step>("auth");
   const [error, setError] = useState<string | null>(null);
   const [docTitle, setDocTitle] = useState<string | null>(null);
 
@@ -37,11 +36,7 @@ export default function DownloadClaimPage() {
     void (async () => {
       try {
         setError(null);
-        setStep("bootstrapping");
-
-        // Allow auth endpoints to proceed if invite-gated.
-        await fetchJson(`/api/download/bootstrap?token=${encodeURIComponent(token)}`, { method: "GET" });
-
+        // Ensure signed in.
         if (cancelled) return;
         if (status !== "authenticated") {
           setStep("auth");
@@ -83,17 +78,15 @@ export default function DownloadClaimPage() {
           {docTitle ? docTitle : "Download"}
         </div>
         <div className="mt-2 text-sm text-white/60">
-          {step === "bootstrapping"
-            ? "Preparing sign-in…"
-            : step === "auth"
-              ? "Redirecting to Google…"
-              : step === "loading"
-                ? "Loading…"
-                : step === "saving"
-                  ? "Saving…"
-                  : step === "ready"
-                    ? "Choose an action."
-                    : "Couldn’t open this link."}
+          {step === "auth"
+            ? "Redirecting to Google…"
+            : step === "loading"
+              ? "Loading…"
+              : step === "saving"
+                ? "Saving…"
+                : step === "ready"
+                  ? "Choose an action."
+                  : "Couldn’t open this link."}
         </div>
 
         {error ? <div className="mt-4 text-sm font-medium text-red-300">{error}</div> : null}

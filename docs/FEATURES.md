@@ -11,24 +11,21 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Upload**: An upload record representing an incoming file (or imported URL) and its processing pipeline (store in Blob, extract text, generate preview, extract per-page slide nodes, run AI). Slide nodes are stored per upload version so history can compare visuals across replacements.
 - **Share link**: A public, recipient-facing page at `/s/:shareId` (legacy: `/share/:shareId`) that can optionally be password-protected and optionally allow PDF download.
 - **Project**: A container that groups docs; docs can belong to multiple projects (`projectIds`) with a backward-compatible “primary” `projectId`.
-- **Invite gating**: The unauthenticated experience is gated behind an invite cookie (invite code verification + request flow).
 
 ## Public pages (logged-out)
 
-- **Home page**: `/` — Marketing/invite landing page with paperplane animation, invite code entry, login flow, and a small bottom-left copyright notice (`© YEAR LinkDrop`).
+- **Home page**: `/` — Marketing landing page with paperplane animation, a shared public header (About / Pricing / Log In), a “Get Started” button that goes straight to Google sign-in, and a shared public footer (`© YEAR LinkDrop Group · Terms · Privacy`) pinned to the bottom of the first viewport.
 - **About page**: `/about` — Static page explaining what LinkDrop is and how it works.
-- **Terms of Service**: `/tos` — Terms of Service page accessible from the logged-out homepage header.
-- **Privacy Policy**: `/privacy` — Privacy Policy page accessible from the logged-out homepage header.
+- **Pricing page**: `/pricing` — Free vs Pro comparison (Pro price label read from `BillingConfig`, credit schedule, on-demand rate) with sign-in CTAs; for signed-in users the CTAs act on the active workspace directly (Stripe Checkout / billing portal / "Current plan").
+- **Terms of Service**: `/tos` — Terms of Service page linked from the shared public footer.
+- **Privacy Policy**: `/privacy` — Privacy Policy page linked from the shared public footer.
 
-## Authentication & invite gating
+## Authentication
 
-- **Invite required to proceed** (pre-auth):
-  - Enter an invite code (normalized) and verify it via `/api/invites/verify`.
-  - Check current invite status via `/api/invites/status`.
-  - Request an invite via `/api/invites/request` (email + description). The server avoids creating duplicate requests for the same email, and will nudge existing users to log in instead.
-  - Auto-claim invite codes from email links via `/?invite=CODE` (client flow).
 - **Login**:
-  - Google sign-in via NextAuth (`/api/auth/[...nextauth]`) when auth is enabled.
+  - Anyone can sign in with Google via NextAuth (`/api/auth/[...nextauth]`) when auth is enabled; no approval or gating step is required.
+  - “Get Started” / “Log In” on the home page and `/login` call Google sign-in directly and return to `/`.
+  - Disabled users (`isActive: false`) are denied sign-in.
 - **“Temp user” support**:
   - Client requests can be decorated with temp-user headers (used for upload flows and other gated actions).
   - Server route `/api/auth/claim-temp` exists to claim/convert temp access.
@@ -54,7 +51,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
     - Renders a **single** plan status card (no Free-vs-Pro comparison cards).
     - Uses `GET /api/billing/status` to show user billing state (plan + Stripe status + renewal date when available).
     - Uses `GET /api/credits/snapshot` to determine whether AI tools are currently blocked due to credits.
-    - Free plan shows a calm status line and a **single** **Upgrade** CTA (Stripe Checkout via `POST /api/stripe/checkout`), plus a **View plan details** action.
+    - Free plan shows a calm status line and a **single** **Upgrade** CTA (Stripe Checkout via `POST /api/stripe/checkout`), plus a **View plan details** link to `/pricing` (the old in-dashboard plan modal is gone; `/pricing` is the single source of truth for plan comparison).
     - After Checkout, the user lands on `/billing/success` which shows **“Processing…”** and polls `/api/billing/status` until **Stripe webhooks** update MongoDB (access is webhook-driven; we do not trust the redirect).
     - Pro plan includes a **Manage Subscription** button that opens a Stripe **billing portal** session (`POST /api/stripe/portal`) and a Billing shortcut.
     - When on Pro, the card also shows a small **On-demand usage this cycle** module with a **hard spend limit** editor (Cursor-style presets + custom).
@@ -93,7 +90,6 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Org invites**:
   - Org admins/owners can generate invite links for another user to join.
   - Org admins/owners can also **email an invite** to a recipient via `/api/org-invites/email` (which also creates an invite link token).
-  - Bootstrap endpoint: `/api/org-invites/bootstrap` sets the invite-gating cookie so the recipient can proceed through Google sign-in.
   - Invite UI shows recent invite links with **Used / Not used / Expired** filtering, and includes a members tab for owners/admins.
   - For email-sent invites, the invite list displays the **recipient email**.
   - For used invites, the invite list also displays **who redeemed it** (best-effort name/email).
@@ -290,7 +286,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Clicking a project in the left sidebar shows a full-screen **Loading project…** overlay immediately (so it doesn’t feel frozen).
   - Assigning a doc to a project from the doc actions menu shows an inline **spinner** while the add/remove completes.
 - **Create from left sidebar**:
-  - The left sidebar **Projects** section includes a **New project** row to create a new project without leaving the current page.
+  - The left sidebar **Projects** section header has a **+** button (“New project”) to create a project without leaving the current page (visible even when the section is collapsed).
 - **List docs for a project**:
   - `/api/projects/:projectSlug/docs`.
 - **Project page**:
@@ -310,9 +306,6 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **AI runs**: `/a/ai-runs`
   - API: `/api/admin/ai-runs` and `/api/admin/ai-runs/:runId`
   - Lists prompt + output logs for AI features (review agent and PDF analysis) to aid debugging.
-- **Users → Invites**: `/a/invitecodes`
-  - APIs: `/api/invites/codes` and `/api/invites/codes/:inviteId/toggle-active`
-  - Approve invite requests: `/api/invites/requests` and `/api/invites/requests/:requestId/approve`
 - **Metrics → Share views**: `/a/shareviews`
   - APIs: `/api/admin/shareviews/recent` and `/api/admin/shareviews/doc/:docId`
   - Captures and displays a best-effort `viewerIp` for each share view (from proxy headers like `x-forwarded-for`).
@@ -355,6 +348,26 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Shows latest heartbeat snapshots written by cron endpoints (status/duration/last error).
 - **System → Error events (Mongo ErrorEvent)**
   - API: `/api/admin/errors` (filters + cursor pagination)
+
+## Activity (workspace feed)
+
+- **Page**: `/activity` (app shell; "Activity" entry in the left sidebar right after Upload). Rows are grouped by day (Today / Yesterday / date), filterable by **All / Uploads / Sharing / Documents**, and paged with "Load more" (cursor).
+- **API**: `GET /api/activity?limit=&cursor=&type=a,b&docId=` → `{ items, nextCursor }`. Read-only; any workspace member (viewer or above) can read. Temp users receive an empty list (not a 401).
+- **Storage**: `activityevents` collection (`ActivityEventModel`, `src/lib/models/ActivityEvent.ts`), scoped by `orgId`, with denormalized `title` for fast rendering and a `meta` payload per type.
+- **Recording**: `recordActivity()` in `src/lib/activity/log.ts` is best-effort (never throws) and is fired as `void recordActivity({...})` **after** the primary write succeeds, never inside a transaction.
+- **Event types and where they are recorded**:
+  - `doc.created` — `POST /api/docs`
+  - `upload.completed`, `doc.processed`, `doc.imported_url` — upload pipeline (`/api/uploads/**`)
+  - `doc.replaced` — `POST /api/doc/update/:code/uploads` (public replace link; `actorKind: "secret"`, `meta.version`)
+  - `doc.deleted` — `DELETE /api/docs/:docId`
+  - `share.updated` — `PATCH /api/docs/:docId` when `shareEnabled` / `shareAllowPdfDownload` / `shareAllowRevisionHistory` actually change (`meta.changed`)
+  - `share.password_set` / `share.password_cleared` — `POST /api/docs/:docId/share-password`
+  - `request_repo.created` — `POST /api/requests`
+  - `request.upload_received` — `POST /api/requests/:token/uploads` (`actorKind` is `user` when the inbox requires sign-in, else `secret`; `meta.fileName`, `meta.requireAuth`)
+  - `download_request.created` / `download_request.approved` / `download_request.denied` — share download-request endpoints (`meta.email` is masked to first char + domain)
+- `share.viewed` / `share.downloaded` — recorded once per new viewer of a share link (first visit, not per page) and on each PDF download. `actorKind: "viewer"`, with the signed-in viewer’s user id when known, otherwise the name/email they introduced themselves with.
+- **Agent attribution**: agents/MCP clients send `x-lnkdrp-agent: <client>/<version>` (e.g. `claude-code/1.2.3`); when absent the User-Agent is sniffed for known clients (claude-code, claude-desktop, cursor, codex, gemini-cli, grok, windsurf, cline). Browsers resolve to no agent. The feed shows an agent badge (`agentLabel()`), e.g. "Claude Code". The upcoming MCP server will pass the MCP `initialize` `clientInfo { name, version }` instead (see `docs/prds/lnkdrp-mcp.md`).
+- **Feature flag**: the sidebar "Request" action and the "Received" section are hidden unless `NEXT_PUBLIC_FEATURE_REQUESTS=1` (the Received section still shows when the workspace already has inboxes). Routes stay available.
 
 ## Revision history (in progress)
 

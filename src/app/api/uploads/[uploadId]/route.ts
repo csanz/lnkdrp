@@ -5,7 +5,14 @@ import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
-import { isBlobPathnameForUpload, isBlobUrlForUpload } from "@/lib/blob/serverClientUploadRoute";
+import {
+  isBlobPathnameForUpload,
+  isBlobUrlForUpload,
+  isPdfUploadMeta,
+  PDF_ONLY_ERROR_MESSAGE,
+  UNSUPPORTED_FILE_TYPE_CODE,
+} from "@/lib/blob/serverClientUploadRoute";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 /**
@@ -173,6 +180,71 @@ function buildPatchUpdate(
 }
 
 /**
+ * Return whether an upload being marked `uploaded` is a PDF.
+ *
+ * Uses the metadata stored at creation time (`contentType` / `originalFileName`); when neither was
+ * recorded, falls back to the extension of the blob pathname being attached. Documents are PDF-only.
+ */
+function isPdfUploadRecord(
+  stored: { contentType?: unknown; originalFileName?: unknown },
+  update: Record<string, unknown>,
+): boolean {
+  const contentType = typeof stored.contentType === "string" ? stored.contentType : "";
+  const originalFileName = typeof stored.originalFileName === "string" ? stored.originalFileName : "";
+  const blobPathname = typeof update.blobPathname === "string" ? update.blobPathname : "";
+  const blobName = blobPathname.split("/").pop() ?? "";
+  if (blobName && !/\.pdf$/i.test(blobName)) return false;
+  const hasStoredMeta = Boolean(contentType.trim() || originalFileName.trim());
+  return hasStoredMeta ? isPdfUploadMeta({ contentType, fileName: originalFileName }) : /\.pdf$/i.test(blobName);
+}
+
+/**
+ * Record `upload.completed` once an upload transitions to `uploaded` (best-effort; never throws).
+ */
+async function logUploadCompleted(params: {
+  request: Request;
+  upload: {
+    _id: unknown;
+    docId?: unknown;
+    userId?: unknown;
+    orgId?: unknown;
+    version?: unknown;
+    originalFileName?: unknown;
+    sizeBytes?: unknown;
+    metadata?: unknown;
+  };
+  actorKind: "user" | "temp" | "secret";
+  fallbackOrgId?: string | null;
+}): Promise<void> {
+  const { request, upload, actorKind, fallbackOrgId } = params;
+  const docId = upload.docId ? String(upload.docId) : null;
+  const doc = docId
+    ? await DocModel.findById(docId).select({ orgId: 1, title: 1 }).lean().catch(() => null)
+    : null;
+  const docOrgId = doc && (doc as { orgId?: unknown }).orgId ? String((doc as { orgId?: unknown }).orgId) : null;
+  const orgId = docOrgId ?? (upload.orgId ? String(upload.orgId) : null) ?? fallbackOrgId ?? null;
+  if (!orgId) return;
+  const meta = upload.metadata && typeof upload.metadata === "object" ? (upload.metadata as { size?: unknown }) : null;
+  const sizeBytes =
+    typeof upload.sizeBytes === "number" ? upload.sizeBytes : typeof meta?.size === "number" ? meta.size : null;
+  void recordActivity({
+    orgId,
+    userId: upload.userId ? String(upload.userId) : null,
+    actorKind,
+    type: "upload.completed",
+    docId,
+    uploadId: String(upload._id),
+    title: doc && typeof (doc as { title?: unknown }).title === "string" ? (doc as { title: string }).title : null,
+    meta: {
+      fileName: typeof upload.originalFileName === "string" ? upload.originalFileName : null,
+      sizeBytes,
+      version: typeof upload.version === "number" ? upload.version : null,
+    },
+    request,
+  });
+}
+
+/**
  * Handle PATCH requests.
  */
 
@@ -215,7 +287,7 @@ export async function PATCH(
         _id: new Types.ObjectId(uploadId),
         isDeleted: { $ne: true },
       })
-        .select({ _id: 1, uploadSecret: 1, docId: 1 })
+        .select({ _id: 1, uploadSecret: 1, docId: 1, contentType: 1, originalFileName: 1 })
         .lean();
       if (!exists) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -230,6 +302,10 @@ export async function PATCH(
       const built = buildPatchUpdate(body, { docId: exists.docId ? String(exists.docId) : "", uploadId });
       if ("error" in built) return NextResponse.json({ error: built.error }, { status: 400 });
       const update = built.update;
+      if (update.status === "uploaded" && !isPdfUploadRecord(exists, update)) {
+        debugLog(1, "[api/uploads/:uploadId] PATCH unsupported file type (secret)", { uploadId });
+        return NextResponse.json({ error: PDF_ONLY_ERROR_MESSAGE, code: UNSUPPORTED_FILE_TYPE_CODE }, { status: 415 });
+      }
       if ("previewImageUrl" in update) {
         debugLog(1, "[api/uploads/:uploadId] PATCH previewImageUrl (secret)", {
           uploadId,
@@ -243,6 +319,11 @@ export async function PATCH(
         { new: true },
       ).lean();
       if (!upload) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+      if (update.status === "uploaded") {
+        // Link recipients act inside the owner's workspace; attribute the row to the owner as "secret".
+        void logUploadCompleted({ request, upload, actorKind: "secret" });
+      }
 
       return NextResponse.json({
         upload: {
@@ -263,7 +344,7 @@ export async function PATCH(
       userId: new Types.ObjectId(actor.userId),
       isDeleted: { $ne: true },
     })
-      .select({ _id: 1, docId: 1 })
+      .select({ _id: 1, docId: 1, contentType: 1, originalFileName: 1 })
       .lean();
     if (!owned) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -274,6 +355,13 @@ export async function PATCH(
       return applyTempUserHeaders(NextResponse.json({ error: built.error }, { status: 400 }), actor);
     }
     const update = built.update;
+    if (update.status === "uploaded" && !isPdfUploadRecord(owned, update)) {
+      debugLog(1, "[api/uploads/:uploadId] PATCH unsupported file type (actor)", { uploadId });
+      return applyTempUserHeaders(
+        NextResponse.json({ error: PDF_ONLY_ERROR_MESSAGE, code: UNSUPPORTED_FILE_TYPE_CODE }, { status: 415 }),
+        actor,
+      );
+    }
     if ("previewImageUrl" in update) {
       debugLog(1, "[api/uploads/:uploadId] PATCH previewImageUrl (actor)", {
         uploadId,
@@ -286,6 +374,10 @@ export async function PATCH(
       { new: true },
     ).lean();
     if (!upload) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    if (update.status === "uploaded") {
+      void logUploadCompleted({ request, upload, actorKind: actor.kind, fallbackOrgId: actor.orgId });
+    }
 
     return applyTempUserHeaders(
       NextResponse.json({

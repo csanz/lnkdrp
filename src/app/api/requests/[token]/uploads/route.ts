@@ -15,6 +15,7 @@ import { BOT_ID_HEADER } from "@/lib/botId";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { tryResolveUserActor } from "@/lib/gating/actor";
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -141,11 +142,14 @@ export async function POST(
     const requireAuthToUpload = Boolean(
       (project as unknown as { requestRequireAuthToUpload?: unknown }).requestRequireAuthToUpload,
     );
+    // Signed-in uploader (only when the request repo requires sign-in); used for activity attribution.
+    let uploaderUserId: string | null = null;
     if (requireAuthToUpload) {
       const actor = await tryResolveUserActor(request);
       if (!actor) {
         return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
       }
+      uploaderUserId = actor.userId;
     } else {
       const botId =
         request.headers.get(BOT_ID_HEADER) ?? request.headers.get(BOT_ID_HEADER.toLowerCase()) ?? "";
@@ -249,6 +253,23 @@ export async function POST(
       status: "preparing",
       currentUploadId: uploadId,
       uploadId, // backward compat
+    });
+
+    void recordActivity({
+      orgId: effectiveOrgId,
+      userId: uploaderUserId,
+      actorKind: uploaderUserId ? "user" : "secret",
+      type: "request.upload_received",
+      docId,
+      projectId,
+      uploadId,
+      title,
+      meta: {
+        fileName: originalFileName,
+        requireAuth: requireAuthToUpload,
+        projectName: typeof project.name === "string" ? project.name : null,
+      },
+      request,
     });
 
     return NextResponse.json(

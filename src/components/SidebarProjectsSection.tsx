@@ -67,7 +67,7 @@ export default function SidebarProjectsSection({
 }) {
   return (
     <section>
-      <div className="flex h-6 items-center gap-1 pl-1 pr-2 text-[13px] font-medium leading-5 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]">
+      <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
         <button
           type="button"
           className="inline-flex h-6 items-center rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -83,7 +83,7 @@ export default function SidebarProjectsSection({
           variant="ghost"
           size="sm"
           className={[
-            "h-6 w-6 rounded-md p-0 text-[color-mix(in_srgb,var(--fg)_74%,transparent)]",
+            "h-6 w-6 rounded-md p-0 text-[var(--muted-2)] hover:text-[var(--fg)]",
             "opacity-100",
           ].join(" ")}
           onClick={() => {
@@ -93,13 +93,27 @@ export default function SidebarProjectsSection({
         >
           <StablePlusMinusIcon expanded={!(projectsCollapsedLoaded ? projectsCollapsed : true)} />
         </IconButton>
+        <IconButton
+          ariaLabel="New project"
+          title="New project"
+          variant="ghost"
+          size="sm"
+          disabled={navLocked}
+          className="ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] hover:text-[var(--fg)]"
+          onClick={() => {
+            if (navLocked) return;
+            onClickNewProject();
+          }}
+        >
+          <PlusIcon className="h-4 w-4" />
+        </IconButton>
       </div>
 
       {(projectsCollapsedLoaded ? projectsCollapsed : true) ? (
         !projectsLoaded ? (
-          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">Loading…</div>
+          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
         ) : !projectsForSidebar.length ? (
-          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">No projects yet.</div>
+          <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</div>
         ) : (
           <div className="mt-2 flex items-center justify-between gap-3 pl-3 pr-2 py-1.5">
             <div className="text-[13px] font-medium text-[var(--muted)]">{projects.total || projectsForSidebar.length} projects</div>
@@ -120,33 +134,15 @@ export default function SidebarProjectsSection({
           </div>
         )
       ) : !projectsLoaded ? (
-        <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">Loading…</div>
+        <div className="mt-2 pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">Loading…</div>
       ) : (
         <ul className="mt-2 space-y-1">
-          <li>
-            <button
-              type="button"
-              disabled={navLocked}
-              className={[
-                "flex w-full items-center gap-2 rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px] font-medium text-[var(--muted)]",
-                navLocked ? "cursor-not-allowed opacity-60" : "hover:bg-[var(--sidebar-hover)]",
-              ].join(" ")}
-              onClick={() => {
-                if (navLocked) return;
-                onClickNewProject();
-              }}
-            >
-              <FolderPlusSvg className="relative top-[0.5px] h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" />
-              <span>New project</span>
-            </button>
-          </li>
-
           {!projectsForSidebar.length ? (
-            <li className="pl-3 pr-2 py-2 text-[13px] text-[var(--muted)]">No projects yet.</li>
+            <li className="pl-3 pr-2 py-2 text-[13px] text-[var(--muted-2)]">No projects yet.</li>
           ) : null}
 
           {projectsForSidebar.map((p) => {
-            const title = truncateEnd(p.name, 22);
+            const title = truncateEnd(p.name, 26);
             const isActive = Boolean(activeProjectId && activeProjectId === p.id);
             return (
               <li key={p.id}>
@@ -154,7 +150,10 @@ export default function SidebarProjectsSection({
                   <div
                     role="link"
                     tabIndex={0}
-                    className="w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[15px] hover:bg-[var(--sidebar-hover)]"
+                    className={[
+                      "w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
+                      isActive ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
+                    ].join(" ")}
                     onClick={() => {
                       if (!p.slug) return;
                       showSwitchingOverlay({
@@ -176,7 +175,7 @@ export default function SidebarProjectsSection({
                       routerPush(`/project/${p.id}`);
                     }}
                   >
-                    <div className="flex min-w-0 items-center gap-1.5 pr-8">
+                    <div className="flex min-w-0 items-center gap-2 pr-8">
                       {p.isRequest ? (
                         <InboxArrowDownIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                       ) : (
@@ -188,7 +187,7 @@ export default function SidebarProjectsSection({
                           )}
                         </span>
                       )}
-                      <span className="block min-w-0 flex-1 truncate font-medium text-[var(--fg)]">{title}</span>
+                      <span className="block min-w-0 flex-1 truncate text-[var(--fg)]">{title}</span>
                     </div>
                   </div>
 
@@ -323,24 +322,5 @@ function FolderOpenSvg({ className }: { className?: string }) {
   );
 }
 
-function FolderPlusSvg({ className }: { className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="none"
-      viewBox="0 0 24 24"
-      strokeWidth="1.5"
-      stroke="currentColor"
-      className={className ?? "h-4 w-4"}
-      aria-hidden="true"
-    >
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d="M12 10.5v6m3-3H9m4.06-7.19-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"
-      />
-    </svg>
-  );
-}
 
 

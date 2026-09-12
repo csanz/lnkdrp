@@ -11,6 +11,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
 import { getPublicSiteBase } from "@/lib/urls";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -46,14 +47,21 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 }
 
-export async function GET(_request: Request, ctx: { params: Promise<{ shareId: string; token: string }> }) {
+/** Mask an email for the activity feed: first char + domain (`c***@example.com`). */
+function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at <= 0) return "***";
+  return `${email.charAt(0)}***@${email.slice(at + 1)}`;
+}
+
+export async function GET(request: Request, ctx: { params: Promise<{ shareId: string; token: string }> }) {
   const { shareId, token } = await ctx.params;
   if (!shareId || !token) return NextResponse.json({ error: "Missing params" }, { status: 400 });
 
   await connectMongo();
   const requestTokenHash = sha256Hex(token);
   const reqDoc = await ShareDownloadRequestModel.findOne({ shareId, requestTokenHash })
-    .select({ _id: 1, status: 1, requesterEmail: 1, docId: 1, claimTokenHash: 1, approvedAt: 1, deniedAt: 1 })
+    .select({ _id: 1, status: 1, requesterEmail: 1, docId: 1, ownerUserId: 1, claimTokenHash: 1, approvedAt: 1, deniedAt: 1 })
     .lean();
 
   if (!reqDoc) {
@@ -98,9 +106,24 @@ export async function GET(_request: Request, ctx: { params: Promise<{ shareId: s
 
   const docId = (reqDoc as { docId?: unknown }).docId;
   const doc = await DocModel.findOne({ _id: docId, shareId, isDeleted: { $ne: true } })
-    .select({ title: 1 })
+    .select({ title: 1, orgId: 1 })
     .lean();
   const title = typeof (doc as { title?: unknown } | null)?.title === "string" ? String((doc as { title: string }).title) : "Shared document";
+
+  // Activity (best-effort): the owner acted via an emailed capability link, so `actorKind` is "secret".
+  const docOrgId = (doc as { orgId?: unknown } | null)?.orgId;
+  if (docOrgId) {
+    void recordActivity({
+      orgId: String(docOrgId),
+      userId: (reqDoc as { ownerUserId?: unknown }).ownerUserId ? String((reqDoc as { ownerUserId: unknown }).ownerUserId) : null,
+      actorKind: "secret",
+      type: "download_request.approved",
+      docId: docId ? String(docId) : null,
+      title,
+      meta: { email: maskEmail(to), shareId, requestId: String((reqDoc as { _id: unknown })._id) },
+      request,
+    });
+  }
 
   if (to) {
     try {
