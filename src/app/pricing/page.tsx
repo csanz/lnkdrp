@@ -1,18 +1,25 @@
 /**
  * Public pricing page.
  *
- * Free vs Pro side by side, then the credit schedule so the cost of each AI action is visible
- * before anyone signs in. Numbers come from the billing/credits modules rather than being retyped
- * here, and the Pro price label is the same MongoDB-backed value the dashboard shows.
+ * Free vs Pro side by side. Links, projects, analytics and collaborators are the product; AI
+ * summaries and version compares are included on every plan (2026-09-12 decision, see
+ * docs/prds/lnkdrp-credit-features.md), so there is no credit table here. The Pro price label is
+ * the same MongoDB-backed value the dashboard shows.
+ *
+ * Plan limits are imported from `src/lib/billing/planLimits.ts`, the same module the API routes
+ * enforce with, so the numbers here always match what users hit.
  */
 import type { Metadata } from "next";
 
 import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
+import {
+  FREE_ACTIVE_LINKS,
+  FREE_ANALYTICS_DAYS,
+  FREE_PROJECTS,
+  PRO_INCLUDED_COLLABORATORS,
+} from "@/lib/billing/planLimits";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
-import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
-import { creditsForRun } from "@/lib/credits/schedule";
-import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 import { cn } from "@/lib/cn";
 import PricingCta from "./PricingCta";
 
@@ -21,17 +28,11 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "Start free. Upgrade to Pro when your agent gets busy. Links and tracking never cost credits.",
+  description: "Three links free, forever. Upgrade when your agent needs more.",
 };
 
-const ON_DEMAND_RATE = `$${(USD_CENTS_PER_CREDIT / 100).toFixed(2)}`;
-
-const TIERS = ["basic", "standard", "advanced"] as const;
-const ACTIONS = [
-  { key: "summary", label: "Summary", note: "Runs on every upload" },
-  { key: "review", label: "Review", note: "Deeper read, on request" },
-  { key: "history", label: "History compare", note: "When you replace a document" },
-] as const;
+/** Plan limits come from `planLimits.ts` (the enforcement source of truth) so the copy cannot drift. */
+const EXTRA_COLLABORATOR_LABEL = "$5/mo";
 
 /** Read the Pro price label without letting a database hiccup take the page down. */
 async function readProPriceLabel(): Promise<string | null> {
@@ -91,11 +92,11 @@ export default async function PricingPage() {
           <div className="max-w-2xl">
             <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Pricing</p>
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[56px]">
-              Start free. Upgrade when your agent gets busy.
+              Three links free. Upgrade when your agent needs more.
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-              Share links, click tracking, and stats never cost anything, from the dashboard or from your
-              agent. Credits only pay for the AI work: summaries, reviews, and history comparisons.
+              You pay for links, projects, and the people you work with. The AI that makes each link
+              worth opening, the summary and the version compare, is included on every plan.
             </p>
           </div>
 
@@ -112,17 +113,19 @@ export default async function PricingPage() {
                 <span className="text-sm text-white/50">forever</span>
               </div>
               <p className="mt-3 text-sm leading-6 text-white/60">
-                Everything you need to send a document and see who opened it.
+                Send a deck and see who opened it. Your agent can do the sending.
               </p>
               <FeatureList
                 muted="text-white/75"
                 items={[
-                  `${FREE_STARTER_CREDITS} starter credits, one time`,
-                  "Unlimited share links and tracking",
-                  "Views, clicks, and stats from your agent or the dashboard",
+                  `${FREE_ACTIVE_LINKS} active share links`,
+                  `${FREE_PROJECTS} project`,
+                  `Last ${FREE_ANALYTICS_DAYS} days of viewer analytics`,
+                  "AI summary and key points on every link",
+                  "Version history and compare",
                   "Password protection and download control",
-                  "Team workspaces, invite as many teammates as you like",
-                  "MCP, API, and CLI access",
+                  "Works with Claude Code, Cursor, Codex, and any MCP client",
+                  "Single user",
                 ]}
               />
               <div className="mt-8 flex-1" />
@@ -134,7 +137,7 @@ export default async function PricingPage() {
               <div className="flex min-h-[24px] items-center justify-between">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-black/55">Pro</div>
                 <span className="rounded-full bg-black px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white">
-                  Most popular
+                  Per workspace
                 </span>
               </div>
               <div className="mt-4 flex items-baseline gap-2">
@@ -148,78 +151,93 @@ export default async function PricingPage() {
                 )}
               </div>
               <p className="mt-3 text-sm leading-6 text-black/60">
-                For people who send documents every day and want the AI on every one of them.
+                For teams and agents that send documents every day.
               </p>
               <FeatureList
                 muted="text-black/80"
                 items={[
-                  `${INCLUDED_CREDITS_PER_CYCLE} credits every billing cycle`,
-                  "Everything in Free",
-                  "Covers the whole workspace: every teammate and their agents share one credit pool",
-                  `On-demand credits at ${ON_DEMAND_RATE} each, with a hard spend limit you set`,
-                  "Invoices and payment method in the billing portal",
-                  "Cancel anytime, keeps working until the cycle ends",
+                  "Unlimited active share links",
+                  "Unlimited projects",
+                  "Full viewer analytics history",
+                  "Collaborators on one shared workspace",
+                  "Agents never take a seat",
+                  "AI summary and key points on every link",
+                  "Version history and compare",
+                  "Password protection and download control",
+                  "Works with Claude Code, Cursor, Codex, and any MCP client",
                 ]}
               />
               <div className="mt-8 flex-1" />
-              <PricingCta plan="pro" variant="light" helper="Sign in with Google first. Checkout is handled by Stripe." />
+              <PricingCta plan="pro" variant="light" helper="Stripe checkout · Invoices in the portal · Cancel anytime, Pro stays active until the cycle ends" />
             </div>
           </div>
 
-          {/* Credit schedule */}
-          <div className="mt-20 grid gap-10 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] md:gap-14">
+          {/* Enterprise: sold, not bought. No price; every item here is delivered by hand at first. */}
+          <div className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] px-7 py-7 md:px-9">
+            <div className="grid gap-8 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1.3fr)_auto] md:items-center">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">Enterprise</div>
+                <h2 className="mt-2 font-serif text-2xl leading-snug tracking-tight text-white">
+                  Your domain, your seats, and someone to call.
+                </h2>
+                <p className="mt-2 text-sm leading-6 text-white/60">
+                  For teams that send documents at volume and need the paperwork to match.
+                </p>
+              </div>
+              <ul className="grid gap-x-8 gap-y-2.5 text-sm leading-6 text-white/75 sm:grid-cols-2">
+                {[
+                  "Share links on your own domain",
+                  "As many seats as you need, one invoice",
+                  "Private workspaces per team, one admin view",
+                  "Higher file size and retention limits",
+                  "Priority support and a DPA",
+                  "Everything in Pro",
+                ].map((item) => (
+                  <li key={item} className="flex gap-2.5">
+                    <Check />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="md:min-w-[200px]">
+                <a
+                  href="mailto:hi@lnkdrp.com?subject=LinkDrop%20Enterprise"
+                  className="inline-flex w-full items-center justify-center rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10"
+                >
+                  Talk to us
+                </a>
+                <div className="mt-2 text-center text-[11px] leading-5 text-white/40">
+                  Pricing based on seats and volume. We reply within a business day.
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* What is included, and why */}
+          <div className="mt-20 grid gap-10 md:grid-cols-3 md:gap-8">
             <div>
-              <h2 className="font-serif text-3xl tracking-tight text-white">What a credit buys</h2>
-              <p className="mt-4 text-sm leading-6 text-white/60">
-                Every AI action has a fixed price in credits, so the cost is known before it runs. Pick the
-                quality tier per document, or let your agent decide.
-              </p>
-              <p className="mt-4 text-sm leading-6 text-white/60">
-                Creating links, changing settings, and reading stats are free. Your agent pays the same as
-                the dashboard, no markup for MCP.
+              <h2 className="font-serif text-2xl tracking-tight text-white">Share with context</h2>
+              <p className="mt-3 text-sm leading-6 text-white/60">
+                Every link opens with a summary and the key points, so the reader knows what they are looking
+                at before they commit the time. Password-protect it, allow or block downloads, and replace
+                the file without changing the link.
               </p>
             </div>
-
-            <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/[0.03]">
-              <table className="w-full min-w-[420px] text-sm">
-                <thead>
-                  <tr className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">
-                    <th scope="col" className="px-5 py-4 text-left font-semibold">
-                      Action
-                    </th>
-                    {TIERS.map((tier) => (
-                      <th key={tier} scope="col" className="px-5 py-4 text-right font-semibold capitalize">
-                        {tier}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ACTIONS.map((action) => (
-                    <tr key={action.key} className="border-t border-white/10">
-                      <th scope="row" className="px-5 py-4 text-left font-medium text-white">
-                        {action.label}
-                        <div className="mt-0.5 text-xs font-normal text-white/45">{action.note}</div>
-                      </th>
-                      {TIERS.map((tier) => (
-                        <td key={tier} className="px-5 py-4 text-right tabular-nums text-white/80">
-                          {creditsForRun({ actionType: action.key, qualityTier: tier })}
-                          <span className="ml-1 text-xs text-white/40">cr</span>
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                  <tr className="border-t border-white/10">
-                    <th scope="row" className="px-5 py-4 text-left font-medium text-white">
-                      Links, tracking, stats
-                      <div className="mt-0.5 text-xs font-normal text-white/45">Dashboard, MCP, API, CLI</div>
-                    </th>
-                    <td colSpan={3} className="px-5 py-4 text-right text-white/80">
-                      Free
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div>
+              <h2 className="font-serif text-2xl tracking-tight text-white">Know who read it</h2>
+              <p className="mt-3 text-sm leading-6 text-white/60">
+                Every open is recorded: who it was, how long they stayed, which pages held them, and
+                whether they downloaded. Free keeps the last {FREE_ANALYTICS_DAYS} days. Pro keeps the whole
+                history.
+              </p>
+            </div>
+            <div>
+              <h2 className="font-serif text-2xl tracking-tight text-white">Built for agents</h2>
+              <p className="mt-3 text-sm leading-6 text-white/60">
+                Claude Code, Cursor, Codex, or any MCP client can create links and read the numbers on
+                every plan. Connect five agents and it costs nothing: seats count humans, not the
+                software working for them, and agents live under the same limits so nothing surprises you.
+              </p>
             </div>
           </div>
 
@@ -229,24 +247,32 @@ export default async function PricingPage() {
             <dl className="mt-6 divide-y divide-white/10 border-y border-white/10">
               {[
                 {
-                  q: "When do Pro credits reset?",
-                  a: `You get ${INCLUDED_CREDITS_PER_CYCLE} credits at the start of each billing cycle, on your subscription anniversary rather than the calendar month. Unused credits do not roll over.`,
+                  q: "What counts as an active link?",
+                  a: "A document with sharing switched on. Turn sharing off and the link stops resolving and no longer counts. Your document and its stats stay in your workspace.",
                 },
                 {
-                  q: "What happens when I run out?",
-                  a: "Links keep working and stats keep flowing. AI actions pause until the next cycle, or until you turn on on-demand credits. On-demand is off by default and always capped by a limit you set.",
+                  q: "What happens when I hit the Free limit?",
+                  a: "Existing links keep working. To share a new document you disable an old link or upgrade the workspace to Pro. Your agent gets the same answer over MCP, so it can tell you.",
                 },
                 {
                   q: "Is Pro per person or per workspace?",
-                  a: "Per workspace, with no per-seat fee. Invite your team to a workspace, upgrade it once, and everyone in it, along with their agents, draws from the same credit pool. Your personal workspace stays on whatever plan it has.",
+                  a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} collaborator; additional seats are added per member from your workspace settings.`,
                 },
                 {
-                  q: "Does my agent cost more than the dashboard?",
-                  a: "No. A summary, review, or comparison costs the same number of credits whether it was started from the dashboard or from an agent over MCP.",
+                  q: "I already have more than 3 links. What happens?",
+                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new links and projects wait until you disable some or upgrade. Existing links never stop working.",
+                },
+                {
+                  q: "Do I need credits for the AI?",
+                  a: "No. The summary on every link and the version compare are included on both plans. If we add AI features that cost credits, they will be listed here with a fixed price before they run.",
+                },
+                {
+                  q: "Which files can I share?",
+                  a: "PDF today. Every link opens in our viewer with the AI summary attached, on any device, no app needed.",
                 },
                 {
                   q: "How do I cancel?",
-                  a: "From the billing portal, any time. Pro stays active until the end of the paid cycle, then the workspace goes back to Free.",
+                  a: "From the billing portal, any time. Pro stays active until the end of the paid cycle, then the workspace goes back to Free and the Free limits apply again.",
                 },
               ].map((item) => (
                 <div key={item.q} className="grid gap-2 py-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] sm:gap-8">

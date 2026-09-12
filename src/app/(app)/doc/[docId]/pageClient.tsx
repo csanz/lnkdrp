@@ -18,6 +18,8 @@ import { apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUplo
 import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { debugLog } from "@/lib/debug";
+import PlanLimitNotice from "@/components/PlanLimitNotice";
+import { markPlanLimitHit, parsePlanLimitError, type PlanLimitError } from "@/lib/client/planLimit";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import { CopyButton } from "@/components/CopyButton";
@@ -220,6 +222,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [pdfIframeSrc, setPdfIframeSrc] = useState<string | null>(null);
   const pdfIframeKeyRef = useRef<string>("");
   const [isCopying, setIsCopying] = useState(false);
+  /** Set when enabling sharing was refused with `402 plan_limit`; cleared on the next attempt or dismiss. */
+  const [shareLimitError, setShareLimitError] = useState<PlanLimitError | null>(null);
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
   const [replaceCopyDone, setReplaceCopyDone] = useState(false);
@@ -1269,12 +1273,23 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
     // Optimistic update
     setDoc((d) => ({ ...d, shareEnabled: next }));
+    setShareLimitError(null);
     try {
-      await fetchJson(`/api/docs/${doc.id}`, {
+      const res = await fetchWithTempUser(`/api/docs/${doc.id}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ shareEnabled: next }),
       });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as unknown;
+        const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
+        if (limitErr) {
+          // Free link cap: keep the switch off and show the upgrade prompt next to it.
+          setShareLimitError(limitErr);
+          markPlanLimitHit(limitErr.limit);
+        }
+        throw new Error(`Request failed (${res.status})`);
+      }
     } catch {
       // Revert on failure
       setDoc((d) => ({ ...d, shareEnabled: prev }));
@@ -2334,6 +2349,16 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     onCopy={() => void copyLink()}
                     shareEnabled={doc.shareEnabled !== false}
                     onShareEnabledChange={(next) => void setShareEnabled(next)}
+                    shareNotice={
+                      shareLimitError ? (
+                        <PlanLimitNotice
+                          error={shareLimitError}
+                          secondaryLabel="Manage links"
+                          secondaryHref="/search?scope=documents"
+                          onDismiss={() => setShareLimitError(null)}
+                        />
+                      ) : null
+                    }
                     relevancyEnabled={Boolean(doc.receiverRelevanceChecklist)}
                     onToggleRelevancy={(next) => void setReceiverRelevanceChecklist(next)}
                     pdfDownloadEnabled={Boolean(doc.shareAllowPdfDownload)}

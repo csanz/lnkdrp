@@ -11,6 +11,7 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -87,7 +88,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         return applyTempUserHeaders(NextResponse.json({ error: "Invalid docId" }, { status: 400 }), actor);
       }
 
-      const days = Math.min(60, asPositiveInt(url.searchParams.get("days")) ?? 15);
+      const requestedDays = Math.min(60, asPositiveInt(url.searchParams.get("days")) ?? 15);
       const includeViewers = url.searchParams.get("viewers") === "1";
       const viewersOnly = url.searchParams.get("viewersOnly") === "1";
 
@@ -113,6 +114,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       })
         .select({
           _id: 1,
+          orgId: 1,
           title: 1,
           numberOfViews: 1,
           numberOfPagesViewed: 1,
@@ -123,6 +125,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       if (!doc) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }
+
+      // Plan limits: Free workspaces only see the last `FREE_ANALYTICS_DAYS` days. Legacy docs may
+      // lack `orgId`; they belong to the actor's (personal) workspace.
+      const docOrgIdRaw = (doc as unknown as { orgId?: unknown }).orgId;
+      const plan = await getWorkspacePlan(docOrgIdRaw ? String(docOrgIdRaw) : actor.orgId);
+      const days = clampAnalyticsDays(plan, requestedDays);
+      const analyticsDaysLimit = limitsForPlan(plan).analyticsDays;
 
       const docObjectId = new Types.ObjectId(docId);
 
@@ -393,6 +402,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         ok: true,
         docTitle: typeof (doc as any)?.title === "string" ? String((doc as any).title).trim() : "",
         days,
+        /** Plan cap on the window (`null` = unlimited); when `days < requested`, the UI can explain the clamp. */
+        analyticsDaysLimit,
         totals: {
           views: totalViews,
           downloads: totalDownloads,

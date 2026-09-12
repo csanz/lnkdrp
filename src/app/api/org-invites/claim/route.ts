@@ -9,6 +9,8 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
+import { recordActivity } from "@/lib/activity/log";
 import { OrgModel } from "@/lib/models/Org";
 import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor } from "@/lib/gating/actor";
@@ -65,6 +67,24 @@ export async function POST(request: Request) {
     const now = new Date();
     const userId = new Types.ObjectId(actor.userId);
     const orgObjectId = new Types.ObjectId(orgId);
+
+    // Plan limits: redeeming an invite adds a member, so a pre-existing invite must still respect
+    // the workspace's collaborator allowance (Free 0, Pro 1). Existing members re-joining are fine.
+    const alreadyMember = await OrgMembershipModel.exists({ orgId: orgObjectId, userId, isDeleted: { $ne: true } });
+    if (!alreadyMember) {
+      const limitCheck = await checkLimit(orgId, "collaborators");
+      if (!limitCheck.ok) {
+        void recordActivity({
+          orgId,
+          userId: actor.userId,
+          actorKind: "user",
+          type: "plan.limit_reached",
+          meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max, via: "invite_claim" },
+          request,
+        });
+        return planLimitResponse(limitCheck);
+      }
+    }
 
     // Upsert membership for the invited user.
     //

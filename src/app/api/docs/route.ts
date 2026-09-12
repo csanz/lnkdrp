@@ -15,6 +15,7 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { randomBase62, newShareId } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -330,7 +331,10 @@ export async function GET(request: Request) {
  *
  * Creates a new draft doc for the active workspace with an initial public `shareId`.
  * Permissions: temp users are limited to a single non-deleted doc.
- * Errors: 403 for temp-user limit, 400 for unexpected failures, 201 on success.
+ * Plan limits: new docs default to `shareEnabled: true`, so the Free active-link cap is checked
+ * first; a workspace inside its grace window succeeds with `planWarning` in the body.
+ * Errors: 403 for temp-user limit, 402 (`code: "plan_limit"`) when the link cap blocks,
+ * 400 for unexpected failures, 201 on success.
  */
 export async function POST(request: Request) {
   try {
@@ -363,6 +367,20 @@ export async function POST(request: Request) {
           actor,
         );
       }
+    }
+
+    // Free plan: every new doc is an active share link (schema default `shareEnabled: true`).
+    const limitCheck = await checkLimit(actor.orgId, "active_links");
+    if (!limitCheck.ok) {
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: "plan.limit_reached",
+        meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
+        request,
+      });
+      return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
     }
 
     // Create with a shareId (retry on rare collisions).
@@ -435,6 +453,7 @@ export async function POST(request: Request) {
             aiOutput: doc.aiOutput ?? null,
             receiverRelevanceChecklist: Boolean(doc.receiverRelevanceChecklist),
           },
+          ...(limitCheck.warning ? { planWarning: limitCheck.warning } : {}),
         },
         { status: 201 },
       ),

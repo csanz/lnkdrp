@@ -31,7 +31,12 @@ export type ActivityType =
   | "download_request.approved"
   | "download_request.denied"
   | "share.viewed"
-  | "share.downloaded";
+  | "share.downloaded"
+  | "plan.limit_reached"
+  | "plan.grace_started"
+  | "plan.grace_reminder"
+  | "plan.grace_blocked"
+  | "plan.upgraded";
 
 export type ActivityAgent = { client: string; version: string | null } | null;
 

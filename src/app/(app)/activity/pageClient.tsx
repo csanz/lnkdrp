@@ -8,7 +8,7 @@
  */
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type ComponentType, type SVGProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import {
   ArrowDownTrayIcon,
   ArrowPathIcon,
@@ -37,6 +37,10 @@ import {
 
 const PAGE_SIZES = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = 25;
+/** Minimum time a page transition takes, so the leave/enter choreography reads as one motion. */
+const PAGE_TRANSITION_MIN_MS = 280;
+/** Rows beyond this index enter together (stagger stops growing) so long pages never feel slow. */
+const STAGGER_CAP = 14;
 
 type HeroIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -117,7 +121,7 @@ function ActorAvatar({ item }: { item: ActivityItem }) {
   );
 }
 
-function ActivityRow({ item }: { item: ActivityItem }) {
+function ActivityRow({ item, index = 0 }: { item: ActivityItem; index?: number }) {
   const Icon = ICON_BY_TYPE[item.type] ?? ClockIcon;
   const s = describeActivity(item);
   const href = hrefFor(item);
@@ -135,7 +139,7 @@ function ActivityRow({ item }: { item: ActivityItem }) {
   ) : null;
 
   return (
-    <li className="flex items-start gap-3 px-4 py-3">
+    <li style={{ animationDelay: `${Math.min(index, STAGGER_CAP) * 28}ms` }} className="motion-safe:animate-[ldFeedRowIn_360ms_cubic-bezier(0.2,0.7,0.2,1)_both] flex items-start gap-3 px-4 py-3">
       <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--panel-hover)] text-[var(--muted-2)] ring-1 ring-[var(--border)]">
         <Icon className="h-4 w-4" aria-hidden="true" />
       </div>
@@ -188,7 +192,12 @@ export default function ActivityPageClient() {
   const [cursors, setCursors] = useState<Array<string | null>>([null]);
   const [pageIndex, setPageIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  // Changes on every page swap so rows remount and replay their enter animation.
+  const [pageKey, setPageKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const feedRef = useRef<HTMLDivElement | null>(null);
 
   const types = useMemo(() => ACTIVITY_FILTERS.find((f) => f.id === filter)?.types ?? [], [filter]);
 
@@ -237,24 +246,33 @@ export default function ActivityPageClient() {
     };
   }, [fetchPage]);
 
-  /** Open page `index` using the stored cursor (or the fresh nextCursor when moving forward). */
+  /**
+   * Page transition choreography: dim and lift the current rows, glide the feed to the top, fetch
+   * the next page, then let the new rows fade up in a short stagger. Never blanks the list.
+   */
   async function goToPage(index: number) {
-    if (loading) return;
+    if (loading || pending) return;
     const cursor = index < cursors.length ? cursors[index] : nextCursor;
     if (index > 0 && !cursor) return;
-    setLoading(true);
+    const reduceMotion =
+      typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    setPending(true);
+    setLeaving(true);
     setError(null);
+    feedRef.current?.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+    const minWait = new Promise<void>((r) => window.setTimeout(r, reduceMotion ? 0 : PAGE_TRANSITION_MIN_MS));
     try {
-      const page = await fetchPage(cursor ?? null);
+      const [page] = await Promise.all([fetchPage(cursor ?? null), minWait]);
       setItems(page.items);
       setNextCursor(page.nextCursor);
       setCursors((prev) => (index < prev.length ? prev : [...prev, cursor ?? null]));
       setPageIndex(index);
-      if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+      setPageKey((k) => k + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load activity.");
     } finally {
-      setLoading(false);
+      setLeaving(false);
+      setPending(false);
     }
   }
 
@@ -304,7 +322,12 @@ export default function ActivityPageClient() {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-6 py-6">
+      <div ref={feedRef} className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-6 py-6" aria-busy={pending || loading}>
+        {pending ? (
+          <div aria-hidden="true" className="pointer-events-none sticky top-0 z-10 -mx-6 -mt-6 mb-4 h-0.5 overflow-hidden bg-transparent">
+            <div className="h-full w-1/3 bg-[var(--fg)]/60 motion-safe:animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
+          </div>
+        ) : null}
         {error ? (
           <div className="mb-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 text-sm text-red-700">
             {error}
@@ -312,16 +335,35 @@ export default function ActivityPageClient() {
         ) : null}
 
         {loading ? (
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-6 text-sm text-[var(--muted)]">
-            Loading…
+          <div className="grid gap-6" aria-hidden="true">
+            <div className="mb-2 h-3 w-16 rounded bg-[var(--panel-hover)]" />
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+              <ul className="divide-y divide-[var(--border)]">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <li key={i} className="flex items-center gap-3 px-4 py-3 motion-safe:animate-pulse" style={{ animationDelay: `${i * 80}ms` }}>
+                    <div className="h-8 w-8 rounded-full bg-[var(--panel-hover)]" />
+                    <div className="min-w-0 flex-1">
+                      <div className="h-3.5 w-[min(420px,70%)] rounded bg-[var(--panel-hover)]" />
+                      <div className="mt-2 h-3 w-24 rounded bg-[var(--panel-hover)]" />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         ) : !items.length ? (
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-10 text-center text-sm text-[var(--muted)]">
             No activity yet. Uploads, share changes and request submissions will show up here.
           </div>
         ) : (
-          <div className="grid gap-6">
-            {groups.map((g) => (
+          <div
+            key={pageKey}
+            className={[
+              "grid gap-6 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+              leaving ? "translate-y-1 opacity-40" : "translate-y-0 opacity-100",
+            ].join(" ")}
+          >
+            {(() => { let i = 0; return groups.map((g) => (
               <section key={g.key} aria-label={g.label}>
                 <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
                   {g.label}
@@ -329,12 +371,12 @@ export default function ActivityPageClient() {
                 <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                   <ul className="divide-y divide-[var(--border)]">
                     {g.items.map((item) => (
-                      <ActivityRow key={item.id} item={item} />
+                      <ActivityRow key={item.id} item={item} index={i++} />
                     ))}
                   </ul>
                 </div>
               </section>
-            ))}
+            )); })()}
 
             {(pageIndex > 0 || nextCursor || items.length >= pageSize) ? (
               <nav aria-label="Activity pages" className="flex flex-wrap items-center justify-between gap-3 pt-1">
@@ -355,16 +397,18 @@ export default function ActivityPageClient() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={pageIndex === 0 || loading}
+                    disabled={pageIndex === 0 || loading || pending}
                     onClick={() => void goToPage(pageIndex - 1)}
                     className="h-9 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-[13px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Previous
                   </button>
-                  <span className="min-w-[4.5rem] text-center text-[12px] tabular-nums text-[var(--muted-2)]">Page {pageIndex + 1}</span>
+                  <span className="min-w-[4.5rem] text-center text-[12px] tabular-nums text-[var(--muted-2)]" aria-live="polite">
+                    {pending ? "Loading…" : `Page ${pageIndex + 1}`}
+                  </span>
                   <button
                     type="button"
-                    disabled={!nextCursor || loading}
+                    disabled={!nextCursor || loading || pending}
                     onClick={() => void goToPage(pageIndex + 1)}
                     className="h-9 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-[13px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:cursor-not-allowed disabled:opacity-50"
                   >

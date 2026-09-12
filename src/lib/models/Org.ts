@@ -42,6 +42,26 @@ const orgSchema = new Schema(
     joinSecretHash: { type: String, default: null },
     joinSecretExpiresAt: { type: Date, default: null, index: true },
 
+    /**
+     * Plan-limit grace window (see `src/lib/billing/planLimits.ts`).
+     *
+     * Set when a Free workspace is found over a Free limit (grandfathered or downgraded from Pro);
+     * the workspace keeps working until `endsAt`, after which the grace cron sets `blockedAt`.
+     * `remindersSent` records when reminder emails went out. `null` when no grace window applies.
+     */
+    planGrace: {
+      type: new Schema(
+        {
+          startedAt: { type: Date, required: true },
+          endsAt: { type: Date, required: true },
+          blockedAt: { type: Date, default: null },
+          remindersSent: { type: [Date], default: [] },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+
     isDeleted: { type: Boolean, default: false, index: true },
   },
   {
@@ -60,6 +80,14 @@ export type Org = InferSchemaType<typeof orgSchema>;
 
 export const OrgModel: Model<Org> =
   (mongoose.models.Org as Model<Org> | undefined) ?? mongoose.model<Org>("Org", orgSchema);
+
+// Dev safety: patch in new fields during hot reload (mongoose model caching).
+const ExistingOrgModel = mongoose.models.Org as Model<Org> | undefined;
+if (ExistingOrgModel && !ExistingOrgModel.schema.path("planGrace")) {
+  ExistingOrgModel.schema.add({
+    planGrace: { type: orgSchema.path("planGrace").schema, default: null },
+  } as any);
+}
 
 /**
  * Ensure a user has a personal org and membership.

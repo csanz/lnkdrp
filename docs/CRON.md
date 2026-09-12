@@ -70,6 +70,56 @@ Frequencies below are from `vercel.json` `"crons"` (production source of truth).
   - **Failure handling**: each recipient send is isolated; a failed send is logged, counted (`sendFailures`, per-category `failed`) and that user's cursor is **not** advanced, so the events are retried next run.
   - **Overlap**: holds a `CronHealth` lease (see "Overlap lease" below); returns `200 { skipped: "locked" }` if a run is already in progress.
   - **Idempotency**: safe under retries; per-user cursors prevent duplicates.
+- **Plan limits grace sweep (Free workspaces)**
+  - **Route**: `GET|POST /api/cron/plan-limits`
+  - **Schedule**: `40 * * * *` (hourly)
+  - **Purpose**: advance the 14-day grace period (`LIMIT_GRACE_DAYS`) for Free workspaces that are over a Free limit (active links, projects, collaborators), email the workspace owners at each step, and clear grace when a workspace fixes it or upgrades. See "Plan limits grace sweep" below.
+  - **Reads**: `Org` (`planGrace`), `Subscription` (active/trialing → Pro), `Doc` / `Project` / `OrgMembership` (usage via `getWorkspaceUsage`), `User` (owner emails)
+  - **Writes**: `Org.planGrace`, `ActivityEvent` (`plan.grace_started` / `plan.grace_reminder` / `plan.grace_blocked` / `plan.upgraded`), `CronHealth(jobKey="plan-limits")`
+  - **Bounds**: `?limit=` (default `500`, max `5000`) workspaces per run; workspaces already in grace are visited first. `?dryRun=1` computes and counts without writing or sending.
+  - **Overlap**: holds a `CronHealth` lease (see "Overlap lease" below); returns `200 { skipped: "locked" }` if a run is already in progress.
+  - **Idempotency**: every transition is guarded by the persisted `Org.planGrace` (start only when `null`, block only once via `blockedAt`, reminders deduped by day bucket in `remindersSent`), so re-runs and overlapping ticks cannot double-email.
+
+## Plan limits grace sweep (Free workspaces)
+
+### What it does
+- Free workspaces (no `active`/`trialing` subscription) that exceed a Free limit get a grace window before new links/projects are blocked. Existing links keep working throughout; nothing is deleted.
+- State lives on `Org.planGrace = { startedAt, endsAt, blockedAt, remindersSent[] } | null`. `checkLimit()` in `src/lib/billing/planLimits.ts` reads the same field: inside the window an over-limit workspace still gets `ok: true` with a `warning`; after `blockedAt` it gets a `402 plan_limit`.
+- Per workspace, each run:
+  - over a limit and `planGrace` is `null` → set `{ startedAt: now, endsAt: now + 14d, blockedAt: null, remindersSent: [now] }`, email owners ("started"), record `plan.grace_started`
+  - in grace and `now >= endsAt` → set `blockedAt = now`, email owners ("blocked"), record `plan.grace_blocked`
+  - in grace, not blocked → send the day-7 and day-12 reminders once each (only the latest due one after downtime), email owners ("reminder"), record `plan.grace_reminder`
+  - back under every limit → clear `planGrace` (they fixed it)
+  - now on Pro → clear `planGrace`, record `plan.upgraded` once
+- Emails go to every non-temp **owner** (`OrgMembership.role = "owner"`) via `sendPlanLimitEmail` → `sendTextEmail` (Resend; `EMAIL_TRANSPORT=console` logs instead of sending). Sends and activity rows are best-effort per workspace and counted in `errors`.
+
+### Idempotency
+- **Reminders**: `remindersSent` holds the send timestamps; a reminder for day *N* is considered sent when any entry falls in day bucket ≥ *N* (`floor((sent - startedAt) / 1d)`), so a re-run in the same hour, day, or after a missed tick never repeats it.
+- **Start / block**: only when `planGrace` is `null` / `blockedAt` is `null` respectively, and the state is written before the email is sent.
+- **Result**: `{ scanned, started, reminded, blocked, errors, cleared, upgraded, dryRun }`.
+
+### Code locations
+- **Sweep logic**: `src/lib/billing/planGrace.ts` (`runPlanLimitsGraceSweep`)
+- **Email copy**: `src/lib/email/sendPlanLimitEmail.ts` (`sendPlanLimitEmail`, `buildPlanLimitEmail`)
+- **Cron endpoint**: `src/app/api/cron/plan-limits/route.ts` (`GET|POST /api/cron/plan-limits`)
+- **Local runner**: `scripts/plan-limits-grace.ts`
+- **Cron health**: `CronHealth.jobKey = "plan-limits"`
+
+### Local runner
+
+```bash
+# Dry run (default): computes transitions, writes nothing, sends nothing
+npx tsx scripts/plan-limits-grace.ts --dry-run
+
+# Real run (writes Org.planGrace, records activity, sends emails)
+npx tsx scripts/plan-limits-grace.ts --send
+
+# Real run without real emails
+EMAIL_TRANSPORT=console npx tsx scripts/plan-limits-grace.ts --send
+
+# Options: --limit <n> (default 500), --now <ISO> (reference time, e.g. to hit a reminder/block day locally)
+npx tsx scripts/plan-limits-grace.ts --send --now 2026-09-20T12:00:00Z
+```
 
 ## Doc metrics rollup (cached snapshot)
 
@@ -107,7 +157,7 @@ Cron endpoints can upsert a small “health” record in MongoDB so we can see w
 
 ## Overlap lease
 
-Jobs that must not run concurrently (`notification-emails`, `stripe-credits-reconcile`) take a lease before doing work.
+Jobs that must not run concurrently (`notification-emails`, `stripe-credits-reconcile`, `stripe-credits-report`, `plan-limits`) take a lease before doing work.
 
 - **Implementation**: `src/lib/cron/lease.ts` (`acquireCronLease({ jobKey, ttlMs })` / `releaseCronLease(lease)`).
 - **Storage**: `CronHealth.leaseUntil` (+ `leaseToken`) on the job's heartbeat row.
@@ -125,6 +175,7 @@ Jobs that must not run concurrently (`notification-emails`, `stripe-credits-reco
 - `/api/cron/stripe-credits-report` — **hourly** (reports metered credits usage to Stripe)
 - `/api/cron/usage-agg-reconcile` — **hourly** (recomputes usage aggregates from ledger)
 - `/api/cron/notification-emails` — **every 5 minutes** (doc update + request repo notification emails)
+- `/api/cron/plan-limits` — **hourly** (Free plan-limit grace period: start / remind / block + owner emails)
 
 If you deploy on Vercel, these are configured in `vercel.json` under `"crons"` so schedules are committed in-repo (recommended).
 You can also manage schedules from Vercel UI (Project → Settings → Cron Jobs), but `vercel.json` is the source of truth for production in this repo.

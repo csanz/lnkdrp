@@ -124,6 +124,7 @@ Alternatively, one-off commands:
   - `LNKDRP_CRON_SECRET` is still honored as a legacy fallback when `CRON_SECRET` is unset.
   - Without any secret configured, production cron routes **fail closed** (401).
 - [ ] Overlap lease: `notification-emails` and `stripe-credits-reconcile` take a `CronHealth.leaseUntil` lease; a `200 { skipped: "locked" }` response means a previous run is still in progress (auto-expires after ~6 min).
+- [ ] Enable the `plan-limits` cron (`/api/cron/plan-limits`, hourly at `:40` in `vercel.json`) — Free plan-limit grace sweep + owner emails; no new env vars (uses `CRON_SECRET`, `RESEND_API_KEY`, `INVITE_EMAIL_FROM`/`NOTIFICATION_EMAIL_FROM`).
 - [ ] Verify cron inventory/behavior in `docs/CRON.md`.
 
 ### Database migrations

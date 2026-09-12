@@ -17,6 +17,8 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
 import { OrgModel } from "@/lib/models/Org";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
+import { recordActivity } from "@/lib/activity/log";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 
@@ -228,6 +230,21 @@ export async function POST(request: Request) {
   const userRole = membership ? String((membership as { role?: unknown }).role ?? "") : "";
   const canInvite = userRole === "owner" || userRole === "admin";
   if (!canInvite) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Plan limits: Free workspaces cannot add collaborators (the invite would add a member).
+  // Personal orgs never reach here (they 404 above); only team orgs are gated.
+  const limitCheck = await checkLimit(orgIdRaw, "collaborators");
+  if (!limitCheck.ok) {
+    void recordActivity({
+      orgId: orgIdRaw,
+      userId: session.userId,
+      actorKind: "user",
+      type: "plan.limit_reached",
+      meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
+      request,
+    });
+    return planLimitResponse(limitCheck);
+  }
 
   const token = crypto.randomBytes(24).toString("base64url");
   const tokenHash = sha256Hex(token);

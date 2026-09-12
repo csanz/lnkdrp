@@ -14,6 +14,7 @@ import Alert from "@/components/ui/Alert";
 import SpendLimitModule from "./SpendLimitModule";
 import { formatShortDate } from "@/lib/format/date";
 import { openBillingPortal, startCheckout as startCheckoutAction } from "@/lib/billing/clientActions";
+import { FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY } from "@/lib/client/planLimit";
 
 type BillingStatusResponse = {
   plan?: string;
@@ -70,10 +71,11 @@ export default function SubscriptionCard() {
         if (!cancelled) setData(billingJson);
         billingStatusCache = { data: billingJson, at: Date.now() };
 
-        // Only fetch credits snapshot when needed (Free plan uses it to show the "blocked" hint).
+        // Only fetch credits snapshot when needed (Free plan uses it to show the "blocked" hint) and
+        // only while the credits UI is enabled (AI is free at launch).
         const planRaw = typeof billingJson?.plan === "string" ? billingJson.plan.trim().toLowerCase() : "";
         const isFree = !planRaw || planRaw === "free";
-        if (isFree) {
+        if (isFree && FEATURE_CREDITS_ENABLED) {
           const cachedBlockedAt = creditsBlockedCache?.at ?? 0;
           const cachedBlockedFresh =
             typeof creditsBlockedCache?.blocked === "boolean" && Date.now() - cachedBlockedAt < BILLING_STATUS_CACHE_TTL_MS;
@@ -125,7 +127,7 @@ export default function SubscriptionCard() {
     if (busy) return "Loading billing details…";
     if (error) return error;
     if (plan === "pro") return "Manage billing, invoices, and payment method.";
-    return "Your current plan and credit status.";
+    return FEATURE_CREDITS_ENABLED ? "Your current plan and credit status." : "Your current plan and its limits.";
   }, [busy, error, plan]);
 
   async function startCheckout() {
@@ -167,7 +169,7 @@ export default function SubscriptionCard() {
   }: {
     planLabel: string;
     price?: string;
-    subtitle: string;
+    subtitle: React.ReactNode;
     cta: React.ReactNode;
     rightSlot?: React.ReactNode;
   }) {
@@ -188,7 +190,18 @@ export default function SubscriptionCard() {
     );
   }
 
-  const outOfCredits = creditsBlocked === true;
+  const outOfCredits = FEATURE_CREDITS_ENABLED && creditsBlocked === true;
+
+  /** Free plan: the three launch limits, with `/pricing` as the single source of truth. */
+  const freeLimitsSubtitle = (
+    <span>
+      {FREE_PLAN_LIMITS_COPY.activeLinks} active share links · {FREE_PLAN_LIMITS_COPY.projects} project · last{" "}
+      {FREE_PLAN_LIMITS_COPY.analyticsDays} days of analytics.{" "}
+      <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
+        Compare plans
+      </Link>
+    </span>
+  );
 
   return (
     <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
@@ -219,7 +232,12 @@ export default function SubscriptionCard() {
           <PlanPanel
             planLabel="Pro"
             price={proPriceLabel || undefined}
-            subtitle={periodHint ? periodHint : "Your subscription is active."}
+            subtitle={
+              <span>
+                {periodHint ? periodHint : "Your subscription is active."} Includes 1 collaborator. Need more seats? Contact
+                us and we will add them to your workspace.
+              </span>
+            }
             cta={
               <div className="flex flex-col items-stretch gap-2 md:flex-row md:flex-wrap md:items-center">
                 <button
@@ -239,7 +257,7 @@ export default function SubscriptionCard() {
                 </button>
               </div>
             }
-            rightSlot={<SpendLimitModule className="md:w-[340px]" compact />}
+            rightSlot={FEATURE_CREDITS_ENABLED ? <SpendLimitModule className="md:w-[340px]" compact /> : undefined}
           />
         ) : (
           <PlanPanel
@@ -247,7 +265,9 @@ export default function SubscriptionCard() {
             subtitle={
               outOfCredits
                 ? "AI tools are currently unavailable due to credit limits."
-                : "Includes 50 starter credits. They don’t reset monthly; upgrade to Pro for 300 credits every billing cycle."
+                : FEATURE_CREDITS_ENABLED
+                  ? "Includes 50 starter credits. They don’t reset monthly; upgrade to Pro for 300 credits every billing cycle."
+                  : freeLimitsSubtitle
             }
             cta={
               <div className="flex flex-col items-stretch gap-2 md:flex-row md:flex-wrap md:items-center">

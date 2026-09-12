@@ -25,6 +25,8 @@ type Snapshot = {
 type StatsResponse = {
   ok?: boolean;
   days?: number;
+  /** Present when the workspace plan clamps the analytics window (Free = 7 days). */
+  analyticsDaysLimit?: number;
   totals?: {
     views?: number;
     downloads?: number;
@@ -179,6 +181,13 @@ export default function DocQuickStats({
   );
   const hasAnyViews = series.some((s) => s.views > 0);
   const freshness = live ? "Live" : snapshot?.updatedAt ? `Updated ${relativeAge(snapshot.updatedAt) ?? ""}`.trim() : null;
+  // Free workspaces get a clamped window; the server reports both the limit and the days it served.
+  const analyticsDaysLimit =
+    typeof live?.analyticsDaysLimit === "number" && Number.isFinite(live.analyticsDaysLimit) && live.analyticsDaysLimit > 0
+      ? Math.floor(live.analyticsDaysLimit)
+      : null;
+  const clamped = analyticsDaysLimit !== null && analyticsDaysLimit < DAYS;
+  const shownDays = clamped ? Math.min(analyticsDaysLimit, num(live?.days) || analyticsDaysLimit) : DAYS;
 
   const tile = (label: string, value: number | null | string) => (
     <div className="min-w-0">
@@ -192,7 +201,7 @@ export default function DocQuickStats({
   return (
     <section aria-label="Quick stats" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
-        <div className="text-[12px] font-medium text-[var(--fg)]">Last {DAYS} days</div>
+        <div className="text-[12px] font-medium text-[var(--fg)]">Last {shownDays} days</div>
         <div className="text-[11px] text-[var(--muted-2)]">{failed ? "Live stats unavailable" : (freshness ?? "")}</div>
       </div>
 
@@ -209,7 +218,7 @@ export default function DocQuickStats({
             <ViewsSparkline series={series} />
           ) : (
             <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-center text-[12px] text-[var(--muted)]">
-              No views yet in the last {DAYS} days. Share the link to start tracking.
+              No views yet in the last {shownDays} days. Share the link to start tracking.
             </div>
           )
         ) : (
@@ -226,6 +235,15 @@ export default function DocQuickStats({
           Open metrics
         </Link>
       </div>
+
+      {clamped ? (
+        <div className="mt-2 text-[11px] text-[var(--muted-2)]">
+          Free shows the last {analyticsDaysLimit} days ·{" "}
+          <Link href="/pricing" className="font-medium text-[var(--fg)] underline-offset-2 hover:underline">
+            Upgrade for full history
+          </Link>
+        </div>
+      ) : null}
     </section>
   );
 }

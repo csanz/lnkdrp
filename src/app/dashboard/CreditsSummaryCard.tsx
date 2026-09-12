@@ -15,6 +15,7 @@ import { formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
 import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
+import { FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 
 type CreditsSnapshot = {
@@ -29,7 +30,16 @@ type CreditsSnapshot = {
   onDemandUsedCreditsThisCycle?: number;
 };
 
-export default function CreditsSummaryCard({
+/**
+ * Credits summary card; renders nothing unless `NEXT_PUBLIC_FEATURE_CREDITS=1` (AI is free at launch).
+ */
+export default function CreditsSummaryCard(props: { headerRightSlot?: ReactNode }) {
+  if (!FEATURE_CREDITS_ENABLED) return null;
+  return <CreditsSummaryCardInner {...props} />;
+}
+
+/** Credits summary body: remaining / included / extra / used tiles plus the out-of-credits prompt. */
+function CreditsSummaryCardInner({
   headerRightSlot,
 }: {
   headerRightSlot?: ReactNode;

@@ -205,7 +205,7 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
               Generate share links from your favorite AI agent through our MCP interface, then track clicks and
               usage through your agent or our dashboard. Every document gets an AI review with summaries, key
               points, and relevance signals, so recipients (and their own agents) know what they&apos;re getting
-              before they commit time. Collect submissions the same way, with intelligent review built in.
+              before they commit time.
             </p>
 
             <div className="mt-7 flex items-center gap-4">

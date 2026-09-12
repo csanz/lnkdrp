@@ -111,8 +111,8 @@ export default function UploadPageClient() {
   }
 
   const subtitle = useMemo(() => {
-    if (!selectedFile) return "Choose a PDF to preview, then upload.";
-    return "Review the PDF below. When you’re ready, click Upload.";
+    if (!selectedFile) return "Choose a PDF to preview it here. Nothing is uploaded until you say so.";
+    return "This is a local preview. Nothing has been uploaded and no link exists yet.";
   }, [selectedFile]);
 
   async function handleUpload() {
@@ -151,8 +151,41 @@ export default function UploadPageClient() {
       {/* Top bar */}
       <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-3 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:px-6 md:py-4">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-[var(--fg)]">New document</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-sm font-semibold text-[var(--fg)]">{selectedFile ? "Preview" : "New document"}</div>
+            {selectedFile ? (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-[var(--border)] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">
+                <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--muted-2)]" />
+                Not uploaded yet
+              </span>
+            ) : null}
+          </div>
           <div className="mt-0.5 text-[12px] text-[var(--muted)]">{subtitle}</div>
+          <ol className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--muted-2)]" aria-label="Upload steps">
+            {[
+              { n: 1, label: "Choose a PDF", state: selectedFile ? "done" : "current" },
+              { n: 2, label: "Preview", state: selectedFile && !busy ? "current" : selectedFile ? "done" : "todo" },
+              { n: 3, label: "Upload & create link", state: busy ? "current" : "todo" },
+            ].map((step) => (
+              <li key={step.n} className="flex items-center gap-1.5">
+                <span
+                  className={[
+                    "grid h-4 w-4 place-items-center rounded-full text-[10px] font-semibold",
+                    step.state === "done"
+                      ? "bg-[var(--fg)] text-[var(--bg)]"
+                      : step.state === "current"
+                        ? "border border-[var(--fg)] text-[var(--fg)]"
+                        : "border border-[var(--border)] text-[var(--muted-2)]",
+                  ].join(" ")}
+                  aria-hidden="true"
+                >
+                  {step.state === "done" ? "✓" : step.n}
+                </span>
+                <span className={step.state === "current" ? "font-semibold text-[var(--fg)]" : ""}>{step.label}</span>
+                {step.state === "current" ? <span className="sr-only">(current step)</span> : null}
+              </li>
+            ))}
+          </ol>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -171,7 +204,7 @@ export default function UploadPageClient() {
               onClick={() => void handleUpload()}
             >
               <UploadIcon />
-              {busy ? "Uploading…" : "Upload"}
+              {busy ? "Uploading…" : "Upload & create link"}
             </button>
           ) : null}
         </div>
@@ -214,9 +247,32 @@ export default function UploadPageClient() {
           }}
         >
           {/* Viewer (left) */}
-          <div className="min-h-0 flex-1 bg-black">
+          <div className="relative min-h-0 flex-1 bg-black">
             {previewUrl ? (
-              <PdfJsViewer url={previewUrl} initialPage={1} />
+              <>
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-2 z-10 rounded-xl border border-dashed border-white/25"
+                />
+                <div className="pointer-events-none absolute left-4 top-4 z-20 flex items-center gap-2 rounded-full border border-white/20 bg-black/70 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/85 backdrop-blur-sm">
+                  <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-white/70" />
+                  Preview · not uploaded
+                </div>
+                {busy ? (
+                  <div role="status" aria-live="polite" className="absolute inset-0 z-30 grid place-items-center bg-black/70 px-6 backdrop-blur-[2px]">
+                    <div className="w-full max-w-md rounded-3xl border border-white/10 bg-[var(--panel)] p-8 text-center">
+                      <div className="text-lg font-semibold tracking-tight text-[var(--fg)]">Uploading your PDF…</div>
+                      <div className="mt-2 text-sm text-[var(--muted)]">
+                        We’ll open the document as soon as it’s on its way. The AI summary is generated after upload.
+                      </div>
+                      <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
+                        <div className="h-full w-1/3 bg-[var(--primary-bg)] motion-safe:animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+                <PdfJsViewer url={previewUrl} initialPage={1} />
+              </>
             ) : selectedFile || previewLoading ? (
               <div className="grid h-full min-h-0 place-items-center px-6 py-10">
                 <div className="w-full max-w-xl rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-10 text-center">
@@ -263,7 +319,9 @@ export default function UploadPageClient() {
 
           {/* Side panel (right) */}
           <div className="w-full border-t border-[var(--border)] bg-[var(--panel)] p-4 md:w-[380px] md:border-l md:border-t-0">
-            <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">Selected file</div>
+            <div className="text-[12px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+              {selectedFile ? "Ready to upload?" : "Selected file"}
+            </div>
             {selectedFile ? (
               <div className="mt-2">
                 <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{selectedFile.name}</div>
@@ -283,7 +341,7 @@ export default function UploadPageClient() {
                 onClick={() => void handleUpload()}
               >
                 <UploadIcon />
-                {busy ? "Uploading…" : "Upload"}
+                {busy ? "Uploading…" : "Upload & create link"}
               </button>
 
               <div className="flex items-center justify-between gap-2">
@@ -318,6 +376,13 @@ export default function UploadPageClient() {
             </div>
 
             {error ? <div className="mt-4 text-sm font-medium text-red-600">{error}</div> : null}
+            {selectedFile ? (
+              <ul className="mt-4 space-y-1.5 text-[12px] leading-5 text-[var(--muted)]">
+                <li className="flex gap-2"><span aria-hidden="true" className="text-[var(--muted-2)]">·</span>Preview only. Nothing is saved until you upload.</li>
+                <li className="flex gap-2"><span aria-hidden="true" className="text-[var(--muted-2)]">·</span>Uploading creates a private share link you control.</li>
+                <li className="flex gap-2"><span aria-hidden="true" className="text-[var(--muted-2)]">·</span>The AI summary and key points are generated after upload.</li>
+              </ul>
+            ) : null}
             <div className="mt-4 text-[11px] leading-5 text-[var(--muted)]">
               Tip: drag & drop a PDF anywhere onto this page to replace the selection.
             </div>

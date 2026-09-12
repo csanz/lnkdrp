@@ -10,6 +10,7 @@ import Alert from "@/components/ui/Alert";
 import HelpTooltip from "@/components/ui/HelpTooltip";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
+import { FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
 import { clampNonNegInt } from "@/lib/format/number";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { SPEND_LIMIT_UPDATED_EVENT, getCachedSpendStatus, refreshSpendStatus } from "./SpendLimitModule";
@@ -21,7 +22,16 @@ type SpendStatus = {
   onDemandUsedCentsThisCycle: number;
 };
 
+/**
+ * On-demand usage card; renders nothing unless `NEXT_PUBLIC_FEATURE_CREDITS=1` (AI is free at launch).
+ */
 export default function OnDemandUsageCard() {
+  if (!FEATURE_CREDITS_ENABLED) return null;
+  return <OnDemandUsageCardInner />;
+}
+
+/** On-demand usage body: credits used vs limit for the current billing cycle. */
+function OnDemandUsageCardInner() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SpendStatus | null>(() => (getCachedSpendStatus() as SpendStatus | null) ?? null);

@@ -2950,7 +2950,8 @@ export function PdfJsViewer({
           <div className="min-h-full" />
         )}
 
-        {/* Hover arrows (centered within PDF viewport) */}
+        {/* Page arrows (centered within PDF viewport). Always visible at rest so touch and first-time
+            viewers see them; brighter on hover. Dimmed, not hidden, at the first/last page. */}
         {viewMode === "single" ? (
           <button
             type="button"
@@ -2959,13 +2960,13 @@ export function PdfJsViewer({
             onClick={goPrev}
             aria-disabled={!canPrev}
             disabled={status.kind === "loading"}
-            className={`pointer-events-auto absolute left-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-0 group-hover:opacity-100 ${
-              canPrev ? "" : "text-white/70"
+            className={`pointer-events-auto absolute left-4 top-1/2 grid h-14 w-14 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white opacity-80 shadow-xl ring-1 ring-white/25 backdrop-blur-sm transition duration-200 hover:bg-black/80 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:opacity-0 group-hover:opacity-100 ${
+              canPrev ? "" : "text-white/40 ring-white/10"
             }`}
           >
             <svg
-              width="22"
-              height="22"
+              width="28"
+              height="28"
               viewBox="0 0 24 24"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
@@ -2973,7 +2974,7 @@ export function PdfJsViewer({
               <path
                 d="M15 6L9 12L15 18"
                 stroke="currentColor"
-                strokeWidth="2.25"
+                strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
@@ -2989,13 +2990,13 @@ export function PdfJsViewer({
             onClick={goNext}
             aria-disabled={!canNext}
             disabled={status.kind === "loading"}
-            className={`pointer-events-auto absolute right-4 top-1/2 grid h-11 w-11 -translate-y-1/2 place-items-center rounded-full bg-black/35 text-white/90 opacity-0 shadow-lg backdrop-blur-sm transition-opacity duration-200 hover:bg-black/45 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:opacity-0 group-hover:opacity-100 ${
-              canNext ? "" : "text-white/70"
+            className={`pointer-events-auto absolute right-4 top-1/2 grid h-14 w-14 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white opacity-80 shadow-xl ring-1 ring-white/25 backdrop-blur-sm transition duration-200 hover:bg-black/80 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:opacity-0 group-hover:opacity-100 ${
+              canNext ? "" : "text-white/40 ring-white/10"
             }`}
           >
             <svg
-              width="22"
-              height="22"
+              width="28"
+              height="28"
               viewBox="0 0 24 24"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
@@ -3003,7 +3004,7 @@ export function PdfJsViewer({
               <path
                 d="M9 6L15 12L9 18"
                 stroke="currentColor"
-                strokeWidth="2.25"
+                strokeWidth="2.5"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />

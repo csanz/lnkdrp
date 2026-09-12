@@ -17,6 +17,8 @@ type MetricsResponse = {
   ok: true;
   docTitle?: string;
   days: number;
+  /** Present when the workspace plan clamps the analytics window (Free = 7 days). */
+  analyticsDaysLimit?: number;
   totals: {
     views: number;
     downloads: number;
@@ -289,6 +291,26 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [days, setDays] = useState(15);
   const [rangeOpen, setRangeOpen] = useState(false);
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
+  // Free workspaces are clamped server-side; the response says so and the picker follows.
+  const analyticsDaysLimit =
+    typeof data?.analyticsDaysLimit === "number" && Number.isFinite(data.analyticsDaysLimit) && data.analyticsDaysLimit > 0
+      ? Math.floor(data.analyticsDaysLimit)
+      : null;
+  const rangeOptions = useMemo(
+    () =>
+      [
+        { label: "Last 3 days", value: 3 },
+        { label: "Last 7 days", value: 7 },
+        { label: "Last 15 days", value: 15 },
+        { label: "Last 30 days", value: 30 },
+      ].filter((opt) => analyticsDaysLimit === null || opt.value <= analyticsDaysLimit),
+    [analyticsDaysLimit],
+  );
+
+  useEffect(() => {
+    // Snap the selected range to the plan window so the label and the data agree.
+    if (analyticsDaysLimit !== null && days > analyticsDaysLimit) setDays(analyticsDaysLimit);
+  }, [analyticsDaysLimit, days]);
   const [viewerDetail, setViewerDetail] = useState<
     | null
     | {
@@ -662,6 +684,14 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               <div className="min-w-0">
                 <div className="text-base font-semibold text-[var(--fg)]">Metrics</div>
                 <div className="mt-1 text-sm text-[var(--muted)]">{dateRangeLabel}</div>
+                {analyticsDaysLimit !== null ? (
+                  <div className="mt-1 text-xs text-[var(--muted-2)]">
+                    Free shows the last {analyticsDaysLimit} days ·{" "}
+                    <Link href="/pricing" className="font-medium text-[var(--fg)] underline-offset-2 hover:underline">
+                      Upgrade for full history
+                    </Link>
+                  </div>
+                ) : null}
               </div>
 
               <div ref={rootRef} className="relative shrink-0">
@@ -679,12 +709,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 {rangeOpen ? (
                   <div className="absolute right-0 top-[calc(100%+8px)] z-10 w-56 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-black/5">
                     <div className="p-2">
-                      {[
-                        { label: "Last 3 days", value: 3 },
-                        { label: "Last 7 days", value: 7 },
-                        { label: "Last 15 days", value: 15 },
-                        { label: "Last 30 days", value: 30 },
-                      ].map((opt) => {
+                      {rangeOptions.map((opt) => {
                         const active = opt.value === days;
                         return (
                           <button

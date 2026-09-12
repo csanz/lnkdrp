@@ -186,3 +186,15 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* Activity feed rows entering after a page change (staggered via inline animation-delay). */
+@keyframes ldFeedRowIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

@@ -154,25 +154,28 @@ export default function TermsOfServicePage() {
           </section>
 
           <section>
-            <h2 className="mb-3 text-base font-semibold text-white">8. Plans, Credits, and Billing</h2>
+            <h2 className="mb-3 text-base font-semibold text-white">8. Plans and Billing</h2>
             <p className="mb-4 leading-7">
-              The Service has a Free plan and a paid Pro plan. Plans are bound to a workspace, not to an individual, and one Pro subscription covers every member of that workspace.
+              The Service has a Free plan and a paid Pro plan. Plans are bound to a workspace, not to an individual. Current limits and prices are listed on our <Link href="/pricing" className="text-white/80 underline hover:text-white">pricing page</Link>, which forms part of these Terms.
             </p>
             <p className="mb-4 leading-7">
-              <strong>Credits:</strong> AI features consume credits. Each AI action has a fixed credit cost shown on our <Link href="/pricing" className="text-white/80 underline hover:text-white">pricing page</Link>. Free workspaces receive a one-time starter balance. Pro workspaces receive an included credit allowance at the start of each billing cycle; unused included credits do not roll over. When credits run out, AI features pause but your documents, share links, and tracking keep working.
+              <strong>Free:</strong> a limited number of active share links and projects, a limited window of viewer analytics, and no additional collaborators. AI summaries and version comparisons are included. When you reach a limit, existing links keep working; you can disable a link to free a slot or upgrade the workspace.
             </p>
             <p className="mb-4 leading-7">
-              <strong>On-demand credits:</strong> Pro workspaces can optionally enable on-demand credits beyond the included allowance. On-demand usage is metered and billed at the published per-credit rate, and is always capped by a spend limit you set. On-demand is off by default.
+              <strong>Pro:</strong> unlimited share links and projects, full analytics history, and collaborators. One collaborator is included; each additional member of a Pro workspace is billed as a monthly licence at the rate shown on the pricing page, prorated when added or removed. Members are people; software agents acting under a member's account do not need a licence.
             </p>
             <p className="mb-4 leading-7">
-              If you purchase a Pro subscription:
+              <strong>AI features and credits:</strong> the AI features available at launch are included in both plans. If we introduce features metered in credits, their cost will be shown before they run and listed on the pricing page, and any credit allowance and on-demand rate will be described there. We will not start charging credits for a feature that was included without notice.
+            </p>
+            <p className="mb-4 leading-7">
+              If you purchase a Pro subscription or collaborator licences:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li>The subscription fee is billed in advance on a recurring basis (currently monthly); on-demand credits, if enabled, are billed in arrears based on metered usage</li>
+              <li>Fees are billed in advance on a recurring basis (currently monthly)</li>
               <li>All fees are non-refundable except as required by law</li>
-              <li>We reserve the right to change plan prices and credit costs with 30 days' notice</li>
+              <li>We reserve the right to change prices and plan limits with 30 days' notice</li>
               <li>Your subscription will automatically renew unless cancelled before the renewal date</li>
-              <li>You may cancel at any time through the billing portal; cancellation takes effect at the end of the current billing period, after which the workspace returns to the Free plan</li>
+              <li>You may cancel at any time through the billing portal; cancellation takes effect at the end of the current billing period, after which the workspace returns to the Free plan and its limits apply again</li>
             </ul>
             <p className="leading-7">
               We use Stripe to handle payments. Your card details are entered on and stored by Stripe, not by us. By providing payment information, you agree to Stripe's terms and conditions.

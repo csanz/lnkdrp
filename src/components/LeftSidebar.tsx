@@ -35,6 +35,15 @@ import SidebarProjectsSection from "@/components/SidebarProjectsSection";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
 import CreateProjectModal from "@/components/modals/CreateProjectModal";
+import PlanLimitNotice from "@/components/PlanLimitNotice";
+import {
+  PLAN_LIMIT_HIT_EVENT,
+  markPlanLimitHit,
+  parsePlanLimitError,
+  readPlanLimitHit,
+  type PlanLimitError,
+  type PlanLimitKey,
+} from "@/lib/client/planLimit";
 import { buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getPublicSiteBase } from "@/lib/urls";
 import {
   getStarredDocs,
@@ -338,6 +347,11 @@ export default function LeftSidebar({
   const [starredMetaCacheById, setStarredMetaCacheById] = useState<StarredMetaById>({});
 
   const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
+  const [newProjectLimitError, setNewProjectLimitError] = useState<PlanLimitError | null>(null);
+  // Plan-limit nudge: `/api/billing/status` carries no usage, so the sidebar only knows the workspace
+  // is at a Free cap after a `402 plan_limit` was seen in this session (see `markPlanLimitHit`).
+  const [planLimitHit, setPlanLimitHit] = useState<PlanLimitKey | null>(null);
+  const [planLimitNudgeDismissed, setPlanLimitNudgeDismissed] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDescription, setNewProjectDescription] = useState("");
   const [newProjectBusy, setNewProjectBusy] = useState(false);
@@ -1497,6 +1511,7 @@ export default function LeftSidebar({
     if (navLocked) return;
     setNewProjectBusy(true);
     setNewProjectError(null);
+    setNewProjectLimitError(null);
     let createdId: string | null = null;
     try {
       const name = newProjectName.trim();
@@ -1520,6 +1535,13 @@ export default function LeftSidebar({
         project?: { id?: string; slug?: string };
       };
       if (!res.ok) {
+        const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
+        if (limitErr) {
+          // Free project cap: show the upgrade prompt inside the modal.
+          setNewProjectLimitError(limitErr);
+          markPlanLimitHit(limitErr.limit);
+          return;
+        }
         setNewProjectError(json?.error || "Failed to create project");
         return;
       }
@@ -1551,6 +1573,17 @@ export default function LeftSidebar({
       if (!createdId) setNewProjectBusy(false);
     }
   }
+
+  // Plan-limit nudge: hydrate from sessionStorage, then follow in-session 402s.
+  useEffect(() => {
+    setPlanLimitHit(readPlanLimitHit());
+    const onHit = () => {
+      setPlanLimitHit(readPlanLimitHit());
+      setPlanLimitNudgeDismissed(false);
+    };
+    window.addEventListener(PLAN_LIMIT_HIT_EVENT, onHit);
+    return () => window.removeEventListener(PLAN_LIMIT_HIT_EVENT, onHit);
+  }, []);
 
   // Close the Create Project modal only after we've actually navigated to the new project.
   useEffect(() => {
@@ -1646,14 +1679,18 @@ export default function LeftSidebar({
               disabled={navLocked}
               className={[
                 "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
-                navLocked ? "cursor-not-allowed opacity-50" : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
+                navLocked
+                  ? "cursor-not-allowed opacity-50"
+                  : pathname.startsWith("/search")
+                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
                 if (navLocked) return;
-                setDocsModal((s) => ({ ...s, page: 1 }));
-                setShowDocsModal(true);
+                router.push("/search");
               }}
               aria-label="Search"
+              aria-current={pathname.startsWith("/search") ? "page" : undefined}
               title={navLocked ? "Disabled while uploading" : "Search"}
             >
               <div className="flex items-center gap-2">
@@ -2066,6 +2103,7 @@ export default function LeftSidebar({
                 onClickNewProject={() => {
                   if (navLocked) return;
                   setNewProjectError(null);
+                  setNewProjectLimitError(null);
                   setShowCreateProjectModal(true);
                 }}
                 routerPush={(href) => router.push(href)}
@@ -2188,6 +2226,18 @@ export default function LeftSidebar({
             </section>
           </div>
         </nav>
+
+        {planLimitHit && !planLimitNudgeDismissed ? (
+          <div className="px-3 pb-2">
+            <PlanLimitNotice
+              limit={planLimitHit}
+              compact
+              secondaryLabel={planLimitHit === "projects" ? "Manage projects" : "Manage links"}
+              secondaryHref={planLimitHit === "projects" ? "/search?scope=projects" : "/search?scope=documents"}
+              onDismiss={() => setPlanLimitNudgeDismissed(true)}
+            />
+          </div>
+        ) : null}
 
         <div className="border-t border-[var(--border)] px-3 py-3">
           <AccountMenu />
@@ -2382,6 +2432,7 @@ export default function LeftSidebar({
         open={showCreateProjectModal}
         busy={newProjectBusy}
         error={newProjectError}
+        limitError={newProjectLimitError}
         name={newProjectName}
         setName={setNewProjectName}
         description={newProjectDescription}
@@ -2390,6 +2441,7 @@ export default function LeftSidebar({
           if (newProjectBusy) return;
           setShowCreateProjectModal(false);
           setNewProjectError(null);
+          setNewProjectLimitError(null);
           setPendingNewProjectNavId(null);
         }}
         onCreate={() => void createProject()}

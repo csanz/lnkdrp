@@ -4,7 +4,7 @@ import { Suspense, createContext, useCallback, useContext, useEffect, useLayoutE
 import { SessionProvider, useSession } from "next-auth/react";
 import type { Session } from "next-auth";
 import { ThemeProvider } from "next-themes";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PendingUploadProvider } from "@/lib/pendingUpload";
 import { clearTempUser, getTempUser } from "@/lib/gating/tempUserClient";
 import { fetchJson } from "@/lib/http/fetchJson";
@@ -170,6 +170,45 @@ function DocNavOverlayController() {
   return null;
 }
 
+/** Dispatched on `window` by the ⌘K handler when already on `/search`; the page focuses its input. */
+const FOCUS_SEARCH_EVENT = "lnkdrp:focus-search";
+
+function isEditableElement(el: Element | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (el.isContentEditable) return true;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT";
+}
+
+/**
+ * Global ⌘K / Ctrl+K: go to `/search`, or focus its input when already there.
+ * Never intercepts while focus is in an editable element (the search input itself excepted),
+ * and stays quiet while navigation is locked (uploads in flight).
+ */
+function SearchShortcut() {
+  const router = useRouter();
+  const pathname = usePathname() ?? "";
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      const active = document.activeElement;
+      const isSearchInput = active instanceof HTMLElement && active.hasAttribute("data-lnkdrp-search-input");
+      if (!isSearchInput && isEditableElement(active)) return;
+      if (document.documentElement.dataset.navLocked === "true") return;
+      e.preventDefault();
+      if (pathname.startsWith("/search")) {
+        window.dispatchEvent(new CustomEvent(FOCUS_SEARCH_EVENT));
+      } else {
+        router.push("/search");
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [router, pathname]);
+
+  return null;
+}
+
 /**
  * Lock *all* link-style navigation (`<a>` and `[role="link"]`) while `shouldLock` is true.
  * Uses a reference-counted lock to avoid accidental unlocks if multiple operations overlap.
@@ -208,6 +247,7 @@ export default function Providers({
           <PendingUploadProvider>
             <NavigationLockProvider>
               <DocNavOverlayController />
+              <SearchShortcut />
               {children}
               <OutOfCreditsListener />
             </NavigationLockProvider>
@@ -230,6 +270,7 @@ export default function Providers({
           <PendingUploadProvider>
             <NavigationLockProvider>
               <DocNavOverlayController />
+              <SearchShortcut />
               {children}
               <OutOfCreditsListener />
             </NavigationLockProvider>

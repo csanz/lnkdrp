@@ -15,6 +15,7 @@ import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { formatInt } from "@/lib/format/number";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { dispatchCreditsSnapshotRefresh } from "@/lib/client/creditsSnapshotRefresh";
+import { FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
 
 type SpendStatus = {
   ok: true;
@@ -83,7 +84,16 @@ function isPreset(limitCents: number): boolean {
   return (ALLOWED_LIMITS as readonly number[]).includes(limitCents);
 }
 
-export default function SpendLimitModule({
+/**
+ * Spend limit module; renders nothing unless `NEXT_PUBLIC_FEATURE_CREDITS=1` (AI is free at launch).
+ */
+export default function SpendLimitModule(props: { className?: string; compact?: boolean }) {
+  if (!FEATURE_CREDITS_ENABLED) return null;
+  return <SpendLimitModuleInner {...props} />;
+}
+
+/** Spend limit body: on-demand usage summary plus the preset/custom limit editor modal. */
+function SpendLimitModuleInner({
   className,
   compact = false,
 }: {

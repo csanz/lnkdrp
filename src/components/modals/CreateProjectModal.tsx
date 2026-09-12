@@ -1,9 +1,14 @@
 "use client";
 
 import Modal from "@/components/modals/Modal";
+import PlanLimitNotice from "@/components/PlanLimitNotice";
+import type { PlanLimitError } from "@/lib/client/planLimit";
 
 /**
  * Create Project modal (used from the left sidebar).
+ *
+ * When the create call is refused with `402 plan_limit` (Free project cap), the caller passes the
+ * parsed body as `limitError` and the modal shows an upgrade prompt instead of a plain error line.
  */
 export default function CreateProjectModal({
   open,
@@ -11,6 +16,7 @@ export default function CreateProjectModal({
   onCreate,
   busy,
   error,
+  limitError = null,
   name,
   setName,
   description,
@@ -21,6 +27,8 @@ export default function CreateProjectModal({
   onCreate: () => void;
   busy: boolean;
   error: string | null;
+  /** Parsed `402 plan_limit` body from the last create attempt, if any. */
+  limitError?: PlanLimitError | null;
   name: string;
   setName: (v: string) => void;
   description: string;
@@ -70,7 +78,11 @@ export default function CreateProjectModal({
           />
         </div>
 
-        {error ? <div className="text-sm font-medium text-red-700">{error}</div> : null}
+        {limitError ? (
+          <PlanLimitNotice error={limitError} secondaryLabel="Manage projects" secondaryHref="/search?scope=projects" />
+        ) : error ? (
+          <div className="text-sm font-medium text-red-700">{error}</div>
+        ) : null}
 
         <div className="flex items-center justify-end gap-3">
           <button

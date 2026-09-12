@@ -28,6 +28,8 @@ type Props = {
   uploadError?: unknown | null;
   /** Optional quick-stats card rendered between the share controls and the Snapshot. */
   quickStats?: ReactNode;
+  /** Optional notice rendered directly under the "Share enabled" switch (e.g. a plan-limit prompt). */
+  shareNotice?: ReactNode;
 };
 /**
  * Render the DocSharePanel UI (uses local state).
@@ -54,6 +56,7 @@ export default function DocSharePanel({
   aiOutput,
   uploadError,
   quickStats,
+  shareNotice,
 }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
 
@@ -266,6 +269,8 @@ export default function DocSharePanel({
             />
           </button>
         </div>
+
+        {shareNotice ? <div className="mt-2">{shareNotice}</div> : null}
 
         <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
           <div className="min-w-0">

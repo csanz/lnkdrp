@@ -6,6 +6,9 @@
  * - Validates the secret against the org record
  * - Adds the currently signed-in user as a member of that org
  * - Clears the join secret + cookie (single use)
+ *
+ * Plan limits: joining adds a collaborator, so a user who is not already a member of a Free team
+ * org gets a 402 (`code: "plan_limit"`) and the cookie is cleared (the secret is short-lived anyway).
  */
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
@@ -15,6 +18,8 @@ import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor } from "@/lib/gating/actor";
+import { recordActivity } from "@/lib/activity/log";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 
@@ -77,6 +82,26 @@ export async function POST(request: Request) {
 
     // Add membership for the currently authenticated user.
     const userId = new Types.ObjectId(actor.userId);
+
+    // Collaborator gate: only a brand-new (or previously removed) member counts against the cap.
+    const alreadyMember = await OrgMembershipModel.exists({ orgId: orgObjectId, userId, isDeleted: { $ne: true } });
+    if (!alreadyMember) {
+      const limitCheck = await checkLimit(orgObjectId, "collaborators");
+      if (!limitCheck.ok) {
+        void recordActivity({
+          orgId: orgObjectId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "plan.limit_reached",
+          meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
+          request,
+        });
+        const res = planLimitResponse(limitCheck);
+        res.cookies.set(JOIN_COOKIE, "", { path: "/", maxAge: 0 });
+        return res;
+      }
+    }
+
     await OrgMembershipModel.updateOne(
       { orgId: orgObjectId, userId },
       {

@@ -15,6 +15,7 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
+import { checkLimit, planLimitResponse, type LimitCheck } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -636,7 +637,9 @@ export async function GET(
  *
  * Applies user-scoped updates to doc metadata (title/status/share settings/project membership/archive state).
  * Side effects: may update project membership fields and keep legacy pointers (`uploadId`) in sync.
- * Errors: 400 for invalid IDs/body, 404 when doc not found.
+ * Plan limits: re-enabling sharing (`shareEnabled: false → true`) is checked against the Free
+ * active-link cap; disabling never is. Inside a grace window the update succeeds with `planWarning`.
+ * Errors: 400 for invalid IDs/body, 402 (`code: "plan_limit"`) when the link cap blocks, 404 when doc not found.
  */
 export async function PATCH(
   request: Request,
@@ -737,6 +740,25 @@ export async function PATCH(
 
     if (wantsProjectChange && !before) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    // Free plan: turning sharing back on adds an active link. Legacy docs without the field are
+    // already enabled, so only an explicit `false → true` flip counts. Disabling never checks.
+    let limitCheck: LimitCheck | null = null;
+    if (body.shareEnabled === true && before && (before as { shareEnabled?: unknown }).shareEnabled === false) {
+      limitCheck = await checkLimit(actor.orgId, "active_links");
+      if (!limitCheck.ok) {
+        void recordActivity({
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "plan.limit_reached",
+          docId: docObjectId,
+          meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
+          request,
+        });
+        return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
+      }
     }
 
     // Canonical behavior: setting `primaryProjectId` sets the primary pointer and adds membership.
@@ -945,6 +967,7 @@ export async function PATCH(
             (doc as unknown as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory,
           ),
         },
+        ...(limitCheck?.ok && limitCheck.warning ? { planWarning: limitCheck.warning } : {}),
         },
         { headers: { "cache-control": "no-store" } },
       ),

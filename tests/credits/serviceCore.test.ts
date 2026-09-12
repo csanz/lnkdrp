@@ -143,17 +143,17 @@ describe("credits/serviceCore", () => {
       workspaceId: "w1",
       userId: "u1",
       docId: null,
-      actionType: "summary",
+      actionType: "review",
       qualityTier: "basic",
       idempotencyKey: "k1",
       initBalanceIfMissing: async () => baseBalance(),
     });
 
     const full = getLedgerFullById(res.ledgerId)!;
-    expect(full.creditsFrom.subscription).toBe(1);
+    expect(full.creditsFrom.subscription).toBe(2);
     expect(full.creditsFrom.trial).toBe(0);
     expect(full.creditsFrom.purchased).toBe(0);
-    expect(getBalance().subscriptionCreditsRemaining).toBe(299);
+    expect(getBalance().subscriptionCreditsRemaining).toBe(298);
   });
 
   test("idempotency: second reserve with same key does not double-decrement", async () => {
@@ -166,7 +166,7 @@ describe("credits/serviceCore", () => {
       workspaceId: "w1",
       userId: "u1",
       docId: null,
-      actionType: "summary",
+      actionType: "review",
       qualityTier: "basic",
       idempotencyKey: "k1",
       initBalanceIfMissing: async () => baseBalance(),
@@ -175,13 +175,13 @@ describe("credits/serviceCore", () => {
       workspaceId: "w1",
       userId: "u1",
       docId: null,
-      actionType: "summary",
+      actionType: "review",
       qualityTier: "basic",
       idempotencyKey: "k1",
       initBalanceIfMissing: async () => baseBalance(),
     });
 
-    expect(getBalance().subscriptionCreditsRemaining).toBe(299);
+    expect(getBalance().subscriptionCreditsRemaining).toBe(298);
   });
 
   test("blocks when insufficient credits and on-demand disabled", async () => {
@@ -195,7 +195,7 @@ describe("credits/serviceCore", () => {
         workspaceId: "w1",
         userId: "u1",
         docId: null,
-        actionType: "history",
+        actionType: "review",
         qualityTier: "advanced",
         idempotencyKey: "k1",
         initBalanceIfMissing: async () => baseBalance(),

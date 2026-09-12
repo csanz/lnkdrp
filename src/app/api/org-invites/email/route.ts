@@ -11,6 +11,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { OrgModel } from "@/lib/models/Org";
 import { resolveActor } from "@/lib/gating/actor";
 import { sendOrgInviteEmail } from "@/lib/email/sendOrgInviteEmail";
@@ -109,6 +110,10 @@ export async function POST(request: Request) {
     .lean();
   const orgName = org ? String((org as { name?: unknown }).name ?? "").trim() : "";
   if (!orgName) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  // Plan limits: an emailed invite would add a member; Free workspaces have no collaborator seats.
+  const limitCheck = await checkLimit(orgIdRaw, "collaborators");
+  if (!limitCheck.ok) return planLimitResponse(limitCheck);
 
   const token = crypto.randomBytes(24).toString("base64url");
   const tokenHash = sha256Hex(token);

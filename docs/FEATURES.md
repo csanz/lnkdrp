@@ -16,7 +16,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Home page**: `/` — Marketing landing page with paperplane animation, a shared public header (About / Pricing / Log In), a “Get Started” button that goes straight to Google sign-in, and a shared public footer (`© YEAR LinkDrop Group · Terms · Privacy`) pinned to the bottom of the first viewport.
 - **About page**: `/about` — Static page explaining what LinkDrop is and how it works.
-- **Pricing page**: `/pricing` — Free vs Pro comparison (Pro price label read from `BillingConfig`, credit schedule, on-demand rate) with sign-in CTAs; for signed-in users the CTAs act on the active workspace directly (Stripe Checkout / billing portal / "Current plan").
+- **Pricing page**: `/pricing` — Free vs Pro comparison (Pro price label read from `BillingConfig`; Free = 3 active links / 1 project / 7 days of analytics / no collaborators, Pro = unlimited + 1 collaborator included with paid seats "coming soon"; no credit table at launch since summary + history compare are included) with sign-in CTAs; for signed-in users the CTAs act on the active workspace directly (Stripe Checkout / billing portal / "Current plan"). The FAQ covers the launch grace period for workspaces already over the Free limits (see **Plans and limits**).
 - **Terms of Service**: `/tos` — Terms of Service page linked from the shared public footer.
 - **Privacy Policy**: `/privacy` — Privacy Policy page linked from the shared public footer.
 
@@ -51,10 +51,11 @@ This document is a **product-oriented** breakdown of the main user-facing featur
     - Renders a **single** plan status card (no Free-vs-Pro comparison cards).
     - Uses `GET /api/billing/status` to show user billing state (plan + Stripe status + renewal date when available).
     - Uses `GET /api/credits/snapshot` to determine whether AI tools are currently blocked due to credits.
-    - Free plan shows a calm status line and a **single** **Upgrade** CTA (Stripe Checkout via `POST /api/stripe/checkout`), plus a **View plan details** link to `/pricing` (the old in-dashboard plan modal is gone; `/pricing` is the single source of truth for plan comparison).
+    - Free plan lists the three Free limits (3 active share links · 1 project · last 7 days of analytics) with a **Compare plans** link, plus a **single** **Upgrade** CTA (Stripe Checkout via `POST /api/stripe/checkout`) and a **View plan details** link to `/pricing` (the old in-dashboard plan modal is gone; `/pricing` is the single source of truth for plan comparison). Pro shows "1 collaborator included · paid seats coming soon".
     - After Checkout, the user lands on `/billing/success` which shows **“Processing…”** and polls `/api/billing/status` until **Stripe webhooks** update MongoDB (access is webhook-driven; we do not trust the redirect).
     - Pro plan includes a **Manage Subscription** button that opens a Stripe **billing portal** session (`POST /api/stripe/portal`) and a Billing shortcut.
-    - When on Pro, the card also shows a small **On-demand usage this cycle** module with a **hard spend limit** editor (Cursor-style presets + custom).
+    - When on Pro (and `NEXT_PUBLIC_FEATURE_CREDITS=1`), the card also shows a small **On-demand usage this cycle** module with a **hard spend limit** editor (Cursor-style presets + custom).
+  - **Credits UI flag**: every credits surface below (header pill, exhausted banner, Credits summary, On-demand usage card, spend-limit module, and the `/dashboard/usage` + `/dashboard/limits` pretty URLs, which fall back to Overview) is hidden unless `NEXT_PUBLIC_FEATURE_CREDITS=1`, because AI is free at launch. The API routes keep working either way.
   - Dashboard header (top-right) shows a **Credits: X** indicator (Dashboard-only) that links to the **Usage** tab (`/dashboard?tab=usage`) for the full breakdown. When the workspace is set to an unlimited on-demand cap, it shows **Credits: Unlimited**.
   - When the on-demand cap is set to **Unlimited**, the dashboard surfaces **Unlimited** (not a large sentinel number) anywhere an on-demand credit limit/headroom is displayed (header, Usage summary, Limits cards, Billing & Invoices on-demand section).
   - When credits are exhausted (and on-demand is disabled / has no headroom), the dashboard shows a persistent banner:
@@ -201,8 +202,22 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Tags**:
   - `/api/tags/:tag/docs` lists docs that contain a specific AI-derived tag (paged).
 
+## Plans and limits
+
+- **Source of truth**: `src/lib/billing/planLimits.ts` (`limitsForPlan`, `checkLimit`, `planLimitResponse`, `clampAnalyticsDays`). Plan comes from `SubscriptionModel` (`active` / `trialing` = Pro), one row per workspace. The pricing page imports the same constants so the copy cannot drift.
+- **Free**: 3 active share links (docs with sharing on, not deleted/archived), 1 project (request repos do not count), viewer analytics for the last 7 days, no collaborators (just the owner). AI summary, version compare, password protection, download control, and MCP/API/CLI access are all included.
+- **Pro** (per workspace): unlimited links and projects, full analytics history, 1 collaborator included. **Paid seats are deferred**: extra members will be announced (and priced) before they are billed; agents never count as seats.
+- **Enforcement**: creating a link (enabling sharing), creating a project, and inviting a collaborator are checked with `checkLimit`. Over the cap the API answers **`402`** with `{ error, code: "plan_limit", limit, used, max, grace, upgradeUrl: "/pricing" }`. Existing links never stop working; disabling one frees a slot.
+- **Client handling**: `src/lib/client/planLimit.ts` (`parsePlanLimitError`, `planLimitPrompt`, `markPlanLimitHit`) + `src/components/PlanLimitNotice.tsx` (message, **Upgrade to Pro** → `/pricing`, caller-supplied secondary action). Used in the doc share toggle (switch stays off, notice appears under it), the **New project** modal, and the left sidebar (a compact nudge above the account menu once a `402 plan_limit` has been seen this session; stored in `sessionStorage` key `lnkdrp_plan_limit_hit`).
+- **Analytics window**: `/api/docs/:docId/shareviews` clamps `days` for Free workspaces and returns `analyticsDaysLimit`. The metrics range picker then only offers ranges ≤ the limit and shows "Free shows the last 7 days · Upgrade for full history"; the doc page quick-stats card shows the same note in its footer.
+- **Launch grace period**: workspaces that were already over a Free limit at launch get `Org.planGrace` (`startedAt` / `endsAt` = +14 days / `blockedAt` / `remindersSent`). Inside the window, over-limit actions still succeed with a `warning` and reminder emails go out; after `endsAt` (or once `blockedAt` is set) new links/projects return `402` until the workspace disables some or upgrades. Existing links keep resolving throughout.
+- **Flags**:
+  - `NEXT_PUBLIC_FEATURE_CREDITS=1` — show the credits UI (header pill, banner, Usage/Limits cards, spend-limit module). Off by default at launch.
+  - `NEXT_PUBLIC_FEATURE_REQUESTS=1` — show the request-repo nav entries (see **Activity**).
+
 ## Usage & limits
 
+- **Credits UI flag**: everything in this section is hidden in the dashboard unless `NEXT_PUBLIC_FEATURE_CREDITS=1` (AI is free at launch). The `/api/credits/*` and `/api/billing/spend` routes keep working.
 - **Credits (billing-cycle-based)**:
   - Pro includes **300 credits per Stripe billing cycle** (subscription anniversary, not calendar month).
   - Included credits **reset to 300** on renewal (no rollover). Purchased credits (if present) do not expire.
@@ -368,6 +383,14 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - `share.viewed` / `share.downloaded` — recorded once per new viewer of a share link (first visit, not per page) and on each PDF download. `actorKind: "viewer"`, with the signed-in viewer’s user id when known, otherwise the name/email they introduced themselves with.
 - **Agent attribution**: agents/MCP clients send `x-lnkdrp-agent: <client>/<version>` (e.g. `claude-code/1.2.3`); when absent the User-Agent is sniffed for known clients (claude-code, claude-desktop, cursor, codex, gemini-cli, grok, windsurf, cline). Browsers resolve to no agent. The feed shows an agent badge (`agentLabel()`), e.g. "Claude Code". The upcoming MCP server will pass the MCP `initialize` `clientInfo { name, version }` instead (see `docs/prds/lnkdrp-mcp.md`).
 - **Feature flag**: the sidebar "Request" action and the "Received" section are hidden unless `NEXT_PUBLIC_FEATURE_REQUESTS=1` (the Received section still shows when the workspace already has inboxes). Routes stay available.
+
+## Search
+
+- **Page**: `/search` (app shell; the sidebar "Search" entry navigates here — the Docs section still opens `SidebarDocsModal`). Files: `src/app/(app)/search/{page,pageClient,SearchResultRow,loading}.tsx`.
+- **URL-backed**: `?q=&scope=&sort=&page=` is the source of truth. Typing writes `q` (250 ms debounce, `history.replaceState`); scope, sort and page push history entries, so back/forward restore the exact view. Writes go through `window.history` (Next syncs them into `useSearchParams`) so the route segment is not refetched per keystroke.
+- **Scopes**: All · Documents · Received (docs with `receivedViaRequestProjectId`) · Projects. **Sort**: Recently updated (default) · Title A–Z · Newest. Received filtering and sorting apply client-side within the fetched page.
+- **Data**: documents from `GET /api/docs?q=&page=&limit=20` (paged, Previous/Next); projects from `GET /api/projects?q=&sidebar=1&limit=50` (skips backfills, keeps `description`/`docCount`), filtered client-side by name/description. Empty query shows the 20 most recently updated documents under "Recent".
+- **Shortcuts**: `⌘K` / `Ctrl+K` anywhere in the app opens `/search` (or focuses the input when already there, via the `lnkdrp:focus-search` window event; handler in `src/app/providers.tsx`, skipped while typing in another field or while navigation is locked). On the page: `/` focuses the input, `Enter` opens the first result, `↑`/`↓` move focus through results (roving tabindex), `Esc` clears the query.
 
 ## Revision history (in progress)
 

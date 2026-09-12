@@ -17,6 +17,7 @@ import Alert from "@/components/ui/Alert";
 import IconButton from "@/components/ui/IconButton";
 import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } from "@/lib/orgsCache";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
+import { FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 
 const DASHBOARD_NAV_OPEN_EVENT = "lnkdrp:dashboard-nav-open";
@@ -138,6 +139,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const creditsUnlimited = Boolean(credits && credits.onDemandMonthlyLimitCents >= UNLIMITED_LIMIT_CENTS);
 
   async function refreshCredits(includeSpend = false, opts: { bust?: boolean } = {}) {
+    // Credits UI is hidden at launch (AI is free); skip the snapshot fetch entirely.
+    if (!FEATURE_CREDITS_ENABLED) return;
     setCreditsBusy(true);
     setCreditsError(null);
     creditsBusyRef.current = true;
@@ -339,53 +342,55 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 
           <div className="min-w-0">
             <div className="flex min-w-0 items-center justify-end gap-2">
-              <Link
-                href="/dashboard?tab=usage"
-                className={`inline-flex h-[34px] min-w-0 max-w-[52vw] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] sm:max-w-none truncate ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
-                title="View usage"
-                onMouseEnter={() => {
-                  if (credits || creditsBusyRef.current) return;
-                  void refreshCredits(false);
-                }}
-              >
-                <span className="hidden sm:inline">AI Credits:</span>
-                <span className="sm:hidden">Credits:</span>
-                {credits ? (
-                  creditsUnlimited ? (
-                    <span className="inline-flex items-baseline">
-                      <span className="ml-1.5 mr-1.5 text-emerald-700 dark:text-emerald-300" aria-hidden="true">
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="currentColor"
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="relative top-[1.5px] block"
-                        >
-                          <path d="M3 7l4.5 4.5L12 6l4.5 5.5L21 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm2 4.414V17h14v-5.586l-2.5 2.5L12 8l-4.5 5.914L5 11.414z" />
-                        </svg>
+              {FEATURE_CREDITS_ENABLED ? (
+                <Link
+                  href="/dashboard?tab=usage"
+                  className={`inline-flex h-[34px] min-w-0 max-w-[52vw] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] sm:max-w-none truncate ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
+                  title="View usage"
+                  onMouseEnter={() => {
+                    if (credits || creditsBusyRef.current) return;
+                    void refreshCredits(false);
+                  }}
+                >
+                  <span className="hidden sm:inline">AI Credits:</span>
+                  <span className="sm:hidden">Credits:</span>
+                  {credits ? (
+                    creditsUnlimited ? (
+                      <span className="inline-flex items-baseline">
+                        <span className="ml-1.5 mr-1.5 text-emerald-700 dark:text-emerald-300" aria-hidden="true">
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="relative top-[1.5px] block"
+                          >
+                            <path d="M3 7l4.5 4.5L12 6l4.5 5.5L21 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7zm2 4.414V17h14v-5.586l-2.5 2.5L12 8l-4.5 5.914L5 11.414z" />
+                          </svg>
+                        </span>
+                        <span>Unlimited</span>
                       </span>
-                      <span>Unlimited</span>
-                    </span>
+                    ) : (
+                      <span className="ml-1">{Math.max(0, Math.floor(credits.creditsRemaining)).toLocaleString()}</span>
+                    )
                   ) : (
-                    <span className="ml-1">{Math.max(0, Math.floor(credits.creditsRemaining)).toLocaleString()}</span>
-                  )
-                ) : (
-                  <span className="ml-1">—</span>
-                )}
-              </Link>
+                    <span className="ml-1">—</span>
+                  )}
+                </Link>
+              ) : null}
               <AccountMenu variant="topbar" />
             </div>
           </div>
         </div>
       </header>
 
-      {blockedBanner}
+      {FEATURE_CREDITS_ENABLED ? blockedBanner : null}
 
       <main className="mx-auto w-full max-w-[1280px] px-3 py-6 sm:px-5">{children}</main>
 
       <Modal
-        open={creditsOpen}
+        open={FEATURE_CREDITS_ENABLED && creditsOpen}
         onClose={() => setCreditsOpen(false)}
         ariaLabel="Credits breakdown"
       >

@@ -11,6 +11,8 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { recordActivity } from "@/lib/activity/log";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -243,7 +245,10 @@ export async function GET(request: Request) {
  * `POST /api/projects`
  *
  * Creates a new non-request project (name/description/autoAddFiles) with a unique slug and shareId.
- * Errors: 400 for validation/unexpected failures, 409 when a duplicate name constraint is hit.
+ * Plan limits: Free workspaces are capped on non-request projects (request repos are not counted);
+ * inside a grace window the create succeeds with `planWarning` in the body.
+ * Errors: 400 for validation/unexpected failures, 402 (`code: "plan_limit"`) when the project cap
+ * blocks, 409 when a duplicate name constraint is hit.
  */
 export async function POST(request: Request) {
   try {
@@ -266,6 +271,21 @@ export async function POST(request: Request) {
     await connectMongo();
     const orgId = new Types.ObjectId(actor.orgId);
     const userId = new Types.ObjectId(actor.userId);
+
+    // Free plan: project cap (non-request projects only).
+    const limitCheck = await checkLimit(actor.orgId, "projects");
+    if (!limitCheck.ok) {
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: "plan.limit_reached",
+        meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
+        request,
+      });
+      return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
+    }
+
     const base = slugify(name);
     const slug = await ensureUniqueSlug({
       orgId,
@@ -299,6 +319,7 @@ export async function POST(request: Request) {
             })(),
             autoAddFiles,
           },
+          ...(limitCheck.warning ? { planWarning: limitCheck.warning } : {}),
         },
         { status: 201 },
       ),

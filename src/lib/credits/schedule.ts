@@ -8,9 +8,18 @@ import type { ActionType, QualityTier } from "@/lib/credits/types";
  * - Keep this small and explicit so we can later swap reconciliation to use true cost without
  *   schema changes.
  */
+/**
+ * Actions included on every plan at launch (2026-09-12 decision): the automatic summary and the
+ * history compare cost nothing. The ledger still records a 0-credit row so usage stays visible.
+ * Remove an action from this set to start charging the tier prices below again.
+ */
+export const INCLUDED_ACTIONS_AT_LAUNCH: ReadonlySet<ActionType> = new Set<ActionType>(["summary", "history"]);
+
 export function creditsForRun(params: { actionType: ActionType; qualityTier: QualityTier }): number {
   const a = params.actionType;
   const q = params.qualityTier;
+
+  if (INCLUDED_ACTIONS_AT_LAUNCH.has(a)) return 0;
 
   // summary (default automatic = Basic)
   if (a === "summary") {
