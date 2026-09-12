@@ -23,6 +23,8 @@ type Props = {
    * Useful to tweak spacing per-modal without changing global defaults.
    */
   contentClassName?: string;
+  /** Panel width in px (capped to the viewport); defaults to 520. */
+  width?: number;
 };
 /**
  * Render the Modal UI (uses effects).
@@ -37,6 +39,7 @@ export default function Modal({
   panelRef,
   panelClassName,
   contentClassName,
+  width = 520,
 }: Props) {
   useEffect(() => {
     if (!open) return;
@@ -65,10 +68,11 @@ export default function Modal({
       <div
         ref={panelRef}
         className={[
-          "absolute left-1/2 top-1/2 w-[min(520px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2",
+          "absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2",
           "rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-[var(--border)]",
           panelClassName ?? "",
         ].join(" ")}
+        style={{ width: `min(${width}px, calc(100vw - 32px))` }}
       >
         <div className="relative">
           <IconButton
@@ -81,7 +85,7 @@ export default function Modal({
 
           <div
             className={[
-              "max-h-[min(75vh,820px)] overflow-auto px-7 pb-7 pt-6",
+              "max-h-[min(85vh,820px)] overflow-auto px-7 pb-7 pt-6",
               contentClassName ?? "",
             ].join(" ")}
           >

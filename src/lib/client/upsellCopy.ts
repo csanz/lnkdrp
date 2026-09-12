@@ -6,7 +6,7 @@
  * (passive states such as the sidebar fallback nudge). Facts mirror `/pricing` and
  * `src/lib/billing/planLimits.ts`: Free = 3 active links, 1 project, 7-day analytics, single user,
  * no version history / AI compare; Pro = unlimited links and projects, full analytics history,
- * version history + AI compare, 300 credits a cycle, 1 collaborator included (more on request),
+ * version history + AI compare, 300 credits a month, 1 collaborator included (more on request),
  * agents never take a seat.
  */
 import type { PlanLimitKey } from "@/lib/client/planLimit";
@@ -35,9 +35,9 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     title: "Version history is a Pro feature",
     reason: "Free workspaces keep only the latest file; Pro keeps every version and explains what changed.",
     bullets: [
-      "Every version of every link, with revision history recipients can view",
+      "Every version kept, with a history recipients can browse",
       "AI compare of what changed between two versions",
-      "300 credits a cycle to power compares and reviews",
+      "Unlimited active links and projects",
     ],
     secondaryLabel: "Compare plans",
   },
@@ -83,9 +83,9 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   },
   credits: {
     title: "Credits power AI compare on Pro",
-    reason: "AI compare and reviews run on credits, which are included with Pro.",
+    reason: "AI compare runs on credits, which are included with Pro.",
     bullets: [
-      "300 credits a cycle, more on demand",
+      "300 credits a month, more at $0.10 each",
       "AI compare of what changed between versions",
       "Version history for every link",
     ],

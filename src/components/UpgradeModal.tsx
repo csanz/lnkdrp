@@ -1,14 +1,15 @@
 /**
  * UpgradeModal — the blocking Free → Pro prompt, opened through `useUpgradeModal()`.
  *
- * Built on the shared `Modal` so it matches the app: a "Pro" pill, the registry title and reason
- * (with "{used} of {max} used." and the grace hint appended when provided), three Pro benefits with
- * check icons, a price line, and two actions. The price comes from `GET /api/billing/status`
- * (`proPriceLabel`), fetched once per session and cached; when the request fails or the visitor is
- * not signed in, the line falls back to `PRO_PRICE_FALLBACK` and **Upgrade to Pro** links to
- * `/pricing`. Signed-in workspaces start Stripe Checkout directly (same call as the dashboard
- * Plan card). Pro workspaces never see it: the provider refuses to open, and this component closes
- * itself if the plan snapshot resolves to Pro.
+ * Built on the shared `Modal` as an upgrade sheet rather than a confirm dialog: a "Pro" pill, the
+ * registry title and reason (with "{used} of {max} used." and the grace hint appended when
+ * provided), three Pro benefits in an inset panel, a price block with the amount set large, a
+ * full-width **Upgrade to Pro** action and a quiet **Not now** link. The price comes from
+ * `GET /api/billing/status` (`proPriceLabel`), fetched once per session and cached; when the
+ * request fails or the visitor is not signed in, it falls back to `PRO_PRICE_FALLBACK` and
+ * **Upgrade to Pro** links to `/pricing`. Signed-in workspaces start Stripe Checkout directly (same
+ * call as the dashboard Plan card). Pro workspaces never see it: the provider refuses to open, and
+ * this component closes itself if the plan snapshot resolves to Pro.
  */
 "use client";
 
@@ -71,6 +72,18 @@ async function loadBillingEntry(): Promise<BillingEntry> {
   return billingEntryInflight;
 }
 
+/**
+ * Split a price label such as "$29/mo" or "$29 / month" into the amount and its period so the
+ * amount can be set large. Labels that do not start with an amount render whole.
+ */
+export function splitPriceLabel(label: string): { amount: string; period: string } {
+  const m = /^(\p{Sc}?\s?\d[\d,]*(?:\.\d+)?)\s*(?:\/|per)?\s*(.*)$/u.exec(label.trim());
+  if (!m) return { amount: label.trim(), period: "" };
+  const raw = m[2].trim().toLowerCase();
+  const period = raw === "" ? "" : raw === "mo" || raw === "month" || raw === "monthly" ? "per month" : raw === "yr" || raw === "year" || raw === "yearly" ? "per year" : `per ${raw}`;
+  return { amount: m[1].replace(/\s+/g, ""), period };
+}
+
 /** Render the upgrade modal for one upsell key. */
 export default function UpgradeModal({
   open,
@@ -120,58 +133,81 @@ export default function UpgradeModal({
 
   const usage = planLimitUsageSuffix({ used, max });
   const reason = [copy.reason, usage, graceHint ?? ""].filter(Boolean).join(" ");
-  const price = billing?.proPriceLabel || PRO_PRICE_FALLBACK;
+  const { amount, period } = splitPriceLabel(billing?.proPriceLabel || PRO_PRICE_FALLBACK);
   const canCheckout = checkoutEnabled && Boolean(billing?.checkoutEligible);
   const primaryLabel = copy.primaryLabel ?? "Upgrade to Pro";
   const primaryClass =
-    "inline-flex w-full items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-60 sm:w-auto";
-  const secondaryClass =
-    "inline-flex w-full items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] sm:w-auto";
+    "inline-flex w-full items-center justify-center rounded-xl bg-[var(--primary-bg)] px-5 py-3 text-[15px] font-semibold text-[var(--primary-fg)] shadow-[0_1px_2px_var(--primary-shadow)] transition-colors hover:bg-[var(--primary-hover-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary-ring)] disabled:opacity-60";
 
   return (
     <Modal
       open={open}
       onClose={onClose}
       ariaLabel={copy.title}
+      width={620}
       panelClassName="motion-safe:animate-[lnkdrpUpgradeIn_180ms_ease-out]"
+      contentClassName="px-6 pb-6 pt-6 sm:px-10 sm:pb-9 sm:pt-9"
     >
-      <div className="pr-8">
+      <div className="pr-6 sm:pr-8">
         <ProPill />
-        <h2 className="mt-3 text-[17px] font-semibold leading-6 text-[var(--fg)]">{copy.title}</h2>
-        <p className="mt-1.5 text-[13px] leading-5 text-[var(--muted-2)]">{reason}</p>
+        <h2 className="mt-3.5 text-[22px] font-semibold leading-7 sm:mt-4 sm:text-[26px] sm:leading-8 tracking-[-0.015em] text-[var(--fg)] text-balance">{copy.title}</h2>
+        <p className="mt-2 max-w-[46ch] text-[14px] leading-5 sm:mt-2.5 sm:text-[15px] sm:leading-6 text-[var(--muted-2)] text-pretty">{reason}</p>
+      </div>
 
-        <ul className="mt-4 space-y-2.5">
-          {copy.bullets.map((bullet) => (
-            <li key={bullet} className="flex items-start gap-2.5 text-[13px] leading-5 text-[var(--fg)]">
-              <CheckIcon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--fg)]" aria-hidden="true" />
-              <span>{bullet}</span>
-            </li>
-          ))}
-        </ul>
+      <ul className="mt-5 space-y-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-4 sm:mt-7 sm:space-y-3.5 sm:px-5 sm:py-5">
+        {copy.bullets.map((bullet, i) => (
+          <li key={bullet} className="flex items-start gap-3.5 text-[15px] leading-6 text-[var(--fg)]">
+            <span
+              className={[
+                "mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full",
+                i === 0 ? "bg-[var(--primary-bg)] text-[var(--primary-fg)]" : "border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)]",
+              ].join(" ")}
+              aria-hidden="true"
+            >
+              <CheckIcon className="h-3 w-3" strokeWidth={3} />
+            </span>
+            <span className={i === 0 ? "font-medium" : ""}>{bullet}</span>
+          </li>
+        ))}
+      </ul>
 
-        <p className="mt-4 text-[12px] leading-5 text-[var(--muted)]">Pro is {price} per workspace. Cancel anytime.</p>
+      <div className="mt-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-1.5 sm:mt-7 sm:gap-y-3">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[32px] font-semibold leading-none sm:text-[36px] tracking-[-0.02em] text-[var(--fg)] tabular-nums">{amount}</span>
+          {period ? <span className="text-[14px] leading-5 text-[var(--muted-2)]">{period}</span> : null}
+        </div>
+        <p className="text-[13px] leading-5 text-[var(--muted)]">Per workspace. Cancel anytime.</p>
+      </div>
 
-        <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <button type="button" className={secondaryClass} onClick={onClose}>
+      <div className="mt-4 sm:mt-5">
+        {canCheckout ? (
+          <button type="button" className={primaryClass} disabled={checkoutBusy} onClick={() => void handleCheckout()}>
+            {checkoutBusy ? "Opening checkout…" : primaryLabel}
+          </button>
+        ) : (
+          <Link href="/pricing" className={primaryClass} onClick={onClose}>
+            {primaryLabel}
+          </Link>
+        )}
+        <div className="mt-3 flex items-center justify-between gap-4">
+          <Link href="/pricing" className="text-[13px] font-medium text-[var(--muted-2)] underline-offset-4 hover:text-[var(--fg)] hover:underline" onClick={onClose}>
+            Compare plans
+          </Link>
+          <button
+            type="button"
+            className="rounded-md px-1 text-[13px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            onClick={onClose}
+          >
             Not now
           </button>
-          {canCheckout ? (
-            <button type="button" className={primaryClass} disabled={checkoutBusy} onClick={() => void handleCheckout()}>
-              {checkoutBusy ? "Opening…" : primaryLabel}
-            </button>
-          ) : (
-            <Link href="/pricing" className={primaryClass} onClick={onClose}>
-              {primaryLabel}
-            </Link>
-          )}
         </div>
-
-        {checkoutError ? (
-          <div role="alert" className="mt-3 text-[12px] text-red-600 dark:text-red-400">
-            {checkoutError}
-          </div>
-        ) : null}
       </div>
+
+      {checkoutError ? (
+        <div role="alert" className="mt-3 text-[13px] text-red-600 dark:text-red-400">
+          {checkoutError}
+        </div>
+      ) : null}
     </Modal>
   );
 }
