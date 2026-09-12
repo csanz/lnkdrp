@@ -33,11 +33,11 @@ export const PRO_PRICE_FALLBACK = "$29/mo";
 export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   version_history: {
     title: "Version history is a Pro feature",
-    reason: "Free workspaces keep only the latest file; Pro keeps every version and explains what changed.",
+    reason: "Free workspaces keep only the latest file. Pro keeps every version, shows who changed it, and explains what changed.",
     bullets: [
-      "Every version kept, with a history recipients can browse",
+      "Every version kept, with who uploaded it, teammate or agent",
       "AI compare of what changed between two versions",
-      "Unlimited active links and projects",
+      "A version history recipients can browse",
     ],
     secondaryLabel: "Compare plans",
   },
