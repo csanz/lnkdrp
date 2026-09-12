@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, Tooltip, YAxis } from "recharts";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 
 /**
  * Quick engagement stats for the owner's document page side panel.
@@ -146,6 +147,7 @@ export default function DocQuickStats({
 }) {
   const [live, setLive] = useState<StatsResponse | null>(null);
   const [failed, setFailed] = useState(false);
+  const { openUpgrade } = useUpgradeModal();
 
   useEffect(() => {
     let cancelled = false;
@@ -239,9 +241,13 @@ export default function DocQuickStats({
       {clamped ? (
         <div className="mt-2 text-[11px] text-[var(--muted-2)]">
           Free shows the last {analyticsDaysLimit} days ·{" "}
-          <Link href="/pricing" className="font-medium text-[var(--fg)] underline-offset-2 hover:underline">
+          <button
+            type="button"
+            className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+            onClick={() => openUpgrade("analytics_history")}
+          >
             Upgrade for full history
-          </Link>
+          </button>
         </div>
       ) : null}
     </section>

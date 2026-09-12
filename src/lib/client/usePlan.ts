@@ -52,6 +52,11 @@ async function load(force = false): Promise<PlanSnapshot | null> {
   return inflight;
 }
 
+/** Synchronous read of the cached snapshot (no fetch); `null` when nothing has loaded yet. */
+export function peekPlan(): PlanSnapshot | null {
+  return cache?.data ?? null;
+}
+
 /** Invalidate the shared cache and tell every mounted `usePlan` to refetch. */
 export function refreshPlan(): void {
   cache = null;

@@ -31,10 +31,10 @@ type Props = {
   quickStats?: ReactNode;
   /** Optional notice rendered directly under the "Share enabled" switch (e.g. a plan-limit prompt). */
   shareNotice?: ReactNode;
-  /** Optional notice rendered under the revision-history switch (the Pro gate's plan-limit prompt). */
-  revisionHistoryNotice?: ReactNode;
   /** Show the "Pro" pill next to the revision-history switch (Free workspaces only; Pro sees nothing). */
   showProPill?: boolean;
+  /** Makes the "Pro" pill clickable (opens the upgrade modal). */
+  onProPillClick?: () => void;
 };
 
 /**
@@ -63,8 +63,8 @@ export default function DocSharePanel({
   uploadError,
   quickStats,
   shareNotice,
-  revisionHistoryNotice,
   showProPill = false,
+  onProPillClick,
 }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
 
@@ -318,7 +318,7 @@ export default function DocSharePanel({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium text-[var(--fg)]">
               <span>Enable revision history viewing</span>
-              {showProPill ? <ProPill /> : null}
+              {showProPill ? <ProPill onClick={onProPillClick} /> : null}
             </div>
             <div className="mt-0.5 text-[12px] text-[var(--muted)]">
               Show a light revision history to recipients (version + date + summary).
@@ -354,7 +354,6 @@ export default function DocSharePanel({
           </button>
         </div>
 
-        {revisionHistoryNotice ? <div className="mt-2">{revisionHistoryNotice}</div> : null}
 
         {/* a11y: announce copy state */}
         <div className="sr-only" aria-live="polite">

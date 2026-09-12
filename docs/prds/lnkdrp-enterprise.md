@@ -27,7 +27,7 @@ Qualify and close enterprise leads through a conversation, then deliver the prom
 ## Approach
 
 ### Card copy (pricing page)
-Own domain on share links · Single sign-on (SAML or OIDC) · As many seats as you need, on one invoice · Private workspaces per team with an admin who sees all of them · Priority support and a DPA · Button "Talk to us" · Helper "Pricing based on seats and volume. We reply within a business day."
+Own domain on share links · Single sign-on (SAML or OIDC) · As many seats as you need, on one invoice · Private workspaces per team with an admin who sees all of them · Priority support and a DPA · Verified access for sensitive links · Button "Talk to us" · Helper "Pricing based on seats and volume. We reply within a business day."
 
 ### Custom domains
 - `Org.customDomain: { hostname, verifiedAt, txtToken }` + unique index on hostname.
@@ -64,6 +64,7 @@ Own domain on share links · Single sign-on (SAML or OIDC) · As many seats as y
 - Proves: a link on docs.customer.com opens the viewer with summary and records views to the right workspace
 
 ### M3 — Enterprise admin and SSO
+- Verified access for sensitive links: per-link access levels beyond password (email verification with a one-time code, domain allow-list, or SSO sign-in required before viewing); viewer identity recorded on every view; `Doc.shareAccess: { level: "link" | "password" | "verified_email" | "allowlist" | "sso", allowedDomains?: string[] }`; recipient flow on `/s/:shareId` and the `lnkdrp_set_share_access` MCP tool gain the level.
 - SSO: NextAuth provider per enterprise workspace (SAML via a broker such as WorkOS/BoxyHQ, or OIDC directly), `Org.sso: { provider, issuer, clientId, domain }`, sign-in routed by email domain; members provisioned on first login.
 - `Org.billingOwnerUserId`; Teams tab lists all workspaces for that owner with member counts.
 - Manual invoicing notes in `docs/SUBSCRIPTION.md`; Stripe bespoke price when required.

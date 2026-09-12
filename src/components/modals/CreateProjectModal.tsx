@@ -2,16 +2,18 @@
 
 import Modal from "@/components/modals/Modal";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
-import type { PlanLimitError } from "@/lib/client/planLimit";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { planLimitGraceHint, type PlanLimitError } from "@/lib/client/planLimit";
 import { usePlan } from "@/lib/client/usePlan";
 
 /**
  * Create Project modal (used from the left sidebar).
  *
  * When the create call is refused with `402 plan_limit` (Free project cap), the caller passes the
- * parsed body as `limitError` and the modal shows an upgrade prompt instead of a plain error line.
- * When the plan snapshot already says the Free workspace is at its project cap, the same prompt is
- * shown up front and the primary button is disabled, so the user never has to hit the 402.
+ * parsed body as `limitError` and the modal shows an inline upgrade note instead of a plain error
+ * line. When the plan snapshot already says the Free workspace is at its project cap, the same
+ * note is shown up front and the primary button is disabled, so the user never has to hit the 402.
+ * The note's **Upgrade to Pro** closes this modal and opens the upgrade modal (no stacked dialogs).
  */
 export default function CreateProjectModal({
   open,
@@ -38,8 +40,19 @@ export default function CreateProjectModal({
   setDescription: (v: string) => void;
 }) {
   const { plan } = usePlan();
+  const { openUpgrade } = useUpgradeModal();
   const atProjectLimit = plan?.plan === "free" && plan.atLimit.projects;
   const showLimitNotice = Boolean(limitError) || atProjectLimit;
+
+  /** Close this modal, then open the upgrade modal with the live project numbers. */
+  function upgradeFromNotice() {
+    onClose();
+    openUpgrade("projects", {
+      used: limitError?.used ?? plan?.usage.projects,
+      max: limitError?.max ?? plan?.limits.projects ?? undefined,
+      graceHint: planLimitGraceHint(limitError),
+    });
+  }
 
   return (
     <Modal
@@ -91,6 +104,7 @@ export default function CreateProjectModal({
             limit="projects"
             secondaryLabel="Manage projects"
             secondaryHref="/search?scope=projects"
+            onUpgrade={upgradeFromNotice}
           />
         ) : error ? (
           <div className="text-sm font-medium text-red-700">{error}</div>

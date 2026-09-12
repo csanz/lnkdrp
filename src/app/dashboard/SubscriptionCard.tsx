@@ -16,6 +16,7 @@ import Alert from "@/components/ui/Alert";
 import SpendLimitModule from "./SpendLimitModule";
 import { formatShortDate } from "@/lib/format/date";
 import PlanUsageMeter from "@/components/PlanUsageMeter";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { openBillingPortal, startCheckout as startCheckoutAction } from "@/lib/billing/clientActions";
 import { FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY } from "@/lib/client/planLimit";
 import { usePlan } from "@/lib/client/usePlan";
@@ -43,6 +44,7 @@ export default function SubscriptionCard() {
   const router = useRouter();
   // Live limits/usage for the Free meters. Rows render (with empty bars) before the snapshot lands.
   const { plan: planSnapshot } = usePlan();
+  const { openUpgrade } = useUpgradeModal();
 
   const [busy, setBusy] = useState(false);
   const [upgradeBusy, setUpgradeBusy] = useState(false);
@@ -194,9 +196,25 @@ export default function SubscriptionCard() {
       </div>
       <div className="mt-3">
         Includes 50 starter credits, one time. Version history and AI compare are Pro features.{" "}
-        <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
-          Compare plans
-        </Link>
+        <button
+          type="button"
+          className="font-semibold text-[var(--fg)] underline underline-offset-2"
+          onClick={() => {
+            // Lead with whichever cap is hit; otherwise the Pro-only feature the sentence names.
+            if (freeSnapshot?.atLimit.activeLinks) {
+              openUpgrade("active_links", {
+                used: freeSnapshot.usage.activeLinks,
+                max: freeSnapshot.limits.activeLinks ?? undefined,
+              });
+            } else if (freeSnapshot?.atLimit.projects) {
+              openUpgrade("projects", { used: freeSnapshot.usage.projects, max: freeSnapshot.limits.projects ?? undefined });
+            } else {
+              openUpgrade("version_history");
+            }
+          }}
+        >
+          See what&apos;s included
+        </button>
       </div>
     </div>
   );

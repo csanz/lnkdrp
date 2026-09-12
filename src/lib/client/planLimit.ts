@@ -6,6 +6,7 @@
  * mirrors only what the browser needs: the 402 body shape, prompt copy per limit, and a tiny
  * session flag so the sidebar can nudge once a limit has been hit.
  */
+import { UPSELL_COPY, upsellKeyForLimit } from "@/lib/client/upsellCopy";
 
 /**
  * Which Free-plan limit was hit. Mirrors `LimitKey` in `src/lib/billing/planLimits.ts`.
@@ -96,51 +97,53 @@ export function parsePlanLimitError(json: unknown): PlanLimitError | null {
 export type PlanLimitPrompt = { title: string; message: string; secondaryLabel: string };
 
 /**
+ * Format a "{used} of {max} used." suffix for counted limits; empty for feature gates (`max` 0).
+ */
+export function planLimitUsageSuffix(opts: { used?: number; max?: number } = {}): string {
+  const max = typeof opts.max === "number" && Number.isFinite(opts.max) ? Math.max(0, Math.floor(opts.max)) : 0;
+  const used = typeof opts.used === "number" && Number.isFinite(opts.used) ? Math.max(0, Math.floor(opts.used)) : null;
+  if (max <= 0 || used === null) return "";
+  return `${used} of ${max} used.`;
+}
+
+/**
  * Build the prompt copy for a given limit (hook-free so it works in handlers and render alike).
  *
- * `used`/`max` are optional; when present they are folded into the message.
+ * Title and reason come from the shared `UPSELL_COPY` registry so the inline notice and the
+ * upgrade modal never drift. `used`/`max` are optional; when present they are folded into the
+ * message. The one non-Free case (Pro with its included collaborator already in place) keeps its
+ * own "contact us for seats" copy.
  */
 export function planLimitPrompt(limit: PlanLimitKey, opts: { used?: number; max?: number } = {}): PlanLimitPrompt {
   const max = typeof opts.max === "number" && Number.isFinite(opts.max) ? Math.max(0, Math.floor(opts.max)) : null;
-  switch (limit) {
-    case "active_links": {
-      const n = max ?? FREE_PLAN_LIMITS_COPY.activeLinks;
-      return {
-        title: "Link limit reached",
-        message: `Free workspaces can have ${n} active share ${n === 1 ? "link" : "links"}. Disable one or upgrade to Pro.`,
-        secondaryLabel: "Manage links",
-      };
-    }
-    case "projects": {
-      const n = max ?? FREE_PLAN_LIMITS_COPY.projects;
-      return {
-        title: "Project limit reached",
-        message: `Free workspaces can have ${n} ${n === 1 ? "project" : "projects"}. Delete one or upgrade to Pro.`,
-        secondaryLabel: "Manage projects",
-      };
-    }
-    case "collaborators":
-      return max && max > 0
-        ? {
-            title: "This workspace includes one collaborator",
-            message: "Pro includes 1 collaborator. Want more seats? Contact us and we will add them to your workspace.",
-            secondaryLabel: "Manage members",
-          }
-        : {
-            title: "Collaborators are a Pro feature",
-            message: "Free workspaces are single-user. Upgrade to Pro to invite a collaborator.",
-            secondaryLabel: "Manage members",
-          };
-    case "version_history":
-      return {
-        title: "Version history is a Pro feature",
-        message:
-          "See every version, let recipients view revision history, and get an AI compare of what changed. Upgrade to Pro.",
-        secondaryLabel: "Compare plans",
-      };
-    default:
-      return { title: "Plan limit reached", message: "Upgrade to Pro to keep going.", secondaryLabel: "Manage" };
+  if (limit === "collaborators" && max && max > 0) {
+    return {
+      title: "This workspace includes one collaborator",
+      message: "Pro includes 1 collaborator. Want more seats? Contact us and we will add them to your workspace.",
+      secondaryLabel: "Manage members",
+    };
   }
+  const copy = UPSELL_COPY[upsellKeyForLimit(limit)];
+  const suffix = planLimitUsageSuffix(opts);
+  return {
+    title: copy.title,
+    message: suffix ? `${copy.reason} ${suffix}` : copy.reason,
+    secondaryLabel: copy.secondaryLabel ?? "Compare plans",
+  };
+}
+
+/**
+ * Format the launch grace-period hint for a parsed 402, when the workspace is still inside its
+ * unblocked window; `null` otherwise. Hook-free so open-modal handlers can use it.
+ */
+export function planLimitGraceHint(error: PlanLimitError | null | undefined): string | null {
+  const g = error?.grace;
+  if (!g || g.blockedAt) return null;
+  const ends = Date.parse(g.endsAt);
+  if (!Number.isFinite(ends)) return null;
+  const daysLeft = Math.max(0, Math.ceil((ends - Date.now()) / 86_400_000));
+  if (daysLeft <= 0) return null;
+  return `Grace period: ${daysLeft} ${daysLeft === 1 ? "day" : "days"} left.`;
 }
 
 /**

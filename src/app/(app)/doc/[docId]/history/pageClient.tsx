@@ -3,8 +3,9 @@
  * Route: `/doc/:docId/history`
  *
  * Version history is a Pro feature: the workspace plan comes from `usePlan()` and a Free workspace
- * sees the `version_history` plan-limit notice in place of the list (header intact). Nothing below
- * the header renders (and no history request fires) until the plan is known, so there is no jump.
+ * sees a one-line "Version history is a Pro feature" note with a **See what's included** button
+ * that opens the upgrade modal, in place of the list (header intact). Nothing below the header
+ * renders (and no history request fires) until the plan is known, so there is no jump.
  */
 "use client";
 
@@ -13,8 +14,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Modal from "@/components/modals/Modal";
-import PlanLimitNotice from "@/components/PlanLimitNotice";
+import ProPill from "@/components/ProPill";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
+import { UPSELL_COPY } from "@/lib/client/upsellCopy";
 import { usePlan } from "@/lib/client/usePlan";
 
 type DocChangeItem = {
@@ -148,6 +151,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   // (and its request) only mounts on Pro, and the API gates the list too.
   const { plan: planSnapshot } = usePlan();
   const plan: "free" | "pro" | null = planSnapshot?.plan ?? null;
+  const { openUpgrade } = useUpgradeModal();
 
   // Load workspace defaults (best-effort). Falls back to "standard".
   useEffect(() => {
@@ -503,8 +507,21 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
         <div className="mx-auto w-full max-w-[1700px] px-6 py-6">
           {plan === null ? null : plan === "free" ? (
-            <div className="max-w-xl">
-              <PlanLimitNotice limit="version_history" />
+            <div
+              role="status"
+              className="flex max-w-xl flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-[13px] leading-5 text-[var(--muted-2)]"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <ProPill />
+                <span>{UPSELL_COPY.version_history.title}.</span>
+              </span>
+              <button
+                type="button"
+                className="shrink-0 font-semibold text-[var(--fg)] underline underline-offset-2"
+                onClick={() => openUpgrade("version_history")}
+              >
+                See what&apos;s included
+              </button>
             </div>
           ) : (
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_440px]">

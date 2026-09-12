@@ -37,6 +37,7 @@ import IconButton from "@/components/ui/IconButton";
 import CreateProjectModal from "@/components/modals/CreateProjectModal";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
 import PlanUsageMeter from "@/components/PlanUsageMeter";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import {
   PLAN_LIMIT_HIT_EVENT,
   markPlanLimitHit,
@@ -354,6 +355,7 @@ export default function LeftSidebar({
   // account menu. The session flag below (`markPlanLimitHit`) is only a fallback for when the
   // snapshot could not be loaded.
   const { plan, loading: planLoading } = usePlan();
+  const { openUpgrade } = useUpgradeModal();
   const [planLimitHit, setPlanLimitHit] = useState<PlanLimitKey | null>(null);
   const [planLimitNudgeDismissed, setPlanLimitNudgeDismissed] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -2259,9 +2261,19 @@ export default function LeftSidebar({
                 ) : (
                   <span className="truncate text-[var(--muted-2)]">Free plan</span>
                 )}
-                <Link href="/pricing" className="shrink-0 font-semibold text-[var(--fg)] hover:underline underline-offset-2">
+                <button
+                  type="button"
+                  className="shrink-0 font-semibold text-[var(--fg)] hover:underline underline-offset-2"
+                  onClick={() => {
+                    // Open the modal for whichever cap is hit; links are the default story.
+                    const key = plan.atLimit.activeLinks ? "active_links" : plan.atLimit.projects ? "projects" : "active_links";
+                    const used = key === "projects" ? plan.usage.projects : plan.usage.activeLinks;
+                    const max = key === "projects" ? plan.limits.projects : plan.limits.activeLinks;
+                    openUpgrade(key, { used, max: max ?? undefined });
+                  }}
+                >
                   Upgrade to Pro
-                </Link>
+                </button>
               </div>
             </div>
           </div>

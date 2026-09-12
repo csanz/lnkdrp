@@ -5,10 +5,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import UploadButton, { UploadIcon } from "@/components/UploadButton";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
 import {
   apiCreateDoc,
@@ -42,6 +42,7 @@ export default function UploadPageClient() {
   // the doc page's share switch explains the missing slot. Say so up front (only once the plan is known).
   const { plan } = usePlan();
   const atLinkLimit = plan?.plan === "free" && plan.atLimit.activeLinks;
+  const { openUpgrade } = useUpgradeModal();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -225,9 +226,15 @@ export default function UploadPageClient() {
             This workspace is at its {plan.limits.activeLinks ?? 3}-link limit. You can still upload; sharing stays off until
             you free a link or upgrade.
           </span>
-          <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
+          <button
+            type="button"
+            className="font-semibold text-[var(--fg)] underline underline-offset-2"
+            onClick={() =>
+              openUpgrade("active_links", { used: plan.usage.activeLinks, max: plan.limits.activeLinks ?? undefined })
+            }
+          >
             Upgrade
-          </Link>
+          </button>
         </div>
       ) : null}
 

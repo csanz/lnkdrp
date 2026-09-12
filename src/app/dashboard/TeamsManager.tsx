@@ -14,8 +14,9 @@ import {
 } from "@/lib/orgsCache";
 import { useNavigationLocked } from "@/app/providers";
 import Pill from "@/components/ui/Pill";
-import PlanLimitNotice from "@/components/PlanLimitNotice";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { planLimitPrompt } from "@/lib/client/planLimit";
+import { UPSELL_COPY } from "@/lib/client/upsellCopy";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 
@@ -154,9 +155,11 @@ export default function TeamsManager() {
   // Personal workspaces are single-user; teams + invites are not allowed.
   const canAdminTeams = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
   const canInvite = canAdminTeams;
-  // Plan gate: Free workspaces are single-user (the invite form renders disabled with an upgrade
-  // prompt instead of a 402); Pro includes one collaborator and points at contact for more seats.
+  // Plan gate: Free workspaces are single-user (the invite form renders disabled with a one-line
+  // note whose Upgrade button opens the upgrade modal, instead of a 402); Pro includes one
+  // collaborator and points at contact for more seats.
   const { plan } = usePlan();
+  const { openUpgrade } = useUpgradeModal();
   const inviteBlockedByPlan = plan?.plan === "free";
   const proSeatsFull = plan?.plan === "pro" && plan.atLimit.collaborators;
   const proSeatsPrompt = planLimitPrompt("collaborators", { max: plan?.limits.collaborators ?? 1 });
@@ -683,7 +686,22 @@ export default function TeamsManager() {
             {inviteError ? <div className="text-[12px] text-red-500">{inviteError}</div> : null}
 
             {canInvite && inviteBlockedByPlan ? (
-              <PlanLimitNotice limit="collaborators" secondaryLabel="Compare plans" secondaryHref="/pricing" />
+              <div
+                role="status"
+                className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3 text-[12px] leading-5 text-[var(--muted-2)]"
+              >
+                <span>
+                  <span className="font-semibold text-[var(--fg)]">{UPSELL_COPY.collaborators.title}.</span>{" "}
+                  {UPSELL_COPY.collaborators.reason}
+                </span>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-lg bg-[var(--primary-bg)] px-3 py-1.5 text-[12px] font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
+                  onClick={() => openUpgrade("collaborators")}
+                >
+                  Upgrade
+                </button>
+              </div>
             ) : canInvite && proSeatsFull ? (
               <div
                 role="status"

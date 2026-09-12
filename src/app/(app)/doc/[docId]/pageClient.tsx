@@ -18,9 +18,10 @@ import { apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUplo
 import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { debugLog } from "@/lib/debug";
-import PlanLimitNotice from "@/components/PlanLimitNotice";
 import ProPill from "@/components/ProPill";
-import { markPlanLimitHit, parsePlanLimitError, type PlanLimitError } from "@/lib/client/planLimit";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
+import { upsellKeyForLimit } from "@/lib/client/upsellCopy";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
@@ -224,13 +225,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [pdfIframeSrc, setPdfIframeSrc] = useState<string | null>(null);
   const pdfIframeKeyRef = useRef<string>("");
   const [isCopying, setIsCopying] = useState(false);
-  /** Set when enabling sharing was refused with `402 plan_limit`; cleared on the next attempt or dismiss. */
-  const [shareLimitError, setShareLimitError] = useState<PlanLimitError | null>(null);
-  /** `402 plan_limit` from the revision-history toggle (version history is a Pro feature). */
-  const [revisionHistoryLimitError, setRevisionHistoryLimitError] = useState<PlanLimitError | null>(null);
   // Workspace plan snapshot: drives the "Pro" pill on history links and the pre-402 share hint.
   const { plan } = usePlan();
   const isFreePlan = plan?.plan === "free";
+  // Blocking upsells (share toggle at cap, revision-history toggle on Free) open the upgrade modal.
+  const { openUpgrade } = useUpgradeModal();
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
   const [replaceCopyDone, setReplaceCopyDone] = useState(false);
@@ -1259,7 +1258,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
     // Optimistic update
     setDoc((d) => ({ ...d, shareAllowRevisionHistory: next }));
-    setRevisionHistoryLimitError(null);
     try {
       const res = await fetchWithTempUser(`/api/docs/${doc.id}`, {
         method: "PATCH",
@@ -1270,9 +1268,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         const json = (await res.json().catch(() => null)) as unknown;
         const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
         if (limitErr) {
-          // Version history is Pro: keep the switch off and show the upgrade prompt under it.
-          setRevisionHistoryLimitError(limitErr);
-          markPlanLimitHit(limitErr.limit);
+          // Version history is Pro: keep the switch off and open the upgrade modal.
+          openUpgrade(upsellKeyForLimit(limitErr.limit), { graceHint: planLimitGraceHint(limitErr) });
         }
         throw new Error(`Request failed (${res.status})`);
       }
@@ -1291,7 +1288,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
     // Optimistic update
     setDoc((d) => ({ ...d, shareEnabled: next }));
-    setShareLimitError(null);
     try {
       const res = await fetchWithTempUser(`/api/docs/${doc.id}`, {
         method: "PATCH",
@@ -1302,9 +1298,12 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         const json = (await res.json().catch(() => null)) as unknown;
         const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
         if (limitErr) {
-          // Free link cap: keep the switch off and show the upgrade prompt next to it.
-          setShareLimitError(limitErr);
-          markPlanLimitHit(limitErr.limit);
+          // Free link cap: keep the switch off and open the upgrade modal with the live numbers.
+          openUpgrade(upsellKeyForLimit(limitErr.limit), {
+            used: limitErr.used,
+            max: limitErr.max,
+            graceHint: planLimitGraceHint(limitErr),
+          });
         }
         throw new Error(`Request failed (${res.status})`);
       }
@@ -2366,6 +2365,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                   <DocSharePanel
                     docId={doc.id}
                     showProPill={isFreePlan}
+                    onProPillClick={() => openUpgrade("version_history")}
                     shareUrl={shareUrl}
                     shareInputRef={shareInputRef}
                     isCopying={isCopying}
@@ -2374,23 +2374,25 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     shareEnabled={doc.shareEnabled !== false}
                     onShareEnabledChange={(next) => void setShareEnabled(next)}
                     shareNotice={
-                      shareLimitError ? (
-                        <PlanLimitNotice
-                          error={shareLimitError}
-                          secondaryLabel="Manage links"
-                          secondaryHref="/search?scope=documents"
-                          onDismiss={() => setShareLimitError(null)}
-                        />
-                      ) : isFreePlan && plan && doc.shareEnabled === false && plan.atLimit.activeLinks ? (
+                      isFreePlan && plan && doc.shareEnabled === false && plan.atLimit.activeLinks ? (
                         // Pre-empt the 402: the workspace has no free link slot for this doc.
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[12px] leading-5 text-[var(--muted-2)]">
                           <span>
                             Turning this on needs a free link slot ({plan.usage.activeLinks} of {plan.limits.activeLinks ?? 3}{" "}
                             used).
                           </span>
-                          <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
+                          <button
+                            type="button"
+                            className="font-semibold text-[var(--fg)] underline underline-offset-2"
+                            onClick={() =>
+                              openUpgrade("active_links", {
+                                used: plan.usage.activeLinks,
+                                max: plan.limits.activeLinks ?? undefined,
+                              })
+                            }
+                          >
                             Upgrade
-                          </Link>
+                          </button>
                         </div>
                       ) : null
                     }
@@ -2400,15 +2402,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     onPdfDownloadEnabledChange={(next) => void setShareAllowPdfDownload(next)}
                     revisionHistoryEnabled={Boolean(doc.shareAllowRevisionHistory)}
                     onRevisionHistoryEnabledChange={(next) => void setShareAllowRevisionHistory(next)}
-                    revisionHistoryNotice={
-                      revisionHistoryLimitError ? (
-                        <PlanLimitNotice
-                          error={revisionHistoryLimitError}
-                          secondaryHref="/pricing"
-                          onDismiss={() => setRevisionHistoryLimitError(null)}
-                        />
-                      ) : null
-                    }
                     sharePasswordEnabled={Boolean(doc.sharePasswordEnabled)}
                     onSharePasswordEnabledChange={(enabled) =>
                       setDoc((d) => ({ ...d, sharePasswordEnabled: enabled }))

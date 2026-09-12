@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftIcon, UserIcon } from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { Area, AreaChart, CartesianGrid, Tooltip, YAxis } from "recharts";
 
@@ -291,6 +292,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [days, setDays] = useState(15);
   const [rangeOpen, setRangeOpen] = useState(false);
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
+  const { openUpgrade } = useUpgradeModal();
   // Free workspaces are clamped server-side; the response says so and the picker follows.
   const analyticsDaysLimit =
     typeof data?.analyticsDaysLimit === "number" && Number.isFinite(data.analyticsDaysLimit) && data.analyticsDaysLimit > 0
@@ -687,9 +689,13 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 {analyticsDaysLimit !== null ? (
                   <div className="mt-1 text-xs text-[var(--muted-2)]">
                     Free shows the last {analyticsDaysLimit} days ·{" "}
-                    <Link href="/pricing" className="font-medium text-[var(--fg)] underline-offset-2 hover:underline">
+                    <button
+                      type="button"
+                      className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                      onClick={() => openUpgrade("analytics_history")}
+                    >
                       Upgrade for full history
-                    </Link>
+                    </button>
                   </div>
                 ) : null}
               </div>

@@ -298,6 +298,7 @@ export default async function PricingPage() {
                 "Unlimited seats, one invoice",
                 "Private workspaces, one admin view",
                 "Priority support and a DPA",
+                "Verified access for sensitive links",
               ].map((item) => (
                 <li key={item} className="flex items-start gap-2.5">
                   <Check />

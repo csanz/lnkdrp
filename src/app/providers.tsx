@@ -20,6 +20,7 @@ import {
   switchWorkspaceWithOverlay,
 } from "@/components/SwitchingOverlay";
 import OutOfCreditsListener from "@/components/OutOfCreditsListener";
+import { UpgradeModalProvider } from "@/components/UpgradeModalProvider";
 
 const AuthEnabledContext = createContext(false);
 export function useAuthEnabled() {
@@ -248,8 +249,10 @@ export default function Providers({
             <NavigationLockProvider>
               <DocNavOverlayController />
               <SearchShortcut />
-              {children}
-              <OutOfCreditsListener />
+              <UpgradeModalProvider>
+                {children}
+                <OutOfCreditsListener />
+              </UpgradeModalProvider>
             </NavigationLockProvider>
           </PendingUploadProvider>
         </AuthEnabledContext.Provider>
@@ -271,8 +274,10 @@ export default function Providers({
             <NavigationLockProvider>
               <DocNavOverlayController />
               <SearchShortcut />
-              {children}
-              <OutOfCreditsListener />
+              <UpgradeModalProvider checkoutEnabled>
+                {children}
+                <OutOfCreditsListener />
+              </UpgradeModalProvider>
             </NavigationLockProvider>
           </PendingUploadProvider>
         </SessionProvider>
