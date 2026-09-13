@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 /**
  * Client UI for `/connect`.
  *
@@ -21,6 +23,7 @@ import StepsRail from "@/components/connect/StepsRail";
 import ToolCatalogTable from "@/components/connect/ToolCatalogTable";
 import Troubleshooting from "@/components/connect/Troubleshooting";
 import VerifyPanel from "@/components/connect/VerifyPanel";
+import { formatRelative } from "@/components/connect/format";
 
 /** Render the Connect page UI. */
 export default function ConnectPageClient() {
@@ -63,7 +66,7 @@ export default function ConnectPageClient() {
             <CpuChipIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
             <h1 className="text-sm font-semibold text-[var(--fg)]">Connect your agent</h1>
           </div>
-          <StatusPill status={status} loading={loading} />
+          <StatusPill status={status} loading={loading} href={connected || verified ? "/activity?who=agents" : undefined} />
         </div>
         <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--muted-2)]">
           Create links and read the numbers from Claude Code, Cursor, Codex, or any MCP client. One key per agent or machine.
@@ -77,6 +80,25 @@ export default function ConnectPageClient() {
         {/* Left-aligned under the header like the other app pages, growing with the viewport. On wide
             screens the reference material (tool catalog, troubleshooting) moves into a side column so
             the page uses the width instead of leaving a narrow strip in the middle. */}
+        {connected && status ? (
+          <div className="mb-6 flex w-full max-w-7xl flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-3.5">
+            <div className="flex min-w-0 items-center gap-3 text-[13px] text-[var(--fg)]">
+              <span aria-hidden="true" className="inline-block h-2 w-2 shrink-0 rounded-full bg-[var(--chart-views)]" />
+              <span className="min-w-0">
+                <span className="font-semibold">
+                  {status.connectedCount} {status.connectedCount === 1 ? "agent" : "agents"} connected
+                </span>
+                <span className="text-[var(--muted)]">
+                  {" "}· {status.clients.map((c) => c.client).join(", ")}
+                  {status.lastUsedAt ? ` · last activity ${formatRelative(status.lastUsedAt).toLowerCase()}` : ""}
+                </span>
+              </span>
+            </div>
+            <Link href="/activity?who=agents" className="shrink-0 text-[13px] font-semibold text-[var(--fg)] underline-offset-4 hover:underline">
+              See what they did →
+            </Link>
+          </div>
+        ) : null}
         <div className="grid w-full max-w-7xl gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:items-start">
           <div className="grid min-w-0 gap-6">
             <KeysPanel status={status} loading={loading} plaintextKey={plaintextKey} onCreated={onCreated} onUse={onUse} onRevoked={onRevoked} />

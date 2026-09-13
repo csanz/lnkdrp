@@ -28,7 +28,7 @@ import {
 import PlanLimitNotice from "@/components/PlanLimitNotice";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
-import { subscribeRealtime } from "@/lib/client/realtime";
+import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import {
@@ -207,6 +207,26 @@ export default function ActivityPageClient() {
   // Second axis: who did it. "Teammates" is the team-activity story; on Free it opens the
   // collaborator upsell instead of filtering, since a Free workspace has no teammates to show.
   const [who, setWho] = useState<"all" | "me" | "team" | "agents">("all");
+  // Deep-linkable: /activity?who=agents (the sidebar's "N connected" lands here). Read once on
+  // mount, mirror changes back into the URL without a navigation.
+  useEffect(() => {
+    const w = new URLSearchParams(window.location.search).get("who");
+    if (w === "me" || w === "team" || w === "agents") setWho(w);
+  }, []);
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (who === "all") url.searchParams.delete("who");
+    else url.searchParams.set("who", who);
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [who]);
+  // "Live" badge while the realtime socket is open.
+  const [live, setLive] = useState(false);
+  useEffect(() => {
+    const sync = () => setLive(realtimeState() === "open");
+    sync();
+    window.addEventListener(REALTIME_STATE_EVENT, sync);
+    return () => window.removeEventListener(REALTIME_STATE_EVENT, sync);
+  }, []);
   const { plan } = usePlan();
   const isFree = plan?.plan === "free";
   const { openUpgrade } = useUpgradeModal();
@@ -335,6 +355,15 @@ export default function ActivityPageClient() {
         <div className="flex items-center gap-2">
           <ClockIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
           <div className="text-sm font-semibold text-[var(--fg)]">Activity</div>
+          {live ? (
+            <span
+              className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
+              title="Updates arrive over the realtime connection"
+            >
+              <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--chart-views)]" />
+              Live
+            </span>
+          ) : null}
         </div>
         <div className="mt-1 text-xs text-[var(--muted-2)]">
           Uploads, share changes, views and agent activity in this workspace, by everyone in it.

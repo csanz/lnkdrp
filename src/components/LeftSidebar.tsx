@@ -1793,11 +1793,14 @@ export default function LeftSidebar({
               </div>
             </button>
 
+            {/* Two targets on one row: the label opens /connect, the status opens Activity filtered
+                to agents. Kept as siblings (a button cannot nest a button). */}
+            <div className="relative">
             <button
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-24 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname.startsWith("/connect")
@@ -1821,24 +1824,29 @@ export default function LeftSidebar({
               <div className="flex items-center gap-2">
                 <CpuChipIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
                 <span>Agents</span>
-                {agentStatus ? (
-                  <span className="ml-auto flex items-center gap-1.5 pr-1 text-[11px] font-normal text-[var(--muted)]">
-                    <span
-                      aria-hidden="true"
-                      className={[
-                        "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-                        agentStatus.connected ? "bg-[var(--chart-views)]" : "bg-[var(--muted)]",
-                      ].join(" ")}
-                    />
-                    <span>
-                      {agentStatus.connected
-                        ? `${agentStatus.connectedCount || 1} connected`
-                        : "Not connected"}
-                    </span>
-                  </span>
-                ) : null}
               </div>
             </button>
+            {agentStatus && !navLocked ? (
+              <button
+                type="button"
+                className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-normal text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push(agentStatus.connected ? "/activity?who=agents" : "/connect");
+                }}
+                title={agentStatus.connected ? "See what your agents did" : "Connect an agent"}
+              >
+                <span
+                  aria-hidden="true"
+                  className={[
+                    "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+                    agentStatus.connected ? "bg-[var(--chart-views)]" : "bg-[var(--muted)]",
+                  ].join(" ")}
+                />
+                <span>{agentStatus.connected ? `${agentStatus.connectedCount || 1} connected` : "Not connected"}</span>
+              </button>
+            ) : null}
+            </div>
             {/* Most recent connected clients (up to 3) under the Agents entry; each row opens /connect.
                 In shared workspaces the owner's name is shown so a team sees whose agent it is. */}
             {agentStatus?.connected && agentStatus.clients.length > 0 && !navLocked ? (
