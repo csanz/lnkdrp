@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { refreshAgentStatus, type AgentKeyRow, type AgentStatus } from "@/lib/client/useAgentStatus";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import Modal from "@/components/modals/Modal";
 import Panel from "./Panel";
 import { formatDate, formatRelative } from "./format";
 
@@ -53,12 +54,28 @@ function RevealBox({ created, onDismiss }: { created: CreatedKey; onDismiss: () 
         </button>
       </div>
       <p className="mt-3 text-[13px] leading-5 text-[var(--muted)]">
-        Shown once. Store it in your client now. The commands below already include it; after you leave this page only the prefix is kept.
+        Shown once. After you leave this page only the prefix is kept.
       </p>
+      {/* The next step, made unmissable: the client commands below are already filled with this key. */}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
+        <div className="text-[13px] leading-5 text-[var(--fg)]">
+          <span className="font-semibold">Next:</span> add lnkdrp to your client. The commands in step 2 already include this key.
+        </div>
+        <a
+          href="#client"
+          onClick={(e) => {
+            e.preventDefault();
+            document.getElementById("client")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          className={PRIMARY_BUTTON}
+        >
+          Go to step 2
+        </a>
+      </div>
       <button
         type="button"
         onClick={onDismiss}
-        className="mt-2 text-[12px] font-medium text-[var(--muted-2)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
+        className="mt-3 text-[12px] font-medium text-[var(--muted-2)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
       >
         I have stored it
       </button>
@@ -137,7 +154,7 @@ function KeyRow({
             </>
           ) : null}
           <span aria-hidden="true"> · </span>
-          {row.revoked ? "Revoked" : lastUsed}
+          {row.revoked ? (row.lastUsedAt ? `Revoked · last used ${lastUsed}` : "Revoked · never used") : lastUsed}
         </div>
         {error ? (
           <div role="alert" className="mt-1 text-[12px] text-red-600 dark:text-red-400">
@@ -191,6 +208,11 @@ export default function KeysPanel({
 
   const canManage = Boolean(status?.canManage);
   const keys = status?.keys ?? [];
+  // Active keys stay in the panel; revoked ones move behind a link so step 2 is never pushed down
+  // by history. The modal keeps the full audit trail one click away.
+  const activeKeys = keys.filter((k) => !k.revoked);
+  const revokedKeys = keys.filter((k) => k.revoked);
+  const [revokedOpen, setRevokedOpen] = useState(false);
   const activeCount = keys.filter((k) => !k.revoked).length;
 
   const submit = async () => {
@@ -299,19 +321,45 @@ export default function KeysPanel({
         </ul>
       ) : !status ? (
         <p className="text-[13px] text-[var(--muted)]">Could not load the keys for this workspace. Reload to try again.</p>
-      ) : keys.length === 0 ? (
+      ) : activeKeys.length === 0 ? (
         <p className="text-[13px] leading-5 text-[var(--muted)]">
           {canManage
-            ? "No keys yet. Create one per agent or machine, so you can revoke a single one later."
-            : "No keys yet. Ask a workspace owner to create a key."}
+            ? "No active keys. Create one per agent or machine, so you can revoke a single one later."
+            : "No active keys. Ask a workspace owner to create a key."}
         </p>
       ) : (
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
-          {keys.map((row) => (
+          {activeKeys.map((row) => (
             <KeyRow key={row.id} row={row} canManage={canManage} showOwner={!status?.isPersonalOrg} onRevoked={onRevoked} />
           ))}
         </ul>
       )}
+
+      {revokedKeys.length > 0 ? (
+        <div className="mt-3 text-[12px] text-[var(--muted-2)]">
+          <button
+            type="button"
+            onClick={() => setRevokedOpen(true)}
+            className="font-medium underline-offset-4 hover:text-[var(--fg)] hover:underline"
+          >
+            {revokedKeys.length} revoked {revokedKeys.length === 1 ? "key" : "keys"}
+          </button>
+        </div>
+      ) : null}
+
+      <Modal open={revokedOpen} onClose={() => setRevokedOpen(false)} ariaLabel="Revoked keys" width={640}>
+        <div className="pr-8">
+          <h2 className="text-[17px] font-semibold text-[var(--fg)]">Revoked keys</h2>
+          <p className="mt-1 text-[13px] leading-5 text-[var(--muted-2)]">
+            Revoked keys stop working immediately. They are kept here so you can see what was connected and when.
+          </p>
+        </div>
+        <ul className="mt-4 divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
+          {revokedKeys.map((row) => (
+            <KeyRow key={row.id} row={row} canManage={false} showOwner={!status?.isPersonalOrg} onRevoked={onRevoked} />
+          ))}
+        </ul>
+      </Modal>
 
       {status && !canManage ? (
         <p className="mt-3 text-[12px] text-[var(--muted-2)]">Ask a workspace owner to create a key.</p>

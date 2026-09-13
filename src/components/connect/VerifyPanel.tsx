@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { AgentStatus } from "@/lib/client/useAgentStatus";
-import { ASK_YOUR_AGENT, KEY_PLACEHOLDER, whoamiCurl } from "@/lib/mcp/clientSetups";
+import { ASK_YOUR_AGENT, KEY_PLACEHOLDER, SITE_ORIGIN, whoamiCurl } from "@/lib/mcp/clientSetups";
 import CodeBlock from "./CodeBlock";
 import { formatRelative } from "./format";
 
@@ -26,6 +26,13 @@ export default function VerifyPanel({
 }) {
   const [checked, setChecked] = useState(false);
   const key = plaintextKey ?? KEY_PLACEHOLDER;
+  // The command targets the server this page is running on: a key minted on a dev server is only
+  // known there. Read after mount so server and client render the same first frame.
+  const [origin, setOrigin] = useState(SITE_ORIGIN);
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.origin) setOrigin(window.location.origin);
+  }, []);
+  const isLocal = origin !== SITE_ORIGIN;
 
   const result = (() => {
     if (!checked) return null;
@@ -42,7 +49,12 @@ export default function VerifyPanel({
     <div className="grid gap-4">
       <div>
         <p className="mb-2 text-[13px] text-[var(--muted)]">Run this in a terminal. It works today, before the MCP server ships.</p>
-        <CodeBlock lines={whoamiCurl(key)} label="Copy verification command" />
+        <CodeBlock lines={whoamiCurl(key, origin)} label="Copy verification command" />
+        {isLocal ? (
+          <p className="mt-2 text-[12px] leading-5 text-[var(--muted-2)]">
+            You are on <code className="font-mono">{origin}</code>, so the command targets this server. Keys created here do not work on {SITE_ORIGIN.replace(/^https?:\/\//, "")}.
+          </p>
+        ) : null}
       </div>
       <p className="text-[13px] leading-5 text-[var(--muted)]">
         Or ask your agent: <span className="text-[var(--fg)]">“{ASK_YOUR_AGENT}”</span>

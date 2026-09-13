@@ -10,7 +10,10 @@
  */
 
 export const MCP_URL = "https://mcp.lnkdrp.com/mcp";
-export const WHOAMI_URL = "https://lnkdrp.com/api/agent/whoami";
+/** Public site origin for docs and the verification command (build-time; falls back to production). */
+export const SITE_ORIGIN = (process.env.NEXT_PUBLIC_SITE_URL || "https://lnkdrp.com").replace(/\/+$/, "");
+export const WHOAMI_PATH = "/api/agent/whoami";
+export const WHOAMI_URL = `${SITE_ORIGIN}${WHOAMI_PATH}`;
 export const KEY_PLACEHOLDER = "lnk_your_key_here";
 /** Shown on the public guides as "Last updated". Bump when a client's steps change. */
 export const GUIDES_LAST_UPDATED = "September 13, 2026";
@@ -218,8 +221,10 @@ export function findClientSetup(slug: string): ClientSetup | undefined {
 }
 
 /** The verification request: works today, before the MCP server ships. */
-export function whoamiCurl(key: string): string[] {
-  return [`curl -s ${WHOAMI_URL} \\`, `  -H "Authorization: Bearer ${key}" \\`, `  -H "x-lnkdrp-agent: curl/1"`];
+export function whoamiCurl(key: string, origin: string = SITE_ORIGIN): string[] {
+  // `origin` lets the in-app page point at the server it is running on (a dev server's key is only
+  // known to that server); the public guides use the site origin.
+  return [`curl -s ${origin.replace(/\/+$/, "")}${WHOAMI_PATH} \\`, `  -H "Authorization: Bearer ${key}" \\`, `  -H "x-lnkdrp-agent: curl/1"`];
 }
 
 /** The prompt a user can paste into their agent to verify the connection end to end. */
