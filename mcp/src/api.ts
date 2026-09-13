@@ -18,7 +18,15 @@
  * - `POST /api/uploads`                        -> 201 `{ upload: { id, docId, version, status } }`
  * - `POST /api/uploads/:id/import-url` `{ url }` -> `{ ok: true }`; 400 `{ error }`; 415 `{ error, code }`
  * - `POST /api/uploads/:id/process`            -> `{ ok: true, alreadyProcessing? }`; 409 `UPLOAD_NOT_READY`; 402 credits
- * - `GET  /api/docs/:id/shareviews?days&viewers=1` -> `{ ok, days, analyticsDaysLimit, analyticsTier, viewerCount, totals, series, viewers, anonymousViewers }`
+ * - `POST /api/uploads` also takes `{ summary?, keyPoints? }` (both or neither) -> agent summary, 0 credits; 400 `{ error, code: "invalid_summary" }`
+ * - `GET  /api/uploads/:id`                    -> `{ upload: { id, docId, status, version, ai: UploadAi | null }, doc: { id, status } }`
+ * - `GET  /api/credits/snapshot?fast=1`        -> `{ creditsRemaining, blocked, includedThisCycle, cycleEnd, … }` (session or key actor)
+ * - `GET  /api/plan`                           -> `{ plan: "free"|"pro", limits, usage, … }`
+ * - `GET  /api/docs/:id/shareviews?days&viewers=1&shareId=` -> `{ ok, days, analyticsDaysLimit, analyticsTier, viewerCount, totals, series, viewers, anonymousViewers }` (`shareId` scopes every number to one link)
+ * - `GET  /api/docs/:id/links`                 -> `{ links: ShareLinkDTO[] }` (default link first)
+ * - `POST /api/docs/:id/links` `{ label, … }`  -> 201 `{ link, planWarning? }` (at the Free cap the link is created disabled and `planWarning` explains why)
+ * - `PATCH /api/docs/:id/links/:linkId`        -> `{ link, planWarning? }`
+ * - `DELETE /api/docs/:id/links/:linkId`       -> 204 (soft archive; analytics kept)
  */
 import { API_TIMEOUT_MS } from "./config";
 import { mapApiError, ToolError } from "./errors";
@@ -58,7 +66,61 @@ export type ApiDoc = {
 
 export type ApiDocListItem = { id: string; shareId: string | null; title: string | null; status: string };
 
+/** One share link of a document (`ShareLinkDTO` from `src/lib/share/links.ts`). */
+export type ApiShareLink = {
+  id: string;
+  docId: string;
+  shareId: string;
+  label: string;
+  audience: string | null;
+  isDefault: boolean;
+  enabled: boolean;
+  allowDownload: boolean;
+  allowRevisionHistory: boolean;
+  passwordEnabled: boolean;
+  expiresAt: string | null;
+  active: boolean;
+  status: "active" | "disabled" | "expired" | "archived" | string;
+  createdVia: string;
+  createdAt: string | null;
+  lastViewedAt: string | null;
+  viewCount: number;
+  downloadCount: number;
+};
+
+/** Settings accepted when creating or updating a share link. */
+export type ShareLinkPatch = Partial<{
+  label: string;
+  audience: string | null;
+  enabled: boolean;
+  allowDownload: boolean;
+  allowRevisionHistory: boolean;
+  expiresAt: string | null;
+  password: string | null;
+}>;
+
 export type ApiUpload = { id: string; docId: string; version: number | null; status: string };
+
+/** `upload.ai` from `GET /api/uploads/:id`: what the automatic AI steps did and why. */
+export type UploadAi = {
+  summary: "done" | "skipped" | "failed" | string;
+  compare: "done" | "skipped" | "failed" | "not_applicable" | string;
+  reason: string | null;
+  code: "out_of_credits" | "daily_cap" | "plan" | "recipient" | "error" | string | null;
+  creditsNeeded: number | null;
+  creditsUsed: number;
+  source: "owner" | "recipient" | string;
+  summaryBy: { kind: string; client: string } | null;
+};
+
+/** The fields of `GET /api/credits/snapshot` the MCP server uses. `resetAt` is the first reset-like date found. */
+export type CreditsSnapshotLite = {
+  creditsRemaining: number | null;
+  blocked: boolean;
+  includedThisCycle: number | null;
+  cycleEnd: string | null;
+  resetAt: string | null;
+};
 
 export type DocPatch = Partial<{
   title: string;
@@ -139,11 +201,56 @@ function asDoc(raw: unknown): ApiDoc {
   };
 }
 
+/** Normalise `upload.ai`; null while processing has not finished. */
+function asUploadAi(raw: unknown): UploadAi | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = rec(raw);
+  const by = rec(a.summaryBy);
+  return {
+    summary: strOrNull(a.summary) ?? "done",
+    compare: strOrNull(a.compare) ?? "not_applicable",
+    reason: strOrNull(a.reason),
+    code: strOrNull(a.code),
+    creditsNeeded: typeof a.creditsNeeded === "number" ? a.creditsNeeded : null,
+    creditsUsed: num(a.creditsUsed),
+    source: strOrNull(a.source) ?? "owner",
+    summaryBy: typeof by.client === "string" ? { kind: strOrNull(by.kind) ?? "agent", client: by.client } : null,
+  };
+}
+
 /** Normalise the optional `planWarning` returned by doc create/patch. */
 function asPlanWarning(raw: unknown): PlanWarning | undefined {
   const w = rec(raw);
   if (typeof w.limit !== "string") return undefined;
   return { limit: w.limit, used: num(w.used), max: num(w.max), grace: w.grace ?? null };
+}
+
+/** Normalise one share link from `/api/docs/:id/links` (`{ link }` / `{ links }` already unwrapped). */
+function asShareLink(raw: unknown): ApiShareLink {
+  const l = rec(raw);
+  const id = strOrNull(l.id);
+  const shareId = strOrNull(l.shareId);
+  if (!id || !shareId) throw new ToolError("upstream", "lnkdrp API returned a share link without an id.");
+  return {
+    id,
+    docId: strOrNull(l.docId) ?? "",
+    shareId,
+    label: strOrNull(l.label) ?? "",
+    audience: strOrNull(l.audience),
+    isDefault: Boolean(l.isDefault),
+    enabled: Boolean(l.enabled),
+    allowDownload: Boolean(l.allowDownload),
+    allowRevisionHistory: Boolean(l.allowRevisionHistory),
+    passwordEnabled: Boolean(l.passwordEnabled),
+    expiresAt: strOrNull(l.expiresAt),
+    active: Boolean(l.active),
+    status: strOrNull(l.status) ?? "active",
+    createdVia: strOrNull(l.createdVia) ?? "api",
+    createdAt: strOrNull(l.createdAt),
+    lastViewedAt: strOrNull(l.lastViewedAt),
+    viewCount: num(l.viewCount),
+    downloadCount: num(l.downloadCount),
+  };
 }
 
 /** Normalise one viewer row from the shareviews route (drops userId and per-page maps). */
@@ -291,10 +398,46 @@ export class ApiClient {
     return { sharePasswordEnabled: Boolean(body.sharePasswordEnabled) };
   }
 
-  async createUpload(input: { docId: string; originalFileName: string }): Promise<ApiUpload> {
+  /** `GET /api/docs/:id/links` — every link of a document, default first. */
+  async listShareLinks(docId: string): Promise<ApiShareLink[]> {
+    const body = rec(await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/links`));
+    return Array.isArray(body.links) ? body.links.map(asShareLink) : [];
+  }
+
+  /**
+   * `POST /api/docs/:id/links` — create a link. At the Free active-link cap the link is created
+   * **disabled** and `planWarning` says so (201, never a 402), so the agent can report the cap
+   * without losing the link.
+   */
+  async createShareLink(docId: string, settings: ShareLinkPatch & { label: string }): Promise<{ link: ApiShareLink; planWarning?: PlanWarning }> {
+    const body = rec(await this.request("POST", `/api/docs/${encodeURIComponent(docId)}/links`, { body: settings }));
+    return { link: asShareLink(body.link), planWarning: asPlanWarning(body.planWarning) };
+  }
+
+  /** `PATCH /api/docs/:id/links/:linkId` — change one link's settings. */
+  async updateShareLink(docId: string, linkId: string, patch: ShareLinkPatch): Promise<{ link: ApiShareLink; planWarning?: PlanWarning }> {
+    const body = rec(
+      await this.request("PATCH", `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(linkId)}`, { body: patch }),
+    );
+    return { link: asShareLink(body.link), planWarning: asPlanWarning(body.planWarning) };
+  }
+
+  /** `DELETE /api/docs/:id/links/:linkId` — soft-archive a link (204; analytics are kept). */
+  async deleteShareLink(docId: string, linkId: string): Promise<void> {
+    await this.request("DELETE", `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(linkId)}`);
+  }
+
+  async createUpload(input: { docId: string; originalFileName: string; summary?: string | undefined; keyPoints?: string[] | undefined }): Promise<ApiUpload> {
     const body = rec(
       await this.request("POST", "/api/uploads", {
-        body: { docId: input.docId, originalFileName: input.originalFileName, contentType: "application/pdf", sizeBytes: 0 },
+        body: {
+          docId: input.docId,
+          originalFileName: input.originalFileName,
+          contentType: "application/pdf",
+          sizeBytes: 0,
+          // Agent-written summary: both or neither (the server skips the paid AI summary when present).
+          ...(input.summary !== undefined && input.keyPoints !== undefined ? { summary: input.summary, keyPoints: input.keyPoints } : {}),
+        },
       }),
     );
     const u = rec(body.upload);
@@ -312,10 +455,37 @@ export class ApiClient {
     return { alreadyProcessing: Boolean(body.alreadyProcessing) };
   }
 
-  async shareViews(docId: string, input: { days: number; viewers: boolean }): Promise<ShareViews> {
+  /** `GET /api/uploads/:id` — upload status plus the AI outcome (`ai` is null until processing finishes). */
+  async getUpload(uploadId: string): Promise<{ id: string; status: string | null; ai: UploadAi | null }> {
+    const body = rec(await this.request("GET", `/api/uploads/${encodeURIComponent(uploadId)}`));
+    const u = rec(body.upload);
+    return { id: strOrNull(u.id) ?? uploadId, status: strOrNull(u.status), ai: asUploadAi(u.ai) };
+  }
+
+  /** `GET /api/credits/snapshot?fast=1` — credits left in the workspace (read defensively). */
+  async creditsSnapshot(): Promise<CreditsSnapshotLite> {
+    const s = rec(await this.request("GET", "/api/credits/snapshot", { query: { fast: 1 } }));
+    const resetAt = strOrNull(s.resetAt) ?? strOrNull(s.creditsResetAt) ?? strOrNull(s.resetsAt) ?? strOrNull(s.nextResetAt) ?? strOrNull(s.cycleEnd);
+    return {
+      creditsRemaining: typeof s.creditsRemaining === "number" ? s.creditsRemaining : null,
+      blocked: Boolean(s.blocked),
+      includedThisCycle: typeof s.includedThisCycle === "number" ? s.includedThisCycle : null,
+      cycleEnd: strOrNull(s.cycleEnd),
+      resetAt,
+    };
+  }
+
+  /** `GET /api/plan` — the workspace plan ("free" | "pro"). */
+  async planSnapshot(): Promise<{ plan: string | null }> {
+    const p = rec(await this.request("GET", "/api/plan"));
+    return { plan: strOrNull(p.plan) };
+  }
+
+  /** Analytics for a document, or for one of its links when `shareId` is given. */
+  async shareViews(docId: string, input: { days: number; viewers: boolean; shareId?: string | undefined }): Promise<ShareViews> {
     const body = rec(
       await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/shareviews`, {
-        query: { days: input.days, viewers: input.viewers ? 1 : undefined },
+        query: { days: input.days, viewers: input.viewers ? 1 : undefined, shareId: input.shareId },
       }),
     );
     const totals = rec(body.totals);

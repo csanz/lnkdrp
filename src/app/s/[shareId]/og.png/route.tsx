@@ -3,8 +3,7 @@ import { notFound } from "next/navigation";
 import type { NextRequest } from "next/server";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink } from "@/lib/share/links";
 import {
   DEFAULT_OG_SIZE,
   imageResponseFromBytes,
@@ -27,18 +26,26 @@ export async function GET(
   const { shareId } = await context.params;
   if (!shareId) notFound();
 
-  await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } }).lean();
-  if (!doc) notFound();
+  // The OG image is the document's, never the link's: labels and audiences stay private
+  // (docs/prds/lnkdrp-multi-links.md). A refused link has no preview at all.
+  const resolved = await resolveShareLink(shareId, {
+    select: { title: 1, aiOutput: 1, previewImageUrl: 1, firstPagePngUrl: 1 } as Record<string, 1>,
+  });
+  if (!resolved || resolved.refusal) notFound();
+  const doc = resolved.doc as {
+    title?: unknown;
+    aiOutput?: unknown;
+    previewImageUrl?: unknown;
+    firstPagePngUrl?: unknown;
+  };
 
-  const title =
-    (doc.aiOutput &&
-      typeof doc.aiOutput === "object" &&
-      typeof (doc.aiOutput as { openGraph?: { title?: unknown } }).openGraph?.title ===
-        "string" &&
-      (doc.aiOutput as { openGraph: { title: string } }).openGraph.title) ||
-    doc.title ||
-    "Shared document";
+  const ogTitle =
+    doc.aiOutput &&
+    typeof doc.aiOutput === "object" &&
+    typeof (doc.aiOutput as { openGraph?: { title?: unknown } }).openGraph?.title === "string"
+      ? (doc.aiOutput as { openGraph: { title: string } }).openGraph.title
+      : "";
+  const title = ogTitle || (typeof doc.title === "string" ? doc.title : "") || "Shared document";
 
   const og = (doc.aiOutput && typeof doc.aiOutput === "object"
     ? (doc.aiOutput as { openGraph?: { imageUrl?: unknown; imagePath?: unknown } }).openGraph

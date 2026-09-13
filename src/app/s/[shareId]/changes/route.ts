@@ -8,8 +8,7 @@
  * to `/s/:shareId`) is sent by the browser.
  */
 import { NextResponse } from "next/server";
-import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink } from "@/lib/share/links";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
@@ -98,30 +97,21 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
       }
 
-      await connectMongo();
-      const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-        .select({
-          _id: 1,
-          shareEnabled: 1,
-          shareAllowRevisionHistory: 1,
-          sharePasswordHash: 1,
-          sharePasswordSalt: 1,
-        })
-        .lean();
-      if (!doc) {
+      // Refused links (disabled/expired/archived) answer 404, like an unknown slug.
+      const resolved = await resolveShareLink(shareId);
+      if (!resolved || resolved.refusal) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
-      if ((doc as { shareEnabled?: unknown }).shareEnabled === false) {
-        return NextResponse.json({ error: "Not found" }, { status: 404 });
-      }
+      const { link, doc } = resolved;
 
-      const enabled = Boolean((doc as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory);
+      // Revision history is a per-link permission (docs/prds/lnkdrp-multi-links.md).
+      const enabled = Boolean(link.allowRevisionHistory);
       if (!enabled) {
         return NextResponse.json({ error: "Version history disabled" }, { status: 403 });
       }
 
-      const sharePasswordHash = (doc as { sharePasswordHash?: unknown }).sharePasswordHash;
-      const sharePasswordSalt = (doc as { sharePasswordSalt?: unknown }).sharePasswordSalt;
+      const sharePasswordHash = link.passwordHash;
+      const sharePasswordSalt = link.passwordSalt;
       const passwordEnabled =
         typeof sharePasswordHash === "string" &&
         Boolean(sharePasswordHash) &&

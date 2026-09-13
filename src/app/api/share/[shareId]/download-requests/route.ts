@@ -7,8 +7,7 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
-import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink } from "@/lib/share/links";
 import { UserModel } from "@/lib/models/User";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
@@ -83,17 +82,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     const rlEmail = await rateLimit({ key: `dlreq:email:${sha256Hex(email)}`, limit: REQUEST_LIMIT, windowMs: REQUEST_WINDOW_MS });
     if (!rlEmail.ok) return rateLimitedResponse(rlEmail);
 
-    await connectMongo();
-    const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-      .select({ _id: 1, userId: 1, orgId: 1, title: 1, shareEnabled: 1, shareAllowPdfDownload: 1 })
-      .lean();
-    if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    if ((doc as { shareEnabled?: unknown }).shareEnabled === false) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    // The request is about one link: a refused link answers 404, and the download permission that
+    // decides whether a request is needed is the link's (docs/prds/lnkdrp-multi-links.md).
+    const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
+    if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const doc = resolved.doc;
+    const docTitle = typeof doc.title === "string" ? doc.title : null;
 
     // If downloads are already enabled, no need to request.
-    if (Boolean((doc as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload)) {
+    if (Boolean(resolved.link.allowDownload)) {
       return NextResponse.json({ ok: true, kind: "download_already_enabled" as const, emailedOwner: false });
     }
 
@@ -157,7 +154,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
         actorKind: "secret",
         type: "download_request.created",
         docId: docId as Types.ObjectId,
-        title: typeof (doc as { title?: unknown }).title === "string" ? (doc as { title: string }).title : null,
+        title: docTitle,
         meta: { email: maskEmail(email), shareId, requestId: String(created._id) },
         request,
       });
@@ -168,8 +165,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     let emailedRequester = false;
     try {
       const base = getPublicSiteBase();
-      const title =
-        typeof (doc as { title?: unknown }).title === "string" ? (doc as { title: string }).title : "Shared document";
+      const title = docTitle ?? "Shared document";
       const shareUrl = base ? new URL(`/s/${encodeURIComponent(shareId)}`, base).toString() : "";
       const subject = `Request received: ${title || "Shared document"}`;
       const text = [
@@ -206,7 +202,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     const ownerEmail = owner && typeof (owner as { email?: unknown }).email === "string" ? String((owner as { email: string }).email) : "";
 
     const base = getPublicSiteBase();
-    const title = typeof (doc as { title?: unknown }).title === "string" ? (doc as { title: string }).title : "Shared document";
+    const title = docTitle ?? "Shared document";
     const shareUrl = base ? new URL(`/s/${encodeURIComponent(shareId)}`, base).toString() : "";
     const approveUrl = base
       ? new URL(

@@ -2,8 +2,9 @@
  * End-to-end harness for the lnkdrp MCP server (`mcp/`, see docs/MCP.md).
  *
  * Drives the real stack over the wire: mints a temporary API key straight in Mongo, connects an
- * MCP client to the running server, exercises the five tools in the order an agent would use
- * them, checks that a bad key is rejected at `initialize`, and revokes the key again.
+ * MCP client to the running server, exercises the nine tools in the order an agent would use
+ * them (including the share-link lifecycle: create a second link, fetch it, disable it, delete
+ * it), checks that a bad key is rejected at `initialize`, and revokes the key again.
  *
  * Prerequisites (three terminals):
  *   npm run dev        # Next app on :3001 (the MCP server calls its REST API)
@@ -22,8 +23,9 @@
  *   E2E_CLIENT_NAME/_VERSION MCP client identity sent at initialize (default lnkdrp-e2e / 1.0)
  *
  * Prints one line per step with its duration, then a one-line JSON summary. Exits 1 on the first
- * failed assertion (the key is still revoked). The doc it creates ("MCP e2e") is left in the
- * workspace so you can open it in the app and see the "Lnkdrp E2e" attribution on /activity.
+ * failed assertion (the key is still revoked). The docs it creates ("MCP e2e", "MCP e2e agent
+ * summary") are deleted again at the end so the Free active-link cap is not consumed; set
+ * E2E_KEEP_DOCS=1 to keep them and see the "Lnkdrp E2e" attribution on /activity.
  *
  * No test framework on purpose: a single readable script that mirrors what an agent does.
  */
@@ -35,6 +37,9 @@ import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontex
 
 import { connectMongo } from "@/lib/mongodb";
 import { apiKeyPrefix, createApiKey, revokeApiKey } from "@/lib/agents/apiKeys";
+import { creditsForRun } from "@/lib/credits/schedule";
+import { CreditLedgerModel } from "@/lib/models/CreditLedger";
+import { UploadModel } from "@/lib/models/Upload";
 
 // ---------------------------------------------------------------------------------------------
 // Config
@@ -59,6 +64,10 @@ const EXPECTED_TOOLS = [
   "lnkdrp_get_share",
   "lnkdrp_set_share_access",
   "lnkdrp_get_share_stats",
+  "lnkdrp_create_share_link",
+  "lnkdrp_list_share_links",
+  "lnkdrp_update_share_link",
+  "lnkdrp_delete_share_link",
 ] as const;
 
 /** A syntactically valid key (`lnk_` + 32 base62 chars) that was never minted. */
@@ -168,6 +177,33 @@ function isUntrusted(v: unknown): v is Untrusted {
 type WhoAmI = { ok: boolean; userId: string; orgId: string; orgName: string | null; plan: string; keyPrefix: string; scopes: string[]; client: string; costs?: unknown; mcpVersion?: string };
 type SharePdfResult = { docId: string; shareId: string; shareUrl: string; replaceUrl: null; status: string; version: number; uploadId: string; title: string; planWarning?: unknown };
 type GetShareResult = { docId: string; shareId: string; title: Untrusted; status: string; shareEnabled: boolean; shareAllowPdfDownload: boolean; sharePasswordEnabled: boolean; shareAllowRevisionHistory: boolean; shareUrl: string; previewImageUrl: string | null; oneLiner: Untrusted | null; summary: Untrusted | null; isArchived: boolean };
+/** One share link as the link tools return it (the DTO plus its public URL). */
+type ShareLinkDTO = {
+  id: string;
+  docId: string;
+  shareId: string;
+  shareUrl: string;
+  label: string;
+  audience: string | null;
+  isDefault: boolean;
+  enabled: boolean;
+  allowDownload: boolean;
+  status: string;
+  active: boolean;
+  viewCount: number;
+  downloadCount: number;
+};
+type CreateShareLinkResult = { link: ShareLinkDTO; shareUrl: string; planWarning?: unknown; planNote?: string };
+type ListShareLinksResult = { docId: string; links: ShareLinkDTO[] };
+
+/** Credit/AI fields added to whoami and share_pdf (agent-written summaries, warnings). */
+type WhoAmICredits = { costs?: { summary?: number[]; compare?: number[] }; creditsRemaining?: number | null; creditsResetAt?: string | null };
+type SharePdfAiFields = { warnings?: unknown; creditsRemaining?: number };
+/** Documents this run created; deleted in `finally` so the Free active-link cap is not consumed. */
+const createdDocs: Array<{ docId: string; origin: string }> = [];
+/** Set E2E_KEEP_DOCS=1 to keep the created documents (e.g. to inspect attribution on /activity). */
+const KEEP_DOCS = process.env.E2E_KEEP_DOCS === "1";
+
 type ShareStatsResult = { docId: string; shareId: string; days: number; analyticsTier: string; viewerCount: number; totals: { views: number; downloads: number; pagesViewed: number; timeSpentMs: number; authenticatedViewers: number; anonymousViewers: number }; series: Array<{ date: string; views: number; downloads?: number }>; viewers?: unknown[] };
 
 // ---------------------------------------------------------------------------------------------
@@ -268,7 +304,7 @@ async function main(): Promise<void> {
     });
 
     // 4. Tool catalogue.
-    await step("listTools exposes the five lnkdrp tools", async () => {
+    await step("listTools exposes the nine lnkdrp tools", async () => {
       const { tools } = await live.listTools();
       const names = tools.map((t) => t.name);
       for (const expected of EXPECTED_TOOLS) assert(names.includes(expected), `missing tool ${expected}; got ${names.join(", ")}`);
@@ -290,6 +326,18 @@ async function main(): Promise<void> {
       const clientId = String(me.client ?? "").toLowerCase().replace(/\s+/g, "-");
       assert(clientId === CLIENT_INFO.name, `whoami.client "${me.client}" does not identify ${CLIENT_INFO.name}`);
       info("workspace", `${me.orgName ?? "(unnamed)"} plan=${me.plan} scopes=${me.scopes?.join(",")} client="${me.client}" mcpVersion=${me.mcpVersion ?? "?"}`);
+    });
+
+    // 5b. whoami costs come from the app's credit schedule, not a copy.
+    await step("lnkdrp_whoami costs equal creditsForRun (summary, history)", async () => {
+      const me = await callTool<WhoAmICredits>(live, "lnkdrp_whoami", {});
+      const tiers = ["basic", "standard", "advanced"] as const;
+      const summary = tiers.map((qualityTier) => creditsForRun({ actionType: "summary", qualityTier }));
+      const compare = tiers.map((qualityTier) => creditsForRun({ actionType: "history", qualityTier }));
+      assert(JSON.stringify(me.costs?.summary) === JSON.stringify(summary), `whoami.costs.summary ${JSON.stringify(me.costs?.summary)} !== ${JSON.stringify(summary)}`);
+      assert(JSON.stringify(me.costs?.compare) === JSON.stringify(compare), `whoami.costs.compare ${JSON.stringify(me.costs?.compare)} !== ${JSON.stringify(compare)}`);
+      assert(me.creditsRemaining === null || typeof me.creditsRemaining === "number", "whoami.creditsRemaining is neither a number nor null");
+      info("credits", `costs=${JSON.stringify(me.costs)} remaining=${String(me.creditsRemaining)} resetAt=${String(me.creditsResetAt)}`);
     });
 
     // 6. share_pdf: create doc + upload + import + process, wait for ready.
@@ -316,6 +364,17 @@ async function main(): Promise<void> {
       info("shareUrl", res.shareUrl);
       if (res.planWarning) info("planWarning", res.planWarning);
       return res;
+    });
+    createdDocs.push({ docId: shared.docId, origin: new URL(shared.shareUrl).origin });
+
+    // 6b. share_pdf always reports AI outcome warnings (possibly empty) once processing finished.
+    await step("lnkdrp_share_pdf result has a warnings array", async () => {
+      const ai = shared as unknown as SharePdfAiFields;
+      assert(Array.isArray(ai.warnings), `share_pdf.warnings is not an array: ${JSON.stringify(ai.warnings)}`);
+      assert(ai.warnings.every((w) => typeof w === "string"), "share_pdf.warnings contains a non-string");
+      assert(ai.creditsRemaining === undefined || typeof ai.creditsRemaining === "number", "share_pdf.creditsRemaining is not a number");
+      info("warnings", ai.warnings);
+      if (ai.creditsRemaining !== undefined) info("creditsRemaining", ai.creditsRemaining);
     });
 
     // 7. get_share by docId.
@@ -375,9 +434,158 @@ async function main(): Promise<void> {
       assert(again.shareId === shared.shareId, `replay returned a different shareId: ${again.shareId} !== ${shared.shareId}`);
       info("docId", again.docId);
     });
+
+    // 11. A second link on the same document, labelled for one recipient, with downloads on.
+    const extra = await step('lnkdrp_create_share_link { label: "Sequoia", allowDownload: true }', async () => {
+      const res = await callTool<CreateShareLinkResult>(live, "lnkdrp_create_share_link", {
+        docId: shared.docId,
+        label: "Sequoia",
+        audience: "Sequoia · Roelof",
+        allowDownload: true,
+      });
+      assert(res.link && typeof res.link.id === "string", "create_share_link returned no link");
+      assert(res.link.shareId !== shared.shareId, "create_share_link reused the default link's shareId");
+      assert(res.link.label === "Sequoia", `create_share_link.label "${res.link.label}" !== "Sequoia"`);
+      assert(res.link.allowDownload === true, "create_share_link ignored allowDownload");
+      assert(res.link.isDefault === false, "create_share_link marked the new link as the default one");
+      assert(res.shareUrl.endsWith(`/s/${res.link.shareId}`), `create_share_link.shareUrl "${res.shareUrl}" does not end with /s/${res.link.shareId}`);
+      if (res.planWarning) info("planWarning", res.planWarning);
+      info("link", `${res.link.id} ${res.link.shareId} status=${res.link.status}`);
+      info("shareUrl", res.shareUrl);
+      return res;
+    });
+
+    // 12b. Free-plan headroom: the active-link cap counts every enabled link in the workspace, so
+    // on a busy Free workspace the new link is created disabled (planWarning says so). Turn this
+    // document's default link off - it has done its job in the steps above - and enable the new
+    // one, so the link lifecycle below runs on a live link either way.
+    let defaultLinkLive = true;
+    if (extra.planWarning) {
+      await step("free a slot at the Free active-link cap, then enable the new link", async () => {
+        const list = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId });
+        const def = list.links.find((l) => l.isDefault);
+        assert(def, "the document has no default link");
+        await callTool<CreateShareLinkResult>(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: def.id, enabled: false });
+        defaultLinkLive = false;
+        const on = await callTool<CreateShareLinkResult>(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, enabled: true });
+        assert(on.link.enabled === true, "the new link could not be enabled after freeing a slot");
+        info("links", `default=off ${on.link.label}=${on.link.status}`);
+      });
+    }
+
+    // 13. The document now lists two links, the default one first.
+    await step("lnkdrp_list_share_links shows both links, default first", async () => {
+      const res = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId });
+      assert(Array.isArray(res.links), "list_share_links.links is not an array");
+      assert(res.links.length === 2, `expected 2 links, got ${res.links.length}`);
+      assert(res.links[0]?.isDefault === true, "the default link is not listed first");
+      assert(res.links.some((l) => l.id === extra.link.id), "the new link is missing from the list");
+      info("links", res.links.map((l) => `${l.label}${l.isDefault ? " (default)" : ""}=${l.status}`).join(", "));
+    });
+
+    // 14. The new link resolves publicly, straight away.
+    //
+    // The share *page* streams, so `notFound()` reaches the client as a 200 with the not-found UI;
+    // `/s/<shareId>/pdf` is a route handler and answers with a real status, so that is what the
+    // refusal assertions use (both links here have downloads enabled).
+    await step("GET /s/<new shareId> serves the document", async () => {
+      const page = await fetch(extra.shareUrl, { redirect: "manual", signal: AbortSignal.timeout(15_000) });
+      await page.arrayBuffer();
+      assert(page.status === 200, `GET ${extra.shareUrl} returned HTTP ${page.status} (expected 200)`);
+      const pdf = await fetch(`${extra.shareUrl}/pdf`, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+      await pdf.arrayBuffer();
+      assert(pdf.status === 200, `GET ${extra.shareUrl}/pdf returned HTTP ${pdf.status} (expected 200)`);
+    });
+
+    // 15b. Per-link analytics: docId + shareId reads that link alone (`?shareId=` on shareviews).
+    await step("lnkdrp_get_share_stats { docId, shareId } reports the link alone", async () => {
+      const st = await callTool<ShareStatsResult & { perLink?: boolean }>(live, "lnkdrp_get_share_stats", {
+        docId: shared.docId,
+        shareId: extra.link.shareId,
+      });
+      assert(st.perLink === true, "stats did not report perLink for a shareId-scoped read");
+      assert(st.shareId === extra.link.shareId, `stats.shareId ${st.shareId} !== ${extra.link.shareId}`);
+      assert(st.totals && typeof st.totals.views === "number", "per-link stats.totals.views missing");
+      assert(Array.isArray(st.series), "per-link stats.series is not an array");
+      info("stats", `perLink views=${st.totals.views} downloads=${st.totals.downloads} series=${st.series.length}`);
+    });
+
+    // 16. Disabling one link revokes that recipient only; the document's other links are untouched.
+    await step("lnkdrp_update_share_link { enabled: false } stops the link resolving", async () => {
+      const res = await callTool<CreateShareLinkResult>(live, "lnkdrp_update_share_link", {
+        docId: shared.docId,
+        linkId: extra.link.id,
+        enabled: false,
+      });
+      assert(res.link.enabled === false, "update_share_link did not disable the link");
+      assert(res.link.status === "disabled", `update_share_link.status is "${res.link.status}", expected "disabled"`);
+      const pdf = await fetch(`${extra.shareUrl}/pdf`, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+      await pdf.arrayBuffer();
+      assert(pdf.status === 404, `a disabled link still served ${extra.shareUrl}/pdf (HTTP ${pdf.status}, expected 404)`);
+      if (defaultLinkLive) {
+        const still = await fetch(`${shareUrl as string}/pdf`, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+        await still.arrayBuffer();
+        assert(still.status === 200, `the default link broke when the extra link was disabled (HTTP ${still.status})`);
+      }
+    });
+
+    // 17. Deleting it leaves the document with just its default link.
+    await step("lnkdrp_delete_share_link leaves one link", async () => {
+      const res = await callTool<{ ok: boolean }>(live, "lnkdrp_delete_share_link", { docId: shared.docId, linkId: extra.link.id });
+      assert(res.ok === true, "delete_share_link did not return ok");
+      const list = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId });
+      assert(list.links.length === 1, `expected 1 link after delete, got ${list.links.length}`);
+      assert(list.links[0]?.isDefault === true, "the surviving link is not the default one");
+    });
+
+    // 17. Agent-written summary: no AI summary run, 0 credits, attributed to the calling client.
+    await step("lnkdrp_share_pdf with summary + keyPoints charges 0 credits and records the agent", async () => {
+      const res = await callTool<SharePdfResult & SharePdfAiFields>(live, "lnkdrp_share_pdf", {
+        idempotencyKey: `e2e-agent-summary-${randomUUID()}`,
+        title: "MCP e2e agent summary",
+        sourceUrl: PDF_URL,
+        summary: "A one-page placeholder PDF used by the W3C accessibility test suite; it contains the words Dummy PDF file and nothing else.",
+        keyPoints: ["Single page with a short line of placeholder text", "Used as a fixture in W3C accessibility tests"],
+        waitForReady: true,
+        timeoutSeconds: TIMEOUT_SECONDS,
+      });
+      createdDocs.push({ docId: res.docId, origin: new URL(res.shareUrl).origin });
+      info("doc", `${res.docId} upload ${res.uploadId} status=${res.status}`);
+      info("warnings", res.warnings);
+      assert(Array.isArray(res.warnings), "share_pdf.warnings is not an array");
+      assert(
+        !(res.warnings as unknown[]).some((w) => typeof w === "string" && /AI summary (skipped|failed)/.test(w)),
+        `share_pdf with an agent summary still reports a skipped/failed AI summary: ${JSON.stringify(res.warnings)}`,
+      );
+      assert(res.status === "ready", `agent-summary doc status is "${res.status}", expected ready`);
+
+      const rows = await CreditLedgerModel.find({ workspaceId: ORG_ID, docId: res.docId, actionType: "summary" })
+        .select({ creditsCharged: 1, source: 1, status: 1, idempotencyKey: 1 })
+        .lean();
+      info("ledger", rows.map((r) => ({ key: r.idempotencyKey, status: r.status, creditsCharged: r.creditsCharged, source: r.source })));
+      assert(rows.length >= 1, `no summary ledger row for doc ${res.docId}`);
+      assert(rows.every((r) => (r.creditsCharged ?? 0) === 0), `summary ledger charged credits: ${JSON.stringify(rows.map((r) => r.creditsCharged))}`);
+      assert(rows.some((r) => String(r.source) === "agent"), `no summary ledger row with source "agent": ${JSON.stringify(rows.map((r) => r.source))}`);
+
+      const upload = await UploadModel.findById(res.uploadId).select({ ai: 1 }).lean();
+      const ai = (upload as { ai?: { summaryBy?: { kind?: string; client?: string } } } | null)?.ai ?? null;
+      info("upload.ai", ai);
+      assert(ai?.summaryBy?.client, `upload.ai.summaryBy.client is not set: ${JSON.stringify(ai)}`);
+    });
   } finally {
     // Always: close the session and revoke the temporary key, even after a failed assertion.
     if (client && transport) await closeQuietly(client, transport);
+    // Delete the documents this run created (soft delete via the REST API, with the temporary key).
+    if (plaintext && !KEEP_DOCS) {
+      for (const { docId: id, origin } of createdDocs) {
+        const res = await fetch(`${origin}/api/docs/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${plaintext}` },
+          signal: AbortSignal.timeout(15_000),
+        }).catch(() => null);
+        console.log(`[--] delete doc ${id} ${res?.ok ? "ok" : `FAILED (${res ? `HTTP ${res.status}` : "network"})`}`);
+      }
+    }
     if (keyId) {
       const id = keyId;
       const t = performance.now();

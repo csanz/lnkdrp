@@ -63,6 +63,22 @@ type MetricsResponse = {
   }>;
 };
 
+/** The `ShareLinkDTO` fields this page renders (`GET /api/docs/:docId/links`). */
+type ShareLinkRow = {
+  id: string;
+  shareId: string;
+  label: string;
+  audience: string | null;
+  isDefault: boolean;
+  status: "active" | "disabled" | "expired" | "archived";
+  lastViewedAt: string | null;
+  viewCount: number;
+  downloadCount: number;
+};
+
+/** One link's totals inside the selected window (from `/shareviews?shareId=…&lite=1`). */
+type LinkWindowStats = { views: number; downloads: number; viewers: number };
+
 type ShareViewerVisitSummary = {
   visitId: string;
   startedAt: string | null;
@@ -383,6 +399,13 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [anonViewersModalPage, setAnonViewersModalPage] = useState(0);
   const [days, setDays] = useState(15);
   const [rangeOpen, setRangeOpen] = useState(false);
+  // Links of this document: the chip row filters every figure on the page through `?shareId=`,
+  // and the per-link table below compares them (docs/prds/lnkdrp-multi-links.md).
+  const [links, setLinks] = useState<ShareLinkRow[] | null>(null);
+  const [shareId, setShareId] = useState<string | null>(null);
+  const [linkStats, setLinkStats] = useState<Record<string, LinkWindowStats>>({});
+  /** `&shareId=…` for the selected link, or "" for "All links". */
+  const linkFilterParam = shareId ? `&shareId=${encodeURIComponent(shareId)}` : "";
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
   const { openUpgrade } = useUpgradeModal();
   const { plan } = usePlan();
@@ -494,10 +517,16 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       setViewersLoaded(false);
       try {
         const res = await fetchWithTempUser(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1`,
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1${linkFilterParam}`,
           { cache: "no-store" },
         );
         if (res.status === 404) {
+          // A filtered request 404s when that link is gone (deleted elsewhere): drop the filter
+          // rather than treating it as a missing document.
+          if (linkFilterParam) {
+            if (!cancelled) setShareId(null);
+            return;
+          }
           if (!cancelled) router.replace("/dashboard");
           return;
         }
@@ -525,7 +554,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [docId, days]);
+  }, [docId, days, linkFilterParam, router]);
 
   // Auto-load the viewers list after the lightweight payload returns (no button). Basic tier gets
   // no identities back, so the request is skipped entirely there.
@@ -537,7 +566,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     void (async () => {
       try {
         const res = await fetchWithTempUser(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&viewers=1&viewersOnly=1`,
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&viewers=1&viewersOnly=1${linkFilterParam}`,
           { cache: "no-store" },
         );
         if (!res.ok) return;
@@ -570,8 +599,67 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     return () => {
       cancelled = true;
     };
+    // `data` (not `data.ok`) is the trigger: a new payload — a new range, or a different link
+    // filter — always arrives with `viewersLoaded` reset, so the viewer list follows it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId, days, data?.ok, deepAnalytics]);
+  }, [docId, days, linkFilterParam, data, deepAnalytics]);
+
+  // The links of this document, for the filter chips and the per-link table.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/links`, { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { links?: ShareLinkRow[] };
+        if (!cancelled && Array.isArray(json?.links)) setLinks(json.links);
+      } catch {
+        // the page works without the link breakdown
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId]);
+
+  // Per-link totals for the window. One lite request per link (capped), so the table can show
+  // unique viewers, which the link row itself does not carry.
+  useEffect(() => {
+    const rows = (links ?? []).slice(0, 12);
+    if (rows.length < 2) return;
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        rows.map(async (l) => {
+          try {
+            const res = await fetchWithTempUser(
+              `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1&shareId=${encodeURIComponent(l.shareId)}`,
+              { cache: "no-store" },
+            );
+            if (!res.ok) return null;
+            const json = (await res.json()) as MetricsResponse;
+            return [
+              l.id,
+              {
+                views: Math.max(0, Math.floor(json?.totals?.views ?? 0)),
+                downloads: Math.max(0, Math.floor(json?.totals?.downloads ?? 0)),
+                viewers: Math.max(0, Math.floor(json?.viewerCount ?? 0)),
+              },
+            ] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const next: Record<string, LinkWindowStats> = {};
+      for (const entry of entries) if (entry) next[entry[0]] = entry[1];
+      setLinkStats(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, days, links]);
 
   const views = data?.totals?.views ?? 0;
   const downloads = data?.totals?.downloads ?? 0;
@@ -860,6 +948,32 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               </div>
             </div>
 
+            {links && links.length > 1 ? (
+              <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter by link">
+                {[{ key: "all", label: "All links", value: null as string | null }, ...links.map((l) => ({ key: l.id, label: l.label, value: l.shareId }))].map(
+                  (chip) => {
+                    const active = shareId === chip.value;
+                    return (
+                      <button
+                        key={chip.key}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => setShareId(chip.value)}
+                        className={[
+                          "max-w-[220px] truncate rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
+                          active
+                            ? "border-[var(--fg)] bg-[var(--fg)] text-[var(--bg)]"
+                            : "border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] hover:bg-[var(--panel-hover)]",
+                        ].join(" ")}
+                      >
+                        {chip.label}
+                      </button>
+                    );
+                  },
+                )}
+              </div>
+            ) : null}
+
             <div className="grid gap-5 sm:grid-cols-2">
               {/* Views card */}
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
@@ -982,6 +1096,67 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 </div>
               </div>
             </div>
+
+            {links && links.length > 1 ? (
+              <div className="mt-1">
+                <div className="text-sm font-semibold text-[var(--fg)]">Links</div>
+                <div className="mt-1 text-sm text-[var(--muted)]">
+                  What each link brought in over the last {days} days. Click a row to filter the page.
+                </div>
+
+                <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-[var(--border)] text-[11px] uppercase tracking-wide text-[var(--muted-2)]">
+                          <th scope="col" className="px-4 py-2 font-semibold">Link</th>
+                          <th scope="col" className="px-4 py-2 text-right font-semibold">Views</th>
+                          <th scope="col" className="px-4 py-2 text-right font-semibold">Viewers</th>
+                          <th scope="col" className="px-4 py-2 text-right font-semibold">Downloads</th>
+                          <th scope="col" className="px-4 py-2 text-right font-semibold">Last viewed</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {links.map((l) => {
+                          const s = linkStats[l.id];
+                          const active = shareId === l.shareId;
+                          return (
+                            <tr
+                              key={l.id}
+                              className={[
+                                "border-b border-[var(--border)] last:border-b-0",
+                                active ? "bg-[var(--panel-hover)]" : "",
+                              ].join(" ")}
+                            >
+                              <td className="px-4 py-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setShareId(active ? null : l.shareId)}
+                                  className="max-w-[260px] truncate text-left font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                                  title={l.audience ?? l.label}
+                                >
+                                  {l.label}
+                                </button>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-2)]">
+                                  {l.audience ? <span className="truncate">{l.audience}</span> : null}
+                                  {l.status !== "active" ? <span className="capitalize">{l.status}</span> : null}
+                                </div>
+                              </td>
+                              <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.views : "—"}</td>
+                              <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.viewers : "—"}</td>
+                              <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.downloads : "—"}</td>
+                              <td className="px-4 py-2 text-right text-[var(--muted)]">
+                                {l.lastViewedAt ? formatDateTime(l.lastViewedAt) : "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             {!deepAnalytics ? (
               <LockedViewersBlock

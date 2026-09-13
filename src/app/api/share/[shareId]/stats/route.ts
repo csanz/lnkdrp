@@ -13,8 +13,8 @@ import { recordActivity } from "@/lib/activity/log";
 import crypto from "node:crypto";
 import net from "node:net";
 import { Types } from "mongoose";
-import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
@@ -168,13 +168,18 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       // Perf: avoid minting temp users for public share stats reads.
       const session = await tryResolveAuthUserId(request);
 
-      await connectMongo();
-      const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-        .select({ userId: 1, orgId: 1, title: 1, numberOfViews: 1, numberOfPagesViewed: 1 })
-        .lean();
-      if (!doc) {
+      // Resolve through the link so a disabled/expired link stops answering, like the share page.
+      const resolved = await resolveShareLink(shareId, {
+        select: { title: 1, numberOfViews: 1, numberOfPagesViewed: 1 } as Record<string, 1>,
+      });
+      if (!resolved || resolved.refusal) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
+      const doc = resolved.doc as {
+        userId?: unknown;
+        numberOfViews?: unknown;
+        numberOfPagesViewed?: unknown;
+      };
 
       const isOwner = Boolean(session?.userId) && String(doc.userId) === String(session?.userId);
       return NextResponse.json(
@@ -234,13 +239,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       });
       if (!rl.ok) return rateLimitedResponse(rl);
 
-      await connectMongo();
-      const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-        .select({ _id: 1, userId: 1, orgId: 1, title: 1 })
-        .lean();
-      if (!doc) {
+      // Views are recorded against the link that was opened; a refused link records nothing.
+      const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
+      if (!resolved || resolved.refusal) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
+      const doc = resolved.doc;
+      const shareLinkId = resolved.link._id;
 
       // Perf: return immediately; analytics updates are best-effort.
       const docId = doc._id;
@@ -267,6 +272,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               $setOnInsert: {
                 shareId,
                 docId,
+                shareLinkId,
                 botIdHash,
                 pagesSeen: [],
               },
@@ -278,6 +284,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           const created = Boolean((upsert as any)?.upsertedCount);
           if (created) {
             await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
+            // Per-link counters for the links list (best effort; ShareView rows stay the truth).
+            void touchShareLink(shareId, "view");
             // Activity feed: one "viewed" event per new viewer of this share (not per page/visit).
             void (async () => {
               try {
@@ -300,6 +308,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                     viewerName: viewerNameIntro ?? null,
                     viewerEmail: viewerEmail ?? null,
                     shareId,
+                    // Which link they came through: the feed renders "via Sequoia" and skips the
+                    // suffix for the default link (see `linkSuffix` in src/lib/activity/labels.ts).
+                    linkLabel: resolved.link.label ?? null,
+                    isDefaultLink: Boolean(resolved.link.isDefault),
                   },
                   request,
                 });
@@ -399,12 +411,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 $setOnInsert: {
                   shareId,
                   docId,
+                  shareLinkId,
                   botIdHash,
                   visitIdHash,
                   startedAt: enteredAt ?? leftAt,
-                  lastEventAt: leftAt,
                   pagesSeen: [],
                 },
+                // `lastEventAt` lives only in `$max`: naming it in `$setOnInsert` too made Mongo
+                // refuse the whole upsert ("would create a conflict at 'lastEventAt'"), which the
+                // surrounding catch swallowed — no ShareVisit row was ever written. `$max` against
+                // a missing field sets it, so inserts still get the right value.
                 $max: { lastEventAt: leftAt },
               };
 

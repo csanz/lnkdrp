@@ -20,6 +20,12 @@ const shareVisitSchema = new Schema(
     shareId: { type: String, trim: true, index: true, required: true },
     docId: { type: Schema.Types.ObjectId, ref: "Doc", index: true, required: true },
 
+    /**
+     * The `ShareLink` this visit belongs to (docs/prds/lnkdrp-multi-links.md). `shareId` stays
+     * the analytics key; this is the join handle and is null for pre-model rows.
+     */
+    shareLinkId: { type: Schema.Types.ObjectId, ref: "ShareLink", index: true, default: null },
+
     /** Viewer identity (best-effort, per browser/device). */
     botIdHash: { type: String, trim: true, index: true, required: true },
 

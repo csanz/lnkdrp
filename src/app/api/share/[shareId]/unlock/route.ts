@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink } from "@/lib/share/links";
 import { shareAuthCookieName, shareAuthCookieValue, verifySharePassword } from "@/lib/sharePassword";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -39,14 +38,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     const rl = await rateLimit({ key: `unlock:${ip}:${shareId}`, limit: UNLOCK_LIMIT, windowMs: UNLOCK_WINDOW_MS });
     if (!rl.ok) return rateLimitedResponse(rl, "Too many attempts. Please try again later.");
 
-    await connectMongo();
-    const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-      .select({ sharePasswordHash: 1, sharePasswordSalt: 1 })
-      .lean();
-    if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // The password lives on the link, so each recipient's link unlocks independently
+    // (docs/prds/lnkdrp-multi-links.md). A refused link is a 404, like an unknown slug.
+    const resolved = await resolveShareLink(shareId);
+    if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    const hash = (doc as { sharePasswordHash?: unknown }).sharePasswordHash;
-    const salt = (doc as { sharePasswordSalt?: unknown }).sharePasswordSalt;
+    const hash = resolved.link.passwordHash;
+    const salt = resolved.link.passwordSalt;
     const enabled = typeof hash === "string" && Boolean(hash) && typeof salt === "string" && Boolean(salt);
 
     if (!enabled) {

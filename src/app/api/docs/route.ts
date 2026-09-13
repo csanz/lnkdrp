@@ -16,6 +16,7 @@ import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { randomBase62, newShareId } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
+import { ensureDefaultLink } from "@/lib/share/links";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -430,6 +431,24 @@ export async function POST(request: Request) {
         ),
         actor,
       );
+    }
+
+    // Every document owns its links (docs/prds/lnkdrp-multi-links.md); the first one is the default
+    // link behind `Doc.shareId`, and it inherits `shareEnabled` so a doc created at the cap stays
+    // unshared. Best-effort: a link failure must never lose the document the user just created.
+    try {
+      await ensureDefaultLink({
+        _id: doc._id as Types.ObjectId,
+        orgId: new Types.ObjectId(actor.orgId),
+        userId: new Types.ObjectId(actor.userId),
+        shareId: doc.shareId ?? null,
+        shareEnabled: doc.shareEnabled !== false,
+      });
+    } catch (e) {
+      debugError(1, "[api/docs] POST ensureDefaultLink failed", {
+        docId: String(doc._id),
+        message: e instanceof Error ? e.message : String(e),
+      });
     }
 
     void recordActivity({

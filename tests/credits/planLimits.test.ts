@@ -41,6 +41,13 @@ vi.mock("@/lib/models/Doc", () => ({
   DocModel: { countDocuments: vi.fn(async () => state.activeLinks) },
 }));
 
+// `getWorkspaceUsage` counts share links through the links service now (a document can own
+// several). Stub the service rather than its two aggregations: how a link is counted is covered
+// by tests/lib/shareLinks.test.ts; this file is about caps, warnings and grace.
+vi.mock("@/lib/share/links", () => ({
+  countActiveShareLinks: vi.fn(async () => state.activeLinks),
+}));
+
 vi.mock("@/lib/models/Project", () => ({
   ProjectModel: { countDocuments: vi.fn(async () => state.projects) },
 }));

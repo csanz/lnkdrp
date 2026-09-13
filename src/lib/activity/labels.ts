@@ -18,6 +18,9 @@ export const ACTIVITY_FILTERS = [
     label: "Sharing",
     types: [
       "share.updated",
+      "share_link.created",
+      "share_link.updated",
+      "share_link.revoked",
       "share.password_set",
       "share.password_cleared",
       "download_request.created",
@@ -64,15 +67,20 @@ export function actorDisplayName(actor: ActivityItem["actor"]): string | null {
   return null;
 }
 
-/** Read a non-empty string from `meta[key]`, or null. */
-/** "N credits" / "1 credit" when a processing run charged credits; nothing when it cost 0. */
+/**
+ * Suffix for a processing run: "N credits" / "1 credit" when it charged credits, and "summary by
+ * <agent>" when the uploading agent wrote the summary itself (0 credits). Null when neither applies.
+ */
 function creditsSuffix(meta: Record<string, unknown> | null | undefined): string | null {
+  const parts: string[] = [];
   const v = meta?.credits;
-  if (typeof v !== "number" || !Number.isFinite(v)) return null;
-  if (v <= 0) return null;
-  return `${v} credit${v === 1 ? "" : "s"}`;
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) parts.push(`${v} credit${v === 1 ? "" : "s"}`);
+  const by = meta?.summaryBy;
+  if (typeof by === "string" && by.trim()) parts.push(`summary by ${by.trim()}`);
+  return parts.length ? parts.join(" · ") : null;
 }
 
+/** Read a non-empty string from `meta[key]`, or null. */
 function metaString(meta: Record<string, unknown>, key: string): string | null {
   const v = meta?.[key];
   return typeof v === "string" && v.trim() ? v.trim() : null;
@@ -91,6 +99,22 @@ function describeShareChanges(meta: Record<string, unknown>): string | null {
     parts.push(c.shareAllowRevisionHistory ? "made version history visible" : "hid version history");
   return parts.length ? parts.join(", ") : null;
 }
+
+/**
+ * "via {label}" for a view/download that came through a named share link.
+ *
+ * A document's default link is unnamed as far as the reader is concerned ("Default link" is an
+ * internal label), so it never adds a suffix; only the links a sender created and named do.
+ */
+function linkSuffix(meta: Record<string, unknown>): string | null {
+  if (meta?.isDefaultLink === true) return null;
+  const label = metaString(meta, "linkLabel");
+  if (!label || label === DEFAULT_LINK_LABEL) return null;
+  return `via ${label}`;
+}
+
+/** Label the default link of a document carries; never shown as a "via …" suffix. */
+const DEFAULT_LINK_LABEL = "Default link";
 
 /**
  * Build the one-line sentence for an activity item.
@@ -147,6 +171,18 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
         ? { subject, verb: detail, object: "", suffix: `for ${docTitle}` }
         : { subject, verb: "updated share settings for", object: docTitle, suffix: null };
     }
+    case "share_link.created": {
+      const label = metaString(item.meta, "linkLabel") || "a link";
+      return { subject, verb: "created a link", object: `“${label}”`, suffix: `for ${docTitle}` };
+    }
+    case "share_link.updated": {
+      const label = metaString(item.meta, "linkLabel") || "a link";
+      return { subject, verb: "updated link", object: `“${label}”`, suffix: `on ${docTitle}` };
+    }
+    case "share_link.revoked": {
+      const label = metaString(item.meta, "linkLabel") || "a link";
+      return { subject, verb: "removed link", object: `“${label}”`, suffix: `from ${docTitle}` };
+    }
     case "share.password_set":
       return { subject, verb: "set a password on", object: docTitle, suffix: null };
     case "share.password_cleared":
@@ -157,10 +193,10 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject: user || "Someone", verb: "submitted a document to", object: projectName, suffix: "via request link" };
     case "share.viewed": {
       const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
-      return { subject: who, verb: "viewed", object: docTitle, suffix: null };
+      return { subject: who, verb: "viewed", object: docTitle, suffix: linkSuffix(item.meta) };
     }
     case "share.downloaded":
-      return { subject: user || "Someone", verb: "downloaded", object: docTitle, suffix: null };
+      return { subject: user || "Someone", verb: "downloaded", object: docTitle, suffix: linkSuffix(item.meta) };
     case "download_request.created":
       return { subject: email || "Someone", verb: "requested to download", object: docTitle, suffix: null };
     case "download_request.approved":
@@ -201,6 +237,12 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject: "Grace period", verb: "ended for", object: "this workspace", suffix: "Free limits now apply" };
     case "plan.upgraded":
       return { subject, verb: "upgraded", object: "this workspace", suffix: "to Pro" };
+    case "summary.generated": {
+      // A skipped summary written later (doc page action or the monthly re-queue).
+      const cost = creditsSuffix(item.meta);
+      const failed = metaString(item.meta, "summary") !== "done";
+      return { subject, verb: failed ? "could not write the AI summary for" : "wrote the AI summary for", object: docTitle, suffix: cost };
+    }
     case "credits.exhausted": {
       // The upload completed but the AI summary was skipped for want of credits.
       const code = metaString(item.meta, "code");

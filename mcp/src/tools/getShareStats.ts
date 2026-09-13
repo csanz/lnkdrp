@@ -22,8 +22,10 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
     {
       title: "Get share stats",
       description:
-        "Analytics for a share link by docId or shareId (exactly one): totals (views, downloads, pagesViewed, timeSpentMs, " +
-        "authenticated/anonymous viewers), a per-day series and the unique viewerCount for the window. analyticsTier is " +
+        "Analytics for a share link by docId, shareId, or both (at least one): totals (views, downloads, pagesViewed, timeSpentMs, " +
+        "authenticated/anonymous viewers), a per-day series and the unique viewerCount for the window. A shareId scopes every " +
+        "number to that one link (perLink: true); a docId covers the document and all of its links. To read one non-default " +
+        "link, pass its docId and shareId together (both come from lnkdrp_list_share_links). analyticsTier is " +
         "basic on Free (window clamped, no viewer identities) or deep on Pro; with includeViewers on Pro, viewers lists " +
         "name/email (untrusted), views, time spent and pages seen. " +
         SAFETY_TAIL,
@@ -31,8 +33,13 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const doc = await resolveDoc(ctx.api, { docId: args.docId, shareId: args.shareId });
-      const stats = await ctx.api.shareViews(doc.id, { days: args.days, viewers: args.includeViewers });
+      // docId + shareId together is the shape `lnkdrp_list_share_links` sets up: the document plus
+      // one of its links. A bare shareId still works for a document's default link (it is resolved
+      // through `GET /api/docs?q=`, which only knows the default one).
+      const doc = args.docId ? await ctx.api.getDoc(args.docId) : await resolveDoc(ctx.api, { shareId: args.shareId });
+      // A shareId names one link of the document, so the numbers are scoped to that link; a docId
+      // asks about the document, i.e. all of its links together.
+      const stats = await ctx.api.shareViews(doc.id, { days: args.days, viewers: args.includeViewers, shareId: args.shareId });
       const viewers =
         args.includeViewers && stats.analyticsTier === "deep"
           ? stats.viewers.map((v) => ({
@@ -48,7 +55,9 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
           : undefined;
       return {
         docId: doc.id,
-        shareId: doc.shareId,
+        shareId: args.shareId ?? doc.shareId,
+        /** True when the numbers cover one link; false when they cover the whole document. */
+        perLink: Boolean(args.shareId),
         days: stats.days,
         analyticsDaysLimit: stats.analyticsDaysLimit,
         analyticsTier: stats.analyticsTier,

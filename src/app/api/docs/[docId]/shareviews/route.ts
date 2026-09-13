@@ -8,6 +8,10 @@
  *   and per-page maps are omitted, so no viewer identity, per-viewer row or per-page time leaves
  *   the server. Identities are still recorded; upgrading reveals them retroactively.
  * - `analyticsTier: "deep"` (Pro): everything, including viewer rows with `?viewers=1`.
+ *
+ * Multiple links per document (docs/prds/lnkdrp-multi-links.md): without `?shareId=` every number
+ * covers the whole document (all of its links); with `?shareId=<slug>` the same response is scoped
+ * to that one link. The response shape is identical either way.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -19,6 +23,7 @@ import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
+import { listShareLinks } from "@/lib/share/links";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,6 +101,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       }
 
       const requestedDays = Math.min(60, asPositiveInt(url.searchParams.get("days")) ?? 15);
+      /** Optional per-link filter: the slug of one of the document's share links. */
+      const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();
       const wantsViewers = url.searchParams.get("viewers") === "1";
       const viewersOnly = url.searchParams.get("viewersOnly") === "1";
 
@@ -145,22 +152,66 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
 
       const docObjectId = new Types.ObjectId(docId);
 
+      // `?shareId=` scopes every aggregate to one link of this document; without it the numbers
+      // cover the document (all its links). An unknown slug is a 404, not a silent whole-doc read.
+      const link = shareIdFilter
+        ? (await listShareLinks({ orgId: docOrgIdRaw ? String(docOrgIdRaw) : actor.orgId, docId: docObjectId, includeArchived: true })).find(
+            (l) => l.shareId === shareIdFilter,
+          ) ?? null
+        : null;
+      if (shareIdFilter && !link) {
+        return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+      }
+      /** What every `ShareView` aggregate matches on: one link, or the whole document. */
+      const scopeMatch: Record<string, unknown> = link ? { shareId: link.shareId } : { docId: docObjectId };
+
       const start = new Date();
       start.setUTCHours(0, 0, 0, 0);
       start.setUTCDate(start.getUTCDate() - (days - 1));
 
       const startKey = utcDayKey(start);
-      const downloadsEnabled = Boolean((doc as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload);
+      const downloadsEnabled = link
+        ? Boolean(link.allowDownload)
+        : Boolean((doc as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload);
 
-      const totalViews = typeof (doc as any).numberOfViews === "number" ? (doc as any).numberOfViews : 0;
-      const pagesViewed = typeof doc.numberOfPagesViewed === "number" ? doc.numberOfPagesViewed : 0;
+      // Document totals come from the denormalized counters; a per-link read recomputes them from
+      // the link's own rows (`numberOfViews` is incremented once per new ShareView row, so the two
+      // agree by construction).
+      const linkTotals = link
+        ? ((
+            await ShareViewModel.aggregate([
+              { $match: { shareId: link.shareId } },
+              { $group: { _id: null, views: { $sum: 1 }, pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } } } },
+              {
+                $project: {
+                  _id: 0,
+                  views: 1,
+                  pagesViewed: {
+                    $size: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
+                  },
+                },
+              },
+            ])
+          )[0] as { views?: number; pagesViewed?: number } | undefined) ?? { views: 0, pagesViewed: 0 }
+        : null;
+
+      const totalViews = linkTotals
+        ? (typeof linkTotals.views === "number" ? linkTotals.views : 0)
+        : typeof (doc as any).numberOfViews === "number"
+          ? (doc as any).numberOfViews
+          : 0;
+      const pagesViewed = linkTotals
+        ? (typeof linkTotals.pagesViewed === "number" ? linkTotals.pagesViewed : 0)
+        : typeof doc.numberOfPagesViewed === "number"
+          ? doc.numberOfPagesViewed
+          : 0;
 
       const series: Array<{ date: string; views: number; downloads: number }> = [];
       let totalDownloads = 0;
       if (!viewersOnly) {
         const [seriesAgg, downloadsSeriesAgg, downloadsAgg] = await Promise.all([
           ShareViewModel.aggregate([
-            { $match: { docId: docObjectId, createdDate: { $gte: start } } },
+            { $match: { ...scopeMatch, createdDate: { $gte: start } } },
             {
               $group: {
                 _id: { $dateToString: { date: "$createdDate", format: "%Y-%m-%d", timezone: "UTC" } },
@@ -171,7 +222,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           ]) as Promise<Array<{ _id: string; views: number }>>,
           downloadsEnabled
             ? (ShareViewModel.aggregate([
-                { $match: { docId: docObjectId } },
+                { $match: { ...scopeMatch } },
                 {
                   $project: {
                     items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } },
@@ -185,7 +236,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             : Promise.resolve([] as Array<{ _id: string; downloads: number }>),
           downloadsEnabled
             ? (ShareViewModel.aggregate([
-                { $match: { docId: docObjectId } },
+                { $match: { ...scopeMatch } },
                 { $group: { _id: null, downloads: { $sum: { $ifNull: ["$downloads", 0] } } } },
               ]) as Promise<Array<{ downloads?: number }>>)
             : Promise.resolve([] as Array<{ downloads?: number }>),
@@ -207,7 +258,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const [viewersAgg, anonymousAgg] = includeViewers
         ? await Promise.all([
             ShareViewModel.aggregate([
-              { $match: { docId: docObjectId, viewerUserId: { $ne: null } } },
+              { $match: { ...scopeMatch, viewerUserId: { $ne: null } } },
               // Ensure we pick the most recent denormalized viewerName/email snapshots.
               { $sort: { updatedDate: -1 } },
               {
@@ -277,7 +328,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               }>
             >,
             ShareViewModel.aggregate([
-              { $match: { docId: docObjectId, $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] } },
+              { $match: { ...scopeMatch, $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] } },
               { $sort: { updatedDate: -1 } },
               {
                 $group: {
@@ -351,7 +402,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // Window summary (both tiers): unique viewers and total time on the document within `days`.
       // Groups by viewer identity without projecting it, so it is safe to run on Basic.
       const windowAgg = (await ShareViewModel.aggregate([
-        { $match: { docId: docObjectId, createdDate: { $gte: start } } },
+        { $match: { ...scopeMatch, createdDate: { $gte: start } } },
         {
           $group: {
             _id: {

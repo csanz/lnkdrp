@@ -4,6 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
+import { ensureDefaultLink, updateShareLink } from "@/lib/share/links";
 import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
 import { debugError } from "@/lib/debug";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -35,6 +36,28 @@ function asPassword(v: unknown): string | null {
 
 function safeErrMessage(err: unknown): string {
   return err instanceof Error ? err.message : "Unknown error";
+}
+
+/**
+ * Set or clear the share password on the document's default link.
+ *
+ * Since docs/prds/lnkdrp-multi-links.md the password that gates `/s/:shareId` lives on the link,
+ * not on the document; this route keeps its contract by writing through to the default link (the
+ * one behind `Doc.shareId`). `updateShareLink` re-mirrors the material onto the document, so the
+ * response — which reads the document — is unchanged.
+ */
+async function writePasswordToDefaultLink(
+  doc: Record<string, unknown> & { _id: unknown },
+  password: string | null,
+): Promise<void> {
+  const link = await ensureDefaultLink({
+    _id: doc._id as Types.ObjectId,
+    orgId: (doc.orgId ?? null) as Types.ObjectId | null,
+    userId: (doc.userId ?? null) as Types.ObjectId | null,
+    shareId: typeof doc.shareId === "string" ? doc.shareId : null,
+    shareEnabled: doc.shareEnabled !== false,
+  });
+  await updateShareLink({ orgId: link.orgId, linkId: link._id, settings: { password } });
 }
 
 function logSharePasswordError(args: {
@@ -116,6 +139,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       if (!updated) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }
+      await writePasswordToDefaultLink(updated as Record<string, unknown> & { _id: unknown }, null);
       void recordActivity({
         orgId: actor.orgId,
         userId: actor.userId,
@@ -168,6 +192,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     if (!updated) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
+    await writePasswordToDefaultLink(updated as Record<string, unknown> & { _id: unknown }, trimmed);
 
     void recordActivity({
       orgId: actor.orgId,

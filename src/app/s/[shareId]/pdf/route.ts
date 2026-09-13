@@ -2,8 +2,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { recordActivity } from "@/lib/activity/log";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
-import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import crypto from "node:crypto";
@@ -122,7 +121,12 @@ function safePdfFilename(input: string | null | undefined): string {
  * - If `?download=1`, enforces `doc.shareAllowPdfDownload` and sets attachment headers.
  */
 /** Activity feed: "downloaded" event for the owner's workspace (best-effort, never blocks the download). */
-async function recordDownloadActivity(doc: Record<string, unknown>, shareId: string, request: Request) {
+async function recordDownloadActivity(
+  doc: Record<string, unknown>,
+  shareId: string,
+  request: Request,
+  linkMeta: { linkLabel: string | null; isDefaultLink: boolean },
+) {
   try {
     const ownerUserId = doc.userId ? new Types.ObjectId(String(doc.userId)) : null;
     const orgId = doc.orgId
@@ -138,7 +142,7 @@ async function recordDownloadActivity(doc: Record<string, unknown>, shareId: str
       type: "share.downloaded",
       docId: String(doc._id),
       title: typeof doc.title === "string" ? doc.title : null,
-      meta: { shareId },
+      meta: { shareId, linkLabel: linkMeta.linkLabel, isDefaultLink: linkMeta.isDefaultLink },
       request,
     });
   } catch {
@@ -155,32 +159,21 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   const botId = url.searchParams.get("botId");
   const viewerIp = getClientIp(request);
 
-  await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-    .select({
-      _id: 1,
-      userId: 1,
-      orgId: 1,
-      blobUrl: 1,
-      title: 1,
-      fileName: 1,
-      shareAllowPdfDownload: 1,
-      shareEnabled: 1,
-      sharePasswordHash: 1,
-      sharePasswordSalt: 1,
-    })
-    .lean();
-
-  if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if ((doc as { shareEnabled?: unknown }).shareEnabled === false) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // One link → one document; a refused link (disabled/expired/archived) is a 404, exactly as a
+  // slug that never existed (docs/prds/lnkdrp-multi-links.md).
+  const resolved = await resolveShareLink(shareId, {
+    select: { blobUrl: 1, title: 1, fileName: 1 } as Record<string, 1>,
+  });
+  if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { link, doc } = resolved;
 
   const blobUrl = (doc as { blobUrl?: unknown }).blobUrl;
   if (typeof blobUrl !== "string" || !blobUrl) {
     return NextResponse.json({ error: "PDF not available" }, { status: 404 });
   }
 
-  const sharePasswordHash = (doc as { sharePasswordHash?: unknown }).sharePasswordHash;
-  const sharePasswordSalt = (doc as { sharePasswordSalt?: unknown }).sharePasswordSalt;
+  const sharePasswordHash = link.passwordHash;
+  const sharePasswordSalt = link.passwordSalt;
   const passwordEnabled =
     typeof sharePasswordHash === "string" &&
     Boolean(sharePasswordHash) &&
@@ -196,7 +189,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     }
   }
 
-  if (wantsDownload && !Boolean((doc as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload)) {
+  // Download permission is per link: the same document may be downloadable on one link and not on another.
+  if (wantsDownload && !link.allowDownload) {
     return new Response("Download disabled", { status: 403 });
   }
 
@@ -212,6 +206,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
           $setOnInsert: {
             shareId,
             docId,
+            shareLinkId: link._id,
             botIdHash,
             pagesSeen: [],
           },
@@ -220,7 +215,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         },
         { upsert: true },
       );
-      void recordDownloadActivity(doc as Record<string, unknown>, shareId, request);
+      // Per-link counters (best effort; the ShareView rows above stay the source of truth).
+      void touchShareLink(shareId, "download");
+      void recordDownloadActivity(doc as Record<string, unknown>, shareId, request, {
+        linkLabel: link.label ?? null,
+        isDefaultLink: Boolean(link.isDefault),
+      });
     } catch (e) {
       // Ignore tracking failures (never block download).
       // If a duplicate key race occurs, retry once without upsert.

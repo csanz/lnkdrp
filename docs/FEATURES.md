@@ -16,7 +16,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **Home page**: `/` — Marketing landing page with paperplane animation, a shared public header (About / Pricing / Log In), a “Get Started” button that goes straight to Google sign-in, and a shared public footer (`© YEAR LinkDrop Group · Terms · Privacy`) pinned to the bottom of the first viewport.
 - **About page**: `/about` — Static page explaining what LinkDrop is and how it works.
-- **Pricing page**: `/pricing` — Free vs Pro comparison (Pro price label read from `BillingConfig`; Free = 3 active links / 1 project / 7 days of analytics / no collaborators, Pro = unlimited + 1 collaborator included, more seats on request; plus a credit table (AI summary 1/2/5 by tier, automatic at basic; AI compare 2/5/12 by tier)) with sign-in CTAs; for signed-in users the CTAs act on the active workspace directly (Stripe Checkout / billing portal / "Current plan"). The FAQ covers the launch grace period for workspaces already over the Free limits (see **Plans and limits**).
+- **Pricing page**: `/pricing` — Free vs Pro comparison (Pro price label read from `BillingConfig`; Free = 3 active links / 1 project / 7 days of analytics / no collaborators, Pro = unlimited + 1 collaborator included, more seats on request; plus a credit table (AI summary 1/2/5 by tier, automatic at basic; AI compare 2/5/12 by tier), a note that agent-written summaries and recipient uploads cost 0 credits, and a dated pricing change note (2026-09-13: the automatic summary now costs 1 credit, previously included; starter credits already granted are kept)) with sign-in CTAs; for signed-in users the CTAs act on the active workspace directly (Stripe Checkout / billing portal / "Current plan"). The FAQ covers the launch grace period for workspaces already over the Free limits (see **Plans and limits**).
 - **Terms of Service**: `/tos` — Terms of Service page linked from the shared public footer.
 - **Privacy Policy**: `/privacy` — Privacy Policy page linked from the shared public footer.
 
@@ -58,9 +58,10 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - **Who pays for AI, and when it is skipped** (`src/app/api/uploads/[uploadId]/process/route.ts`):
     - The automatic summary (1 credit) is reserved **before** the replacement compare (2+ credits), so a workspace with a credit or two left keeps the summary and drops the compare. Reservation failures never fail the upload: the doc still becomes ready, the AI step is skipped, and the upload stores `ai = { summary, compare, reason, code, creditsNeeded, creditsUsed, source }` (returned by `GET /api/uploads/:id`). A credit-caused skip also writes a `credits.exhausted` feed row ("AI summary skipped for <doc> · out of AI credits").
     - **Recipient uploads** (request links, replace links; `x-upload-secret`) never bill the owner: the summary still runs and is recorded as a 0-credit `source: "recipient"` ledger row; the AI compare is not run. They are braked at 20 uploads per link per day on every plan, plus 20 per Free workspace per day (`src/lib/uploads/recipientCaps.ts`, HTTP 429 `RECIPIENT_UPLOAD_LIMIT`).
+    - **Agent-written summaries** (MCP `share_pdf` with summary and key points, or the API) cost 0 credits. Links, uploads, replacements and stats never need credits. When the summary is skipped for credits, the owner can write it later from the document page (1 credit); compare and manual AI actions stop until credits return.
     - The automatic compare runs at the workspace default tier: Basic on Free, Standard on Pro, unless pinned on the Limits tab (`src/lib/credits/qualityDefaults.ts`). Its idempotency key carries no tier, so changing the default never bills the same version twice. A forced review runs at exactly the tier it was charged for.
     - When both model attempts fail, the analyzer returns an empty snapshot and the reserved credit is **refunded**, not charged (`isFallbackAnalysis`). Successful runs store provider usage (model, tokens, latency) on the ledger row.
-    - **Starter credits**: personal Free workspaces get 50 once (both the dashboard snapshot and the reserve path seed through `starterCreditsForWorkspace`; team and Pro workspaces get 0). Free workspaces also have a **15 credits/day** brake (`dailyCreditCap`); hitting it returns `code: "DAILY_CREDIT_CAP"` (402) and the modal says the credits are safe and to try tomorrow. `scripts/credit-balances-reconcile.ts` fixes rows seeded before these rules.
+    - **Starter credits**: personal Free workspaces get 50 to start, then are topped up to 10 on the 1st of each month (a floor: a balance above 10 gets nothing, never additive; no on-demand on Free) (both the dashboard snapshot and the reserve path seed through `starterCreditsForWorkspace`; team and Pro workspaces get 0). Free workspaces also have a **15 credits/day** brake (`dailyCreditCap`); hitting it returns `code: "DAILY_CREDIT_CAP"` (402) and the modal says the credits are safe and to try tomorrow. `scripts/credit-balances-reconcile.ts` fixes rows seeded before these rules.
   - **Credits UI flag**: every credits surface below (header pill, exhausted banner, Credits summary, On-demand usage card, spend-limit module, and the `/dashboard/usage` + `/dashboard/limits` pretty URLs, which fall back to Overview) is shown by default; set `NEXT_PUBLIC_FEATURE_CREDITS=0` to hide it (the API routes keep working either way).
   - Dashboard header (top-right) shows a **Credits: X** indicator (Dashboard-only) that links to the **Usage** tab (`/dashboard?tab=usage`) for the full breakdown. When the workspace is set to an unlimited on-demand cap, it shows **Credits: Unlimited**.
   - When the on-demand cap is set to **Unlimited**, the dashboard surfaces **Unlimited** (not a large sentinel number) anywhere an on-demand credit limit/headroom is displayed (header, Usage summary, Limits cards, Billing & Invoices on-demand section).
@@ -172,6 +173,47 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Receiver relevance checklist toggle**:
   - Owner can enable a receiver-facing relevance checklist in the share viewer (feature flag stored on the doc).
 
+## Share links (many per document)
+
+A document owns **any number of share links** — one per audience — instead of a single link
+(PRD: `docs/prds/lnkdrp-multi-links.md`). Each link is a row in `sharelinks`
+(`src/lib/models/ShareLink.ts`) with its own slug and settings, and the service
+`src/lib/share/links.ts` is the only place that creates, resolves, counts and updates them.
+
+- **Per-link settings**: `label` and `audience` (private to the sender, never shown to a viewer or in
+  OG), `enabled`, `allowDownload`, `allowRevisionHistory`, `password`, `expiresAt`.
+  Two recipients of the same deck can therefore have different passwords, different download rights,
+  and be revoked independently.
+- **The default link**: a document's original `Doc.shareId` is its **default link** (labelled
+  “Default link”, `isDefault: true`). It is materialised lazily by `ensureDefaultLink()` the first
+  time a legacy document is touched, so no existing `/s/:shareId` ever broke. New documents get it at
+  creation (`POST /api/docs`).
+- **Resolution**: every public route — `/s/:shareId`, `/s/:shareId/pdf|changes|og.png`, and
+  `/api/share/:shareId/*` — goes through `resolveShareLink(shareId)`, which returns the link, its
+  document and a `refusal` (`disabled` | `expired` | `archived` | `doc_gone` | `null`). **Any refusal
+  answers 404**, exactly like a slug that never existed, so a revoked link leaks nothing — not even
+  the document's title in a link preview.
+- **Password gating**: the password hash/salt live on the link; the unlock cookie is already scoped
+  per `shareId` (`/api/share/:shareId/unlock`), so unlocking one link never unlocks another.
+- **Analytics**: `ShareView` / `ShareVisit` stay keyed by `shareId` and now also carry `shareLinkId`,
+  so per-link stats come for free; `viewCount` / `downloadCount` / `lastViewedAt` are mirrored onto
+  the link row for the links list.
+- **Plan limit**: the Free cap of 3 **active share links** counts links, not documents — enabled,
+  unexpired, unarchived rows across the whole workspace (`countActiveShareLinks`, used by
+  `getWorkspaceUsage().activeLinks`). Three investor links on one deck consume the whole Free cap;
+  disabling a link frees a slot. Creating a link at the cap still creates it, **disabled**, with a
+  plan warning for the upsell. A document may hold at most 50 links.
+- **Document-level switches (compat)**: `PATCH /api/docs/:docId` and
+  `/api/docs/:docId/share-password` keep their exact request/response shapes and write through to the
+  links: `shareEnabled` enables/disables *all* links of the document, while the download,
+  revision-history and password switches act on the **default** link. `syncDocShareState()` mirrors
+  the result back onto the legacy `Doc` fields, so readers that still look at the document (and a
+  rollback build) stay correct.
+- **Migration**: `npm run sharelinks:backfill -- --dry-run` then `npm run sharelinks:backfill`
+  (`scripts/sharelinks-backfill.ts`) creates the default link for every non-deleted document and
+  re-syncs the document mirror. It is idempotent and safe to run while the app is serving, because
+  resolution creates the same row lazily.
+
 ## Recipient share view (`/s/:shareId`)
 
 - **Public share page**:
@@ -213,8 +255,8 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 ## Plans and limits
 
 - **Source of truth**: `src/lib/billing/planLimits.ts` (`limitsForPlan`, `checkLimit`, `planLimitResponse`, `clampAnalyticsDays`). Plan comes from `SubscriptionModel` (`active` / `trialing` = Pro), one row per workspace. The pricing page imports the same constants so the copy cannot drift.
-- **Free**: 3 active share links (docs with sharing on, not deleted/archived) — archiving a document frees its slot and its link stops resolving; un-archiving a shared document re-checks the cap, 1 project (request repos do not count), **basic analytics** for the last 7 days (totals, views-by-day, total time on document, a unique-viewer count — no viewer identities, per-viewer rows, per-page time or visit timelines), no collaborators (just the owner). Summary and key points, password protection and download control are included (the MCP is not built yet). **No version history or AI compare**: Free workspaces get a one-time 50-credit starter grant (`FREE_STARTER_CREDITS = 50`) for upcoming credit features, but no compare, replacement uploads still record a version row but skip the AI compare, the owner history page and "Rerun compare" are gated, and recipients of a Free owner's link get the same "revision history disabled" response as when the toggle is off.
-- **Pro** (per workspace): unlimited links and projects, **deep analytics** with full history (viewer names/emails, per-viewer views/time/pages/downloads, time per page, return visits, visit timelines), 1 collaborator included, **version history** (every version, recipient revision history via `shareAllowRevisionHistory`, AI compare at 2/5/12 credits by tier), **300 credits a month (reset on the Stripe renewal date, no rollover)** (reset on renewal, no rollover) and **on-demand credits at $0.10 each** once a spend limit is set. **Paid seats are deferred**: extra members will be announced (and priced) before they are billed; agents never count as seats.
+- **Free**: 3 active share links (docs with sharing on, not deleted/archived) — archiving a document frees its slot and its link stops resolving; un-archiving a shared document re-checks the cap, 1 project (request repos do not count), **basic analytics** for the last 7 days (totals, views-by-day, total time on document, a unique-viewer count — no viewer identities, per-viewer rows, per-page time or visit timelines), no collaborators (just the owner). Password protection and download control are included; the AI summary costs 1 credit per upload (0 when the uploader's agent writes it or a recipient uploads the file). **No version history or AI compare**: personal Free workspaces get a 50-credit starter grant (`FREE_STARTER_CREDITS = 50`), topped up to 10 on the 1st of each month, but no compare, replacement uploads still record a version row but skip the AI compare, the owner history page and "Rerun compare" are gated, and recipients of a Free owner's link get the same "revision history disabled" response as when the toggle is off.
+- **Pro** (per workspace): unlimited links and projects, **deep analytics** with full history (viewer names/emails, per-viewer views/time/pages/downloads, time per page, return visits, visit timelines), 1 collaborator included, **version history** (every version, recipient revision history via `shareAllowRevisionHistory`, AI compare at 2/5/12 credits by tier), **300 credits a month (reset on the Stripe renewal date, no rollover)** and **on-demand credits at $0.10 each** once a spend limit is set. **Paid seats are deferred**: extra members will be announced (and priced) before they are billed; agents never count as seats.
 - **Enforcement**: enabling sharing (`PATCH /api/docs/:docId`), creating a project, and inviting a collaborator are checked with `checkLimit`; `POST /api/docs` checks the same cap but never blocks — at the cap the doc is created with `shareEnabled: false` and a `planWarning` in the 201 body; the `version_history` key is a **feature gate** (Free → blocked with `used: 0, max: 0`, never in grace; Pro → ok) checked by `POST /api/docs/:docId/changes/:changeId/rerun`, `PATCH /api/docs/:docId` (`shareAllowRevisionHistory: true`), and the upload processor before reserving `history` credits; the `analytics_history` key is the same kind of gate ("Deep analytics are a Pro feature.") checked by `GET /api/docs/:docId/shareviews/visits`, `.../visits/:visitId`, `GET /api/docs/:docId/history/:version/recipients` and `.../history/:version/viewer/:userId`. Over the cap the API answers **`402`** with `{ error, code: "plan_limit", limit, used, max, grace, upgradeUrl: "/pricing" }`. Existing links never stop working; disabling one frees a slot.
 - **Client handling**: `src/lib/client/planLimit.ts` (`parsePlanLimitError`, `planLimitPrompt`, `planLimitGraceHint`, `markPlanLimitHit`), the copy registry `src/lib/client/upsellCopy.ts` (`UPSELL_COPY`, `upsellKeyForLimit`, `PRO_PRICE_FALLBACK`), the blocking `src/components/UpgradeModal.tsx` (opened through `useUpgradeModal()` from `src/components/UpgradeModalProvider.tsx`, mounted once in `src/app/providers.tsx` so it covers both the `(app)` shell and `/dashboard`), and the quiet inline `src/components/PlanLimitNotice.tsx`. Which surface uses which is listed under **Upsells on Free**. The sidebar's fallback nudge (only when the plan snapshot could not load and a `402 plan_limit` was seen this session) reads `sessionStorage` key `lnkdrp_plan_limit_hit`.
 - **Plan snapshot**: `GET /api/plan` (`src/app/api/plan/route.ts`) returns `{ plan, orgId, isPersonalOrg, limits, usage, grace, graceActive, atLimit, fraction, upgradeUrl }` for the active workspace (`atLimit` honours the launch grace window like `checkLimit`, so nothing is hard-disabled while `graceActive`); the client hook `usePlan()` (`src/lib/client/usePlan.ts`) memoises it for 30s, drops the cache on a workspace switch, and `refreshPlan()` is called after any mutation that changes usage (share toggled, doc/project created or deleted, member invited/removed).
@@ -226,7 +268,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Analytics tiers** (decided 2026-09-12): `/api/docs/:docId/shareviews` returns `analyticsTier: "basic" | "deep"` (`analyticsTierForPlan`) and `viewerCount` (unique signed-in + anonymous viewers in the window) on both tiers, plus `totals.timeSpentMs` (total time on the document in the window). On **basic** (Free) `viewers` and `anonymousViewers` are always `[]` and the identity aggregates never run, so no names/emails, per-viewer rows or per-page maps (`pageTimeMsByPage`, `pagesSeen`) leave the server; `totals.pagesViewed` stays a document total. On **deep** (Pro) `?viewers=1` returns the full rows. Nothing changes on the write path: viewer identities are still recorded on Free, only withheld, so upgrading reveals them retroactively. The MCP `lnkdrp_get_share_stats` tool follows the same rule.
 - **Launch grace period**: workspaces that were already over a Free limit at launch get `Org.planGrace` (`startedAt` / `endsAt` = +14 days / `blockedAt` / `remindersSent`). Inside the window, over-limit actions still succeed with a `warning` and reminder emails go out; after `endsAt` (or once `blockedAt` is set) new links/projects return `402` until the workspace disables some or upgrades. Existing links keep resolving throughout.
 - **Flags**:
-  - `NEXT_PUBLIC_FEATURE_CREDITS=0` — hide the credits UI (header pill, banner, Usage/Limits cards, spend-limit module). On by default: AI compare is charged at launch (AI review is not released).
+  - `NEXT_PUBLIC_FEATURE_CREDITS=0` — hide the credits UI (header pill, banner, Usage/Limits cards, spend-limit module). On by default: the automatic AI summary (since 2026-09-13) and AI compare are charged (AI review is not released).
   - `NEXT_PUBLIC_FEATURE_REQUESTS=1` — show the request-repo nav entries (see **Activity**).
 
 ## Usage & limits
@@ -235,7 +277,7 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Credits (billing-cycle-based)**:
   - Pro includes **300 credits per Stripe billing cycle** (subscription anniversary, not calendar month).
   - Included credits **reset to 300** on renewal (no rollover). Purchased credits (if present) do not expire.
-  - Free workspaces get a **one-time 50 credits** starter grant (no reset); Pro includes 300 per cycle plus on-demand at $0.10.
+  - Personal Free workspaces get **50 credits to start**, then a top-up to **10 on the 1st of each month** (a floor, never additive), with at most 15 credits a day and no on-demand; team workspaces on Free get no allowance. Pro includes 300 per cycle plus on-demand at $0.10.
   - Customer UI exposes **credits and quality tiers only** (no tokens or provider raw costs).
 - **Limits (credits-first)**:
   - Dashboard includes a **Limits** page (`/dashboard/limits`) for workspace owners/admins to manage on-demand usage caps (credits-first; dollars are secondary).

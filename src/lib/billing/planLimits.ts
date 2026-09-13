@@ -26,11 +26,13 @@
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
 import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ProjectModel } from "@/lib/models/Project";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+// The share-links service owns the definition of "an active link"; importing it here keeps the
+// cap and the link routes from ever disagreeing (the cycle is import-only: both sides call at runtime).
+import { countActiveShareLinks } from "@/lib/share/links";
 
 /** Free plan: docs with sharing enabled (not deleted, not archived). */
 export const FREE_ACTIVE_LINKS = 3;
@@ -150,7 +152,9 @@ export async function getWorkspacePlan(orgId: string | Types.ObjectId): Promise<
 /**
  * Count what a workspace is using against its caps (three `countDocuments` calls).
  *
- * - `activeLinks`: docs with `shareEnabled !== false` (legacy docs default to enabled), not deleted, not archived.
+ * - `activeLinks`: `sharelinks` rows that are enabled, unarchived and unexpired, across every
+ *   document of the workspace (`countActiveShareLinks`). A document may own several links, so the
+ *   cap counts links, not documents (docs/prds/lnkdrp-multi-links.md).
  * - `projects`: non-request projects, not deleted (request repos are not capped).
  * - `members`: non-deleted memberships, owner included.
  */
@@ -160,12 +164,7 @@ export async function getWorkspaceUsage(
   const id = toOrgObjectId(orgId);
   await connectMongo();
   const [activeLinks, projects, members] = await Promise.all([
-    DocModel.countDocuments({
-      orgId: id,
-      shareEnabled: { $ne: false },
-      isDeleted: { $ne: true },
-      isArchived: { $ne: true },
-    }),
+    countActiveShareLinks(id),
     ProjectModel.countDocuments({
       orgId: id,
       isDeleted: { $ne: true },

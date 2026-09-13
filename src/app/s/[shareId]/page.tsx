@@ -4,8 +4,7 @@
 import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
 import { notFound } from "next/navigation";
-import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink } from "@/lib/share/links";
 import type { AiOutput } from "@/components/PdfJsViewer";
 import ShareViewerClient from "./ShareViewerClient";
 import PasswordGate from "./PasswordGate";
@@ -84,9 +83,10 @@ export async function generateMetadata(props: {
   const { shareId } = await props.params;
   if (!shareId) return { title: "Shared document" };
 
-  await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-    .select({
+  // One link → one document (docs/prds/lnkdrp-multi-links.md). A refused link keeps the generic
+  // title so a disabled/expired link never leaks the document's name into a link preview.
+  const resolved = await resolveShareLink(shareId, {
+    select: {
       title: 1,
       // Perf: only pull the minimal metadata-related AI fields (avoid huge aiOutput JSON).
       "aiOutput.meta_title": 1,
@@ -95,12 +95,22 @@ export async function generateMetadata(props: {
       "aiOutput.openGraph.description": 1,
       previewImageUrl: 1,
       firstPagePngUrl: 1,
-    })
-    .lean();
+    } as Record<string, 1>,
+  });
+  const doc =
+    resolved && !resolved.refusal
+      ? (resolved.doc as {
+          title?: unknown;
+          aiOutput?: unknown;
+          previewImageUrl?: unknown;
+          firstPagePngUrl?: unknown;
+        })
+      : null;
 
   const meta = pickMetaStrings(doc?.aiOutput);
   const og = pickOgStrings(doc?.aiOutput);
-  const title = meta.title || og.title || doc?.title || "Shared document";
+  const title =
+    meta.title || og.title || (typeof doc?.title === "string" ? doc.title : "") || "Shared document";
   const description = meta.description || og.description || "Shared with LinkDrop.";
 
   // Prefer the request origin (correct for preview deployments / custom domains); a malformed
@@ -177,12 +187,12 @@ export default async function SharePage(props: {
   const { shareId } = await props.params;
   if (!shareId) notFound();
 
-  await connectMongo();
-  const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-    .select({
+  // The link is the unit of sharing: it carries the password, the download and revision-history
+  // permissions, and whether the page may be served at all (docs/prds/lnkdrp-multi-links.md).
+  const resolved = await resolveShareLink(shareId, {
+    select: {
       title: 1,
       blobUrl: 1,
-      shareEnabled: 1,
       // Perf: only fetch receiver-facing AI snapshot fields (avoid huge aiOutput JSON).
       "aiOutput.one_liner": 1,
       "aiOutput.core_problem_or_need": 1,
@@ -197,22 +207,23 @@ export default async function SharePage(props: {
       "aiOutput.key_metrics": 1,
       "aiOutput.ask": 1,
       receiverRelevanceChecklist: 1,
-      shareAllowPdfDownload: 1,
-      shareAllowRevisionHistory: 1,
-      sharePasswordHash: 1,
-      sharePasswordSalt: 1,
       previewImageUrl: 1,
       firstPagePngUrl: 1,
-    })
-    .lean();
-  if (!doc) notFound();
-  // Master share switch: when disabled, behave like the share link is gone.
-  if ((doc as { shareEnabled?: unknown }).shareEnabled === false) notFound();
+    } as Record<string, 1>,
+  });
+  // Disabled, expired, archived or deleted: the link behaves as if it never existed.
+  if (!resolved || resolved.refusal) notFound();
+  const { link, doc } = resolved;
 
-  const previewUrl = doc.previewImageUrl ?? doc.firstPagePngUrl ?? null;
+  const previewUrl =
+    typeof doc.previewImageUrl === "string"
+      ? doc.previewImageUrl
+      : typeof doc.firstPagePngUrl === "string"
+        ? doc.firstPagePngUrl
+        : null;
 
-  const sharePasswordHash = (doc as { sharePasswordHash?: unknown }).sharePasswordHash;
-  const sharePasswordSalt = (doc as { sharePasswordSalt?: unknown }).sharePasswordSalt;
+  const sharePasswordHash = link.passwordHash;
+  const sharePasswordSalt = link.passwordSalt;
   const passwordEnabled =
     typeof sharePasswordHash === "string" &&
     Boolean(sharePasswordHash) &&
@@ -239,8 +250,10 @@ export default async function SharePage(props: {
 
   const pdfUrl = doc.blobUrl ? `/s/${encodeURIComponent(shareId)}/pdf` : null;
   const ai = pickReceiverAi(doc.aiOutput ?? null);
-  const allowDownload = Boolean((doc as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload);
-  const allowRevisionHistory = Boolean((doc as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory);
+  // Permissions belong to the link, not the document: two recipients of the same deck can have
+  // different download rights.
+  const allowDownload = Boolean(link.allowDownload);
+  const allowRevisionHistory = Boolean(link.allowRevisionHistory);
 
   if (pdfUrl) {
     return (

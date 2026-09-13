@@ -264,6 +264,10 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: "lnkdrp_get_share", purpose: "Status, settings and summary of a link. Poll it after share_pdf.", access: "read" },
   { name: "lnkdrp_set_share_access", purpose: "Turn sharing, downloads or the password on or off for a link.", access: "write" },
   { name: "lnkdrp_get_share_stats", purpose: "Views, downloads and viewers for a link over a window of days.", access: "read" },
+  { name: "lnkdrp_create_share_link", purpose: "Add another link to a document, one per recipient, with its own label, password and expiry.", access: "write" },
+  { name: "lnkdrp_list_share_links", purpose: "Every link of a document with its settings, status and view counts.", access: "read" },
+  { name: "lnkdrp_update_share_link", purpose: "Change or disable one link without touching the document's other links.", access: "write" },
+  { name: "lnkdrp_delete_share_link", purpose: "Delete one link; its past analytics are kept.", access: "write" },
 ];
 
 /** Short answers to the questions people hit first. Shared by `/connect` and the public guides. */

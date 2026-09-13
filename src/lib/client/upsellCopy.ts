@@ -53,10 +53,10 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   },
   active_links: {
     title: "You're at the Free link limit",
-    reason: "Free workspaces can have 3 active share links; Pro removes the cap.",
+    reason: "Free workspaces can have 3 active share links across all documents; Pro removes the cap.",
     bullets: [
-      "Unlimited active share links",
-      "Unlimited projects to keep them organised",
+      "Unlimited links per document, one per investor",
+      "Unlimited active links and projects across the workspace",
       "Full analytics history on every link",
     ],
     secondaryLabel: "Manage links",
@@ -92,12 +92,12 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     secondaryLabel: "Compare plans",
   },
   credits: {
-    title: "Credits power AI compare on Pro",
-    reason: "AI compare runs on credits, which are included with Pro.",
+    title: "More credits on Pro",
+    reason: "Credits pay for AI runs: the summary on each upload and AI compare. Links, uploads and stats never need credits.",
     bullets: [
       "300 credits a month, about 60 standard AI compares",
-      "AI compare of what changed between versions",
-      "Version history for every link",
+      "On-demand credits at $0.10 each, under a spend limit you set",
+      "Version history and AI compare of what changed between versions",
     ],
     secondaryLabel: "Compare plans",
   },

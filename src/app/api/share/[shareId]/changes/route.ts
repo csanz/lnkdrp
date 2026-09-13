@@ -9,8 +9,7 @@
  * recipients never see a paywall or any Pro-only data.
  */
 import { NextResponse } from "next/server";
-import { connectMongo } from "@/lib/mongodb";
-import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink } from "@/lib/share/links";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
@@ -95,32 +94,24 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
       }
 
-      await connectMongo();
-      const doc = await DocModel.findOne({ shareId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
-        .select({
-          _id: 1,
-          orgId: 1,
-          userId: 1,
-          shareAllowRevisionHistory: 1,
-          sharePasswordHash: 1,
-          sharePasswordSalt: 1,
-        })
-        .lean();
-      if (!doc) {
+      // Refused links (disabled/expired/archived) answer 404, like an unknown slug.
+      const resolved = await resolveShareLink(shareId);
+      if (!resolved || resolved.refusal) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
+      const { link, doc } = resolved;
 
-      // A Free owner (e.g. after a downgrade with the toggle still on) reads as "disabled":
-      // the recipient response is identical, so nothing about the owner's plan is exposed.
+      // Revision history is a per-link permission. A Free owner (e.g. after a downgrade with the
+      // toggle still on) reads as "disabled": the recipient response is identical, so nothing about
+      // the owner's plan is exposed.
       const enabled =
-        Boolean((doc as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory) &&
-        (await ownerIsPro(doc as { orgId?: unknown; userId?: unknown }));
+        Boolean(link.allowRevisionHistory) && (await ownerIsPro(doc as { orgId?: unknown; userId?: unknown }));
       if (!enabled) {
         return NextResponse.json({ error: "Version history disabled" }, { status: 403 });
       }
 
-      const sharePasswordHash = (doc as { sharePasswordHash?: unknown }).sharePasswordHash;
-      const sharePasswordSalt = (doc as { sharePasswordSalt?: unknown }).sharePasswordSalt;
+      const sharePasswordHash = link.passwordHash;
+      const sharePasswordSalt = link.passwordSalt;
       const passwordEnabled =
         typeof sharePasswordHash === "string" &&
         Boolean(sharePasswordHash) &&

@@ -1,15 +1,24 @@
 "use client";
 
-import { LockClosedIcon, LockOpenIcon, SparklesIcon, Square2StackIcon } from "@heroicons/react/24/outline";
+import { SparklesIcon } from "@heroicons/react/24/outline";
 import { useState, type RefObject, type ReactNode } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
-import { fetchJson } from "@/lib/http/fetchJson";
-import { CopyButton } from "@/components/CopyButton";
-import ProPill from "@/components/ProPill";
+import DocLinksManager from "@/components/links/DocLinksManager";
 
+/**
+ * Doc side panel: the links summary, the quick stats and the AI snapshot.
+ *
+ * The document-level share controls (share URL, "Share enabled", "Allow download", "Show version
+ * history", the password lock) used to live here. Every one of them is now a per-link setting, so
+ * they moved to `/doc/:docId/links`; the panel keeps `DocLinksManager variant="panel"`.
+ *
+ * The props they used are still accepted (the doc page passes them unchanged) — they are simply no
+ * longer rendered.
+ */
 type Props = {
   docId: string;
+  /** @deprecated Unused since links moved to `/doc/:docId/links`; the manager resolves its own URL. */
   shareUrl: string;
   shareInputRef: RefObject<HTMLInputElement | null>;
   isCopying: boolean;
@@ -29,11 +38,15 @@ type Props = {
   uploadError?: unknown | null;
   /** Optional quick-stats card rendered between the share controls and the Snapshot. */
   quickStats?: ReactNode;
-  /** Optional notice rendered directly under the "Share enabled" switch (e.g. a plan-limit prompt). */
+  /** Optional notice rendered directly under the links summary (e.g. a plan-limit prompt). */
   shareNotice?: ReactNode;
-  /** Show the "Pro" pill next to the revision-history switch (Free workspaces only; Pro sees nothing). */
+  /** Who wrote the summary when it was not LinkDrop (e.g. "Claude Code" for an agent-written summary). */
+  summaryAuthorLabel?: string | null;
+  /** Replaces the "summary not available" text, e.g. a skipped-for-credits notice with a "Write summary" action. */
+  summaryMissing?: ReactNode;
+  /** @deprecated The links manager reads the plan itself; kept so the doc page compiles unchanged. */
   showProPill?: boolean;
-  /** Makes the "Pro" pill clickable (opens the upgrade modal). */
+  /** @deprecated See `showProPill`. */
   onProPillClick?: () => void;
 };
 
@@ -51,8 +64,8 @@ export default function DocSharePanel({
   onCopy,
   shareEnabled,
   onShareEnabledChange,
-  relevancyEnabled: _relevancyEnabled,
-  onToggleRelevancy: _onToggleRelevancy,
+  relevancyEnabled,
+  onToggleRelevancy,
   pdfDownloadEnabled,
   onPdfDownloadEnabledChange,
   revisionHistoryEnabled,
@@ -63,72 +76,35 @@ export default function DocSharePanel({
   uploadError,
   quickStats,
   shareNotice,
+  summaryAuthorLabel,
+  summaryMissing,
   showProPill = false,
   onProPillClick,
 }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
 
-  const [sharePasswordModalOpen, setSharePasswordModalOpen] = useState(false);
-  const [sharePasswordValue, setSharePasswordValue] = useState("");
-  const [sharePasswordSaving, setSharePasswordSaving] = useState(false);
-  const [sharePasswordError, setSharePasswordError] = useState<string | null>(null);
-  const [sharePasswordLoading, setSharePasswordLoading] = useState(false);
-  const [sharePasswordVisible, setSharePasswordVisible] = useState(false);
-/**
- * Save Share Password (updates state (setSharePasswordSaving, setSharePasswordError, setSharePasswordModalOpen); uses setSharePasswordSaving, setSharePasswordError, fetchJson).
- */
-
-
-  async function saveSharePassword(nextPassword: string) {
-    setSharePasswordSaving(true);
-    setSharePasswordError(null);
-    try {
-      const res = await fetchJson<{ sharePasswordEnabled: boolean }>(
-        `/api/docs/${docId}/share-password`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ password: nextPassword }),
-        },
-      );
-      onSharePasswordEnabledChange(Boolean(res.sharePasswordEnabled));
-      setSharePasswordModalOpen(false);
-      setSharePasswordValue("");
-    } catch (e) {
-      setSharePasswordError(e instanceof Error ? e.message : "Failed to save password");
-    } finally {
-      setSharePasswordSaving(false);
-    }
-  }
-/**
- * Remove Share Password (updates state (setSharePasswordSaving, setSharePasswordError, setSharePasswordModalOpen); uses setSharePasswordSaving, setSharePasswordError, fetchJson).
- */
-
-
-  async function removeSharePassword() {
-    setSharePasswordSaving(true);
-    setSharePasswordError(null);
-    try {
-      const res = await fetchJson<{ sharePasswordEnabled: boolean }>(
-        `/api/docs/${docId}/share-password`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ password: null }),
-        },
-      );
-      onSharePasswordEnabledChange(Boolean(res.sharePasswordEnabled));
-      setSharePasswordModalOpen(false);
-      setSharePasswordValue("");
-    } catch (e) {
-      setSharePasswordError(e instanceof Error ? e.message : "Failed to remove password");
-    } finally {
-      setSharePasswordSaving(false);
-    }
-  }
-
-  const displayValue = shareUrl || "Generating link…";
-  const shareActive = Boolean(shareUrl) && shareEnabled;
+  // --- Links ------------------------------------------------------------------------------
+  // Link management moved to `DocLinksManager` (and to `/doc/:docId/links`); the panel keeps only
+  // the compact summary (docs/prds/lnkdrp-multi-links.md). The document-level share controls it
+  // replaced were per-document duplicates of per-link settings, so they are gone — but the doc
+  // page still passes their props, and they stay in `Props` so nothing there has to change.
+  void shareUrl;
+  void shareInputRef;
+  void isCopying;
+  void copyDone;
+  void onCopy;
+  void shareEnabled;
+  void onShareEnabledChange;
+  void relevancyEnabled;
+  void onToggleRelevancy;
+  void pdfDownloadEnabled;
+  void onPdfDownloadEnabledChange;
+  void revisionHistoryEnabled;
+  void onRevisionHistoryEnabledChange;
+  void sharePasswordEnabled;
+  void onSharePasswordEnabledChange;
+  void showProPill;
+  void onProPillClick;
 
   const ai = aiOutput && typeof aiOutput === "object" ? (aiOutput as Record<string, unknown>) : null;
   const oneLiner = typeof ai?.one_liner === "string" ? ai.one_liner.trim() : "";
@@ -152,6 +128,12 @@ export default function DocSharePanel({
         .map((s) => s.trim())
     : [];
   const summary = typeof ai?.summary === "string" ? ai.summary.trim() : "";
+  // Agent-written summaries carry `summary_by`; otherwise LinkDrop wrote it.
+  const summaryByStored =
+    ai?.summary_by && typeof ai.summary_by === "object"
+      ? ((ai.summary_by as { label?: unknown; client?: unknown }).label ?? (ai.summary_by as { client?: unknown }).client)
+      : null;
+  const summaryBadge = `Written by ${summaryAuthorLabel || (typeof summaryByStored === "string" && summaryByStored.trim()) || "LinkDrop"}`;
 
   const hasSnapshot = Boolean(oneLiner || why || scope.length || context || value || maturity || ask || metrics.length);
   const hasSummary = Boolean(summary);
@@ -173,193 +155,10 @@ export default function DocSharePanel({
 
   return (
     <div className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-      {/* 1) Share link */}
-      <div>
-        <div className="text-xs font-medium text-[var(--muted)]">Share link</div>
+      {/* 1) Links — the default link, the count, and the way through to /doc/:docId/links */}
+      <DocLinksManager docId={docId} variant="panel" />
 
-        <div className="mt-2 flex items-stretch gap-2">
-          <input
-            ref={shareInputRef}
-            value={displayValue}
-            readOnly
-            className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 text-[13px] font-medium text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-            onFocus={(e) => e.currentTarget.select()}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              e.preventDefault();
-              onCopy();
-            }}
-            aria-label="Share link"
-          />
-          <CopyButton
-            copyDone={copyDone}
-            isCopying={isCopying}
-            disabled={!shareActive}
-            onCopy={onCopy}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--primary-bg)] text-[var(--primary-fg)] shadow-sm transition-colors duration-150 hover:bg-[var(--primary-hover-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-ring)] focus:ring-offset-2 focus:ring-offset-[var(--panel)] disabled:opacity-50"
-            copyAriaLabel="Copy link"
-            copiedAriaLabel="Copied"
-          />
-          <button
-            type="button"
-            onClick={() => {
-              setSharePasswordError(null);
-              setSharePasswordValue("");
-              setSharePasswordVisible(false);
-              setSharePasswordModalOpen(true);
-              if (sharePasswordEnabled) {
-                setSharePasswordLoading(true);
-                void (async () => {
-                  try {
-                    const res = await fetchJson<{ sharePasswordEnabled: boolean; password: string | null }>(
-                      `/api/docs/${docId}/share-password`,
-                      { cache: "no-store" },
-                    );
-                    if (res.sharePasswordEnabled && typeof res.password === "string") {
-                      setSharePasswordValue(res.password);
-                    }
-                  } catch {
-                    // If we can't fetch/decrypt, fall back to empty input (still allows changing).
-                  } finally {
-                    setSharePasswordLoading(false);
-                  }
-                })();
-              }
-            }}
-            disabled={!shareActive || sharePasswordSaving}
-            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] shadow-sm transition-colors duration-150 hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] focus:ring-offset-2 focus:ring-offset-[var(--panel)] disabled:opacity-50"
-            aria-label={sharePasswordEnabled ? "Change share password" : "Set share password"}
-            title={sharePasswordEnabled ? "Password protected" : "Not password protected"}
-          >
-            {sharePasswordEnabled ? (
-              <LockClosedIcon className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <LockOpenIcon className="h-4 w-4" aria-hidden="true" />
-            )}
-          </button>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
-          <div className="min-w-0">
-            <div className="text-[12px] font-medium text-[var(--fg)]">Share enabled</div>
-            <div className="mt-0.5 text-[12px] text-[var(--muted)]">
-              {shareEnabled
-                ? "Anyone with the link can view this document (subject to password, if set)."
-                : "Sharing is disabled. Receivers will see “This document is no longer shared.”"}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            role="switch"
-            aria-checked={shareEnabled}
-            aria-label="Share enabled"
-            disabled={!shareUrl}
-            className={[
-              "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-              shareEnabled ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
-              !shareUrl ? "opacity-50" : "cursor-pointer",
-            ].join(" ")}
-            onClick={() => onShareEnabledChange(!shareEnabled)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter" && e.key !== " ") return;
-              e.preventDefault();
-              onShareEnabledChange(!shareEnabled);
-            }}
-          >
-            <span
-              aria-hidden="true"
-              className={[
-                "inline-block h-5 w-5 transform rounded-full bg-[var(--panel)] shadow ring-1 ring-[var(--border)] transition-transform",
-                shareEnabled ? "translate-x-5" : "translate-x-1",
-              ].join(" ")}
-            />
-          </button>
-        </div>
-
-        {shareNotice ? <div className="mt-2">{shareNotice}</div> : null}
-
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
-          <div className="min-w-0">
-            <div className="text-[12px] font-medium text-[var(--fg)]">Allow download</div>
-          </div>
-
-          <button
-            type="button"
-            role="switch"
-            aria-checked={pdfDownloadEnabled}
-            aria-label="Allow download"
-            disabled={!shareActive}
-            className={[
-              "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-              pdfDownloadEnabled ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
-              !shareActive ? "opacity-50" : "cursor-pointer",
-            ].join(" ")}
-            onClick={() => onPdfDownloadEnabledChange(!pdfDownloadEnabled)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter" && e.key !== " ") return;
-              e.preventDefault();
-              onPdfDownloadEnabledChange(!pdfDownloadEnabled);
-            }}
-          >
-            <span
-              aria-hidden="true"
-              className={[
-                "inline-block h-5 w-5 transform rounded-full bg-[var(--panel)] shadow ring-1 ring-[var(--border)] transition-transform",
-                pdfDownloadEnabled ? "translate-x-5" : "translate-x-1",
-              ].join(" ")}
-            />
-          </button>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium text-[var(--fg)]">
-              <span>Show version history to recipients</span>
-              {showProPill ? <ProPill onClick={onProPillClick} /> : null}
-            </div>
-            <div className="mt-0.5 text-[12px] text-[var(--muted)]">
-              Recipients can browse versions (version, date and what changed).
-            </div>
-          </div>
-
-          <button
-            type="button"
-            role="switch"
-            aria-checked={revisionHistoryEnabled}
-            aria-label="Show version history to recipients"
-            disabled={!shareActive}
-            className={[
-              "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
-              "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-              revisionHistoryEnabled ? "bg-[var(--primary-bg)]" : "bg-[var(--border)]",
-              !shareActive ? "opacity-50" : "cursor-pointer",
-            ].join(" ")}
-            onClick={() => onRevisionHistoryEnabledChange(!revisionHistoryEnabled)}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter" && e.key !== " ") return;
-              e.preventDefault();
-              onRevisionHistoryEnabledChange(!revisionHistoryEnabled);
-            }}
-          >
-            <span
-              aria-hidden="true"
-              className={[
-                "inline-block h-5 w-5 transform rounded-full bg-[var(--panel)] shadow ring-1 ring-[var(--border)] transition-transform",
-                revisionHistoryEnabled ? "translate-x-5" : "translate-x-1",
-              ].join(" ")}
-            />
-          </button>
-        </div>
-
-
-        {/* a11y: announce copy state */}
-        <div className="sr-only" aria-live="polite">
-          {copyDone ? "Copied to clipboard" : ""}
-        </div>
-      </div>
+      {shareNotice ? <div className="mt-2">{shareNotice}</div> : null}
 
       {/* 1b) Quick stats (owner engagement glimpse) */}
       {quickStats ? <div className="mt-4">{quickStats}</div> : null}
@@ -376,7 +175,7 @@ export default function DocSharePanel({
                 <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
                 <span className="truncate">Summary</span>
                 <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
-                  Written by LinkDrop
+                  {summaryBadge}
                 </span>
               </div>
               <div className="shrink-0">
@@ -431,12 +230,16 @@ export default function DocSharePanel({
             >
               <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
               <span className="truncate">Summary</span>
-              <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
-                Written by LinkDrop
-              </span>
+              {/* No author badge when there is no summary yet: "Written by LinkDrop" next to
+                  "Skipped: …" claims authorship of something that was never written. */}
+              {summaryMissing ? null : (
+                <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
+                  {summaryBadge}
+                </span>
+              )}
             </div>
             <div className="mt-2 text-[13px] leading-relaxed text-[var(--muted)]">
-              {aiMissingMessage}
+              {summaryMissing ?? aiMissingMessage}
             </div>
           </div>
         </div>
@@ -451,7 +254,7 @@ export default function DocSharePanel({
         <div className="flex items-center gap-2 text-base font-semibold text-[var(--fg)]">
           <span>Summary</span>
           <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
-            Written by LinkDrop
+            {summaryBadge}
           </span>
         </div>
         <div className="mt-2 text-sm text-[var(--muted)]">
@@ -541,94 +344,6 @@ export default function DocSharePanel({
         </div>
       </Modal>
 
-      <Modal
-        open={sharePasswordModalOpen}
-        onClose={() => {
-          if (sharePasswordSaving) return;
-          setSharePasswordModalOpen(false);
-          setSharePasswordError(null);
-          setSharePasswordValue("");
-          setSharePasswordVisible(false);
-        }}
-        ariaLabel="Password protect share link"
-      >
-        <div className="text-base font-semibold text-[var(--fg)]">Password protect share link</div>
-        <div className="mt-2 text-sm text-[var(--muted)]">
-          Anyone with the link will need this password to view the document.
-        </div>
-
-        <div className="mt-5">
-          <label className="text-xs font-medium text-[var(--muted)]" htmlFor="share-password-owner">
-            {sharePasswordEnabled ? "Password" : "New password"}
-          </label>
-          <div className="mt-2 flex items-stretch gap-2">
-            <input
-              id="share-password-owner"
-              type={sharePasswordVisible ? "text" : "password"}
-              value={sharePasswordValue}
-              onChange={(e) => setSharePasswordValue(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                const v = sharePasswordValue.trim();
-                if (!v || sharePasswordSaving) return;
-                void saveSharePassword(v);
-              }}
-              className="h-10 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-sm text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-              placeholder={sharePasswordLoading ? "Loading…" : "Enter a password"}
-              autoComplete={sharePasswordEnabled ? "current-password" : "new-password"}
-              autoFocus
-              disabled={sharePasswordLoading}
-            />
-            <button
-              type="button"
-              onClick={() => setSharePasswordVisible((v) => !v)}
-              className="inline-flex h-10 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
-              aria-label={sharePasswordVisible ? "Hide password" : "Show password"}
-              title={sharePasswordVisible ? "Hide" : "Show"}
-            >
-              {sharePasswordVisible ? "Hide" : "Show"}
-            </button>
-          </div>
-        </div>
-
-        {sharePasswordError ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-            {sharePasswordError}
-          </div>
-        ) : null}
-
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-          {sharePasswordEnabled ? (
-            <button
-              type="button"
-              onClick={() => void removeSharePassword()}
-              disabled={sharePasswordSaving}
-              className="rounded-lg border border-red-200 bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Remove password
-            </button>
-          ) : (
-            <div className="text-xs text-[var(--muted-2)]">No password is currently set.</div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              const v = sharePasswordValue.trim();
-              if (!v) {
-                setSharePasswordError("Please enter a password.");
-                return;
-              }
-              void saveSharePassword(v);
-            }}
-            disabled={sharePasswordSaving}
-            className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {sharePasswordSaving ? "Saving…" : sharePasswordEnabled ? "Change password" : "Set password"}
-          </button>
-        </div>
-      </Modal>
     </div>
   );
 }

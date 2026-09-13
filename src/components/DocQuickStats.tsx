@@ -21,6 +21,9 @@ import { usePlan } from "@/lib/client/usePlan";
  * window; both open the `analytics_history` upsell.
  */
 
+/** The few `ShareLinkDTO` fields the summary line needs (`GET /api/docs/:docId/links`). */
+type LinkSummary = { id: string; label: string; viewCount: number };
+
 type Snapshot = {
   updatedAt: string | null;
   days: number | null;
@@ -174,9 +177,36 @@ export default function DocQuickStats({
   const [rev, setRev] = useState(0);
   useEffect(() => {
     return subscribeRealtime("activity", (f) => {
-      if (f.type === "activity" && typeof f.event.type === "string" && f.event.type.startsWith("share.")) setRev((r) => r + 1);
+      if (f.type !== "activity" || typeof f.event.type !== "string") return;
+      // `share.*` moves the totals; `share_link.*` changes the link summary line.
+      if (f.event.type.startsWith("share.") || f.event.type.startsWith("share_link.")) setRev((r) => r + 1);
     });
   }, []);
+
+  // Link summary: how many links this document has, and which one is pulling the views.
+  const [links, setLinks] = useState<LinkSummary[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/links`, { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { links?: LinkSummary[] };
+        if (!cancelled && Array.isArray(json?.links)) setLinks(json.links);
+      } catch {
+        // the summary line is a bonus; the tiles do not depend on it
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, rev]);
+
+  const topLink = useMemo(() => {
+    if (!links || links.length < 2) return null;
+    const best = [...links].sort((a, b) => num(b.viewCount) - num(a.viewCount))[0];
+    return best && num(best.viewCount) > 0 ? best : null;
+  }, [links]);
 
   useEffect(() => {
     let cancelled = false;
@@ -261,6 +291,19 @@ export default function DocQuickStats({
         {tile("Downloads", downloadsEnabled ? stats.downloads : "Off")}
         {tile("Pages", stats.pages)}
       </div>
+
+      {links && links.length > 1 ? (
+        <div className="mt-3 text-[11px] text-[var(--muted-2)]">
+          <span className="font-medium text-[var(--muted)]">{links.length} links</span>
+          {topLink ? (
+            <>
+              {" · most viewed: "}
+              <span className="font-medium text-[var(--fg)]">{topLink.label}</span>{" "}
+              <span className="tabular-nums">({num(topLink.viewCount).toLocaleString()})</span>
+            </>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-3">
         {series.length ? (

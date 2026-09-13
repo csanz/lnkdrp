@@ -1,6 +1,6 @@
 # PRD — Multiple share links per document
 
-**Status:** Draft for review (not ingested in metis yet)
+**Status:** Approved 2026-09-13, in progress (metis `prd_Po4aqWpRh3`; M1–M3 building)
 **Owner:** chrissanz
 **Last updated:** 2026-09-13
 **Project:** lnkdrp
@@ -169,15 +169,14 @@ Rollback: the previous build ignores `sharelinks` and reads the still-present do
 ### M4 — Pro link security
 - `expiresAt` UI, require-email gate (Pro), later magic-link verification (Enterprise "verified access").
 
-## Open questions
+## Decided (were open questions)
 
-1. Should a document's share toggle survive as "disable all links" or go away? (Proposal: it
-   becomes a bulk action on the Links panel.)
-2. Free cap wording on `/pricing`: "3 active share links" already reads correctly; confirm we
-   are comfortable that three investor links on one deck consume the whole Free cap.
-3. Do we show the link label to the viewer anywhere (e.g., page title)? Proposal: never;
-   labels are private to the sender.
-4. Per-link OG images or titles for social previews: not in v1.
+1. The document's share toggle stays and becomes "enable/disable every link" (`setAllLinksEnabled`).
+2. The Free cap counts every active link across the workspace; `/pricing` already says
+   "3 active share links", so no copy change. Three investor links on one deck use the whole
+   Free cap by design: that is the clearest Pro trigger in the product.
+3. Link labels and audience notes are never shown to a viewer, anywhere.
+4. No per-link OG image or title in v1.
 
 ## Future
 

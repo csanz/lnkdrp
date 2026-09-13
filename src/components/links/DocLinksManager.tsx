@@ -1,0 +1,567 @@
+/**
+ * DocLinksManager — the one place that owns a document's share links (docs/prds/lnkdrp-multi-links.md).
+ *
+ * Moved out of `DocSharePanel` so link management has a home of its own: the doc side panel keeps a
+ * compact summary (`variant="panel"`), the dedicated `/doc/:docId/links` page renders the full list
+ * (`variant="page"`). Both share the same data and the same mutations — the fetch of
+ * `GET /api/docs/:docId/links`, per-link unique-viewer counts, create/edit through `ShareLinkModal`,
+ * enable/disable, delete behind an inline confirm, copy, the `share_link.*` realtime refetch and the
+ * `planWarning` upgrade prompt.
+ */
+"use client";
+
+import Link from "next/link";
+import { LockClosedIcon, PlusIcon } from "@heroicons/react/24/outline";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useState,
+} from "react";
+
+import { CopyButton } from "@/components/CopyButton";
+import ShareLinkModal, { type ShareLinkFormValues } from "@/components/modals/ShareLinkModal";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { subscribeRealtime } from "@/lib/client/realtime";
+import { refreshPlan, usePlan } from "@/lib/client/usePlan";
+import { fetchJson } from "@/lib/http/fetchJson";
+import { buildPublicShareUrl } from "@/lib/urls";
+import type { ShareLinkDTO } from "@/lib/share/links";
+
+/** `planWarning` from the links API: the Free-cap state behind the upgrade prompt. */
+type LinkPlanWarning = { limit?: string; used?: number; max?: number } | null;
+type LinkMutationResponse = { link: ShareLinkDTO; planWarning?: LinkPlanWarning };
+
+/** Lets a page header's "New link" button open the create modal this component owns. */
+export type DocLinksManagerHandle = { openCreate: () => void };
+
+type Props = {
+  docId: string;
+  /** `panel` = compact summary for the doc side rail; `page` = the full list. */
+  variant: "panel" | "page";
+  /** False hides every mutation (create, edit, enable/disable, delete); copy stays. */
+  canManage?: boolean;
+};
+
+/** "3h ago" / "12 Sep" for a link's last view; empty when it has never been viewed. */
+function relativeWhen(iso: string | null): string {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(ms));
+}
+
+/** "12 Sep 2026" for an expiry date. */
+function formatDate(iso: string | null): string {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(ms));
+}
+
+const LINK_STATUS_PILL: Record<ShareLinkDTO["status"], { label: string; className: string }> = {
+  active: {
+    label: "Active",
+    className: "bg-emerald-50 text-emerald-800 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-0",
+  },
+  disabled: {
+    label: "Disabled",
+    className: "bg-[var(--panel)] text-[var(--muted)] ring-[var(--border)]",
+  },
+  expired: {
+    label: "Expired",
+    className: "bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-0",
+  },
+  archived: {
+    label: "Deleted",
+    className: "bg-[var(--panel)] text-[var(--muted-2)] ring-[var(--border)]",
+  },
+};
+
+const LINK_ACTION_CLASS =
+  "rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1.5 text-[12px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)] disabled:opacity-50";
+
+const NEW_LINK_CLASS =
+  "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 text-[12px] font-semibold text-[var(--fg)] shadow-sm transition-colors hover:bg-[var(--panel-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]";
+
+/** One "Label · value" cell of the settings summary row. */
+function SettingItem({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className="text-[var(--muted-2)]">{label}</span>
+      <span className="font-medium text-[var(--fg)]">{value}</span>
+    </span>
+  );
+}
+
+/** One stat of a link card. */
+function StatItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">{label}</div>
+      <div className="mt-0.5 truncate text-[13px] font-semibold tabular-nums text-[var(--fg)]">{value}</div>
+    </div>
+  );
+}
+
+const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLinksManager(
+  { docId, variant, canManage = true },
+  ref,
+) {
+  const { openUpgrade } = useUpgradeModal();
+  const { plan } = usePlan();
+  const isFreePlan = plan?.plan === "free";
+
+  const [links, setLinks] = useState<ShareLinkDTO[] | null>(null);
+  const [linksError, setLinksError] = useState<string | null>(null);
+  const [linksRev, setLinksRev] = useState(0);
+  const [linkViewers, setLinkViewers] = useState<Record<string, number>>({});
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [linkModal, setLinkModal] = useState<{ mode: "create" } | { mode: "edit"; link: ShareLinkDTO } | null>(null);
+  const [linkSaving, setLinkSaving] = useState(false);
+  const [linkModalError, setLinkModalError] = useState<string | null>(null);
+
+  const refreshLinks = useCallback(() => setLinksRev((r) => r + 1), []);
+
+  const openCreate = useCallback(() => {
+    setLinkModalError(null);
+    setLinkModal({ mode: "create" });
+  }, []);
+
+  useImperativeHandle(ref, () => ({ openCreate }), [openCreate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetchJson<{ links: ShareLinkDTO[] }>(`/api/docs/${encodeURIComponent(docId)}/links`, {
+          cache: "no-store",
+        });
+        if (cancelled) return;
+        setLinks(Array.isArray(res.links) ? res.links : []);
+        setLinksError(null);
+      } catch (e) {
+        if (!cancelled) setLinksError(e instanceof Error ? e.message : "Failed to load links");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, linksRev]);
+
+  // Agents and other sessions create links too: `share_link.*` activity frames refetch the list.
+  useEffect(
+    () =>
+      subscribeRealtime("activity", (f) => {
+        if (f.type !== "activity") return;
+        if (typeof f.event.type === "string" && f.event.type.startsWith("share_link.")) refreshLinks();
+      }),
+    [refreshLinks],
+  );
+
+  // Unique viewers are not on the link row (they need the analytics window), so ask for them per
+  // link — only for links that have been viewed at all, and only for the first few.
+  useEffect(() => {
+    if (variant !== "page") return;
+    const rows = (links ?? []).filter((l) => l.viewCount > 0).slice(0, 8);
+    if (!rows.length) return;
+    let cancelled = false;
+    void (async () => {
+      const entries = await Promise.all(
+        rows.map(async (l) => {
+          try {
+            const res = await fetchJson<{ viewerCount?: number }>(
+              `/api/docs/${encodeURIComponent(docId)}/shareviews?days=30&lite=1&shareId=${encodeURIComponent(l.shareId)}`,
+              { cache: "no-store" },
+            );
+            return [l.id, typeof res.viewerCount === "number" ? Math.max(0, Math.floor(res.viewerCount)) : -1] as const;
+          } catch {
+            return [l.id, -1] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setLinkViewers((prev) => {
+        const next = { ...prev };
+        for (const [id, count] of entries) if (count >= 0) next[id] = count;
+        return next;
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, links, variant]);
+
+  /** Default link first, then the rest in the order the API returned them. */
+  const ordered = useMemo(() => {
+    if (!links) return null;
+    return [...links].sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+  }, [links]);
+
+  const defaultLink = useMemo(
+    () => (links ? (links.find((l) => l.isDefault) ?? links[0] ?? null) : null),
+    [links],
+  );
+
+  /** At (or inside the grace window of) the Free cap: show the standard upgrade prompt. */
+  function handlePlanWarning(warning: LinkPlanWarning | undefined) {
+    if (!warning) return;
+    openUpgrade("active_links", { used: warning.used, max: warning.max });
+  }
+
+  /** Copy one link's public URL and flash the check icon on that row. */
+  async function copyLinkUrl(link: ShareLinkDTO) {
+    const url = buildPublicShareUrl(link.shareId);
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedLinkId(link.id);
+      window.setTimeout(() => setCopiedLinkId((c) => (c === link.id ? null : c)), 1200);
+    } catch {
+      // clipboard blocked: the URL stays selectable in the row
+    }
+  }
+
+  /** Enable or disable one link (enabling re-checks the Free cap server-side). */
+  async function setLinkEnabled(link: ShareLinkDTO, enabled: boolean) {
+    setRowBusyId(link.id);
+    setLinksError(null);
+    try {
+      const res = await fetchJson<LinkMutationResponse>(
+        `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(link.id)}`,
+        { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) },
+      );
+      handlePlanWarning(res?.planWarning);
+      refreshLinks();
+      refreshPlan();
+    } catch (e) {
+      setLinksError(e instanceof Error ? e.message : "Failed to update the link");
+    } finally {
+      setRowBusyId(null);
+    }
+  }
+
+  /** Delete (soft-archive) a link; its stats stay. The default link cannot be deleted. */
+  async function deleteLink(link: ShareLinkDTO) {
+    setRowBusyId(link.id);
+    setLinksError(null);
+    try {
+      await fetchJson<null>(`/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(link.id)}`, {
+        method: "DELETE",
+      });
+      setConfirmDeleteId(null);
+      refreshLinks();
+      refreshPlan();
+    } catch (e) {
+      setLinksError(e instanceof Error ? e.message : "Failed to delete the link");
+    } finally {
+      setRowBusyId(null);
+    }
+  }
+
+  /** Create or save the link the modal is editing. */
+  async function submitLinkModal(values: ShareLinkFormValues) {
+    if (!linkModal) return;
+    setLinkSaving(true);
+    setLinkModalError(null);
+    try {
+      const editing = linkModal.mode === "edit" ? linkModal.link : null;
+      const res = await fetchJson<LinkMutationResponse>(
+        editing
+          ? `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(editing.id)}`
+          : `/api/docs/${encodeURIComponent(docId)}/links`,
+        {
+          method: editing ? "PATCH" : "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(values),
+        },
+      );
+      setLinkModal(null);
+      handlePlanWarning(res?.planWarning);
+      refreshLinks();
+      refreshPlan();
+    } catch (e) {
+      setLinkModalError(e instanceof Error ? e.message : "Failed to save the link");
+    } finally {
+      setLinkSaving(false);
+    }
+  }
+
+  const modal = (
+    <ShareLinkModal
+      open={Boolean(linkModal)}
+      mode={linkModal?.mode ?? "create"}
+      link={linkModal?.mode === "edit" ? linkModal.link : null}
+      links={links ?? []}
+      saving={linkSaving}
+      error={linkModalError}
+      showProPill={isFreePlan}
+      onProPillClick={() => openUpgrade("version_history")}
+      onClose={() => {
+        setLinkModal(null);
+        setLinkModalError(null);
+      }}
+      onSubmit={(values) => void submitLinkModal(values)}
+    />
+  );
+
+  // --- Panel: the default link, the count, and a way out to the page -------------------------
+  if (variant === "panel") {
+    const defaultUrl = defaultLink ? buildPublicShareUrl(defaultLink.shareId) : "";
+    const count = links?.length ?? 0;
+
+    return (
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0 text-xs font-medium text-[var(--muted)]">Share link</div>
+          {canManage ? (
+            <button type="button" onClick={openCreate} className={NEW_LINK_CLASS}>
+              <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              New link
+            </button>
+          ) : null}
+        </div>
+
+        <div className="mt-2 flex items-stretch gap-2">
+          <input
+            value={defaultUrl || (links === null ? "Loading…" : "Generating link…")}
+            readOnly
+            className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 text-[13px] font-medium text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+            onFocus={(e) => e.currentTarget.select()}
+            onKeyDown={(e) => {
+              if (e.key !== "Enter" || !defaultLink) return;
+              e.preventDefault();
+              void copyLinkUrl(defaultLink);
+            }}
+            aria-label="Share link"
+          />
+          <CopyButton
+            copyDone={Boolean(defaultLink && copiedLinkId === defaultLink.id)}
+            disabled={!defaultUrl}
+            onCopy={() => {
+              if (defaultLink) void copyLinkUrl(defaultLink);
+            }}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--primary-bg)] text-[var(--primary-fg)] shadow-sm transition-colors duration-150 hover:bg-[var(--primary-hover-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-ring)] focus:ring-offset-2 focus:ring-offset-[var(--panel)] disabled:opacity-50"
+            copyAriaLabel="Copy link"
+            copiedAriaLabel="Copied"
+          />
+        </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-x-1.5 text-[12px] text-[var(--muted)]">
+          <span>
+            {count} {count === 1 ? "link" : "links"}
+          </span>
+          <span aria-hidden="true">·</span>
+          <Link
+            href={`/doc/${encodeURIComponent(docId)}/links`}
+            className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
+          >
+            Manage
+          </Link>
+        </div>
+
+        {linksError ? <div className="mt-2 text-[12px] font-medium text-red-700">{linksError}</div> : null}
+
+        {/* a11y: announce copy state */}
+        <div className="sr-only" aria-live="polite">
+          {copiedLinkId ? "Copied to clipboard" : ""}
+        </div>
+
+        {modal}
+      </div>
+    );
+  }
+
+  // --- Page: one card per link ---------------------------------------------------------------
+  return (
+    <div>
+      {linksError ? (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800 dark:border-red-300/30 dark:bg-red-400/10 dark:text-red-200">
+          {linksError}
+        </div>
+      ) : null}
+
+      <div className="grid gap-3">
+        {ordered === null ? (
+          <>
+            <div className="h-[180px] animate-pulse rounded-2xl bg-[var(--panel-hover)]" aria-hidden="true" />
+            <div className="h-[180px] animate-pulse rounded-2xl bg-[var(--panel-hover)]" aria-hidden="true" />
+          </>
+        ) : ordered.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-[var(--border)] px-6 py-10 text-center">
+            <div className="text-sm font-semibold text-[var(--fg)]">No links yet</div>
+            <div className="mx-auto mt-1 max-w-sm text-[13px] text-[var(--muted)]">
+              Create one link per audience — each keeps its own settings and its own stats.
+            </div>
+            {canManage ? (
+              <button type="button" onClick={openCreate} className={`${NEW_LINK_CLASS} mt-4`}>
+                <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                New link
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          ordered.map((link) => {
+            const pill = LINK_STATUS_PILL[link.status] ?? LINK_STATUS_PILL.disabled;
+            const viewers = linkViewers[link.id];
+            const lastViewed = relativeWhen(link.lastViewedAt);
+            const busy = rowBusyId === link.id;
+            const confirming = confirmDeleteId === link.id;
+            const url = buildPublicShareUrl(link.shareId) || `/s/${link.shareId}`;
+            const expires = formatDate(link.expiresAt);
+
+            return (
+              <div
+                key={link.id}
+                className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-4 sm:px-5"
+              >
+                {/* Header: label, audience, status */}
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+                  <span className="truncate text-[15px] font-semibold text-[var(--fg)]">{link.label}</span>
+                  {link.audience ? (
+                    <span className="truncate text-[13px] text-[var(--muted)]">{link.audience}</span>
+                  ) : null}
+                  <span
+                    className={[
+                      "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset",
+                      pill.className,
+                    ].join(" ")}
+                  >
+                    {pill.label}
+                  </span>
+                  {link.passwordEnabled ? (
+                    <LockClosedIcon
+                      className="h-4 w-4 shrink-0 text-[var(--muted)]"
+                      aria-label="Password protected"
+                      title="Password protected"
+                    />
+                  ) : null}
+                  {link.isDefault ? (
+                    <span className="shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                      Default
+                    </span>
+                  ) : null}
+                </div>
+
+                {/* The share URL */}
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="min-w-0 flex-1 select-all truncate rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[13px] font-medium text-[var(--fg)]">
+                    {url}
+                  </span>
+                  <CopyButton
+                    copyDone={copiedLinkId === link.id}
+                    onCopy={() => void copyLinkUrl(link)}
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    copyAriaLabel={`Copy the link “${link.label}”`}
+                    copiedAriaLabel="Copied"
+                  />
+                </div>
+
+                {/* Settings summary */}
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--muted)]">
+                  <SettingItem label="Download" value={link.allowDownload ? "on" : "off"} />
+                  <SettingItem label="Password" value={link.passwordEnabled ? "set" : "none"} />
+                  <SettingItem label="Version history" value={link.allowRevisionHistory ? "on" : "off"} />
+                  <SettingItem label="Expires" value={expires || "Never"} />
+                </div>
+
+                {/* Stats */}
+                <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3 sm:grid-cols-4">
+                  <StatItem label="Views" value={link.viewCount.toLocaleString()} />
+                  <StatItem label="Viewers" value={typeof viewers === "number" ? viewers.toLocaleString() : "—"} />
+                  <StatItem label="Downloads" value={link.downloadCount.toLocaleString()} />
+                  <StatItem label="Last viewed" value={lastViewed || "Never"} />
+                </div>
+
+                {/* Actions */}
+                {confirming ? (
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <span className="text-[12px] text-[var(--muted)]">
+                      Delete this link? Recipients lose access; its stats stay.
+                    </span>
+                    <span className="flex-1" />
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void deleteLink(link)}
+                      className="rounded-lg border border-red-200 bg-[var(--panel)] px-2.5 py-1.5 text-[12px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-300/30 dark:text-red-300 dark:hover:bg-red-400/10"
+                    >
+                      {busy ? "Deleting…" : "Delete"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmDeleteId(null)}
+                      className={LINK_ACTION_CLASS}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button type="button" onClick={() => void copyLinkUrl(link)} className={LINK_ACTION_CLASS}>
+                      {copiedLinkId === link.id ? "Copied" : "Copy"}
+                    </button>
+                    {canManage ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => {
+                            setLinkModalError(null);
+                            setLinkModal({ mode: "edit", link });
+                          }}
+                          className={LINK_ACTION_CLASS}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => void setLinkEnabled(link, !link.enabled)}
+                          className={LINK_ACTION_CLASS}
+                        >
+                          {busy ? "Saving…" : link.enabled ? "Disable" : "Enable"}
+                        </button>
+                        {link.isDefault ? null : (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => setConfirmDeleteId(link.id)}
+                            className={LINK_ACTION_CLASS}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* a11y: announce copy state */}
+      <div className="sr-only" aria-live="polite">
+        {copiedLinkId ? "Copied to clipboard" : ""}
+      </div>
+
+      {modal}
+    </div>
+  );
+});
+
+export default DocLinksManager;

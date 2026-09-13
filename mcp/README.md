@@ -81,14 +81,26 @@ truncated (title 300, summary 8000 chars) and stripped of control and bidi chara
 
 ### `lnkdrp_whoami`
 In `{}`. Out: the whoami payload (`userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client`)
-plus `costs: { summary: [1,2,5], compare: [2,5,12] }` and `mcpVersion`.
+plus `creditsRemaining`, `creditsResetAt` (from `GET /api/credits/snapshot?fast=1`, `null` when unreadable; whoami
+never fails over them), `costTiers: ["basic","standard","advanced"]`, `costs: { summary: [1,2,5], compare: [2,5,12] }`
+and `mcpVersion`. `costs` are computed from `creditsForRun` (`src/lib/credits/schedule.ts`, imported by the MCP
+server and copied into the Docker image), so they always match what the app charges.
 
 ### `lnkdrp_share_pdf`
 In `{ idempotencyKey (1–128), title? (≤200), sourceUrl (https; Google Drive share links and lnkdrp /s/ links accepted),
-allowDownload? = false, password? (8–128), waitForReady? = true, timeoutSeconds? 5–120 = 60 }`.
+allowDownload? = false, password? (8–128), waitForReady? = true, timeoutSeconds? 5–120 = 60,
+summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }`. `summary` and `keyPoints` go together (both or
+neither), plain text written from the document (URLs and markup are stripped). Each upload's AI summary costs 1 credit,
+or nothing when the agent passes them; the summary is then attributed to the agent. A 400 `invalid_summary` becomes a
+`validation` error that says what to fix.
 Flow: `POST /api/docs` → `POST /api/uploads` → `POST /api/uploads/:id/import-url` → `POST /api/uploads/:id/process`
 → `PATCH /api/docs/:id` (download) → `POST /api/docs/:id/share-password` → wait for `ready|failed`.
-Out `{ docId, shareId, shareUrl, replaceUrl: null, status, version, uploadId, title, planWarning?, timedOut? }`.
+Out `{ docId, shareId, shareUrl, replaceUrl: null, status, version, uploadId, title, planWarning?, timedOut?, warnings, creditsRemaining? }`.
+After processing finishes it reads `GET /api/uploads/:id` and turns `upload.ai` into `warnings` (e.g. "AI summary skipped:
+out of AI credits (needs 1). Pass summary and keyPoints to share without credits.", "AI compare skipped: version history
+is a Pro feature."); a skipped step never fails the call. `lnkdrp_get_share` returns the same `warnings`.
+`out_of_credits` errors name `creditsNeeded` / `creditsRemaining` / the reset date when the API sends them and tell a
+`DAILY_CREDIT_CAP` apart (`details.reason: "daily_cap"`).
 The same `idempotencyKey` within 24h returns the same document (status refreshed). If the import
 fails the empty draft is deleted again; failures after the file is stored keep the document and
 report `docId/shareId/shareUrl` in `details`. When a Free workspace is at its active-link cap the
@@ -104,11 +116,28 @@ In `{ idempotencyKey, docId, shareEnabled?, allowDownload?, password?: string|nu
 Out: the `lnkdrp_get_share` shape. Free-plan caps surface as `plan_limit` with the pricing link.
 
 ### `lnkdrp_get_share_stats`
-In `{ docId? | shareId?, days? 1–60 = 15, includeViewers? = false }`.
-Out `{ docId, shareId, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, downloads, pagesViewed,
+In `{ docId?, shareId?, days? 1–60 = 15, includeViewers? = false }` (at least one id). A `shareId` scopes every number to that
+one link (`perLink: true`, `GET /api/docs/:id/shareviews?shareId=`); a `docId` covers the document and all of its links. Pass
+both for a non-default link: a bare `shareId` goes through `GET /api/docs?q=`, which only matches a document's default link.
+Out `{ docId, shareId, perLink, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, downloads, pagesViewed,
 timeSpentMs, authenticatedViewers, anonymousViewers }, series: [{ date, views, downloads }], viewers? }`.
 `viewers` (untrusted `name`/`email`, `views`, `timeSpentMs`, `pagesViewed`, `pagesSeen`, `firstSeen`, `lastSeen`) is
 present only with `includeViewers` on a Pro workspace (`analyticsTier: "deep"`).
+
+### Share links (`lnkdrp_create_share_link`, `lnkdrp_list_share_links`, `lnkdrp_update_share_link`, `lnkdrp_delete_share_link`)
+A document owns many links, one per recipient (docs/prds/lnkdrp-multi-links.md); each has its own `/s/<shareId>`, label,
+audience, password, download/revision switches, expiry and counts. Link DTO: `{ id, docId, shareId, shareUrl, label, audience,
+isDefault, enabled, allowDownload, allowRevisionHistory, passwordEnabled, expiresAt, active, status, createdVia, createdAt,
+lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the sender and never shown to a viewer.
+
+- create — In `{ docId, label (1–80), audience?, allowDownload? = false, password? (8–128) | null, expiresAt? ISO | null,
+  allowRevisionHistory? = false, enabled? = true }` → `POST /api/docs/:id/links` → `{ link, shareUrl, planWarning?, planNote? }`.
+  At the Free active-link cap the link is created **disabled** with a `planWarning` instead of failing.
+- list — In `{ docId }` → `GET /api/docs/:id/links` → `{ docId, links }`, default link first.
+- update — In `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?, expiresAt?, allowRevisionHistory? }`
+  (≥1 setting) → `PATCH /api/docs/:id/links/:linkId` → `{ link, shareUrl, planWarning?, planNote? }`.
+- delete — In `{ linkId, docId }` → `DELETE /api/docs/:id/links/:linkId` → `{ ok: true }`. Soft archive; analytics kept; the
+  default link refuses (disable it instead).
 
 Also registered: resource `lnkdrp://workspace` (whoami JSON) and prompt `share-and-report`.
 

@@ -105,7 +105,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   const claimUrl = base ? new URL(`/download/${encodeURIComponent(claimToken)}`, base).toString() : "";
 
   const docId = (reqDoc as { docId?: unknown }).docId;
-  const doc = await DocModel.findOne({ _id: docId, shareId, isDeleted: { $ne: true } })
+  // `shareId` now belongs to a link, not to the document (a document owns many links), so it is no
+  // longer a field on the doc. The request row was already matched on `{ shareId, requestTokenHash }`,
+  // which is what ties this token to that link; the doc is fetched by its own id.
+  const doc = await DocModel.findOne({ _id: docId, isDeleted: { $ne: true } })
     .select({ title: 1, orgId: 1 })
     .lean();
   const title = typeof (doc as { title?: unknown } | null)?.title === "string" ? String((doc as { title: string }).title) : "Shared document";

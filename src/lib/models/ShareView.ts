@@ -11,6 +11,12 @@ const shareViewSchema = new Schema(
   {
     shareId: { type: String, trim: true, index: true, required: true },
     docId: { type: Schema.Types.ObjectId, ref: "Doc", index: true, required: true },
+    /**
+     * The `ShareLink` this view belongs to (a document owns many links; see
+     * docs/prds/lnkdrp-multi-links.md). `shareId` stays the analytics key; this is the join
+     * handle and is null for rows written before the model existed.
+     */
+    shareLinkId: { type: Schema.Types.ObjectId, ref: "ShareLink", index: true, default: null },
     botIdHash: { type: String, trim: true, index: true, required: true },
     pagesSeen: { type: [Number], default: [] },
     /**

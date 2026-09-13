@@ -15,7 +15,8 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
-import { checkLimit, planLimitResponse, type LimitCheck } from "@/lib/billing/planLimits";
+import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked } from "@/lib/billing/planLimits";
+import { ensureDefaultLink, setAllLinksEnabled, updateShareLink } from "@/lib/share/links";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +36,49 @@ function shareSettingsOf(doc: Record<string, unknown> | null | undefined): Recor
     shareAllowPdfDownload: Boolean(d.shareAllowPdfDownload),
     shareAllowRevisionHistory: Boolean(d.shareAllowRevisionHistory),
   };
+}
+
+/**
+ * Write the document-level share switches through to the document's links.
+ *
+ * Since docs/prds/lnkdrp-multi-links.md a document's share settings are a facade over its links:
+ * `shareEnabled` enables/disables *all* of them, while the download and revision-history switches
+ * act on the default link (the one behind `Doc.shareId`). `syncDocShareState` mirrors the result
+ * back onto the document, so this route's responses keep their exact shape.
+ *
+ * Returns a blocked plan check when enabling links would exceed the Free cap (the caller answers
+ * 402), or null when the write went through.
+ */
+async function applyShareFieldsToLinks(input: {
+  orgId: string;
+  doc: { _id: Types.ObjectId; orgId?: unknown; userId?: unknown; shareId?: unknown; shareEnabled?: unknown };
+  body: { shareEnabled?: boolean; shareAllowPdfDownload?: boolean; shareAllowRevisionHistory?: boolean };
+}): Promise<PlanLimitBlocked | null> {
+  const { orgId, doc, body } = input;
+  if (typeof body.shareEnabled === "boolean") {
+    const res = await setAllLinksEnabled({ orgId, docId: doc._id, enabled: body.shareEnabled });
+    if (res.limit && !res.limit.ok) return res.limit;
+  }
+  if (typeof body.shareAllowPdfDownload === "boolean" || typeof body.shareAllowRevisionHistory === "boolean") {
+    const defaultLink = await ensureDefaultLink({
+      _id: doc._id,
+      orgId: (doc.orgId ?? null) as Types.ObjectId | null,
+      userId: (doc.userId ?? null) as Types.ObjectId | null,
+      shareId: typeof doc.shareId === "string" ? doc.shareId : null,
+      shareEnabled: doc.shareEnabled !== false,
+    });
+    await updateShareLink({
+      orgId: defaultLink.orgId,
+      linkId: defaultLink._id,
+      settings: {
+        ...(typeof body.shareAllowPdfDownload === "boolean" ? { allowDownload: body.shareAllowPdfDownload } : {}),
+        ...(typeof body.shareAllowRevisionHistory === "boolean"
+          ? { allowRevisionHistory: body.shareAllowRevisionHistory }
+          : {}),
+      },
+    });
+  }
+  return null;
 }
 
 /**
@@ -898,6 +942,28 @@ export async function PATCH(
       { new: true },
     ).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // The links are the real sharing state; the doc fields above are the mirror kept for
+    // compatibility (docs/prds/lnkdrp-multi-links.md).
+    if (wantsShareChange) {
+      const blocked = await applyShareFieldsToLinks({
+        orgId: actor.orgId,
+        doc: doc as unknown as { _id: Types.ObjectId; orgId?: unknown; userId?: unknown; shareId?: unknown; shareEnabled?: unknown },
+        body,
+      });
+      if (blocked) {
+        void recordActivity({
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "plan.limit_reached",
+          docId: docObjectId,
+          meta: { limit: blocked.limit, used: blocked.used, max: blocked.max },
+          request,
+        });
+        return applyTempUserHeaders(planLimitResponse(blocked), actor);
+      }
+    }
 
     if (wantsShareChange) {
       const prev = shareSettingsOf(before as Record<string, unknown> | null);
