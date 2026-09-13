@@ -164,7 +164,7 @@ export default async function PricingPage() {
                   "Unlimited projects",
                   "Deep analytics: who opened it, time per page, full history",
                   "Version history and AI compare",
-                  "300 credits a month, more at $0.10 each",
+                  "300 credits a month, about 60 AI compares at standard quality",
                   `${PRO_INCLUDED_COLLABORATORS} collaborator included · more on request`,
                   "Agents never take a seat",
                   "AI summary and key points on every link",
@@ -214,8 +214,9 @@ export default async function PricingPage() {
                   Pick a level, pay per run.
                 </h2>
                 <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
-                  Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month. Higher levels run a deeper
-                  analysis and cost more per run. The summary on every link never uses credits.
+                  Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month: about 150 basic compares, 60 standard, or
+                  25 advanced. Higher levels run a deeper analysis and cost more per run. The summary on every
+                  link never uses credits, so most workspaces never buy more.
                 </p>
                 <p className="mt-3 max-w-md text-[12px] leading-5 text-white/45">
                   Need more? Turn on on-demand: $0.10 per credit, billed through Stripe, under a hard spend limit
@@ -331,7 +332,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What do credits pay for?",
-                  a: "AI compare of two versions, which explains what changed: 2 credits for basic, 5 for standard, 12 for advanced. Pro includes 300 credits a month; they reset monthly and do not roll over. If you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set. The summary on every link never uses credits.",
+                  a: "AI compare of two versions, which explains what changed: 2 credits for basic, 5 for standard, 12 for advanced. Pro includes 300 credits a month, enough for about 150 basic, 60 standard, or 25 advanced compares; they reset monthly and do not roll over. If you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set. The summary on every link never uses credits.",
                 },
                 {
                   q: "Can I replace a file on Free?",

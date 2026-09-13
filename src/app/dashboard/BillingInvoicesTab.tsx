@@ -472,7 +472,7 @@ export default function BillingInvoicesTab() {
               {summaryLoaded ? cycleRange : <SkeletonPill widthClassName="w-56" />}
             </div>
             <div className="mt-2 text-[12px] text-[var(--muted-2)]">
-              Includes 300 credits a month. Credits reset on your renewal date.
+              Includes 300 credits a month, about 60 standard AI compares. Credits reset on your renewal date.
             </div>
             <button
               type="button"

@@ -85,7 +85,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     title: "Credits power AI compare on Pro",
     reason: "AI compare runs on credits, which are included with Pro.",
     bullets: [
-      "300 credits a month, more at $0.10 each",
+      "300 credits a month, about 60 standard AI compares",
       "AI compare of what changed between versions",
       "Version history for every link",
     ],
