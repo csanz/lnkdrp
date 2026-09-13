@@ -7,6 +7,7 @@
  * `detail` so local debugging stays convenient.
  */
 import { NextResponse } from "next/server";
+import { ApiKeyAuthError } from "@/lib/gating/apiKeyActor";
 import { debugError } from "@/lib/debug";
 
 export type ErrorJsonOptions = {
@@ -37,6 +38,10 @@ export function errorMessage(err: unknown): string {
  * In non-production environments the response also carries `detail` with the raw message.
  */
 export function errorJson(err: unknown, opts: ErrorJsonOptions): NextResponse {
+  // A bad or read-only API key is a client error with its own status, not a 500.
+  if (err instanceof ApiKeyAuthError) {
+    return NextResponse.json({ error: err.code, message: err.message }, { status: err.status, headers: { "cache-control": "no-store" } });
+  }
   const message = errorMessage(err);
   debugError(1, opts.context ?? "[api] request failed", { status: opts.status, message, ...(opts.logMeta ?? {}) });
 

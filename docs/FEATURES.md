@@ -400,6 +400,10 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 
 - **WebSocket push** (2026-09-13): a standalone server (`realtime/server.ts`, `npm run realtime`) fans out Mongo change streams to per-workspace rooms — `agent` (key used/created/revoked), `activity` (new row), `doc` (processing status). Browser client `src/lib/client/realtime.ts` (`subscribeRealtime(type, handler)`, one socket per tab, 60s HMAC tickets from `GET /api/realtime/ticket`, backoff reconnect, re-ticket on workspace switch). `useAgentStatus` and the Activity page subscribe; polling stays as fallback (60s+ while the socket is open). The MCP server writes through the same collections (fan-out is automatic) and can subscribe with a self-signed ticket. Docs: `docs/REALTIME.md`.
 
+## REST API with agent keys
+
+- **Any route accepts `Authorization: Bearer lnk_…`** (2026-09-13): `tryResolveApiKeyActor` in `src/lib/gating/apiKeyActor.ts` runs first in every actor resolver (`tryResolveUserActor`, the two fast paths, `resolveActorForStats`), so a key resolves to the key's workspace with no session or cookie. Bad or revoked keys throw `ApiKeyAuthError` → 401 (`errorJson` maps it; a few routes with their own catch answer 500 with the same message, a known rough edge); keys without the `write` scope get 403 on POST/PUT/PATCH/DELETE. Activity attribution comes from `x-lnkdrp-agent: <client>/<version>` as before. This is what the MCP server drives; scripts and CLIs can use it directly (`curl -H "Authorization: Bearer lnk_…" /api/docs`).
+
 ## Agent API keys
 
 - **What**: workspace-scoped bearer keys that AI agents / MCP clients (Claude Code, Cursor, Codex, …) use to act as the workspace. Managed from the in-app Connect page (`/connect`); the not-yet-built MCP server (`docs/prds/lnkdrp-mcp.md`) authenticates every request with the same `verifyBearer()` seam.

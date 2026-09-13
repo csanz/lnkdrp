@@ -5,6 +5,7 @@ import { ensurePersonalOrgForUserId, OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER } from "@/lib/gating/tempUserHeaders";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
+import { tryResolveApiKeyActor } from "@/lib/gating/apiKeyActor";
 
 const ACTOR_CACHE = new WeakMap<Request, Promise<Actor>>();
 
@@ -243,6 +244,9 @@ export function applyTempUserHeaders(
  * create/mint a new temp user when no authenticated session exists.
  */
 export async function tryResolveUserActor(request: Request): Promise<Actor | null> {
+  // API keys first: an `lnk_` bearer is the workspace, no session or cookie involved.
+  const keyActor = await tryResolveApiKeyActor(request);
+  if (keyActor) return keyActor;
   const session = await tryGetSessionClaims(request);
   if (!session?.userId) return null;
 
@@ -308,6 +312,8 @@ export async function tryResolveUserActor(request: Request): Promise<Actor | nul
  * - you can tolerate falling back to full `resolveActor()` when claim is missing.
  */
 export async function tryResolveUserActorFast(request: Request): Promise<Actor | null> {
+  const keyActor = await tryResolveApiKeyActor(request);
+  if (keyActor) return keyActor;
   const session = await tryGetSessionClaims(request);
   if (!session?.userId) return null;
 
@@ -348,6 +354,8 @@ export async function tryResolveUserActorFast(request: Request): Promise<Actor |
  * - a cached personalOrgId (to preserve legacy personal-doc scoping behavior without extra upserts)
  */
 export async function tryResolveUserActorFastWithPersonalOrg(request: Request): Promise<Actor | null> {
+  const keyActor = await tryResolveApiKeyActor(request);
+  if (keyActor) return keyActor;
   const session = await tryGetSessionClaims(request);
   if (!session?.userId) return null;
 
@@ -522,6 +530,8 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
   if (cached) return await cached;
 
   const p: Promise<Actor> = (async () => {
+    const keyActor = await tryResolveApiKeyActor(request);
+    if (keyActor) return keyActor;
     const session = await tryGetSessionClaims(request);
     if (!session?.userId) return await resolveActorUncached(request);
 

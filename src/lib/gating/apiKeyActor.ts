@@ -97,3 +97,46 @@ export async function verifyBearer(request: Request): Promise<VerifyBearerResult
   await touchApiKeyUse({ keyId: result.key.id, client: clientLabelFromRequest(request) });
   return result;
 }
+
+/**
+ * Thrown by `tryResolveApiKeyActor` when a request carries an `lnk_` bearer that is invalid,
+ * revoked, or lacks the scope for the method. Routes that use `errorJson` map it to its status;
+ * it must never fall through to a session or temp-user actor, because an agent presenting a bad
+ * key would otherwise silently land in a fresh temporary workspace.
+ */
+export class ApiKeyAuthError extends Error {
+  status: number;
+  code: "unauthorized" | "key_revoked" | "forbidden";
+  constructor(code: "unauthorized" | "key_revoked" | "forbidden", message: string) {
+    super(message);
+    this.name = "ApiKeyAuthError";
+    this.code = code;
+    this.status = code === "forbidden" ? 403 : 401;
+  }
+}
+
+const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * REST seam: when the request carries `Authorization: Bearer lnk_…`, resolve the key to an actor
+ * for the key's workspace (and record the use, with the client from `x-lnkdrp-agent`). Returns
+ * null when there is no `lnk_` bearer so the normal session / temp-user resolution runs. Keys
+ * without the `write` scope are refused on mutating methods.
+ *
+ * This is what lets the MCP server (and any script) drive the same API the web app uses.
+ */
+export async function tryResolveApiKeyActor(request: Request): Promise<Actor | null> {
+  const token = bearerTokenFromRequest(request);
+  // Anything that claims to be a key is judged as one: a malformed `lnk_…` must 401, never fall
+  // through to a session or a fresh temp workspace.
+  if (!token || !token.startsWith(API_KEY_PREFIX)) return null;
+  const result = await verifyBearer(request);
+  if (!result.ok) {
+    throw new ApiKeyAuthError(result.code, result.code === "key_revoked" ? "This API key was revoked." : "Invalid API key.");
+  }
+  const method = (request.method || "GET").toUpperCase();
+  if (MUTATING.has(method) && !result.key.scopes.includes("write")) {
+    throw new ApiKeyAuthError("forbidden", "This API key is read-only.");
+  }
+  return result.actor;
+}

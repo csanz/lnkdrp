@@ -25,7 +25,7 @@ const {
   toAgentKeyRow,
   touchApiKeyUse,
 } = await import("@/lib/agents/apiKeys");
-const { verifyBearer, verifyBearerToken, bearerTokenFromRequest, clientLabelFromRequest } = await import(
+const { verifyBearer, verifyBearerToken, bearerTokenFromRequest, clientLabelFromRequest, tryResolveApiKeyActor, ApiKeyAuthError } = await import(
   "@/lib/gating/apiKeyActor"
 );
 
@@ -241,5 +241,33 @@ describe("gating/apiKeyActor.verifyBearerToken", () => {
     resetApiKeyTouchThrottle();
     apiKeyUpdateOne.mockRejectedValueOnce(new Error("mongo down"));
     await expect(touchApiKeyUse({ keyId, client: "Codex" })).resolves.toBeUndefined();
+  });
+});
+
+describe("gating/apiKeyActor.tryResolveApiKeyActor (REST seam)", () => {
+  const req = (headers: Record<string, string>, method = "GET") => new Request("http://x/api/docs", { method, headers });
+
+  test("returns null without an lnk_ bearer so session resolution runs", async () => {
+    expect(await tryResolveApiKeyActor(req({}))).toBeNull();
+    expect(await tryResolveApiKeyActor(req({ authorization: "Bearer oauth_token" }))).toBeNull();
+  });
+
+  test("a malformed or unknown lnk_ bearer throws 401 instead of falling through", async () => {
+    await expect(tryResolveApiKeyActor(req({ authorization: "Bearer lnk_short" }))).rejects.toMatchObject({ status: 401, code: "unauthorized" });
+    lookup(null);
+    await expect(tryResolveApiKeyActor(req({ authorization: `Bearer ${generateApiKeyPlaintext()}` }))).rejects.toBeInstanceOf(ApiKeyAuthError);
+  });
+
+  test("a revoked key throws key_revoked", async () => {
+    lookup(keyDoc({ revokedAt: new Date() }));
+    await expect(tryResolveApiKeyActor(req({ authorization: `Bearer ${generateApiKeyPlaintext()}` }))).rejects.toMatchObject({ status: 401, code: "key_revoked" });
+  });
+
+  test("a read-only key is refused on mutating methods and accepted on GET", async () => {
+    lookup(keyDoc({ scopes: ["read"] }));
+    await expect(tryResolveApiKeyActor(req({ authorization: `Bearer ${generateApiKeyPlaintext()}` }, "POST"))).rejects.toMatchObject({ status: 403, code: "forbidden" });
+    lookup(keyDoc({ scopes: ["read"] }));
+    const actor = await tryResolveApiKeyActor(req({ authorization: `Bearer ${generateApiKeyPlaintext()}` }, "GET"));
+    expect(actor?.kind).toBe("user");
   });
 });
