@@ -14,7 +14,8 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { newSecretToken } from "@/lib/crypto/randomBase62";
 import { API_KEY_SCOPES, ApiKeyModel, type ApiKeyScope } from "@/lib/models/ApiKey";
-import type { AgentKeyRow, AgentStatus } from "@/lib/client/useAgentStatus";
+import { UserModel } from "@/lib/models/User";
+import type { AgentClient, AgentKeyRow, AgentStatus } from "@/lib/client/useAgentStatus";
 import { debugLog } from "@/lib/debug";
 
 export const API_KEY_PREFIX = "lnk_";
@@ -76,7 +77,11 @@ export type ApiKeyRowSource = {
   lastUsedAt?: Date | string | null;
   lastUsedClient?: string | null;
   revokedAt?: Date | string | null;
+  createdByUserId?: Types.ObjectId | string | null;
 };
+
+/** Owner display info resolved from `User` for `createdBy`. */
+export type KeyOwner = { id: string; name: string | null; email: string | null };
 
 /** ISO string for a Date/string, or null when missing/invalid. */
 function toIso(v: Date | string | null | undefined): string | null {
@@ -86,7 +91,7 @@ function toIso(v: Date | string | null | undefined): string | null {
 }
 
 /** Project an ApiKey document into the client `AgentKeyRow` shape (never includes the hash). */
-export function toAgentKeyRow(doc: ApiKeyRowSource): AgentKeyRow {
+export function toAgentKeyRow(doc: ApiKeyRowSource, owner: KeyOwner | null = null): AgentKeyRow {
   const scopes = (doc.scopes ?? []).filter((s): s is ApiKeyScope =>
     (API_KEY_SCOPES as readonly string[]).includes(s),
   );
@@ -99,7 +104,16 @@ export function toAgentKeyRow(doc: ApiKeyRowSource): AgentKeyRow {
     lastUsedAt: toIso(doc.lastUsedAt),
     lastUsedClient: doc.lastUsedClient ?? null,
     revoked: Boolean(doc.revokedAt),
+    createdBy: owner,
   };
+}
+
+/** Short display name for a key owner: name, else the part of the email before "@", else "a member". */
+export function ownerLabel(owner: KeyOwner | null): string {
+  if (!owner) return "a member";
+  if (owner.name && owner.name.trim()) return owner.name.trim();
+  if (owner.email) return owner.email.split("@")[0] || owner.email;
+  return "a member";
 }
 
 /** Coerce a string/ObjectId into an ObjectId (callers validate ids first). */
@@ -144,14 +158,32 @@ export async function createApiKey(input: CreateApiKeyInput): Promise<{ plaintex
 }
 
 /** Keys for a workspace, newest first, revoked included (`revoked: true`), capped at 50. */
+/** Resolve `createdByUserId`s to display info in one query (missing users map to null). */
+async function resolveOwners(ids: Array<Types.ObjectId | string | null>): Promise<Map<string, KeyOwner>> {
+  const unique = Array.from(new Set(ids.filter(Boolean).map((v) => String(v)))).filter((v) => Types.ObjectId.isValid(v));
+  const out = new Map<string, KeyOwner>();
+  if (unique.length === 0) return out;
+  const users = await UserModel.find({ _id: { $in: unique.map((v) => new Types.ObjectId(v)) } })
+    .select({ name: 1, email: 1 })
+    .lean();
+  for (const u of users as Array<{ _id: Types.ObjectId; name?: string | null; email?: string | null }>) {
+    out.set(String(u._id), { id: String(u._id), name: u.name ?? null, email: u.email ?? null });
+  }
+  return out;
+}
+
 export async function listApiKeys(orgId: string | Types.ObjectId): Promise<AgentKeyRow[]> {
   await connectMongo();
   const docs = await ApiKeyModel.find({ orgId: toObjectId(orgId), isDeleted: { $ne: true } })
     .sort({ createdDate: -1 })
     .limit(API_KEY_LIST_LIMIT)
-    .select({ name: 1, prefix: 1, scopes: 1, createdDate: 1, lastUsedAt: 1, lastUsedClient: 1, revokedAt: 1 })
+    .select({ name: 1, prefix: 1, scopes: 1, createdDate: 1, lastUsedAt: 1, lastUsedClient: 1, revokedAt: 1, createdByUserId: 1 })
     .lean();
-  return docs.map((d) => toAgentKeyRow(d as ApiKeyRowSource));
+  const owners = await resolveOwners(docs.map((d) => (d as ApiKeyRowSource).createdByUserId ?? null));
+  return docs.map((d) => {
+    const src = d as ApiKeyRowSource;
+    return toAgentKeyRow(src, src.createdByUserId ? (owners.get(String(src.createdByUserId)) ?? null) : null);
+  });
 }
 
 /** Number of non-revoked keys in a workspace (for the per-org cap). */
@@ -172,7 +204,7 @@ export async function revokeApiKey(input: { orgId: string | Types.ObjectId; keyI
     { $set: { revokedAt: new Date() } },
     { new: true },
   )
-    .select({ name: 1, prefix: 1, scopes: 1, createdDate: 1, lastUsedAt: 1, lastUsedClient: 1, revokedAt: 1 })
+    .select({ name: 1, prefix: 1, scopes: 1, createdDate: 1, lastUsedAt: 1, lastUsedClient: 1, revokedAt: 1, createdByUserId: 1 })
     .lean();
   return doc ? toAgentKeyRow(doc as ApiKeyRowSource) : null;
 }
@@ -222,18 +254,36 @@ export function resetApiKeyTouchThrottle(): void {
  * so a workspace that revokes every key goes back to "Not connected" instead of showing a stale
  * green dot forever; their history stays visible in the key list.
  */
-export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Omit<AgentStatus, "canManage">> {
+export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Omit<AgentStatus, "canManage" | "isPersonalOrg">> {
   const keys = await listApiKeys(orgId);
   let latest: AgentKeyRow | null = null;
   for (const k of keys) {
     if (!k.lastUsedAt || k.revoked) continue;
     if (!latest || (latest.lastUsedAt ?? "") < k.lastUsedAt) latest = k;
   }
+  // Distinct connected clients across active, used keys (a client may hold several keys, and in a
+  // shared workspace several members may each connect the same client).
+  const byClient = new Map<string, AgentClient>();
+  for (const k of keys) {
+    if (!k.lastUsedAt || k.revoked) continue;
+    const name = k.lastUsedClient ?? "API key";
+    const who = ownerLabel(k.createdBy);
+    const cur = byClient.get(name);
+    if (!cur) byClient.set(name, { client: name, lastUsedAt: k.lastUsedAt, keys: 1, by: [who] });
+    else {
+      cur.keys += 1;
+      if (cur.lastUsedAt < k.lastUsedAt) cur.lastUsedAt = k.lastUsedAt;
+      if (!cur.by.includes(who)) cur.by.push(who);
+    }
+  }
+  const clients = Array.from(byClient.values()).sort((a, b) => (a.lastUsedAt < b.lastUsedAt ? 1 : -1));
   return {
     connected: latest !== null,
     lastUsedAt: latest?.lastUsedAt ?? null,
     lastUsedClient: latest?.lastUsedClient ?? null,
     activeKeys: keys.filter((k) => !k.revoked).length,
     keys,
+    clients,
+    connectedCount: clients.length,
   };
 }

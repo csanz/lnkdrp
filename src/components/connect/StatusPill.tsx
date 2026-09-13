@@ -14,9 +14,15 @@ export default function StatusPill({ status, loading }: { status: AgentStatus | 
     );
   }
   const connected = Boolean(status?.connected);
-  const parts = connected
-    ? ["Connected", status?.lastUsedClient ?? null, formatRelative(status?.lastUsedAt) || null].filter(Boolean)
-    : ["No agent has connected yet"];
+  const clients = status?.clients ?? [];
+  // "Claude Code, Cursor" up to two names; "3 clients" past that, so the pill stays one line.
+  const who =
+    clients.length === 0
+      ? (status?.lastUsedClient ?? null)
+      : clients.length <= 2
+        ? clients.map((c) => c.client).join(", ")
+        : `${clients.length} clients`;
+  const parts = connected ? ["Connected", who, formatRelative(status?.lastUsedAt) || null].filter(Boolean) : ["No agent has connected yet"];
   return (
     <span
       role="status"

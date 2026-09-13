@@ -67,13 +67,24 @@ function RevealBox({ created, onDismiss }: { created: CreatedKey; onDismiss: () 
 }
 
 /** One key in the list: name, prefix, dates, and a two-step Revoke for managers. */
+/** Owner display name for shared workspaces: name, else the email's local part. */
+function ownerName(owner: AgentKeyRow["createdBy"]): string | null {
+  if (!owner) return null;
+  if (owner.name && owner.name.trim()) return owner.name.trim();
+  if (owner.email) return owner.email.split("@")[0] || owner.email;
+  return null;
+}
+
 function KeyRow({
   row,
   canManage,
+  showOwner,
   onRevoked,
 }: {
   row: AgentKeyRow;
   canManage: boolean;
+  /** Shared workspaces: show whose key it is so a team can see each other's agents. */
+  showOwner: boolean;
   onRevoked: (id: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
@@ -103,6 +114,7 @@ function KeyRow({
   const lastUsed = row.lastUsedAt
     ? [formatRelative(row.lastUsedAt), row.lastUsedClient].filter(Boolean).join(" · ")
     : "Never used";
+  const owner = showOwner ? ownerName(row.createdBy) : null;
 
   return (
     <li className={["flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3", row.revoked ? "opacity-60" : ""].join(" ")}>
@@ -118,6 +130,12 @@ function KeyRow({
         </div>
         <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
           Created {formatDate(row.createdAt)}
+          {owner ? (
+            <>
+              <span aria-hidden="true"> · </span>
+              by <span className="text-[var(--muted)]">{owner}</span>
+            </>
+          ) : null}
           <span aria-hidden="true"> · </span>
           {row.revoked ? "Revoked" : lastUsed}
         </div>
@@ -290,7 +308,7 @@ export default function KeysPanel({
       ) : (
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
           {keys.map((row) => (
-            <KeyRow key={row.id} row={row} canManage={canManage} onRevoked={onRevoked} />
+            <KeyRow key={row.id} row={row} canManage={canManage} showOwner={!status?.isPersonalOrg} onRevoked={onRevoked} />
           ))}
         </ul>
       )}

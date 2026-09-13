@@ -22,6 +22,18 @@ export type AgentKeyRow = {
   /** Client label derived from `x-lnkdrp-agent` / User-Agent on last use, e.g. "Claude Code". */
   lastUsedClient: string | null;
   revoked: boolean;
+  /** Who created the key; shown in shared workspaces so a team can see whose agents are connected. */
+  createdBy: { id: string; name: string | null; email: string | null } | null;
+};
+
+/** One connected client (distinct `lastUsedClient` across active, used keys), most recent first. */
+export type AgentClient = {
+  client: string;
+  lastUsedAt: string;
+  /** Active keys this client has used. */
+  keys: number;
+  /** Display names of the members whose keys this client used (shared workspaces). */
+  by: string[];
 };
 
 export type AgentStatus = {
@@ -31,6 +43,11 @@ export type AgentStatus = {
   lastUsedClient: string | null;
   activeKeys: number;
   keys: AgentKeyRow[];
+  /** Distinct connected clients, most recent first; `connectedCount === clients.length`. */
+  clients: AgentClient[];
+  connectedCount: number;
+  /** Personal workspaces have no teammates, so owner names are omitted in the UI. */
+  isPersonalOrg: boolean;
   /** Whether the current member may create/revoke keys (owner or admin). */
   canManage: boolean;
 };

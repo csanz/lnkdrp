@@ -1814,7 +1814,7 @@ export default function LeftSidebar({
                 navLocked
                   ? "Disabled while uploading"
                   : agentStatus?.connected
-                    ? `Last used by ${agentStatus.lastUsedClient ?? "an agent"} ${formatRelative(agentStatus.lastUsedAt).toLowerCase()}`.trimEnd()
+                    ? `${agentStatus.clients.map((c) => c.client).join(", ") || agentStatus.lastUsedClient || "An agent"} · last used ${formatRelative(agentStatus.lastUsedAt).toLowerCase()}`.trimEnd()
                     : "Connect Claude Code, Cursor, Codex or any MCP client"
               }
             >
@@ -1830,11 +1830,39 @@ export default function LeftSidebar({
                         agentStatus.connected ? "bg-[var(--chart-views)]" : "bg-[var(--muted)]",
                       ].join(" ")}
                     />
-                    <span>{agentStatus.connected ? "Connected" : "Not connected"}</span>
+                    <span>
+                      {agentStatus.connected
+                        ? `${agentStatus.connectedCount || 1} connected`
+                        : "Not connected"}
+                    </span>
                   </span>
                 ) : null}
               </div>
             </button>
+            {/* Most recent connected clients (up to 3) under the Agents entry; each row opens /connect.
+                In shared workspaces the owner's name is shown so a team sees whose agent it is. */}
+            {agentStatus?.connected && agentStatus.clients.length > 0 && !navLocked ? (
+              <ul className="mb-1 mt-0.5 space-y-0.5 pl-9 pr-2" aria-label="Connected clients">
+                {agentStatus.clients.slice(0, 3).map((c) => (
+                  <li key={c.client}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-[11px] text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                      onClick={() => router.push("/connect")}
+                      title={`${c.client} · ${formatRelative(c.lastUsedAt)}${agentStatus.isPersonalOrg ? "" : ` · ${c.by.join(", ")}`}`}
+                    >
+                      <span className="min-w-0 truncate">
+                        {c.client}
+                        {!agentStatus.isPersonalOrg && c.by.length > 0 ? (
+                          <span className="text-[var(--muted-2)]"> · {c.by.length === 1 ? c.by[0] : `${c.by.length} members`}</span>
+                        ) : null}
+                      </span>
+                      <span className="shrink-0 text-[var(--muted-2)]">{formatRelative(c.lastUsedAt)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
 
             {FEATURE_REQUESTS_ENABLED ? (
               <button

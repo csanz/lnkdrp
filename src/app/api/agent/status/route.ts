@@ -29,7 +29,10 @@ export async function GET(request: Request) {
     if (!role.ok) return NextResponse.json({ error: "forbidden" }, { status: 403, headers: NO_STORE });
 
     const status = await getAgentStatus(actor.orgId);
-    return NextResponse.json({ ...status, canManage: roleAtLeast(role.role, "admin") }, { headers: NO_STORE });
+    return NextResponse.json(
+      { ...status, isPersonalOrg: actor.orgId === actor.personalOrgId, canManage: roleAtLeast(role.role, "admin") },
+      { headers: NO_STORE },
+    );
   } catch (err) {
     return errorJson(err, { status: 500, publicMessage: "Could not load agent status", context: "[api/agent/status] GET failed" });
   }

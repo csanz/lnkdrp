@@ -123,6 +123,7 @@ describe("agents/apiKeys key format", () => {
       lastUsedAt: null,
       lastUsedClient: null,
       revoked: true,
+      createdBy: null,
     });
     expect("keyHash" in row).toBe(false);
   });
