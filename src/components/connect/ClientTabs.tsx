@@ -64,6 +64,11 @@ export default function ClientTabs({ plaintextKey }: { plaintextKey: string | nu
           The MCP server ships with launch. Your key already works against the verification endpoint below.
           {plaintextKey ? null : " Commands show a placeholder until you create a key."}
         </p>
+        <details className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] leading-5 text-[var(--muted)]">
+          <summary className="cursor-pointer select-none font-medium text-[var(--fg)]">Change the key or remove lnkdrp</summary>
+          <p className="mt-2">{active.remove.body}</p>
+          {active.remove.code ? <CodeBlock lines={active.remove.code} label={`Copy ${active.label} remove command`} size="sm" className="mt-2" /> : null}
+        </details>
         {isLocal ? (
           <p className="mt-1.5 text-[12px] leading-5 text-[var(--muted-2)]">
             Local dev: commands use <code className="font-mono">{mcp}</code>. Set <code className="font-mono">NEXT_PUBLIC_MCP_URL</code> to point elsewhere; production is <code className="font-mono">{MCP_URL}</code>.

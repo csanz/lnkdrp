@@ -220,7 +220,7 @@ function KeyRow({
       {canManage && !row.revoked ? (
         confirming ? (
           <div className="flex items-center gap-2">
-            <span className="text-[12px] text-[var(--muted)]">Revoke this key?</span>
+            <span className="text-[12px] text-[var(--muted)]">Revoke this key? Clients using it stop working until you remove lnkdrp there and add it again with a new key (step 2 explains how).</span>
             <button type="button" onClick={() => void revoke()} disabled={busy} className={PRIMARY_BUTTON}>
               {busy ? "Revoking…" : "Revoke"}
             </button>
@@ -312,11 +312,55 @@ export default function KeysPanel({
     }
   };
 
+  // "Revoke all": every active key in one go, for when you want every agent connection dead now.
+  // Revokes sequentially through the same endpoint so the activity feed gets one row per key.
+  const [revokeAllOpen, setRevokeAllOpen] = useState(false);
+  const [revokingAll, setRevokingAll] = useState(false);
+  const revokeAll = async () => {
+    setRevokingAll(true);
+    setError(null);
+    try {
+      for (const k of activeKeys) {
+        const res = await fetchWithTempUser(`/api/agent/keys/${encodeURIComponent(k.id)}`, { method: "DELETE" });
+        if (!res.ok && res.status !== 404) {
+          const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+          throw new Error(errorMessage(res.status, body, "Could not revoke every key."));
+        }
+        onRevoked(k.id);
+      }
+      refreshAgentStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not revoke every key.");
+    } finally {
+      setRevokingAll(false);
+      setRevokeAllOpen(false);
+    }
+  };
+
   const action =
     canManage && !formOpen ? (
-      <button type="button" onClick={() => { setFormOpen(true); setError(null); }} className={PRIMARY_BUTTON}>
-        Create key
-      </button>
+      <div className="flex items-center gap-2">
+        {activeCount > 1 ? (
+          revokeAllOpen ? (
+            <>
+              <span className="text-[12px] text-[var(--muted)]">Revoke all {activeCount} keys?</span>
+              <button type="button" onClick={() => void revokeAll()} disabled={revokingAll} className={QUIET_BUTTON}>
+                {revokingAll ? "Revoking…" : "Revoke all"}
+              </button>
+              <button type="button" onClick={() => setRevokeAllOpen(false)} disabled={revokingAll} className={QUIET_BUTTON}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={() => setRevokeAllOpen(true)} className={QUIET_BUTTON} title="Revoke every active key; all agent connections stop">
+              Revoke all
+            </button>
+          )
+        ) : null}
+        <button type="button" onClick={() => { setFormOpen(true); setError(null); }} className={PRIMARY_BUTTON}>
+          Create key
+        </button>
+      </div>
     ) : null;
 
   return (

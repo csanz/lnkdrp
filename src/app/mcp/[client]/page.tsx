@@ -150,6 +150,14 @@ export default async function McpClientGuidePage({ params }: { params: Promise<P
       </ol>
 
       <div className="mt-14">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Change the key or remove lnkdrp</h2>
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <p className="text-sm leading-6 text-white/70">{setup.remove.body}</p>
+          {setup.remove.code ? <CodeBlock lines={setup.remove.code} label={`Copy ${setup.label} remove command`} className="mt-3" /> : null}
+        </div>
+      </div>
+
+      <div className="mt-14">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Troubleshooting</h2>
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
           <Troubleshooting />
