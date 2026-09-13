@@ -314,8 +314,8 @@ export default function ShareLinkModal({
           />
           <SwitchRow label="Allow download" checked={allowDownload} disabled={saving} onChange={setAllowDownload} />
           <SwitchRow
-            label="Show version history"
-            hint="Recipients can browse versions (version, date and what changed)."
+            label="Let recipients browse versions"
+            hint="They see each version with its date and what changed. Owner-side version history and AI compare are separate."
             checked={allowRevisionHistory}
             disabled={saving}
             onChange={setAllowRevisionHistory}

@@ -26,8 +26,8 @@ The older first-deployment checklist with key-generation walkthroughs lives in
 | Piece | Runs on | Why it lives there |
 |---|---|---|
 | Web app + API + crons | Vercel | Serverless functions, Vercel Cron, Blob client uploads |
-| Realtime server | Any host that holds sockets (Fly, Railway, a VM, Docker) | Vercel functions cannot keep a WebSocket open |
-| MCP server | Same kind of host, or the same box as realtime | Long-lived MCP sessions; holds client identity per session |
+| Realtime server | Fly.io machine (`deploy/fly/realtime.fly.toml`); any socket-capable host works | Vercel functions cannot keep a WebSocket open; see 6.1 |
+| MCP server | Fly.io machine (`deploy/fly/mcp.fly.toml`) | Long-lived MCP sessions; holds client identity per session |
 
 All three share one Mongo cluster and one secret family. Nothing else is stateful.
 
@@ -140,13 +140,76 @@ with a server-issued token; the completion callback reaches the app at the publi
 Never set `API_TEST_BYPASS_AUTH` or `ADMIN_LOCALHOST_BYPASS` in production. The code refuses
 the auth bypass outside development, but do not rely on that.
 
-4. Crons come from `vercel.json` (seven routes, hourly to six-hourly). Each cron route also
-   accepts `POST` with the same bearer for manual runs. Vercel Pro is required for schedules
-   more frequent than daily; the notification-emails cron runs every 5 minutes.
+4. Crons come from `vercel.json`; see section 5.1. Vercel Pro is required for schedules more
+   frequent than daily (notification emails run every 5 minutes).
 5. Deploy. The first production build takes a few minutes because of the PDF and canvas native
    packages.
 
+### 5.1 Cron jobs
+
+Every job is one HTTP route, one schedule, and one runner script, and `tests/lib/cronMap.test.ts`
+fails when they drift:
+
+| Job | Schedule (`vercel.json`) | Run by hand |
+|---|---|---|
+| `doc-metrics` | `0 */6 * * *` | `npm run cron:doc-metrics` |
+| `stripe-credits-reconcile` | `15 */6 * * *` | `npm run cron:stripe-credits-reconcile` |
+| `stripe-credits-report` | `30 * * * *` | `npm run cron:stripe-credits-report` |
+| `credits-cycle-reconcile` | `10 * * * *` | `npm run cron:credits-cycle-reconcile` |
+| `usage-agg-reconcile` | `20 * * * *` | `npm run cron:usage-agg-reconcile` |
+| `notification-emails` | `*/5 * * * *` | `npm run cron:notification-emails` |
+| `plan-limits` | `40 * * * *` | `npm run cron:plan-limits` |
+
+- **Production:** Vercel Cron calls `GET /api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`
+  on the schedule. Routes take a Mongo lease so an overlapping run is skipped, record a
+  `CronHealth` row, and accept `POST` as well.
+- **By hand, any environment:** `npm run cron:<job> -- --target=https://lnkdrp.com` with
+  `CRON_SECRET` in the shell (add `--dry-run` where the route supports it). Against a local dev
+  server the secret is optional. The runners in `scripts/cron/` only call the route; they never
+  re-implement a job.
+- **Without Vercel Cron:** the same runners work from a system crontab on the services host;
+  `scripts/cron/README.md` has the crontab lines. Keep the two schedules identical; leases make an
+  accidental double scheduler harmless.
+- Job details and manual-trigger examples: `docs/CRON.md`.
+
 ## 6. Realtime server
+
+### 6.1 Where to host WebSockets
+
+The web app cannot host them: Vercel functions are request-scoped and cannot keep a socket open.
+The server needs a host that runs a container continuously, passes WebSocket upgrades through
+its edge, does not idle-close connections faster than our 25 s heartbeat, and reaches Atlas.
+Options weighed (September 2026):
+
+| Host | WebSockets | Notes | Fit |
+|---|---|---|---|
+| **Fly.io** | Native; TLS terminated by fly-proxy, sockets forwarded to the machine | Built for long-running processes; a `shared-cpu-1x` machine runs about $2/month, custom domains $0.10/month with the first ten free; `auto_stop_machines` must be off. Launch plan $5/month. | **Recommended**: cheapest always-on option with first-class socket support and per-app certificates. `deploy/fly/*.toml` are ready. |
+| Railway | Supported; automatic SSL, deploy from GitHub | Usage-billed; a 512 MB Node service is a few dollars a month; Hobby $5 with $5 credit, Pro $20. | Good alternative if you prefer GitHub-push deploys over `fly deploy`. |
+| Render | Supported; no fixed idle timeout, connections drop on redeploy | Free tier spins down (useless for sockets); paid instances from about $7/month. | Fine; slightly pricier, simple UI. |
+| DigitalOcean App Platform | Supported but idles sockets after roughly 1–2 minutes of inactivity | Our 25 s ping keeps connections alive, but the platform publishes little socket guidance. | Workable, not preferred. |
+| A VM (Hetzner, DigitalOcean Droplet) + Caddy | Anything | $4–6/month, you run TLS, updates and restarts; `deploy/docker-compose.yml` fits this. | Fine if you already operate a box. |
+| Managed pub/sub (Ably, Pusher) | Yes | Would replace `realtime/server.ts` and the browser client with their SDK; pay per connection/message. | Not now; ours is one small process. |
+
+Decision: **Fly.io**, one machine each for realtime and MCP in `iad` (closest to Vercel's default
+region and to Atlas if the cluster is in us-east). Both configs live in `deploy/fly/`. Move to
+Railway or a VM by reusing the same Dockerfiles; nothing in the code is Fly-specific.
+
+### 6.2 Deploy on Fly
+
+```
+fly launch --no-deploy --copy-config --config deploy/fly/realtime.fly.toml \
+  --dockerfile realtime/Dockerfile --name lnkdrp-realtime
+fly secrets set MONGODB_URI='mongodb+srv://…' REALTIME_SECRET='…' -a lnkdrp-realtime
+fly deploy --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile
+fly certs add realtime.lnkdrp.com -a lnkdrp-realtime    # then CNAME realtime → lnkdrp-realtime.fly.dev
+curl https://realtime.lnkdrp.com/healthz
+```
+
+Then set `NEXT_PUBLIC_REALTIME_URL=wss://realtime.lnkdrp.com` in Vercel and redeploy the web app.
+Until then the app polls and everything still works. Add the Fly egress IP (`fly ips list`) to the
+Atlas allowlist, or allow all with a strong password.
+
+### 6.3 Deploy with Docker anywhere else
 
 Host it anywhere that can keep a WebSocket open and reach Atlas. Single instance for launch.
 
@@ -158,16 +221,25 @@ docker run -d --restart unless-stopped -p 8788:8788 \
 
 Or with the compose file that runs both services: `docker compose -f deploy/docker-compose.yml up -d --build`.
 
-1. Put TLS in front (Caddy, nginx, the host's load balancer) so the public address is
-   `wss://realtime.lnkdrp.com`. WebSocket upgrade must be passed through; idle timeouts should
-   exceed 30 seconds (the server pings every 25).
-2. `GET https://realtime.lnkdrp.com/healthz` → `{ ok: true, rooms, sockets }`.
-3. Set `NEXT_PUBLIC_REALTIME_URL=wss://realtime.lnkdrp.com` in Vercel and redeploy the web app.
-   Until then the app polls and everything still works.
+Put TLS in front (Caddy, nginx, the host's load balancer) so the public address is
+`wss://realtime.lnkdrp.com`; the proxy must pass WebSocket upgrades and keep idle connections
+longer than 30 seconds (the server pings every 25). Verify with `/healthz`, then set
+`NEXT_PUBLIC_REALTIME_URL` in Vercel as above.
 
 Details, frame formats and scaling notes: `docs/REALTIME.md`.
 
 ## 7. MCP server
+
+Same host class as the realtime server; on Fly:
+
+```
+fly launch --no-deploy --copy-config --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile --name lnkdrp-mcp
+fly secrets set REALTIME_SECRET='…' -a lnkdrp-mcp
+fly deploy --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile
+fly certs add mcp.lnkdrp.com -a lnkdrp-mcp              # then CNAME mcp → lnkdrp-mcp.fly.dev
+```
+
+Or with Docker anywhere:
 
 ```
 docker build -f mcp/Dockerfile -t lnkdrp-mcp .
@@ -213,9 +285,11 @@ Run in this order; each step depends on the previous.
   branches with the preview env (sandbox Stripe, a separate Atlas database).
 - Before merging anything touching data shapes: add a migration under `db/migration/`, run it
   against production (section 4.1) before the deploy lands, since functions roll forward first.
-- The realtime and MCP services do not auto-deploy. Rebuild and restart their images when a
+- The realtime and MCP services do not auto-deploy. Run `fly deploy` (section 6.2 / 7) when a
   commit touches `realtime/`, `mcp/`, or `src/lib/realtime/ticket.ts`. They are backwards
   compatible with the web app across ordinary releases; deploy the web app first when both change.
+- Adding a cron job means a route, a `vercel.json` entry and a `scripts/cron/cron.<job>.ts`
+  runner; the lib test suite enforces the trio.
 - Local gate before pushing: `npx tsc --noEmit -p .`, `npx eslint src realtime mcp tests`,
   the four vitest suites (`npm run tests:credits:vitest` etc.), `npx next build`, and
   `npx tsx --env-file=.env.local tests/mcp/e2e.ts` when the MCP or the API-key seam changed.
@@ -246,8 +320,8 @@ Run in this order; each step depends on the previous.
 ## 12. Known gaps before first production traffic
 
 - Stripe live catalog and webhook do not exist yet; only the sandbox is configured.
-- Neither service has a host yet; the guides already advertise `mcp.lnkdrp.com` and the
-  realtime code advertises `realtime.lnkdrp.com`.
+- Neither service is deployed yet. Fly.io is the chosen host (section 6.1), configs are in
+  `deploy/fly/`; DNS for `mcp.lnkdrp.com` and `realtime.lnkdrp.com` still has to be created.
 - The uncommitted edits from the parallel session (doc page, dashboard subscription card,
   history page, global styles, plan usage meter, paper plane) must be committed or discarded
   before the release that follows this runbook.
