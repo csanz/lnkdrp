@@ -257,6 +257,32 @@ export default function ActivityPageClient() {
     };
   }, [fetchPage]);
 
+  // Live-ish feed: while the tab is visible and on the first page, re-check every 10s (and on
+  // focus) and swap in the new first page when anything changed. Polling stands in for the push
+  // channel planned on the Node host (see docs/prds/lnkdrp-mcp.md, Future).
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState !== "visible" || pageIndex !== 0 || pending || loading) return;
+      fetchPage(null)
+        .then((page) => {
+          setItems((prev) => {
+            const changed = page.items.length !== prev.length || page.items.some((it, i) => it.id !== prev[i]?.id);
+            return changed ? page.items : prev;
+          });
+          setNextCursor(page.nextCursor);
+        })
+        .catch(() => {
+          // Background refresh; the visible feed stays as it was.
+        });
+    };
+    const timer = window.setInterval(tick, 10_000);
+    window.addEventListener("focus", tick);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", tick);
+    };
+  }, [fetchPage, pageIndex, pending, loading]);
+
   /**
    * Page transition choreography: dim and lift the current rows, glide the feed to the top, fetch
    * the next page, then let the new rows fade up in a short stagger. Never blanks the list.

@@ -93,8 +93,16 @@ if (typeof window !== "undefined") {
   window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, () => refreshAgentStatus());
 }
 
-/** Subscribe to the workspace agent status. `status` is null until the first response arrives. */
-export function useAgentStatus(): { status: AgentStatus | null; loading: boolean; refresh: () => void } {
+/**
+ * Subscribe to the workspace agent status. `status` is null until the first response arrives.
+ *
+ * `pollMs` keeps it live without a click: refetch on that interval while the tab is visible, and
+ * whenever the tab becomes visible or the window regains focus. Polling is the interim for a
+ * push channel (SSE/WebSocket) that Vercel functions cannot hold; the Node host planned for the
+ * worker and MCP server is where that will live.
+ */
+export function useAgentStatus(opts: { pollMs?: number } = {}): { status: AgentStatus | null; loading: boolean; refresh: () => void } {
+  const pollMs = opts.pollMs ?? 0;
   const [status, setStatus] = useState<AgentStatus | null>(() => cache?.data ?? null);
   const [loading, setLoading] = useState(!cache);
 
@@ -119,11 +127,31 @@ export function useAgentStatus(): { status: AgentStatus | null; loading: boolean
       });
     };
     window.addEventListener(AGENT_STATUS_CHANGED_EVENT, onChange);
+    // Live-ish: poll while visible, and catch up the moment the tab or window comes back.
+    const tick = () => {
+      if (document.visibilityState !== "visible") return;
+      void load(true).then((d) => {
+        if (!cancelled && d) setStatus(d);
+      });
+    };
+    const timer = pollMs > 0 ? window.setInterval(tick, pollMs) : null;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    if (pollMs > 0) {
+      document.addEventListener("visibilitychange", onVisible);
+      window.addEventListener("focus", tick);
+    }
     return () => {
       cancelled = true;
       window.removeEventListener(AGENT_STATUS_CHANGED_EVENT, onChange);
+      if (timer) window.clearInterval(timer);
+      if (pollMs > 0) {
+        document.removeEventListener("visibilitychange", onVisible);
+        window.removeEventListener("focus", tick);
+      }
     };
-  }, []);
+  }, [pollMs]);
 
   return { status, loading, refresh };
 }

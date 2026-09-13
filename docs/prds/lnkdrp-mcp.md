@@ -207,6 +207,8 @@ None in v1: a `lnkdrp://doc/{id}` resource would duplicate `get_share`, and prom
 
 ## Future (not v1)
 
+- **Real-time status and activity.** Today the app polls (`useAgentStatus({ pollMs })`: 4s on `/connect`, 30s in the sidebar, plus visibility/focus catch-up; the activity feed re-checks its first page every 10s). Vercel functions cannot hold a socket, so the push channel belongs on the Node host that runs the worker and MCP server: Mongo change streams on `activityevents`/`apikeys` → SSE (or WebSocket) per workspace, with the browser falling back to polling. The `AGENT_STATUS_CHANGED_EVENT` / `refreshAgentStatus()` seam is where a socket message would plug in.
+
 - OAuth 2.1 (NextAuth-backed authorization server, DCR, PKCE) for Claude.ai connectors, behind the `verifyBearer` seam.
 - Per-user identity keys; multi-org keys with per-call `orgId`.
 - Webhooks (`upload.ready`, `request.received`, `share.viewed`) for agent loops.

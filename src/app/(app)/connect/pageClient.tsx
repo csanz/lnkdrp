@@ -24,7 +24,8 @@ import VerifyPanel from "@/components/connect/VerifyPanel";
 
 /** Render the Connect page UI. */
 export default function ConnectPageClient() {
-  const { status, loading, refresh } = useAgentStatus();
+  // 4s while on this page: a first tool call or the verify curl shows up without a click.
+  const { status, loading, refresh } = useAgentStatus({ pollMs: 4_000 });
   // The plaintext of the key created on this visit, kept only in memory so the commands can use it.
   const [created, setCreated] = useState<{ plaintext: string; key: AgentKeyRow } | null>(null);
   // A saved key pasted back through "Use in commands" (memory only; the server never sees it).

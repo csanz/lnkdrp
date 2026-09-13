@@ -178,7 +178,7 @@ function KeyRow({
           </div>
         ) : null}
       </div>
-      {!row.revoked && onUse && !inUse ? (
+      {!row.revoked && onUse && !inUse && !confirming ? (
         pasteOpen ? (
           <form
             className="flex basis-full flex-wrap items-center gap-2"
@@ -219,14 +219,19 @@ function KeyRow({
       ) : null}
       {canManage && !row.revoked ? (
         confirming ? (
-          <div className="flex items-center gap-2">
-            <span className="text-[12px] text-[var(--muted)]">Revoke this key? Clients using it stop working until you remove lnkdrp there and add it again with a new key (step 2 explains how).</span>
-            <button type="button" onClick={() => void revoke()} disabled={busy} className={PRIMARY_BUTTON}>
-              {busy ? "Revoking…" : "Revoke"}
-            </button>
-            <button type="button" onClick={() => setConfirming(false)} disabled={busy} className={QUIET_BUTTON}>
-              Cancel
-            </button>
+          // Own row under the key so the question does not fight the buttons for one line.
+          <div className="flex basis-full flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
+            <span className="min-w-0 flex-1 text-[12px] leading-5 text-[var(--muted)]">
+              <span className="font-medium text-[var(--fg)]">Revoke this key?</span> Clients using it stop working until you remove lnkdrp there and add it again with a new key. Step 2 explains how.
+            </span>
+            <span className="flex shrink-0 items-center gap-2">
+              <button type="button" onClick={() => void revoke()} disabled={busy} className={PRIMARY_BUTTON}>
+                {busy ? "Revoking…" : "Revoke"}
+              </button>
+              <button type="button" onClick={() => setConfirming(false)} disabled={busy} className={QUIET_BUTTON}>
+                Cancel
+              </button>
+            </span>
           </div>
         ) : (
           <button type="button" onClick={() => setConfirming(true)} className={QUIET_BUTTON}>

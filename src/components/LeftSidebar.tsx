@@ -275,7 +275,7 @@ export default function LeftSidebar({
   const pathname = usePathname() ?? "";
   const { resolvedTheme } = useTheme();
   const navLocked = useNavigationLocked();
-  const { status: agentStatus } = useAgentStatus();
+  const { status: agentStatus } = useAgentStatus({ pollMs: 30_000 });
   const isDocRoute = useMemo(() => pathname.startsWith("/doc/"), [pathname]);
 
   const activeProjectId = useMemo(() => {
