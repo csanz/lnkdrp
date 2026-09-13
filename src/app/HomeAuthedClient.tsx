@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ArrowUpTrayIcon, CpuChipIcon, DocumentPlusIcon, LinkIcon, LockClosedIcon } from "@heroicons/react/24/outline";
 import UploadButton from "@/components/UploadButton";
+import AgentMark from "@/components/AgentMark";
+import { usePlan } from "@/lib/client/usePlan";
+import { useAgentStatus } from "@/lib/client/useAgentStatus";
 import AppShellLayout from "./(app)/AppShellLayout";
-import { PlanLimitClientError, apiCreateDoc, apiCreateUpload } from "@/lib/client/docUploadPipeline";
+import { PlanLimitClientError, apiCreateDoc, apiCreateUpload, isPdfFile, PDF_ONLY_MESSAGE } from "@/lib/client/docUploadPipeline";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePendingUpload } from "@/lib/pendingUpload";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -40,6 +45,10 @@ export default function HomeAuthedClient() {
   const [urlInput, setUrlInput] = useState("");
   const [urlBusy, setUrlBusy] = useState(false);
   const pushingUploadRef = useRef(false);
+  const dragDepthRef = useRef(0);
+  const { plan } = usePlan();
+  // Shares the sidebar's cached status (the sidebar owns the refresh); no polling from this page.
+  const { status: agentStatus } = useAgentStatus();
 
   function startUploadNavNow() {
     // Show an immediate full-screen overlay before routing to `/upload`
@@ -189,107 +198,265 @@ export default function HomeAuthedClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingFile, router]);
 
+  const atLinkLimit = plan?.plan === "free" && plan.atLimit.activeLinks;
+  const pickerDisabled = urlBusy || Boolean(atLinkLimit);
+  const openLinkUpgrade = () => {
+    if (!plan) return;
+    openUpgrade("active_links", { used: plan.usage.activeLinks, max: plan.limits.activeLinks ?? undefined });
+  };
+
+  /** Stage a picked or dropped file for the preview route (PDF only). */
+  function stageFile(file: File) {
+    if (!isPdfFile(file)) {
+      setError(PDF_ONLY_MESSAGE);
+      return;
+    }
+    if (atLinkLimit) {
+      openLinkUpgrade();
+      return;
+    }
+    setPendingFile(file);
+    setError(null);
+    startUploadNavNow();
+    pushUploadRouteSoon();
+  }
+
+  const freeLinks =
+    plan?.plan === "free" && typeof plan.limits.activeLinks === "number"
+      ? { used: plan.usage.activeLinks, max: plan.limits.activeLinks }
+      : null;
+  const connectedClient = agentStatus?.connected ? (agentStatus.clients[0]?.client ?? agentStatus.lastUsedClient) : null;
+
   return (
     <AppShellLayout>
-      <div className="h-full min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
-        <div className="flex h-full min-h-[100svh] w-full items-center justify-center px-6 py-10">
-          <div className="w-full max-w-3xl">
-            <div
-              className={[
-                "relative rounded-3xl border border-dashed p-10 text-center",
-                "bg-[var(--panel)]",
-                dragActive
-                  ? "border-[var(--ring)] ring-2 ring-[var(--ring)]"
-                  : "border-[var(--border)]",
-              ].join(" ")}
-              onDragEnter={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setDragActive(true);
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setDragActive(true);
-              }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setDragActive(false);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setDragActive(false);
-                const file = e.dataTransfer?.files?.[0] ?? null;
-                if (!file) return;
-                const name = (file.name ?? "").toLowerCase();
-                const isPdf = file.type === "application/pdf" || name.endsWith(".pdf");
-                if (!isPdf) return;
-                setPendingFile(file);
-                setError(null);
-                startUploadNavNow();
-                pushUploadRouteSoon();
-              }}
-            >
-              <div className="text-xl font-semibold tracking-tight">Upload</div>
-              <div className="mt-3 text-sm leading-6 text-[var(--muted)]">Choose a PDF to preview, then upload.</div>
-
-              <div className="mt-8 flex flex-col items-center gap-3.5">
-                <UploadButton
-                  label="Choose a PDF"
-                  accept="pdf"
-                  variant="cta"
-                  disabled={urlBusy}
-                  onFileSelected={(file) => {
-                    setPendingFile(file);
-                    setError(null);
-                    startUploadNavNow();
-                    pushUploadRouteSoon();
-                  }}
-                />
-                <div className="text-xs leading-5 text-[var(--muted)]">
-                  or drag and drop a PDF anywhere onto this area
-                </div>
+      <div
+        className="relative h-full min-h-[100svh] overflow-y-auto bg-[var(--bg)] text-[var(--fg)]"
+        // The whole page is a drop target; a depth counter keeps child enter/leave pairs from flickering.
+        onDragEnter={(e) => {
+          if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+          e.preventDefault();
+          dragDepthRef.current += 1;
+          setDragActive(true);
+        }}
+        onDragOver={(e) => {
+          if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+          e.preventDefault();
+        }}
+        onDragLeave={(e) => {
+          if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
+          dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+          if (dragDepthRef.current === 0) setDragActive(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          dragDepthRef.current = 0;
+          setDragActive(false);
+          const file = e.dataTransfer?.files?.[0] ?? null;
+          if (file) stageFile(file);
+        }}
+      >
+        <div className="mx-auto w-full max-w-[920px] px-6 pb-16 pt-10 sm:px-8 md:pt-14">
+          {/* Header: same rhythm as Activity (icon + title, one-line description), plan room on the right. */}
+          <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
+                <DocumentPlusIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
+                <h1 className="text-lg font-semibold tracking-tight text-[var(--fg)]">Upload</h1>
               </div>
+              <p className="mt-1.5 text-[13px] text-[var(--muted-2)]">
+                Turn a PDF into a share link, and see how it is read from the first open.
+              </p>
+            </div>
+            {freeLinks ? (
+              <button
+                type="button"
+                onClick={openLinkUpgrade}
+                className={[
+                  "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[12px] transition-colors",
+                  atLinkLimit
+                    ? "border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+                    : "border-[var(--border)] text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                ].join(" ")}
+                title="Free workspaces can have this many active share links"
+              >
+                <span className="tabular-nums">
+                  {freeLinks.used} of {freeLinks.max} links
+                </span>
+                <span aria-hidden="true" className="h-3 w-px bg-current opacity-30" />
+                <span className="font-medium">Free</span>
+              </button>
+            ) : null}
+          </div>
 
-                <div className="mt-8 flex items-center gap-3">
-                  <div className="h-px flex-1 bg-[var(--border)]" />
-                  <div className="text-xs font-medium text-[var(--muted)]">or</div>
-                  <div className="h-px flex-1 bg-[var(--border)]" />
-                </div>
-
-                <div className="mt-6">
-                  <div className="text-sm font-semibold text-[var(--fg)]">Paste a PDF link</div>
-                  <div className="mt-2 text-xs leading-5 text-[var(--muted)]">
-                    We’ll download it and create a share link for you.
+          {/* Primary action: one large drop zone. */}
+          <div
+            className={[
+              "relative mt-7 overflow-hidden rounded-2xl border transition-[border-color,background-color,box-shadow] duration-200",
+              dragActive && !atLinkLimit
+                ? "border-[var(--feed-new-bar)] bg-[var(--feed-new-bg)] shadow-[0_0_0_4px_var(--feed-new-bg)]"
+                : "border-[var(--border)] bg-[var(--panel)]",
+            ].join(" ")}
+          >
+            <div className="flex min-h-[300px] flex-col items-center justify-center px-6 py-12 text-center">
+              {atLinkLimit ? (
+                <>
+                  <div className="grid h-12 w-12 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)]">
+                    <LockClosedIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
                   </div>
-                  <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
-                    <input
-                      value={urlInput}
-                      onChange={(e) => setUrlInput(e.target.value)}
-                      placeholder="https://example.com/pitch.pdf"
-                      className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-black/10"
-                    disabled={urlBusy}
-                      onKeyDown={(e) => {
-                        if (e.key !== "Enter") return;
-                        e.preventDefault();
-                        void handleUrlSubmit();
-                      }}
-                    />
+                  <div className="mt-5 text-[17px] font-semibold tracking-tight text-[var(--fg)]">
+                    All {freeLinks?.max ?? 3} Free links are in use
+                  </div>
+                  <p className="mt-2 max-w-md text-[13px] leading-6 text-[var(--muted-2)]">
+                    Turn off sharing on a document you no longer need, or upgrade to Pro for unlimited links.
+                  </p>
+                  <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
                     <button
                       type="button"
-                      className="inline-flex shrink-0 items-center justify-center rounded-xl bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] transition-colors hover:bg-[var(--primary-hover-bg)] disabled:opacity-60"
-                      onClick={() => void handleUrlSubmit()}
-                    disabled={urlBusy}
+                      onClick={openLinkUpgrade}
+                      className="inline-flex min-w-[132px] items-center justify-center rounded-lg bg-[var(--primary-bg)] px-5 py-2 text-[13px] font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
                     >
-                      {urlBusy ? "Fetching…" : "Upload link"}
+                      Upgrade to Pro
                     </button>
+                    <Link
+                      href="/search?scope=docs"
+                      className="inline-flex items-center rounded-lg px-3 py-2 text-[13px] font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                    >
+                      Manage links
+                    </Link>
                   </div>
-                </div>
-
-                {error ? <div className="mt-5 text-sm font-medium text-red-600">{error}</div> : null}
+                </>
+              ) : (
+                <>
+                  <div
+                    className={[
+                      "grid h-12 w-12 place-items-center rounded-2xl border transition-transform duration-200",
+                      dragActive ? "-translate-y-1 border-[var(--feed-new-bar)] bg-[var(--panel)]" : "border-[var(--border)] bg-[var(--panel-2)]",
+                    ].join(" ")}
+                  >
+                    <ArrowUpTrayIcon className="h-5 w-5 text-[var(--fg)]" aria-hidden="true" />
+                  </div>
+                  <div className="mt-5 text-[17px] font-semibold tracking-tight text-[var(--fg)]">
+                    {dragActive ? (
+                      "Release to preview"
+                    ) : (
+                      <>
+                        <span className="md:hidden">Upload a PDF</span>
+                        <span className="hidden md:inline">Drop a PDF anywhere on this page</span>
+                      </>
+                    )}
+                  </div>
+                  <p className="mt-2 text-[13px] text-[var(--muted-2)]">
+                    You will see a preview first. Nothing is uploaded until you confirm.
+                  </p>
+                  <div className="mt-6">
+                    <UploadButton
+                      label="Choose a PDF"
+                      accept="pdf"
+                      variant="cta"
+                      disabled={pickerDisabled}
+                      onFileRejected={setError}
+                      onFileSelected={stageFile}
+                    />
+                  </div>
+                </>
+              )}
             </div>
+            <ul className="flex flex-col items-center gap-1 border-t border-[var(--border)] bg-[var(--panel-2)] px-6 py-3 text-[12px] text-[var(--muted)] md:flex-row md:justify-center md:gap-0 md:py-2.5">
+              {["PDF up to 250 MB", "The AI summary uses 1 credit", "Replace the file later and the link stays the same"].map((fact, i) => (
+                <li key={fact} className="flex items-center">
+                  {i > 0 ? <span aria-hidden="true" className="mx-4 hidden h-3 w-px bg-[var(--border)] md:inline-block" /> : null}
+                  {fact}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {error ? (
+            <div role="alert" className="mt-4 text-[13px] font-medium text-red-600 dark:text-red-400">
+              {error}
+            </div>
+          ) : null}
+
+          {/* Secondary ways in. */}
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+              <div className="flex items-center gap-2">
+                <LinkIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
+                <h2 className="text-[13px] font-semibold text-[var(--fg)]">Import from a link</h2>
+              </div>
+              <p className="mt-1.5 text-[12px] leading-5 text-[var(--muted)]">
+                A public PDF link or a Google Drive share link. We fetch the file and create the share link.
+              </p>
+              <form
+                className="mt-4 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-1 pl-3 focus-within:border-[var(--muted)]"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (atLinkLimit) {
+                    openLinkUpgrade();
+                    return;
+                  }
+                  void handleUrlSubmit();
+                }}
+              >
+                <input
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  placeholder="https://example.com/deck.pdf"
+                  inputMode="url"
+                  aria-label="PDF link"
+                  className="min-w-0 flex-1 bg-transparent py-1.5 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted)] focus:outline-none"
+                  disabled={urlBusy}
+                />
+                <button
+                  type="submit"
+                  className={[
+                    "inline-flex shrink-0 items-center justify-center rounded-lg px-3.5 py-1.5 text-[13px] font-semibold transition-colors",
+                    urlInput.trim() || urlBusy
+                      ? "bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-70"
+                      : "cursor-default bg-[var(--panel-hover)] text-[var(--muted)]",
+                  ].join(" ")}
+                  disabled={urlBusy || !urlInput.trim()}
+                >
+                  {urlBusy ? "Fetching…" : "Import"}
+                </button>
+              </form>
+            </section>
+
+            <section className="flex flex-col rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <CpuChipIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
+                  <h2 className="text-[13px] font-semibold text-[var(--fg)]">Let your agent do it</h2>
+                </div>
+                <div className="flex items-center gap-1.5 text-[var(--muted-2)]" aria-hidden="true">
+                  {["claude-code", "cursor", "codex", "gemini-cli"].map((c) => (
+                    <AgentMark key={c} client={c} className="h-3.5 w-3.5" />
+                  ))}
+                </div>
+              </div>
+              <p className="mt-1.5 text-[12px] leading-5 text-[var(--muted)]">
+                Claude Code, Cursor and other MCP clients can create share links and read their stats for you.
+              </p>
+              <div className="mt-auto pt-4">
+                {connectedClient ? (
+                  <Link
+                    href="/activity?who=agents"
+                    className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[13px] font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                  >
+                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--chart-views)]" />
+                    {agentStatus && agentStatus.connectedCount > 1 ? `${agentStatus.connectedCount} agents connected` : "Agent connected"}
+                    <span className="text-[var(--muted)]">· See activity</span>
+                  </Link>
+                ) : (
+                  <Link
+                    href="/connect"
+                    className="inline-flex items-center rounded-lg border border-[var(--border)] px-3 py-1.5 text-[13px] font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                  >
+                    Connect an agent
+                  </Link>
+                )}
+              </div>
+            </section>
           </div>
         </div>
       </div>
