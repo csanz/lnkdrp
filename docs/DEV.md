@@ -79,6 +79,9 @@ OPENAI_API_KEY=sk-...                           # Required for AI extraction/rev
 NEXT_PUBLIC_APP_URL=http://localhost:3001       # Canonical app URL
 NEXT_PUBLIC_SITE_URL=http://localhost:3001      # Public site URL (for emails, OG tags)
 # NEXT_PUBLIC_MCP_URL=http://localhost:8787/mcp  # MCP endpoint shown in /connect and /mcp guides (default: production; /connect falls back to this local URL on a dev server)
+NEXT_PUBLIC_REALTIME_URL=ws://localhost:8788    # Realtime WebSocket server (npm run realtime); unset = polling only. See docs/REALTIME.md
+REALTIME_PORT=8788                              # Port the realtime server listens on
+# REALTIME_SECRET=…                             # Ticket HMAC secret shared by the app and the realtime server (defaults to NEXTAUTH_SECRET)
 ```
 
 ### Optional

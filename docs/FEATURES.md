@@ -396,6 +396,10 @@ This document is a **product-oriented** breakdown of the main user-facing featur
 - **Agent attribution**: agents/MCP clients send `x-lnkdrp-agent: <client>/<version>` (e.g. `claude-code/1.2.3`); when absent the User-Agent is sniffed for known clients (claude-code, claude-desktop, cursor, codex, gemini-cli, grok, windsurf, cline). Browsers resolve to no agent. The feed shows an agent badge (`agentLabel()`), e.g. "Claude Code". The upcoming MCP server will pass the MCP `initialize` `clientInfo { name, version }` instead (see `docs/prds/lnkdrp-mcp.md`).
 - **Feature flag**: the sidebar "Request" action and the "Received" section are hidden unless `NEXT_PUBLIC_FEATURE_REQUESTS=1` (the Received section still shows when the workspace already has inboxes). Routes stay available.
 
+## Realtime
+
+- **WebSocket push** (2026-09-13): a standalone server (`realtime/server.ts`, `npm run realtime`) fans out Mongo change streams to per-workspace rooms — `agent` (key used/created/revoked), `activity` (new row), `doc` (processing status). Browser client `src/lib/client/realtime.ts` (`subscribeRealtime(type, handler)`, one socket per tab, 60s HMAC tickets from `GET /api/realtime/ticket`, backoff reconnect, re-ticket on workspace switch). `useAgentStatus` and the Activity page subscribe; polling stays as fallback (60s+ while the socket is open). The MCP server writes through the same collections (fan-out is automatic) and can subscribe with a self-signed ticket. Docs: `docs/REALTIME.md`.
+
 ## Agent API keys
 
 - **What**: workspace-scoped bearer keys that AI agents / MCP clients (Claude Code, Cursor, Codex, …) use to act as the workspace. Managed from the in-app Connect page (`/connect`); the not-yet-built MCP server (`docs/prds/lnkdrp-mcp.md`) authenticates every request with the same `verifyBearer()` seam.

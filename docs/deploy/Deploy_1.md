@@ -162,6 +162,7 @@ Alternatively, one-off commands:
 - **Auth**: NextAuth (Google OAuth).
 - **Billing**: Stripe Checkout + `/api/stripe/webhook` as source of truth.
 - **Storage**: Vercel Blob.
+- **Realtime**: `realtime/server.ts` runs on its own host (not Vercel): `npm run realtime:prod`, env `MONGODB_URI` (replica set), `REALTIME_SECRET` (same value as the app), `REALTIME_PORT`; set `NEXT_PUBLIC_REALTIME_URL=wss://…` in the app. Without it the app polls. See `docs/REALTIME.md`.
 - **Background jobs**: Vercel Cron → `GET /api/cron/*` with `Authorization: Bearer $CRON_SECRET` (routes also accept `POST`; see `docs/CRON.md` + `vercel.json`).
 
 ### Release workflow (repeatable)

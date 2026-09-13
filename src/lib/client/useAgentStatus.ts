@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { ACTIVE_ORG_CHANGED_EVENT } from "@/lib/sidebarCache";
+import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 
 /**
  * Client view of `GET /api/agent/status`: whether any AI agent has authenticated to the active
@@ -134,7 +135,20 @@ export function useAgentStatus(opts: { pollMs?: number } = {}): { status: AgentS
         if (!cancelled && d) setStatus(d);
       });
     };
-    const timer = pollMs > 0 ? window.setInterval(tick, pollMs) : null;
+    // With the socket open, polling is only a safety net: stretch the interval to at least 60s.
+    let timer: number | null = null;
+    const armTimer = () => {
+      if (timer !== null) window.clearInterval(timer);
+      timer = null;
+      if (pollMs <= 0) return;
+      const every = realtimeState() === "open" ? Math.max(pollMs, 60_000) : pollMs;
+      timer = window.setInterval(tick, every);
+    };
+    armTimer();
+    const onRealtimeState = () => armTimer();
+    window.addEventListener(REALTIME_STATE_EVENT, onRealtimeState);
+    // Push: any key use / create / revoke in this workspace arrives as an "agent" frame.
+    const unsubscribe = subscribeRealtime("agent", () => tick());
     const onVisible = () => {
       if (document.visibilityState === "visible") tick();
     };
@@ -145,7 +159,9 @@ export function useAgentStatus(opts: { pollMs?: number } = {}): { status: AgentS
     return () => {
       cancelled = true;
       window.removeEventListener(AGENT_STATUS_CHANGED_EVENT, onChange);
-      if (timer) window.clearInterval(timer);
+      if (timer !== null) window.clearInterval(timer);
+      window.removeEventListener(REALTIME_STATE_EVENT, onRealtimeState);
+      unsubscribe();
       if (pollMs > 0) {
         document.removeEventListener("visibilitychange", onVisible);
         window.removeEventListener("focus", tick);

@@ -207,7 +207,7 @@ None in v1: a `lnkdrp://doc/{id}` resource would duplicate `get_share`, and prom
 
 ## Future (not v1)
 
-- **Real-time status and activity.** Today the app polls (`useAgentStatus({ pollMs })`: 4s on `/connect`, 30s in the sidebar, plus visibility/focus catch-up; the activity feed re-checks its first page every 10s). Vercel functions cannot hold a socket, so the push channel belongs on the Node host that runs the worker and MCP server: Mongo change streams on `activityevents`/`apikeys` → SSE (or WebSocket) per workspace, with the browser falling back to polling. The `AGENT_STATUS_CHANGED_EVENT` / `refreshAgentStatus()` seam is where a socket message would plug in.
+- **Realtime (shipped 2026-09-13, `docs/REALTIME.md`).** `realtime/server.ts` is a standalone WebSocket server (change streams on `activityevents`, `apikeys`, `docs.status` → per-workspace rooms, 60s HMAC tickets from `GET /api/realtime/ticket`). The MCP server MUST use this channel: its writes fan out automatically, and `share_pdf` should subscribe with a self-signed ticket (`signRealtimeTicket`, shared secret) and return on the `doc` frame with `status: "ready"` instead of asking clients to poll `get_share`. The browser keeps polling only as a fallback.
 
 - OAuth 2.1 (NextAuth-backed authorization server, DCR, PKCE) for Claude.ai connectors, behind the `verifyBearer` seam.
 - Per-user identity keys; multi-org keys with per-call `orgId`.

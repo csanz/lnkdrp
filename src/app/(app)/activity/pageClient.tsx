@@ -28,6 +28,7 @@ import {
 import PlanLimitNotice from "@/components/PlanLimitNotice";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
+import { subscribeRealtime } from "@/lib/client/realtime";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import {
@@ -275,9 +276,13 @@ export default function ActivityPageClient() {
           // Background refresh; the visible feed stays as it was.
         });
     };
+    // Push: a new activity row in this workspace arrives as an "activity" frame; refetch page one
+    // right away. The 10s timer stays as the fallback when the socket is not available.
+    const unsubscribe = subscribeRealtime("activity", () => tick());
     const timer = window.setInterval(tick, 10_000);
     window.addEventListener("focus", tick);
     return () => {
+      unsubscribe();
       window.clearInterval(timer);
       window.removeEventListener("focus", tick);
     };
