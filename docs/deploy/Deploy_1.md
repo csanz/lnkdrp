@@ -163,6 +163,7 @@ Alternatively, one-off commands:
 - **Billing**: Stripe Checkout + `/api/stripe/webhook` as source of truth.
 - **Storage**: Vercel Blob.
 - **Realtime**: `realtime/server.ts` runs on its own host (not Vercel): `npm run realtime:prod`, env `MONGODB_URI` (replica set), `REALTIME_SECRET` (same value as the app), `REALTIME_PORT`; set `NEXT_PUBLIC_REALTIME_URL=wss://…` in the app. Without it the app polls. See `docs/REALTIME.md`.
+- **MCP server**: `mcp/src/main.ts` runs on its own host (Docker via `mcp/Dockerfile`, not Vercel): `npm run mcp:prod`, env `LNKDRP_API_URL=https://lnkdrp.com`, `MCP_PORT`, `MCP_PUBLIC_URL=https://mcp.lnkdrp.com`, plus `NEXT_PUBLIC_REALTIME_URL` + `REALTIME_SECRET` so `share_pdf` can wait for `ready` over the socket. No Mongo or blob credentials on this host; it calls the app's REST API with the caller's key. Sessions are in-memory, so run one instance (or sticky routing on `Mcp-Session-Id`). Set `NEXT_PUBLIC_MCP_URL` in the app only for staging. See `docs/MCP.md`.
 - **Background jobs**: Vercel Cron → `GET /api/cron/*` with `Authorization: Bearer $CRON_SECRET` (routes also accept `POST`; see `docs/CRON.md` + `vercel.json`).
 
 ### Release workflow (repeatable)

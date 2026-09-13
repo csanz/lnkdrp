@@ -173,6 +173,7 @@ None in v1: a `lnkdrp://doc/{id}` resource would duplicate `get_share`, and prom
 - Proves: Processing runs off Vercel and bills the right org
 
 ### M3 — MCP server (read) + keys tab
+> **Shipped 2026-09-13** for `lnkdrp_whoami`, `lnkdrp_get_share`, `lnkdrp_get_share_stats` (`mcp/`, `docs/MCP.md`). Built as a thin translator over the REST API with the caller's key (no Mongo in the MCP process, stateful Streamable HTTP sessions so the `initialize` client name attributes every call) rather than the direct-service design below; bearer auth and scopes live in the app's `verifyBearer`/`tryResolveApiKeyActor`. The keys tab shipped as `/connect` (M1). `list_request_repos` / `list_request_uploads` are **deferred** with the request tools. Not built: `mcpauditlogs`, per-key fail-closed rate buckets (the app's limits apply), `mcp/test/read.e2e.test.ts` (replaced by `tests/mcp/e2e.ts`).
 - Scaffold `mcp/` with `package.json` (`@modelcontextprotocol/sdk ^1.30`, `express`, `zod`), tsconfig paths to `../src/lib`, `mcp/src/main.ts` (Express, `StreamableHTTPServerTransport` at `/mcp`, `/healthz`, `/.well-known/oauth-protected-resource`, `--stdio`) and a Dockerfile.
 - Implement `mcp/src/auth.ts` bearer middleware calling `verifyBearer` and returning 401 with `WWW-Authenticate`.
 - Implement `mcp/src/audit.ts` (`withAudit`) with `src/lib/models/McpAuditLog.ts`, per-key rate buckets, structured logging and the version header.
@@ -182,6 +183,7 @@ None in v1: a `lnkdrp://doc/{id}` resource would duplicate `get_share`, and prom
 - Proves: A key holder reads stats and request uploads from Claude Code
 
 ### M4 — Write tools + launch
+> **Shipped 2026-09-13** for `lnkdrp_share_pdf` and `lnkdrp_set_share_access` (`docs/MCP.md` written; `tests/mcp/e2e.ts` covers the five tools, the 401 at `initialize`, and idempotent replay). `share_pdf` goes through `POST /api/docs` → `/api/uploads` → `import-url` → `process` and waits for `ready` over the realtime channel (self-signed ticket) with 2s polling as fallback; `replaceUrl` is `null` (no capability URLs from MCP), and the agent-supplied `summary`/`keyPoints` inputs are not implemented. Idempotency is an in-memory `${orgId}:${idempotencyKey}` cache (1000 entries, 24h), not `McpIdempotency`. `lnkdrp_create_request_repo` is **deferred** with the other request tools; `scripts/mcp-smoke.ts` is superseded by the e2e harness.
 - Add `src/lib/models/McpIdempotency.ts` and `mcp/src/idempotency.ts` (`withIdempotency(keyId, tool, idempotencyKey, fn)`).
 - Implement and register `share_pdf`, `set_share_access`, `create_request_repo` with scope + `requireOrgRole(member)` checks, credits preflight and cost-table descriptions.
 - Write `docs/MCP.md` (install strings for Claude Code and Cursor, tool reference, three-job walkthrough, error codes, limits).
