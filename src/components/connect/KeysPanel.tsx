@@ -84,16 +84,40 @@ function KeyRow({
   row,
   canManage,
   showOwner,
+  inUse = false,
+  onUse,
   onRevoked,
 }: {
   row: AgentKeyRow;
   canManage: boolean;
   /** Shared workspaces: show whose key it is so a team can see each other's agents. */
   showOwner: boolean;
+  /** True when the commands in steps 2 and 3 are currently filled with this key. */
+  inUse?: boolean;
+  /**
+   * "Use in commands": the server only keeps a hash, so after a reload the page cannot recover the
+   * plaintext. The member pastes the key they saved; it is checked against this row's prefix and
+   * length and kept in memory only, never sent anywhere.
+   */
+  onUse?: (plaintext: string) => void;
   onRevoked: (id: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasted, setPasted] = useState("");
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const submitPaste = () => {
+    const v = pasted.trim();
+    if (!v.startsWith(row.prefix) || v.length !== 36) {
+      setPasteError(`That is not this key. It starts with ${row.prefix} and is 36 characters.`);
+      return;
+    }
+    onUse?.(v);
+    setPasteOpen(false);
+    setPasted("");
+    setPasteError(null);
+  };
   const [error, setError] = useState<string | null>(null);
 
   const revoke = async () => {
@@ -131,6 +155,10 @@ function KeyRow({
             <span className="rounded-md px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)] ring-1 ring-[var(--border)]">
               Revoked
             </span>
+          ) : inUse ? (
+            <span className="rounded-md bg-[var(--panel-hover)] px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--fg)] ring-1 ring-[var(--border)]">
+              In steps 2 and 3
+            </span>
           ) : null}
         </div>
         <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
@@ -150,6 +178,45 @@ function KeyRow({
           </div>
         ) : null}
       </div>
+      {!row.revoked && onUse && !inUse ? (
+        pasteOpen ? (
+          <form
+            className="flex basis-full flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitPaste();
+            }}
+          >
+            <input
+              type="text"
+              autoFocus
+              value={pasted}
+              onChange={(e) => {
+                setPasted(e.target.value);
+                setPasteError(null);
+              }}
+              placeholder={`${row.prefix}…`}
+              spellCheck={false}
+              autoComplete="off"
+              aria-label="Paste the full key"
+              className="h-9 w-72 max-w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 font-mono text-[12px] text-[var(--fg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            />
+            <button type="submit" className={PRIMARY_BUTTON}>Use</button>
+            <button type="button" onClick={() => { setPasteOpen(false); setPasted(""); setPasteError(null); }} className={QUIET_BUTTON}>
+              Cancel
+            </button>
+            {pasteError ? (
+              <div role="alert" className="basis-full text-[12px] text-red-600 dark:text-red-400">
+                {pasteError}
+              </div>
+            ) : null}
+          </form>
+        ) : (
+          <button type="button" onClick={() => setPasteOpen(true)} className={QUIET_BUTTON} title="Paste the key you saved to fill the commands in steps 2 and 3">
+            Use in commands
+          </button>
+        )
+      ) : null}
       {canManage && !row.revoked ? (
         confirming ? (
           <div className="flex items-center gap-2">
@@ -180,12 +247,18 @@ function KeyRow({
 export default function KeysPanel({
   status,
   loading,
+  plaintextKey = null,
   onCreated,
+  onUse,
   onRevoked,
 }: {
   status: AgentStatus | null;
   loading: boolean;
+  /** The key currently filled into steps 2 and 3 (created this visit or pasted back), if any. */
+  plaintextKey?: string | null;
   onCreated: (plaintext: string, key: AgentKeyRow) => void;
+  /** A member pasted a saved key back to fill the commands (memory only). */
+  onUse?: (plaintext: string) => void;
   onRevoked: (id: string) => void;
 }) {
   const [formOpen, setFormOpen] = useState(false);
@@ -318,7 +391,15 @@ export default function KeysPanel({
       ) : (
         <ul className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
           {activeKeys.map((row) => (
-            <KeyRow key={row.id} row={row} canManage={canManage} showOwner={!status?.isPersonalOrg} onRevoked={onRevoked} />
+            <KeyRow
+              key={row.id}
+              row={row}
+              canManage={canManage}
+              showOwner={!status?.isPersonalOrg}
+              inUse={Boolean(plaintextKey && plaintextKey.startsWith(row.prefix))}
+              onUse={onUse}
+              onRevoked={onRevoked}
+            />
           ))}
         </ul>
       )}

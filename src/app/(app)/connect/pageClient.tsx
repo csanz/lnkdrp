@@ -27,14 +27,23 @@ export default function ConnectPageClient() {
   const { status, loading, refresh } = useAgentStatus();
   // The plaintext of the key created on this visit, kept only in memory so the commands can use it.
   const [created, setCreated] = useState<{ plaintext: string; key: AgentKeyRow } | null>(null);
+  // A saved key pasted back through "Use in commands" (memory only; the server never sees it).
+  const [pasted, setPasted] = useState<string | null>(null);
+  const plaintextKey = created?.plaintext ?? pasted;
 
   const activeKeys = status ? status.keys.filter((k) => !k.revoked).length : 0;
   const connected = Boolean(status?.connected);
   const currentStep: 1 | 2 | 3 = connected ? 3 : activeKeys > 0 ? 2 : 1;
 
   const onCreated = useCallback((plaintext: string, key: AgentKeyRow) => setCreated({ plaintext, key }), []);
+  const onUse = useCallback((plaintext: string) => {
+    setCreated(null);
+    setPasted(plaintext);
+  }, []);
   const onRevoked = useCallback((id: string) => {
     setCreated((prev) => (prev && prev.key.id === id ? null : prev));
+    // The revoked row's prefix is unknown here; the status refetch re-derives "in use" per row, and
+    // a revoked key in the commands is harmless (it fails with 401, which the guides explain).
   }, []);
   const check = useCallback(() => {
     // Drop the shared cache (sidebar refetches too), then refetch here with a visible loading state.
@@ -66,14 +75,14 @@ export default function ConnectPageClient() {
             the page uses the width instead of leaving a narrow strip in the middle. */}
         <div className="grid w-full max-w-7xl gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:items-start">
           <div className="grid min-w-0 gap-6">
-            <KeysPanel status={status} loading={loading} onCreated={onCreated} onRevoked={onRevoked} />
+            <KeysPanel status={status} loading={loading} plaintextKey={plaintextKey} onCreated={onCreated} onUse={onUse} onRevoked={onRevoked} />
 
             <Panel id="client" step={2} title="Add lnkdrp to your client" caption="Pick your client">
-              <ClientTabs plaintextKey={created?.plaintext ?? null} />
+              <ClientTabs plaintextKey={plaintextKey} />
             </Panel>
 
             <Panel id="verify" step={3} title="Verify" caption="Works today">
-              <VerifyPanel plaintextKey={created?.plaintext ?? null} status={status} loading={loading} onCheck={check} />
+              <VerifyPanel plaintextKey={plaintextKey} status={status} loading={loading} onCheck={check} />
             </Panel>
           </div>
 
