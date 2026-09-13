@@ -1,0 +1,38 @@
+# Fly.io app for the MCP server.
+#   fly launch --no-deploy --copy-config --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile --name lnkdrp-mcp
+#   fly secrets set REALTIME_SECRET='…' -a lnkdrp-mcp
+#   fly deploy --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile
+#   fly certs add mcp.lnkdrp.com -a lnkdrp-mcp   # then CNAME mcp → lnkdrp-mcp.fly.dev
+app = "lnkdrp-mcp"
+primary_region = "iad"
+
+[build]
+  dockerfile = "../../mcp/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  MCP_PORT = "8787"
+  LNKDRP_API_URL = "https://lnkdrp.com"
+  MCP_PUBLIC_URL = "https://mcp.lnkdrp.com"
+  NEXT_PUBLIC_REALTIME_URL = "wss://realtime.lnkdrp.com"
+
+[http_service]
+  internal_port = 8787
+  force_https = true
+  auto_stop_machines = false      # MCP sessions live in memory
+  auto_start_machines = true
+  min_machines_running = 1
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 400
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
