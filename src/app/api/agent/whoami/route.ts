@@ -1,0 +1,75 @@
+/**
+ * `GET /api/agent/whoami` — verification endpoint for agent API keys.
+ *
+ * Bearer `lnk_` auth ONLY (via `verifyBearer`); there is deliberately no session or temp-user
+ * fallback so a client can prove its key works from outside a browser. Clients self-identify with
+ * `x-lnkdrp-agent: <client>/<version>`.
+ *
+ * 200 `{ ok: true, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client }`
+ * 401 `{ error: "unauthorized" | "key_revoked" }`
+ *
+ * The first ever use of a key records an `agent.connected` activity row attributed to the agent.
+ */
+import { NextResponse } from "next/server";
+import { Types } from "mongoose";
+
+import { connectMongo } from "@/lib/mongodb";
+import { verifyBearer, clientLabelFromRequest } from "@/lib/gating/apiKeyActor";
+import { UserModel } from "@/lib/models/User";
+import { OrgModel } from "@/lib/models/Org";
+import { getWorkspacePlan } from "@/lib/billing/planLimits";
+import { recordActivity } from "@/lib/activity/log";
+import { errorJson } from "@/lib/http/errorResponse";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const NO_STORE = { "cache-control": "no-store" } as const;
+
+/** Who does this API key act as, and for which workspace. */
+export async function GET(request: Request) {
+  try {
+    const verified = await verifyBearer(request);
+    if (!verified.ok) return NextResponse.json({ error: verified.code }, { status: 401, headers: NO_STORE });
+    const { actor, key } = verified;
+
+    await connectMongo();
+    const [user, org, plan] = await Promise.all([
+      UserModel.findOne({ _id: new Types.ObjectId(actor.userId) }).select({ email: 1 }).lean(),
+      OrgModel.findOne({ _id: new Types.ObjectId(actor.orgId), isDeleted: { $ne: true } }).select({ name: 1, type: 1 }).lean(),
+      getWorkspacePlan(actor.orgId),
+    ]);
+    if (!org) return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: NO_STORE });
+
+    const client = clientLabelFromRequest(request);
+
+    if (key.useCount === 0) {
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: "api_key",
+        type: "agent.connected",
+        meta: { keyId: key.id, name: key.name, prefix: key.prefix, client },
+        request,
+      });
+    }
+
+    return NextResponse.json(
+      {
+        ok: true,
+        userId: actor.userId,
+        email: typeof user?.email === "string" ? user.email : null,
+        orgId: actor.orgId,
+        orgName: typeof org.name === "string" ? org.name : null,
+        isPersonalOrg: org.type === "personal",
+        plan,
+        keyPrefix: key.prefix,
+        scopes: key.scopes,
+        client,
+      },
+      { headers: NO_STORE },
+    );
+  } catch (err) {
+    return errorJson(err, { status: 500, publicMessage: "Could not verify key", context: "[api/agent/whoami] GET failed" });
+  }
+}

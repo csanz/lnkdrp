@@ -143,6 +143,19 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "approved a download request for", object: docTitle, suffix: email ? `(${email})` : null };
     case "download_request.denied":
       return { subject, verb: "denied a download request for", object: docTitle, suffix: email ? `(${email})` : null };
+    case "agent.key_created": {
+      const name = metaString(item.meta, "name") || metaString(item.meta, "prefix") || "a key";
+      return { subject: user || "Someone", verb: "created an agent key", object: `“${name}”`, suffix: null };
+    }
+    case "agent.key_revoked": {
+      const name = metaString(item.meta, "name") || metaString(item.meta, "prefix") || "a key";
+      return { subject: user || "Someone", verb: "revoked an agent key", object: `“${name}”`, suffix: null };
+    }
+    case "agent.connected": {
+      const client = item.agent?.label || metaString(item.meta, "client") || "An agent";
+      const keyName = metaString(item.meta, "name");
+      return { subject: client, verb: "connected to", object: "this workspace", suffix: keyName ? `using “${keyName}”` : null };
+    }
     default:
       return { subject, verb: item.type.replace(/[._]/g, " "), object: docTitle, suffix: null };
   }

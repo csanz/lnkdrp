@@ -36,7 +36,10 @@ export type ActivityType =
   | "plan.grace_started"
   | "plan.grace_reminder"
   | "plan.grace_blocked"
-  | "plan.upgraded";
+  | "plan.upgraded"
+  | "agent.key_created"
+  | "agent.key_revoked"
+  | "agent.connected";
 
 export type ActivityAgent = { client: string; version: string | null } | null;
 

@@ -10,6 +10,7 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   ClockIcon,
+  CpuChipIcon,
   DocumentIcon,
   DocumentPlusIcon,
   EllipsisHorizontalIcon,
@@ -46,6 +47,7 @@ import {
   type PlanLimitError,
   type PlanLimitKey,
 } from "@/lib/client/planLimit";
+import { useAgentStatus } from "@/lib/client/useAgentStatus";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import { buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getPublicSiteBase } from "@/lib/urls";
 import {
@@ -273,6 +275,7 @@ export default function LeftSidebar({
   const pathname = usePathname() ?? "";
   const { resolvedTheme } = useTheme();
   const navLocked = useNavigationLocked();
+  const { status: agentStatus } = useAgentStatus();
   const isDocRoute = useMemo(() => pathname.startsWith("/doc/"), [pathname]);
 
   const activeProjectId = useMemo(() => {
@@ -1787,6 +1790,49 @@ export default function LeftSidebar({
               <div className="flex items-center gap-2">
                 <ClockIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
                 <span>Activity</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              disabled={navLocked}
+              className={[
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                navLocked
+                  ? "cursor-not-allowed opacity-50"
+                  : pathname.startsWith("/connect")
+                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
+              ].join(" ")}
+              onClick={() => {
+                if (navLocked) return;
+                router.push("/connect");
+              }}
+              aria-label="Agents"
+              aria-current={pathname.startsWith("/connect") ? "page" : undefined}
+              title={
+                navLocked
+                  ? "Disabled while uploading"
+                  : agentStatus?.connected
+                    ? `Last used by ${agentStatus.lastUsedClient ?? "an agent"} ${formatRelative(agentStatus.lastUsedAt).toLowerCase()}`.trimEnd()
+                    : "Connect Claude Code, Cursor, Codex or any MCP client"
+              }
+            >
+              <div className="flex items-center gap-2">
+                <CpuChipIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
+                <span>Agents</span>
+                {agentStatus ? (
+                  <span className="ml-auto flex items-center gap-1.5 pr-1 text-[11px] font-normal text-[var(--muted)]">
+                    <span
+                      aria-hidden="true"
+                      className={[
+                        "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
+                        agentStatus.connected ? "bg-[var(--chart-views)]" : "bg-[var(--muted)]",
+                      ].join(" ")}
+                    />
+                    <span>{agentStatus.connected ? "Connected" : "Not connected"}</span>
+                  </span>
+                ) : null}
               </div>
             </button>
 

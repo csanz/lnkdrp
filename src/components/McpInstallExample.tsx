@@ -2,65 +2,16 @@
 
 import { useState } from "react";
 
+import { CLIENT_SETUPS, KEY_PLACEHOLDER, type ClientKey } from "@/lib/mcp/clientSetups";
+
 /**
  * Homepage example of connecting an AI agent to LinkDrop over MCP.
  *
- * Marketing-only: the install line and the exchange are illustrative. Real install
- * instructions live in the MCP PRD (`docs/prds/lnkdrp-mcp.md`) and replace these once the
- * server ships.
+ * The install snippets come from `src/lib/mcp/clientSetups.ts` (shared with `/connect` and the
+ * public `/mcp` guides) rendered with the placeholder key; the exchange below is illustrative.
  */
 
-type ClientKey = "claude" | "cowork" | "cursor" | "codex" | "gemini" | "grok" | "json";
-
-const KEY = "lnk_9f3aQ7…";
-const URL = "https://mcp.lnkdrp.com/mcp";
-
-const CLIENTS: Array<{ key: ClientKey; label: string; lines: string[] }> = [
-  {
-    key: "claude",
-    label: "Claude Code",
-    lines: [`claude mcp add --transport http lnkdrp ${URL} \\`, `  --header "Authorization: Bearer ${KEY}"`],
-  },
-  {
-    key: "cowork",
-    label: "Cowork",
-    lines: ["Cowork › Settings › Connectors › Add MCP server", "name   lnkdrp", `url    ${URL}`, `auth   Bearer ${KEY}`],
-  },
-  {
-    key: "cursor",
-    label: "Cursor",
-    lines: ["Settings › MCP › Add server", "name   lnkdrp", `url    ${URL}`, `auth   Bearer ${KEY}`],
-  },
-  {
-    key: "codex",
-    label: "Codex",
-    lines: [`codex mcp add lnkdrp --url ${URL} \\`, `  --header "Authorization: Bearer ${KEY}"`],
-  },
-  {
-    key: "gemini",
-    label: "Gemini CLI",
-    lines: [`gemini mcp add --transport http lnkdrp ${URL} \\`, `  --header "Authorization: Bearer ${KEY}"`],
-  },
-  {
-    key: "grok",
-    label: "Grok",
-    lines: ["Grok › Settings › Tools › Add MCP server", "name   lnkdrp", `url    ${URL}`, `auth   Bearer ${KEY}`],
-  },
-  {
-    key: "json",
-    label: "Any client",
-    lines: [
-      "{",
-      '  "mcpServers": {',
-      '    "lnkdrp": {',
-      `      "url": "${URL}",`,
-      `      "headers": { "Authorization": "Bearer ${KEY}" }`,
-      "    }",
-      "  }",
-      "}",
-    ],
-  },
-];
+const CLIENTS = CLIENT_SETUPS.map((c) => ({ key: c.key, label: c.label, lines: c.lines(KEY_PLACEHOLDER) }));
 
 const EXCHANGE: Array<{ who: "you" | "agent"; text: string }> = [
   {
@@ -79,6 +30,7 @@ const EXCHANGE: Array<{ who: "you" | "agent"; text: string }> = [
   },
 ];
 
+/** Render the homepage "Connect your agent" panel. */
 export default function McpInstallExample() {
   const [client, setClient] = useState<ClientKey>("claude");
   const [copied, setCopied] = useState(false);

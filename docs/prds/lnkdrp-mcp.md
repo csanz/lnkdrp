@@ -159,7 +159,7 @@ None in v1: a `lnkdrp://doc/{id}` resource would duplicate `get_share`, and prom
 - Extract `src/lib/services/docs.ts`, `src/lib/services/share.ts`, `src/lib/services/errors.ts` and reduce the docs and share-password routes to actor resolution plus `NextResponse` mapping.
 - Extract `src/lib/services/requests.ts` from `src/app/api/requests/route.ts` and `src/app/api/projects/[projectSlug]/docs/route.ts`.
 - Extract `src/lib/services/stats.ts` from `src/app/api/docs/[docId]/shareviews/route.ts`, and `src/lib/services/uploads.ts` plus `src/lib/blob/serverPut.ts` from the uploads and import-url routes.
-- Add `src/lib/models/ApiKey.ts`, `src/lib/auth/apiKey.ts` and `src/lib/gating/apiKeyActor.ts` with unit tests for hash lookup, expiry, revocation and rotation grace.
+- Add `src/lib/models/ApiKey.ts`, `src/lib/auth/apiKey.ts` and `src/lib/gating/apiKeyActor.ts` with unit tests for hash lookup, expiry, revocation and rotation grace. **Shipped 2026-09-13** as `src/lib/models/ApiKey.ts`, `src/lib/agents/apiKeys.ts`, `src/lib/gating/apiKeyActor.ts` (`verifyBearer`), `/api/agent/{status,keys,whoami}`, the in-app `/connect` page and public `/mcp/<client>` guides; no expiry/rotation yet (revoke + create instead).
 - Add `failClosed` to `rateLimit()` in `src/lib/http/rateLimit.ts` with a test that Mongo failure yields a limited result.
 - Add `createdVia`/`createdByKeyId` to `src/lib/models/Doc.ts` and `src/lib/models/Upload.ts`, and `source`/`apiKeyId` to `src/lib/models/CreditLedger.ts`.
 - Proves: Routes and a script call the same lib functions with an explicit actor; revoked keys fail
