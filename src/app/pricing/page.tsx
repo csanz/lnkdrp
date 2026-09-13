@@ -124,14 +124,13 @@ export default async function PricingPage() {
                   `Basic analytics: views and downloads, last ${FREE_ANALYTICS_DAYS} days`,
                   "AI summary and key points on every link",
                   "Password protection and download control",
-                  "Works with Claude Code, Cursor, Codex, and any MCP client",
+                  "Built for Claude Code, Cursor, Codex, and any MCP client",
                   `${FREE_STARTER_CREDITS} credits to start, one time`,
                   "Single user",
                 ]}
               />
               <p className="mt-4 text-[12px] leading-5 text-white/45">
-                Archive a document any time to free up a link slot. Not on Free: version history, AI compare, and AI
-                review.
+                Archive a document any time to free up a link slot. Not on Free: version history and AI compare.
               </p>
               <div className="mt-8 flex-1" />
               <PricingCta plan="free" variant="dark" helper="Sign in with Google. No card needed." />
@@ -156,7 +155,7 @@ export default async function PricingPage() {
                 )}
               </div>
               <p className="mt-3 text-sm leading-6 text-black/60">
-                For teams and agents that send documents every day.
+                For workspaces and agents that send documents every day.
               </p>
               <FeatureList
                 muted="text-black/80"
@@ -170,11 +169,11 @@ export default async function PricingPage() {
                   "Agents never take a seat",
                   "AI summary and key points on every link",
                   "Password protection and download control",
-                  "Works with Claude Code, Cursor, Codex, and any MCP client",
+                  "Built for Claude Code, Cursor, Codex, and any MCP client",
                 ]}
               />
               <div className="mt-8 flex-1" />
-              <PricingCta plan="pro" variant="light" helper="Stripe checkout · Cancel anytime, Pro stays active until the cycle ends" />
+              <PricingCta plan="pro" variant="light" helper="Stripe checkout · Cancel anytime, Pro stays active until the billing period ends" />
             </div>
           </div>
 
@@ -199,8 +198,8 @@ export default async function PricingPage() {
             <div>
               <h2 className="font-serif text-2xl tracking-tight text-white">Built for agents</h2>
               <p className="mt-3 text-sm leading-6 text-white/60">
-                Claude Code, Cursor, Codex, or any MCP client can create links and read the numbers on
-                every plan. Connect five agents and it costs nothing: seats count humans, not the
+                Claude Code, Cursor, Codex, or any MCP client creates links and reads the numbers on
+                every plan, through the MCP that ships with launch. Connect five agents and it costs nothing: seats count humans, not the
                 software working for them, and agents live under the same limits so nothing surprises you.
               </p>
             </div>
@@ -215,7 +214,7 @@ export default async function PricingPage() {
                   Pick a level, pay per run.
                 </h2>
                 <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
-                  Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits every billing cycle. Higher levels run a deeper
+                  Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month. Higher levels run a deeper
                   analysis and cost more per run. The summary on every link never uses credits.
                 </p>
                 <p className="mt-3 max-w-md text-[12px] leading-5 text-white/45">
@@ -277,7 +276,7 @@ export default async function PricingPage() {
                   Your domain, your seats, and someone to call.
                 </h2>
                 <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
-                  For teams that send documents at volume and need the paperwork to match.
+                  For companies that send documents at volume and need the paperwork to match.
                 </p>
               </div>
               <div className="flex flex-col justify-end">
@@ -320,7 +319,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What happens when I hit the Free limit?",
-                  a: "Existing links keep working. To share a new document, archive an old one or turn its sharing off to free the slot, or upgrade the workspace to Pro. Archived documents keep their stats and can come back whenever a slot is free. Your agent gets the same answer over MCP, so it can tell you.",
+                  a: "Existing links keep working. To share a new document, archive an old one or turn its sharing off to free the slot, or upgrade the workspace to Pro. Archived documents keep their stats and can come back whenever a slot is free.",
                 },
                 {
                   q: "Is Pro per person or per workspace?",
@@ -332,11 +331,11 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What do credits pay for?",
-                  a: "AI compare of two versions, which explains what changed: 2 credits for basic, 5 for standard, 12 for advanced, and reviews when you enable them. Pro includes 300 credits per billing cycle; they reset each cycle and do not roll over. If you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set. The summary on every link never uses credits.",
+                  a: "AI compare of two versions, which explains what changed: 2 credits for basic, 5 for standard, 12 for advanced. Pro includes 300 credits a month; they reset monthly and do not roll over. If you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set. The summary on every link never uses credits.",
                 },
                 {
                   q: "Can I replace a file on Free?",
-                  a: "Yes. Replacing keeps the same link and recipients always see the latest file. Version history, the revision list recipients can view, and the AI compare are Pro.",
+                  a: "Yes. Replacing keeps the same link and recipients always see the latest file. Version history, the version list recipients can view, and AI compare are Pro.",
                 },
                 {
                   q: "Which files can I share?",
@@ -344,7 +343,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "How do I cancel?",
-                  a: "From the billing portal, any time. Pro stays active until the end of the paid cycle, then the workspace goes back to Free and the Free limits apply again.",
+                  a: "From the billing portal, any time. Pro stays active until the end of the paid period, then the workspace goes back to Free and the Free limits apply again.",
                 },
               ].map((item) => (
                 <div key={item.q} className="grid gap-2 py-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] sm:gap-8">

@@ -36,8 +36,8 @@ export const FREE_PLAN_LIMITS_COPY = {
 } as const;
 
 /**
- * Launch flag: AI is free at launch, so credit surfaces (dashboard credits pill, Usage/Limits cards,
- * spend-limit editor) are hidden unless `NEXT_PUBLIC_FEATURE_CREDITS=1`. Routes keep working.
+ * Launch flag: credit surfaces (dashboard credits pill, Usage/Limits cards, spend-limit editor) are on
+ * by default and hidden only when `NEXT_PUBLIC_FEATURE_CREDITS=0`. Routes keep working either way.
  */
 export const FEATURE_CREDITS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_CREDITS !== "0";
 

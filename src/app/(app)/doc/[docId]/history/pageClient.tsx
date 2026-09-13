@@ -549,7 +549,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                 <div className="px-5 py-3" id="versions">
                   {!loading && !hasHistory ? (
                     <div className="text-sm text-[var(--muted)]">
-                      Replace the file to generate a version change summary.
+                      Replace the file to run AI compare on the new version.
                     </div>
                   ) : null}
 
@@ -709,8 +709,8 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                   onChange={(e) =>
                                     setRerunTierById((m) => ({ ...m, [it.id]: e.target.value as any }))
                                   }
-                                  aria-label="History quality"
-                                  title="Choose quality for history regeneration"
+                                  aria-label="AI compare quality"
+                                  title="Choose quality for the AI compare rerun"
                                 >
                                   <option value="basic">Basic (2 credits)</option>
                                   <option value="standard">Standard (5 credits)</option>
@@ -753,7 +753,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                       }
                                     })();
                                   }}
-                                  title="Regenerate this change summary"
+                                  title="Rerun AI compare for this version"
                                 >
                                   {rerunBusyById[it.id] ? "Regenerating…" : "Regenerate"}
                                 </button>
@@ -1030,7 +1030,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
 
                 <div className="mt-3 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]">
                   <div className="grid grid-cols-[80px_1fr] gap-2 border-b border-[var(--border)] px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)]">
-                    <div>Slide</div>
+                    <div>Page</div>
                     <div>Time</div>
                   </div>
                   {(Array.isArray(viewerStats.pages) ? viewerStats.pages : []).map((p: any) => (
@@ -1045,7 +1045,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                     </div>
                   ))}
                   {Array.isArray(viewerStats.pages) && viewerStats.pages.length === 0 ? (
-                    <div className="px-3 py-3 text-xs text-[var(--muted)]">No slide timing recorded yet.</div>
+                    <div className="px-3 py-3 text-xs text-[var(--muted)]">No page timing recorded yet.</div>
                   ) : null}
                 </div>
               </div>

@@ -1169,15 +1169,15 @@ export default function LeftSidebar({
     }
   }
 /**
-   * Return whether accepted pdf or image.
+   * Return whether the file is an accepted PDF.
    */
 
 
-  function isAcceptedPdfOrImage(file: File) {
+  function isAcceptedPdf(file: File) {
     // Some platforms/drivers may provide an empty/unknown MIME type, so fall back
-    // to filename extension while still enforcing "PDF or image only".
+    // to filename extension while still enforcing "PDF only".
     const name = (file.name ?? "").toLowerCase();
-    return file.type === "application/pdf" || name.endsWith(".pdf") || file.type.startsWith("image/");
+    return file.type === "application/pdf" || name.endsWith(".pdf");
   }
 /**
  * Open Add New Picker (uses push).
@@ -1745,7 +1745,7 @@ export default function LeftSidebar({
                 if (navLocked) return;
                 const file = e.dataTransfer?.files?.[0] ?? null;
                 if (!file) return;
-                if (!isAcceptedPdfOrImage(file)) return;
+                if (!isAcceptedPdf(file)) return;
                 onAddNewFile(file);
               }}
               aria-label="Upload"
@@ -1935,8 +1935,8 @@ export default function LeftSidebar({
               )}
             </section>
 
-            {/* Received (request inboxes): hidden behind the requests flag unless this workspace already has inboxes. */}
-            {FEATURE_REQUESTS_ENABLED || requests.items.length > 0 ? (
+            {/* Received (request inboxes): hidden entirely unless the requests flag is on. */}
+            {FEATURE_REQUESTS_ENABLED ? (
             <section>
               <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
                 <button

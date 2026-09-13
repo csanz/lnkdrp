@@ -145,7 +145,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const creditsUnlimited = Boolean(credits && credits.onDemandMonthlyLimitCents >= UNLIMITED_LIMIT_CENTS);
 
   async function refreshCredits(includeSpend = false, opts: { bust?: boolean } = {}) {
-    // Credits UI is hidden at launch (AI is free); skip the snapshot fetch entirely.
+    // Credits UI is on by default and hidden only when NEXT_PUBLIC_FEATURE_CREDITS=0; skip the snapshot fetch when hidden.
     if (!FEATURE_CREDITS_ENABLED) return;
     // Free workspaces have no credits; skip so a 0 balance never surfaces as "AI unavailable".
     if (!isProRef.current) return;
@@ -279,7 +279,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     return (
       <div className="bg-amber-500/[0.08] px-3 py-2 text-[12px] text-amber-900 dark:text-amber-200">
         <div className="mx-auto flex w-full max-w-[1280px] items-center justify-between gap-3 px-0 md:px-2">
-          <div className="font-semibold">AI tools are currently unavailable. You’ve used all credits for this billing cycle.</div>
+          <div className="font-semibold">AI compare is unavailable. You’ve used all credits for this month.</div>
           <div className="flex items-center gap-3">
             <Link
               href="/dashboard/limits"
@@ -422,7 +422,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         ariaLabel="Credits breakdown"
       >
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Credits</div>
-        <div className="mt-1 text-[13px] text-[var(--muted-2)]">Your workspace credits and billing cycle.</div>
+        <div className="mt-1 text-[13px] text-[var(--muted-2)]">Your workspace credits and reset date.</div>
 
         {creditsError ? (
           <Alert variant="error" className="mt-4 text-[12px]">
@@ -439,7 +439,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-[var(--panel-2)] p-4">
-              <div className="text-[12px] font-semibold text-[var(--muted-2)]">Included this cycle</div>
+              <div className="text-[12px] font-semibold text-[var(--muted-2)]">Included this month</div>
               <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
                 {credits?.includedThisCycle != null
                   ? Math.max(0, Math.floor(credits.includedThisCycle)).toLocaleString()
@@ -460,7 +460,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             </div>
           </div>
           <div className="rounded-xl bg-[var(--panel-2)] p-4">
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Used this cycle</div>
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Used this month</div>
             <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
               {credits ? Math.max(0, Math.floor(credits.usedThisCycle)).toLocaleString() : "—"}
             </div>

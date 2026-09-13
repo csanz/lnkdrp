@@ -26,6 +26,10 @@ import { debugError } from "@/lib/debug";
 
 type Mode = "off" | "daily" | "immediate";
 
+// Requests (inbound document repositories) are hidden at launch; repo-link-request emails are skipped
+// unless NEXT_PUBLIC_FEATURE_REQUESTS=1. Doc-update emails are unaffected.
+const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
+
 export type SendNotificationEmailsParams = {
   /** When true, don't send; just compute what would be sent. */
   dryRun?: boolean;
@@ -402,7 +406,7 @@ export async function sendNotificationEmails(
     }
 
     // ---------- REPO LINK REQUESTS (source: Upload.updatedDate + Doc.receivedViaRequestProjectId) ----------
-    const repoMembers = mems.filter((m) => m.repoMode !== "off");
+    const repoMembers = FEATURE_REQUESTS_ENABLED ? mems.filter((m) => m.repoMode !== "off") : [];
     if (repoMembers.length) {
       const cursorRows = await NotificationEmailCursorModel.find({
         orgId,

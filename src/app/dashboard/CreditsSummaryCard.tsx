@@ -36,7 +36,7 @@ type CreditsSnapshot = {
 type PlanState = "free" | "pro" | "unknown" | null;
 
 /**
- * Credits summary card; renders nothing unless `NEXT_PUBLIC_FEATURE_CREDITS=1` (AI is free at launch).
+ * Credits summary card; on by default, renders nothing only when `NEXT_PUBLIC_FEATURE_CREDITS=0`.
  */
 export default function CreditsSummaryCard(props: { headerRightSlot?: ReactNode }) {
   if (!FEATURE_CREDITS_ENABLED) return null;
@@ -168,8 +168,8 @@ function CreditsSummaryCardInner({
             {busy
               ? "Loading…"
               : reset
-                ? `Cycle resets on ${formatShortDate(reset, { invalid: "raw" })}.`
-                : "Cycle reset date unavailable."}
+                ? `Credits reset on ${formatShortDate(reset, { invalid: "raw" })}.`
+                : "Reset date unavailable."}
           </div>
         </div>
         {headerRightSlot ? <div className="shrink-0">{headerRightSlot}</div> : <div className="text-[12px] text-[var(--muted-2)]">{busy ? "…" : null}</div>}
@@ -201,7 +201,7 @@ function CreditsSummaryCardInner({
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">Included</div>
           <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{includedRemaining !== null ? includedRemaining.toLocaleString() : "—"}</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-            Per cycle: {includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}
+            Per month: {includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}
           </div>
         </div>
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
@@ -221,7 +221,7 @@ function CreditsSummaryCardInner({
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">Used</div>
           <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{usedThisCycle !== null ? usedThisCycle.toLocaleString() : "—"}</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-            This cycle{usedCentsThisCycle !== null ? ` • ≈ ${formatUsdFromCents(usedCentsThisCycle)} @ $0.10/credit` : ""}
+            This month{usedCentsThisCycle !== null ? ` • ≈ ${formatUsdFromCents(usedCentsThisCycle)} @ $0.10/credit` : ""}
           </div>
         </div>
       </div>
@@ -236,7 +236,7 @@ function CreditsSummaryCardInner({
         <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
           <div className="text-[12px] font-semibold text-[var(--fg)]">Out of credits</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-            You’ve used all available credits. AI tools are currently unavailable.
+            You’ve used all available credits. AI compare is unavailable until credits reset or you enable on-demand.
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Link

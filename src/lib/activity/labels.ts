@@ -80,7 +80,7 @@ function describeShareChanges(meta: Record<string, unknown>): string | null {
   if (typeof c.shareAllowPdfDownload === "boolean")
     parts.push(c.shareAllowPdfDownload ? "allowed PDF downloads" : "blocked PDF downloads");
   if (typeof c.shareAllowRevisionHistory === "boolean")
-    parts.push(c.shareAllowRevisionHistory ? "made revision history visible" : "hid revision history");
+    parts.push(c.shareAllowRevisionHistory ? "made version history visible" : "hid version history");
   return parts.length ? parts.join(", ") : null;
 }
 

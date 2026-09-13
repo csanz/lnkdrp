@@ -43,7 +43,7 @@ async function starterCreditsFor(orgId: Types.ObjectId): Promise<number> {
  *
  * Exists so the credit service can operate even before a workspace has ever run an AI action.
  * Every bucket starts at 0; the only exception is the Free starter grant (`FREE_STARTER_CREDITS`,
- * currently 0 and therefore skipped, see `starterCreditsFor`). Pro included credits arrive via
+ * 50, granted once to personal Free workspaces, see `starterCreditsFor`). Pro included credits arrive via
  * `grantCycleIncludedCredits` when Stripe opens a billing cycle. The initializer is idempotent
  * because the store only calls it when no balance row exists yet.
  */

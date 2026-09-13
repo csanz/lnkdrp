@@ -142,7 +142,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       });
       if (!diff) {
         await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: reserved.ledgerId });
-        return applyTempUserHeaders(NextResponse.json({ ok: false, error: "Diff generation unavailable" }, { status: 503 }), actor);
+        return applyTempUserHeaders(NextResponse.json({ ok: false, error: "AI compare unavailable" }, { status: 503 }), actor);
       }
 
       await DocChangeModel.updateOne(
@@ -157,11 +157,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: reserved.ledgerId });
       if (isAbortError(e)) {
         return applyTempUserHeaders(
-          NextResponse.json({ ok: false, error: "Diff generation timed out", code: "DIFF_TIMEOUT" }, { status: 503 }),
+          NextResponse.json({ ok: false, error: "AI compare timed out", code: "DIFF_TIMEOUT" }, { status: 503 }),
           actor,
         );
       }
-      const message = e instanceof Error ? e.message : "Diff generation failed";
+      const message = e instanceof Error ? e.message : "AI compare failed";
       return applyTempUserHeaders(NextResponse.json({ error: message }, { status: 400 }), actor);
     }
   } catch (err) {

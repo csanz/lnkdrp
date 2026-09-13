@@ -96,7 +96,7 @@ export async function POST(request: Request) {
       const review = parseTier(body?.reviewQualityTier);
       const history = parseTier(body?.historyQualityTier);
       if (!review || !history) {
-        return NextResponse.json({ error: "reviewQualityTier and historyQualityTier must be: standard | advanced" }, { status: 400 });
+        return NextResponse.json({ error: "reviewQualityTier and historyQualityTier must be: basic | standard | advanced" }, { status: 400 });
       }
 
       await WorkspaceCreditBalanceModel.updateOne(

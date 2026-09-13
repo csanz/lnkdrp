@@ -129,7 +129,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
             <div className="text-[12px] font-semibold text-[var(--muted-2)]">Summary and key points</div>
             <HelpTooltip
               label="Who writes the summary?"
-              body="lnkdrp's own summary agent writes the summary and key points after every upload, on every plan. It never uses credits. An agent sharing through the MCP can supply its own summary instead, in which case ours is skipped."
+              body="lnkdrp's own summary agent writes the summary and key points after every upload, on every plan. It never uses credits."
             />
           </div>
           <div className="mt-2 text-[13px] font-semibold text-[var(--fg)]">Included</div>
@@ -139,9 +139,9 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
         {FEATURE_REQUESTS_ENABLED ? (
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Review Agent</div>
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">AI review</div>
             <HelpTooltip
-              label="What is Review Agent?"
+              label="What is AI review?"
               body="A deeper quality assessment you run on-demand. Basic is fastest/cheapest. Standard is balanced. Advanced uses more context and retries."
             />
           </div>

@@ -470,7 +470,7 @@ export default function TeamsManager() {
             {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "—"}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Org"}</Pill> : null}
+            {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Shared"}</Pill> : null}
             {currentOrg?.role ? <Pill>{currentOrg.role}</Pill> : null}
           </div>
         </div>
@@ -511,7 +511,7 @@ export default function TeamsManager() {
 
       {currentOrg?.type === "personal" ? (
         <div className="rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
-          Personal workspaces are single-user (no members to manage, no invites). Switch to an org workspace to manage members and invites.
+          Personal workspaces are single-user (no members to manage, no invites). Switch to a shared workspace to manage members and invites.
         </div>
       ) : null}
 
@@ -636,7 +636,7 @@ export default function TeamsManager() {
         isPersonalOrg ? (
           <div className="space-y-4">
             <div className="rounded-xl bg-[var(--panel-2)] px-4 py-3 text-[12px] text-[var(--muted-2)]">
-              Personal workspaces can’t generate invite links. Switch to an org workspace to invite members.
+              Personal workspaces can’t generate invite links. Switch to a shared workspace to invite members.
             </div>
           </div>
         ) : (

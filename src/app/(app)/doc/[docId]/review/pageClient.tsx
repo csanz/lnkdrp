@@ -127,7 +127,7 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
       <div className="mx-auto w-full max-w-3xl px-6 py-8">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <div className="text-lg font-semibold tracking-tight">Quality review</div>
+            <div className="text-lg font-semibold tracking-tight">AI review</div>
             <div className="mt-1 text-sm text-zinc-600">
               AI-generated, stored per upload version.
             </div>
@@ -145,7 +145,7 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
                 className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm font-semibold text-zinc-800"
                 value={quality}
                 onChange={(e) => setQuality(e.target.value as any)}
-                aria-label="Review quality"
+                aria-label="AI review quality"
               >
                 <option value="basic">Basic (2 credits)</option>
                 <option value="standard">Standard (5 credits)</option>

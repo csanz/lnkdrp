@@ -35,7 +35,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     title: "Version history is a Pro feature",
     reason: "Free workspaces keep only the latest file. Pro keeps every version, shows who changed it, and explains what changed.",
     bullets: [
-      "Every version kept, with who uploaded it, teammate or agent",
+      "Every version kept, with who uploaded it, collaborator or agent",
       "AI compare of what changed between two versions",
       "A version history recipients can browse",
     ],

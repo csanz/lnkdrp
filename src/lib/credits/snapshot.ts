@@ -144,7 +144,7 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   // even before the first AI run triggers reservation initialization.
   let bal: WorkspaceCreditBalanceDoc = balRaw;
   if (!bal) {
-    // Free workspaces get no starter credits at launch (credits are a Pro concept).
+    // Personal Free workspaces get FREE_STARTER_CREDITS (50) once; Pro workspaces get included credits per cycle instead.
     const initTrialCredits = pro ? 0 : FREE_STARTER_CREDITS;
     const initSeed = {
       trialCreditsRemaining: initTrialCredits,

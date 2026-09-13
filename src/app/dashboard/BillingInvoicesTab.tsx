@@ -162,14 +162,14 @@ export default function BillingInvoicesTab() {
     if (!start || !end) return [];
     const s = new Date(start);
     const e = new Date(end);
-    if (!Number.isFinite(s.getTime()) || !Number.isFinite(e.getTime())) return [{ start, end, label: "Current cycle" }];
+    if (!Number.isFinite(s.getTime()) || !Number.isFinite(e.getTime())) return [{ start, end, label: "Current period" }];
     const periodMs = Math.max(1, e.getTime() - s.getTime());
 
     const out: Array<{ start: string; end: string; label: string }> = [];
     for (let i = 0; i < 6; i++) {
       const cs = new Date(s.getTime() - i * periodMs);
       const ce = new Date(cs.getTime() + periodMs);
-      const label = `Cycle Starting ${formatShortDate(cs.toISOString())}`;
+      const label = `Period starting ${formatShortDate(cs.toISOString())}`;
       out.push({ start: cs.toISOString(), end: ce.toISOString(), label });
     }
     return out;
@@ -472,7 +472,7 @@ export default function BillingInvoicesTab() {
               {summaryLoaded ? cycleRange : <SkeletonPill widthClassName="w-56" />}
             </div>
             <div className="mt-2 text-[12px] text-[var(--muted-2)]">
-              Includes 300 credits per billing cycle. Credits reset on your renewal date.
+              Includes 300 credits a month. Credits reset on your renewal date.
             </div>
             <button
               type="button"
@@ -498,7 +498,7 @@ export default function BillingInvoicesTab() {
               {usageError}
             </Alert>
           ) : usageLoaded && includedRows.length === 0 ? (
-            <div className="text-[12px] text-[var(--muted-2)]">No usage yet for this cycle.</div>
+            <div className="text-[12px] text-[var(--muted-2)]">No usage yet for this period.</div>
           ) : (
             <DataTable containerClassName="bg-[var(--panel-2)]">
               <thead className="bg-[var(--panel)] text-[12px] font-semibold text-[var(--muted-2)]">
@@ -584,7 +584,7 @@ export default function BillingInvoicesTab() {
           </div>
 
           <div className="shrink-0">
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Cycle</div>
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Period</div>
             <Select
               className="mt-2"
               value={cycleStartIso ?? ""}
@@ -612,7 +612,7 @@ export default function BillingInvoicesTab() {
               {usageError}
             </Alert>
           ) : summaryLoaded && summary && !summary.onDemand.enabled ? null : usageLoaded && onDemandRows.length === 0 ? (
-            <div className="text-[12px] text-[var(--muted-2)]">No usage yet for this cycle.</div>
+            <div className="text-[12px] text-[var(--muted-2)]">No usage yet for this period.</div>
           ) : (
             <>
               <DataTable containerClassName="bg-[var(--panel-2)]">

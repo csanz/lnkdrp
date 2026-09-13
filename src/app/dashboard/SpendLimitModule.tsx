@@ -85,7 +85,7 @@ function isPreset(limitCents: number): boolean {
 }
 
 /**
- * Spend limit module; renders nothing unless `NEXT_PUBLIC_FEATURE_CREDITS=1` (AI is free at launch).
+ * Spend limit module; on by default, renders nothing only when `NEXT_PUBLIC_FEATURE_CREDITS=0`.
  */
 export default function SpendLimitModule(props: { className?: string; compact?: boolean }) {
   if (!FEATURE_CREDITS_ENABLED) return null;
@@ -234,7 +234,7 @@ function SpendLimitModuleInner({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <div className="text-[12px] font-semibold text-[var(--fg)]">
-              {compact ? "On-Demand Usage" : "On-Demand Usage this Cycle"}
+              {compact ? "On-Demand Usage" : "On-demand usage this month"}
             </div>
             <HelpTooltip
               label="On-demand usage help"

@@ -295,7 +295,7 @@ export default function ActivityPageClient() {
           <div className="text-sm font-semibold text-[var(--fg)]">Activity</div>
         </div>
         <div className="mt-1 text-xs text-[var(--muted-2)]">
-          Uploads, share changes and request submissions in this workspace.
+          Uploads, share changes and views in this workspace.
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2" role="tablist" aria-label="Activity filters">
@@ -353,7 +353,7 @@ export default function ActivityPageClient() {
           </div>
         ) : !items.length ? (
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-10 text-center text-sm text-[var(--muted)]">
-            No activity yet. Uploads, share changes and request submissions will show up here.
+            No activity yet. Uploads, share changes and views will show up here.
           </div>
         ) : (
           <div

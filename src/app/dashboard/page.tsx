@@ -41,6 +41,9 @@ const MultiLineChart30d = dynamic(() => import("./MultiLineChart30d"), {
   loading: () => <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />,
 });
 
+// Requests (inbound document repositories) are hidden at launch; surfaces show only when NEXT_PUBLIC_FEATURE_REQUESTS=1.
+const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
+
 function Section({
   title,
   description,
@@ -77,7 +80,7 @@ const TAB_GROUPS: Array<{ items: Array<{ id: DashTab; label: string }> }> = [
   {
     items: [
       { id: "workspace", label: "Workspace" },
-      { id: "teams", label: "Teams" },
+      { id: "teams", label: "Members" },
     ],
   },
   {
@@ -454,7 +457,9 @@ function DashboardPageInner() {
                   <div className="mt-5 grid grid-cols-2 gap-3">
                     <StatMini label="Active docs" value={stats ? stats.docs.active : null} />
                     <StatMini label="Projects" value={stats ? stats.projects.active : null} />
-                    <StatMini label="Request inboxes" value={stats ? stats.projects.requests : null} />
+                    {FEATURE_REQUESTS_ENABLED ? (
+                      <StatMini label="Request inboxes" value={stats ? stats.projects.requests : null} />
+                    ) : null}
                     <StatMini label="All-time views" value={stats ? stats.sharing.viewsTotal : null} />
                   </div>
                 </div>
@@ -467,7 +472,9 @@ function DashboardPageInner() {
                   <ul className="mt-4 grid gap-2 text-[13px] text-[var(--muted-2)]">
                     <li>• Share a doc and set a short password to track engagement.</li>
                     <li>• Enable “Allow download” only when needed to reduce uncontrolled forwarding.</li>
-                    <li>• Create a request inbox to collect decks/docs into one place.</li>
+                    {FEATURE_REQUESTS_ENABLED ? (
+                      <li>• Create a request inbox to collect decks/docs into one place.</li>
+                    ) : null}
                   </ul>
                 </div>
               </div>
@@ -519,7 +526,7 @@ function DashboardPageInner() {
         ) : null}
 
         {tab === "teams" ? (
-          <Section title="Teams" description="Manage members and invite links for your active workspace.">
+          <Section title="Members" description="Manage members and invite links for your active workspace.">
             <TeamsManager />
           </Section>
         ) : null}
@@ -591,21 +598,6 @@ function DashboardPageInner() {
             </div>
 
             <AiQualityDefaultsCard className="mt-3" />
-
-            <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
-              <div className="text-[13px] font-semibold text-[var(--fg)]">Deep Search Agent</div>
-              <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-                Deep-searches your document for companies, people, products, and potential risks.
-              </div>
-              <div className="mt-3 text-[13px] leading-6 text-[var(--muted-2)]">
-                Deep Search Agent is currently being tested with only a few users. It’s very early access.{" "}
-                If you’re interested in joining the waiting list to test it out, email us at{" "}
-                <a className="font-semibold text-[var(--fg)] underline underline-offset-2" href="mailto:hi@lnkdrp.com">
-                  hi@lnkdrp.com
-                </a>
-                .
-              </div>
-            </div>
           </Section>
         ) : null}
 

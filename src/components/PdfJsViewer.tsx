@@ -779,7 +779,7 @@ export function PdfJsViewer({
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
       // Keep wording calm and factual (avoid blame/negativity).
-      setHistoryError(message || "Revision history isn’t available right now.");
+      setHistoryError(message || "Version history isn’t available right now.");
     } finally {
       if (timeoutId && typeof window !== "undefined") window.clearTimeout(timeoutId);
       setHistoryLoading(false);
@@ -1942,7 +1942,7 @@ export function PdfJsViewer({
               <div className="inline-flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-1.5">
                 <button
                   type="button"
-                  aria-label="Summary (generated)"
+                  aria-label="Summary and key points, written by LinkDrop"
                   ref={aiButtonRef}
                   onClick={() => {
                     setAiOpen((v) => !v);
@@ -1958,7 +1958,7 @@ export function PdfJsViewer({
                 {revisionHistoryEnabled ? (
                   <button
                     type="button"
-                    aria-label="Revision history"
+                    aria-label="Version history"
                     onClick={() => setHistoryOpen(true)}
                     className="inline-flex h-8 items-center rounded-xl px-3 text-xs font-medium text-white/90 hover:bg-white/10"
                   >
@@ -2183,7 +2183,7 @@ export function PdfJsViewer({
                   <SparklesIcon />
                   SUMMARY
                   <span className="rounded-md border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/70">
-                    Generated
+                    Written by LinkDrop
                   </span>
                 </div>
                 <div className="ml-auto text-sm text-white/70">Esc to close</div>
@@ -2483,16 +2483,16 @@ export function PdfJsViewer({
         onClose={() => {
           setHistoryOpen(false);
         }}
-        ariaLabel="Revision history"
+        ariaLabel="Version history"
         panelClassName="border-white/15 bg-black/95 text-white ring-white/15"
         contentClassName="px-6 pb-6 pt-5"
       >
         <div className="flex items-center gap-2 text-base font-semibold text-white">
           <HistoryIcon />
-          <span>Revision history</span>
+          <span>Version history</span>
         </div>
         <div className="mt-2 text-sm text-white/70">
-          A light history of updates (version + date + summary).
+          Versions of this document (version, date and what changed).
         </div>
 
         {!historyItems.length && historyLoading ? (

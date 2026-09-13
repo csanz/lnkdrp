@@ -116,7 +116,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         Boolean((doc as { shareAllowRevisionHistory?: unknown }).shareAllowRevisionHistory) &&
         (await ownerIsPro(doc as { orgId?: unknown; userId?: unknown }));
       if (!enabled) {
-        return NextResponse.json({ error: "Revision history disabled" }, { status: 403 });
+        return NextResponse.json({ error: "Version history disabled" }, { status: 403 });
       }
 
       const sharePasswordHash = (doc as { sharePasswordHash?: unknown }).sharePasswordHash;

@@ -3,7 +3,7 @@
  *
  * Three kinds:
  * - `started`  — the workspace just went over a Free limit; explains the 14-day grace window.
- * - `reminder` — a nudge partway through the window ("5 days left…", "2 days left…").
+ * - `reminder` — a nudge partway through the window ("7 days left…", "2 days left…").
  * - `blocked`  — the window has ended; new links/projects are paused until they are back under
  *   the limits or upgrade. Existing links keep working.
  *

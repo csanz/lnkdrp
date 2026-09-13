@@ -198,9 +198,9 @@ export default function UsageTable({
                         {r.action === "summary"
                           ? "Summary"
                           : r.action === "review"
-                            ? "Review"
+                            ? "AI review"
                             : r.action === "history"
-                              ? "History"
+                              ? "AI compare"
                               : "Unknown"}
                       </td>
                       <td className="px-4 py-3 text-[var(--muted-2)]">

@@ -121,7 +121,7 @@ export default function WorkspaceManager() {
     if (orgActionBusy) return;
     const name = createOrgName.trim();
     if (!name) {
-      setCreateOrgError("Org name is required");
+      setCreateOrgError("Workspace name is required");
       return;
     }
     setOrgActionBusy(true);
@@ -151,7 +151,7 @@ export default function WorkspaceManager() {
       }
       await refreshOrgsCache({ userKey: session.user.email ?? "", force: true }).catch(() => void 0);
     } catch (e) {
-      setCreateOrgError(e instanceof Error ? e.message : "Failed to create org");
+      setCreateOrgError(e instanceof Error ? e.message : "Failed to create workspace");
     } finally {
       setOrgActionBusy(false);
     }
@@ -383,7 +383,7 @@ export default function WorkspaceManager() {
             {orgsBusy ? "Loading…" : orgsError ? orgsError : currentOrg ? currentOrg.name : "—"}
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Org"}</Pill> : null}
+            {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Shared"}</Pill> : null}
             {currentOrg?.role ? <Pill>{currentOrg.role}</Pill> : null}
           </div>
         </div>
@@ -442,7 +442,7 @@ export default function WorkspaceManager() {
                           <div className="min-w-0">
                             <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{activeRow.name}</div>
                             <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                              {activeRow.type === "personal" ? "Personal" : "Org"} • Active
+                              {activeRow.type === "personal" ? "Personal" : "Shared"} • Active
                             </div>
                           </div>
                         </div>
@@ -500,7 +500,7 @@ export default function WorkspaceManager() {
                             <div className="min-w-0">
                               <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{o.name}</div>
                               <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                                {o.type === "personal" ? "Personal" : "Org"}
+                                {o.type === "personal" ? "Personal" : "Shared"}
                               </div>
                             </div>
                           </div>
@@ -742,7 +742,7 @@ export default function WorkspaceManager() {
       <Modal open={showCreateOrgModal} onClose={() => setShowCreateOrgModal(false)} ariaLabel="Create workspace">
         <div className="text-base font-semibold text-[var(--fg)]">Create workspace</div>
         <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-          A workspace can be a diff group within your own organization, a separate project group, or a completely new company.
+          A workspace can be a different group within your own organization, a separate project group, or a completely new company.
         </div>
         <div className="mt-4">
           <label className="block text-[12px] font-semibold text-[var(--muted-2)]">Workspace name</label>

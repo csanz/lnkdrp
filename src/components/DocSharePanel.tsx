@@ -168,7 +168,7 @@ export default function DocSharePanel({
     !hasSnapshot && aiWarning
       ? aiWarning
       : !hasSnapshot
-        ? "Snapshot is not available for this upload yet."
+        ? "The summary is not available for this upload yet."
         : "";
 
   return (
@@ -317,11 +317,11 @@ export default function DocSharePanel({
         <div className="mt-3 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-1.5 text-[12px] font-medium text-[var(--fg)]">
-              <span>Enable revision history viewing</span>
+              <span>Show version history to recipients</span>
               {showProPill ? <ProPill onClick={onProPillClick} /> : null}
             </div>
             <div className="mt-0.5 text-[12px] text-[var(--muted)]">
-              Show a light revision history to recipients (version + date + summary).
+              Recipients can browse versions (version, date and what changed).
             </div>
           </div>
 
@@ -329,7 +329,7 @@ export default function DocSharePanel({
             type="button"
             role="switch"
             aria-checked={revisionHistoryEnabled}
-            aria-label="Enable revision history viewing"
+            aria-label="Show version history to recipients"
             disabled={!shareActive}
             className={[
               "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors",
@@ -371,12 +371,12 @@ export default function DocSharePanel({
             <div className="flex items-center justify-between gap-3 pb-3">
               <div
                 className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]"
-                title="Snapshot (generated)"
+                title="Summary and key points"
               >
                 <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-                <span className="truncate">Snapshot</span>
+                <span className="truncate">Summary</span>
                 <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
-                  Generated
+                  Written by LinkDrop
                 </span>
               </div>
               <div className="shrink-0">
@@ -427,12 +427,12 @@ export default function DocSharePanel({
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
             <div
               className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]"
-              title="Snapshot (generated)"
+              title="Summary and key points"
             >
               <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-              <span className="truncate">Snapshot</span>
+              <span className="truncate">Summary</span>
               <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
-                Generated
+                Written by LinkDrop
               </span>
             </div>
             <div className="mt-2 text-[13px] leading-relaxed text-[var(--muted)]">
@@ -445,17 +445,17 @@ export default function DocSharePanel({
       <Modal
         open={aiExtractOpen}
         onClose={() => setAiExtractOpen(false)}
-        ariaLabel="Snapshot (generated)"
+        ariaLabel="Summary and key points"
         panelClassName="w-[min(860px,calc(100vw-32px))]"
       >
         <div className="flex items-center gap-2 text-base font-semibold text-[var(--fg)]">
-          <span>Snapshot</span>
+          <span>Summary</span>
           <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
-            Generated
+            Written by LinkDrop
           </span>
         </div>
         <div className="mt-2 text-sm text-[var(--muted)]">
-          Structured context captured from the document.
+          Summary and key points, written after every upload.
         </div>
 
         {oneLiner ? (

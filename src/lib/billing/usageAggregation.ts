@@ -41,8 +41,8 @@ function centsFromUsd(usd: number): number {
 
 function actionLabel(a: BillingLedgerRow["actionType"]): string {
   if (a === "summary") return "Summary";
-  if (a === "review") return "Review";
-  if (a === "history") return "History";
+  if (a === "review") return "AI review";
+  if (a === "history") return "AI compare";
   return "Unknown";
 }
 

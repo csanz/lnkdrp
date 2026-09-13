@@ -57,7 +57,7 @@ export async function GET(request: Request) {
     const status = statusRaw || "free";
 
     const planNameRaw = typeof (sub as any)?.planName === "string" ? String((sub as any).planName).trim() : "";
-    const planName = planNameRaw || (status === "free" ? "Free" : "Paid");
+    const planName = planNameRaw || (status === "free" ? "Free" : "Pro");
 
     // Checkout is always driven through our own route (which creates a per-workspace Checkout
     // Session with metadata/orgId); never hand out a static Payment Link.

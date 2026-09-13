@@ -407,7 +407,7 @@ export default function CreateLinkRequestRepositoryModal({
                         </button>
                       </div>
                       <div className="mt-1 text-sm text-[var(--muted)]">
-                        Currently supports Venture Capitalist. More perspectives are coming soon.
+                        Currently supports the Venture Capitalist perspective.
                       </div>
                       {requestReviewAgentLabel ? (
                         <div className="mt-2 text-sm text-[var(--muted)]">
