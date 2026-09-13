@@ -49,6 +49,7 @@ function keyDoc(overrides: Record<string, unknown> = {}) {
     scopes: ["read", "write"],
     revokedAt: null,
     useCount: 0,
+        lastUsedClient: null,
     ...overrides,
   };
 }
@@ -181,6 +182,7 @@ describe("gating/apiKeyActor.verifyBearerToken", () => {
         scopes: ["read", "write"],
         orgId: String(ORG),
         useCount: 0,
+        lastUsedClient: null,
       },
     });
   });

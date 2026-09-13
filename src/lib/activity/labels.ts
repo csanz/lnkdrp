@@ -151,6 +151,11 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       const name = metaString(item.meta, "name") || metaString(item.meta, "prefix") || "a key";
       return { subject: user || "Someone", verb: "revoked an agent key", object: `“${name}”`, suffix: null };
     }
+    case "agent.key_verified": {
+      const client = metaString(item.meta, "client") || "curl";
+      const keyName = metaString(item.meta, "name");
+      return { subject: user || "Someone", verb: "verified an agent key", object: keyName ? `“${keyName}”` : "", suffix: `with ${client}` };
+    }
     case "agent.connected": {
       const client = item.agent?.label || metaString(item.meta, "client") || "An agent";
       const keyName = metaString(item.meta, "name");

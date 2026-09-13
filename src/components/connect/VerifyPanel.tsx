@@ -42,6 +42,9 @@ export default function VerifyPanel({
       const bits = ["Connected", status.lastUsedClient, formatRelative(status.lastUsedAt)].filter(Boolean);
       return bits.join(" · ");
     }
+    if (status.verified && status.lastVerified) {
+      return `Key verified with ${status.lastVerified.client} ${formatRelative(status.lastVerified.at)}. No agent client has connected yet; that happens on its first tool call once your client is set up.`;
+    }
     return "No agent has connected yet. Run the command above, then check again.";
   })();
 

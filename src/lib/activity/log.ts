@@ -39,7 +39,8 @@ export type ActivityType =
   | "plan.upgraded"
   | "agent.key_created"
   | "agent.key_revoked"
-  | "agent.connected";
+  | "agent.connected"
+  | "agent.key_verified";
 
 export type ActivityAgent = { client: string; version: string | null } | null;
 

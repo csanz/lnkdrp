@@ -29,6 +29,8 @@ export type VerifiedApiKey = {
   orgId: string;
   /** Uses recorded before this request (0 means this is the key's first ever use). */
   useCount: number;
+  /** Client label of the previous use (before this one), or null. */
+  lastUsedClient: string | null;
 };
 
 export type VerifyBearerFailureCode = "unauthorized" | "key_revoked";
@@ -60,7 +62,7 @@ export async function verifyBearerToken(token: string | null | undefined): Promi
 
   await connectMongo();
   const doc = await ApiKeyModel.findOne({ keyHash: hashApiKey(token), isDeleted: { $ne: true } })
-    .select({ orgId: 1, createdByUserId: 1, name: 1, prefix: 1, scopes: 1, revokedAt: 1, useCount: 1 })
+    .select({ orgId: 1, createdByUserId: 1, name: 1, prefix: 1, scopes: 1, revokedAt: 1, useCount: 1, lastUsedClient: 1 })
     .lean();
   if (!doc) return { ok: false, code: "unauthorized" };
   if (doc.revokedAt) return { ok: false, code: "key_revoked" };
@@ -79,6 +81,7 @@ export async function verifyBearerToken(token: string | null | undefined): Promi
       scopes: (doc.scopes ?? []) as ApiKeyScope[],
       orgId,
       useCount: typeof doc.useCount === "number" ? doc.useCount : 0,
+      lastUsedClient: typeof doc.lastUsedClient === "string" ? doc.lastUsedClient : null,
     },
   };
 }

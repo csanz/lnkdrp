@@ -22,7 +22,12 @@ export default function StatusPill({ status, loading }: { status: AgentStatus | 
       : clients.length <= 2
         ? clients.map((c) => c.client).join(", ")
         : `${clients.length} clients`;
-  const parts = connected ? ["Connected", who, formatRelative(status?.lastUsedAt) || null].filter(Boolean) : ["No agent has connected yet"];
+  const verified = Boolean(status?.verified);
+  const parts = connected
+    ? ["Connected", who, formatRelative(status?.lastUsedAt) || null].filter(Boolean)
+    : verified
+      ? ["Key verified", status?.lastVerified?.client ?? null, "waiting for an agent client"].filter(Boolean)
+      : ["No agent has connected yet"];
   return (
     <span
       role="status"
@@ -30,7 +35,7 @@ export default function StatusPill({ status, loading }: { status: AgentStatus | 
     >
       <span
         aria-hidden="true"
-        className={["h-1.5 w-1.5 rounded-full", connected ? "bg-emerald-500" : "bg-[var(--muted-2)]"].join(" ")}
+        className={["h-1.5 w-1.5 rounded-full", connected ? "bg-emerald-500" : verified ? "bg-amber-500" : "bg-[var(--muted-2)]"].join(" ")}
       />
       {parts.map((p, i) => (
         <span key={i} className="inline-flex items-center gap-2">

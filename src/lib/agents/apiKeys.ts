@@ -108,6 +108,17 @@ export function toAgentKeyRow(doc: ApiKeyRowSource, owner: KeyOwner | null = nul
   };
 }
 
+/**
+ * HTTP tools people use to check a key (the Verify step's curl above all). They prove the key
+ * works but are not agents, so they count as "verified", never as "connected", and never appear
+ * under Agents. Matched case-insensitively against the client label.
+ */
+const TOOL_CLIENTS = new Set(["curl", "wget", "httpie", "postman", "insomnia", "python-requests", "node-fetch", "undici", "axios", "fetch", "api key"]);
+export function isToolClient(label: string | null | undefined): boolean {
+  const l = (label ?? "").trim().toLowerCase();
+  return l === "" || TOOL_CLIENTS.has(l);
+}
+
 /** Short display name for a key owner: name, else the part of the email before "@", else "a member". */
 export function ownerLabel(owner: KeyOwner | null): string {
   if (!owner) return "a member";
@@ -256,16 +267,22 @@ export function resetApiKeyTouchThrottle(): void {
  */
 export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Omit<AgentStatus, "canManage" | "isPersonalOrg">> {
   const keys = await listApiKeys(orgId);
+  // `latest` = most recent use by an agent client; `latestTool` = most recent use by curl & co.
   let latest: AgentKeyRow | null = null;
+  let latestTool: AgentKeyRow | null = null;
   for (const k of keys) {
     if (!k.lastUsedAt || k.revoked) continue;
+    if (isToolClient(k.lastUsedClient)) {
+      if (!latestTool || (latestTool.lastUsedAt ?? "") < k.lastUsedAt) latestTool = k;
+      continue;
+    }
     if (!latest || (latest.lastUsedAt ?? "") < k.lastUsedAt) latest = k;
   }
   // Distinct connected clients across active, used keys (a client may hold several keys, and in a
   // shared workspace several members may each connect the same client).
   const byClient = new Map<string, AgentClient>();
   for (const k of keys) {
-    if (!k.lastUsedAt || k.revoked) continue;
+    if (!k.lastUsedAt || k.revoked || isToolClient(k.lastUsedClient)) continue;
     const name = k.lastUsedClient ?? "API key";
     const who = ownerLabel(k.createdBy);
     const cur = byClient.get(name);
@@ -279,6 +296,8 @@ export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Om
   const clients = Array.from(byClient.values()).sort((a, b) => (a.lastUsedAt < b.lastUsedAt ? 1 : -1));
   return {
     connected: latest !== null,
+    verified: latest !== null || latestTool !== null,
+    lastVerified: latestTool?.lastUsedAt ? { at: latestTool.lastUsedAt, client: latestTool.lastUsedClient ?? "API key" } : null,
     lastUsedAt: latest?.lastUsedAt ?? null,
     lastUsedClient: latest?.lastUsedClient ?? null,
     activeKeys: keys.filter((k) => !k.revoked).length,

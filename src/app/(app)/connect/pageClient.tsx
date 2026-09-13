@@ -34,7 +34,10 @@ export default function ConnectPageClient() {
 
   const activeKeys = status ? status.keys.filter((k) => !k.revoked).length : 0;
   const connected = Boolean(status?.connected);
-  const currentStep: 1 | 2 | 3 = connected ? 3 : activeKeys > 0 ? 2 : 1;
+  // A verified key (curl) completes step 3 as well: the key works; the agent's own first call
+  // upgrades the pill from "Key verified" to "Connected".
+  const verified = Boolean(status?.verified);
+  const currentStep: 1 | 2 | 3 = connected || verified ? 3 : activeKeys > 0 ? 2 : 1;
 
   const onCreated = useCallback((plaintext: string, key: AgentKeyRow) => setCreated({ plaintext, key }), []);
   const onUse = useCallback((plaintext: string) => {
@@ -66,7 +69,7 @@ export default function ConnectPageClient() {
           Create links and read the numbers from Claude Code, Cursor, Codex, or any MCP client. One key per agent or machine.
         </p>
         <div className="mt-4">
-          <StepsRail current={currentStep} done={connected} />
+          <StepsRail current={currentStep} done={connected || verified} />
         </div>
       </div>
 

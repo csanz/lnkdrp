@@ -38,8 +38,12 @@ export type AgentClient = {
 };
 
 export type AgentStatus = {
-  /** True once any active (not revoked) key for this workspace has been used at least once. */
+  /** True once an agent client (not an HTTP tool such as curl) has used an active key. */
   connected: boolean;
+  /** True once any active key has been used at all, including by curl from the Verify step. */
+  verified: boolean;
+  /** Latest tool-style use (curl, wget, HTTPie, plain "API key"): proof the key works, not a connection. */
+  lastVerified: { at: string; client: string } | null;
   lastUsedAt: string | null;
   lastUsedClient: string | null;
   activeKeys: number;

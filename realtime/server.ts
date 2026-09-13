@@ -189,6 +189,14 @@ async function main() {
     }
   }, PING_MS);
 
+  server.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`[realtime] port ${PORT} is already in use. Another realtime server is running; stop it or set REALTIME_PORT.`);
+    } else {
+      console.error("[realtime] server error", err);
+    }
+    process.exit(1);
+  });
   server.listen(PORT, () => log(`listening on :${PORT}`));
 
   const shutdown = async () => {

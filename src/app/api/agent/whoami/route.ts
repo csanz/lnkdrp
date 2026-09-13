@@ -15,6 +15,7 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { verifyBearer, clientLabelFromRequest } from "@/lib/gating/apiKeyActor";
+import { isToolClient } from "@/lib/agents/apiKeys";
 import { UserModel } from "@/lib/models/User";
 import { OrgModel } from "@/lib/models/Org";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
@@ -43,12 +44,15 @@ export async function GET(request: Request) {
 
     const client = clientLabelFromRequest(request);
 
-    if (key.useCount === 0) {
+    // curl & co. verify the key (Verify step); a real client connecting is the bigger event.
+    // Each is recorded once per key: the first tool use, and the first agent use.
+    const tool = isToolClient(client);
+    if (key.useCount === 0 || (!tool && isToolClient(key.lastUsedClient))) {
       void recordActivity({
         orgId: actor.orgId,
         userId: actor.userId,
         actorKind: "api_key",
-        type: "agent.connected",
+        type: tool ? "agent.key_verified" : "agent.connected",
         meta: { keyId: key.id, name: key.name, prefix: key.prefix, client },
         request,
       });
