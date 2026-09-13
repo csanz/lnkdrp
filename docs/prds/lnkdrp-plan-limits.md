@@ -7,14 +7,14 @@
 **Sibling docs:** [lnkdrp-mcp](./lnkdrp-mcp.md) · [lnkdrp-credit-features](./lnkdrp-credit-features.md) · [SUBSCRIPTION](../SUBSCRIPTION.md) · [FEATURES](../FEATURES.md)
 
 > **Decision (2026-09-12).** The pricing page and Terms §8 now describe Free (3 active links, 1 project,
-> 7 days of analytics, no collaborators) and Pro (unlimited, 1 collaborator included then $5/mo per
-> member). None of it is enforced yet. Seat pricing must not be announced until it is enforced and billable.
+> 7 days of analytics, no collaborators) and Pro (unlimited, 1 collaborator included, more on
+> request; paid seats deferred). Free limits and the 14-day grace are enforced (M1 shipped). Seat pricing must not be announced until it is enforced and billable.
 
 ---
 
 ## Problem
 
-The site promises plan limits the app does not enforce. A Free workspace today can share unlimited
+(Resolved by M1; kept for context.) The site promised plan limits the app did not enforce. A Free workspace today can share unlimited
 links, create unlimited projects, invite anyone, and see all analytics. The dashboard still shows an
 "AI Credits" counter and Usage tab that no longer mean anything at launch.
 

@@ -10,7 +10,7 @@ import type { ActionType, QualityTier } from "@/lib/credits/types";
  */
 /**
  * Actions included on every plan at launch (2026-09-12 decision, revised the same day): only the
- * automatic summary is free. The history compare and reviews are charged at the tier prices below.
+ * automatic summary is free. AI compare (and AI review, not released) are charged at the tier prices below.
  * The ledger still records a 0-credit row for included actions so usage stays visible.
  * Remove an action from this set to start charging the tier prices below again.
  */

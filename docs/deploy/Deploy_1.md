@@ -103,7 +103,7 @@ Alternatively, one-off commands:
 - [ ] `LNKDRP_ORG_INVITE_TOKEN_SECRET` (falls back to `NEXTAUTH_SECRET` if unset)
 
 #### Optional (feature-gated)
-- [ ] `OPENAI_API_KEY` (enables AI review/extraction features when set)
+- [ ] `OPENAI_API_KEY` (enables the summary/extraction and AI compare features when set; AI review is not released)
 
 ### External service configuration
 

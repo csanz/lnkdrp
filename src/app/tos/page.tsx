@@ -46,7 +46,7 @@ export default function TermsOfServicePage() {
               By accessing or using LinkDrop ("the Service"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, you may not access or use the Service.
             </p>
             <p className="leading-7">
-              LinkDrop is a document sharing platform for uploading PDF documents, sharing them through trackable links, and reviewing them with AI. The Service is provided by LinkDrop ("we," "us," or "our").
+              LinkDrop is a document sharing platform for uploading PDF documents, sharing them through trackable links, and summarizing and comparing them with AI. The Service is provided by LinkDrop ("we," "us," or "our").
             </p>
           </section>
 
@@ -58,11 +58,11 @@ export default function TermsOfServicePage() {
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li>Uploading and storing PDF documents, including documents imported from a URL you provide</li>
               <li>Creating share links for documents, with optional password protection and control over whether recipients can download the PDF</li>
-              <li>Organizing documents into projects, and collecting documents from other people through request links</li>
-              <li>AI-generated summaries, reviews, and version comparisons of your documents, shown to you and, for summaries and key points, to the people you share with</li>
+              <li>Organizing documents into projects</li>
+              <li>AI-generated summaries and key points, and AI compare of document versions, shown to you and, for summaries and key points, to the people you share with</li>
               <li>Tracking how shared documents are viewed: views, pages read, time spent, and downloads</li>
-              <li>Team workspaces where members share documents, projects, and a billing plan</li>
-              <li>Email notifications about document activity and request-link submissions, which you can turn off in your settings</li>
+              <li>Workspaces where collaborators share documents, projects, and a billing plan</li>
+              <li>Email notifications about document activity, which you can turn off in your settings</li>
             </ul>
             <p className="mb-4 leading-7">
               Programmatic access for AI agents and other software (for example over MCP, an API, or a CLI) is made available as we release it. When it is, the same Terms apply to anything an agent does on your behalf, and you are responsible for the agent's actions under your account.
@@ -79,7 +79,7 @@ export default function TermsOfServicePage() {
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li>Keeping your Google account secure, since anyone who can sign in to it can access your LinkDrop account</li>
-              <li>All activity that occurs under your account, including activity by team members you invite and by agents or software you connect</li>
+              <li>All activity that occurs under your account, including activity by collaborators you invite and by agents or software you connect</li>
               <li>Notifying us promptly at hi@lnkdrp.com of any unauthorized use of your account</li>
             </ul>
             <p className="mb-4 leading-7">
@@ -101,7 +101,7 @@ export default function TermsOfServicePage() {
               <li>Infringe upon the intellectual property rights of others</li>
               <li>Upload malicious software, viruses, or other harmful code</li>
               <li>Attempt to gain unauthorized access to the Service or other users' accounts, documents, or workspaces</li>
-              <li>Use share links, request links, or email notifications for spam, phishing, or other fraudulent activities</li>
+              <li>Use share links or email notifications for spam, phishing, or other fraudulent activities</li>
               <li>Circumvent rate limits, password protection, download restrictions, or credit limits</li>
               <li>Interfere with or disrupt the Service or servers connected to the Service</li>
               <li>Reverse engineer, decompile, or disassemble any part of the Service</li>
@@ -111,16 +111,16 @@ export default function TermsOfServicePage() {
           <section>
             <h2 className="mb-3 text-base font-semibold text-white">5. Content and Intellectual Property</h2>
             <p className="mb-4 leading-7">
-              <strong>Your Content:</strong> You retain ownership of any documents, data, or content you upload to the Service ("Your Content"). By uploading Your Content, you grant us a limited, non-exclusive license to store, process, and display Your Content solely for the purpose of providing the Service to you. That processing includes extracting text and page images from your PDFs and sending them to our AI provider to generate summaries, reviews, and comparisons.
+              <strong>Your Content:</strong> You retain ownership of any documents, data, or content you upload to the Service ("Your Content"). By uploading Your Content, you grant us a limited, non-exclusive license to store, process, and display Your Content solely for the purpose of providing the Service to you. That processing includes extracting text and page images from your PDFs and sending them to our AI provider to generate summaries, key points, and version comparisons.
             </p>
             <p className="mb-4 leading-7">
-              <strong>Content You Receive:</strong> Documents that other people submit to you through a request link, or that you save from a share link into your own account, are stored in your workspace. You are responsible for handling them in line with any obligations you owe to the person who sent them.
+              <strong>Content You Receive:</strong> Documents that you save from a share link into your own account are stored in your workspace. You are responsible for handling them in line with any obligations you owe to the person who sent them.
             </p>
             <p className="mb-4 leading-7">
               <strong>Our Content:</strong> The Service, including its design, features, functionality, and all related software, is owned by LinkDrop and protected by copyright, trademark, and other intellectual property laws. You may not copy, modify, distribute, or create derivative works based on the Service without our express written permission.
             </p>
             <p className="leading-7">
-              <strong>AI-Generated Content:</strong> The Service uses artificial intelligence to analyze, summarize, review, and compare your documents, and to extract details such as company names and contact information from documents submitted through request links. AI-generated content can be wrong or incomplete. It is provided for informational purposes only and should not be relied upon as professional, legal, financial, or investment advice.
+              <strong>AI-Generated Content:</strong> The Service uses artificial intelligence to summarize and compare your documents. AI-generated content can be wrong or incomplete. It is provided for informational purposes only and should not be relied upon as professional, legal, financial, or investment advice.
             </p>
           </section>
 
@@ -159,19 +159,19 @@ export default function TermsOfServicePage() {
               The Service has a Free plan and a paid Pro plan. Plans are bound to a workspace, not to an individual. Current limits and prices are listed on our <Link href="/pricing" className="text-white/80 underline hover:text-white">pricing page</Link>, which forms part of these Terms.
             </p>
             <p className="mb-4 leading-7">
-              <strong>Free:</strong> a limited number of active share links and projects, a limited window of viewer analytics, and no additional collaborators. AI summaries and version comparisons are included. When you reach a limit, existing links keep working; you can disable a link to free a slot or upgrade the workspace.
+              <strong>Free:</strong> 3 active share links, 1 project, 7 days of basic analytics, and no collaborators. Summaries and key points are included; version history and AI compare are not. When you reach a limit, existing links keep working; you can archive a document to free a slot or upgrade to Pro.
             </p>
             <p className="mb-4 leading-7">
-              <strong>Pro:</strong> unlimited share links and projects, full analytics history, and collaborators. One collaborator is included; each additional member of a Pro workspace is billed as a monthly licence at the rate shown on the pricing page, prorated when added or removed. Members are people; software agents acting under a member's account do not need a licence.
+              <strong>Pro:</strong> unlimited share links and projects, deep analytics with full history, version history, AI compare, and collaborators. One collaborator is included; additional collaborators are available on request. Collaborators are people; software agents acting under a collaborator's account never take a seat.
             </p>
             <p className="mb-4 leading-7">
-              <strong>AI features and credits:</strong> the AI features available at launch are included in both plans. If we introduce features metered in credits, their cost will be shown before they run and listed on the pricing page, and any credit allowance and on-demand rate will be described there. We will not start charging credits for a feature that was included without notice.
+              <strong>AI features and credits:</strong> summaries and key points are included in both plans and never cost credits. AI compare is metered in credits; its cost is shown before it runs and listed on the pricing page. Pro workspaces receive 300 credits a month, which reset monthly and do not roll over, and can buy more on demand at $0.10 per credit under a spend limit you set. Free workspaces receive 50 starter credits once. We will not start charging credits for a feature that was included without notice.
             </p>
             <p className="mb-4 leading-7">
-              If you purchase a Pro subscription or collaborator licences:
+              If you purchase a Pro subscription or on-demand credits:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li>Fees are billed in advance on a recurring basis (currently monthly)</li>
+              <li>Subscription fees are billed monthly in advance; on-demand credits are billed at the end of each billing period based on usage</li>
               <li>All fees are non-refundable except as required by law</li>
               <li>We reserve the right to change prices and plan limits with 30 days' notice</li>
               <li>Your subscription will automatically renew unless cancelled before the renewal date</li>

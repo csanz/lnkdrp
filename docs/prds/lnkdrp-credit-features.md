@@ -6,10 +6,7 @@
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-mcp](./lnkdrp-mcp.md) · [SUBSCRIPTION](../SUBSCRIPTION.md) · [METRICS](../METRICS.md) · [REQUEST](../REQUEST.md)
 
-> **Decision (2026-09-12, revised same day).** At launch the automatic summary is free; the history compare and reviews are charged (2/5/12 by tier). Earlier text below that says "no AI feature costs credits" is superseded. The automatic summary and the
-> history compare are included on every plan, and an agent sharing over MCP can supply its own
-> summary so ours is skipped. The credit ledger keeps running underneath as a fair-use meter but is
-> not shown on the pricing page. Credits come back only for features that pass the test below.
+> **Decision (2026-09-12, revised same day).** At launch only the automatic summary is included on every plan; AI compare is charged 2/5/12 by tier and the credit table is shown on `/pricing` (AI review is listed there as not released). Earlier text below that says "no AI feature costs credits" or "the table is empty" is superseded. Agent-supplied summaries over MCP are planned, not live.
 
 ---
 
@@ -36,7 +33,7 @@ A feature may cost credits only if **all** of these hold:
 
 ## Proposed decisions (to lock)
 
-1. **Credits stay per workspace** with the existing ledger, cycle grants and on-demand rate; the customer-facing table is empty until the first feature below ships.
+1. **Credits stay per workspace** with the existing ledger, cycle grants and on-demand rate; the customer-facing table lists Summary (included) and AI compare (2/5/12); rows are added as features ship.
 2. **Pricing page** gains one row per shipped feature, with a fixed credit cost known before the run.
 3. **MCP parity:** every feature here is exposed as an MCP tool with the same cost as the web.
 4. **Free plan** gets a small monthly allowance so the features are discoverable; Pro gets the cycle grant plus on-demand.
@@ -69,9 +66,9 @@ Each milestone is independent and can ship in any order. Ordered here by expecte
 
 ### M3 — History compare as a premium tier
 
-- Keep the basic text diff included on every plan.
+- Basic AI compare is charged (2 credits) today; this milestone decides whether to make it free.
 - Offer an advanced compare that uses page images across versions and writes a change brief for recipients who enabled revision viewing.
-- Price advanced compare only; basic stays free.
+- Price advanced compare separately if basic becomes free.
 
 ### M4 — Request review (when Requests return)
 
@@ -89,7 +86,7 @@ Each milestone is independent and can ship in any order. Ordered here by expecte
 
 1. Each shipped feature has a fixed cost in `creditsForRun`, appears on `/pricing`, and is reachable from both the dashboard and MCP.
 2. A Free workspace can try each feature within its allowance and hits a clear `out_of_credits` with a billing link afterwards.
-3. Summary and basic history compare remain zero-cost in the ledger after every milestone.
+3. Summary remains zero-cost in the ledger after every milestone; AI compare stays at 2/5/12.
 
 ## Future
 

@@ -203,9 +203,8 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
 
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
               Generate share links from your favorite AI agent through our MCP interface, then track clicks and
-              usage through your agent or our dashboard. Every document gets an AI review with summaries, key
-              points, and relevance signals, so recipients (and their own agents) know what they&apos;re getting
-              before they commit time.
+              usage through your agent or our dashboard. Every link opens with an AI summary and key points, so
+              recipients (and their own agents) know what they&apos;re getting before they commit time.
             </p>
 
             <div className="mt-7 flex items-center gap-4">

@@ -15,26 +15,26 @@ export default function AboutCopy() {
         after that is guesswork.
       </p>
       <p>
-        LinkDrop is built by people who send a lot of fundraising, sales, and legal documents, and
+        LinkDrop is built by people who send a lot of fundraising, sales, and legal PDFs, and
         who now do most of that work with an AI agent at their side. So LinkDrop meets you there.
         Generate a share link from your favorite agent through the LinkDrop MCP interface, hand it
         to a recipient, and read the clicks, views, and usage back through your agent or our
-        dashboard. Every document ships with AI-generated context, so readers know what
+        dashboard. Every link opens with a summary and key points, so readers know what
         they&apos;re getting before they commit time.
       </p>
       <div className="grid gap-4 pt-1 sm:grid-cols-2">
         <div>
           <div className="font-medium text-[var(--fg)]">Built for agents</div>
           <p className="mt-1 text-xs leading-5">
-            Create links, open request repositories, and pull stats from Claude, Cursor, or any MCP
-            client. No browser required.
+            Create links and pull stats from Claude, Cursor, or any MCP client. No browser
+            required.
           </p>
         </div>
         <div>
           <div className="font-medium text-[var(--fg)]">AI-powered context</div>
           <p className="mt-1 text-xs leading-5">
-            Summaries, key points, category, and relevance signals, extracted before anyone opens
-            the file.
+            A summary and key points, written automatically after every upload, before anyone
+            opens the file.
           </p>
         </div>
         <div>
@@ -45,10 +45,10 @@ export default function AboutCopy() {
           </p>
         </div>
         <div>
-          <div className="font-medium text-[var(--fg)]">Request repositories</div>
+          <div className="font-medium text-[var(--fg)]">Version history and AI compare</div>
           <p className="mt-1 text-xs leading-5">
-            Collect documents through a link. AI scores submissions against your criteria as they
-            arrive.
+            Replace the file and the link stays the same. Compare any two versions and get a plain
+            account of what changed.
           </p>
         </div>
       </div>

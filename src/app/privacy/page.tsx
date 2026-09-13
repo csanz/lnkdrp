@@ -48,7 +48,7 @@ export default function PrivacyPolicyPage() {
               LinkDrop ("we", "us", or "our") is committed to protecting your privacy. This Privacy Policy explains how we collect, use, disclose, and safeguard information when you use our document sharing platform and related services (collectively, the "Service").
             </p>
             <p className="mb-4 leading-7">
-              It applies to two kinds of people: <strong>account holders</strong> who upload and share documents, and <strong>viewers</strong> who open a link someone shared with them or submit a document through a request link. Section 5 is written for viewers.
+              It applies to two kinds of people: <strong>account holders</strong> who upload and share documents, and <strong>viewers</strong> who open a link someone shared with them. Section 5 is written for viewers.
             </p>
             <p className="leading-7">
               By using the Service, you agree to the collection and use of information in accordance with this Privacy Policy. If you do not agree with our policies and practices, please do not use the Service.
@@ -62,7 +62,7 @@ export default function PrivacyPolicyPage() {
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li><strong>Account Information:</strong> Sign-in is through Google only. When you sign in, Google gives us your email address, name, Google account identifier, and profile picture URL. We store these and the time of your last sign-in. We do not store a password.</li>
               <li><strong>Documents and Content:</strong> We store the PDF documents you upload or import from a URL, along with the text we extract from them, a preview image, an image of each page, and your document titles and settings.</li>
-              <li><strong>AI Output:</strong> Summaries, key points, reviews, and version comparisons generated for your documents are stored with them. We also keep a record of each AI run, including the prompt sent and the response received, so we can show you results, count credits, and debug problems.</li>
+              <li><strong>AI Output:</strong> Summaries, key points, and version comparisons generated for your documents are stored with them. We also keep a record of each AI run, including the prompt sent and the response received, so we can show you results, count credits, and debug problems.</li>
               <li><strong>Workspace Information:</strong> If you create or join a workspace, we store the workspace name, optional icon, its members and their roles, and any invitation you send (including the invitee's email address if you enter one).</li>
               <li><strong>Preferences:</strong> Notification settings, starred documents, and similar choices you make in the app.</li>
               <li><strong>Communication:</strong> When you contact us for support, we collect your email address and any information you provide in your message.</li>
@@ -95,12 +95,12 @@ export default function PrivacyPolicyPage() {
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li>Provide, maintain, and improve the Service</li>
-              <li>Store, process, and display your documents, including sending document text and page images to our AI provider to generate summaries, reviews, and comparisons</li>
+              <li>Store, process, and display your documents, including sending document text and page images to our AI provider to generate summaries, key points, and version comparisons</li>
               <li>Show you who viewed your shared documents and how they engaged with them</li>
               <li>Create and manage your account, workspaces, memberships, and settings</li>
-              <li>Generate share links and request links and enforce the access controls you set on them</li>
+              <li>Generate share links and enforce the access controls you set on them</li>
               <li>Meter credits, process payments, and manage subscriptions</li>
-              <li>Send service emails: workspace invitations, document activity notifications and digests you have opted into, request-link submissions, and download-request and approval messages</li>
+              <li>Send service emails: workspace invitations, document activity notifications and digests you have opted into, and download-request and approval messages</li>
               <li>Detect, prevent, and address technical issues, abuse, and security threats, including rate limiting</li>
               <li>Comply with legal obligations and enforce our Terms of Service</li>
             </ul>
@@ -128,7 +128,7 @@ export default function PrivacyPolicyPage() {
               <li><strong>Google (Google LLC):</strong> Sign-in. Receives your sign-in requests.</li>
               <li><strong>Vercel (Vercel Inc.):</strong> Hosting, request logs, scheduled jobs, and file storage. Your PDFs, page images, preview images, extracted text, and workspace icons are stored in Vercel Blob storage at addresses that are not listed publicly.</li>
               <li><strong>MongoDB (MongoDB Atlas):</strong> Our database. Holds account, workspace, document text, AI output, viewer activity, billing, and log records.</li>
-              <li><strong>OpenAI (OpenAI, L.L.C.):</strong> AI processing. Receives the extracted text of your documents and images of their pages when a summary, review, or version comparison is generated. See section 6.</li>
+              <li><strong>OpenAI (OpenAI, L.L.C.):</strong> AI processing. Receives the extracted text of your documents and images of their pages when a summary or version comparison is generated. See section 6.</li>
               <li><strong>Stripe (Stripe, Inc.):</strong> Payments and subscriptions. Receives your email address and workspace identifier when you upgrade, and metered usage totals for on-demand credits.</li>
               <li><strong>Resend (Resend, Inc.):</strong> Sends our transactional email. Receives the recipient address and message content of each email we send.</li>
             </ul>
@@ -150,7 +150,7 @@ export default function PrivacyPolicyPage() {
           <section>
             <h2 className="mb-3 text-base font-semibold text-white">5. If Someone Shared a Document With You</h2>
             <p className="mb-4 leading-7">
-              This section is for people who open a LinkDrop share link or submit a document through a request link. You do not need an account to do either, but the document owner can see how you interacted with what they shared.
+              This section is for people who open a LinkDrop share link. You do not need an account to do so, but the document owner can see how you interacted with what they shared.
             </p>
             <p className="mb-4 leading-7">
               When you open a share link we record the following. Everything except your IP address is shown to the document owner:
@@ -167,9 +167,6 @@ export default function PrivacyPolicyPage() {
             <p className="mb-4 leading-7">
               If the owner has not enabled downloads, you can request one by entering your email address. We email the owner to ask for approval; if they approve, we email you a link, and you must sign in with Google to receive the file. Your email address is stored with that request.
             </p>
-            <p className="mb-4 leading-7">
-              If you submit a document through a request link, the document becomes part of the requester's workspace and is treated as their content. If the requester has enabled AI review, our AI provider processes your document and may extract details from it, such as a company name, contact name, email address, or website, and present them to the requester.
-            </p>
             <p className="leading-7">
               Password protection on a share link is set by the owner. When you enter a correct password we set a cookie so you do not have to re-enter it for 14 days on that browser.
             </p>
@@ -178,10 +175,10 @@ export default function PrivacyPolicyPage() {
           <section>
             <h2 className="mb-3 text-base font-semibold text-white">6. AI Processing</h2>
             <p className="mb-4 leading-7">
-              We use OpenAI's API to generate summaries, key points, reviews, and version comparisons. When an AI feature runs, we send the extracted text of the document and, for some features, images of its pages, together with our instructions. For version comparisons we send page images from both versions.
+              We use OpenAI's API to generate summaries, key points, and version comparisons. When an AI feature runs, we send the extracted text of the document and, for some features, images of its pages, together with our instructions. For version comparisons we send page images from both versions.
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
-              <li>A summary is generated automatically when a document finishes uploading. Reviews and comparisons run when you or someone in your workspace asks for them.</li>
+              <li>A summary is generated automatically when a document finishes uploading. Comparisons run when you or someone in your workspace asks for them.</li>
               <li>AI output is stored with the document and shown to you; summaries and key points are also shown to viewers of the share link.</li>
               <li>We keep the prompt and response of each run to display results, meter credits, and investigate failures.</li>
               <li>We do not train AI models. Under OpenAI's API data usage policy, content sent through the API is not used to train OpenAI's models. We have not opted in to any data-sharing program.</li>
@@ -243,7 +240,7 @@ export default function PrivacyPolicyPage() {
               To exercise these rights, contact us at hi@lnkdrp.com. We will respond within a reasonable timeframe and in accordance with applicable law. If you were a viewer of someone else's document, we may need to confirm the request with the document owner.
             </p>
             <p className="leading-7">
-              In the app you can change your display name, leave workspaces, remove members from workspaces you administer, delete documents, and turn document activity and request-link emails off, to a daily digest, or to immediate in your notification settings.
+              In the app you can change your display name, leave workspaces, remove members from workspaces you administer, delete documents, and turn document activity emails off, to a daily digest, or to immediate in your notification settings.
             </p>
           </section>
 

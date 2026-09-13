@@ -1,5 +1,7 @@
 # Requests (Inbound upload repositories)
 
+> **Status:** hidden at launch behind `NEXT_PUBLIC_FEATURE_REQUESTS`; Requests and AI review are not released.
+
 This document is a **technical** description of the “request link” feature: the **schemas** involved, the **API surface**, and how we run the **AI/review agents** differently for request uploads vs normal owner uploads.
 
 ## Overview
