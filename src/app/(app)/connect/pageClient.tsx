@@ -68,11 +68,11 @@ export default function ConnectPageClient() {
           <div className="grid min-w-0 gap-6">
             <KeysPanel status={status} loading={loading} onCreated={onCreated} onRevoked={onRevoked} />
 
-            <Panel id="client" title="Add lnkdrp to your client" caption="Pick your client">
+            <Panel id="client" step={2} title="Add lnkdrp to your client" caption="Pick your client">
               <ClientTabs plaintextKey={created?.plaintext ?? null} />
             </Panel>
 
-            <Panel id="verify" title="Verify" caption="Works today">
+            <Panel id="verify" step={3} title="Verify" caption="Works today">
               <VerifyPanel plaintextKey={created?.plaintext ?? null} status={status} loading={loading} onCheck={check} />
             </Panel>
           </div>

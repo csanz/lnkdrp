@@ -57,20 +57,8 @@ function RevealBox({ created, onDismiss }: { created: CreatedKey; onDismiss: () 
         Shown once. After you leave this page only the prefix is kept.
       </p>
       {/* The next step, made unmissable: the client commands below are already filled with this key. */}
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
-        <div className="text-[13px] leading-5 text-[var(--fg)]">
-          <span className="font-semibold">Next:</span> add lnkdrp to your client. The commands in step 2 already include this key.
-        </div>
-        <a
-          href="#client"
-          onClick={(e) => {
-            e.preventDefault();
-            document.getElementById("client")?.scrollIntoView({ behavior: "smooth", block: "start" });
-          }}
-          className={PRIMARY_BUTTON}
-        >
-          Go to step 2
-        </a>
+      <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5 text-[13px] leading-5 text-[var(--fg)]">
+        <span className="font-semibold">Next:</span> go to step 2 below and add lnkdrp to your client. The commands there already include this key.
       </div>
       <button
         type="button"
@@ -259,7 +247,7 @@ export default function KeysPanel({
     ) : null;
 
   return (
-    <Panel id="keys" title="Keys" caption={status ? `${activeCount} active` : undefined} action={action}>
+    <Panel id="keys" step={1} title="Create a key" caption={status ? `${activeCount} active` : undefined} action={action}>
       {created ? (
         <div className="mb-4">
           <RevealBox
