@@ -64,10 +64,18 @@ export default function ClientTabs({ plaintextKey }: { plaintextKey: string | nu
           The MCP server ships with launch. Your key already works against the verification endpoint below.
           {plaintextKey ? null : " Commands show a placeholder until you create a key."}
         </p>
-        <details className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] leading-5 text-[var(--muted)]">
-          <summary className="cursor-pointer select-none font-medium text-[var(--fg)]">Change the key or remove lnkdrp</summary>
-          <p className="mt-2">{active.remove.body}</p>
-          {active.remove.code ? <CodeBlock lines={active.remove.code} label={`Copy ${active.label} remove command`} size="sm" className="mt-2" /> : null}
+        {/* Rotating a key is the one thing every client makes awkward ("lnkdrp already exists"), so
+            this gets a real callout rather than a footnote. Closed by default to keep step 2 short. */}
+        <details className="group mt-4 rounded-xl border border-[var(--border)] border-l-4 border-l-[var(--fg)] bg-[var(--panel-2)] px-4 py-3 text-[13px] leading-5 text-[var(--muted)]">
+          <summary className="flex cursor-pointer select-none list-none items-center justify-between gap-3 [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0">
+              <span className="block font-semibold text-[var(--fg)]">Already added lnkdrp? Changing the key or removing it</span>
+              <span className="block text-[12px] text-[var(--muted-2)]">Re-running the add command with a new key fails. Here is the fix for {active.label}.</span>
+            </span>
+            <span aria-hidden="true" className="shrink-0 text-[var(--muted-2)] transition-transform group-open:rotate-90">›</span>
+          </summary>
+          <p className="mt-3">{active.remove.body}</p>
+          {active.remove.code ? <CodeBlock lines={active.remove.code} label={`Copy ${active.label} remove command`} className="mt-3" /> : null}
         </details>
         {isLocal ? (
           <p className="mt-1.5 text-[12px] leading-5 text-[var(--muted-2)]">
