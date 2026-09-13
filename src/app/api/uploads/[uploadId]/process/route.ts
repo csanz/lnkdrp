@@ -2476,7 +2476,9 @@ export async function POST(
           userId: actor.userId,
           actorKind: viaUploadSecret ? "secret" : actor.kind,
           agent: activityAgent,
-          type: "doc.processed",
+          // A later version is a replacement; the feed labels it "replaced <doc> (vN)" instead of
+          // a generic "processing finished", which read as noise across repeated replacements.
+          type: typeof uploadVersion === "number" && uploadVersion > 1 ? "doc.replaced" : "doc.processed",
           docId,
           uploadId,
           title: typeof docUpdate.title === "string" ? docUpdate.title : existingTitle,

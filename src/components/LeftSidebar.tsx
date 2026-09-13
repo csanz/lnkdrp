@@ -48,6 +48,7 @@ import {
   type PlanLimitKey,
 } from "@/lib/client/planLimit";
 import { useAgentStatus } from "@/lib/client/useAgentStatus";
+import { subscribeRealtime } from "@/lib/client/realtime";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import { buildPublicRequestUrl, buildPublicRequestViewUrl, buildPublicShareUrl, getPublicSiteBase } from "@/lib/urls";
 import {
@@ -640,11 +641,35 @@ export default function LeftSidebar({
       refreshPlan();
       void refresh();
     }
+    // Docs changed locally (delete, archive, move, upload): the list and the link meter refresh.
+    // This event was dispatched by every doc mutation but nothing here listened for it.
+    function onDocsChanged() {
+      refreshPlan();
+      void refresh();
+    }
+    // Realtime: any document/project/share activity in the workspace, from any member or agent
+    // (an MCP share_pdf, a teammate's upload), refreshes the sidebar. Coalesced so a burst of
+    // frames during processing costs one refetch.
+    let realtimeTimer: number | null = null;
+    const unsubscribeRealtime = subscribeRealtime("activity", (f) => {
+      if (f.type !== "activity") return;
+      const t = f.event.type ?? "";
+      if (!(t.startsWith("doc.") || t.startsWith("project.") || t.startsWith("share.updated"))) return;
+      if (realtimeTimer !== null) return;
+      realtimeTimer = window.setTimeout(() => {
+        realtimeTimer = null;
+        onDocsChanged();
+      }, 400);
+    });
 
     window.addEventListener(PROJECTS_CHANGED_EVENT, onProjectsChanged);
+    window.addEventListener(DOCS_CHANGED_EVENT, onDocsChanged);
     return () => {
       cancelled = true;
       window.removeEventListener(PROJECTS_CHANGED_EVENT, onProjectsChanged);
+      window.removeEventListener(DOCS_CHANGED_EVENT, onDocsChanged);
+      unsubscribeRealtime();
+      if (realtimeTimer !== null) window.clearTimeout(realtimeTimer);
     };
   }, [
     projectsModal.limit,
