@@ -2263,14 +2263,10 @@ export default function LeftSidebar({
                 )}
                 <button
                   type="button"
-                  className="shrink-0 font-semibold text-[var(--fg)] hover:underline underline-offset-2"
-                  onClick={() => {
-                    // Open the modal for whichever cap is hit; links are the default story.
-                    const key = plan.atLimit.activeLinks ? "active_links" : plan.atLimit.projects ? "projects" : "active_links";
-                    const used = key === "projects" ? plan.usage.projects : plan.usage.activeLinks;
-                    const max = key === "projects" ? plan.limits.projects : plan.limits.activeLinks;
-                    openUpgrade(key, { used, max: max ?? undefined });
-                  }}
+                  className="shrink-0 rounded-md bg-[var(--primary-bg)] px-2.5 py-1 text-[11px] font-semibold leading-4 text-[var(--primary-fg)] transition-colors hover:bg-[var(--primary-hover-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary-ring)]"
+                  // Generic pitch: nobody hit a wall here, so no limit-specific title or "N of N used".
+                  // The walls themselves (share toggle, new project, invite) open their own keyed modal.
+                  onClick={() => openUpgrade("pro")}
                 >
                   Upgrade to Pro
                 </button>

@@ -11,8 +11,8 @@
  */
 import type { PlanLimitKey } from "@/lib/client/planLimit";
 
-/** Which upsell to show. The first four mirror API limit keys; the last two are passive surfaces. */
-export type UpsellKey = "version_history" | "active_links" | "projects" | "collaborators" | "analytics_history" | "credits";
+/** Which upsell to show. `pro` is the generic pitch (sidebar link, no wall hit); the next five mirror API limit keys; `credits` is passive. */
+export type UpsellKey = "pro" | "version_history" | "active_links" | "projects" | "collaborators" | "analytics_history" | "credits";
 
 /** Copy for one upsell: title, one-sentence reason, and three concrete Pro benefits. */
 export type UpsellCopy = {
@@ -31,6 +31,16 @@ export const PRO_PRICE_FALLBACK = "$29/mo";
 
 /** Copy per upsell key. Keep numbers in sync with `/pricing`. */
 export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
+  pro: {
+    title: "Pro is for sending every day",
+    reason: "Free covers a few links. Pro removes the caps and shows you who actually read what you sent.",
+    bullets: [
+      "Unlimited active share links and projects",
+      "Deep analytics: who opened it, time per page, full history",
+      "Version history and AI compare, with 300 credits a month",
+    ],
+    secondaryLabel: "Compare plans",
+  },
   version_history: {
     title: "Version history is a Pro feature",
     reason: "Free workspaces keep only the latest file. Pro keeps every version, shows who changed it, and explains what changed.",
