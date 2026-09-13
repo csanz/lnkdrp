@@ -61,24 +61,37 @@ export default function ConnectPageClient() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-6 py-6" aria-busy={loading && !status}>
-        <div className="mx-auto grid w-full max-w-3xl gap-6">
-          <KeysPanel status={status} loading={loading} onCreated={onCreated} onRevoked={onRevoked} />
+        {/* Left-aligned under the header like the other app pages, growing with the viewport. On wide
+            screens the reference material (tool catalog, troubleshooting) moves into a side column so
+            the page uses the width instead of leaving a narrow strip in the middle. */}
+        <div className="grid w-full max-w-7xl gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:items-start">
+          <div className="grid min-w-0 gap-6">
+            <KeysPanel status={status} loading={loading} onCreated={onCreated} onRevoked={onRevoked} />
 
-          <Panel id="client" title="Add lnkdrp to your client" caption="Pick your client">
-            <ClientTabs plaintextKey={created?.plaintext ?? null} />
-          </Panel>
+            <Panel id="client" title="Add lnkdrp to your client" caption="Pick your client">
+              <ClientTabs plaintextKey={created?.plaintext ?? null} />
+            </Panel>
 
-          <Panel id="verify" title="Verify" caption="Works today">
-            <VerifyPanel plaintextKey={created?.plaintext ?? null} status={status} loading={loading} onCheck={check} />
-          </Panel>
+            <Panel id="verify" title="Verify" caption="Works today">
+              <VerifyPanel plaintextKey={created?.plaintext ?? null} status={status} loading={loading} onCheck={check} />
+            </Panel>
+          </div>
 
-          <Panel id="tools" title="What your agent can do" caption="Ships with launch">
-            <ToolCatalogTable />
-          </Panel>
+          <aside className="grid min-w-0 gap-6 xl:sticky xl:top-0">
+            <Panel id="tools" title="What your agent can do" caption="Ships with launch">
+              {/* Table below xl (full width), stacked rows in the xl side column. */}
+              <div className="xl:hidden">
+                <ToolCatalogTable />
+              </div>
+              <div className="hidden xl:block">
+                <ToolCatalogTable layout="stack" />
+              </div>
+            </Panel>
 
-          <Panel id="troubleshooting" title="Troubleshooting">
-            <Troubleshooting />
-          </Panel>
+            <Panel id="troubleshooting" title="Troubleshooting">
+              <Troubleshooting />
+            </Panel>
+          </aside>
         </div>
       </div>
     </div>

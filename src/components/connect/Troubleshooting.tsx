@@ -3,7 +3,7 @@ import { TROUBLESHOOTING } from "@/lib/mcp/clientSetups";
 /** Short Q/A list shared by `/connect` and the public guides. */
 export default function Troubleshooting() {
   return (
-    <dl className="grid gap-4 sm:grid-cols-2">
+    <dl className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
       {TROUBLESHOOTING.map((item) => (
         <div key={item.q}>
           <dt className="text-[13px] font-semibold text-[var(--fg)]">{item.q}</dt>
