@@ -218,13 +218,15 @@ export function resetApiKeyTouchThrottle(): void {
 /**
  * Workspace agent status (without `canManage`, which depends on the caller's role).
  *
- * `connected` is true once any key, revoked or not, has been used at least once.
+ * `connected` is true once any ACTIVE key has been used at least once. Revoked keys do not count,
+ * so a workspace that revokes every key goes back to "Not connected" instead of showing a stale
+ * green dot forever; their history stays visible in the key list.
  */
 export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Omit<AgentStatus, "canManage">> {
   const keys = await listApiKeys(orgId);
   let latest: AgentKeyRow | null = null;
   for (const k of keys) {
-    if (!k.lastUsedAt) continue;
+    if (!k.lastUsedAt || k.revoked) continue;
     if (!latest || (latest.lastUsedAt ?? "") < k.lastUsedAt) latest = k;
   }
   return {

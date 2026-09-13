@@ -25,7 +25,7 @@ export type AgentKeyRow = {
 };
 
 export type AgentStatus = {
-  /** True once any key for this workspace has been used at least once. */
+  /** True once any active (not revoked) key for this workspace has been used at least once. */
   connected: boolean;
   lastUsedAt: string | null;
   lastUsedClient: string | null;
