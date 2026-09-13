@@ -5,7 +5,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon, LockClosedIcon } from "@heroicons/react/24/outline";
+import { useSession } from "next-auth/react";
 import UploadButton from "@/components/UploadButton";
 import DocSharePanel from "@/components/DocSharePanel";
 import DocQuickStats from "@/components/DocQuickStats";
@@ -230,6 +231,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const isFreePlan = plan?.plan === "free";
   // Blocking upsells (share toggle at cap, revision-history toggle on Free) open the upgrade modal.
   const { openUpgrade } = useUpgradeModal();
+  // Used only to drop the redundant "by <you>" clause on the Last updated line.
+  const { data: session } = useSession();
+  const viewerEmail = (session?.user?.email ?? "").trim().toLowerCase();
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
   const [replaceCopyDone, setReplaceCopyDone] = useState(false);
@@ -1677,7 +1681,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           </div>
         ) : null}
         {/* Top bar */}
-        <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-3 py-3 md:flex-row md:items-center md:justify-between md:gap-4 md:px-6 md:py-4">
+        <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-6 md:px-8 md:py-5">
             <div className="flex w-full min-w-0 items-center gap-3 md:w-auto">
               {isReceivedViaRequest ? (
                 <div
@@ -1761,7 +1765,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : isReceivedViaRequest ? (
-                    <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--fg)]">
+                    <div className="flex min-w-0 items-center gap-2.5 text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg">
                       <button
                         type="button"
                         onClick={() => void handleToggleStar()}
@@ -1795,7 +1799,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       {displayVersion != null ? (
                         navLockActive ? (
                           <span
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1 py-0 text-[11px] font-medium text-[var(--muted-2)]"
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
                             aria-label={`Document version ${displayVersion}`}
                             title={`Version ${displayVersion}`}
                           >
@@ -1804,18 +1808,25 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         ) : (
                           <Link
                             href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1 py-0 text-[11px] font-medium text-[var(--muted-2)] hover:underline underline-offset-4"
-                            aria-label={`Document version ${displayVersion} (view history)`}
-                            title={`Version ${displayVersion} (view history)`}
+                            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:text-[var(--fg)]"
+                            aria-label={
+                              isFreePlan
+                                ? `Document version ${displayVersion}. Version history is a Pro feature`
+                                : `Document version ${displayVersion} (view history)`
+                            }
+                            title={isFreePlan ? "Version history is a Pro feature" : `Version ${displayVersion} (view history)`}
                           >
-                            v{displayVersion}
+                            <span>v{displayVersion}</span>
+                            <span aria-hidden="true" className="opacity-50">·</span>
+                            <span>History</span>
+                            {/* Lock, not a "PRO" badge: the gate belongs to the history link, not the document. */}
+                            {isFreePlan ? <LockClosedIcon className="h-3 w-3 opacity-80" aria-hidden="true" /> : null}
                           </Link>
                         )
                       ) : null}
-                      {displayVersion != null && isFreePlan ? <ProPill /> : null}
                     </div>
                   ) : (
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2.5">
                       <button
                         type="button"
                         onClick={() => void handleToggleStar()}
@@ -1851,7 +1862,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           setEditingTitle(true);
                         }}
                         className={[
-                          "block min-w-0 truncate text-left text-sm font-semibold text-[var(--fg)]",
+                          "block min-w-0 truncate text-left text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg",
                           navLockActive ? "cursor-not-allowed opacity-70" : "hover:underline",
                         ].join(" ")}
                       >
@@ -1867,7 +1878,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       {displayVersion != null ? (
                         navLockActive ? (
                           <span
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1 py-0 text-[11px] font-medium text-[var(--muted-2)]"
+                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
                             aria-label={`Document version ${displayVersion}`}
                             title={`Version ${displayVersion}`}
                           >
@@ -1876,15 +1887,22 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         ) : (
                           <Link
                             href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-1 py-0 text-[11px] font-medium text-[var(--muted-2)] hover:underline underline-offset-4"
-                            aria-label={`Document version ${displayVersion} (view history)`}
-                            title={`Version ${displayVersion} (view history)`}
+                            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:text-[var(--fg)]"
+                            aria-label={
+                              isFreePlan
+                                ? `Document version ${displayVersion}. Version history is a Pro feature`
+                                : `Document version ${displayVersion} (view history)`
+                            }
+                            title={isFreePlan ? "Version history is a Pro feature" : `Version ${displayVersion} (view history)`}
                           >
-                            v{displayVersion}
+                            <span>v{displayVersion}</span>
+                            <span aria-hidden="true" className="opacity-50">·</span>
+                            <span>History</span>
+                            {/* Lock, not a "PRO" badge: the gate belongs to the history link, not the document. */}
+                            {isFreePlan ? <LockClosedIcon className="h-3 w-3 opacity-80" aria-hidden="true" /> : null}
                           </Link>
                         )
                       ) : null}
-                      {displayVersion != null && isFreePlan ? <ProPill /> : null}
 
                       {projectsInline.length ? (
                         <div className="inline-flex shrink-0 flex-wrap items-center gap-1 text-sm font-medium text-[var(--muted-2)]">
@@ -1894,7 +1912,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             const Pill = (
                               <span
                                 className={[
-                                  "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 align-middle",
+                                  "inline-flex items-center gap-1.5 rounded-md px-2 py-1 align-middle",
                                   "text-[12px] font-medium leading-none text-[var(--muted-2)]",
                                   "bg-transparent hover:bg-[var(--panel-hover)]",
                                 ].join(" ")}
@@ -1936,8 +1954,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   )}
                   {doc.lastUpdate?.uploadedAt ? (
-                    <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-[var(--muted)]">
-                      <ArrowPathIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
+                    <div className="mt-1.5 flex items-center gap-2 pl-7 text-[12px] text-[var(--muted)]">
                       <span>
                         {(() => {
                           const iso = doc.lastUpdate?.uploadedAt ?? "";
@@ -1962,7 +1979,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             </>
                           );
                         })()}
-                        {doc.lastUpdate?.uploadedBy ? (
+                        {doc.lastUpdate?.uploadedBy &&
+                        (doc.lastUpdate.uploadedBy.email ?? "").trim().toLowerCase() !== viewerEmail ? (
                           <>
                             {" "}
                             by{" "}
@@ -1977,7 +1995,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   ) : null}
                   {isReceivedViaRequest ? (
-                    <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-[var(--muted)] md:hidden">
+                    <div className="mt-1.5 flex items-center gap-2 pl-7 text-[12px] text-[var(--muted)] md:hidden">
                       <InboxArrowDownIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
                       <span>
                         uploaded into{" "}
@@ -1997,7 +2015,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   ) : null}
                   {guideRequestProjectId ? (
-                    <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-[var(--muted)]">
+                    <div className="mt-1.5 flex items-center gap-2 pl-7 text-[12px] text-[var(--muted)]">
                       <LightBulbIcon className="h-4 w-4 text-[var(--muted-2)]" aria-hidden="true" />
                       <span>
                         guide for{" "}

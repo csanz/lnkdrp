@@ -30,16 +30,48 @@ type BillingSummary = {
   balances: { includedRemaining: number; purchasedRemaining: number; trialRemaining: number; creditsRemaining: number };
 };
 
+/** Ledger bucket a usage row was drawn from, when the API reports it. */
+type LedgerBucket = "trial" | "subscription" | "purchased" | "on_demand";
+
+/**
+ * Customer-facing bucket names. The ledger's `trial` bucket is the one-time starter grant every
+ * Free workspace begins with, so it reads "Starter" in the UI, never "Trial".
+ */
+const BUCKET_LABELS: Record<LedgerBucket, string> = {
+  trial: "Starter",
+  subscription: "Included",
+  purchased: "Purchased",
+  on_demand: "On-demand",
+};
+
+/**
+ * Display label for a ledger row: appends the bucket name when the row carries one, and rewrites
+ * a bare "Trial" that arrived inside the label text so the starter grant never reads as a trial.
+ */
+function ledgerRowLabel(row: { label: string; bucket?: LedgerBucket | string | null }): string {
+  const bucket = typeof row.bucket === "string" ? row.bucket.trim().toLowerCase() : "";
+  const bucketLabel = bucket in BUCKET_LABELS ? BUCKET_LABELS[bucket as LedgerBucket] : bucket ? bucket : "";
+  const base = row.label.replace(/\bTrial\b/g, "Starter");
+  return bucketLabel && !base.includes(bucketLabel) ? `${base} · ${bucketLabel}` : base;
+}
+
 type BillingUsage = {
   cycle: { start: string; end: string };
   included: {
-    rows: Array<{ label: string; credits: number; costCents: number; costLabel: string }>;
+    rows: Array<{ label: string; bucket?: LedgerBucket | string | null; credits: number; costCents: number; costLabel: string }>;
     total: { label: string; credits: number; costCents: number; costLabel: string };
   };
   onDemand: {
     usedCents: number;
     limitCents: number;
-    rows: Array<{ label: string; credits: number; costCents: number | null; qty: number; totalCents: number | null }>;
+    rows: Array<{
+      label: string;
+      bucket?: LedgerBucket | string | null;
+      credits: number;
+      costCents: number | null;
+      qty: number;
+      totalCents: number | null;
+    }>;
     adjustments: Array<{ description: string; totalCents: number }>;
     subtotalCents: number;
   };
@@ -510,8 +542,8 @@ export default function BillingInvoicesTab() {
               </thead>
               <tbody>
                 {includedRows.map((r) => (
-                  <tr key={r.label} className="border-t border-[var(--border)]">
-                    <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{r.label}</td>
+                  <tr key={`${r.bucket ?? ""}:${r.label}`} className="border-t border-[var(--border)]">
+                    <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{ledgerRowLabel(r)}</td>
                     <td className="px-4 py-3 text-right text-[13px] text-[var(--muted-2)]">{formatInt(r.credits)}</td>
                     <td className="px-4 py-3 text-right text-[13px] text-[var(--muted-2)]">
                       {(r.costLabel ?? "").trim() ? r.costLabel : r.costCents === 0 ? "Included" : formatUsdFromCents(r.costCents)}
@@ -627,8 +659,8 @@ export default function BillingInvoicesTab() {
                 </thead>
                 <tbody>
                   {onDemandRows.map((r) => (
-                    <tr key={r.label} className="border-t border-[var(--border)]">
-                      <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{r.label}</td>
+                    <tr key={`${r.bucket ?? ""}:${r.label}`} className="border-t border-[var(--border)]">
+                      <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{ledgerRowLabel(r)}</td>
                       <td className="px-4 py-3 text-right text-[13px] text-[var(--muted-2)]">{formatInt(r.credits)}</td>
                       <td className="px-4 py-3 text-right text-[13px] text-[var(--muted-2)]">
                         {formatUsdOrNotAvailable(r.costCents)}

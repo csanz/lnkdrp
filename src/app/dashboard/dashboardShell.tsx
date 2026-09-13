@@ -1,8 +1,9 @@
 /**
  * Client shell for `/dashboard/*` — top bar (logo left, account menu right) + auth redirect.
  *
- * Credits are a Pro concept: the header credits pill, the out-of-credits banner, and the snapshot
- * fetch behind them only run once `/api/billing/status` reports `plan: "pro"`.
+ * Every workspace has credits (Free starts with a one-time starter grant, Pro gets a monthly
+ * allowance), so the header credits pill and the snapshot fetch behind it run for both plans. The
+ * plan from `/api/billing/status` only picks the copy of the out-of-credits banner.
  */
 "use client";
 
@@ -20,7 +21,8 @@ import Alert from "@/components/ui/Alert";
 import IconButton from "@/components/ui/IconButton";
 import { ORGS_CACHE_UPDATED_EVENT, readOrgsCacheSnapshot, refreshOrgsCache } from "@/lib/orgsCache";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
-import { FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
+import { CREDITS_COPY, FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
+import { subscribeRealtime } from "@/lib/client/realtime";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 
 const DASHBOARD_NAV_OPEN_EVENT = "lnkdrp:dashboard-nav-open";
@@ -59,9 +61,8 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const [creditsOpen, setCreditsOpen] = useState(false);
   const creditsBusyRef = useRef(false);
   const pendingCreditsRefreshRef = useRef(false);
-  // Workspace plan; credits UI (pill, banner, snapshot fetch) is Pro-only. null = unknown.
+  // Workspace plan; picks the out-of-credits banner copy. null = unknown (banner waits).
   const [plan, setPlan] = useState<"free" | "pro" | null>(null);
-  const isProRef = useRef(false);
   // null = unknown (avoid flicker), boolean = known
   const [bannerDismissed, setBannerDismissed] = useState<boolean | null>(null);
 
@@ -144,11 +145,30 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   const logoSrc = mounted && resolvedTheme === "dark" ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
   const creditsUnlimited = Boolean(credits && credits.onDemandMonthlyLimitCents >= UNLIMITED_LIMIT_CENTS);
 
+  // Credits move when a processing run, replacement, compare or review finishes; the activity
+  // frame for those is the push signal, so the pill refreshes without polling.
+  useEffect(() => {
+    let timer: number | null = null;
+    const unsubscribe = subscribeRealtime("activity", (f) => {
+      if (f.type !== "activity") return;
+      const t = f.event.type ?? "";
+      if (!(t === "doc.processed" || t === "doc.replaced" || t.startsWith("review.") || t.startsWith("history."))) return;
+      if (timer !== null) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        void refreshCredits(false, { bust: true });
+      }, 600);
+    });
+    return () => {
+      unsubscribe();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function refreshCredits(includeSpend = false, opts: { bust?: boolean } = {}) {
     // Credits UI is on by default and hidden only when NEXT_PUBLIC_FEATURE_CREDITS=0; skip the snapshot fetch when hidden.
     if (!FEATURE_CREDITS_ENABLED) return;
-    // Free workspaces have no credits; skip so a 0 balance never surfaces as "AI unavailable".
-    if (!isProRef.current) return;
     setCreditsBusy(true);
     setCreditsError(null);
     creditsBusyRef.current = true;
@@ -204,18 +224,17 @@ export default function DashboardShell({ children }: { children: React.ReactNode
     if (!FEATURE_CREDITS_ENABLED) return;
     let cancelled = false;
     const id = window.setTimeout(() => {
+      // Credits exist on every plan, so the snapshot fetch does not wait for the plan read.
+      void refreshCredits(false);
       void (async () => {
         try {
           const res = await fetch("/api/billing/status", { method: "GET" });
           const json = (await res.json().catch(() => null)) as { plan?: unknown } | null;
           const p = res.ok && json && typeof json.plan === "string" ? json.plan.trim().toLowerCase() : "";
           if (cancelled) return;
-          const isPro = p === "pro";
-          isProRef.current = isPro;
-          setPlan(isPro ? "pro" : "free");
-          if (isPro) void refreshCredits(false);
+          setPlan(p === "pro" ? "pro" : "free");
         } catch {
-          // Unknown plan: leave the credits UI hidden rather than guess.
+          // Unknown plan: the pill still shows; only the banner (whose copy is plan-specific) waits.
         }
       })();
     }, 400);
@@ -269,20 +288,26 @@ export default function DashboardShell({ children }: { children: React.ReactNode
   }, [activeOrgId, orgReady, credits?.cycleEnd, credits?.blocked]);
 
   const blockedBanner = useMemo(() => {
-    if (plan !== "pro") return null;
+    // The copy is plan-specific, so wait for the plan read rather than guess.
+    if (plan === null) return null;
     if (!credits) return null;
     if (!credits.blocked) return null;
     // Avoid flicker: don't render until dismissal status is known.
     if (bannerDismissed !== false) return null;
+    const isFree = plan === "free";
     const onDemandConfigured = credits.onDemandMonthlyLimitCents > 0;
-    const ctaLabel = onDemandConfigured ? "Increase limit" : "View limits";
+    const ctaLabel = isFree ? "Upgrade to Pro" : onDemandConfigured ? "Increase limit" : "View limits";
+    const ctaHref = isFree ? "/pricing" : "/dashboard/limits";
+    const message = isFree
+      ? `AI tools are unavailable. You’ve used your starter credits; Pro includes ${CREDITS_COPY.proPerMonth} a month.`
+      : "AI compare is unavailable. You’ve used all credits for this month.";
     return (
       <div className="bg-amber-500/[0.08] px-3 py-2 text-[12px] text-amber-900 dark:text-amber-200">
         <div className="mx-auto flex w-full max-w-[1280px] items-center justify-between gap-3 px-0 md:px-2">
-          <div className="font-semibold">AI compare is unavailable. You’ve used all credits for this month.</div>
+          <div className="font-semibold">{message}</div>
           <div className="flex items-center gap-3">
             <Link
-              href="/dashboard/limits"
+              href={ctaHref}
               className="rounded-lg border border-amber-900/[0.06] bg-amber-50/60 px-[8px] py-[3px] text-[11px] font-semibold text-stone-900/90 hover:bg-amber-50/68 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-900/15 dark:border-amber-100/[0.06] dark:bg-[#f3e7d3]/32 dark:hover:bg-[#f3e7d3]/38 dark:focus-visible:outline-amber-100/15"
             >
               {ctaLabel}
@@ -369,7 +394,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
 
           <div className="min-w-0">
             <div className="flex min-w-0 items-center justify-end gap-2">
-              {FEATURE_CREDITS_ENABLED && plan === "pro" ? (
+              {FEATURE_CREDITS_ENABLED ? (
                 <Link
                   href="/dashboard?tab=usage"
                   className={`inline-flex h-[34px] min-w-0 max-w-[52vw] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] sm:max-w-none truncate ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
@@ -422,7 +447,9 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         ariaLabel="Credits breakdown"
       >
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Credits</div>
-        <div className="mt-1 text-[13px] text-[var(--muted-2)]">Your workspace credits and reset date.</div>
+        <div className="mt-1 text-[13px] text-[var(--muted-2)]">
+          {plan === "free" ? "Your workspace's one-time starter credits." : "Your workspace credits and reset date."}
+        </div>
 
         {creditsError ? (
           <Alert variant="error" className="mt-4 text-[12px]">
@@ -439,7 +466,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-[var(--panel-2)] p-4">
-              <div className="text-[12px] font-semibold text-[var(--muted-2)]">Included this month</div>
+              <div className="text-[12px] font-semibold text-[var(--muted-2)]">{plan === "free" ? "Starter" : "Included this month"}</div>
               <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
                 {credits?.includedThisCycle != null
                   ? Math.max(0, Math.floor(credits.includedThisCycle)).toLocaleString()
@@ -473,12 +500,16 @@ export default function DashboardShell({ children }: { children: React.ReactNode
                 credits
               </div>
             ) : null}
-            <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-              Resets on:{" "}
-              <span className="font-semibold text-[var(--fg)]">
-                {credits?.cycleEnd ? formatShortDate(credits.cycleEnd) : "—"}
-              </span>
-            </div>
+            {plan === "free" ? (
+              <div className="mt-1 text-[12px] text-[var(--muted-2)]">Starter credits are one time; they do not reset.</div>
+            ) : (
+              <div className="mt-1 text-[12px] text-[var(--muted-2)]">
+                Resets on:{" "}
+                <span className="font-semibold text-[var(--fg)]">
+                  {credits?.cycleEnd ? formatShortDate(credits.cycleEnd) : "—"}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 

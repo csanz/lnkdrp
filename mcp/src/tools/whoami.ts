@@ -8,8 +8,8 @@ import type { ToolContext } from "../context";
 import { handleTool } from "../errors";
 import { SAFETY_TAIL } from "./shared";
 
-/** Credit costs by quality level, per the launch pricing model (summary is free; compare is paid). */
-export const COSTS = { summary: [0, 0, 0], compare: [2, 5, 12] } as const;
+/** Credit costs by quality level, per the launch pricing model (summary 1/2/5, compare 2/5/12). */
+export const COSTS = { summary: [1, 2, 5], compare: [2, 5, 12] } as const;
 
 /** Register `lnkdrp_whoami`. */
 export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {

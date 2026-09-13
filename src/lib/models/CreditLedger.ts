@@ -92,6 +92,13 @@ const creditLedgerSchema = new Schema(
     creditsFromPurchased: { type: Number, default: 0, min: 0 },
     creditsFromOnDemand: { type: Number, default: 0, min: 0 },
 
+    /**
+     * Who triggered the run. `owner` rows are billed to the workspace; `recipient` rows are
+     * uploads made through a request/replace link by someone outside the workspace and are
+     * always recorded at 0 credits (the owner never pays for a stranger's upload).
+     */
+    source: { type: String, enum: ["owner", "recipient"], default: "owner", index: true },
+
     /** Idempotency marker: set when usage aggregates have been applied for this ledger row. */
     usageAggAppliedAt: { type: Date, default: null, index: true },
 

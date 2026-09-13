@@ -16,6 +16,7 @@ import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { tryResolveUserActor } from "@/lib/gating/actor";
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
+import { checkRecipientUploadCap, RECIPIENT_UPLOAD_LIMIT_CODE } from "@/lib/uploads/recipientCaps";
 
 export const runtime = "nodejs";
 
@@ -188,6 +189,15 @@ export async function POST(
       } catch {
         // ignore
       }
+    }
+
+    // Daily brake on recipient uploads (per link, and per Free workspace) before anything is created.
+    const cap = await checkRecipientUploadCap({ orgId: effectiveOrgId, requestProjectId: projectId });
+    if (!cap.ok) {
+      return NextResponse.json(
+        { error: RECIPIENT_UPLOAD_LIMIT_CODE, code: RECIPIENT_UPLOAD_LIMIT_CODE, scope: cap.scope, message: cap.message },
+        { status: 429, headers: { "Retry-After": "3600" } },
+      );
     }
 
     // Create with a shareId (retry on rare collisions).

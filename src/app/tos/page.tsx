@@ -165,7 +165,7 @@ export default function TermsOfServicePage() {
               <strong>Pro:</strong> unlimited share links and projects, deep analytics with full history, version history, AI compare, and collaborators. One collaborator is included; additional collaborators are available on request. Collaborators are people; software agents acting under a collaborator's account never take a seat.
             </p>
             <p className="mb-4 leading-7">
-              <strong>AI features and credits:</strong> summaries and key points are included in both plans and never cost credits. AI compare is metered in credits; its cost is shown before it runs and listed on the pricing page. Pro workspaces receive 300 credits a month, which reset monthly and do not roll over, and can buy more on demand at $0.10 per credit under a spend limit you set. Free workspaces receive 50 starter credits once. We will not start charging credits for a feature that was included without notice.
+              <strong>AI features and credits:</strong> AI features are metered in credits. The automatic summary written for every upload costs one credit; AI compare costs more, by level, and every cost is listed on the pricing page before it runs. Pro workspaces receive 300 credits a month, which reset monthly and do not roll over, and can buy more on demand at $0.10 per credit under a spend limit you set. Free workspaces receive 50 starter credits once; when they are used up, AI features pause while links, tracking, and stats keep working. We will not raise the credit cost of a feature without notice.
             </p>
             <p className="mb-4 leading-7">
               If you purchase a Pro subscription or on-demand credits:

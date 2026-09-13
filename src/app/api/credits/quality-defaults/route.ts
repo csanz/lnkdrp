@@ -12,24 +12,17 @@ import { resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { getWorkspacePlan } from "@/lib/billing/planLimits";
+import { defaultBalanceForWorkspace } from "@/lib/credits/creditService";
+import { parseQualityTier as parseTier, resolveHistoryQualityTier } from "@/lib/credits/qualityDefaults";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-type Tier = "basic" | "standard" | "advanced";
 
 // Short-lived in-memory cache to keep the dashboard Limits tab snappy.
 // Safe because these defaults rarely change and the UI refreshes after saves.
 const QUALITY_DEFAULTS_CACHE_TTL_MS = 10_000;
 let qualityDefaultsCache: Map<string, { at: number; payload: any }> | null = null;
-
-function parseTier(v: unknown): Tier | null {
-  const s = typeof v === "string" ? v.trim().toLowerCase() : "";
-  if (s === "basic") return "basic";
-  if (s === "standard") return "standard";
-  if (s === "advanced") return "advanced";
-  return null;
-}
 
 async function resolveUserAndOrgForWorkspaceRoute(request: Request): Promise<{ ok: true; userId: Types.ObjectId; orgId: Types.ObjectId } | { ok: false; status: number; error: string }> {
   // Membership-validated fast path (cookie / JWT claim + one cached membership check), then the full
@@ -55,15 +48,17 @@ export async function GET(request: Request) {
       }
 
       await connectMongo();
-      const [membership, bal] = await Promise.all([
+      const [membership, bal, plan] = await Promise.all([
         OrgMembershipModel.findOne({ orgId: ctx.orgId, userId: ctx.userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
         WorkspaceCreditBalanceModel.findOne({ workspaceId: ctx.orgId }).select({ defaultReviewQualityTier: 1, defaultHistoryQualityTier: 1 }).lean(),
+        getWorkspacePlan(ctx.orgId),
       ]);
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       if (role !== "owner" && role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
       const review = parseTier((bal as any)?.defaultReviewQualityTier) ?? "standard";
-      const history = parseTier((bal as any)?.defaultHistoryQualityTier) ?? "standard";
+      // Compare tier is plan-aware when unset: Basic on Free, Standard on Pro. A stored value wins.
+      const history = resolveHistoryQualityTier((bal as any)?.defaultHistoryQualityTier, plan);
 
       const payload = { ok: true, review, history };
       qualityDefaultsCache.set(cacheKey, { at: Date.now(), payload });
@@ -99,9 +94,15 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "reviewQualityTier and historyQualityTier must be: basic | standard | advanced" }, { status: 400 });
       }
 
+      // Upsert: when this is the first write to the balance row, seed it the same way the reserve
+      // and snapshot paths do so the Free starter grant / daily cap are not silently skipped.
+      const seed = await defaultBalanceForWorkspace(ctx.orgId);
       await WorkspaceCreditBalanceModel.updateOne(
         { workspaceId: ctx.orgId },
-        { $set: { defaultReviewQualityTier: review, defaultHistoryQualityTier: history } },
+        {
+          $set: { defaultReviewQualityTier: review, defaultHistoryQualityTier: history },
+          $setOnInsert: { workspaceId: ctx.orgId, ...seed },
+        },
         { upsert: true },
       );
 

@@ -8,9 +8,9 @@ export const INCLUDED_CREDITS_PER_CYCLE = 300;
 
 /**
  * One-time starter credits for personal Free workspaces (no cycle reset), granted by
- * `defaultInitBalanceIfMissing` (`creditService.ts`) and shown on the pricing card. Team
- * workspaces always start at 0 so a user cannot farm credits by creating orgs. Set to 0 to skip
- * the grant entirely.
+ * `starterCreditsForWorkspace` (`creditService.ts`, used by both the reserve path and the
+ * dashboard snapshot) and shown on the pricing card. Team workspaces always start at 0 so a user
+ * cannot farm credits by creating orgs. Set to 0 to skip the grant entirely.
  */
 export const FREE_STARTER_CREDITS = 50;
 

@@ -1,5 +1,6 @@
 import { Types } from "mongoose";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
+import { defaultBalanceForWorkspace } from "@/lib/credits/creditService";
 
 import { connectMongo } from "@/lib/mongodb";
 import { SubscriptionModel } from "@/lib/models/Subscription";
@@ -141,20 +142,18 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   const pro = isProStatus(sub?.status);
 
   // Ensure a balance record exists so the dashboard can show Personal one-time credits
-  // even before the first AI run triggers reservation initialization.
+  // even before the first AI run triggers reservation initialization. The seed comes from the
+  // same helper the reserve path uses (`defaultBalanceForWorkspace`), so a team workspace never
+  // gets the personal starter grant here and the Free daily cap lands on whichever path runs first.
   let bal: WorkspaceCreditBalanceDoc = balRaw;
   if (!bal) {
-    // Personal Free workspaces get FREE_STARTER_CREDITS (50) once; Pro workspaces get included credits per cycle instead.
-    const initTrialCredits = pro ? 0 : FREE_STARTER_CREDITS;
-    const initSeed = {
-      trialCreditsRemaining: initTrialCredits,
-      subscriptionCreditsRemaining: 0,
-      purchasedCreditsRemaining: 0,
-      onDemandEnabled: false,
-      onDemandMonthlyLimitCents: 0,
-    };
+    const initSeed = await defaultBalanceForWorkspace(orgId);
     try {
-      await WorkspaceCreditBalanceModel.updateOne({ workspaceId: orgId }, { $setOnInsert: initSeed }, { upsert: true });
+      await WorkspaceCreditBalanceModel.updateOne(
+        { workspaceId: orgId },
+        { $setOnInsert: { workspaceId: orgId, ...initSeed } },
+        { upsert: true },
+      );
       bal = initSeed as WorkspaceCreditBalanceDoc;
     } catch {
       // best-effort; fall through with bal as null-ish

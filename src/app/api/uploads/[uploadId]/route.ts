@@ -67,6 +67,7 @@ export async function GET(
           docId: upload.docId ? String(upload.docId) : null,
           status: upload.status ?? null,
           version: typeof (upload as any).version === "number" ? (upload as any).version : null,
+          ai: (upload as { ai?: unknown }).ai ?? null,
         },
         doc: {
           id: upload.docId ? String(upload.docId) : null,
@@ -100,6 +101,7 @@ export async function GET(
           docId: upload.docId ? String(upload.docId) : null,
           status: upload.status ?? null,
           version: typeof (upload as any).version === "number" ? (upload as any).version : null,
+          ai: (upload as { ai?: unknown }).ai ?? null,
         },
         doc: {
           id: upload.docId ? String(upload.docId) : null,

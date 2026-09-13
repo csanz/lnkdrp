@@ -154,9 +154,9 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
 
 - In: `{}`
 - Out: `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan: "free"|"pro", keyPrefix, scopes,
-  client, costs: { summary: [0,0,0], compare: [2,5,12] }, mcpVersion }`. `client` is the label
+  client, costs: { summary: [1,2,5], compare: [2,5,12] }, mcpVersion }`. `client` is the label
   derived from the `initialize` client name (`"claude-code"` → `"Claude Code"`; unknown names are
-  title-cased). `costs` are credits per tier for the AI actions; the summary is included at launch.
+  title-cased). `costs` are credits per tier for the AI actions; the automatic summary runs at basic (1 credit), or costs nothing when the agent supplies its own.
 
 ### `lnkdrp_share_pdf` (write, idempotent by key)
 

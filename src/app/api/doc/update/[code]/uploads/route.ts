@@ -13,6 +13,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { debugError, debugLog } from "@/lib/debug";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { recordActivity } from "@/lib/activity/log";
+import { checkRecipientUploadCap, RECIPIENT_UPLOAD_LIMIT_CODE } from "@/lib/uploads/recipientCaps";
 
 export const runtime = "nodejs";
 
@@ -65,6 +66,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ code: stri
       docOrgIdRaw && Types.ObjectId.isValid(String(docOrgIdRaw))
         ? new Types.ObjectId(String(docOrgIdRaw))
         : (await ensurePersonalOrgForUserId({ userId: ownerUserId })).orgId;
+
+    // Daily brake on recipient uploads (per link, and per Free workspace) before a version is allocated.
+    const cap = await checkRecipientUploadCap({ orgId: effectiveOrgId, replaceDocId: docId });
+    if (!cap.ok) {
+      return NextResponse.json(
+        { error: RECIPIENT_UPLOAD_LIMIT_CODE, code: RECIPIENT_UPLOAD_LIMIT_CODE, scope: cap.scope, message: cap.message },
+        { status: 429, headers: { "Retry-After": "3600" } },
+      );
+    }
 
     // Monotonic per-doc version number, allocated atomically (no count-then-insert race).
     const version = await allocateDocUploadVersion(docId);

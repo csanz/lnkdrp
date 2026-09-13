@@ -1,9 +1,9 @@
 /**
  * Credits summary card for `/dashboard?tab=usage`.
  *
- * Shows remaining credits and billing cycle reset date (Stripe period end). Credits are a Pro
- * concept: a Free workspace (plan read from `/api/billing/status`) sees a short upsell instead of
- * the numbers.
+ * Shows remaining credits for every plan. On Pro the included tile is the monthly allowance and the
+ * header carries the billing cycle reset date (Stripe period end); on Free (plan read from
+ * `/api/billing/status`) the included tile is the one-time starter grant and there is no reset date.
  */
 "use client";
 
@@ -17,8 +17,9 @@ import { formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
 import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
-import { FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
+import { CREDITS_COPY, FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 
 type CreditsSnapshot = {
   ok: true;
@@ -53,9 +54,10 @@ function CreditsSummaryCardInner({
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<CreditsSnapshot | null>(null);
   const [plan, setPlan] = useState<PlanState>(null);
+  const { openUpgrade } = useUpgradeModal();
 
-  // Plan gate: Free workspaces have no credits, so show the upsell instead of numbers. A failed
-  // read falls back to the numbers ("unknown") rather than hiding a Pro workspace's balance.
+  // The plan picks the labels (starter grant vs monthly allowance). A failed read falls back to the
+  // Pro labels ("unknown") rather than hiding a workspace's balance.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -116,35 +118,13 @@ function CreditsSummaryCardInner({
 
   const centsPerCredit = USD_CENTS_PER_CREDIT;
   const usedCentsThisCycle = usedThisCycle !== null ? usedThisCycle * centsPerCredit : null;
-
-  if (plan === "free") {
-    return (
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <div className="text-[13px] font-semibold text-[var(--fg)]">Credits</div>
-            <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Credits are a Pro feature.</div>
-          </div>
-          {headerRightSlot ? <div className="shrink-0">{headerRightSlot}</div> : null}
-        </div>
-        <div className="mt-5 rounded-xl bg-[var(--panel-2)] p-4">
-          <div className="text-[12px] font-semibold text-[var(--fg)]">Credits power AI compare on Pro.</div>
-          <div className="mt-1 text-[12px] text-[var(--muted-2)]">300 a month, plus on-demand.</div>
-          <div className="mt-3">
-            <Link
-              href="/pricing"
-              className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-[12px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-            >
-              Compare plans
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const isFree = plan === "free";
+  // Free: the snapshot reports the starter grant while any of it remains; once it is spent the
+  // grant is still 50, so keep the label honest instead of showing a dash.
+  const starterGrant = includedThisCycle ?? CREDITS_COPY.freeStarter;
 
   if (plan === null) {
-    // Plan still loading: keep the header and a quiet placeholder so Free never flashes the numbers.
+    // Plan still loading: keep the header and a quiet placeholder so the labels never flip.
     return (
       <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -167,9 +147,11 @@ function CreditsSummaryCardInner({
           <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
             {busy
               ? "Loading…"
-              : reset
-                ? `Credits reset on ${formatShortDate(reset, { invalid: "raw" })}.`
-                : "Reset date unavailable."}
+              : isFree
+                ? `One-time starter credits. Pro includes ${CREDITS_COPY.proPerMonth} a month.`
+                : reset
+                  ? `Credits reset on ${formatShortDate(reset, { invalid: "raw" })}.`
+                  : "Reset date unavailable."}
           </div>
         </div>
         {headerRightSlot ? <div className="shrink-0">{headerRightSlot}</div> : <div className="text-[12px] text-[var(--muted-2)]">{busy ? "…" : null}</div>}
@@ -198,10 +180,12 @@ function CreditsSummaryCardInner({
           </div>
         </div>
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
-          <div className="text-[12px] font-semibold text-[var(--muted-2)]">Included</div>
+          <div className="text-[12px] font-semibold text-[var(--muted-2)]">{isFree ? "Starter" : "Included"}</div>
           <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{includedRemaining !== null ? includedRemaining.toLocaleString() : "—"}</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-            Per month: {includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}
+            {isFree
+              ? `One time: ${starterGrant.toLocaleString()}`
+              : `Per month: ${includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}`}
           </div>
         </div>
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
@@ -215,7 +199,7 @@ function CreditsSummaryCardInner({
               paidRemaining.toLocaleString()
             )}
           </div>
-          <div className="mt-1 text-[12px] text-[var(--muted-2)]">Purchased + on-demand headroom</div>
+          <div className="mt-1 text-[12px] text-[var(--muted-2)]">{isFree ? "Purchased credits" : "Purchased + on-demand headroom"}</div>
         </div>
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">Used</div>
@@ -234,17 +218,29 @@ function CreditsSummaryCardInner({
 
       {creditsRemaining === 0 ? (
         <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
-          <div className="text-[12px] font-semibold text-[var(--fg)]">Out of credits</div>
+          <div className="text-[12px] font-semibold text-[var(--fg)]">{isFree ? "Starter credits used up" : "Out of credits"}</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-            You’ve used all available credits. AI compare is unavailable until credits reset or you enable on-demand.
+            {isFree
+              ? `You’ve used your ${CREDITS_COPY.freeStarter} starter credits. Pro includes ${CREDITS_COPY.proPerMonth} a month, and AI compare on every replacement.`
+              : "You’ve used all available credits. AI compare is unavailable until credits reset or you enable on-demand."}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Link
-              href="/dashboard/limits"
-              className="inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)]"
-            >
-              {onDemandEnabled ? "Increase limit" : "Manage credits"}
-            </Link>
+            {isFree ? (
+              <button
+                type="button"
+                className="inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)]"
+                onClick={() => openUpgrade("credits")}
+              >
+                Upgrade to Pro
+              </button>
+            ) : (
+              <Link
+                href="/dashboard/limits"
+                className="inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)]"
+              >
+                {onDemandEnabled ? "Increase limit" : "Manage credits"}
+              </Link>
+            )}
             <Button
               variant="outline"
               className="text-[12px]"

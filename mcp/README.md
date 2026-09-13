@@ -81,7 +81,7 @@ truncated (title 300, summary 8000 chars) and stripped of control and bidi chara
 
 ### `lnkdrp_whoami`
 In `{}`. Out: the whoami payload (`userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client`)
-plus `costs: { summary: [0,0,0], compare: [2,5,12] }` and `mcpVersion`.
+plus `costs: { summary: [1,2,5], compare: [2,5,12] }` and `mcpVersion`.
 
 ### `lnkdrp_share_pdf`
 In `{ idempotencyKey (1–128), title? (≤200), sourceUrl (https; Google Drive share links and lnkdrp /s/ links accepted),

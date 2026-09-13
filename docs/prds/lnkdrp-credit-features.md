@@ -6,7 +6,7 @@
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-mcp](./lnkdrp-mcp.md) · [SUBSCRIPTION](../SUBSCRIPTION.md) · [METRICS](../METRICS.md) · [REQUEST](../REQUEST.md)
 
-> **Decision (2026-09-12, revised same day).** At launch only the automatic summary is included on every plan; AI compare is charged 2/5/12 by tier and the credit table is shown on `/pricing` (AI review is listed there as not released). Earlier text below that says "no AI feature costs credits" or "the table is empty" is superseded. Agent-supplied summaries over MCP are planned, not live.
+> **Decision (2026-09-12, revised 2026-09-13).** At launch every AI action costs credits: the automatic summary 1/2/5 by tier (runs at basic), AI compare 2/5/12 and the credit table is shown on `/pricing` (AI review is listed there as not released). Earlier text below that says "no AI feature costs credits" or "the table is empty" is superseded. Agent-supplied summaries over MCP are planned, not live.
 
 ---
 
@@ -33,7 +33,7 @@ A feature may cost credits only if **all** of these hold:
 
 ## Proposed decisions (to lock)
 
-1. **Credits stay per workspace** with the existing ledger, cycle grants and on-demand rate; the customer-facing table lists Summary (included) and AI compare (2/5/12); rows are added as features ship.
+1. **Credits stay per workspace** with the existing ledger, cycle grants and on-demand rate; the customer-facing table lists Summary (1/2/5) and AI compare (2/5/12); rows are added as features ship.
 2. **Pricing page** gains one row per shipped feature, with a fixed credit cost known before the run.
 3. **MCP parity:** every feature here is exposed as an MCP tool with the same cost as the web.
 4. **Free plan** gets a small monthly allowance so the features are discoverable; Pro gets the cycle grant plus on-demand.
@@ -49,6 +49,15 @@ Each milestone is independent and can ship in any order. Ordered here by expecte
 - Training or fine-tuning on customer documents.
 
 ## Milestones
+
+### M0 — Money correctness (shipped 2026-09-13, branch fix/production-readiness)
+
+- Summary reserved before compare; upload never fails on a credit reservation; structured `ai` skip state on the upload plus a `credits.exhausted` feed row.
+- Recipient uploads unbilled (`source: "recipient"`, 0 credits) with per-link and per-Free-workspace daily caps (20/day).
+- Plan-aware compare tier default (Basic on Free, Standard on Pro), tier-free idempotency key, review runs at the charged tier.
+- Fallback analysis refunds instead of charging; provider usage stored on the ledger row.
+- One seeding path for starter credits (personal Free only); Free daily brake of 15 credits with its own 402 code and modal copy.
+- Still open from the credits review: Free monthly floor (10), agent-supplied summary input on `share_pdf`/`POST /api/docs`, `whoami` costs derived from `creditsForRun`, dated Terms note, and the gate split (owner history/compare credit-gated on every plan; recipient version list stays Pro).
 
 ### M1 — Recipient-side intelligence
 

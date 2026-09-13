@@ -14,11 +14,12 @@
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname, buildDocPreviewPngPathname } from "@/lib/blob/clientUpload";
 import { debugError, debugLog } from "@/lib/debug";
-import { fetchJson } from "@/lib/http/fetchJson";
+import { parsePlanLimitError, type PlanLimitError } from "@/lib/client/planLimit";
+import { extractErrorMessage, fetchJson } from "@/lib/http/fetchJson";
 import { fetchWithTempUser, tempUserHeaders } from "@/lib/gating/tempUserClient";
 import { notifyDocsChanged } from "@/lib/sidebarCache";
 import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
-import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
+import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 import { dispatchCreditsSnapshotRefresh } from "@/lib/client/creditsSnapshotRefresh";
 
 export type CreateDocResponse = { doc: { id: string } };
@@ -109,6 +110,16 @@ async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null>
   }
 }
 
+/** Thrown by `apiCreateDoc` when the workspace is at its Free link cap (HTTP 402 `plan_limit`). */
+export class PlanLimitClientError extends Error {
+  readonly planLimit: PlanLimitError;
+  constructor(limit: PlanLimitError) {
+    super("This workspace is at its link limit.");
+    this.name = "PlanLimitClientError";
+    this.planLimit = limit;
+  }
+}
+
 /**
  * Creates a new doc via `/api/docs` and returns the doc id.
  *
@@ -116,11 +127,22 @@ async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null>
  * Errors: throws on non-2xx responses from the API.
  */
 export async function apiCreateDoc(params: { title: string }): Promise<string> {
-  const json = await fetchJson<CreateDocResponse>("/api/docs", {
+  const res = await fetchWithTempUser("/api/docs", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ title: params.title }),
   });
+  if (res.status === 402) {
+    // Free link cap: hand the parsed limit to the caller so it can open the upgrade modal.
+    const body = (await res.json().catch(() => null)) as unknown;
+    const limit = parsePlanLimitError(body);
+    if (limit) throw new PlanLimitClientError(limit);
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as unknown;
+    throw new Error(extractErrorMessage(body) ?? `Request failed: /api/docs (${res.status})`);
+  }
+  const json = (await res.json()) as CreateDocResponse;
   // Immediately tell the app shell sidebar to refresh so the new doc appears,
   // even while the blob upload + processing pipeline runs in the background.
   notifyDocsChanged();
@@ -247,8 +269,8 @@ export function startBlobUploadAndProcess(params: {
       const res = await fetchWithTempUser(`/api/uploads/${uploadId}/process`, { method: "POST" });
       if (!res.ok) {
         const json = (await res.json().catch(() => null)) as any;
-        if (res.status === 402 && (json?.code === OUT_OF_CREDITS_CODE || json?.error === "Out of credits")) {
-          dispatchOutOfCredits();
+        if (res.status === 402 && (json?.code === OUT_OF_CREDITS_CODE || json?.code === "DAILY_CREDIT_CAP" || json?.error === "Out of credits")) {
+          dispatchOutOfCredits(outOfCreditsReasonFromCode(json?.code));
           throw new Error("Out of credits");
         }
         throw new Error(json?.error || `Request failed (${res.status})`);

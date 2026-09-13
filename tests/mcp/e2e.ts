@@ -19,6 +19,7 @@
  *   E2E_ORG_ID, E2E_USER_ID  workspace the key is minted for (default: the local dev workspace)
  *   E2E_PDF_URL              public PDF to import (default: the W3C dummy.pdf)
  *   E2E_TIMEOUT_SECONDS      share_pdf waitForReady timeout, 5..120 (default 90)
+ *   E2E_CLIENT_NAME/_VERSION MCP client identity sent at initialize (default lnkdrp-e2e / 1.0)
  *
  * Prints one line per step with its duration, then a one-line JSON summary. Exits 1 on the first
  * failed assertion (the key is still revoked). The doc it creates ("MCP e2e") is left in the
@@ -45,7 +46,12 @@ const ORG_ID = process.env.E2E_ORG_ID ?? "6aa4a3a4b0b9b3a1a769660a";
 const USER_ID = process.env.E2E_USER_ID ?? "6aa4a3a455068178c0fdb804";
 const PDF_URL = process.env.E2E_PDF_URL ?? "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
 const TIMEOUT_SECONDS = clamp(Number(process.env.E2E_TIMEOUT_SECONDS ?? 90), 5, 120);
-const CLIENT_INFO = { name: "lnkdrp-e2e", version: "1.0" } as const;
+/** MCP client identity sent at `initialize`; the server records it as the activity agent. Override
+ *  with E2E_CLIENT_NAME / E2E_CLIENT_VERSION (e.g. `claude-code` / `2.1.0`) to see real attribution. */
+const CLIENT_INFO = {
+  name: process.env.E2E_CLIENT_NAME ?? "lnkdrp-e2e",
+  version: process.env.E2E_CLIENT_VERSION ?? "1.0",
+} as const;
 
 const EXPECTED_TOOLS = [
   "lnkdrp_whoami",

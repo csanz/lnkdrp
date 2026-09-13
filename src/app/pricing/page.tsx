@@ -2,7 +2,7 @@
  * Public pricing page.
  *
  * Free vs Pro side by side. Links, projects, analytics and collaborators are the product; the AI
- * summary is included on every plan, while version history, AI compare and credits are Pro
+ * summary costs credits like the other AI actions (1/2/5 by tier), while version history and AI compare are Pro
  * (2026-09-12 decision, see docs/prds/lnkdrp-credit-features.md). A compact "How credits work"
  * block explains the per-action prices without a full credit table. The Pro price label is the
  * same MongoDB-backed value the dashboard shows.
@@ -96,8 +96,8 @@ export default async function PricingPage() {
               Pro to send every day.
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-              You pay for links, projects, and the people you work with. The summary that makes each
-              link worth opening is included on every plan. Version history and AI compare are Pro.
+              You pay for links, projects, and the people you work with. Every link opens with an AI
+              summary, one credit each. Version history and AI compare are Pro.
             </p>
           </div>
 
@@ -216,7 +216,7 @@ export default async function PricingPage() {
                 <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
                   Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month: about 150 basic compares, 60 standard, or
                   25 advanced. Higher levels run a deeper analysis and cost more per run. The summary on every
-                  link never uses credits, so most workspaces never buy more.
+                  link is one credit, so a busy month of uploads still leaves most of the allowance.
                 </p>
                 <p className="mt-3 max-w-md text-[12px] leading-5 text-white/45">
                   Need more? Turn on on-demand: $0.10 per credit, billed through Stripe, under a hard spend limit
@@ -235,7 +235,7 @@ export default async function PricingPage() {
                   </thead>
                   <tbody className="divide-y divide-white/10 text-white/80">
                     {[
-                      { label: "Summary and key points", sub: "Automatic on every link", costs: ["Included", "Included", "Included"], soon: false },
+                      { label: "Summary and key points", sub: "Automatic on every link, at the basic level", costs: ["1", "2", "5"], soon: false },
                       { label: "AI compare", sub: "What changed between two versions", costs: ["2", "5", "12"], soon: false },
                       { label: "AI review", sub: "Scores a document someone sent you against the criteria you set, and explains the score. Priced per document.", costs: ["2", "5", "12"], soon: true },
                       { label: "Viewer follow-up briefs", sub: "A short brief on one viewer: which pages they lingered on, whether they came back, and a suggested next step. Priced per brief.", costs: ["1", "1", "1"], soon: true },
@@ -332,7 +332,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What do credits pay for?",
-                  a: "AI compare of two versions, which explains what changed: 2 credits for basic, 5 for standard, 12 for advanced. Pro includes 300 credits a month, enough for about 150 basic, 60 standard, or 25 advanced compares; they reset monthly and do not roll over. If you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set. The summary on every link never uses credits.",
+                  a: "The summary and key points written for every link: 1 credit at the basic level it runs at automatically. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Free workspaces start with 50 credits, about 50 uploads. Pro includes 300 credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.",
                 },
                 {
                   q: "Can I replace a file on Free?",

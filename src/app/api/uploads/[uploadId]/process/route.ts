@@ -21,11 +21,13 @@ import {
   buildDocPageImagePathname,
   buildDocPageThumbPathname,
 } from "@/lib/blob/clientUpload";
-import { analyzePdfText } from "@/lib/ai/analyzePdfText";
+import { analyzePdfText, isFallbackAnalysis, analysisTelemetry } from "@/lib/ai/analyzePdfText";
 import { runDocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
 import { runRequestReviewInvestorFocused } from "@/lib/ai/requestReviewInvestorFocused";
-import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger } from "@/lib/credits/creditService";
+import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger, recordUnbilledRun } from "@/lib/credits/creditService";
+import { getDefaultHistoryQualityTier } from "@/lib/credits/qualityDefaults";
+import { isOutOfCreditsError } from "@/lib/credits/errors";
 import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest } from "@/lib/credits/idempotency";
 import { getCreditsSnapshot } from "@/lib/credits/snapshot";
@@ -553,7 +555,7 @@ async function ensureReviewForUpload(params: {
   uploadId: string;
   version: number;
   extractedText: string;
-  qualityTier?: "standard" | "advanced";
+  qualityTier?: "basic" | "standard" | "advanced";
   instructions?: string | null;
   guideText?: string | null;
   stageHint?: string | null;
@@ -566,7 +568,8 @@ async function ensureReviewForUpload(params: {
   } | null;
 }) {
   const { docId, uploadId, version, extractedText, instructions, force } = params;
-  const qualityTier = params.qualityTier === "advanced" ? "advanced" : "standard";
+  // Run at exactly the tier the caller reserved credits for; never silently upgrade a Basic run.
+  const qualityTier: "basic" | "standard" | "advanced" = params.qualityTier ?? "standard";
   const agentKind = params.agentKind ?? "reviewDocText";
   const guideText = params.guideText ?? null;
   const stageHint = params.stageHint ?? null;
@@ -903,6 +906,9 @@ export async function POST(
   request: Request,
   ctx: { params: Promise<{ uploadId: string }> },
 ) {
+  // Credits charged by this processing run (summary + history compare + review); reported on the
+  // doc.processed / doc.replaced activity row so the feed can say what a run cost.
+  let creditsUsedThisRun = 0;
   const { uploadId } = await ctx.params;
   const traceId = crypto.randomBytes(6).toString("base64url");
   if (!Types.ObjectId.isValid(uploadId)) {
@@ -1003,9 +1009,9 @@ export async function POST(
   // Server-side enforcement: if AI tools are blocked for this workspace, reject before scheduling work.
   // Note: this route always runs in the background via `after()`, so we must preflight here.
   //
-  // Only a user-initiated paid action (forced review) is preflighted. The automatic summary costs 0
-  // credits and the replacement compare is skipped by plan below, so Free workspaces (which hold no
-  // credits at all) must still be able to upload; their in-job reservations fail soft if ever needed.
+  // Only a user-initiated paid action (forced review) is preflighted. The automatic summary and the
+  // replacement compare reserve inside the job and fail soft: an upload always completes, the AI
+  // step is skipped and the skip is recorded on the upload (`ai`) so the UI can explain it.
   const needsPaidAi = forceReview && creditsForRun({ actionType: "review", qualityTier: forceReviewQualityTier }) > 0;
   if (needsPaidAi) {
     try {
@@ -1240,18 +1246,23 @@ export async function POST(
                 .lean();
               const previousText = (prev?.rawExtractedText ?? (prev as any)?.pdfText ?? "").toString();
               const newText = (upload.rawExtractedText ?? upload.pdfText ?? "").toString();
-            // Credits: history (automatic on replacement) defaults to Standard.
-            const historyTier = "standard" as const;
+            // Credits: the automatic compare runs at the workspace default tier (Basic on Free,
+            // Standard on Pro unless pinned). The idempotency key carries no tier so changing the
+            // default cannot bill the same version twice.
+            const historyTier = await getDefaultHistoryQualityTier(actor.orgId).catch(() => "basic" as const);
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
-            const historyIdempotencyKey = `history:auto:${String(docId)}:to:${toVersion}:${historyTier}`;
+            const historyIdempotencyKey = `history:auto:${String(docId)}:to:${toVersion}`;
             let historyLedgerId: string | null = null;
             // Pro feature gate: the AI compare is part of version history. Free workspaces keep the
             // DocChange row (so versions still list) but no credits are reserved and no diff is run.
-            const historyAllowed = await getWorkspacePlan(actor.orgId)
-              .then((plan) => plan === "pro")
-              .catch(() => false);
+            // Recipient uploads (request/replace links) never bill the owner, so no compare either.
+            const historyAllowed =
+              !viaUploadSecret &&
+              (await getWorkspacePlan(actor.orgId)
+                .then((plan) => plan === "pro")
+                .catch(() => false));
             if (!historyAllowed) {
-              debugLog(1, "[process] history compare skipped (Pro feature)", { uploadId, docId: String(docId), version: toVersion });
+              debugLog(1, "[process] history compare skipped (plan or recipient upload)", { uploadId, docId: String(docId), version: toVersion });
             }
             if (historyAllowed) {
               try {
@@ -1278,6 +1289,7 @@ export async function POST(
                   diff = null;
                 } else {
                   await markLedgerCharged({ workspaceId: actor.orgId, ledgerId: historyLedgerId, creditsCharged: historyCredits });
+                  creditsUsedThisRun += historyCredits;
                 }
               } catch {
                 await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
@@ -1421,7 +1433,7 @@ export async function POST(
                   uploadId,
                   version: uploadVersion,
                   extractedText,
-                  qualityTier: reviewTier === "advanced" ? "advanced" : "standard",
+                  qualityTier: reviewTier,
                   instructions: null,
                   force: true,
                   meta: {
@@ -1431,6 +1443,7 @@ export async function POST(
                   },
                 });
                 await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
+                creditsUsedThisRun += reviewCredits;
               } catch (e) {
                 await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
                 throw e;
@@ -1472,7 +1485,7 @@ export async function POST(
                   uploadId,
                   version: uploadVersion,
                   extractedText,
-                  qualityTier: reviewTier === "advanced" ? "advanced" : "standard",
+                  qualityTier: reviewTier,
                   agentKind: "requestReviewInvestorFocused",
                   instructions: null,
                   guideText: requestGuideDocText,
@@ -1485,6 +1498,7 @@ export async function POST(
                   },
                 });
                 await markLedgerCharged({ workspaceId: actor.orgId, ledgerId, creditsCharged: reviewCredits });
+                creditsUsedThisRun += reviewCredits;
               } catch (e) {
                 await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId });
                 throw e;
@@ -1819,6 +1833,60 @@ export async function POST(
         });
       }
 
+      /**
+       * Credits, reservation order.
+       *
+       * The summary (1 credit, every upload) is reserved before the replacement compare (2+ credits)
+       * so a workspace with only a credit or two left keeps the summary and drops the compare, not
+       * the other way round. Recipient uploads (request/replace links, `viaUploadSecret`) never
+       * reserve: the summary still runs and is recorded as a 0-credit `recipient` ledger row.
+       * `aiState` is persisted on the upload so the UI can say exactly why an AI step was skipped.
+       */
+      const summaryTier = "basic" as const;
+      const summaryCredits = creditsForRun({ actionType: "summary", qualityTier: summaryTier });
+      const summaryIdempotencyKey = `summary:auto:${uploadId}:v${uploadVersion ?? "?"}:${summaryTier}`;
+      let summaryLedgerId: string | null = null;
+      const aiState: {
+        summary: "done" | "skipped" | "failed" | "pending";
+        compare: "done" | "skipped" | "failed" | "not_applicable" | "pending";
+        reason: string | null;
+        code: "out_of_credits" | "daily_cap" | "plan" | "recipient" | "error" | null;
+        creditsNeeded: number | null;
+        creditsUsed: number;
+        source: "owner" | "recipient";
+      } = {
+        summary: "pending",
+        compare: isReplacement ? "pending" : "not_applicable",
+        reason: null,
+        code: null,
+        creditsNeeded: null,
+        creditsUsed: 0,
+        source: viaUploadSecret ? "recipient" : "owner",
+      };
+      const summaryWanted = !upload.aiOutput && Boolean(extractedText) && Boolean(process.env.OPENAI_API_KEY);
+      if (summaryWanted && !viaUploadSecret) {
+        try {
+          const reserved = await reserveCreditsOrThrow({
+            workspaceId: String(existingDocOrgId),
+            userId: actor.userId,
+            docId: String(docId),
+            actionType: "summary",
+            qualityTier: summaryTier,
+            idempotencyKey: summaryIdempotencyKey,
+          });
+          summaryLedgerId = reserved.ledgerId;
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          warningDetails.summaryCredits = message;
+          aiState.summary = "skipped";
+          aiState.reason = message;
+          aiState.code = /daily credit cap/i.test(message) ? "daily_cap" : isOutOfCreditsError(e) ? "out_of_credits" : "error";
+          aiState.creditsNeeded = summaryCredits;
+          debugLog(1, "[process] AI analysis skipped (could not reserve credits)", { uploadId, message });
+          summaryLedgerId = null;
+        }
+      }
+
       // Best-effort: store a DocChange record for replacement uploads.
       try {
         if (isReplacement && uploadVersion && uploadVersion > 1) {
@@ -1928,20 +1996,33 @@ export async function POST(
               changedPages = [];
             }
 
-            // Credits: history (automatic on replacement) defaults to Standard.
-            const historyTier = "standard" as const;
+            // Credits: the automatic compare runs at the workspace default tier (Basic on Free,
+            // Standard on Pro unless pinned). The idempotency key carries no tier so changing the
+            // default cannot bill the same version twice.
+            const historyTier = await getDefaultHistoryQualityTier(String(existingDocOrgId)).catch(() => "basic" as const);
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
-            const historyIdempotencyKey = `history:auto:${String(docId)}:to:${uploadVersion}:${historyTier}`;
+            const historyIdempotencyKey = `history:auto:${String(docId)}:to:${uploadVersion}`;
             let historyLedgerId: string | null = null;
             // Pro feature gate: the AI compare is part of version history. Free workspaces keep the
             // DocChange row (versions still list, page thumbnails still attach) but no credits are
-            // reserved and no diff is generated.
-            const historyAllowed = await getWorkspacePlan(String(existingDocOrgId))
-              .then((plan) => plan === "pro")
-              .catch(() => false);
+            // reserved and no diff is generated. Recipient uploads never bill the owner: no compare.
+            const historyAllowed =
+              !viaUploadSecret &&
+              (await getWorkspacePlan(String(existingDocOrgId))
+                .then((plan) => plan === "pro")
+                .catch(() => false));
             if (!historyAllowed) {
-              warningDetails.historyPlan = "version_history is a Pro feature; AI compare skipped";
-              debugLog(1, "[process] history compare skipped (Pro feature)", { uploadId, docId: String(docId), version: uploadVersion });
+              aiState.compare = "skipped";
+              if (viaUploadSecret) {
+                warningDetails.historyPlan = "recipient upload; AI compare is not run on the owner's credits";
+              } else {
+                warningDetails.historyPlan = "version_history is a Pro feature; AI compare skipped";
+                if (!aiState.code) {
+                  aiState.code = "plan";
+                  aiState.reason = "AI compare is part of version history, a Pro feature";
+                }
+              }
+              debugLog(1, "[process] history compare skipped (plan or recipient upload)", { uploadId, docId: String(docId), version: uploadVersion });
             }
             if (historyAllowed) {
               try {
@@ -1955,7 +2036,14 @@ export async function POST(
                 });
                 historyLedgerId = reserved.ledgerId;
               } catch (e) {
-                warningDetails.historyCredits = e instanceof Error ? e.message : String(e);
+                const message = e instanceof Error ? e.message : String(e);
+                warningDetails.historyCredits = message;
+                aiState.compare = "skipped";
+                if (!aiState.code) {
+                  aiState.reason = message;
+                  aiState.code = /daily credit cap/i.test(message) ? "daily_cap" : isOutOfCreditsError(e) ? "out_of_credits" : "error";
+                  aiState.creditsNeeded = historyCredits;
+                }
                 // Skip history diff generation if we can't reserve credits.
                 historyLedgerId = null;
               }
@@ -1967,6 +2055,7 @@ export async function POST(
                 diff = await runDocChangeDiff({ previousText, newText, changedPages, qualityTier: historyTier });
                 if (!diff) {
                   await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
+                  aiState.compare = "failed";
                   diff = null;
                 } else {
                   await markLedgerCharged({
@@ -1974,9 +2063,12 @@ export async function POST(
                     ledgerId: historyLedgerId,
                     creditsCharged: historyCredits,
                   });
+                  creditsUsedThisRun += historyCredits;
+                  aiState.compare = "done";
                 }
               } catch {
                 await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
+                aiState.compare = "failed";
                 diff = null;
               }
             }
@@ -2123,29 +2215,9 @@ export async function POST(
                   thumb_url: typeof p.thumbUrl === "string" && p.thumbUrl.trim() ? p.thumbUrl.trim() : null,
                 }))
               : [];
-            // Credits: summary is automatic and defaults to Basic.
-            const summaryTier = "basic" as const;
-            const summaryCredits = creditsForRun({ actionType: "summary", qualityTier: summaryTier });
-            const summaryIdempotencyKey = `summary:auto:${uploadId}:v${uploadVersion ?? "?"}:${summaryTier}`;
-            let summaryLedgerId: string | null = null;
-            try {
-              const reserved = await reserveCreditsOrThrow({
-                workspaceId: String(existingDocOrgId),
-                userId: actor.userId,
-                docId: String(docId),
-                actionType: "summary",
-                qualityTier: summaryTier,
-                idempotencyKey: summaryIdempotencyKey,
-              });
-              summaryLedgerId = reserved.ledgerId;
-            } catch (e) {
-              warningDetails.summaryCredits = e instanceof Error ? e.message : String(e);
-              debugLog(1, "[process] AI analysis skipped (insufficient credits)", { uploadId });
-              // Skip AI analysis if we can't reserve credits.
-              summaryLedgerId = null;
-            }
-
-            if (summaryLedgerId) {
+            // Credits were reserved above (before the compare) for owner uploads; recipient uploads
+            // run unbilled and are recorded as a 0-credit ledger row after the run succeeds.
+            if (summaryLedgerId || viaUploadSecret) {
               try {
                 const analyzed = await analyzePdfText({
                   fullText: extractedText,
@@ -2165,19 +2237,51 @@ export async function POST(
                   },
                 });
                 if (!analyzed) {
-                  await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: summaryLedgerId });
+                  if (summaryLedgerId) await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: summaryLedgerId });
                   debugLog(1, "[process] AI analysis skipped (returned null)", { uploadId });
+                  aiState.summary = "failed";
                   aiOutput = null;
+                } else if (isFallbackAnalysis(analyzed)) {
+                  // Both model attempts failed and the analyzer returned an empty snapshot so the
+                  // downstream normalization still runs. That is not a summary: refund, don't charge.
+                  aiOutput = analyzed;
+                  if (summaryLedgerId) await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: summaryLedgerId });
+                  warningDetails.ai = warningDetails.ai ?? "AI analysis failed; empty snapshot used";
+                  aiState.summary = "failed";
+                  aiState.code = aiState.code ?? "error";
+                  aiState.reason = aiState.reason ?? "The AI summary could not be generated for this version";
+                  debugLog(1, "[process] AI analysis returned the fallback snapshot (refunded)", { uploadId });
                 } else {
                   aiOutput = analyzed;
-                  await markLedgerCharged({
-                    workspaceId: String(existingDocOrgId),
-                    ledgerId: summaryLedgerId,
-                    creditsCharged: summaryCredits,
-                  });
+                  if (summaryLedgerId) {
+                    await markLedgerCharged({
+                      workspaceId: String(existingDocOrgId),
+                      ledgerId: summaryLedgerId,
+                      creditsCharged: summaryCredits,
+                      telemetry: analysisTelemetry(analyzed),
+                    });
+                    creditsUsedThisRun += summaryCredits;
+                  } else {
+                    await recordUnbilledRun({
+                      workspaceId: String(existingDocOrgId),
+                      userId: actor.userId,
+                      docId: String(docId),
+                      actionType: "summary",
+                      qualityTier: summaryTier,
+                      idempotencyKey: summaryIdempotencyKey,
+                      source: "recipient",
+                    }).catch((e) => {
+                      debugLog(1, "[process] unbilled ledger row failed (continuing)", {
+                        uploadId,
+                        message: e instanceof Error ? e.message : String(e),
+                      });
+                    });
+                  }
+                  aiState.summary = "done";
                 }
               } catch (e) {
-                await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: summaryLedgerId });
+                if (summaryLedgerId) await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: summaryLedgerId });
+                aiState.summary = "failed";
                 const message = e instanceof Error ? e.message : String(e);
                 warningDetails.ai = warningDetails.ai ?? message;
                 jobError = jobError ?? new Error(`AI analysis failed: ${message}`);
@@ -2392,6 +2496,12 @@ export async function POST(
         docName: docName ?? null,
         pageSlugs: pageSlugs ?? [],
         slideNodes: Array.isArray(slideNodes) ? slideNodes : [],
+        ai: {
+          ...aiState,
+          summary: aiState.summary === "pending" ? "skipped" : aiState.summary,
+          compare: aiState.compare === "pending" ? "skipped" : aiState.compare,
+          creditsUsed: creditsUsedThisRun,
+        },
         error: jobError
           ? {
               message:
@@ -2488,9 +2598,27 @@ export async function POST(
             quality: forceReviewQualityTier,
             replacement: isReplacement,
             warnings: Object.keys(warningDetails),
+            credits: creditsUsedThisRun,
+            aiSkipped: aiState.code,
           },
           request,
         });
+        // A credit-caused skip gets its own feed row so the owner learns why the summary is missing
+        // without opening the upload. Recorded once per upload; a retry that succeeds does not undo it.
+        if (aiState.code === "out_of_credits" || aiState.code === "daily_cap") {
+          void recordActivity({
+            orgId: existingDocOrgId,
+            userId: actor.userId,
+            actorKind: viaUploadSecret ? "secret" : actor.kind,
+            agent: activityAgent,
+            type: "credits.exhausted",
+            docId,
+            uploadId,
+            title: typeof docUpdate.title === "string" ? docUpdate.title : existingTitle,
+            meta: { version: uploadVersion, code: aiState.code, creditsNeeded: aiState.creditsNeeded },
+            request,
+          });
+        }
       }
 
       // Debug breadcrumb: confirm the doc record actually flipped and points at this upload.

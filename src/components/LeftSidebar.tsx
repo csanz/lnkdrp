@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback } from "react";
 import { useTheme } from "next-themes";
 import {
   ClipboardDocumentCheckIcon,
@@ -35,6 +35,7 @@ import AccountMenu from "@/components/AccountMenu";
 import SidebarProjectsSection from "@/components/SidebarProjectsSection";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
+import SidebarCredits from "@/components/SidebarCredits";
 import CreateProjectModal from "@/components/modals/CreateProjectModal";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
 import PlanUsageMeter from "@/components/PlanUsageMeter";
@@ -1147,10 +1148,50 @@ export default function LeftSidebar({
 
   const starredForSidebar = useMemo(() => starredValid.slice(0, STARRED_SIDEBAR_LIMIT), [starredValid]);
 
+  // Rows that appeared after the first load (an agent's upload, a teammate's project) grow in
+  // instead of popping. Ids seen on the first non-empty render are treated as already there.
+  const seenRowIdsRef = useRef<Set<string> | null>(null);
+  const [newRowIds, setNewRowIds] = useState<Set<string>>(() => new Set());
+  const newRowTimersRef = useRef<number[]>([]);
+  useEffect(() => () => newRowTimersRef.current.forEach((t) => window.clearTimeout(t)), []);
+  const visibleRowIds = useMemo(
+    () => [...docsForSidebar.map((d) => d.id), ...starredForSidebar.map((d) => d.id), ...projectsForSidebar.map((p) => p.id)],
+    [docsForSidebar, starredForSidebar, projectsForSidebar],
+  );
+  useEffect(() => {
+    if (!visibleRowIds.length) return;
+    if (seenRowIdsRef.current === null) {
+      seenRowIdsRef.current = new Set(visibleRowIds);
+      return;
+    }
+    const seen = seenRowIdsRef.current;
+    const fresh = visibleRowIds.filter((id) => !seen.has(id));
+    if (!fresh.length) return;
+    fresh.forEach((id) => seen.add(id));
+    setNewRowIds((cur) => new Set([...cur, ...fresh]));
+    const t = window.setTimeout(() => {
+      setNewRowIds((cur) => {
+        const out = new Set(cur);
+        fresh.forEach((id) => out.delete(id));
+        return out;
+      });
+    }, 3400);
+    newRowTimersRef.current.push(t);
+  }, [visibleRowIds]);
+  /** Classes for a list row and its direct child while it grows in (empty once settled). */
+  const rowEnter = useCallback(
+    (id: string) =>
+      newRowIds.has(id)
+        ? { li: "grid rounded-xl motion-safe:animate-[ldSidebarRowIn_3.2s_cubic-bezier(0.22,0.61,0.36,1)_both]", child: "min-h-0 [overflow-y:clip]" }
+        : { li: "", child: "" },
+    [newRowIds],
+  );
+
   // Keep cached starred meta (version/status) up to date from the sidebar docs list snapshot.
   // This makes the Starred "v#" pills render instantly without waiting on `/api/docs?ids=...`.
   useEffect(() => {
     if (!starredDocs.length) return;
+
     if (!docs.items.length) return;
     for (const s of starredDocs) {
       const meta = sidebarDocMetaById.get(s.id) ?? null;
@@ -1998,10 +2039,11 @@ export default function LeftSidebar({
                     const sidebarMeta = sidebarDocMetaById.get(d.id) ?? null;
                     const title = truncateEnd(d.title, 36);
                     return (
-                      <li key={d.id}>
+                      <li key={d.id} className={rowEnter(d.id).li}>
                         <Link
                           href={href}
                           className={[
+                            rowEnter(d.id).child,
                             // Expand highlight into the sidebar's right padding so left/right gutters match.
                             // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
@@ -2231,6 +2273,7 @@ export default function LeftSidebar({
                 setDeleteProjectError={setDeleteProjectError}
                 setDeleteProjectOpen={setDeleteProjectOpen}
                 truncateEnd={truncateEnd}
+                rowEnter={rowEnter}
               />
             </section>
 
@@ -2299,8 +2342,8 @@ export default function LeftSidebar({
                   // Keep this conservative since we also show version pills + hover actions on the right.
                   const title = truncateEnd(d.title, 36);
                   return (
-                    <li key={d.id}>
-                      <div className="group relative">
+                    <li key={d.id} className={rowEnter(d.id).li}>
+                      <div className={["group relative", rowEnter(d.id).child].join(" ")}>
                         <Link
                           href={href}
                           className={[
@@ -2394,6 +2437,7 @@ export default function LeftSidebar({
         ) : null}
 
         <div className="border-t border-[var(--border)] px-3 py-3">
+          <SidebarCredits />
           <AccountMenu />
         </div>
       </div>

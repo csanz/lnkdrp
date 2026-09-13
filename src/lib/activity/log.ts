@@ -37,6 +37,7 @@ export type ActivityType =
   | "plan.grace_reminder"
   | "plan.grace_blocked"
   | "plan.upgraded"
+  | "credits.exhausted"
   | "agent.key_created"
   | "agent.key_revoked"
   | "agent.connected"

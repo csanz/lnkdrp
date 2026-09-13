@@ -6,6 +6,18 @@
 export const OUT_OF_CREDITS_CODE = "OUT_OF_CREDITS";
 
 /**
+ * Stable code for the Free daily brake (`dailyCreditCap`): the workspace still has credits, it
+ * just cannot spend more today. Clients show different copy than for an exhausted balance.
+ */
+export const DAILY_CAP_CODE = "DAILY_CREDIT_CAP";
+
+/** Returns true when an error is the daily credit brake rather than an empty balance. */
+export function isDailyCapError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : typeof err === "string" ? err : "";
+  return String(msg || "").toLowerCase().includes("daily credit cap exceeded");
+}
+
+/**
  * Returns true when an error indicates the user/workspace is out of credits.
  *
  * Exists to trigger global UI (modal/toast) from many different call sites without coupling.

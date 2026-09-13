@@ -15,7 +15,7 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { randomBase62, newShareId } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
-import { checkLimit } from "@/lib/billing/planLimits";
+import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -371,14 +371,10 @@ export async function POST(request: Request) {
       }
     }
 
-    // Free plan: every new doc is an active share link (schema default `shareEnabled: true`).
-    // At the cap we still create the doc, just unshared, so the upload page's "sharing stays off
-    // until you free a link or upgrade" note is exactly what happens.
+    // Free plan: every new doc is an active share link (schema default `shareEnabled: true`), so at
+    // the cap the upload itself is refused with a 402 `plan_limit` (web, URL import and MCP all land
+    // here). The client opens the upgrade modal; freeing a link or upgrading lifts the gate.
     const limitCheck = await checkLimit(actor.orgId, "active_links");
-    const shareEnabled = limitCheck.ok;
-    const planWarning = limitCheck.ok
-      ? limitCheck.warning
-      : { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max, grace: limitCheck.grace };
     if (!limitCheck.ok) {
       void recordActivity({
         orgId: actor.orgId,
@@ -388,7 +384,10 @@ export async function POST(request: Request) {
         meta: { limit: limitCheck.limit, used: limitCheck.used, max: limitCheck.max },
         request,
       });
+      return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
     }
+    const shareEnabled = true;
+    const planWarning = limitCheck.warning;
 
     // Create with a shareId (retry on rare collisions).
     let doc: CreatedDoc | null = null;

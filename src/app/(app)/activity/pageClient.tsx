@@ -25,10 +25,10 @@ import {
   TrashIcon,
   XCircleIcon,
 } from "@heroicons/react/24/outline";
-import PlanLimitNotice from "@/components/PlanLimitNotice";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
+import AgentMark from "@/components/AgentMark";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import {
@@ -110,22 +110,52 @@ function hrefFor(item: ActivityItem): string | null {
   return null;
 }
 
+/**
+ * Who did it, as avatars. A person alone is one initials circle; an agent acting for a person is
+ * the pair stacked like GitHub's co-authored commits (person in front, agent behind); an agent with
+ * no known person is the agent circle alone.
+ */
 function ActorAvatar({ item }: { item: ActivityItem }) {
   const name = actorDisplayName(item.actor);
-  const label = name ?? (item.agent?.label || null);
-  const initials = label ? initialsFromNameOrEmail(label) : "?";
-  return (
+  const agent = item.agent;
+  const agentTitle = agent ? (agent.version ? `${agent.label} ${agent.version}` : agent.label) : null;
+  const person = name ? (
     <div
-      className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--panel-hover)] text-[10px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]"
-      title={item.actor.email ?? label ?? undefined}
-      aria-hidden="true"
+      className="grid h-7 w-7 place-items-center rounded-full bg-[var(--panel-hover)] text-[10px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]"
+      title={item.actor.email ?? name}
     >
-      {initials}
+      {initialsFromNameOrEmail(name)}
+    </div>
+  ) : null;
+  const bot = agent ? (
+    <div
+      className="grid h-7 w-7 place-items-center rounded-full bg-[var(--panel)] text-[var(--muted)] ring-1 ring-[var(--border)]"
+      title={agentTitle ?? undefined}
+    >
+      <AgentMark client={agent.client} label={agent.label} className="h-3.5 w-3.5" />
+    </div>
+  ) : null;
+  if (person && bot) {
+    return (
+      <div className="flex shrink-0 items-center" aria-hidden="true">
+        <div className="relative z-10 rounded-full ring-2 ring-[var(--panel)]">{person}</div>
+        <div className="-ml-1.5">{bot}</div>
+      </div>
+    );
+  }
+  if (person) return <div className="shrink-0" aria-hidden="true">{person}</div>;
+  if (bot) return <div className="shrink-0" aria-hidden="true">{bot}</div>;
+  return (
+    <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--panel-hover)] text-[10px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]" aria-hidden="true">
+      ?
     </div>
   );
 }
 
-function ActivityRow({ item, index = 0 }: { item: ActivityItem; index?: number }) {
+/** How a row enters: staggered page enter, the live-arrival highlight, or nothing (already shown). */
+type RowEnter = "enter" | "fresh" | "none";
+
+function ActivityRow({ item, index = 0, enter = "enter" }: { item: ActivityItem; index?: number; enter?: RowEnter }) {
   const Icon = ICON_BY_TYPE[item.type] ?? ClockIcon;
   const s = describeActivity(item);
   const href = hrefFor(item);
@@ -143,7 +173,24 @@ function ActivityRow({ item, index = 0 }: { item: ActivityItem; index?: number }
   ) : null;
 
   return (
-    <li style={{ animationDelay: `${Math.min(index, STAGGER_CAP) * 28}ms` }} className="motion-safe:animate-[ldFeedRowIn_360ms_cubic-bezier(0.2,0.7,0.2,1)_both] flex items-start gap-3 px-4 py-3">
+    <li
+      style={{ animationDelay: enter === "enter" ? `${Math.min(index, STAGGER_CAP) * 28}ms` : "0ms" }}
+      className={[
+        // Grid wrapper: a live arrival animates grid-template-rows 0fr -> 1fr, so the rows below
+        // slide down with it instead of jumping; the inner div clips during the expand.
+        "grid",
+        // "fresh" (arrived live): expand into place, hold a soft tint, fade back over a few seconds.
+        // "enter": the regular staggered page enter. "none": a row that already played its
+        // highlight; giving it no animation is what stops the blink when its class changes.
+        enter === "fresh"
+          ? "motion-safe:animate-[ldFeedRowNew_7s_cubic-bezier(0.22,0.61,0.36,1)_both]"
+          : enter === "enter"
+            ? "motion-safe:animate-[ldFeedRowIn_360ms_cubic-bezier(0.2,0.7,0.2,1)_both]"
+            : "",
+      ].join(" ")}
+    >
+      <div className="min-h-0 overflow-hidden">
+      <div className="flex items-start gap-3 px-4 py-3">
       <div className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--panel-hover)] text-[var(--muted-2)] ring-1 ring-[var(--border)]">
         <Icon className="h-4 w-4" aria-hidden="true" />
       </div>
@@ -154,15 +201,6 @@ function ActivityRow({ item, index = 0 }: { item: ActivityItem; index?: number }
           <span>{s.verb}</span>
           {objectNode}
           {s.suffix ? <span>{s.suffix}</span> : null}
-          {item.agent ? (
-            <span
-              className="inline-flex items-center gap-1 rounded-md bg-[var(--panel-hover)] px-1.5 py-0 text-[10px] font-medium text-[var(--muted)] ring-1 ring-[var(--border)]"
-              title={item.agent.version ? `${item.agent.label} ${item.agent.version}` : item.agent.label}
-            >
-              <CpuChipIcon className="h-3 w-3" aria-hidden="true" />
-              {item.agent.label}
-            </span>
-          ) : null}
         </div>
         <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[var(--muted-2)]">
           <time dateTime={item.createdDate} title={exact}>
@@ -183,6 +221,8 @@ function ActivityRow({ item, index = 0 }: { item: ActivityItem; index?: number }
           ) : null}
         </div>
       </div>
+      </div>
+      </div>
     </li>
   );
 }
@@ -192,6 +232,51 @@ export default function ActivityPageClient() {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  // Live arrivals: highlighted while fresh, then "settled" (no animation) so a later class change
+  // never replays the enter fade. New rows are queued and inserted one at a time, oldest first,
+  // so a burst reads as a sequence instead of a wall.
+  const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
+  const settledIdsRef = useRef<Set<string>>(new Set());
+  const freshTimersRef = useRef<number[]>([]);
+  const arrivalQueueRef = useRef<ActivityItem[]>([]);
+  const drainTimerRef = useRef<number | null>(null);
+  const lastInsertAtRef = useRef(0);
+  useEffect(
+    () => () => {
+      freshTimersRef.current.forEach((t) => window.clearTimeout(t));
+      if (drainTimerRef.current !== null) window.clearTimeout(drainTimerRef.current);
+    },
+    [],
+  );
+  const FRESH_MS = 7200;
+  const STAGE_MS = 1400;
+  /** Insert the next queued arrival at the top, highlighted, then schedule the one after it. */
+  const drainArrivals = useCallback(() => {
+    drainTimerRef.current = null;
+    if (!arrivalQueueRef.current.length) return;
+    // Minimum spacing between inserts, even when arrivals come from separate refreshes a few
+    // milliseconds apart (three quick writes = three frames = three refetches).
+    const wait = STAGE_MS - (Date.now() - lastInsertAtRef.current);
+    if (wait > 0) {
+      drainTimerRef.current = window.setTimeout(drainArrivals, wait);
+      return;
+    }
+    const next = arrivalQueueRef.current.shift();
+    if (!next) return;
+    lastInsertAtRef.current = Date.now();
+    setItems((prev) => (prev.some((it) => it.id === next.id) ? prev : [next, ...prev].slice(0, pageSize)));
+    setFreshIds((cur) => new Set([...cur, next.id]));
+    const t = window.setTimeout(() => {
+      settledIdsRef.current.add(next.id);
+      setFreshIds((cur) => {
+        const out = new Set(cur);
+        out.delete(next.id);
+        return out;
+      });
+    }, FRESH_MS);
+    freshTimersRef.current.push(t);
+    if (arrivalQueueRef.current.length) drainTimerRef.current = window.setTimeout(drainArrivals, STAGE_MS);
+  }, [pageSize]);
   // cursors[i] is the cursor that opened page i (null for the first page); pageIndex points at the current page.
   const [cursors, setCursors] = useState<Array<string | null>>([null]);
   const [pageIndex, setPageIndex] = useState(0);
@@ -230,7 +315,6 @@ export default function ActivityPageClient() {
   const { plan } = usePlan();
   const isFree = plan?.plan === "free";
   const { openUpgrade } = useUpgradeModal();
-  const [teamNudgeDismissed, setTeamNudgeDismissed] = useState(false);
 
   const fetchPage = useCallback(
     async (cursor: string | null): Promise<{ items: ActivityItem[]; nextCursor: string | null }> => {
@@ -288,7 +372,22 @@ export default function ActivityPageClient() {
         .then((page) => {
           setItems((prev) => {
             const changed = page.items.length !== prev.length || page.items.some((it, i) => it.id !== prev[i]?.id);
-            return changed ? page.items : prev;
+            if (!changed) return prev;
+            if (!prev.length) return page.items;
+            const known = new Set([...prev.map((it) => it.id), ...arrivalQueueRef.current.map((it) => it.id)]);
+            // Newest first on the wire; enqueue oldest first so each insert lands above the last.
+            const arrived = page.items.filter((it) => !known.has(it.id)).reverse();
+            if (arrived.length) {
+              arrivalQueueRef.current.push(...arrived);
+              if (drainTimerRef.current === null) drainTimerRef.current = window.setTimeout(drainArrivals, 0);
+              return prev;
+            }
+            // Nothing new. While arrivals are still being staged, leave the list alone: mirroring the
+            // server order mid-stage is what made rows appear below the top one. Once the queue is
+            // empty, mirror quietly (a delete elsewhere, or a row aging out of the page).
+            if (arrivalQueueRef.current.length) return prev;
+            for (const it of page.items) settledIdsRef.current.add(it.id);
+            return page.items;
           });
           setNextCursor(page.nextCursor);
         })
@@ -306,7 +405,7 @@ export default function ActivityPageClient() {
       window.clearInterval(timer);
       window.removeEventListener("focus", tick);
     };
-  }, [fetchPage, pageIndex, pending, loading]);
+  }, [fetchPage, pageIndex, pending, loading, drainArrivals]);
 
   /**
    * Page transition choreography: dim and lift the current rows, glide the feed to the top, fetch
@@ -351,10 +450,10 @@ export default function ActivityPageClient() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
-        <div className="flex items-center gap-2">
+      <div className="border-b border-[var(--border)] bg-[var(--panel)] px-8 pb-5 pt-6">
+        <div className="flex items-center gap-2.5">
           <ClockIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
-          <div className="text-sm font-semibold text-[var(--fg)]">Activity</div>
+          <div className="text-lg font-semibold tracking-tight text-[var(--fg)]">Activity</div>
           {live ? (
             <span
               className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
@@ -365,11 +464,13 @@ export default function ActivityPageClient() {
             </span>
           ) : null}
         </div>
-        <div className="mt-1 text-xs text-[var(--muted-2)]">
+        <div className="mt-1.5 text-[13px] text-[var(--muted-2)]">
           Uploads, share changes, views and agent activity in this workspace, by everyone in it.
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2" role="tablist" aria-label="Activity filters">
+        {/* Two filter axes on one row (wrapping on narrow screens), separated by a hairline. */}
+        <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3">
+        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Activity filters">
           {ACTIVITY_FILTERS.map((f) => {
             const active = f.id === filter;
             return (
@@ -392,7 +493,8 @@ export default function ActivityPageClient() {
           })}
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center gap-2" role="tablist" aria-label="Who did it">
+        <div aria-hidden="true" className="hidden h-6 w-px bg-[var(--border)] sm:block" />
+        <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Who did it">
           <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">Who</span>
           {(
             [
@@ -419,7 +521,7 @@ export default function ActivityPageClient() {
                   setWho(w.id);
                 }}
                 className={[
-                  "h-7 rounded-full px-2.5 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                  "h-8 rounded-full px-3 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                   active
                     ? "bg-[var(--fg)] text-[var(--bg)]"
                     : "border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
@@ -431,21 +533,12 @@ export default function ActivityPageClient() {
             );
           })}
         </div>
+        </div>
       </div>
 
-      <div ref={feedRef} className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-6 py-6" aria-busy={pending || loading}>
-        {isFree && !teamNudgeDismissed ? (
-          <PlanLimitNotice
-            limit="collaborators"
-            compact
-            className="mb-4"
-            secondaryLabel="Compare plans"
-            secondaryHref="/pricing"
-            onDismiss={() => setTeamNudgeDismissed(true)}
-          />
-        ) : null}
+      <div ref={feedRef} className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-8 py-6" aria-busy={pending || loading}>
         {pending ? (
-          <div aria-hidden="true" className="pointer-events-none sticky top-0 z-10 -mx-6 -mt-6 mb-4 h-0.5 overflow-hidden bg-transparent">
+          <div aria-hidden="true" className="pointer-events-none sticky top-0 z-10 -mx-8 -mt-6 mb-4 h-0.5 overflow-hidden bg-transparent">
             <div className="h-full w-1/3 bg-[var(--fg)]/60 motion-safe:animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
           </div>
         ) : null}
@@ -489,10 +582,16 @@ export default function ActivityPageClient() {
                 <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
                   {g.label}
                 </div>
-                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                {/* overflow-hidden: the live-arrival tint on the first/last row must clip to the card's corners. */}
+                <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                   <ul className="divide-y divide-[var(--border)]">
                     {g.items.map((item) => (
-                      <ActivityRow key={item.id} item={item} index={i++} />
+                      <ActivityRow
+                        key={item.id}
+                        item={item}
+                        index={i++}
+                        enter={freshIds.has(item.id) ? "fresh" : settledIdsRef.current.has(item.id) ? "none" : "enter"}
+                      />
                     ))}
                   </ul>
                 </div>

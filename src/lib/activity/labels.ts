@@ -65,6 +65,14 @@ export function actorDisplayName(actor: ActivityItem["actor"]): string | null {
 }
 
 /** Read a non-empty string from `meta[key]`, or null. */
+/** "N credits" / "1 credit" when a processing run charged credits; nothing when it cost 0. */
+function creditsSuffix(meta: Record<string, unknown> | null | undefined): string | null {
+  const v = meta?.credits;
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  if (v <= 0) return null;
+  return `${v} credit${v === 1 ? "" : "s"}`;
+}
+
 function metaString(meta: Record<string, unknown>, key: string): string | null {
   const v = meta?.[key];
   return typeof v === "string" && v.trim() ? v.trim() : null;
@@ -87,13 +95,14 @@ function describeShareChanges(meta: Record<string, unknown>): string | null {
 /**
  * Build the one-line sentence for an activity item.
  *
- * Subject precedence: agent label (e.g. "Claude Code") > user name > "Someone".
+ * Subject: when an agent acted for a known user the two are co-credited, GitHub style
+ * ("Christian Sanz and Claude Code"); otherwise agent label > user name > "Someone".
  */
 export function describeActivity(item: ActivityItem): ActivitySentence {
   const docTitle = item.doc?.title?.trim() || "Untitled document";
   const projectName = item.project?.name?.trim() || metaString(item.meta, "projectName") || "a request inbox";
   const user = actorDisplayName(item.actor);
-  const subject = item.agent?.label || user || "Someone";
+  const subject = item.agent?.label && user ? `${user} and ${item.agent.label}` : item.agent?.label || user || "Someone";
   const email = metaString(item.meta, "email");
 
   switch (item.type) {
@@ -103,21 +112,36 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "imported", object: docTitle, suffix: "from a URL" };
     case "upload.completed":
       return { subject, verb: "uploaded", object: docTitle, suffix: null };
-    case "doc.processed":
-      return { subject: "Processing", verb: "finished for", object: docTitle, suffix: null };
+    case "doc.processed": {
+      const cost = creditsSuffix(item.meta);
+      return { subject: "Processing", verb: "finished for", object: docTitle, suffix: cost };
+    }
     case "doc.replaced": {
       const v = item.meta?.version;
       const version = typeof v === "number" && Number.isFinite(v) ? ` (v${v})` : "";
+      const base = user ? version || null : `via update link${version}`;
+      const cost = creditsSuffix(item.meta);
       return {
         subject: user || item.agent?.label || "Someone",
         verb: "replaced",
         object: docTitle,
-        suffix: user ? version || null : `via update link${version}`,
+        suffix: base && cost ? `${base} · ${cost}` : base ?? cost,
       };
     }
     case "doc.deleted":
       return { subject, verb: "deleted", object: docTitle, suffix: null };
     case "share.updated": {
+      // Project share toggle (no doc on the row): meta.scope === "project" with shareEnabled.
+      if (!item.doc && item.project?.name) {
+        const raw = (item.meta as Record<string, unknown> | null | undefined)?.shareEnabled;
+        const verb =
+          typeof raw === "boolean"
+            ? raw
+              ? "turned sharing on for project"
+              : "turned sharing off for project"
+            : "updated sharing for project";
+        return { subject, verb, object: item.project.name.trim(), suffix: null };
+      }
       const detail = describeShareChanges(item.meta);
       return detail
         ? { subject, verb: detail, object: "", suffix: `for ${docTitle}` }
@@ -160,6 +184,28 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       const client = item.agent?.label || metaString(item.meta, "client") || "An agent";
       const keyName = metaString(item.meta, "name");
       return { subject: client, verb: "connected to", object: "this workspace", suffix: keyName ? `using “${keyName}”` : null };
+    }
+    case "plan.limit_reached": {
+      // meta.limit is the LimitKey ("active_links", "projects", …); name the wall that was hit.
+      const limit = metaString(item.meta, "limit") ?? "";
+      const wall =
+        limit === "active_links" ? "the link limit" : limit === "projects" ? "the project limit" : limit === "collaborators" ? "the collaborator limit" : "a plan limit";
+      const target = item.doc?.title?.trim() ? `sharing ${docTitle}` : item.project?.name?.trim() ? `on ${item.project.name.trim()}` : "";
+      return { subject, verb: `hit ${wall}`, object: target, suffix: null };
+    }
+    case "plan.grace_started":
+      return { subject: "This workspace", verb: "entered its grace period", object: "", suffix: "over the Free limits at launch" };
+    case "plan.grace_reminder":
+      return { subject: "Grace period", verb: "ends soon for", object: "this workspace", suffix: null };
+    case "plan.grace_blocked":
+      return { subject: "Grace period", verb: "ended for", object: "this workspace", suffix: "Free limits now apply" };
+    case "plan.upgraded":
+      return { subject, verb: "upgraded", object: "this workspace", suffix: "to Pro" };
+    case "credits.exhausted": {
+      // The upload completed but the AI summary was skipped for want of credits.
+      const code = metaString(item.meta, "code");
+      const why = code === "daily_cap" ? "daily credit cap reached" : "out of AI credits";
+      return { subject: "AI summary skipped", verb: "for", object: docTitle, suffix: why };
     }
     default:
       return { subject, verb: item.type.replace(/[._]/g, " "), object: docTitle, suffix: null };

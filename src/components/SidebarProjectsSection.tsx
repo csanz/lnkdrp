@@ -43,6 +43,7 @@ export default function SidebarProjectsSection({
   setDeleteProjectError,
   setDeleteProjectOpen,
   truncateEnd,
+  rowEnter,
 }: {
   navLocked: boolean;
   activeProjectId: string | null;
@@ -64,6 +65,8 @@ export default function SidebarProjectsSection({
   setDeleteProjectError: (v: string | null) => void;
   setDeleteProjectOpen: (v: boolean) => void;
   truncateEnd: (text: string, maxChars: number) => string;
+  /** Grow-in classes for a row that just appeared (see LeftSidebar); empty strings once settled. */
+  rowEnter?: (id: string) => { li: string; child: string };
 }) {
   return (
     <section>
@@ -145,8 +148,8 @@ export default function SidebarProjectsSection({
             const title = truncateEnd(p.name, 26);
             const isActive = Boolean(activeProjectId && activeProjectId === p.id);
             return (
-              <li key={p.id}>
-                <div className="group relative">
+              <li key={p.id} className={rowEnter?.(p.id).li ?? ""}>
+                <div className={["group relative", rowEnter?.(p.id).child ?? ""].join(" ")}>
                   <div
                     role="link"
                     tabIndex={0}

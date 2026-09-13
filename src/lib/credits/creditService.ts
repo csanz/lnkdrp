@@ -6,8 +6,15 @@ import { SubscriptionModel } from "@/lib/models/Subscription";
 import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
 import { createCreditService } from "@/lib/credits/serviceCore";
 import { createMongooseCreditStore } from "@/lib/credits/mongooseStore";
+import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import type { ActionType, LedgerStatus, QualityTier } from "@/lib/credits/types";
 import type { WorkspaceBalanceSnapshot } from "@/lib/credits/store";
+
+/** Daily credit brake for Free workspaces (credits per UTC day). Pro has no daily cap. */
+export const FREE_DAILY_CREDIT_CAP = 15;
+
+/** The two facts every seed decision depends on: is this a personal org, and is it paid. */
+type WorkspacePlanFacts = { isPersonal: boolean; isPro: boolean };
 
 /**
  * Returns true when a Stripe subscription status should be treated as "pro".
@@ -19,43 +26,74 @@ function isProSubscriptionStatus(statusRaw: unknown): boolean {
   return s === "active" || s === "trialing";
 }
 
+/** Coerce a string/ObjectId workspace id; throws on malformed input. */
+function toOrgObjectId(orgId: string | Types.ObjectId): Types.ObjectId {
+  if (orgId instanceof Types.ObjectId) return orgId;
+  const s = String(orgId).trim();
+  if (!Types.ObjectId.isValid(s)) throw new Error("Invalid workspaceId");
+  return new Types.ObjectId(s);
+}
+
+/** Read org type + subscription status in one round trip (the only DB reads a seed needs). */
+async function workspacePlanFacts(orgId: Types.ObjectId): Promise<WorkspacePlanFacts> {
+  const [org, sub] = await Promise.all([
+    OrgModel.findOne({ _id: orgId, isDeleted: { $ne: true } }).select({ type: 1 }).lean(),
+    SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean(),
+  ]);
+  return {
+    isPersonal: (org as { type?: unknown } | null)?.type === "personal",
+    isPro: isProSubscriptionStatus((sub as { status?: unknown } | null)?.status),
+  };
+}
+
+/** Pure form of the starter-grant rule: personal AND not Pro → `FREE_STARTER_CREDITS`, else 0. */
+function starterCreditsFromFacts(facts: WorkspacePlanFacts): number {
+  if (FREE_STARTER_CREDITS <= 0) return 0;
+  return facts.isPersonal && !facts.isPro ? FREE_STARTER_CREDITS : 0;
+}
+
+/** Pure form of the daily brake: Free → `FREE_DAILY_CREDIT_CAP`, Pro → no cap. */
+function dailyCreditCapFromFacts(facts: WorkspacePlanFacts): number | null {
+  return facts.isPro ? null : FREE_DAILY_CREDIT_CAP;
+}
+
 /**
  * Decide whether a workspace qualifies for the one-time Free starter grant.
  *
  * Only a personal, non-Pro workspace ever qualifies (team workspaces start at 0 so a user cannot
  * farm credits by creating orgs). Returns the credits to seed, or 0.
+ *
+ * This is the single source of truth for the grant: both the reserve path
+ * (`defaultBalanceForWorkspace`) and the dashboard snapshot (`getCreditsSnapshot`) seed through it,
+ * so whichever runs first creates the row and the other finds it (the grant lands exactly once).
  * Side effects: reads the org type and subscription status; skipped entirely when
  * `FREE_STARTER_CREDITS` is 0 (credits are a Pro concept, so Free gets none).
  */
-async function starterCreditsFor(orgId: Types.ObjectId): Promise<number> {
+export async function starterCreditsForWorkspace(orgId: string | Types.ObjectId): Promise<number> {
   if (FREE_STARTER_CREDITS <= 0) return 0;
-  const [org, sub] = await Promise.all([
-    OrgModel.findOne({ _id: orgId, isDeleted: { $ne: true } }).select({ type: 1 }).lean(),
-    SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean(),
-  ]);
-  const isPersonal = (org as { type?: unknown } | null)?.type === "personal";
-  const isPro = isProSubscriptionStatus((sub as any)?.status);
-  return isPersonal && !isPro ? FREE_STARTER_CREDITS : 0;
+  return starterCreditsFromFacts(await workspacePlanFacts(toOrgObjectId(orgId)));
 }
 
 /**
- * Default initializer for a missing workspace balance snapshot.
+ * Default balance for a workspace that has no balance row yet.
  *
  * Exists so the credit service can operate even before a workspace has ever run an AI action.
  * Every bucket starts at 0; the only exception is the Free starter grant (`FREE_STARTER_CREDITS`,
- * 50, granted once to personal Free workspaces, see `starterCreditsFor`). Pro included credits arrive via
- * `grantCycleIncludedCredits` when Stripe opens a billing cycle. The initializer is idempotent
- * because the store only calls it when no balance row exists yet.
+ * 50, granted once to personal Free workspaces, see `starterCreditsForWorkspace`). Free workspaces
+ * (personal or team) also get the daily brake (`FREE_DAILY_CREDIT_CAP`); Pro has none. Pro included
+ * credits arrive via `grantCycleIncludedCredits` when Stripe opens a billing cycle. The seed is
+ * idempotent because callers only write it when no balance row exists yet (`create` inside the
+ * reserve transaction, `$setOnInsert` in the snapshot).
  */
-async function defaultInitBalanceIfMissing(params: { workspaceId: string }): Promise<WorkspaceBalanceSnapshot> {
-  const orgId = new Types.ObjectId(params.workspaceId);
+export async function defaultBalanceForWorkspace(orgId: string | Types.ObjectId): Promise<WorkspaceBalanceSnapshot> {
+  const facts = await workspacePlanFacts(toOrgObjectId(orgId));
   return {
-    trialCreditsRemaining: await starterCreditsFor(orgId),
+    trialCreditsRemaining: starterCreditsFromFacts(facts),
     subscriptionCreditsRemaining: 0,
     purchasedCreditsRemaining: 0,
     onDemandEnabled: false,
     onDemandMonthlyLimitCents: 0,
-    dailyCreditCap: null,
+    dailyCreditCap: dailyCreditCapFromFacts(facts),
     monthlyCreditCap: null,
     perRunCreditCapBasic: 20,
     perRunCreditCapStandard: 60,
@@ -95,7 +133,7 @@ export async function reserveCreditsOrThrow(params: {
   const svc = createCreditService(store);
   return await svc.reserveCreditsOrThrow({
     ...params,
-    initBalanceIfMissing: async () => await defaultInitBalanceIfMissing({ workspaceId: params.workspaceId }),
+    initBalanceIfMissing: async () => await defaultBalanceForWorkspace(params.workspaceId),
   });
 }
 
@@ -134,4 +172,46 @@ export async function failAndRefundLedger(params: { workspaceId: string; ledgerI
   await svc.failAndRefundLedger({ ledgerId: params.ledgerId });
 }
 
+/**
+ * Records an AI run that was performed for the workspace but must not be billed to it.
+ *
+ * Exists for recipient uploads (request/replace links): the automatic summary still runs so the
+ * owner gets a summarized document, but the owner never pays for a stranger's upload. The row
+ * carries `source: "recipient"` and 0 credits, touches no balance bucket, and is idempotent on
+ * `idempotencyKey` (a retried job returns the existing row).
+ * Errors: throws on invalid ids; DB failures propagate.
+ */
+export async function recordUnbilledRun(params: {
+  workspaceId: string;
+  userId: string;
+  docId?: string | null;
+  actionType: ActionType;
+  qualityTier: QualityTier;
+  idempotencyKey: string;
+  source: "recipient";
+}): Promise<{ ledgerId: string; created: boolean }> {
+  if (!Types.ObjectId.isValid(params.workspaceId)) throw new Error("Invalid workspaceId");
+  if (!Types.ObjectId.isValid(params.userId)) throw new Error("Invalid userId");
+  if (params.docId && !Types.ObjectId.isValid(params.docId)) throw new Error("Invalid docId");
+  const idempotencyKey = (params.idempotencyKey ?? "").trim();
+  if (!idempotencyKey) throw new Error("Missing idempotencyKey");
 
+  await connectMongo();
+  const workspaceId = new Types.ObjectId(params.workspaceId);
+  const existing = await CreditLedgerModel.findOne({ workspaceId, idempotencyKey }).select({ _id: 1 }).lean();
+  if (existing) return { ledgerId: String(existing._id), created: false };
+  const created = await CreditLedgerModel.create({
+    workspaceId,
+    userId: new Types.ObjectId(params.userId),
+    docId: params.docId ? new Types.ObjectId(params.docId) : null,
+    actionType: params.actionType,
+    qualityTier: params.qualityTier,
+    status: "charged",
+    source: params.source,
+    idempotencyKey,
+    creditsEstimated: 0,
+    creditsReserved: 0,
+    creditsCharged: 0,
+  });
+  return { ledgerId: String(created._id), created: true };
+}

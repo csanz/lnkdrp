@@ -36,6 +36,19 @@ export const FREE_PLAN_LIMITS_COPY = {
 } as const;
 
 /**
+ * Credit numbers for copy on client surfaces, mirrored from `src/lib/credits/grants.ts`
+ * (`FREE_STARTER_CREDITS`, `INCLUDED_CREDITS_PER_CYCLE`), which is server-only.
+ */
+export const CREDITS_COPY = {
+  /** One-time starter grant for Free workspaces (no cycle reset). */
+  freeStarter: 50,
+  /** Included credits per billing cycle on Pro. */
+  proPerMonth: 300,
+  /** Free daily brake (`FREE_DAILY_CREDIT_CAP` in `src/lib/credits/creditService.ts`). */
+  freeDailyCap: 15,
+} as const;
+
+/**
  * Launch flag: credit surfaces (dashboard credits pill, Usage/Limits cards, spend-limit editor) are on
  * by default and hidden only when `NEXT_PUBLIC_FEATURE_CREDITS=0`. Routes keep working either way.
  */

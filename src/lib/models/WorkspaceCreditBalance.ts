@@ -36,10 +36,12 @@ const workspaceCreditBalanceSchema = new Schema(
      * These are user-facing tiers, not vendor model names.
      *
      * - summary: always Basic (automatic; not configurable here)
-     * - review/history: Standard or Advanced default for new runs
+     * - review: Standard or Advanced default for new runs
+     * - history (automatic AI compare): `null` = follow the plan (Basic on Free, Standard on Pro,
+     *   see `getDefaultHistoryQualityTier` in `@/lib/credits/qualityDefaults`); a stored tier wins.
      */
     defaultReviewQualityTier: { type: String, enum: ["basic", "standard", "advanced"], default: "standard" },
-    defaultHistoryQualityTier: { type: String, enum: ["basic", "standard", "advanced"], default: "standard" },
+    defaultHistoryQualityTier: { type: String, enum: ["basic", "standard", "advanced"], default: null },
   },
   {
     timestamps: { createdAt: "createdDate", updatedAt: "updatedDate" },

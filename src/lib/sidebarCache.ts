@@ -435,12 +435,13 @@ export async function refreshSidebarCache(opts?: { force?: boolean; reason?: str
     }
   })();
 
-  inFlightByKey.set(
-    key,
-    run.finally(() => {
-      if (inFlightByKey.get(key) === run) inFlightByKey.delete(key);
-    }),
-  );
-
-  return inFlightByKey.get(key);
+  // Track the *wrapped* promise and compare against that same reference on release. The map used
+  // to hold `run.finally(...)` while the release check compared to `run`, so the entry was never
+  // removed: after the first refresh every later call (realtime frames included) returned the stale
+  // settled promise and never fetched, and the sidebar stopped updating until a reload.
+  const tracked: Promise<void> = run.finally(() => {
+    if (inFlightByKey.get(key) === tracked) inFlightByKey.delete(key);
+  });
+  inFlightByKey.set(key, tracked);
+  return tracked;
 }

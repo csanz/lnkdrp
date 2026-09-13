@@ -70,6 +70,15 @@ const uploadSchema = new Schema(
     previewImageUrl: { type: String, trim: true }, // (vercel blob URL)
 
     /**
+     * What the AI steps did on this version and why, written by the processing job:
+     * `{ summary, compare, reason, code, creditsNeeded, creditsUsed, source }` where `summary` is
+     * `done|skipped|failed`, `compare` is `done|skipped|failed|not_applicable`, `code` is
+     * `out_of_credits|daily_cap|plan|recipient|error|null` and `source` is `owner|recipient`.
+     * Returned as `ai` by `GET /api/uploads/:id` so the UI can explain a missing summary.
+     */
+    ai: { type: Schema.Types.Mixed, default: null },
+
+    /**
      * Optional Blob location for the extracted text artifact.
      * Used for prompt-context payloads (e.g. request guide documents).
      */
@@ -152,6 +161,11 @@ export const UploadModel: Model<Upload> =
 if (ExistingUploadModel && !ExistingUploadModel.schema.path("uploadSecret")) {
   ExistingUploadModel.schema.add({
     uploadSecret: { type: String, trim: true, default: null },
+  } as any);
+}
+if (ExistingUploadModel && !ExistingUploadModel.schema.path("ai")) {
+  ExistingUploadModel.schema.add({
+    ai: { type: Schema.Types.Mixed, default: null },
   } as any);
 }
 if (ExistingUploadModel && !ExistingUploadModel.schema.path("processingStartedAt")) {

@@ -9,12 +9,13 @@ import type { ActionType, QualityTier } from "@/lib/credits/types";
  *   schema changes.
  */
 /**
- * Actions included on every plan at launch (2026-09-12 decision, revised the same day): only the
- * automatic summary is free. AI compare (and AI review, not released) are charged at the tier prices below.
+ * Actions included on every plan (none as of 2026-09-13: the founder decided the automatic summary
+ * is a real cost and deducts credits again, 1/2/5 by tier; AI compare 2/5/12; AI review not released).
+ * Add an action here to make it free without touching the tier prices below.
  * The ledger still records a 0-credit row for included actions so usage stays visible.
  * Remove an action from this set to start charging the tier prices below again.
  */
-export const INCLUDED_ACTIONS_AT_LAUNCH: ReadonlySet<ActionType> = new Set<ActionType>(["summary"]);
+export const INCLUDED_ACTIONS_AT_LAUNCH: ReadonlySet<ActionType> = new Set<ActionType>([]);
 
 export function creditsForRun(params: { actionType: ActionType; qualityTier: QualityTier }): number {
   const a = params.actionType;

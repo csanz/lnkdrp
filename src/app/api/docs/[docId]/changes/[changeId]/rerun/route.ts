@@ -18,7 +18,7 @@ import { runDocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger } from "@/lib/credits/creditService";
 import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest, generateIdempotencyKey } from "@/lib/credits/idempotency";
-import { isOutOfCreditsError, OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
+import { DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { recordActivity } from "@/lib/activity/log";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -125,8 +125,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       });
     } catch (e) {
       if (isOutOfCreditsError(e)) {
+        const dailyCap = isDailyCapError(e);
         return applyTempUserHeaders(
-          NextResponse.json({ error: "Out of credits", code: OUT_OF_CREDITS_CODE }, { status: 402 }),
+          NextResponse.json(
+            { error: dailyCap ? "Daily credit cap reached" : "Out of credits", code: dailyCap ? DAILY_CAP_CODE : OUT_OF_CREDITS_CODE },
+            { status: 402 },
+          ),
           actor,
         );
       }

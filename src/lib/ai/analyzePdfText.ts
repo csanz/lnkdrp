@@ -79,6 +79,50 @@ export const AiDocAnalysisSchema = z
 export type AiDocAnalysis = z.infer<typeof AiDocAnalysisSchema>;
 
 /**
+ * Snapshots returned by `analyzePdfText` after both model attempts failed. Kept out of the object
+ * shape (a WeakSet, not a property) so nothing downstream can persist or serialize the marker.
+ * Callers that reserved credits for the run must refund them when this returns true.
+ */
+const fallbackAnalyses = new WeakSet<object>();
+export function isFallbackAnalysis(analysis: unknown): boolean {
+  return typeof analysis === "object" && analysis !== null && fallbackAnalyses.has(analysis);
+}
+
+/** Provider usage for a successful analysis, keyed by the returned object (see `analysisTelemetry`). */
+export type AnalysisTelemetry = {
+  provider: string;
+  modelRoute: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  latencyMs: number;
+  retriesCount: number;
+};
+const analysisUsage = new WeakMap<object, AnalysisTelemetry>();
+/**
+ * Usage telemetry for an analysis returned by `analyzePdfText`, in the shape the credit ledger
+ * stores (`markLedgerCharged({ telemetry })`). Null for fallbacks and unknown objects.
+ */
+export function analysisTelemetry(analysis: unknown): AnalysisTelemetry | null {
+  return typeof analysis === "object" && analysis !== null ? (analysisUsage.get(analysis) ?? null) : null;
+}
+function usageToTelemetry(
+  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null | undefined,
+  args: { model: string; latencyMs: number; retriesCount: number },
+): AnalysisTelemetry {
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : null);
+  return {
+    provider: "openai",
+    modelRoute: args.model,
+    promptTokens: num(usage?.inputTokens),
+    completionTokens: num(usage?.outputTokens),
+    totalTokens: num(usage?.totalTokens),
+    latencyMs: Math.max(0, Math.floor(args.latencyMs)),
+    retriesCount: args.retriesCount,
+  };
+}
+
+/**
  * Schema used for model output validation/repair.
  *
  * Why this exists:
@@ -556,7 +600,7 @@ export async function analyzePdfText(input: {
   })();
 
   try {
-    const { object } = await generateObject({
+    const { object, usage } = await generateObject({
       model: openai(cfg.model),
       schema: AiDocAnalysisGenerationSchema,
       temperature: typeof cfg.temperature === "number" ? cfg.temperature : 0,
@@ -573,6 +617,7 @@ export async function analyzePdfText(input: {
       ...(typeof maxTokensCfg === "number" ? { maxOutputTokens: maxTokensCfg } : {}),
     });
     const normalized = normalizeAiDocAnalysis(object, input.pages);
+    analysisUsage.set(normalized, usageToTelemetry(usage, { model: cfg.model, latencyMs: Date.now() - startedAt, retriesCount: 0 }));
     await completeAiRun(aiRunId, {
       durationMs: Date.now() - startedAt,
       outputObject: object,
@@ -582,7 +627,7 @@ export async function analyzePdfText(input: {
   } catch {
     // Retry once with a higher token budget to reduce truncation-related JSON/schema failures.
     try {
-      const { object } = await generateObject({
+      const { object, usage } = await generateObject({
         model: openai(cfg.model),
         schema: AiDocAnalysisGenerationSchema,
         temperature: 0,
@@ -592,6 +637,7 @@ export async function analyzePdfText(input: {
         ...(typeof maxTokensRetry === "number" ? { maxOutputTokens: maxTokensRetry } : {}),
       });
       const normalized = normalizeAiDocAnalysis(object, input.pages);
+      analysisUsage.set(normalized, usageToTelemetry(usage, { model: cfg.model, latencyMs: Date.now() - startedAt, retriesCount: 1 }));
       await completeAiRun(aiRunId, {
         durationMs: Date.now() - startedAt,
         outputObject: object,
@@ -612,6 +658,7 @@ export async function analyzePdfText(input: {
         outputText: JSON.stringify(fallback),
         error: e2,
       });
+      fallbackAnalyses.add(fallback);
       return fallback;
     }
   }

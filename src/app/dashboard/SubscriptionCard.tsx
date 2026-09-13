@@ -3,9 +3,10 @@
  *
  * Shows current plan status and lets a signed-in user upgrade via Stripe Checkout (server-created session),
  * then manage billing via Stripe's customer portal. Plan details link out to `/pricing` so the comparison
- * has a single source of truth. Credits are a Pro concept, so the Free panel never reads the credits
- * snapshot; it shows live usage meters from `GET /api/plan` (links, projects, analytics window, members)
- * and names version history, AI compare and credits as Pro features instead.
+ * has a single source of truth. The Free panel shows live usage meters from `GET /api/plan` (links,
+ * projects, analytics window, members) and names version history and AI compare as Pro features;
+ * credits exist on both plans (Free starts with a one-time starter grant) and live in the Credits
+ * card on the Usage tab, so this card never reads the credits snapshot.
  */
 "use client";
 
@@ -18,7 +19,7 @@ import { formatShortDate } from "@/lib/format/date";
 import PlanUsageMeter from "@/components/PlanUsageMeter";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { openBillingPortal, startCheckout as startCheckoutAction } from "@/lib/billing/clientActions";
-import { FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY } from "@/lib/client/planLimit";
+import { CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY } from "@/lib/client/planLimit";
 import { usePlan } from "@/lib/client/usePlan";
 
 type BillingStatusResponse = {
@@ -147,15 +148,15 @@ export default function SubscriptionCard() {
     rightSlot?: React.ReactNode;
   }) {
     return (
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4 sm:p-5">
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="text-[16px] font-semibold text-[var(--fg)]">{planLabel}</div>
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5 sm:p-6">
+        <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-2">
+              <div className="text-[18px] font-semibold tracking-tight text-[var(--fg)]">{planLabel}</div>
               {price ? <div className="text-[14px] font-semibold text-[var(--muted-2)]">{price}</div> : null}
             </div>
-            <div className="mt-1 text-[12px] text-[var(--muted-2)]">{subtitle}</div>
-            <div className="mt-4">{cta}</div>
+            <div className="mt-4 text-[12px] text-[var(--muted-2)]">{subtitle}</div>
+            <div className="mt-5">{cta}</div>
           </div>
           {rightSlot ? <div className="w-full md:w-auto md:shrink-0">{rightSlot}</div> : null}
         </div>
@@ -172,7 +173,8 @@ export default function SubscriptionCard() {
   const freeAnalyticsDays = freeSnapshot?.limits.analyticsDays ?? FREE_PLAN_LIMITS_COPY.analyticsDays;
   const freeLimitsSubtitle = (
     <div>
-      <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
+      {/* Three meters on one row; analytics is a window, not a count, so it lives in the note below. */}
+      <div className="grid gap-x-8 gap-y-4 sm:grid-cols-3">
         <PlanUsageMeter
           label="Links"
           used={freeSnapshot ? freeSnapshot.usage.activeLinks : null}
@@ -184,21 +186,20 @@ export default function SubscriptionCard() {
           used={freeSnapshot ? freeSnapshot.usage.projects : null}
           max={freeSnapshot ? freeSnapshot.limits.projects : FREE_PLAN_LIMITS_COPY.projects}
         />
-        <div className="flex items-center justify-between gap-2 text-[12px] leading-4 text-[var(--muted-2)]">
-          <span>Analytics</span>
-          <span className="text-[var(--muted)]">Basic analytics · {freeAnalyticsDays} days</span>
-        </div>
         <PlanUsageMeter
           label="Members"
           used={freeSnapshot ? freeSnapshot.usage.members : null}
           max={freeSnapshot ? freeSnapshot.limits.collaborators + 1 : 1}
         />
       </div>
-      <div className="mt-3">
-        Includes 50 starter credits, one time. Version history and AI compare are Pro features.{" "}
+      <div className="mt-5 flex flex-col gap-2 border-t border-[var(--border)] pt-4 leading-5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+        <span>
+          Analytics cover the last {freeAnalyticsDays} days. AI summaries use your {CREDITS_COPY.freeStarter} one-time starter
+          credits. Version history and AI compare are Pro features.
+        </span>
         <button
           type="button"
-          className="font-semibold text-[var(--fg)] underline underline-offset-2"
+          className="shrink-0 self-start font-semibold text-[var(--fg)] underline underline-offset-2 sm:self-auto"
           onClick={() => {
             // Lead with whichever cap is hit; otherwise the Pro-only feature the sentence names.
             if (freeSnapshot?.atLimit.activeLinks) {
@@ -224,12 +225,7 @@ export default function SubscriptionCard() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Plan</div>
-          <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-            {topHint}{" "}
-            <Link href="/pricing" className="font-semibold text-[var(--fg)] underline underline-offset-2">
-              See plan details
-            </Link>
-          </div>
+          <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">{topHint}</div>
         </div>
         {showStatusPill ? <div className="text-[11px] font-semibold text-[var(--muted-2)]">Status: {status}</div> : null}
       </div>

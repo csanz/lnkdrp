@@ -9,8 +9,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import UploadButton, { UploadIcon } from "@/components/UploadButton";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
-import { usePlan } from "@/lib/client/usePlan";
-import {
+import { refreshPlan, usePlan } from "@/lib/client/usePlan";
+import { PlanLimitClientError,
   apiCreateDoc,
   apiCreateUpload,
   isPdfFile,
@@ -38,8 +38,8 @@ function titleFromFileName(name: string) {
 export default function UploadPageClient() {
   const router = useRouter();
   const { pendingFile, setPendingFile } = usePendingUpload();
-  // Free workspaces at the link cap can still upload: `POST /api/docs` creates the doc unshared and
-  // the doc page's share switch explains the missing slot. Say so up front (only once the plan is known).
+  // Free workspaces at the link cap cannot upload: `POST /api/docs` answers 402 and the upgrade modal
+  // opens. Say so up front and disable the pickers (only once the plan is known).
   const { plan } = usePlan();
   const atLinkLimit = plan?.plan === "free" && plan.atLimit.activeLinks;
   const { openUpgrade } = useUpgradeModal();
@@ -125,6 +125,10 @@ export default function UploadPageClient() {
   async function handleUpload() {
     if (!selectedFile) return;
     if (busy) return;
+    if (atLinkLimit && plan) {
+      openUpgrade("active_links", { used: plan.usage.activeLinks, max: plan.limits.activeLinks ?? undefined });
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -148,6 +152,13 @@ export default function UploadPageClient() {
 
       router.push(`/doc/${encodeURIComponent(docId)}`);
     } catch (e) {
+      if (e instanceof PlanLimitClientError) {
+        // The API refused the doc at the link cap (plan snapshot may have been stale).
+        openUpgrade("active_links", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
+        refreshPlan();
+        setBusy(false);
+        return;
+      }
       setError(e instanceof Error ? e.message : "Upload failed");
       setBusy(false);
     }
@@ -211,7 +222,7 @@ export default function UploadPageClient() {
               onClick={() => void handleUpload()}
             >
               <UploadIcon />
-              {busy ? "Uploading…" : atLinkLimit ? "Upload" : "Upload & create link"}
+              {busy ? "Uploading…" : "Upload & create link"}
             </button>
           ) : null}
         </div>
@@ -223,8 +234,7 @@ export default function UploadPageClient() {
           className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] leading-5 text-[var(--muted-2)] md:px-6"
         >
           <span>
-            This workspace is at its {plan.limits.activeLinks ?? 3}-link limit. You can still upload; sharing stays off until
-            you free a link or upgrade.
+            This workspace is at its {plan.limits.activeLinks ?? 3}-link limit. Free a link, or upgrade to keep uploading.
           </span>
           <button
             type="button"
@@ -325,7 +335,7 @@ export default function UploadPageClient() {
                       label="Choose a PDF"
                       accept="pdf"
                       variant="cta"
-                      disabled={busy}
+                      disabled={busy || atLinkLimit}
                       onFileRejected={setError}
                       onFileSelected={(file) => {
                         if (!isPdfFile(file)) {
@@ -377,7 +387,7 @@ export default function UploadPageClient() {
                   label="Choose a different PDF"
                   accept="pdf"
                   variant="link"
-                  disabled={busy}
+                  disabled={busy || atLinkLimit}
                   onFileRejected={setError}
                   onFileSelected={(file) => {
                     if (!isPdfFile(file)) {

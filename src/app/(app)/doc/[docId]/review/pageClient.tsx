@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Markdown from "@/components/Markdown";
-import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
+import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
 type QualityDefaults = {
   ok: true;
@@ -173,7 +173,8 @@ export default function DocReviewPageClient({ docId }: { docId: string }) {
                         headers: { "x-idempotency-key": idKey },
                       });
                       if (res.status === 402) {
-                        dispatchOutOfCredits();
+                        const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
+                        dispatchOutOfCredits(outOfCreditsReasonFromCode(body?.code));
                         return;
                       }
                       if (!res.ok) {

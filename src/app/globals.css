@@ -17,6 +17,9 @@
   --panel: #ffffff;
 
   --chart-views: #059669; /* single-series chart stroke; validated per surface */
+  /* Activity feed: tint + edge bar for a row that just arrived live (neutral, not a status colour). */
+  --feed-new-bg: rgba(37, 99, 235, 0.06);
+  --feed-new-bar: rgba(37, 99, 235, 0.5);
   --panel-2: #fafafa;
   --panel-hover: #f4f4f5;
 
@@ -32,8 +35,10 @@
   --border: #e4e4e7;
   --ring: color-mix(in srgb, #000000 16%, transparent);
 
-  --muted: #52525b;
-  --muted-2: #71717a;
+  /* Muted text on white/near-white. Kept darker than zinc-500/600 so 11-12px labels
+     (sidebar sections, meters, breadcrumbs) stay legible: ~7.5:1 and ~5.9:1 on #fff. */
+  --muted: #3f3f46;
+  --muted-2: #5b5b64;
 
   /* Primary CTA */
   --primary-bg: #000000;
@@ -64,6 +69,8 @@
   --panel: #111113;
 
   --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
+  --feed-new-bg: rgba(96, 165, 250, 0.1);
+  --feed-new-bar: rgba(96, 165, 250, 0.55);
   --panel-2: #151518;
   --panel-hover: #1b1b1f;
 
@@ -112,6 +119,8 @@
     --panel: #111113;
 
     --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
+  --feed-new-bg: rgba(96, 165, 250, 0.1);
+  --feed-new-bar: rgba(96, 165, 250, 0.55);
     --panel-2: #151518;
     --panel-hover: #1b1b1f;
 
@@ -200,6 +209,56 @@ body {
 }
 
 /* Activity feed rows entering after a page change (staggered via inline animation-delay). */
+/* Activity feed: a row that arrived live. Grows in, holds a soft green tint, then settles. */
+@keyframes ldFeedRowNew {
+  0% {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    background-color: var(--feed-new-bg);
+    box-shadow: inset 2px 0 0 var(--feed-new-bar);
+  }
+  15% {
+    grid-template-rows: 1fr;
+    opacity: 0.45;
+    background-color: var(--feed-new-bg);
+    box-shadow: inset 2px 0 0 var(--feed-new-bar);
+  }
+  26% {
+    opacity: 1;
+    background-color: var(--feed-new-bg);
+    box-shadow: inset 2px 0 0 var(--feed-new-bar);
+  }
+  /* No hold: from here the tint decays steadily, so a row added 1.4s later is clearly brighter
+     than the one before it, and the feed reads as a gradient from newest to oldest. */
+  100% {
+    grid-template-rows: 1fr;
+    background-color: transparent;
+    box-shadow: inset 2px 0 0 transparent;
+  }
+}
+
+/* Sidebar list row that appeared after first load: grow into place with a tint, then settle. */
+@keyframes ldSidebarRowIn {
+  0% {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    background-color: var(--feed-new-bg);
+  }
+  30% {
+    grid-template-rows: 1fr;
+    opacity: 0.35;
+    background-color: var(--feed-new-bg);
+  }
+  45% {
+    opacity: 1;
+    background-color: var(--feed-new-bg);
+  }
+  100% {
+    grid-template-rows: 1fr;
+    background-color: transparent;
+  }
+}
+
 @keyframes ldFeedRowIn {
   from {
     opacity: 0;

@@ -50,7 +50,7 @@ export default function PlanUsageMeter({ label, used, max, warn = false, compact
         <div
           className={cn(
             "h-full rounded-full motion-safe:transition-[width] motion-safe:duration-300",
-            warn ? "bg-amber-500" : "bg-[var(--fg)]",
+            warn ? "bg-amber-500" : "bg-[var(--muted-2)]",
           )}
           style={{ width: pct }}
         />

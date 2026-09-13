@@ -140,6 +140,30 @@ const CONFIG = {
   // Lower values reduce "edge bumps" where borders peek over the horizon.
   GLOBE_BORDERS_LIFT: 1.0006,
 
+  // Link arcs: "share links" travelling between cities as thin great-circle flight paths.
+  // Deliberately faint: the borders sit at 0.28 opacity, the arcs peak well below that, and a
+  // slightly brighter head runs along each one so the eye catches motion rather than lines.
+  ARCS_ENABLED: true,
+  ARCS_COUNT: 6, // slots (max flights in the air at once)
+  // Cadence: one new flight every ARCS_LAUNCH_EVERY seconds, like a metronome, instead of
+  // per-slot random gaps. With 6 slots and ~8 s flights that keeps 4-5 in the air, evenly spaced.
+  ARCS_LAUNCH_EVERY: 1.8,
+  // Fraction of flights whose origin (and usually destination) is on the hemisphere facing the
+  // camera and inside the viewport, so most traffic is where the reader can see it.
+  ARCS_VISIBLE_BIAS: 0.85,
+  ARCS_COLOR: 0xe5e7eb, // same family as the borders so they read as part of the map
+  ARCS_OPACITY: 0.16, // trail (peak; the envelope fades in/out around it)
+  ARCS_HEAD_OPACITY: 0.42, // the short leading segment
+  ARCS_HEAD_FRAC: 0.09, // head length as a fraction of the whole arc
+  ARCS_POINTS: 48, // samples per arc (1px lines need no more)
+  // Apex height as a fraction of the globe radius. Each flight draws its own value from this
+  // range (then scales by distance), so short hops skim the surface and long hauls vary from
+  // low sweeps to high loops.
+  ARCS_LIFT_MIN: 0.08,
+  ARCS_LIFT_MAX: 0.24,
+  ARCS_DURATION_MIN: 7.5, // seconds for one flight (draw + fade); narrow range = steady feel
+  ARCS_DURATION_MAX: 9,
+
   // Wind streaks
   WIND_ENABLED: true,
   WIND_AXIS_Z: -1,
@@ -678,6 +702,265 @@ const bordersMat = new THREE.LineBasicMaterial({
 });
 let bordersLines = null;
 let landFillMesh = null;
+
+// -----------------------------------------------------------------------------
+// Link arcs (thin animated great-circle paths between cities)
+// -----------------------------------------------------------------------------
+// [lon, lat]. A spread of hubs across every continent so flights cross the visible hemisphere
+// from many angles; the exact list is decorative and safe to edit.
+const ARC_CITIES = [
+  [-122.42, 37.77], // San Francisco
+  [-73.98, 40.75], // New York
+  [-79.38, 43.65], // Toronto
+  [-99.13, 19.43], // Mexico City
+  [-46.63, -23.55], // São Paulo
+  [-58.38, -34.6], // Buenos Aires
+  [-0.13, 51.51], // London
+  [2.35, 48.86], // Paris
+  [13.4, 52.52], // Berlin
+  [-3.7, 40.42], // Madrid
+  [18.07, 59.33], // Stockholm
+  [34.78, 32.08], // Tel Aviv
+  [55.27, 25.2], // Dubai
+  [3.38, 6.52], // Lagos
+  [36.82, -1.29], // Nairobi
+  [18.42, -33.93], // Cape Town
+  [72.88, 19.08], // Mumbai
+  [77.59, 12.97], // Bangalore
+  [103.82, 1.35], // Singapore
+  [106.85, -6.21], // Jakarta
+  [114.17, 22.32], // Hong Kong
+  [126.98, 37.57], // Seoul
+  [139.69, 35.69], // Tokyo
+  [151.21, -33.87], // Sydney
+  [-118.24, 34.05], // Los Angeles
+  [-122.33, 47.61], // Seattle
+  [-87.63, 41.88], // Chicago
+  [-97.74, 30.27], // Austin
+  [-80.19, 25.76], // Miami
+  [-123.12, 49.28], // Vancouver
+  [-74.07, 4.71], // Bogotá
+  [-70.67, -33.45], // Santiago
+  [-9.14, 38.72], // Lisbon
+  [4.9, 52.37], // Amsterdam
+  [8.54, 47.38], // Zurich
+  [12.5, 41.9], // Rome
+  [16.37, 48.21], // Vienna
+  [21.01, 52.23], // Warsaw
+  [28.98, 41.01], // Istanbul
+  [31.24, 30.04], // Cairo
+  [46.68, 24.71], // Riyadh
+  [77.21, 28.61], // Delhi
+  [100.5, 13.76], // Bangkok
+  [121.47, 31.23], // Shanghai
+  [116.4, 39.9], // Beijing
+  [174.76, -36.85], // Auckland
+];
+
+const arcsGroup = new THREE.Group();
+arcsGroup.renderOrder = 2;
+globeMap.add(arcsGroup);
+const ARC_RADIUS = GLOBE_SCALE * CONFIG.GLOBE_BORDERS_LIFT * 1.0015;
+
+// One merged LineSegments for every flight: a single draw call, positions uploaded only when a
+// flight launches, and a per-vertex alpha (updated per frame, ~12 KB) that does the grow, the
+// brighter head and the fade. No per-arc objects, no drawRange juggling, no per-frame copies.
+const ARC_N = CONFIG.ARCS_POINTS; // samples per arc
+const ARC_SEGS = ARC_N - 1; // segments per arc
+const ARC_VERTS = ARC_SEGS * 2; // vertices per arc in the segments buffer
+const arcCount = CONFIG.ARCS_ENABLED ? CONFIG.ARCS_COUNT : 0;
+const arcPositions = new Float32Array(arcCount * ARC_VERTS * 3);
+const arcAlphas = new Float32Array(arcCount * ARC_VERTS);
+const arcPosAttr = new THREE.BufferAttribute(arcPositions, 3);
+const arcAlphaAttr = new THREE.BufferAttribute(arcAlphas, 1);
+arcPosAttr.setUsage(THREE.DynamicDrawUsage);
+arcAlphaAttr.setUsage(THREE.DynamicDrawUsage);
+const arcGeom = new THREE.BufferGeometry();
+arcGeom.setAttribute("position", arcPosAttr);
+arcGeom.setAttribute("aAlpha", arcAlphaAttr);
+const arcMat = new THREE.ShaderMaterial({
+  uniforms: { uColor: { value: new THREE.Color(CONFIG.ARCS_COLOR) } },
+  vertexShader: `
+    attribute float aAlpha;
+    varying float vAlpha;
+    void main() {
+      vAlpha = aAlpha;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform vec3 uColor;
+    varying float vAlpha;
+    void main() {
+      if (vAlpha <= 0.001) discard;
+      gl_FragColor = vec4(uColor, vAlpha);
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+});
+const arcLines = new THREE.LineSegments(arcGeom, arcMat);
+arcLines.frustumCulled = false;
+if (arcCount > 0) arcsGroup.add(arcLines);
+
+const arcs = [];
+const tmpArcA = new THREE.Vector3();
+const tmpArcB = new THREE.Vector3();
+const tmpArcUa = new THREE.Vector3();
+const tmpArcUb = new THREE.Vector3();
+
+/** Write a lifted great-circle path between two surface points into arc slot `slot` (no allocation). */
+function fillArcPositions(slot, a, b, lift) {
+  tmpArcUa.copy(a).normalize();
+  tmpArcUb.copy(b).normalize();
+  const omega = Math.acos(THREE.MathUtils.clamp(tmpArcUa.dot(tmpArcUb), -1, 1));
+  const sinO = Math.sin(omega) || 1e-6;
+  // Short hops stay low, long hauls climb higher, like real flight paths on a map.
+  const apex = ARC_RADIUS * lift * THREE.MathUtils.clamp(omega / Math.PI, 0.25, 1);
+  const base = slot * ARC_VERTS * 3;
+  let px = 0, py = 0, pz = 0;
+  for (let i = 0; i < ARC_N; i++) {
+    const t = i / (ARC_N - 1);
+    const w1 = Math.sin((1 - t) * omega) / sinO;
+    const w2 = Math.sin(t * omega) / sinO;
+    const r = ARC_RADIUS + apex * Math.sin(Math.PI * t);
+    const x = (tmpArcUa.x * w1 + tmpArcUb.x * w2) * r;
+    const y = (tmpArcUa.y * w1 + tmpArcUb.y * w2) * r;
+    const z = (tmpArcUa.z * w1 + tmpArcUb.z * w2) * r;
+    if (i > 0) {
+      const o = base + (i - 1) * 6;
+      arcPositions[o] = px; arcPositions[o + 1] = py; arcPositions[o + 2] = pz;
+      arcPositions[o + 3] = x; arcPositions[o + 4] = y; arcPositions[o + 5] = z;
+    }
+    px = x; py = y; pz = z;
+  }
+}
+
+function makeArc(slot) {
+  return { slot, startAt: 0, duration: 1, active: false };
+}
+
+/** Park an arc: all its vertices transparent until the scheduler reuses the slot. */
+function parkArc(arc) {
+  arc.active = false;
+  arcAlphas.fill(0, arc.slot * ARC_VERTS, (arc.slot + 1) * ARC_VERTS);
+  arcAlphaAttr.needsUpdate = true;
+}
+
+const tmpArcWorld = new THREE.Vector3();
+const tmpArcNdc = new THREE.Vector3();
+const tmpArcToCam = new THREE.Vector3();
+const tmpArcNormal = new THREE.Vector3();
+/** True when a city (globe-local position) faces the camera and projects inside the viewport. */
+function cityInView(local) {
+  tmpArcWorld.copy(local).applyMatrix4(arcsGroup.matrixWorld);
+  tmpArcToCam.copy(camera.position).sub(globePivot.position).normalize();
+  const facing = tmpArcNormal.copy(tmpArcWorld).sub(globePivot.position).normalize().dot(tmpArcToCam);
+  if (facing < 0.08) return false;
+  tmpArcNdc.copy(tmpArcWorld).project(camera);
+  return tmpArcNdc.x > -1.05 && tmpArcNdc.x < 1.05 && tmpArcNdc.y > -1.05 && tmpArcNdc.y < 1.05 && tmpArcNdc.z < 1;
+}
+
+// City positions on the globe, computed once (globe-local space never changes).
+const ARC_CITY_POS = ARC_CITIES.map(([lon, lat]) => lonLatToVec3(lon, lat, ARC_RADIUS));
+
+/** Random city index, preferring one currently in view when `preferVisible` (falls back to any). */
+function pickCity(preferVisible, exclude) {
+  const tries = preferVisible ? 14 : 1;
+  let last = 0;
+  for (let k = 0; k < tries; k++) {
+    let idx = Math.floor(Math.random() * ARC_CITY_POS.length);
+    if (idx === exclude) idx = (idx + 1) % ARC_CITY_POS.length;
+    last = idx;
+    if (!preferVisible) return idx;
+    if (cityInView(ARC_CITY_POS[idx])) return idx;
+  }
+  return last;
+}
+
+/** Indices of the `k` cities nearest to city `i` (small fixed scan; runs only at launch). */
+function nearestCities(i, k) {
+  const a = ARC_CITY_POS[i];
+  const best = []; // [{idx, d}] kept sorted ascending, length <= k
+  for (let idx = 0; idx < ARC_CITY_POS.length; idx++) {
+    if (idx === i) continue;
+    const d = ARC_CITY_POS[idx].distanceToSquared(a);
+    if (best.length < k || d < best[best.length - 1].d) {
+      best.push({ idx, d });
+      best.sort((p, q) => p.d - q.d);
+      if (best.length > k) best.pop();
+    }
+  }
+  return best;
+}
+
+function launchArc(arc, now) {
+  arcsGroup.updateWorldMatrix(true, false);
+  const wantVisible = Math.random() < CONFIG.ARCS_VISIBLE_BIAS;
+  const i = pickCity(wantVisible, -1);
+  // Half the flights are short hops (nearest few cities, so they stay near the visible origin);
+  // the rest go anywhere, mostly to another visible city so the whole path is on screen.
+  let j;
+  if (Math.random() < 0.5) {
+    const near = nearestCities(i, 5);
+    j = near[Math.floor(Math.random() * near.length)].idx;
+  } else {
+    j = pickCity(wantVisible && Math.random() < 0.7, i);
+  }
+  tmpArcA.copy(ARC_CITY_POS[i]);
+  tmpArcB.copy(ARC_CITY_POS[j]);
+  const lift = CONFIG.ARCS_LIFT_MIN + Math.random() * (CONFIG.ARCS_LIFT_MAX - CONFIG.ARCS_LIFT_MIN);
+  fillArcPositions(arc.slot, tmpArcA, tmpArcB, lift);
+  arcPosAttr.needsUpdate = true;
+  arc.startAt = now;
+  arc.duration = CONFIG.ARCS_DURATION_MIN + Math.random() * (CONFIG.ARCS_DURATION_MAX - CONFIG.ARCS_DURATION_MIN);
+  arc.active = true;
+}
+
+const ARC_HEAD_SEGS = Math.max(1, Math.round(ARC_SEGS * CONFIG.ARCS_HEAD_FRAC));
+let arcNextLaunchAt = 1.0; // first flight shortly after the scene appears
+
+function updateArcs(now) {
+  // Metronome: launch at most one flight per tick, into the first idle slot. If every slot is
+  // busy the tick is skipped, which keeps the spacing regular rather than bunching launches.
+  if (now >= arcNextLaunchAt) {
+    arcNextLaunchAt = now + CONFIG.ARCS_LAUNCH_EVERY;
+    const idle = arcs.find((a) => !a.active);
+    if (idle) launchArc(idle, now);
+  }
+  let anyAlpha = false;
+  for (const arc of arcs) {
+    if (!arc.active) continue;
+    const p = (now - arc.startAt) / arc.duration; // 0..1 over the flight
+    if (p >= 1) {
+      parkArc(arc);
+      continue;
+    }
+    // The line grows from origin to destination over the first 70%, then the whole thing fades.
+    const grow = THREE.MathUtils.clamp(p / 0.7, 0, 1);
+    const eased = grow < 0.5 ? 2 * grow * grow : 1 - Math.pow(-2 * grow + 2, 2) / 2;
+    const drawnSegs = Math.max(1, Math.round(eased * ARC_SEGS));
+    const fadeIn = THREE.MathUtils.clamp(p / 0.12, 0, 1);
+    const fadeOut = THREE.MathUtils.clamp((1 - p) / 0.3, 0, 1);
+    const env = Math.min(fadeIn, fadeOut);
+    const trailA = CONFIG.ARCS_OPACITY * env;
+    const landed = grow >= 1 ? THREE.MathUtils.clamp(1 - (p - 0.7) / 0.1, 0, 1) : 1;
+    const headA = Math.max(trailA, CONFIG.ARCS_HEAD_OPACITY * env * landed);
+    const headStart = Math.max(0, drawnSegs - ARC_HEAD_SEGS);
+    const base = arc.slot * ARC_VERTS;
+    for (let k = 0; k < ARC_SEGS; k++) {
+      const a = k >= drawnSegs ? 0 : k >= headStart ? headA : trailA;
+      arcAlphas[base + k * 2] = a;
+      arcAlphas[base + k * 2 + 1] = a;
+    }
+    anyAlpha = true;
+  }
+  if (anyAlpha) arcAlphaAttr.needsUpdate = true;
+}
+
+for (let i = 0; i < arcCount; i++) arcs.push(makeArc(i));
 
 function lonLatToVec3(lon, lat, r) {
   // Standard equirectangular lon/lat to sphere surface conversion.
@@ -1417,6 +1700,7 @@ function animate() {
     globeSpin.rotateOnAxis(FORWARD_AXIS, -GLOBE_SPIN_SPEED_EFFECTIVE);
   }
 
+  if (CONFIG.ARCS_ENABLED && globePivot.visible) updateArcs(t);
   renderer.render(scene, camera);
 }
 animate();

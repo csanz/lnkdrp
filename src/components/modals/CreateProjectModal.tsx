@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import Modal from "@/components/modals/Modal";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
@@ -41,6 +42,7 @@ export default function CreateProjectModal({
 }) {
   const { plan } = usePlan();
   const { openUpgrade } = useUpgradeModal();
+  const router = useRouter();
   const atProjectLimit = plan?.plan === "free" && plan.atLimit.projects;
   const showLimitNotice = Boolean(limitError) || atProjectLimit;
 
@@ -103,7 +105,11 @@ export default function CreateProjectModal({
             error={limitError}
             limit="projects"
             secondaryLabel="Manage projects"
-            secondaryHref="/search?scope=projects"
+            // Close first: a link inside the modal would navigate underneath it and leave it open.
+            onSecondary={() => {
+              onClose();
+              router.push("/search?scope=projects");
+            }}
             onUpgrade={upgradeFromNotice}
           />
         ) : error ? (

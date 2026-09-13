@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import UploadButton from "@/components/UploadButton";
 import AppShellLayout from "./(app)/AppShellLayout";
-import { apiCreateDoc, apiCreateUpload } from "@/lib/client/docUploadPipeline";
+import { PlanLimitClientError, apiCreateDoc, apiCreateUpload } from "@/lib/client/docUploadPipeline";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePendingUpload } from "@/lib/pendingUpload";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { fetchJson } from "@/lib/http/fetchJson";
@@ -31,6 +32,7 @@ function fileNameFromUrl(rawUrl: string): string {
 
 export default function HomeAuthedClient() {
   const router = useRouter();
+  const { openUpgrade } = useUpgradeModal();
   const { pendingFile, setPendingFile, setHasEnteredShell } = usePendingUpload();
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -161,7 +163,11 @@ export default function HomeAuthedClient() {
 
       router.push(`/doc/${encodeURIComponent(docId)}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Link upload failed");
+      if (e instanceof PlanLimitClientError) {
+        openUpgrade("active_links", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
+      } else {
+        setError(e instanceof Error ? e.message : "Link upload failed");
+      }
     } finally {
       setUrlBusy(false);
     }
