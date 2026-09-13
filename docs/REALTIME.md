@@ -47,7 +47,7 @@ The MCP server uses the same channel in both directions:
 
 | Variable | Where | Meaning |
 |---|---|---|
-| `NEXT_PUBLIC_REALTIME_URL` | Next app | `ws://localhost:8788` locally, `wss://rt.lnkdrp.com` in production. Unset = polling only. |
+| `NEXT_PUBLIC_REALTIME_URL` | Next app | `ws://localhost:8788` locally, `wss://realtime.lnkdrp.com` in production. Unset = polling only. |
 | `REALTIME_SECRET` | Next app + realtime server | Shared HMAC secret for tickets. Falls back to `NEXTAUTH_SECRET`. |
 | `REALTIME_PORT` | realtime server | Listen port, default 8788. |
 | `MONGODB_URI` | realtime server | Must be a replica set (local `rs0`, Atlas) — change streams need one. |

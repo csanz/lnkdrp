@@ -117,3 +117,18 @@ UI:
 - `src/components/StandaloneBrandedHeader.tsx` — shared branding header for standalone flow pages.
 
 
+
+## Stripe catalog ids
+
+**Sandbox** (account "LinkDrop Sandbox", `acct_1SkZoiBxWJYhcWkZ`, configured 2026-09-12):
+
+| Object | Id | Notes |
+|---|---|---|
+| Product Pro | `prod_Thzz8ih0J5i8W1` | metadata `type=pro`; no unit label |
+| Price Pro $29/month (licensed) | `price_1SkZzUBxWJYhcWkZQTSQBzyG` | `STRIPE_PRICE_ID` |
+| Product On-demand AI credits | `prod_VFYHmHCuaZeApP` | unit label `credit`, metadata `type=ai_credits` |
+| Price $0.10 per credit (metered, monthly) | `price_1UF3AYBxWJYhcWkZplMvZOi8` | `STRIPE_AI_CREDITS_PRICE_ID` |
+| Billing Meter `ai_credits` | `mtr_test_61VOR6JFQe5B7caqU41BxWJYhcWkZN56` | sum, customer by `stripe_customer_id`, value key `value` |
+| Archived | `price_1SllDeBxWJYhcWkZN1SZhtpy`, `price_1UF38xBxWJYhcWkZFaR9qvwQ` | old $0.01 price (wrong unit, wrong meter) and the first $0.10 price that lived on the Pro product (doubled the Checkout description) |
+
+**Live:** not created yet. Recreate the same shape with the live key (see `DEPLOY.md` §4.2) and record the ids here.

@@ -61,3 +61,6 @@ next-env.d.ts
 
 # local auth cookies (benchmark scripts)
 /scripts/cookie.json
+
+# Keep the env template in the repo
+!.env.example

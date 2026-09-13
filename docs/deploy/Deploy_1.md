@@ -1,5 +1,7 @@
 # Deploy 1 — First deployment checklist + plan
 
+> The canonical runbook is now [`DEPLOY.md`](../../DEPLOY.md) at the repo root (topology, env matrix, the realtime and MCP services, verification, rollback). This file keeps the key-generation walkthroughs and the original checklist.
+
 This document is the **runbook for the first production deployment** of `www_lnkdrp`.
 
 If/when you do a future “big” deployment (architecture change, billing revamp, etc), create a new doc in this folder (e.g. `Deploy_2.md`) and keep this one immutable as historical record.
