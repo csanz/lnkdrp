@@ -358,7 +358,8 @@ export async function syncDocShareState(docId: string | Types.ObjectId): Promise
   await DocModel.updateOne({ _id: id }, { $set: set });
 }
 
-export type CreateShareLinkResult = { link: ShareLink; limit: LimitCheck };
+/** `link` is null when a plan limit refused the create; `limit.ok` is then false. */
+export type CreateShareLinkResult = { link: ShareLink | null; limit: LimitCheck };
 
 /**
  * Create a link. Enabled links count against the Free cap: when the cap is hit the link is
@@ -384,6 +385,12 @@ export async function createShareLink(input: {
   const label = validateLabel(input.settings.label);
   const audience = validateAudience(input.settings.audience);
   const expiresAt = validateExpiry(input.settings.expiresAt);
+  // Letting recipients browse versions is a Pro feature. The document-level PATCH has always
+  // refused it on Free; the per-link path has to refuse it too, or the gate is bypassable by
+  // creating a link with the setting on.
+  const historyLimit = input.settings.allowRevisionHistory ? await checkLimit(orgId, "version_history") : null;
+  if (historyLimit && !historyLimit.ok) return { link: null, limit: historyLimit };
+
   const wantsEnabled = input.settings.enabled !== false;
   const limit = wantsEnabled ? await checkLimit(orgId, "active_links") : ({ ok: true, warning: null } as LimitCheck);
   const enabled = wantsEnabled && limit.ok;
@@ -431,7 +438,14 @@ export async function updateShareLink(input: {
   if (s.label !== undefined) set.label = validateLabel(s.label);
   if (s.audience !== undefined) set.audience = validateAudience(s.audience);
   if (s.allowDownload !== undefined) set.allowDownload = Boolean(s.allowDownload);
-  if (s.allowRevisionHistory !== undefined) set.allowRevisionHistory = Boolean(s.allowRevisionHistory);
+  if (s.allowRevisionHistory !== undefined) {
+    // Same Pro gate as the document-level PATCH; turning it off is always allowed.
+    if (s.allowRevisionHistory && !link.allowRevisionHistory) {
+      const historyLimit = await checkLimit(link.orgId, "version_history");
+      if (!historyLimit.ok) return { link, limit: historyLimit };
+    }
+    set.allowRevisionHistory = Boolean(s.allowRevisionHistory);
+  }
   if (s.expiresAt !== undefined) set.expiresAt = validateExpiry(s.expiresAt);
   Object.assign(set, passwordFields(s.password));
   let limit: LimitCheck | null = null;

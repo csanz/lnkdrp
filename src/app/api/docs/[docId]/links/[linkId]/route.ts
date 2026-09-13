@@ -13,6 +13,7 @@ import { Types } from "mongoose";
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
 import { archiveShareLink, listShareLinks, toShareLinkDTO, updateShareLink, ShareLinkError } from "@/lib/share/links";
+import { planLimitResponse } from "@/lib/billing/planLimits";
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "../shared";
 
 export const runtime = "nodejs";
@@ -85,6 +86,13 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
         meta: { linkId: dto.id, shareId: dto.shareId, linkLabel: dto.label, changed: Object.keys(settings), enabled: dto.enabled },
         request,
       });
+    }
+
+    // A refused version_history change is a hard no: nothing was written, so answer 402 with the
+    // standard plan_limit body like the document-level PATCH, rather than a 200 that looks applied.
+    // The active-links cap stays a 200 + planWarning, because there the link is still created.
+    if (blocked && limit && !limit.ok && limit.limit === "version_history") {
+      return applyTempUserHeaders(planLimitResponse(limit), actor);
     }
 
     const planWarning = planWarningOf(limit);

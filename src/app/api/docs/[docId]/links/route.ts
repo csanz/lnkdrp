@@ -17,6 +17,7 @@ import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
 import { createShareLink, listShareLinks, toShareLinkDTO } from "@/lib/share/links";
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "./shared";
+import { planLimitResponse } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,6 +97,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
         ...(body.password !== undefined ? { password: body.password } : {}),
       },
     });
+
+    // A plan limit refused the create (today: recipient version history on Free). Answer 402 with
+    // the standard plan_limit body, exactly as the document-level PATCH does.
+    if (!link) return applyTempUserHeaders(planLimitResponse(limit as Parameters<typeof planLimitResponse>[0]), actor);
 
     const dto = toShareLinkDTO(link);
     void recordActivity({
