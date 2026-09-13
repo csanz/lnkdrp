@@ -32,7 +32,6 @@ import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest } from "@/lib/credits/idempotency";
 import { getCreditsSnapshot } from "@/lib/credits/snapshot";
 import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
-import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -1288,16 +1287,11 @@ export async function POST(
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
             const historyIdempotencyKey = `history:auto:${String(docId)}:to:${toVersion}`;
             let historyLedgerId: string | null = null;
-            // Pro feature gate: the AI compare is part of version history. Free workspaces keep the
-            // DocChange row (so versions still list) but no credits are reserved and no diff is run.
-            // Recipient uploads (request/replace links) never bill the owner, so no compare either.
-            const historyAllowed =
-              !viaUploadSecret &&
-              (await getWorkspacePlan(actor.orgId)
-                .then((plan) => plan === "pro")
-                .catch(() => false));
+            // Credit-gated on every plan (no plan check): the reservation below is the gate. Recipient
+            // uploads (request/replace links) never bill the owner, so they get no compare.
+            const historyAllowed = !viaUploadSecret;
             if (!historyAllowed) {
-              debugLog(1, "[process] history compare skipped (plan or recipient upload)", { uploadId, docId: String(docId), version: toVersion });
+              debugLog(1, "[process] history compare skipped (recipient upload)", { uploadId, docId: String(docId), version: toVersion });
             }
             if (historyAllowed) {
               try {
@@ -2054,26 +2048,14 @@ export async function POST(
             let historyLedgerId: string | null = null;
             /** The compare for this version was already charged by an earlier attempt; keep its DocChange. */
             let historyAlreadyDone = false;
-            // Pro feature gate: the AI compare is part of version history. Free workspaces keep the
-            // DocChange row (versions still list, page thumbnails still attach) but no credits are
-            // reserved and no diff is generated. Recipient uploads never bill the owner: no compare.
-            const historyAllowed =
-              !viaUploadSecret &&
-              (await getWorkspacePlan(String(existingDocOrgId))
-                .then((plan) => plan === "pro")
-                .catch(() => false));
+            // Credit-gated on every plan (no plan check): a Free workspace with credits gets the compare
+            // at its default tier (Basic unless pinned); short of credits the reservation fails and the
+            // compare is skipped with `out_of_credits`. Recipient uploads never bill the owner: no compare.
+            const historyAllowed = !viaUploadSecret;
             if (!historyAllowed) {
               aiState.compare = "skipped";
-              if (viaUploadSecret) {
-                warningDetails.historyPlan = "recipient upload; AI compare is not run on the owner's credits";
-              } else {
-                warningDetails.historyPlan = "version_history is a Pro feature; AI compare skipped";
-                if (!aiState.code) {
-                  aiState.code = "plan";
-                  aiState.reason = "AI compare is part of version history, a Pro feature";
-                }
-              }
-              debugLog(1, "[process] history compare skipped (plan or recipient upload)", { uploadId, docId: String(docId), version: uploadVersion });
+              warningDetails.historyPlan = "recipient upload; AI compare is not run on the owner's credits";
+              debugLog(1, "[process] history compare skipped (recipient upload)", { uploadId, docId: String(docId), version: uploadVersion });
             }
             if (historyAllowed) {
               try {

@@ -2,8 +2,9 @@
  * Public pricing page.
  *
  * Free vs Pro side by side. Links, projects, analytics and collaborators are the product; the AI
- * summary costs credits like the other AI actions (1/2/5 by tier), while version history and AI compare are Pro
- * (2026-09-12 decision, see docs/prds/lnkdrp-credit-features.md). A compact "How credits work"
+ * summary and AI compare cost credits on every plan (summary 1/2/5, compare 2/5/12 by tier); letting
+ * recipients browse versions is the Pro version feature (2026-09-13 decision, see
+ * docs/prds/lnkdrp-credit-features.md). A compact "How credits work"
  * block explains the per-action prices without a full credit table. The Pro price label is the
  * same MongoDB-backed value the dashboard shows.
  *
@@ -30,7 +31,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "Free to send a few. Pro to send every day. Three links free, forever; unlimited links, version history and AI compare on Pro.",
+  description: "Free to send a few. Pro to send every day. Three links free, forever; unlimited links, deep analytics and 300 AI credits a month on Pro.",
 };
 
 /** Read the Pro price label without letting a database hiccup take the page down. */
@@ -97,7 +98,7 @@ export default async function PricingPage() {
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
               You pay for links, projects, and the people you work with. Every link opens with an AI
-              summary, one credit each, or free when your agent writes it. Version history and AI compare are Pro.
+              summary, one credit each, or free when your agent writes it. Version history and AI compare run on credits too.
             </p>
           </div>
 
@@ -123,6 +124,7 @@ export default async function PricingPage() {
                   `${FREE_PROJECTS} project`,
                   `Basic analytics: views and downloads, last ${FREE_ANALYTICS_DAYS} days`,
                   "AI summary on every link, 1 credit; free when your agent writes it",
+                  "Version history, with AI compare from 2 credits",
                   "Password protection and download control",
                   "Built for Claude Code, Cursor, Codex, and any MCP client",
                   `${FREE_STARTER_CREDITS} credits to start, then topped up to 10 a month`,
@@ -131,7 +133,7 @@ export default async function PricingPage() {
               />
               <p className="mt-4 text-[12px] leading-5 text-white/45">
                 Archive a document any time to free up a link slot. Credits top up to 10 on the 1st of each month
-                if you have fewer, and Free uses at most 15 credits a day. Not on Free: version history and AI compare.
+                if you have fewer, and Free uses at most 15 credits a day.
               </p>
               <div className="mt-8 flex-1" />
               <PricingCta plan="free" variant="dark" helper="Sign in with Google. No card needed." />
@@ -164,7 +166,7 @@ export default async function PricingPage() {
                   "Unlimited active share links",
                   "Unlimited projects",
                   "Deep analytics: who opened it, time per page, full history",
-                  "Version history and AI compare",
+                  "Recipients can browse every version and see what changed",
                   "300 credits a month, about 60 AI compares at standard quality",
                   `${PRO_INCLUDED_COLLABORATORS} collaborator included · more on request`,
                   "Agents never take a seat",
@@ -355,7 +357,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "Can I replace a file on Free?",
-                  a: "Yes. Replacing keeps the same link, recipients always see the latest file, and it never uses credits. Version history, the version list recipients can view, and AI compare are Pro.",
+                  a: "Yes. Replacing keeps the same link, recipients always see the latest file, and it never uses credits. Your version history and AI compare work on Free and use credits; the version list recipients can browse is Pro.",
                 },
                 {
                   q: "Which files can I share?",

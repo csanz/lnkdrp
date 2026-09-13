@@ -4,7 +4,7 @@
  * Shows current plan status and lets a signed-in user upgrade via Stripe Checkout (server-created session),
  * then manage billing via Stripe's customer portal. Plan details link out to `/pricing` so the comparison
  * has a single source of truth. The Free panel shows live usage meters from `GET /api/plan` (links,
- * projects, analytics window, members) and names version history and AI compare as Pro features;
+ * projects, analytics window, members) and notes that AI summaries, version history and AI compare run on credits;
  * credits exist on both plans (Free starts with a starter grant, topped up to 10 monthly) and live in the Credits
  * card on the Usage tab, so this card never reads the credits snapshot.
  */
@@ -195,13 +195,13 @@ export default function SubscriptionCard() {
       <div className="mt-5 flex flex-col gap-2 border-t border-[var(--border)] pt-4 leading-5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <span>
           Analytics cover the last {freeAnalyticsDays} days. AI summaries use credits: {CREDITS_COPY.freeStarter} to start, then
-          topped up to 10 on the 1st of each month. Version history and AI compare are Pro features.
+          topped up to 10 on the 1st of each month. Version history and AI compare run on credits too.
         </span>
         <button
           type="button"
           className="shrink-0 self-start font-semibold text-[var(--fg)] underline underline-offset-2 sm:self-auto"
           onClick={() => {
-            // Lead with whichever cap is hit; otherwise the Pro-only feature the sentence names.
+            // Lead with whichever cap is hit; otherwise the generic Pro pitch.
             if (freeSnapshot?.atLimit.activeLinks) {
               openUpgrade("active_links", {
                 used: freeSnapshot.usage.activeLinks,
@@ -210,7 +210,7 @@ export default function SubscriptionCard() {
             } else if (freeSnapshot?.atLimit.projects) {
               openUpgrade("projects", { used: freeSnapshot.usage.projects, max: freeSnapshot.limits.projects ?? undefined });
             } else {
-              openUpgrade("version_history");
+              openUpgrade("pro");
             }
           }}
         >

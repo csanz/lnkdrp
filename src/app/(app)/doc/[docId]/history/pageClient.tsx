@@ -2,22 +2,29 @@
  * Client component for owner doc history page.
  * Route: `/doc/:docId/history`
  *
- * Version history is a Pro feature: the workspace plan comes from `usePlan()` and a Free workspace
- * sees a one-line "Version history is a Pro feature" note with a **See what's included** button
- * that opens the upgrade modal, in place of the list (header intact). Nothing below the header
- * renders (and no history request fires) until the plan is known, so there is no jump.
+ * The owner's version history is open on every plan; AI compare runs on credits (2/5/12 by tier).
+ * A version whose compare was skipped (plan, credits) shows "Not compared yet" and can be
+ * regenerated from its row; the button states the cost and the credits left, and is disabled when
+ * the workspace cannot afford it (with the Free top-up date). Only the recipient-facing version list
+ * on share pages stays a Pro feature (per-link setting).
  */
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import Modal from "@/components/modals/Modal";
-import PlanLimitNotice from "@/components/PlanLimitNotice";
-import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
-import { usePlan } from "@/lib/client/usePlan";
+
+import { creditsForRun } from "@/lib/credits/schedule";
+
+/** AI compare cost by tier, straight from the credit schedule. */
+const RERUN_COST: Record<"basic" | "standard" | "advanced", number> = {
+  basic: creditsForRun({ actionType: "history", qualityTier: "basic" }),
+  standard: creditsForRun({ actionType: "history", qualityTier: "standard" }),
+  advanced: creditsForRun({ actionType: "history", qualityTier: "advanced" }),
+};
 
 type DocChangeItem = {
   id: string;
@@ -146,40 +153,23 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [defaultHistoryTier, setDefaultHistoryTier] = useState<"basic" | "standard" | "advanced">("standard");
   const [rerunBusyById, setRerunBusyById] = useState<Record<string, boolean>>({});
   const [rerunErrorById, setRerunErrorById] = useState<Record<string, string>>({});
-  // Version history is a Pro feature. `plan` is null until the shared snapshot resolves; the list
-  // (and its request) only mounts on Pro, and the API gates the list too.
-  const { plan: planSnapshot } = usePlan();
-  const plan: "free" | "pro" | null = planSnapshot?.plan ?? null;
-  const { openUpgrade } = useUpgradeModal();
-
-  // Version history is a blocking Pro moment, so land straight in the shared UpgradeModal (the same
-  // one every other gate opens). Once per visit; closing it leaves the ghost + inline notice behind.
-  const upgradePromptedRef = useRef(false);
+  // Credits left and the Free top-up date, so each Regenerate button can say what it costs and
+  // whether the workspace can afford it. Refreshed after every rerun.
+  const [credits, setCredits] = useState<{ remaining: number; resetsAt: string | null } | null>(null);
+  const refreshCredits = useCallback(async () => {
+    try {
+      const res = await fetch("/api/credits/snapshot?fast=1&bust=1", { cache: "no-store" });
+      const json = (await res.json().catch(() => null)) as { creditsRemaining?: unknown; resetsAt?: unknown; cycleEnd?: unknown } | null;
+      if (!res.ok || typeof json?.creditsRemaining !== "number") return;
+      const resetsAt = typeof json.resetsAt === "string" ? json.resetsAt : null;
+      setCredits({ remaining: json.creditsRemaining, resetsAt });
+    } catch {
+      // leave the buttons enabled; the API is the real gate
+    }
+  }, []);
   useEffect(() => {
-    if (plan !== "free" || upgradePromptedRef.current) return;
-    upgradePromptedRef.current = true;
-    openUpgrade("version_history");
-  }, [plan, openUpgrade]);
-
-  // Free workspaces never load the change list (the API gates it), so the header title comes from the
-  // doc itself; on Pro the list payload carries `docTitle` and this is skipped.
-  useEffect(() => {
-    if (plan !== "free" || docTitle) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, { cache: "no-store" });
-        const json = (await res.json().catch(() => null)) as { doc?: { title?: unknown } } | null;
-        const t = typeof json?.doc?.title === "string" ? json.doc.title.trim() : "";
-        if (!cancelled && t) setDocTitle(t);
-      } catch {
-        // header falls back to "Document"
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [plan, docId, docTitle]);
+    void refreshCredits();
+  }, [refreshCredits]);
 
   // Load workspace defaults (best-effort). Falls back to "standard".
   useEffect(() => {
@@ -323,7 +313,6 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   }
 
   useEffect(() => {
-    if (plan !== "pro") return;
     let cancelled = false;
     async function load() {
       setLoading(true);
@@ -337,7 +326,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
     return () => {
       cancelled = true;
     };
-  }, [plan, refreshFirstPage]);
+  }, [refreshFirstPage]);
 
   const hasHistory = items.length > 0;
   const filteredItems = useMemo(() => {
@@ -534,9 +523,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
         <div className="w-full px-6 py-6">
-          {plan === null ? null : plan === "free" ? (
-            <ProGatedHistoryPreview docId={docId} onUpgrade={() => openUpgrade("version_history")} />
-          ) : (
+          {(
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_440px]">
             {/* Left: history list */}
             <div className="min-w-0">
@@ -652,7 +639,11 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                 </span>
                               </div>
                               <div className="mt-1 line-clamp-2 text-sm text-[var(--fg)]">
-                                {it.summary?.trim() ? it.summary.trim() : "Change summary unavailable."}
+                                {it.summary?.trim() ? (
+                                  it.summary.trim()
+                                ) : (
+                                  <span className="text-[var(--muted)]">Not compared yet. Expand to run AI compare on this version.</span>
+                                )}
                               </div>
                               {(uploaderLabel || timeLabel) ? (
                                 <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--muted)]">
@@ -732,7 +723,10 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                 <button
                                   type="button"
                                   className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
-                                  disabled={Boolean(rerunBusyById[it.id])}
+                                  disabled={
+                                    Boolean(rerunBusyById[it.id]) ||
+                                    (credits !== null && credits.remaining < RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier])
+                                  }
                                   onClick={() => {
                                     void (async () => {
                                       // Must match the tier the <select> above displays when no explicit choice was made.
@@ -760,6 +754,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                         const json = (await res.json().catch(() => null)) as any;
                                         if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
                                         await refreshFirstPage({ keepExpanded: true });
+                                        void refreshCredits();
                                       } catch (e) {
                                         setRerunErrorById((m) => ({ ...m, [it.id]: e instanceof Error ? e.message : "Failed" }));
                                       } finally {
@@ -769,8 +764,21 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                   }}
                                   title="Rerun AI compare for this version"
                                 >
-                                  {rerunBusyById[it.id] ? "Regenerating…" : "Regenerate"}
+                                  {rerunBusyById[it.id]
+                                    ? "Regenerating…"
+                                    : `${it.summary?.trim() ? "Regenerate" : "Run AI compare"} · ${RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier]} credits`}
                                 </button>
+                                {credits !== null ? (
+                                  <span className="text-[11px] text-[var(--muted)]">
+                                    {credits.remaining < RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier]
+                                      ? `Not enough credits (${credits.remaining} left)${
+                                          credits.resetsAt
+                                            ? `. Tops up to 10 on ${new Date(credits.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}`
+                                            : ""
+                                        }`
+                                      : `${credits.remaining} left`}
+                                  </span>
+                                ) : null}
                               </div>
                               {rerunErrorById[it.id] ? (
                                 <div className="mt-2 text-xs font-medium text-red-700">{rerunErrorById[it.id]}</div>
@@ -1071,87 +1079,3 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   );
 }
 
-/** Static rows behind the Pro gate. Illustrative only; never real data, never interactive. */
-const GATED_HISTORY_ROWS: Array<{ version: string; when: string; who: string; summary: string; pages: string }> = [
-  { version: "v6", when: "Today", who: "Claude Code", summary: "Pricing moved to a single tier; roadmap slide reordered.", pages: "2 pages changed" },
-  { version: "v5", when: "3 days ago", who: "You", summary: "Team slide added; market size figures updated.", pages: "3 pages changed" },
-  { version: "v4", when: "Last week", who: "Cursor", summary: "Traction chart replaced with Q3 numbers.", pages: "1 page changed" },
-  { version: "v3", when: "2 weeks ago", who: "You", summary: "Use-of-funds table rewritten; typo fixes throughout.", pages: "4 pages changed" },
-  { version: "v2", when: "3 weeks ago", who: "You", summary: "Competitive landscape slide added.", pages: "1 page changed" },
-  { version: "v1", when: "Last month", who: "You", summary: "First version.", pages: "" },
-];
-
-/**
- * Free-plan history view: a full-width, lightly blurred ghost of the real history layout (list on
- * the left, compare panel on the right) with the upsell card floating over it, so the reader sees
- * the shape of what Pro unlocks rather than a boxed notice.
- */
-function ProGatedHistoryPreview({ docId, onUpgrade }: { docId: string; onUpgrade: () => void }) {
-  return (
-    <div className="relative min-h-[calc(100svh-140px)]">
-      {/* The standard inline notice (same component as the other gates); Upgrade reopens the modal. */}
-      <PlanLimitNotice
-        limit="version_history"
-        secondaryLabel="Back to document"
-        secondaryHref={`/doc/${encodeURIComponent(docId)}`}
-        onUpgrade={onUpgrade}
-        className="mb-6"
-      />
-      {/* Ghost layout (decorative). Same grid as the live page so the gate looks like the page. */}
-      <div aria-hidden="true" className="pointer-events-none select-none opacity-55 blur-[1.5px]">
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_440px]">
-          <div className="min-w-0">
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)]">
-              <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
-                <div>
-                  <div className="text-sm font-semibold text-[var(--fg)]">Version history</div>
-                  <div className="mt-0.5 text-xs text-[var(--muted)]">Showing 6 change records</div>
-                </div>
-                <div className="rounded-md bg-[var(--panel-hover)] px-2 py-1 text-[11px] font-medium text-[var(--muted-2)]">Latest: v6</div>
-              </div>
-              <ul className="divide-y divide-[var(--border)]">
-                {GATED_HISTORY_ROWS.map((r) => (
-                  <li key={r.version} className="flex items-start gap-4 px-5 py-4">
-                    <span className="mt-0.5 shrink-0 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-semibold text-[var(--fg)]">
-                      {r.version}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-x-3 text-[13px] text-[var(--fg)]">
-                        <span className="font-medium">{r.when}</span>
-                        <span className="text-[var(--muted-2)]">by {r.who}</span>
-                        {r.pages ? <span className="text-[var(--muted-2)]">{r.pages}</span> : null}
-                      </div>
-                      <div className="mt-1 text-[13px] leading-5 text-[var(--muted)]">{r.summary}</div>
-                    </div>
-                    <span className="shrink-0 rounded-md border border-[var(--border)] px-2 py-1 text-[12px] font-medium text-[var(--muted-2)]">
-                      Compare
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-
-          {/* Right: compare panel ghost */}
-          <div className="min-w-0">
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-5">
-              <div className="text-sm font-semibold text-[var(--fg)]">Compare v5 → v6</div>
-              <div className="mt-0.5 text-xs text-[var(--muted)]">AI summary of what changed</div>
-              <div className="mt-4 space-y-2 text-[13px] leading-5 text-[var(--muted)]">
-                <p>Pricing is now a single tier at $29 per workspace; the three-tier table on page 7 is gone.</p>
-                <p>The roadmap moved from page 9 to page 5 and lost the Q4 hardware milestone.</p>
-                <p>No changes to the team, market, or ask pages.</p>
-              </div>
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                {[0, 1, 2, 3].map((i) => (
-                  <div key={i} className="aspect-[4/3] rounded-lg border border-[var(--border)] bg-[var(--panel-2)]" />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-    </div>
-  );
-}

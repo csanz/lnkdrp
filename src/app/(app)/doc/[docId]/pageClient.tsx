@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon, LockClosedIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
 import { useSession } from "next-auth/react";
 import UploadButton from "@/components/UploadButton";
 import DocSharePanel from "@/components/DocSharePanel";
@@ -19,7 +19,6 @@ import { apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUplo
 import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { debugLog } from "@/lib/debug";
-import ProPill from "@/components/ProPill";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
 import { upsellKeyForLimit } from "@/lib/client/upsellCopy";
@@ -1417,7 +1416,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         const json = (await res.json().catch(() => null)) as unknown;
         const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
         if (limitErr) {
-          // Version history is Pro: keep the switch off and open the upgrade modal.
+          // Letting recipients browse versions is Pro: keep the switch off and open the upgrade modal.
           openUpgrade(upsellKeyForLimit(limitErr.limit), { graceHint: planLimitGraceHint(limitErr) });
         }
         throw new Error(`Request failed (${res.status})`);
@@ -1954,18 +1953,12 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           <Link
                             href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
                             className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:text-[var(--fg)]"
-                            aria-label={
-                              isFreePlan
-                                ? `Document version ${displayVersion}. Version history is a Pro feature`
-                                : `Document version ${displayVersion} (view history)`
-                            }
-                            title={isFreePlan ? "Version history is a Pro feature" : `Version ${displayVersion} (view history)`}
+                            aria-label={`Document version ${displayVersion} (view history)`}
+                            title={`Version ${displayVersion} (view history)`}
                           >
                             <span>v{displayVersion}</span>
                             <span aria-hidden="true" className="opacity-50">·</span>
                             <span>History</span>
-                            {/* Lock, not a "PRO" badge: the gate belongs to the history link, not the document. */}
-                            {isFreePlan ? <LockClosedIcon className="h-3 w-3 opacity-80" aria-hidden="true" /> : null}
                           </Link>
                         )
                       ) : null}
@@ -2033,18 +2026,12 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           <Link
                             href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
                             className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:text-[var(--fg)]"
-                            aria-label={
-                              isFreePlan
-                                ? `Document version ${displayVersion}. Version history is a Pro feature`
-                                : `Document version ${displayVersion} (view history)`
-                            }
-                            title={isFreePlan ? "Version history is a Pro feature" : `Version ${displayVersion} (view history)`}
+                            aria-label={`Document version ${displayVersion} (view history)`}
+                            title={`Version ${displayVersion} (view history)`}
                           >
                             <span>v{displayVersion}</span>
                             <span aria-hidden="true" className="opacity-50">·</span>
                             <span>History</span>
-                            {/* Lock, not a "PRO" badge: the gate belongs to the history link, not the document. */}
-                            {isFreePlan ? <LockClosedIcon className="h-3 w-3 opacity-80" aria-hidden="true" /> : null}
                           </Link>
                         )
                       ) : null}
@@ -2392,7 +2379,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           ].join(" ")}
                         >
                           {replaceNotice.toVersion ? `View v${replaceNotice.toVersion} changes` : "View version history"}
-                          {isFreePlan ? <ProPill className="ml-1.5" /> : null}
                         </Link>
                       </div>
                     </div>

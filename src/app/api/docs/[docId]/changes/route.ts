@@ -4,9 +4,8 @@
  * Returns replacement history (what changed) for a doc. Only available to users
  * who have access to the doc (same access rules as other `/api/docs/:docId/*` routes).
  *
- * Plan gate: the change list is a Pro feature (`version_history`), so the list modes answer
- * `402 plan_limit` on Free. `lite=1` (the doc page's "does history exist" probe) stays open so
- * Free owners still see that a replacement happened.
+ * Open on every plan: the owner's version history is not plan-gated (AI compare runs on credits).
+ * Only the recipient-facing version list on share pages is a Pro feature.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -16,7 +15,6 @@ import { DocChangeModel } from "@/lib/models/DocChange";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
-import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,12 +68,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       .select({ _id: 1, orgId: 1, title: 1, currentUploadVersion: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-    // Version history is a Pro feature; only the cheap `lite=1` existence probe is open to Free.
-    if (!lite) {
-      const limitCheck = await checkLimit(actor.orgId, "version_history");
-      if (!limitCheck.ok) return applyTempUserHeaders(planLimitResponse(limitCheck), actor);
-    }
 
     // Modes:
     // - lite=1: used by doc page replace banner; cheapest possible (no joins, no change list).

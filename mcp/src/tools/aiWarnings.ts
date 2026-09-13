@@ -17,7 +17,8 @@ function because(ai: UploadAi, step: "summary" | "compare"): string {
     case "daily_cap":
       return `daily credit cap reached${needs}.${step === "summary" ? ` ${FREE_SHARE_HINT}` : ""}`;
     case "plan":
-      return step === "compare" ? "version history is a Pro feature." : "not included on this plan.";
+      // No longer emitted since 2026-09-13 (compare is credit-gated on every plan); kept for old uploads.
+      return "not included on this plan.";
     case "recipient":
       return "uploads through a request link are not summarized.";
     default:

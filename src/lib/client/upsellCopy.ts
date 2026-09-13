@@ -5,9 +5,9 @@
  * action is refused or a Pro-only control is tapped) and the quiet inline `PlanLimitNotice`
  * (passive states such as the sidebar fallback nudge). Facts mirror `/pricing` and
  * `src/lib/billing/planLimits.ts`: Free = 3 active links, 1 project, 7-day analytics, single user,
- * no version history / AI compare; Pro = unlimited links and projects, full analytics history,
- * version history + AI compare, 300 credits a month, 1 collaborator included (more on request),
- * agents never take a seat.
+ * version history and AI compare on credits; Pro = unlimited links and projects, full analytics
+ * history, a version list recipients can browse, 300 credits a month, 1 collaborator included (more on
+ * request), agents never take a seat.
  */
 import type { PlanLimitKey } from "@/lib/client/planLimit";
 
@@ -37,17 +37,17 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     bullets: [
       "Unlimited active share links and projects",
       "Deep analytics: who opened it, time per page, full history",
-      "Version history and AI compare, with 300 credits a month",
+      "300 AI credits a month, and a version list recipients can browse",
     ],
     secondaryLabel: "Compare plans",
   },
   version_history: {
-    title: "Version history is a Pro feature",
-    reason: "Free workspaces keep only the latest file. Pro keeps every version, shows who changed it, and explains what changed.",
+    title: "Letting recipients browse versions is a Pro feature",
+    reason: "Your own version history and AI compare work on every plan. On Pro, the people you share with can open earlier versions and see what changed.",
     bullets: [
-      "Every version kept, with who uploaded it, collaborator or agent",
-      "AI compare of what changed between two versions",
-      "A version history recipients can browse",
+      "A version list on the share page, with what changed in each",
+      "300 AI credits a month for summaries and compares",
+      "Unlimited links, projects and deep analytics",
     ],
     secondaryLabel: "Compare plans",
   },
@@ -97,7 +97,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     bullets: [
       "300 credits a month, about 60 standard AI compares",
       "On-demand credits at $0.10 each, under a spend limit you set",
-      "Version history and AI compare of what changed between versions",
+      "Recipients can browse every version of what you share",
     ],
     secondaryLabel: "Compare plans",
   },

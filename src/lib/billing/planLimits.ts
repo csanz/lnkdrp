@@ -5,8 +5,10 @@
  * workspaces are capped on active share links, projects, and collaborators, and their viewer
  * analytics window is clamped. Pro workspaces are unlimited on all three counts.
  *
- * Feature gates: some `LimitKey`s are not counts but Pro-only features (`version_history`: the
- * owner history page, recipient revision history, and the AI compare; `analytics_history`: deep
+ * Feature gates: some `LimitKey`s are not counts but Pro-only features (`version_history`: letting
+ * recipients browse a document's versions on the share page, since 2026-09-13 the only version
+ * feature that is plan-gated; the owner's history page and AI compare run on credits on every plan;
+ * `analytics_history`: deep
  * analytics, i.e. viewer identities, per-viewer rows, per-page time and visit timelines). They never
  * carry usage or grace; Free is simply blocked and Pro is always ok.
  *
@@ -222,7 +224,7 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
         ? "Free workspaces are single-user. Upgrade to Pro to invite collaborators."
         : `Free workspaces can have ${max} collaborator${max === 1 ? "" : "s"}. Upgrade to Pro to invite more.`;
     case "version_history":
-      return "Version history and AI compare are Pro features.";
+      return "Letting recipients browse versions is a Pro feature.";
     case "analytics_history":
       return "Deep analytics are a Pro feature.";
   }

@@ -8,9 +8,14 @@
  * 2. Free workspaces seeded before the daily brake existed have `dailyCreditCap: null`; they get
  *    the same 15/day cap new Free workspaces get. Pro workspaces are never touched.
  *
+ * 3. With `--reset-compare-tier`: Free workspaces whose stored compare tier is "standard" (the old
+ *    schema default, indistinguishable from an explicit choice) go back to "follow the plan", which
+ *    is Basic on Free. Opt-in because it overrides what may have been a deliberate setting.
+ *
  * Usage:
  * - Dry run (default):  tsx --env-file=.env.local scripts/credit-balances-reconcile.ts
  * - Apply:              tsx --env-file=.env.local scripts/credit-balances-reconcile.ts --apply
+ * - Also reset tiers:    tsx --env-file=.env.local scripts/credit-balances-reconcile.ts --apply --reset-compare-tier
  */
 import { Types } from "mongoose";
 
@@ -23,14 +28,21 @@ import { FREE_DAILY_CREDIT_CAP } from "@/lib/credits/creditService";
 
 async function main() {
   const apply = process.argv.includes("--apply");
+  const resetCompareTier = process.argv.includes("--reset-compare-tier");
   await connectMongo();
 
   const rows = (await WorkspaceCreditBalanceModel.find({})
-    .select({ workspaceId: 1, trialCreditsRemaining: 1, dailyCreditCap: 1 })
-    .lean()) as Array<{ workspaceId: Types.ObjectId; trialCreditsRemaining?: number; dailyCreditCap?: number | null }>;
+    .select({ workspaceId: 1, trialCreditsRemaining: 1, dailyCreditCap: 1, defaultHistoryQualityTier: 1 })
+    .lean()) as Array<{
+    workspaceId: Types.ObjectId;
+    trialCreditsRemaining?: number;
+    dailyCreditCap?: number | null;
+    defaultHistoryQualityTier?: string | null;
+  }>;
 
   let zeroed = 0;
   let capped = 0;
+  let tiersReset = 0;
   for (const row of rows) {
     const org = (await OrgModel.findById(row.workspaceId).select({ type: 1 }).lean()) as { type?: string } | null;
     const plan = await getWorkspacePlan(row.workspaceId);
@@ -52,6 +64,14 @@ async function main() {
       }
     }
 
+    if (resetCompareTier && plan !== "pro" && row.defaultHistoryQualityTier === "standard") {
+      tiersReset += 1;
+      console.log(`[reconcile] ${String(row.workspaceId)} Free workspace compare tier standard -> follow plan (basic)`);
+      if (apply) {
+        await WorkspaceCreditBalanceModel.updateOne({ workspaceId: row.workspaceId }, { $set: { defaultHistoryQualityTier: null } });
+      }
+    }
+
     if (plan !== "pro" && (row.dailyCreditCap === null || row.dailyCreditCap === undefined)) {
       capped += 1;
       console.log(`[reconcile] ${String(row.workspaceId)} Free workspace without a daily cap -> ${FREE_DAILY_CREDIT_CAP}/day`);
@@ -61,7 +81,7 @@ async function main() {
     }
   }
 
-  console.log(`[reconcile] scanned ${rows.length} balance rows; starter credits zeroed: ${zeroed}; daily caps set: ${capped}; ${apply ? "applied" : "dry run (pass --apply)"}`);
+  console.log(`[reconcile] scanned ${rows.length} balance rows; starter credits zeroed: ${zeroed}; daily caps set: ${capped}; compare tiers reset: ${tiersReset}; ${apply ? "applied" : "dry run (pass --apply)"}`);
 }
 
 main()

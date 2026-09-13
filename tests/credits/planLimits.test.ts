@@ -263,7 +263,7 @@ describe("billing/planLimits checkLimit version_history (feature gate)", () => {
       max: 0,
       grace: null,
       upgradeUrl: "/pricing",
-      message: "Version history and AI compare are Pro features.",
+      message: "Letting recipients browse versions is a Pro feature.",
     });
   });
 
@@ -301,7 +301,7 @@ describe("billing/planLimits checkLimit version_history (feature gate)", () => {
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.code).toBe("plan_limit");
     expect(body.limit).toBe("version_history");
-    expect(body.error).toBe("Version history and AI compare are Pro features.");
+    expect(body.error).toBe("Letting recipients browse versions is a Pro feature.");
   });
 });
 
