@@ -78,6 +78,7 @@ OPENAI_API_KEY=sk-...                           # Required for AI extraction/rev
 ```bash
 NEXT_PUBLIC_APP_URL=http://localhost:3001       # Canonical app URL
 NEXT_PUBLIC_SITE_URL=http://localhost:3001      # Public site URL (for emails, OG tags)
+# NEXT_PUBLIC_MCP_URL=http://localhost:8787/mcp  # MCP endpoint shown in /connect and /mcp guides (default: production; /connect falls back to this local URL on a dev server)
 ```
 
 ### Optional

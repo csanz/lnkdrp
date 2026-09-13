@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { CLIENT_SETUPS, KEY_PLACEHOLDER, type ClientKey } from "@/lib/mcp/clientSetups";
+import { CLIENT_SETUPS, KEY_PLACEHOLDER, MCP_URL, SITE_ORIGIN, mcpUrlForOrigin, type ClientKey } from "@/lib/mcp/clientSetups";
 import CodeBlock from "./CodeBlock";
 
 /**
@@ -15,6 +15,14 @@ export default function ClientTabs({ plaintextKey }: { plaintextKey: string | nu
   const [client, setClient] = useState<ClientKey>("claude");
   const active = CLIENT_SETUPS.find((c) => c.key === client) ?? CLIENT_SETUPS[0];
   const key = plaintextKey ?? KEY_PLACEHOLDER;
+  // Commands point at the MCP server that matches this page's origin (local default on a dev
+  // server, production on the site). Read after mount so the first frame matches the server render.
+  const [origin, setOrigin] = useState(SITE_ORIGIN);
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.origin) setOrigin(window.location.origin);
+  }, []);
+  const mcp = mcpUrlForOrigin(origin);
+  const isLocal = mcp !== MCP_URL;
 
   return (
     <div>
@@ -42,7 +50,7 @@ export default function ClientTabs({ plaintextKey }: { plaintextKey: string | nu
       </div>
 
       <div role="tabpanel" id={`client-panel-${active.key}`} aria-labelledby={`client-tab-${active.key}`} className="pt-4">
-        <CodeBlock lines={active.lines(key)} label={`Copy ${active.label} setup`} />
+        <CodeBlock lines={active.lines(key, mcp)} label={`Copy ${active.label} setup`} />
         <div className="mt-3 flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5 text-[12px] leading-5 text-[var(--muted-2)]">
           <p className="min-w-0 flex-1">{active.note}</p>
           <Link
@@ -56,6 +64,11 @@ export default function ClientTabs({ plaintextKey }: { plaintextKey: string | nu
           The MCP server ships with launch. Your key already works against the verification endpoint below.
           {plaintextKey ? null : " Commands show a placeholder until you create a key."}
         </p>
+        {isLocal ? (
+          <p className="mt-1.5 text-[12px] leading-5 text-[var(--muted-2)]">
+            Local dev: commands use <code className="font-mono">{mcp}</code>. Set <code className="font-mono">NEXT_PUBLIC_MCP_URL</code> to point elsewhere; production is <code className="font-mono">{MCP_URL}</code>.
+          </p>
+        ) : null}
       </div>
     </div>
   );

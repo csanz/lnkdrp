@@ -9,7 +9,20 @@
  * Copy rules: no em-dashes; the MCP server "ships with launch"; the verification endpoint works today.
  */
 
-export const MCP_URL = "https://mcp.lnkdrp.com/mcp";
+/** Production MCP endpoint; override with NEXT_PUBLIC_MCP_URL (build-time) for staging or a local server. */
+export const MCP_URL = (process.env.NEXT_PUBLIC_MCP_URL || "https://mcp.lnkdrp.com/mcp").replace(/\/+$/, "");
+/** Where a locally run MCP server listens by default (`MCP_PORT` in the MCP server's env). */
+export const DEV_MCP_URL = "http://localhost:8787/mcp";
+
+/**
+ * The MCP endpoint to show on a page running at `origin`: the env override when set, the local
+ * default when the page is not on the public site (a dev server), else production. Keeps every
+ * command on `/connect` consistent with the server you are actually on.
+ */
+export function mcpUrlForOrigin(origin: string): string {
+  if (process.env.NEXT_PUBLIC_MCP_URL) return MCP_URL;
+  return origin.replace(/\/+$/, "") === SITE_ORIGIN ? MCP_URL : DEV_MCP_URL;
+}
 /** Public site origin for docs and the verification command (build-time; falls back to production). */
 export const SITE_ORIGIN = (process.env.NEXT_PUBLIC_SITE_URL || "https://lnkdrp.com").replace(/\/+$/, "");
 export const WHOAMI_PATH = "/api/agent/whoami";
@@ -37,34 +50,34 @@ export type ClientSetup = {
   /** Vendor documentation for MCP setup, when it exists. */
   docsUrl?: string;
   /** Compact install snippet for the tab view (homepage and `/connect`). */
-  lines: (key: string) => string[];
+  lines: (key: string, mcpUrl?: string) => string[];
   /**
    * Client-specific steps for the public guide. The guide adds "Create a key" before these and
    * "Verify" after them, so these cover only adding the server to the client.
    */
-  steps: (key: string) => SetupStep[];
+  steps: (key: string, mcpUrl?: string) => SetupStep[];
   /** For JSON-config clients: the object to paste when `mcpServers` already has other entries. */
-  mergeSnippet?: (key: string) => string[];
+  mergeSnippet?: (key: string, mcpUrl?: string) => string[];
 };
 
 /** The `lnkdrp` entry inside an `mcpServers` object, at the given base indent. */
-function jsonEntry(key: string, indent: string): string[] {
+function jsonEntry(key: string, indent: string, mcp: string = MCP_URL): string[] {
   return [
     `${indent}"lnkdrp": {`,
-    `${indent}  "url": "${MCP_URL}",`,
+    `${indent}  "url": "${mcp}",`,
     `${indent}  "headers": { "Authorization": "Bearer ${key}" }`,
     `${indent}}`,
   ];
 }
 
 /** A complete `mcpServers` config containing only lnkdrp. */
-function jsonConfig(key: string): string[] {
-  return ["{", '  "mcpServers": {', ...jsonEntry(key, "    "), "  }", "}"];
+function jsonConfig(key: string, mcp: string = MCP_URL): string[] {
+  return ["{", '  "mcpServers": {', ...jsonEntry(key, "    ", mcp), "  }", "}"];
 }
 
 /** UI-style "fill in these fields" lines used by clients without a CLI or config file. */
-function uiFields(key: string): string[] {
-  return ["name   lnkdrp", `url    ${MCP_URL}`, `auth   Bearer ${key}`];
+function uiFields(key: string, mcp: string = MCP_URL): string[] {
+  return ["name   lnkdrp", `url    ${mcp}`, `auth   Bearer ${key}`];
 }
 
 export const CLIENT_SETUPS: ClientSetup[] = [
@@ -76,12 +89,12 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     blurb: "One command in a terminal. Claude Code talks to lnkdrp over HTTP with your key.",
     note: "Run this in a terminal. Add --scope user to make it available in every project.",
     docsUrl: "https://docs.claude.com/en/docs/claude-code/mcp",
-    lines: (key) => [`claude mcp add --transport http lnkdrp ${MCP_URL} \\`, `  --header "Authorization: Bearer ${key}"`],
-    steps: (key) => [
+    lines: (key, mcp = MCP_URL) => [`claude mcp add --transport http lnkdrp ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+    steps: (key, mcp = MCP_URL) => [
       {
         title: "Add lnkdrp to Claude Code",
         body: "Run this in a terminal. By default it registers the server for the project you run it from; add --scope user to make it available everywhere.",
-        code: [`claude mcp add --transport http lnkdrp ${MCP_URL} \\`, `  --header "Authorization: Bearer ${key}"`],
+        code: [`claude mcp add --transport http lnkdrp ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
       },
       {
         title: "Check it registered",
@@ -97,8 +110,8 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     kind: "ui",
     blurb: "Add lnkdrp as a connector from Cowork's settings. No terminal needed.",
     note: "Fill in these fields when Cowork asks for the server details.",
-    lines: (key) => ["Cowork › Settings › Connectors › Add MCP server", ...uiFields(key)],
-    steps: (key) => [
+    lines: (key, mcp = MCP_URL) => ["Cowork › Settings › Connectors › Add MCP server", ...uiFields(key, mcp)],
+    steps: (key, mcp = MCP_URL) => [
       {
         title: "Open Connectors",
         body: "In Cowork, open Settings, then Connectors, then Add MCP server.",
@@ -106,7 +119,7 @@ export const CLIENT_SETUPS: ClientSetup[] = [
       {
         title: "Enter the server details",
         body: "Use lnkdrp as the name, the URL below as the server address, and your key as a bearer token.",
-        code: uiFields(key),
+        code: uiFields(key, mcp),
       },
     ],
   },
@@ -118,8 +131,8 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     blurb: "A few lines in Cursor's mcp.json. Works globally or per project.",
     note: "Cursor stores servers in ~/.cursor/mcp.json (or .cursor/mcp.json inside a project).",
     docsUrl: "https://docs.cursor.com/context/mcp",
-    lines: (key) => ["Settings › MCP › Add server", ...uiFields(key)],
-    steps: (key) => [
+    lines: (key, mcp = MCP_URL) => ["Settings › MCP › Add server", ...uiFields(key, mcp)],
+    steps: (key, mcp = MCP_URL) => [
       {
         title: "Open Cursor's MCP settings",
         body: "Open Cursor Settings, then MCP, then Add new global MCP server. This opens ~/.cursor/mcp.json. Use .cursor/mcp.json inside a project to scope the server to that project.",
@@ -127,10 +140,10 @@ export const CLIENT_SETUPS: ClientSetup[] = [
       {
         title: "Add the lnkdrp server",
         body: "Paste this if the file is empty. Save, and Cursor shows a green dot next to lnkdrp once it connects.",
-        code: jsonConfig(key),
+        code: jsonConfig(key, mcp),
       },
     ],
-    mergeSnippet: (key) => jsonEntry(key, ""),
+    mergeSnippet: (key, mcp = MCP_URL) => jsonEntry(key, "", mcp),
   },
   {
     key: "codex",
@@ -140,12 +153,12 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     blurb: "One command in a terminal. Codex keeps the server in its config file.",
     note: "Run this in a terminal. Codex stores it in ~/.codex/config.toml.",
     docsUrl: "https://developers.openai.com/codex/mcp",
-    lines: (key) => [`codex mcp add lnkdrp --url ${MCP_URL} \\`, `  --header "Authorization: Bearer ${key}"`],
-    steps: (key) => [
+    lines: (key, mcp = MCP_URL) => [`codex mcp add lnkdrp --url ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+    steps: (key, mcp = MCP_URL) => [
       {
         title: "Add lnkdrp to Codex",
         body: "Run this in a terminal. Codex stores the server in ~/.codex/config.toml.",
-        code: [`codex mcp add lnkdrp --url ${MCP_URL} \\`, `  --header "Authorization: Bearer ${key}"`],
+        code: [`codex mcp add lnkdrp --url ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
       },
       {
         title: "Check it registered",
@@ -162,12 +175,12 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     blurb: "One command in a terminal. Gemini CLI connects over HTTP with your key.",
     note: "Run this in a terminal. Gemini CLI stores it in ~/.gemini/settings.json.",
     docsUrl: "https://geminicli.com/docs/tools/mcp-server/",
-    lines: (key) => [`gemini mcp add --transport http lnkdrp ${MCP_URL} \\`, `  --header "Authorization: Bearer ${key}"`],
-    steps: (key) => [
+    lines: (key, mcp = MCP_URL) => [`gemini mcp add --transport http lnkdrp ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+    steps: (key, mcp = MCP_URL) => [
       {
         title: "Add lnkdrp to Gemini CLI",
         body: "Run this in a terminal. Gemini CLI stores the server in ~/.gemini/settings.json.",
-        code: [`gemini mcp add --transport http lnkdrp ${MCP_URL} \\`, `  --header "Authorization: Bearer ${key}"`],
+        code: [`gemini mcp add --transport http lnkdrp ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
       },
       {
         title: "Check it registered",
@@ -183,8 +196,8 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     kind: "ui",
     blurb: "Add lnkdrp as a tool from Grok's settings. No terminal needed.",
     note: "Fill in these fields when Grok asks for the server details.",
-    lines: (key) => ["Grok › Settings › Tools › Add MCP server", ...uiFields(key)],
-    steps: (key) => [
+    lines: (key, mcp = MCP_URL) => ["Grok › Settings › Tools › Add MCP server", ...uiFields(key, mcp)],
+    steps: (key, mcp = MCP_URL) => [
       {
         title: "Open Tools",
         body: "In Grok, open Settings, then Tools, then Add MCP server.",
@@ -192,7 +205,7 @@ export const CLIENT_SETUPS: ClientSetup[] = [
       {
         title: "Enter the server details",
         body: "Use lnkdrp as the name, the URL below as the server address, and your key as a bearer token.",
-        code: uiFields(key),
+        code: uiFields(key, mcp),
       },
     ],
   },
@@ -203,15 +216,15 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     kind: "json",
     blurb: "Any MCP client that reads an mcpServers config. Streamable HTTP with a bearer token.",
     note: "lnkdrp is a remote server over streamable HTTP, so there is no local process to install.",
-    lines: (key) => jsonConfig(key),
-    steps: (key) => [
+    lines: (key, mcp = MCP_URL) => jsonConfig(key, mcp),
+    steps: (key, mcp = MCP_URL) => [
       {
         title: "Add the server to your client's MCP config",
         body: "Most clients read an mcpServers object from a JSON file. lnkdrp is a remote server over streamable HTTP with a bearer token, so there is no local process to install. Check your client's docs for where the file lives.",
-        code: jsonConfig(key),
+        code: jsonConfig(key, mcp),
       },
     ],
-    mergeSnippet: (key) => jsonEntry(key, ""),
+    mergeSnippet: (key, mcp = MCP_URL) => jsonEntry(key, "", mcp),
   },
 ];
 
