@@ -65,6 +65,42 @@ function str(value: unknown): string {
 const FETCH_BLOCKED_RE = /failed to fetch url|url is not allowed|timed out fetching|only http\(s\) urls|empty pdf|missing url/i;
 const TOO_LARGE_RE = /too large/i;
 
+/** A finite number or null. */
+function numOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * `out_of_credits` for a 402 that is not a plan limit. `DAILY_CREDIT_CAP` (Free daily brake) and
+ * `OUT_OF_CREDITS` (balance exhausted) get different messages; `creditsNeeded`, `creditsRemaining`
+ * and a reset date are included when the API body carries them.
+ */
+function outOfCreditsError(status: number, body: Record<string, unknown>, bodyCode: string, siteUrl: string): ToolError {
+  const dailyCap = bodyCode === "DAILY_CREDIT_CAP";
+  const creditsNeeded = numOrNull(body.creditsNeeded);
+  const creditsRemaining = numOrNull(body.creditsRemaining);
+  const resetAt = str(body.resetAt) || str(body.creditsResetAt) || str(body.resetsAt) || str(body.nextResetAt) || str(body.cycleEnd) || null;
+  const parts = [dailyCap ? "Daily AI credit cap reached for this workspace." : "This workspace is out of AI credits."];
+  if (creditsNeeded !== null) parts.push(`Needs ${creditsNeeded} credit${creditsNeeded === 1 ? "" : "s"}.`);
+  if (creditsRemaining !== null) parts.push(`${creditsRemaining} remaining.`);
+  if (resetAt) parts.push(`${dailyCap ? "The cap resets" : "Credits reset"} at ${resetAt}.`);
+  parts.push(
+    dailyCap
+      ? "Retry after the reset, or pass summary and keyPoints to lnkdrp_share_pdf to share without credits."
+      : `Pass summary and keyPoints to lnkdrp_share_pdf to share without credits, or add credits at ${siteUrl}/pricing.`,
+  );
+  return new ToolError("out_of_credits", parts.join(" "), {
+    status,
+    details: {
+      ...(bodyCode ? { code: bodyCode } : {}),
+      reason: dailyCap ? "daily_cap" : "exhausted",
+      ...(creditsNeeded !== null ? { creditsNeeded } : {}),
+      ...(creditsRemaining !== null ? { creditsRemaining } : {}),
+      ...(resetAt ? { resetAt } : {}),
+    },
+  });
+}
+
 /**
  * Map a non-2xx lnkdrp REST response to a `ToolError`.
  *
@@ -103,6 +139,15 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
       if (TOO_LARGE_RE.test(errorText)) {
         return new ToolError("too_large", errorText, { status });
       }
+      if (bodyCode === "invalid_summary") {
+        return new ToolError(
+          "validation",
+          `lnkdrp rejected summary/keyPoints: ${(message || "invalid summary").replace(/\.+$/, "")}. Fix and retry: summary must be 40-600 characters of ` +
+            "plain text and keyPoints 2-7 items of at most 160 characters each, written from the document, with no URLs or " +
+            "markup (they are stripped before the length check). Pass both or neither; omit both to let lnkdrp summarize (costs credits).",
+          { status, details: { code: bodyCode } },
+        );
+      }
       return new ToolError("validation", message || `lnkdrp rejected the request (${where}).`, {
         status,
         details: bodyCode ? { code: bodyCode } : undefined,
@@ -119,10 +164,7 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
           details: { ...body, upgradeUrl },
         });
       }
-      return new ToolError("out_of_credits", message || "This workspace is out of AI credits.", {
-        status,
-        details: bodyCode ? { code: bodyCode } : undefined,
-      });
+      return outOfCreditsError(status, body, bodyCode, siteUrl);
     }
     case 413:
       return new ToolError("too_large", message || "The file is too large.", { status });

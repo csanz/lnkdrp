@@ -9,8 +9,11 @@ import type { ActionType, QualityTier } from "@/lib/credits/types";
  *   schema changes.
  */
 /**
- * Actions included on every plan (none as of 2026-09-13: the founder decided the automatic summary
- * is a real cost and deducts credits again, 1/2/5 by tier; AI compare 2/5/12; AI review not released).
+ * Actions included on every plan. Empty since 2026-09-13: before that date the automatic summary was
+ * included; from 2026-09-13 the founder decided it is a real cost and it deducts credits, 1/2/5 by
+ * tier (AI compare 2/5/12; AI review not released). Agent-written summaries and recipient uploads
+ * cost the owner 0 credits through separate paths (no lnkdrp run, or a 0-credit recipient ledger
+ * row in creditService.ts), not through this set.
  * Add an action here to make it free without touching the tier prices below.
  * The ledger still records a 0-credit row for included actions so usage stays visible.
  * Remove an action from this set to start charging the tier prices below again.

@@ -34,6 +34,8 @@ import {
   upsertStarredDocTitle,
 } from "@/lib/starredDocs";
 import { ACTIVE_ORG_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocsChanged, setSidebarCacheSnapshot } from "@/lib/sidebarCache";
+import { subscribeRealtime } from "@/lib/client/realtime";
+import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
 type DocStatus = "draft" | "preparing" | "ready" | "failed";
 
@@ -192,6 +194,20 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [doc, setDoc] = useState<DocDTO>(initialDoc);
   const docRef = useRef<DocDTO>(initialDoc);
   const [currentUpload, setCurrentUpload] = useState<UploadDTO | null>(null);
+  /**
+   * What the AI steps did on the current version (`GET /api/uploads/:id` → `upload.ai`): whether the
+   * summary was skipped for credits (so the panel offers "Write summary") and who wrote it.
+   */
+  const [uploadAi, setUploadAi] = useState<{
+    uploadId: string;
+    summary: string | null;
+    code: string | null;
+    summaryBy: { label: string | null; client: string | null } | null;
+  } | null>(null);
+  const [summaryRun, setSummaryRun] = useState<{ state: "idle" | "starting" | "running"; error: string | null }>({
+    state: "idle",
+    error: null,
+  });
   const lastResyncUploadIdRef = useRef<string>("");
   const lastDocPollLogKeyRef = useRef<string>("");
   const replacePendingRef = useRef<boolean>(false);
@@ -467,6 +483,135 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   }, [doc.status, hasHydratedFromServer, isReceivedViaRequest, replaceUploadId, reviewRunStatus, reviewRerunPending]);
 
   const docSummary = useMemo(() => pickDocSummary(doc.aiOutput ?? null), [doc.aiOutput]);
+
+  /** Read the current version's AI step state; returns the upload status so callers know when a rerun finished. */
+  async function loadUploadAi(uploadId: string): Promise<string | null> {
+    try {
+      const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}`, { cache: "no-store" });
+      if (!res.ok) return null;
+      const json = (await res.json().catch(() => null)) as {
+        upload?: { status?: string | null; ai?: { summary?: unknown; code?: unknown; summaryBy?: { label?: unknown; client?: unknown } | null } | null };
+      } | null;
+      const ai = json?.upload?.ai ?? null;
+      const by = ai?.summaryBy ?? null;
+      setUploadAi({
+        uploadId,
+        summary: typeof ai?.summary === "string" ? ai.summary : null,
+        code: typeof ai?.code === "string" ? ai.code : null,
+        summaryBy: by
+          ? { label: typeof by.label === "string" ? by.label : null, client: typeof by.client === "string" ? by.client : null }
+          : null,
+      });
+      return json?.upload?.status ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Re-read the full doc (not the lite poll) so a newly written summary shows up. */
+  async function refreshDocFull() {
+    try {
+      const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docRef.current.id)}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json().catch(() => null)) as { doc?: DocDTO; upload?: UploadDTO | null } | null;
+      if (!data?.doc) return;
+      setDoc((prev) => ({ ...prev, ...data.doc }));
+      if (data.upload !== undefined) setCurrentUpload(data.upload ?? null);
+    } catch {
+      // ignore
+    }
+  }
+
+  useEffect(() => {
+    if (doc.status !== "ready" || !doc.currentUploadId) return;
+    void loadUploadAi(doc.currentUploadId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc.status, doc.currentUploadId]);
+
+  // While a summary rerun runs, its completion arrives as a `summary.generated` activity frame (the
+  // doc's status never changes, so there is no doc frame). One fallback check covers a closed socket.
+  useEffect(() => {
+    if (summaryRun.state !== "running" || !doc.currentUploadId) return;
+    const uploadId = doc.currentUploadId;
+    let done = false;
+    const check = async () => {
+      if (done) return;
+      const status = await loadUploadAi(uploadId);
+      if (status === "completed" || status === "failed") {
+        done = true;
+        await refreshDocFull();
+        setSummaryRun({ state: "idle", error: null });
+      }
+    };
+    const unsubscribe = subscribeRealtime("activity", (f) => {
+      if (f.type === "activity" && f.event.type === "summary.generated") void check();
+    });
+    const fallback = window.setTimeout(() => void check(), 45_000);
+    return () => {
+      done = true;
+      unsubscribe();
+      window.clearTimeout(fallback);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summaryRun.state, doc.currentUploadId]);
+
+  async function writeSummary() {
+    const uploadId = doc.currentUploadId;
+    if (!uploadId || summaryRun.state !== "idle") return;
+    setSummaryRun({ state: "starting", error: null });
+    try {
+      const res = await fetchWithTempUser(`/api/uploads/${encodeURIComponent(uploadId)}/summary`, { method: "POST" });
+      const json = (await res.json().catch(() => null)) as { error?: unknown; code?: unknown } | null;
+      if (res.status === 402) {
+        dispatchOutOfCredits(outOfCreditsReasonFromCode(json?.code));
+        setSummaryRun({ state: "idle", error: null });
+        return;
+      }
+      if (!res.ok) {
+        setSummaryRun({ state: "idle", error: typeof json?.error === "string" ? json.error : "Could not start the summary." });
+        return;
+      }
+      setSummaryRun({ state: "running", error: null });
+    } catch {
+      setSummaryRun({ state: "idle", error: "Could not start the summary." });
+    }
+  }
+
+  const summarySkipped =
+    uploadAi && uploadAi.uploadId === doc.currentUploadId && (uploadAi.summary === "skipped" || uploadAi.summary === "failed");
+  const summaryMissingNotice = summarySkipped || summaryRun.state === "running" ? (
+    <div>
+      {summaryRun.state === "running" ? (
+        <>
+          <div>Writing the summary. It appears here in a moment.</div>
+          <div className="mt-3 h-1 overflow-hidden rounded-full bg-[var(--border)]">
+            <div className="h-full w-1/3 bg-[var(--muted-2)] motion-safe:animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
+          </div>
+        </>
+      ) : (
+        <>
+          <div>
+            {uploadAi?.code === "daily_cap"
+              ? "Skipped: the workspace reached its daily credit cap when this version was uploaded."
+              : uploadAi?.code === "out_of_credits"
+                ? "Skipped: the workspace was out of AI credits when this version was uploaded."
+                : "The AI summary could not be written for this version."}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2">
+            <button
+              type="button"
+              disabled={summaryRun.state !== "idle"}
+              onClick={() => void writeSummary()}
+              className="inline-flex items-center rounded-lg bg-[var(--primary-bg)] px-3 py-1.5 text-[12px] font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-60"
+            >
+              {summaryRun.state === "starting" ? "Starting…" : "Write summary · 1 credit"}
+            </button>
+            {summaryRun.error ? <span className="text-[12px] text-red-600 dark:text-red-400">{summaryRun.error}</span> : null}
+          </div>
+        </>
+      )}
+    </div>
+  ) : undefined;
 
   // While the doc is uploading/processing, disable all link navigation.
   useNavigationLockWhile(navLockActive);
@@ -2426,6 +2571,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     }
                     aiOutput={doc.aiOutput ?? null}
                     uploadError={currentUpload?.error ?? null}
+                    summaryAuthorLabel={
+                      uploadAi?.uploadId === doc.currentUploadId ? (uploadAi?.summaryBy?.label ?? uploadAi?.summaryBy?.client ?? null) : null
+                    }
+                    summaryMissing={summaryMissingNotice}
                     quickStats={
                       hasHydratedFromServer && doc.status === "ready" ? (
                         <DocQuickStats

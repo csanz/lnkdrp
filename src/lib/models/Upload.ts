@@ -79,6 +79,20 @@ const uploadSchema = new Schema(
     ai: { type: Schema.Types.Mixed, default: null },
 
     /**
+     * Summary written by the uploading agent (`{ summary, keyPoints, client, label }`), validated by
+     * `parseAgentSummaryInput`. When set, processing skips the AI summary and records 0 credits.
+     */
+    agentSummary: { type: Schema.Types.Mixed, default: null },
+
+    /**
+     * Set while a "write the summary again" run is queued (`POST /api/uploads/:id/summary` or the
+     * monthly re-queue): processing re-runs only the summary, never the compare, and clears it.
+     */
+    summaryRerun: { type: Boolean, default: false },
+    /** Number of summary reruns requested; part of the rerun's credit idempotency key. */
+    summaryRerunCount: { type: Number, default: 0 },
+
+    /**
      * Optional Blob location for the extracted text artifact.
      * Used for prompt-context payloads (e.g. request guide documents).
      */
@@ -166,6 +180,13 @@ if (ExistingUploadModel && !ExistingUploadModel.schema.path("uploadSecret")) {
 if (ExistingUploadModel && !ExistingUploadModel.schema.path("ai")) {
   ExistingUploadModel.schema.add({
     ai: { type: Schema.Types.Mixed, default: null },
+  } as any);
+}
+if (ExistingUploadModel && !ExistingUploadModel.schema.path("agentSummary")) {
+  ExistingUploadModel.schema.add({
+    agentSummary: { type: Schema.Types.Mixed, default: null },
+    summaryRerun: { type: Boolean, default: false },
+    summaryRerunCount: { type: Number, default: 0 },
   } as any);
 }
 if (ExistingUploadModel && !ExistingUploadModel.schema.path("processingStartedAt")) {

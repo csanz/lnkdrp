@@ -39,6 +39,8 @@ const creditLedgerSchema = new Schema(
      *
      * - `ai_run`: normal per-run credits
      * - `cycle_grant_included`: billing cycle reset/grant (idempotent by `cycleKey`)
+     * - `free_floor_grant`: Free monthly floor top-up (idempotencyKey `free:{orgId}:{YYYY-MM}`,
+     *   `creditsEstimated` = credits added, `creditsReserved`/`creditsCharged` = 0)
      */
     eventType: { type: String, trim: true, default: "ai_run", index: true },
 
@@ -95,9 +97,10 @@ const creditLedgerSchema = new Schema(
     /**
      * Who triggered the run. `owner` rows are billed to the workspace; `recipient` rows are
      * uploads made through a request/replace link by someone outside the workspace and are
-     * always recorded at 0 credits (the owner never pays for a stranger's upload).
+     * always recorded at 0 credits (the owner never pays for a stranger's upload); `agent` rows are
+     * summaries written by the uploading agent itself, also 0 credits.
      */
-    source: { type: String, enum: ["owner", "recipient"], default: "owner", index: true },
+    source: { type: String, enum: ["owner", "recipient", "agent"], default: "owner", index: true },
 
     /** Idempotency marker: set when usage aggregates have been applied for this ledger row. */
     usageAggAppliedAt: { type: Date, default: null, index: true },

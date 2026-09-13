@@ -14,7 +14,7 @@ import Link from "next/link";
 import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
 
-const LAST_UPDATED = "September 12, 2026";
+const LAST_UPDATED = "September 13, 2026";
 
 /**
  * Render the TermsOfServicePage UI.
@@ -159,13 +159,16 @@ export default function TermsOfServicePage() {
               The Service has a Free plan and a paid Pro plan. Plans are bound to a workspace, not to an individual. Current limits and prices are listed on our <Link href="/pricing" className="text-white/80 underline hover:text-white">pricing page</Link>, which forms part of these Terms.
             </p>
             <p className="mb-4 leading-7">
-              <strong>Free:</strong> 3 active share links, 1 project, 7 days of basic analytics, and no collaborators. Summaries and key points are included; version history and AI compare are not. When you reach a limit, existing links keep working; you can archive a document to free a slot or upgrade to Pro.
+              <strong>Free:</strong> 3 active share links, 1 project, 7 days of basic analytics, and no collaborators. AI summaries use credits; version history and AI compare are not available. When you reach a limit, existing links keep working; you can archive a document to free a slot or upgrade to Pro.
             </p>
             <p className="mb-4 leading-7">
               <strong>Pro:</strong> unlimited share links and projects, deep analytics with full history, version history, AI compare, and collaborators. One collaborator is included; additional collaborators are available on request. Collaborators are people; software agents acting under a collaborator's account never take a seat.
             </p>
             <p className="mb-4 leading-7">
-              <strong>AI features and credits:</strong> AI features are metered in credits. The automatic summary written for every upload costs one credit; AI compare costs more, by level, and every cost is listed on the pricing page before it runs. Pro workspaces receive 300 credits a month, which reset monthly and do not roll over, and can buy more on demand at $0.10 per credit under a spend limit you set. Free workspaces receive 50 starter credits once; when they are used up, AI features pause while links, tracking, and stats keep working. We will not raise the credit cost of a feature without notice.
+              <strong>AI features and credits:</strong> AI features are metered in credits. Links, uploads, replacements, and stats never need credits. The automatic summary written for every upload costs one credit. It costs nothing when your own AI agent writes the summary through our MCP server or API, and for files that recipients upload through a request or replace link. AI compare costs more, by level, and every cost is listed on the pricing page before it runs. Pro workspaces receive 300 credits each billing cycle, which do not roll over, and can buy more on demand at $0.10 per credit under a spend limit you set. Personal Free workspaces receive 50 starter credits, are topped up to 10 credits on the 1st of each month when their balance is below 10, and can use at most 15 credits a day; team workspaces on Free receive no credit allowance, and on-demand credits are not available on Free. When a workspace is out of credits, uploads still complete and links, tracking, and stats keep working; the AI summary is skipped and can be written later from the document page, and AI compare and other AI actions stop until credits return. We will not raise the credit cost of a feature without notice.
+            </p>
+            <p className="mb-4 leading-7">
+              <strong>Pricing change, effective September 13, 2026:</strong> the automatic AI summary costs one credit. It was previously included. Starter credits already granted before that date are kept in full.
             </p>
             <p className="mb-4 leading-7">
               If you purchase a Pro subscription or on-demand credits:

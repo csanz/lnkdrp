@@ -10,6 +10,15 @@
  * - Ensures a `cycle_grant_included` ledger entry exists (idempotent)
  *
  * Webhooks remain the primary mechanism. This cron is the backstop.
+ *
+ * Free monthly floor pass (`grantFreeMonthlyFloor`): scans balance rows not yet evaluated for the
+ * current UTC month (`freeFloorMonth`), tops personal Free workspaces up to the floor, marks
+ * Pro/team rows as evaluated, and re-queues skipped summaries for workspaces that received credits.
+ * The reserve path and the dashboard snapshot apply the same floor on read; this covers workspaces
+ * that are idle on the first of the month.
+ *
+ * Query params: `limit` (per pass, default 200, max 1000), `staleHours`, `dryRun=1` (count only:
+ * no grants, no marks, no subscription updates, no re-queues).
  */
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
@@ -19,7 +28,16 @@ import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
-import { buildCycleKey, grantCycleIncludedCredits } from "@/lib/credits/grants";
+import { OrgModel } from "@/lib/models/Org";
+import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
+import {
+  FREE_MONTHLY_FLOOR_CREDITS,
+  buildCycleKey,
+  freeFloorMonth,
+  grantCycleIncludedCredits,
+  grantFreeMonthlyFloor,
+} from "@/lib/credits/grants";
+import { requeueSkippedSummaries } from "@/lib/credits/summaryRequeue";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 import { getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
 import { requireCronAuth } from "@/lib/cron/auth";
@@ -39,6 +57,108 @@ function isProStatus(statusRaw: unknown): boolean {
   return s === "active" || s === "trialing";
 }
 
+type FreeFloorPassResult = {
+  month: string;
+  /** Balance rows not yet evaluated for `month` (bounded by `limit`). */
+  scanned: number;
+  /** Personal workspaces without an active/trialing subscription. */
+  eligible: number;
+  /** Eligible workspaces whose month this pass claimed. */
+  applied: number;
+  /** Workspaces that actually received credits (balance was below the floor). */
+  toppedUp: number;
+  creditsAdded: number;
+  /** dryRun only: eligible workspaces currently below the floor. */
+  wouldTopUp: number;
+  /** Pro/team rows marked as evaluated for `month` (no credits). */
+  markedIneligible: number;
+  requeuedSummaries: number;
+  errors: number;
+};
+
+/**
+ * Free monthly floor pass. Bounded by `limit`; ineligible rows are marked so the scan advances.
+ */
+async function runFreeFloorPass(params: { now: Date; limit: number; dryRun: boolean; origin: string }): Promise<FreeFloorPassResult> {
+  const month = freeFloorMonth(params.now);
+  const out: FreeFloorPassResult = {
+    month,
+    scanned: 0,
+    eligible: 0,
+    applied: 0,
+    toppedUp: 0,
+    creditsAdded: 0,
+    wouldTopUp: 0,
+    markedIneligible: 0,
+    requeuedSummaries: 0,
+    errors: 0,
+  };
+
+  const rows = (await WorkspaceCreditBalanceModel.find({ freeFloorMonth: { $ne: month } })
+    .select({ _id: 0, workspaceId: 1, trialCreditsRemaining: 1 })
+    .limit(params.limit)
+    .lean()) as Array<{ workspaceId?: unknown; trialCreditsRemaining?: unknown }>;
+  const candidates = rows.filter((r): r is { workspaceId: Types.ObjectId; trialCreditsRemaining?: unknown } => r.workspaceId instanceof Types.ObjectId);
+  out.scanned = candidates.length;
+  if (!candidates.length) return out;
+
+  const ids = candidates.map((r) => r.workspaceId);
+  const [personalOrgs, proSubs] = await Promise.all([
+    OrgModel.find({ _id: { $in: ids }, type: "personal", isDeleted: { $ne: true } }).select({ _id: 1 }).lean(),
+    SubscriptionModel.find({ orgId: { $in: ids }, isDeleted: { $ne: true }, status: { $in: ["active", "trialing"] } })
+      .select({ orgId: 1 })
+      .lean(),
+  ]);
+  const personal = new Set(personalOrgs.map((o) => String((o as { _id: unknown })._id)));
+  const pro = new Set(proSubs.map((sub) => String((sub as { orgId: unknown }).orgId)));
+
+  const eligible = candidates.filter((r) => personal.has(String(r.workspaceId)) && !pro.has(String(r.workspaceId)));
+  const ineligibleIds = candidates.filter((r) => !eligible.includes(r)).map((r) => r.workspaceId);
+  out.eligible = eligible.length;
+
+  if (params.dryRun) {
+    out.wouldTopUp = eligible.filter((r) => {
+      const n = Number(r.trialCreditsRemaining ?? 0);
+      return !Number.isFinite(n) || n < FREE_MONTHLY_FLOOR_CREDITS;
+    }).length;
+    return out;
+  }
+
+  if (ineligibleIds.length) {
+    try {
+      const res = await WorkspaceCreditBalanceModel.updateMany(
+        { workspaceId: { $in: ineligibleIds }, freeFloorMonth: { $ne: month } },
+        { $set: { freeFloorMonth: month } },
+      );
+      out.markedIneligible = res.modifiedCount ?? 0;
+    } catch {
+      out.errors += 1;
+    }
+  }
+
+  for (const r of eligible) {
+    const orgId = String(r.workspaceId);
+    try {
+      // Re-checks plan facts itself, so a workspace that upgraded since the scan is only marked.
+      const res = await grantFreeMonthlyFloor({ workspaceId: orgId, now: params.now });
+      if (res.applied) out.applied += 1;
+      if (res.creditsAdded > 0) {
+        out.toppedUp += 1;
+        out.creditsAdded += res.creditsAdded;
+        try {
+          const { queued } = await requeueSkippedSummaries({ orgId, origin: params.origin, limit: 10 });
+          out.requeuedSummaries += queued;
+        } catch {
+          out.errors += 1;
+        }
+      }
+    } catch {
+      out.errors += 1;
+    }
+  }
+  return out;
+}
+
 /**
  * Shared handler for GET (Vercel Cron) and POST (manual) invocations.
  */
@@ -52,6 +172,7 @@ async function handle(request: Request) {
   const jobKey = "credits-cycle-reconcile";
   const limit = Math.min(1000, asPositiveInt(url.searchParams.get("limit")) ?? 200);
   const staleHours = Math.min(72, asPositiveInt(url.searchParams.get("staleHours")) ?? 6);
+  const dryRun = url.searchParams.get("dryRun") === "1";
 
   try {
     await connectMongo();
@@ -62,7 +183,7 @@ async function handle(request: Request) {
           status: "running",
           lastStartedAt: startedAt,
           lastRunAt: startedAt,
-          lastParams: { limit, staleHours },
+          lastParams: { limit, staleHours, dryRun },
           lastError: null,
         },
       },
@@ -142,6 +263,10 @@ async function handle(request: Request) {
         grantsSkipped += 1;
         continue;
       }
+      if (dryRun) {
+        grantsApplied += 1; // would apply
+        continue;
+      }
       const res = await grantCycleIncludedCredits({
         workspaceId: String(r.orgId),
         stripeSubscriptionId: r.subId,
@@ -179,6 +304,10 @@ async function handle(request: Request) {
           grantsSkipped += 1;
           continue;
         }
+        if (dryRun) {
+          grantsApplied += 1; // would apply
+          continue;
+        }
 
         // Keep subscription period fields fresh as a side effect (helps snapshot correctness).
         await SubscriptionModel.updateOne(
@@ -200,9 +329,16 @@ async function handle(request: Request) {
       }
     }
 
+    let freeFloor: FreeFloorPassResult | { error: string };
+    try {
+      freeFloor = await runFreeFloorPass({ now: new Date(), limit, dryRun, origin: url.origin });
+    } catch (e) {
+      freeFloor = { error: e instanceof Error ? e.message : String(e) };
+    }
+
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
-    const result = { checked, fetchedFromStripe, updatedSubscription, grantsApplied, grantsSkipped, errors, limit };
+    const result = { checked, fetchedFromStripe, updatedSubscription, grantsApplied, grantsSkipped, errors, limit, dryRun, freeFloor };
 
     try {
       await connectMongo();

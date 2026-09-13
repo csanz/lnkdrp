@@ -4,7 +4,11 @@
  * Flow (all through the REST API with the caller's key):
  *   POST /api/docs → POST /api/uploads → POST import-url → POST process
  *   → PATCH doc { shareAllowPdfDownload } when allowDownload → POST share-password when password
- *   → optionally wait for status ready|failed (realtime channel + 2s polling, see realtime.ts).
+ *   → optionally wait for status ready|failed (realtime channel + 2s polling, see realtime.ts)
+ *   → GET /api/uploads/:id + GET /api/credits/snapshot for `warnings` / `creditsRemaining` (best-effort).
+ *
+ * `summary` + `keyPoints` (both or neither) go to POST /api/uploads: the server stores the agent's
+ * summary, skips the automatic AI summary and charges 0 credits for it.
  *
  * Idempotent by `idempotencyKey` (per workspace, 24h, in memory): a retry returns the same doc.
  * If the import fails the empty draft doc is deleted again so a failed call leaves nothing behind;
@@ -18,6 +22,7 @@ import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
 import { IdempotencyStore } from "../idempotency";
 import { waitForDocStatus } from "../realtime";
+import { readAiOutcome } from "./aiWarnings";
 import { SAFETY_TAIL } from "./shared";
 
 const PROCESS_NOT_READY_RETRIES = 5;
@@ -39,6 +44,21 @@ export const sharePdfInputShape = {
   password: z.string().min(8).max(128).optional().describe("Protect the share link with a password (8-128 chars)."),
   waitForReady: z.boolean().default(true).describe("Wait until processing finishes (status ready or failed) before returning."),
   timeoutSeconds: z.number().int().min(5).max(120).default(60).describe("Max seconds to wait for processing (5-120, default 60)."),
+  summary: z
+    .string()
+    .min(40)
+    .max(600)
+    .optional()
+    .describe(
+      "Your own summary of the document, written from its content (40-600 characters, plain text; URLs and markup are stripped). " +
+        "Pass together with keyPoints: the automatic AI summary is then skipped and costs 0 credits.",
+    ),
+  keyPoints: z
+    .array(z.string().min(1).max(160))
+    .min(2)
+    .max(7)
+    .optional()
+    .describe("2-7 key points from the document, each at most 160 characters, plain text. Pass together with summary."),
 };
 
 export type SharePdfResult = {
@@ -53,6 +73,10 @@ export type SharePdfResult = {
   planWarning?: PlanWarning;
   /** Present when `waitForReady` gave up before a terminal status; poll `lnkdrp_get_share`. */
   timedOut?: true;
+  /** Skipped or failed AI steps (the link is still valid), e.g. "AI summary skipped: out of AI credits (needs 1). …". */
+  warnings: string[];
+  /** Workspace credits left after processing, when the snapshot was readable. */
+  creditsRemaining?: number;
 };
 
 /** Validate the source URL: https anywhere, http only for the lnkdrp app itself (dev). */
@@ -93,8 +117,10 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
       title: "Share a PDF",
       description:
         "Create a lnkdrp share link for a PDF fetched from a public URL. Creates the document, imports the file, starts " +
-        "processing (preview, text, summary) and returns { docId, shareId, shareUrl, status, uploadId }. By default waits up to " +
-        "timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. Optional: allowDownload, password. " +
+        "processing (preview, text, summary) and returns { docId, shareId, shareUrl, status, uploadId, warnings, creditsRemaining }. " +
+        "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. Optional: allowDownload, password. " +
+        "Each upload's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them from the document). " +
+        "A skipped AI step (for example out of credits) does not fail the call: the link is still valid and warnings says what was skipped. " +
         "Free workspaces have a cap on active share links: when it is hit the document is created with sharing off and " +
         "planWarning explains it. " +
         SAFETY_TAIL,
@@ -105,6 +131,9 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
       const { api } = ctx;
       const sourceUrl = validateSourceUrl(args.sourceUrl, ctx.config.apiUrl);
       const title = (args.title ?? "").trim() || "Untitled document";
+      if ((args.summary === undefined) !== (args.keyPoints === undefined)) {
+        throw new ToolError("validation", "Pass summary and keyPoints together (both or neither).");
+      }
       const orgId = ctx.whoami().orgId;
       const progressToken = extra._meta?.progressToken;
 
@@ -119,7 +148,12 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         let uploadId: string;
         let version = 1;
         try {
-          const upload = await api.createUpload({ docId, originalFileName: fileNameFromUrl(sourceUrl) });
+          const upload = await api.createUpload({
+            docId,
+            originalFileName: fileNameFromUrl(sourceUrl),
+            summary: args.summary,
+            keyPoints: args.keyPoints,
+          });
           uploadId = upload.id;
           version = upload.version ?? 1;
           await api.importUrl(uploadId, sourceUrl);
@@ -171,6 +205,12 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
             timedOut = waited.timedOut;
           }
 
+          // AI outcome is only known once processing finished; never fail the call over it.
+          const outcome =
+            args.waitForReady && !timedOut
+              ? await readAiOutcome(api, uploadId, { credits: true })
+              : { warnings: [] as string[], creditsRemaining: null };
+
           return {
             ...ids,
             replaceUrl: null,
@@ -180,6 +220,8 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
             title,
             ...(created.planWarning ? { planWarning: created.planWarning } : {}),
             ...(timedOut ? { timedOut: true as const } : {}),
+            warnings: outcome.warnings,
+            ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };
         } catch (err) {
           throw isToolError(err) ? err.withDetails(ids) : err;

@@ -13,6 +13,8 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { INVALID_SUMMARY_CODE, parseAgentSummaryInput } from "@/lib/ai/agentSummary";
+import { agentFromRequest, agentLabel } from "@/lib/activity/log";
 import {
   isPdfUploadMeta,
   PDF_ONLY_ERROR_MESSAGE,
@@ -127,6 +129,9 @@ export async function POST(request: Request) {
       contentType: string;
       sizeBytes: number;
       skipReview: boolean;
+      /** Agent-written summary (both or neither); skips the AI summary and costs 0 credits. */
+      summary: string;
+      keyPoints: string[];
     }>;
 
     if (!body.docId || !Types.ObjectId.isValid(body.docId)) {
@@ -145,6 +150,19 @@ export async function POST(request: Request) {
         actor,
       );
     }
+
+    // An agent that already read the document can supply the summary itself (0 credits).
+    const agentSummaryInput = parseAgentSummaryInput({ summary: body.summary, keyPoints: body.keyPoints });
+    if (!agentSummaryInput.ok) {
+      return applyTempUserHeaders(
+        NextResponse.json({ error: agentSummaryInput.error, code: INVALID_SUMMARY_CODE }, { status: 400 }),
+        actor,
+      );
+    }
+    const requestAgent = agentFromRequest(request);
+    const agentSummary = agentSummaryInput.value
+      ? { ...agentSummaryInput.value, client: requestAgent?.client ?? null, label: agentLabel(requestAgent) }
+      : null;
 
     await connectMongo();
 
@@ -233,6 +251,7 @@ export async function POST(request: Request) {
       contentType: body.contentType ?? null,
       sizeBytes,
       skipReview,
+      agentSummary,
       metadata: {
         size: typeof sizeBytes === "number" ? sizeBytes : undefined,
       },

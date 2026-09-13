@@ -240,7 +240,7 @@ function buildDefaultPageSlugs(pages?: Array<{ page_number: number; text: string
  * Normalize model output into a strict `AiDocAnalysis` (never returns null).
  * Accepts loose model output and repairs common issues (nulls, missing keys, bad enums).
  */
-function normalizeAiDocAnalysis(raw: unknown, pages?: Array<{ page_number: number; text: string }>): AiDocAnalysis {
+export function normalizeAiDocAnalysis(raw: unknown, pages?: Array<{ page_number: number; text: string }>): AiDocAnalysis {
   const r = isRecord(raw) ? raw : {};
 
   const rawPageSlugs = Array.isArray(r.page_slugs) ? (r.page_slugs as unknown[]) : [];

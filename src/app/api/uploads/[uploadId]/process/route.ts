@@ -39,10 +39,26 @@ import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { openPdfDocument, renderPdfPageToPng, type PdfJsDocument } from "@/lib/pdf/renderPage";
 import { agentFromRequest, recordActivity } from "@/lib/activity/log";
+import { agentSummaryToAnalysis, readStoredAgentSummary } from "@/lib/ai/agentSummary";
+import { INTERNAL_PROCESS_HEADER, verifyInternalProcessToken } from "@/lib/uploads/internalProcess";
 
 export const runtime = "nodejs";
 // PDF rasterization + AI passes can take minutes for large decks (Vercel Pro/Enterprise cap).
 export const maxDuration = 300;
+
+/**
+ * Reserve credits for an automatic run, never silently reusing a finished ledger row.
+ *
+ * Reservations are idempotent on their key, so a retried job gets the row from the earlier attempt
+ * back. `pending` is the normal case and `charged` means that attempt already paid (the caller
+ * must not charge or redo the work). A `refunded` or `failed` row holds no credits, so charging it
+ * would give the run away for free; this reserves again under a retry-suffixed key instead.
+ */
+async function reserveForAttempt(params: Parameters<typeof reserveCreditsOrThrow>[0]) {
+  const first = await reserveCreditsOrThrow(params);
+  if (first.status === "pending" || first.status === "charged") return first;
+  return await reserveCreditsOrThrow({ ...params, idempotencyKey: `${params.idempotencyKey}:retry:${Date.now().toString(36)}` });
+}
 
 /** An upload stuck in `processing` longer than this is considered abandoned and may be re-claimed. */
 const PROCESSING_STALE_MS = 20 * 60 * 1000;
@@ -933,9 +949,28 @@ export async function POST(
    * - the caller-supplied idempotency key is ignored (derived server-side from uploadId+version).
    */
   const viaUploadSecret = typeof uploadSecret === "string" && Boolean(uploadSecret.trim());
+  /**
+   * Server-to-server trigger (summary rerun, monthly re-queue): a short-lived HMAC bound to this
+   * upload id. Acts as the upload's owner in the document's workspace, billed as an owner upload.
+   */
+  const viaInternal = !viaUploadSecret && verifyInternalProcessToken(uploadId, header(request, INTERNAL_PROCESS_HEADER));
 
   let actor: Actor;
-  if (viaUploadSecret) {
+  if (viaInternal) {
+    const upload = await UploadModel.findOne({ _id: new Types.ObjectId(uploadId), isDeleted: { $ne: true } })
+      .select({ userId: 1, docId: 1 })
+      .lean();
+    const ownerUserId = upload?.userId ? String(upload.userId) : "";
+    if (!ownerUserId) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(ownerUserId) });
+    let billingOrgId = String(orgId);
+    if (upload?.docId) {
+      const docOrg = await DocModel.findById(upload.docId).select({ orgId: 1 }).lean();
+      const docOrgId = (docOrg as { orgId?: unknown } | null)?.orgId;
+      if (docOrgId && Types.ObjectId.isValid(String(docOrgId))) billingOrgId = String(docOrgId);
+    }
+    actor = { kind: "user", userId: ownerUserId, orgId: billingOrgId, personalOrgId: String(orgId) };
+  } else if (viaUploadSecret) {
     // Secret-authorized processing (used by request upload links).
     const upload = await UploadModel.findOne({
       _id: new Types.ObjectId(uploadId),
@@ -1063,7 +1098,7 @@ export async function POST(
 
   // Agent attribution for the activity row is resolved now (headers are cheap to read here and the
   // background job below outlives the response).
-  const activityAgent = agentFromRequest(request);
+  const activityAgent = viaInternal ? null : agentFromRequest(request);
 
   // Respond immediately; do the work in the background.
   after(async () => {
@@ -1844,8 +1879,18 @@ export async function POST(
        */
       const summaryTier = "basic" as const;
       const summaryCredits = creditsForRun({ actionType: "summary", qualityTier: summaryTier });
-      const summaryIdempotencyKey = `summary:auto:${uploadId}:v${uploadVersion ?? "?"}:${summaryTier}`;
+      // A queued "write the summary again" run: only the summary runs (never the compare), under a
+      // per-request key so each rerun is its own charge.
+      const summaryRerun = Boolean((upload as { summaryRerun?: unknown }).summaryRerun);
+      const summaryRerunCount = Number((upload as { summaryRerunCount?: unknown }).summaryRerunCount) || 0;
+      const summaryIdempotencyKey = summaryRerun
+        ? `summary:manual:${uploadId}:v${uploadVersion ?? "?"}:${summaryRerunCount}`
+        : `summary:auto:${uploadId}:v${uploadVersion ?? "?"}:${summaryTier}`;
+      // Summary written by the uploading agent (owner uploads only): no AI run, 0 credits.
+      const agentSummary = viaUploadSecret ? null : readStoredAgentSummary((upload as { agentSummary?: unknown }).agentSummary);
       let summaryLedgerId: string | null = null;
+      /** The reservation came back already charged (a retried job): run without charging again. */
+      let summaryAlreadyPaid = false;
       const aiState: {
         summary: "done" | "skipped" | "failed" | "pending";
         compare: "done" | "skipped" | "failed" | "not_applicable" | "pending";
@@ -1854,19 +1899,21 @@ export async function POST(
         creditsNeeded: number | null;
         creditsUsed: number;
         source: "owner" | "recipient";
+        summaryBy?: { kind: "agent"; client: string | null; label: string | null };
       } = {
         summary: "pending",
-        compare: isReplacement ? "pending" : "not_applicable",
+        compare: isReplacement && !summaryRerun ? "pending" : "not_applicable",
         reason: null,
         code: null,
         creditsNeeded: null,
         creditsUsed: 0,
         source: viaUploadSecret ? "recipient" : "owner",
       };
-      const summaryWanted = !upload.aiOutput && Boolean(extractedText) && Boolean(process.env.OPENAI_API_KEY);
+      const summaryWanted =
+        !upload.aiOutput && !agentSummary && Boolean(extractedText) && Boolean(process.env.OPENAI_API_KEY);
       if (summaryWanted && !viaUploadSecret) {
         try {
-          const reserved = await reserveCreditsOrThrow({
+          const reserved = await reserveForAttempt({
             workspaceId: String(existingDocOrgId),
             userId: actor.userId,
             docId: String(docId),
@@ -1874,7 +1921,8 @@ export async function POST(
             qualityTier: summaryTier,
             idempotencyKey: summaryIdempotencyKey,
           });
-          summaryLedgerId = reserved.ledgerId;
+          if (reserved.status === "charged") summaryAlreadyPaid = true;
+          else summaryLedgerId = reserved.ledgerId;
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           warningDetails.summaryCredits = message;
@@ -1887,9 +1935,10 @@ export async function POST(
         }
       }
 
-      // Best-effort: store a DocChange record for replacement uploads.
+      // Best-effort: store a DocChange record for replacement uploads (not on a summary-only rerun,
+      // which must leave the existing compare and its charge alone).
       try {
-        if (isReplacement && uploadVersion && uploadVersion > 1) {
+        if (isReplacement && uploadVersion && uploadVersion > 1 && !summaryRerun) {
           const previousText = priorExtractedTextRaw.toString();
           const newText = (extractedText ?? "").toString();
           if (previousText.trim() && newText.trim()) {
@@ -2003,6 +2052,8 @@ export async function POST(
             const historyCredits = creditsForRun({ actionType: "history", qualityTier: historyTier });
             const historyIdempotencyKey = `history:auto:${String(docId)}:to:${uploadVersion}`;
             let historyLedgerId: string | null = null;
+            /** The compare for this version was already charged by an earlier attempt; keep its DocChange. */
+            let historyAlreadyDone = false;
             // Pro feature gate: the AI compare is part of version history. Free workspaces keep the
             // DocChange row (versions still list, page thumbnails still attach) but no credits are
             // reserved and no diff is generated. Recipient uploads never bill the owner: no compare.
@@ -2026,7 +2077,7 @@ export async function POST(
             }
             if (historyAllowed) {
               try {
-                const reserved = await reserveCreditsOrThrow({
+                const reserved = await reserveForAttempt({
                   workspaceId: String(existingDocOrgId),
                   userId: actor.userId,
                   docId: String(docId),
@@ -2034,7 +2085,12 @@ export async function POST(
                   qualityTier: historyTier,
                   idempotencyKey: historyIdempotencyKey,
                 });
-                historyLedgerId = reserved.ledgerId;
+                if (reserved.status === "charged") {
+                  historyAlreadyDone = Boolean(await DocChangeModel.exists({ docId, toUploadId: upload._id }));
+                  aiState.compare = "done";
+                } else {
+                  historyLedgerId = reserved.ledgerId;
+                }
               } catch (e) {
                 const message = e instanceof Error ? e.message : String(e);
                 warningDetails.historyCredits = message;
@@ -2134,7 +2190,7 @@ export async function POST(
               // ignore; best-effort
             }
 
-            await DocChangeModel.updateOne(
+            if (!historyAlreadyDone) await DocChangeModel.updateOne(
               { docId, toUploadId: upload._id },
               {
                 $set: {
@@ -2195,9 +2251,9 @@ export async function POST(
         if (existingAi) {
           aiOutput = existingAi;
           debugLog(2, "[process] aiOutput already exists", { uploadId });
-        } else if (extractedText) {
+        } else if (extractedText || agentSummary) {
           const hasOpenAiKey = Boolean(process.env.OPENAI_API_KEY);
-          if (!hasOpenAiKey) {
+          if (!hasOpenAiKey && !agentSummary) {
             const message = "OPENAI_API_KEY is not set in the server process";
             warningDetails.ai = message;
             jobError = jobError ?? new Error(`AI analysis skipped: ${message}`);
@@ -2217,7 +2273,25 @@ export async function POST(
               : [];
             // Credits were reserved above (before the compare) for owner uploads; recipient uploads
             // run unbilled and are recorded as a 0-credit ledger row after the run succeeds.
-            if (summaryLedgerId || viaUploadSecret) {
+            if (agentSummary) {
+              aiOutput = agentSummaryToAnalysis(agentSummary, pages);
+              aiState.summary = "done";
+              aiState.summaryBy = { kind: "agent", client: agentSummary.client, label: agentSummary.label };
+              await recordUnbilledRun({
+                workspaceId: String(existingDocOrgId),
+                userId: actor.userId,
+                docId: String(docId),
+                actionType: "summary",
+                qualityTier: summaryTier,
+                idempotencyKey: `summary:agent:${uploadId}:v${uploadVersion ?? "?"}`,
+                source: "agent",
+              }).catch((e) => {
+                debugLog(1, "[process] agent summary ledger row failed (continuing)", {
+                  uploadId,
+                  message: e instanceof Error ? e.message : String(e),
+                });
+              });
+            } else if (summaryLedgerId || summaryAlreadyPaid || viaUploadSecret) {
               try {
                 const analyzed = await analyzePdfText({
                   fullText: extractedText,
@@ -2253,7 +2327,9 @@ export async function POST(
                   debugLog(1, "[process] AI analysis returned the fallback snapshot (refunded)", { uploadId });
                 } else {
                   aiOutput = analyzed;
-                  if (summaryLedgerId) {
+                  if (summaryAlreadyPaid) {
+                    // Paid by the earlier attempt whose output was lost; nothing more to charge.
+                  } else if (summaryLedgerId) {
                     await markLedgerCharged({
                       workspaceId: String(existingDocOrgId),
                       ledgerId: summaryLedgerId,
@@ -2314,9 +2390,9 @@ export async function POST(
               // Ensure we keep tags populated even if the model returns [].
               const currentTags = uniqueLowerTags(ai.tags);
               const ensuredTags = currentTags.length ? currentTags : deriveTagsFromAi(ai);
-              const ensuredAsk = ensureAsk(ai, extractedText);
-              const ensuredKeyMetrics = ensureKeyMetrics(ai, extractedText);
-              const ensuredStructureSignals = ensureStructureSignals(ai, extractedText);
+              const ensuredAsk = ensureAsk(ai, extractedText ?? "");
+              const ensuredKeyMetrics = ensureKeyMetrics(ai, extractedText ?? "");
+              const ensuredStructureSignals = ensureStructureSignals(ai, extractedText ?? "");
               const meta = ensureMeta({
                 ...ai,
                 doc_name: docName ?? (typeof ai.doc_name === "string" ? ai.doc_name : ""),
@@ -2496,6 +2572,7 @@ export async function POST(
         docName: docName ?? null,
         pageSlugs: pageSlugs ?? [],
         slideNodes: Array.isArray(slideNodes) ? slideNodes : [],
+        summaryRerun: false,
         ai: {
           ...aiState,
           summary: aiState.summary === "pending" ? "skipped" : aiState.summary,
@@ -2588,12 +2665,19 @@ export async function POST(
           agent: activityAgent,
           // A later version is a replacement; the feed labels it "replaced <doc> (vN)" instead of
           // a generic "processing finished", which read as noise across repeated replacements.
-          type: typeof uploadVersion === "number" && uploadVersion > 1 ? "doc.replaced" : "doc.processed",
+          // A summary-only rerun is its own row ("wrote the AI summary for <doc>"), not a replacement.
+          type: summaryRerun
+            ? "summary.generated"
+            : typeof uploadVersion === "number" && uploadVersion > 1
+              ? "doc.replaced"
+              : "doc.processed",
           docId,
           uploadId,
           title: typeof docUpdate.title === "string" ? docUpdate.title : existingTitle,
           meta: {
             version: uploadVersion,
+            summaryBy: aiState.summaryBy?.label ?? aiState.summaryBy?.client ?? null,
+            summary: aiState.summary === "pending" ? "skipped" : aiState.summary,
             review: forceReviewRequested,
             quality: forceReviewQualityTier,
             replacement: isReplacement,

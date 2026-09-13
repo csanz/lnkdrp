@@ -3,7 +3,8 @@
  *
  * Lets workspace owners/admins set default quality tiers per credit-metered action. The summary is
  * not a choice: lnkdrp's own summary agent writes it after every upload at the basic level, one
- * credit per upload (`creditsForRun`). The Review column only shows when Requests are enabled
+ * credit per upload (`creditsForRun`); 0 when the uploader's own agent supplies it or a recipient
+ * uploaded the file. AI compare runs at Basic on Free and Standard on Pro by default. The Review column only shows when Requests are enabled
  * (`NEXT_PUBLIC_FEATURE_REQUESTS=1`), since reviews run on request uploads and are not released.
  */
 "use client";
@@ -129,11 +130,11 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
             <div className="text-[12px] font-semibold text-[var(--muted-2)]">Summary and key points</div>
             <HelpTooltip
               label="Who writes the summary?"
-              body="lnkdrp's own summary agent writes the summary and key points after every upload, at the basic level. One credit per upload."
+              body="lnkdrp's own summary agent writes the summary and key points after every upload, at the basic level. One credit per upload. Free when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link."
             />
           </div>
           <div className="mt-2 text-[13px] font-semibold text-[var(--fg)]">1 credit</div>
-          <div className="mt-1 text-[12px] text-[var(--muted-2)]">Written by lnkdrp after every upload, at the basic level.</div>
+          <div className="mt-1 text-[12px] text-[var(--muted-2)]">Written by lnkdrp after every upload, at the basic level. 0 credits when your agent writes it.</div>
         </div>
 
         {FEATURE_REQUESTS_ENABLED ? (
@@ -227,7 +228,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
               <span className="text-[var(--muted-2)]">(12 credits)</span>
             </label>
           </div>
-          <div className="mt-2 text-[12px] text-[var(--muted-2)]">Used when you run or regenerate a compare.</div>
+          <div className="mt-2 text-[12px] text-[var(--muted-2)]">Used when you run or regenerate a compare. Without a saved default, compare runs at Basic on Free and Standard on Pro.</div>
         </div>
       </div>
     </div>

@@ -29,6 +29,8 @@ type CreditsSnapshot = {
   usedThisCycle: number;
   cycleEnd: string | null;
   includedThisCycle?: number | null;
+  /** Free: when the balance next tops up to the monthly floor (first of next UTC month); null otherwise. */
+  resetsAt?: string | null;
   onDemandMonthlyLimitCents?: number;
   onDemandUsedCreditsThisCycle?: number;
 };
@@ -148,7 +150,7 @@ function CreditsSummaryCardInner({
             {busy
               ? "Loading…"
               : isFree
-                ? `One-time starter credits. Pro includes ${CREDITS_COPY.proPerMonth} a month.`
+                ? `Starter credits, topped up to 10 on the 1st of each month. Pro includes ${CREDITS_COPY.proPerMonth} a month.`
                 : reset
                   ? `Credits reset on ${formatShortDate(reset, { invalid: "raw" })}.`
                   : "Reset date unavailable."}
@@ -184,7 +186,9 @@ function CreditsSummaryCardInner({
           <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{includedRemaining !== null ? includedRemaining.toLocaleString() : "—"}</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             {isFree
-              ? `One time: ${starterGrant.toLocaleString()}`
+              ? typeof data?.resetsAt === "string"
+                ? `Tops up to 10 on ${new Date(data.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}`
+                : `${starterGrant.toLocaleString()} to start, then 10 a month`
               : `Per month: ${includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}`}
           </div>
         </div>
@@ -218,11 +222,11 @@ function CreditsSummaryCardInner({
 
       {creditsRemaining === 0 ? (
         <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
-          <div className="text-[12px] font-semibold text-[var(--fg)]">{isFree ? "Starter credits used up" : "Out of credits"}</div>
+          <div className="text-[12px] font-semibold text-[var(--fg)]">Out of credits</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             {isFree
-              ? `You’ve used your ${CREDITS_COPY.freeStarter} starter credits. Pro includes ${CREDITS_COPY.proPerMonth} a month, and AI compare on every replacement.`
-              : "You’ve used all available credits. AI compare is unavailable until credits reset or you enable on-demand."}
+              ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Credits top up to 10 on the 1st of each month. Pro includes ${CREDITS_COPY.proPerMonth} a month, and AI compare on every replacement.`
+              : "You’ve used all available credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. AI compare is unavailable until credits reset or you enable on-demand."}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {isFree ? (

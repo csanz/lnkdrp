@@ -188,7 +188,7 @@ export async function recordUnbilledRun(params: {
   actionType: ActionType;
   qualityTier: QualityTier;
   idempotencyKey: string;
-  source: "recipient";
+  source: "recipient" | "agent";
 }): Promise<{ ledgerId: string; created: boolean }> {
   if (!Types.ObjectId.isValid(params.workspaceId)) throw new Error("Invalid workspaceId");
   if (!Types.ObjectId.isValid(params.userId)) throw new Error("Invalid userId");

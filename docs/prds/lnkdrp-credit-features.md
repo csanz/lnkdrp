@@ -2,11 +2,11 @@
 
 **Status:** Backlog (not scheduled)
 **Owner:** chrissanz
-**Last updated:** 2026-09-12
+**Last updated:** 2026-09-13
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-mcp](./lnkdrp-mcp.md) · [SUBSCRIPTION](../SUBSCRIPTION.md) · [METRICS](../METRICS.md) · [REQUEST](../REQUEST.md)
 
-> **Decision (2026-09-12, revised 2026-09-13).** At launch every AI action costs credits: the automatic summary 1/2/5 by tier (runs at basic), AI compare 2/5/12 and the credit table is shown on `/pricing` (AI review is listed there as not released). Earlier text below that says "no AI feature costs credits" or "the table is empty" is superseded. Agent-supplied summaries over MCP are planned, not live.
+> **Decision (2026-09-12, revised 2026-09-13).** Links, uploads, replacements and stats never need credits. Credits pay for AI runs. The automatic AI summary costs 1 credit per upload (basic; standard 2, advanced 5). It costs 0 when the uploader's own agent writes the summary (MCP `share_pdf` with summary and key points, or the API) and for files recipients upload through a request or replace link. AI compare on replacement costs 2/5/12 by tier and runs at Basic on Free, Standard on Pro by default; version history and AI compare stay Pro for now. Personal Free workspaces get 50 credits to start, then a top-up to 10 on the 1st of each month (a floor, never additive), at most 15 credits a day, and no on-demand; team workspaces on Free get no allowance. Pro gets 300 credits per billing cycle plus optional on-demand at $0.10 under a spend limit. Out of credits: the upload completes and the link works, the summary is skipped and can be written later from the document page (1 credit), and compare and manual AI actions stop until credits return. Pricing change dated 2026-09-13: the automatic summary now costs 1 credit (previously included); starter credits already granted are kept in full, noted in Terms section 8 and on `/pricing`. The credit table is shown on `/pricing` (AI review listed as not released). Earlier text below that says "no AI feature costs credits", "summary is included" or "the table is empty" is superseded.
 
 ---
 
@@ -36,7 +36,7 @@ A feature may cost credits only if **all** of these hold:
 1. **Credits stay per workspace** with the existing ledger, cycle grants and on-demand rate; the customer-facing table lists Summary (1/2/5) and AI compare (2/5/12); rows are added as features ship.
 2. **Pricing page** gains one row per shipped feature, with a fixed credit cost known before the run.
 3. **MCP parity:** every feature here is exposed as an MCP tool with the same cost as the web.
-4. **Free plan** gets a small monthly allowance so the features are discoverable; Pro gets the cycle grant plus on-demand.
+4. **Free plan** gets 50 starter credits, then a top-up to 10 on the 1st of each month so the features are discoverable; Pro gets the 300-credit cycle grant plus on-demand.
 
 ## Approach
 
@@ -57,7 +57,7 @@ Each milestone is independent and can ship in any order. Ordered here by expecte
 - Plan-aware compare tier default (Basic on Free, Standard on Pro), tier-free idempotency key, review runs at the charged tier.
 - Fallback analysis refunds instead of charging; provider usage stored on the ledger row.
 - One seeding path for starter credits (personal Free only); Free daily brake of 15 credits with its own 402 code and modal copy.
-- Still open from the credits review: Free monthly floor (10), agent-supplied summary input on `share_pdf`/`POST /api/docs`, `whoami` costs derived from `creditsForRun`, dated Terms note, and the gate split (owner history/compare credit-gated on every plan; recipient version list stays Pro).
+- Still open from the credits review: Free monthly floor (10), agent-supplied summary input on `share_pdf`/`POST /api/docs`, `whoami` costs derived from `creditsForRun`, and the gate split (owner history/compare credit-gated on every plan; recipient version list stays Pro).
 
 ### M1 — Recipient-side intelligence
 
@@ -95,7 +95,7 @@ Each milestone is independent and can ship in any order. Ordered here by expecte
 
 1. Each shipped feature has a fixed cost in `creditsForRun`, appears on `/pricing`, and is reachable from both the dashboard and MCP.
 2. A Free workspace can try each feature within its allowance and hits a clear `out_of_credits` with a billing link afterwards.
-3. Summary remains zero-cost in the ledger after every milestone; AI compare stays at 2/5/12.
+3. Summary stays at 1/2/5 (0 when agent-written or recipient-uploaded) after every milestone; AI compare stays at 2/5/12.
 
 ## Future
 

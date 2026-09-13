@@ -3,13 +3,27 @@
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
+// The schedule is pure (no server-only deps), so the MCP build imports the app's source of truth
+// instead of copying the numbers. The Dockerfile copies this file (and its types) into the image.
+import { creditsForRun } from "../../../src/lib/credits/schedule";
+import type { ActionType, QualityTier } from "../../../src/lib/credits/types";
 import { MCP_SERVER_VERSION } from "../config";
 import type { ToolContext } from "../context";
 import { handleTool } from "../errors";
 import { SAFETY_TAIL } from "./shared";
 
-/** Credit costs by quality level, per the launch pricing model (summary 1/2/5, compare 2/5/12). */
-export const COSTS = { summary: [1, 2, 5], compare: [2, 5, 12] } as const;
+/** Tier order of every cost array: basic, standard, advanced. */
+export const COST_TIERS: readonly QualityTier[] = ["basic", "standard", "advanced"];
+
+/** Credits per tier for one action, straight from `creditsForRun`. */
+function costsFor(actionType: ActionType): number[] {
+  return COST_TIERS.map((qualityTier) => creditsForRun({ actionType, qualityTier }));
+}
+
+/** Credit costs by quality tier (basic, standard, advanced); `compare` is the `history` action. */
+export function creditCosts(): { summary: number[]; compare: number[] } {
+  return { summary: costsFor("summary"), compare: costsFor("history") };
+}
 
 /** Register `lnkdrp_whoami`. */
 export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
@@ -19,7 +33,8 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
       title: "Who am I (lnkdrp)",
       description:
         "Verify the lnkdrp API key and return the workspace it acts on: userId, email, orgId, orgName, plan, key prefix, " +
-        "scopes and the client name lnkdrp recorded for this connection, plus the credit cost table and the MCP server version. " +
+        "scopes and the client name lnkdrp recorded for this connection, plus the credit cost table (credits per tier " +
+        "basic/standard/advanced), creditsRemaining and creditsResetAt when readable, and the MCP server version. " +
         "Call this first to confirm the connection works. " +
         SAFETY_TAIL,
       inputSchema: {},
@@ -28,7 +43,20 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
     handleTool(async () => {
       const whoami = await ctx.api.whoami();
       ctx.setWhoami(whoami);
-      return { ...whoami, costs: { summary: [...COSTS.summary], compare: [...COSTS.compare] }, mcpVersion: MCP_SERVER_VERSION };
+      // Best-effort: whoami must not fail because the credits or plan snapshot could not be read.
+      const [credits, plan] = await Promise.all([
+        ctx.api.creditsSnapshot().catch(() => null),
+        ctx.api.planSnapshot().catch(() => null),
+      ]);
+      return {
+        ...whoami,
+        plan: plan?.plan ?? whoami.plan,
+        creditsRemaining: credits?.creditsRemaining ?? null,
+        creditsResetAt: credits?.resetAt ?? null,
+        costTiers: [...COST_TIERS],
+        costs: creditCosts(),
+        mcpVersion: MCP_SERVER_VERSION,
+      };
     }),
   );
 }

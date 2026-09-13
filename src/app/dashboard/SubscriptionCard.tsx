@@ -5,7 +5,7 @@
  * then manage billing via Stripe's customer portal. Plan details link out to `/pricing` so the comparison
  * has a single source of truth. The Free panel shows live usage meters from `GET /api/plan` (links,
  * projects, analytics window, members) and names version history and AI compare as Pro features;
- * credits exist on both plans (Free starts with a one-time starter grant) and live in the Credits
+ * credits exist on both plans (Free starts with a starter grant, topped up to 10 monthly) and live in the Credits
  * card on the Usage tab, so this card never reads the credits snapshot.
  */
 "use client";
@@ -194,8 +194,8 @@ export default function SubscriptionCard() {
       </div>
       <div className="mt-5 flex flex-col gap-2 border-t border-[var(--border)] pt-4 leading-5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <span>
-          Analytics cover the last {freeAnalyticsDays} days. AI summaries use your {CREDITS_COPY.freeStarter} one-time starter
-          credits. Version history and AI compare are Pro features.
+          Analytics cover the last {freeAnalyticsDays} days. AI summaries use credits: {CREDITS_COPY.freeStarter} to start, then
+          topped up to 10 on the 1st of each month. Version history and AI compare are Pro features.
         </span>
         <button
           type="button"

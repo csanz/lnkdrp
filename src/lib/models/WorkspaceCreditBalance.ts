@@ -32,6 +32,13 @@ const workspaceCreditBalanceSchema = new Schema(
     currentPeriodEnd: { type: Date, default: null },
 
     /**
+     * Free monthly floor marker: the UTC month (`YYYY-MM`) whose floor this workspace has already
+     * been evaluated for (`grantFreeMonthlyFloor` in `@/lib/credits/grants`). Claimed with a
+     * conditional update so the floor lands at most once per month. `null` = never evaluated.
+     */
+    freeFloorMonth: { type: String, trim: true, default: null },
+
+    /**
      * AI quality defaults (workspace-level).
      * These are user-facing tiers, not vendor model names.
      *
@@ -51,6 +58,8 @@ const workspaceCreditBalanceSchema = new Schema(
 
 // One balance record per workspace.
 workspaceCreditBalanceSchema.index({ workspaceId: 1 }, { unique: true });
+// Cron scan for workspaces that have not been evaluated for this month's Free floor.
+workspaceCreditBalanceSchema.index({ freeFloorMonth: 1 });
 
 export type WorkspaceCreditBalance = InferSchemaType<typeof workspaceCreditBalanceSchema> & {
   workspaceId: Types.ObjectId;

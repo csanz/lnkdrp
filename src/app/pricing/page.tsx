@@ -97,7 +97,7 @@ export default async function PricingPage() {
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
               You pay for links, projects, and the people you work with. Every link opens with an AI
-              summary, one credit each. Version history and AI compare are Pro.
+              summary, one credit each, or free when your agent writes it. Version history and AI compare are Pro.
             </p>
           </div>
 
@@ -122,15 +122,16 @@ export default async function PricingPage() {
                   `${FREE_ACTIVE_LINKS} active share links`,
                   `${FREE_PROJECTS} project`,
                   `Basic analytics: views and downloads, last ${FREE_ANALYTICS_DAYS} days`,
-                  "AI summary and key points on every link",
+                  "AI summary on every link, 1 credit; free when your agent writes it",
                   "Password protection and download control",
                   "Built for Claude Code, Cursor, Codex, and any MCP client",
-                  `${FREE_STARTER_CREDITS} credits to start, one time`,
+                  `${FREE_STARTER_CREDITS} credits to start, then topped up to 10 a month`,
                   "Single user",
                 ]}
               />
               <p className="mt-4 text-[12px] leading-5 text-white/45">
-                Archive a document any time to free up a link slot. Not on Free: version history and AI compare.
+                Archive a document any time to free up a link slot. Credits top up to 10 on the 1st of each month
+                if you have fewer, and Free uses at most 15 credits a day. Not on Free: version history and AI compare.
               </p>
               <div className="mt-8 flex-1" />
               <PricingCta plan="free" variant="dark" helper="Sign in with Google. No card needed." />
@@ -167,7 +168,7 @@ export default async function PricingPage() {
                   "300 credits a month, about 60 AI compares at standard quality",
                   `${PRO_INCLUDED_COLLABORATORS} collaborator included · more on request`,
                   "Agents never take a seat",
-                  "AI summary and key points on every link",
+                  "AI summary on every link, 1 credit; free when your agent writes it",
                   "Password protection and download control",
                   "Built for Claude Code, Cursor, Codex, and any MCP client",
                 ]}
@@ -216,7 +217,8 @@ export default async function PricingPage() {
                 <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
                   Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month: about 150 basic compares, 60 standard, or
                   25 advanced. Higher levels run a deeper analysis and cost more per run. The summary on every
-                  link is one credit, so a busy month of uploads still leaves most of the allowance.
+                  link is one credit, so a busy month of uploads still leaves most of the allowance. Links,
+                  uploads, replacements and stats never need credits.
                 </p>
                 <p className="mt-3 max-w-md text-[12px] leading-5 text-white/45">
                   Need more? Turn on on-demand: $0.10 per credit, billed through Stripe, under a hard spend limit
@@ -264,6 +266,15 @@ export default async function PricingPage() {
                     ))}
                   </tbody>
                 </table>
+                <p className="mt-3 text-[12px] leading-5 text-white/45">
+                  Summaries cost 0 credits when your own agent writes them through MCP or the API, and for files
+                  recipients upload through a request or replace link. Out of credits? Uploads and links still
+                  work; the summary is skipped and you can write it later from the document page.
+                </p>
+                <p className="mt-2 text-[12px] leading-5 text-white/45">
+                  Pricing change, September 13, 2026: the automatic AI summary now costs 1 credit. It was
+                  previously included. Starter credits already granted are kept in full.
+                </p>
               </div>
             </div>
           </div>
@@ -323,6 +334,10 @@ export default async function PricingPage() {
                   a: "Existing links keep working. To share a new document, archive an old one or turn its sharing off to free the slot, or upgrade the workspace to Pro. Archived documents keep their stats and can come back whenever a slot is free.",
                 },
                 {
+                  q: "Can I create more than one link for a document?",
+                  a: "Yes. Give a document a link per audience — one per investor, one per counterparty — each with its own label, password, download switch, expiry and stats, without uploading the file again. On Free every enabled link counts toward the 3 active links, so three investor links on one deck use the whole allowance; Pro is unlimited.",
+                },
+                {
                   q: "Is Pro per person or per workspace?",
                   a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} collaborator; contact us to add more seats to a workspace.`,
                 },
@@ -332,11 +347,15 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What do credits pay for?",
-                  a: "The summary and key points written for every link: 1 credit at the basic level it runs at automatically. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Free workspaces start with 50 credits, about 50 uploads. Pro includes 300 credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.",
+                  a: "AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Personal Free workspaces start with 50 credits, get topped back up to 10 on the 1st of each month if they have fewer, and use at most 15 credits a day. Pro includes 300 credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.",
+                },
+                {
+                  q: "What happens when I run out of credits?",
+                  a: "Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until credits return.",
                 },
                 {
                   q: "Can I replace a file on Free?",
-                  a: "Yes. Replacing keeps the same link and recipients always see the latest file. Version history, the version list recipients can view, and AI compare are Pro.",
+                  a: "Yes. Replacing keeps the same link, recipients always see the latest file, and it never uses credits. Version history, the version list recipients can view, and AI compare are Pro.",
                 },
                 {
                   q: "Which files can I share?",

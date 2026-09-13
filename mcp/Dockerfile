@@ -1,6 +1,6 @@
 # lnkdrp MCP server image.
 #
-# Build from the REPO ROOT (the server imports src/lib/realtime/ticket.ts):
+# Build from the REPO ROOT (the server imports src/lib/realtime/ticket.ts and src/lib/credits/schedule.ts):
 #   docker build -f mcp/Dockerfile -t lnkdrp-mcp .
 # Run:
 #   docker run --rm -p 8787:8787 \
@@ -31,6 +31,9 @@ RUN printf '%s\n' \
 
 COPY tsconfig.json ./tsconfig.json
 COPY src/lib/realtime/ticket.ts ./src/lib/realtime/ticket.ts
+# lnkdrp_whoami derives its cost table from the app credit schedule (pure module, no server deps).
+COPY src/lib/credits/schedule.ts ./src/lib/credits/schedule.ts
+COPY src/lib/credits/types.ts ./src/lib/credits/types.ts
 COPY mcp ./mcp
 
 USER node
