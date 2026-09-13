@@ -1,7 +1,10 @@
 /**
  * Dashboard Limits card: AI Quality Defaults.
  *
- * Lets workspace owners/admins set default quality tiers per action.
+ * Lets workspace owners/admins set default quality tiers per credit-metered action. The summary is
+ * not a choice: lnkdrp's own summary agent writes it after every upload, included on every plan
+ * (`INCLUDED_ACTIONS_AT_LAUNCH`). The Review column only shows when Requests are enabled
+ * (`NEXT_PUBLIC_FEATURE_REQUESTS=1`), since reviews run on request uploads and are not released.
  */
 "use client";
 
@@ -13,6 +16,8 @@ import { cn } from "@/lib/cn";
 import { dispatchCreditsSnapshotRefresh } from "@/lib/client/creditsSnapshotRefresh";
 
 type Tier = "standard" | "advanced";
+
+const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
 
 type ApiResponse =
   | { ok: true; review: Tier; history: Tier }
@@ -89,7 +94,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">AI Quality Defaults</div>
           <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-            Defaults for new runs. You can still override quality when you run Review Agent/History Agent.
+            Defaults for new credit-metered runs. You can still pick a quality each time you run one.
           </div>
         </div>
         <Button
@@ -118,19 +123,20 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
         </Alert>
       ) : null}
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+      <div className={cn("mt-5 grid gap-3", FEATURE_REQUESTS_ENABLED ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Summary Agent</div>
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Summary and key points</div>
             <HelpTooltip
-              label="What is Summary Agent?"
-              body="Creates a quick overview after upload. Basic is lowest cost, short context, and no retries."
+              label="Who writes the summary?"
+              body="lnkdrp's own summary agent writes the summary and key points after every upload, on every plan. It never uses credits. An agent sharing through the MCP can supply its own summary instead, in which case ours is skipped."
             />
           </div>
-          <div className="mt-2 text-[13px] font-semibold text-[var(--fg)]">Basic (auto)</div>
-          <div className="mt-1 text-[12px] text-[var(--muted-2)]">Runs automatically after upload.</div>
+          <div className="mt-2 text-[13px] font-semibold text-[var(--fg)]">Included</div>
+          <div className="mt-1 text-[12px] text-[var(--muted-2)]">Written by lnkdrp after every upload. Never uses credits.</div>
         </div>
 
+        {FEATURE_REQUESTS_ENABLED ? (
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="flex items-start justify-between gap-2">
             <div className="text-[12px] font-semibold text-[var(--muted-2)]">Review Agent</div>
@@ -176,13 +182,14 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
           </div>
           <div className="mt-2 text-[12px] text-[var(--muted-2)]">Used when you click “Run review”.</div>
         </div>
+        ) : null}
 
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">History Agent</div>
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">AI compare</div>
             <HelpTooltip
-              label="What is History Agent?"
-              body="Compares two versions and summarizes changes. Basic is fastest/cheapest. Standard is balanced. Advanced is most thorough."
+              label="What is AI compare?"
+              body="Compares two versions of a document and explains what changed. Basic is fastest and cheapest. Standard is balanced. Advanced is the most thorough."
             />
           </div>
           <div className="mt-3 grid gap-2 text-[12px] text-[var(--muted-2)]">
@@ -220,7 +227,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
               <span className="text-[var(--muted-2)]">(12 credits)</span>
             </label>
           </div>
-          <div className="mt-2 text-[12px] text-[var(--muted-2)]">Used when you regenerate a diff.</div>
+          <div className="mt-2 text-[12px] text-[var(--muted-2)]">Used when you run or regenerate a compare.</div>
         </div>
       </div>
     </div>
