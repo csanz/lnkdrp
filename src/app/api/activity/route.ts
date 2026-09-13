@@ -71,6 +71,10 @@ export async function GET(request: Request) {
       .slice(0, MAX_TYPE_FILTERS);
     const docIdRaw = (url.searchParams.get("docId") ?? "").trim();
     const docId = docIdRaw && Types.ObjectId.isValid(docIdRaw) ? new Types.ObjectId(docIdRaw) : null;
+    // Who did it: "me" (my own actions in a browser), "team" (other members' browser actions),
+    // "agents" (anything an MCP/API client did, whoever owns the key). Anything else = everyone.
+    const whoRaw = (url.searchParams.get("who") ?? "").trim();
+    const who: "me" | "team" | "agents" | null = whoRaw === "me" || whoRaw === "team" || whoRaw === "agents" ? whoRaw : null;
 
     debugLog(2, "[api/activity] GET", { limit, hasCursor: Boolean(cursor), types: types.length, docId: Boolean(docId) });
 
@@ -94,6 +98,15 @@ export async function GET(request: Request) {
     const filter: Record<string, unknown> = { orgId };
     if (types.length) filter.type = { $in: types };
     if (docId) filter.docId = docId;
+    if (who === "agents") filter["agent.client"] = { $exists: true, $ne: null };
+    else if (who === "me") {
+      filter.userId = new Types.ObjectId(actor.userId);
+      filter["agent.client"] = { $exists: false };
+    } else if (who === "team") {
+      filter.actorKind = "user";
+      filter.userId = { $ne: new Types.ObjectId(actor.userId) };
+      filter["agent.client"] = { $exists: false };
+    }
     if (cursor) {
       filter.$or = [
         { createdDate: { $lt: cursor.createdDate } },

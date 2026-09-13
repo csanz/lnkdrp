@@ -25,6 +25,9 @@ import {
   TrashIcon,
   XCircleIcon,
 } from "@heroicons/react/24/outline";
+import PlanLimitNotice from "@/components/PlanLimitNotice";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { usePlan } from "@/lib/client/usePlan";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import {
@@ -200,12 +203,20 @@ export default function ActivityPageClient() {
   const feedRef = useRef<HTMLDivElement | null>(null);
 
   const types = useMemo(() => ACTIVITY_FILTERS.find((f) => f.id === filter)?.types ?? [], [filter]);
+  // Second axis: who did it. "Teammates" is the team-activity story; on Free it opens the
+  // collaborator upsell instead of filtering, since a Free workspace has no teammates to show.
+  const [who, setWho] = useState<"all" | "me" | "team" | "agents">("all");
+  const { plan } = usePlan();
+  const isFree = plan?.plan === "free";
+  const { openUpgrade } = useUpgradeModal();
+  const [teamNudgeDismissed, setTeamNudgeDismissed] = useState(false);
 
   const fetchPage = useCallback(
     async (cursor: string | null): Promise<{ items: ActivityItem[]; nextCursor: string | null }> => {
       const params = new URLSearchParams();
       params.set("limit", String(pageSize));
       if (types.length) params.set("type", types.join(","));
+      if (who !== "all") params.set("who", who);
       if (cursor) params.set("cursor", cursor);
       const res = await fetchWithTempUser(`/api/activity?${params.toString()}`, { cache: "no-store" });
       const json = (await res.json().catch(() => ({}))) as {
@@ -219,7 +230,7 @@ export default function ActivityPageClient() {
         nextCursor: typeof json.nextCursor === "string" ? json.nextCursor : null,
       };
     },
-    [types, pageSize],
+    [types, who, pageSize],
   );
 
   useEffect(() => {
@@ -295,7 +306,7 @@ export default function ActivityPageClient() {
           <div className="text-sm font-semibold text-[var(--fg)]">Activity</div>
         </div>
         <div className="mt-1 text-xs text-[var(--muted-2)]">
-          Uploads, share changes and views in this workspace.
+          Uploads, share changes, views and agent activity in this workspace, by everyone in it.
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2" role="tablist" aria-label="Activity filters">
@@ -320,9 +331,59 @@ export default function ActivityPageClient() {
             );
           })}
         </div>
+
+        <div className="mt-2 flex flex-wrap items-center gap-2" role="tablist" aria-label="Who did it">
+          <span className="mr-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">Who</span>
+          {(
+            [
+              { id: "all", label: "Everyone" },
+              { id: "me", label: "Me" },
+              { id: "team", label: "Teammates" },
+              { id: "agents", label: "Agents" },
+            ] as const
+          ).map((w) => {
+            const active = w.id === who;
+            const gated = w.id === "team" && isFree;
+            return (
+              <button
+                key={w.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                title={gated ? "Collaborators are a Pro feature" : undefined}
+                onClick={() => {
+                  if (gated) {
+                    openUpgrade("collaborators");
+                    return;
+                  }
+                  setWho(w.id);
+                }}
+                className={[
+                  "h-7 rounded-full px-2.5 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                  active
+                    ? "bg-[var(--fg)] text-[var(--bg)]"
+                    : "border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                ].join(" ")}
+              >
+                {w.label}
+                {gated ? <span className="ml-1.5 rounded px-1 text-[9px] font-semibold uppercase tracking-wide text-[var(--muted-2)] ring-1 ring-[var(--border)]">Pro</span> : null}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div ref={feedRef} className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-6 py-6" aria-busy={pending || loading}>
+        {isFree && !teamNudgeDismissed ? (
+          <PlanLimitNotice
+            limit="collaborators"
+            compact
+            className="mb-4"
+            secondaryLabel="Compare plans"
+            secondaryHref="/pricing"
+            onDismiss={() => setTeamNudgeDismissed(true)}
+          />
+        ) : null}
         {pending ? (
           <div aria-hidden="true" className="pointer-events-none sticky top-0 z-10 -mx-6 -mt-6 mb-4 h-0.5 overflow-hidden bg-transparent">
             <div className="h-full w-1/3 bg-[var(--fg)]/60 motion-safe:animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
