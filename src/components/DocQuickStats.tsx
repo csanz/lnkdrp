@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, Tooltip, YAxis } from "recharts";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { subscribeRealtime } from "@/lib/client/realtime";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
 
@@ -167,6 +168,16 @@ export default function DocQuickStats({
         ? plan.plan === "free"
         : null;
 
+  // Bumped by realtime share.* frames (a viewer opened or downloaded something in this workspace)
+  // so the totals refresh without a reload. The frame carries no docId, so any share event in the
+  // workspace triggers one lite refetch; cheap, and correct.
+  const [rev, setRev] = useState(0);
+  useEffect(() => {
+    return subscribeRealtime("activity", (f) => {
+      if (f.type === "activity" && typeof f.event.type === "string" && f.event.type.startsWith("share.")) setRev((r) => r + 1);
+    });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -184,7 +195,7 @@ export default function DocQuickStats({
     return () => {
       cancelled = true;
     };
-  }, [docId]);
+  }, [docId, rev]);
 
   const stats = useMemo(() => {
     const t = live?.totals;
