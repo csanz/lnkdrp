@@ -32,6 +32,11 @@ let state: RealtimeState = "idle";
 let reconnectTimer: number | null = null;
 let attempts = 0;
 let wanted = false;
+// Bumped on every disconnect/reconnect so a connect() still awaiting its ticket can tell it has
+// been superseded (React strict-mode remounts and fast workspace switches otherwise opened a
+// second socket next to the first).
+let generation = 0;
+let connecting = false;
 
 function setState(next: RealtimeState) {
   if (state === next) return;
@@ -59,6 +64,9 @@ function dispatch(frame: RealtimeFrame) {
 async function connect(): Promise<void> {
   if (!wanted || typeof window === "undefined") return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
+  if (connecting) return;
+  connecting = true;
+  const myGen = generation;
   setState("connecting");
   let url = "";
   let ticket: string | null = null;
@@ -69,9 +77,13 @@ async function connect(): Promise<void> {
     url = typeof json.url === "string" ? json.url : "";
     ticket = typeof json.ticket === "string" ? json.ticket : null;
   } catch {
-    scheduleReconnect();
+    connecting = false;
+    if (myGen === generation) scheduleReconnect();
     return;
   }
+  connecting = false;
+  // Superseded while fetching the ticket (unsubscribed, or workspace switched): do not open.
+  if (myGen !== generation || !wanted) return;
   if (!url || !ticket) {
     // Realtime not configured for this deployment (or not signed in): stay on polling, quietly.
     setState("unavailable");
@@ -119,6 +131,7 @@ function scheduleReconnect() {
 }
 
 function disconnect() {
+  generation += 1;
   if (reconnectTimer !== null) {
     window.clearTimeout(reconnectTimer);
     reconnectTimer = null;

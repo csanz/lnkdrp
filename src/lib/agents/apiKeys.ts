@@ -31,7 +31,7 @@ export const API_KEY_MAX_ACTIVE_PER_ORG = 10;
 /** Maximum rows returned by `listApiKeys()`. */
 export const API_KEY_LIST_LIMIT = 50;
 /** `touchApiKeyUse()` writes at most once per key per this interval (per process). */
-export const API_KEY_TOUCH_THROTTLE_MS = 60_000;
+export const API_KEY_TOUCH_THROTTLE_MS = 10_000;
 
 const API_KEY_RE = new RegExp(`^${API_KEY_PREFIX}[0-9A-Za-z]{${API_KEY_SECRET_LENGTH}}$`);
 
@@ -232,9 +232,13 @@ const TOUCH_MAP_MAX = 1000;
 export async function touchApiKeyUse(input: { keyId: string; client: string | null }): Promise<void> {
   try {
     const now = Date.now();
-    const last = touchedAt.get(input.keyId);
+    // Throttle per key AND client: repeated calls from the same client inside the window are
+    // skipped, but a different client (curl verify, then the agent's first real call) writes at
+    // once, so the change stream pushes the switch immediately instead of up to a window later.
+    const throttleKey = `${input.keyId}|${input.client ?? ""}`;
+    const last = touchedAt.get(throttleKey);
     if (typeof last === "number" && now - last < API_KEY_TOUCH_THROTTLE_MS) return;
-    touchedAt.set(input.keyId, now);
+    touchedAt.set(throttleKey, now);
     if (touchedAt.size > TOUCH_MAP_MAX) {
       const oldest = touchedAt.keys().next().value;
       if (oldest) touchedAt.delete(oldest);

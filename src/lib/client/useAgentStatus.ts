@@ -65,7 +65,9 @@ let inflight: Promise<AgentStatus | null> | null = null;
 
 async function load(force = false): Promise<AgentStatus | null> {
   if (!force && cache && Date.now() - cache.at < TTL_MS) return cache.data;
-  if (inflight) return inflight;
+  // A forced load (realtime frame, mutation) while a fetch is in flight must not reuse that
+  // possibly-stale request: wait for it, then fetch again so the change is never missed.
+  if (inflight) return force ? inflight.then(() => load(true)) : inflight;
   inflight = (async () => {
     try {
       const res = await fetchWithTempUser("/api/agent/status", { cache: "no-store" });
