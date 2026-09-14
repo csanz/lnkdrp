@@ -5,7 +5,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftIcon, LockClosedIcon, UserIcon } from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
@@ -417,7 +417,22 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   // Links of this document: the chip row filters every figure on the page through `?shareId=`,
   // and the per-link table below compares them (docs/prds/lnkdrp-multi-links.md).
   const [links, setLinks] = useState<ShareLinkRow[] | null>(null);
-  const [shareId, setShareId] = useState<string | null>(null);
+  // The selected link lives in the URL, not only in React state. A per-link view is a thing people
+  // want to keep and pass on — "here is what Sequoia actually read" — and while it was state alone
+  // it could not be bookmarked, reloaded, or linked to from the links table that shows the very
+  // numbers it explains. `selectLink` is the only writer, so the two can never disagree.
+  const searchParams = useSearchParams();
+  const shareId = searchParams.get("shareId")?.trim() || null;
+
+  function selectLink(next: string | null): void {
+    const params = new URLSearchParams(searchParams.toString());
+    if (next) params.set("shareId", next);
+    else params.delete("shareId");
+    const qs = params.toString();
+    // `replace`, not `push`: flipping between links is refining one view, not walking a history
+    // someone wants to step back through one chip at a time.
+    router.replace(qs ? `?${qs}` : `/doc/${encodeURIComponent(docId)}/metrics`, { scroll: false });
+  }
   /** Set when a filtered request 404s because the link was deleted elsewhere; the scope then resets. */
   const [filterDroppedNotice, setFilterDroppedNotice] = useState(false);
   /** `&shareId=…` for the selected link, or "" for "All links". */
@@ -543,7 +558,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
           // believes they are looking at one link.
           if (linkFilterParam) {
             if (!cancelled) {
-              setShareId(null);
+              selectLink(null);
               setFilterDroppedNotice(true);
             }
             return;
@@ -937,7 +952,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                       <span className="max-w-[260px] truncate">{selectedLinkLabel}</span>
                       <button
                         type="button"
-                        onClick={() => setShareId(null)}
+                        onClick={() => selectLink(null)}
                         className="text-[12px] font-medium text-[var(--muted)] underline-offset-2 hover:text-[var(--fg)] hover:underline"
                       >
                         Clear
@@ -1026,7 +1041,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                         key={chip.key}
                         type="button"
                         aria-pressed={active}
-                        onClick={() => setShareId(chip.value)}
+                        onClick={() => selectLink(chip.value)}
                         className={[
                           "max-w-[220px] truncate rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
                           active
@@ -1218,7 +1233,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                               <td className="px-4 py-2">
                                 <button
                                   type="button"
-                                  onClick={() => setShareId(active ? null : l.shareId)}
+                                  onClick={() => selectLink(active ? null : l.shareId)}
                                   className="max-w-[260px] truncate text-left font-medium text-[var(--fg)] underline-offset-2 hover:underline"
                                   title={l.audience ?? l.label}
                                 >

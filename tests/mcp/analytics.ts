@@ -20,6 +20,8 @@
  *   npx tsx --env-file=.env.local tests/mcp/analytics.ts --doc "Live Audit Deck 3"
  *   npx tsx --env-file=.env.local tests/mcp/analytics.ts --docId <id> --days 30
  *
+ * Pacing: calls are spaced 1.5-5s apart by default (`./pace.ts`); `--fast` removes the gaps.
+ *
  * Env: MONGODB_URI (to mint and revoke the key, and to resolve --doc to an id),
  *      MCP_URL (default http://localhost:8787/mcp).
  */
@@ -27,12 +29,19 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Types } from "mongoose";
 
+import { describePacing, pause, resolvePacing } from "../pace";
 import { connectMongo } from "@/lib/mongodb";
 import { createApiKey, revokeApiKey } from "@/lib/agents/apiKeys";
 import { DocModel } from "@/lib/models/Doc";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 
 const MCP_URL = process.env.MCP_URL ?? "http://localhost:8787/mcp";
+/**
+ * Spacing between tool calls. This harness only reads, so nothing it does shows up in the activity
+ * feed — but it is paced anyway so the MCP audit log shows an agent working through a document
+ * rather than firing nine calls in one tick. `--fast` turns it off.
+ */
+const PACING = resolvePacing();
 
 function arg(name: string): string | null {
   const i = process.argv.indexOf(`--${name}`);
@@ -165,7 +174,7 @@ async function main(): Promise<void> {
   try {
     await client.connect(transport);
     log(`document: ${d.title} (${String(d._id)})`);
-    log(`workspace: ${orgId} · window: last ${days} days · key ${created.key.prefix}…`);
+    log(`workspace: ${orgId} · window: last ${days} days · key ${created.key.prefix}… · ${describePacing(PACING)}`);
     log();
 
     const links = await callTool<{ links?: Array<{ shareId: string; label: string; status?: string }> }>(client, "lnkdrp_list_share_links", {
@@ -174,6 +183,7 @@ async function main(): Promise<void> {
     const list = links.links ?? [];
 
     // 1. The document: every link added together.
+    await pause(PACING);
     const all = await callTool<Stats>(client, "lnkdrp_get_share_stats", { docId: String(d._id), days, includeViewers: true });
     log(`ALL LINKS (perLink: ${String(all.perLink)}, tier: ${all.analyticsTier})`);
     printTotals("  ", all);
@@ -184,6 +194,7 @@ async function main(): Promise<void> {
     let sumViews = 0;
     let sumDownloads = 0;
     for (const l of list) {
+      await pause(PACING);
       const one = await callTool<Stats>(client, "lnkdrp_get_share_stats", {
         docId: String(d._id),
         shareId: l.shareId,

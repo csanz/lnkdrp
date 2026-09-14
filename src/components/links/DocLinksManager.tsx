@@ -121,6 +121,15 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   const { plan } = usePlan();
   const isFreePlan = plan?.plan === "free";
 
+  /**
+   * The metrics page, already scoped to one link. `?shareId=` is the metrics page's own filter, so
+   * the destination opens showing this link's numbers rather than the document's, and the address
+   * can be bookmarked or sent to someone.
+   */
+  function metricsHref(shareId: string): string {
+    return `/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(shareId)}`;
+  }
+
   const [links, setLinks] = useState<ShareLinkDTO[] | null>(null);
   const [linksError, setLinksError] = useState<string | null>(null);
   const [linksRev, setLinksRev] = useState(0);
@@ -586,12 +595,38 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                     {/* "—" when the analytics request failed, never `link.viewCount` /
                         `link.downloadCount`: those are all-time counters, and printing them under a
                         windowed heading put two different quantities in one column depending on
-                        whether a fetch happened to succeed. */}
+                        whether a fetch happened to succeed.
+
+                        Both numbers link into the metrics page already scoped to this link. They
+                        are the most clickable-looking things on the row and they used to do
+                        nothing: a reader who wanted to know who those 18 viewers were had to guess
+                        that the answer lived on a different page, behind an unfiltered table, and
+                        that clicking a link's name there would narrow it. */}
                     <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
-                      {stats ? stats.viewers.toLocaleString() : "—"}
+                      {stats ? (
+                        <Link
+                          href={metricsHref(link.shareId)}
+                          className="underline-offset-2 hover:underline"
+                          title={`Who opened ${link.label}`}
+                        >
+                          {stats.viewers.toLocaleString()}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
-                      {stats ? stats.downloads.toLocaleString() : "—"}
+                      {stats ? (
+                        <Link
+                          href={metricsHref(link.shareId)}
+                          className="underline-offset-2 hover:underline"
+                          title={`Downloads of ${link.label}`}
+                        >
+                          {stats.downloads.toLocaleString()}
+                        </Link>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     {/* Prefer the analytics timestamp (newest row activity on this link) over the
                         link row's own `lastViewedAt`, which only started moving when links shipped:

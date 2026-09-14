@@ -62,7 +62,7 @@ type StatsResponse = {
   /** Whether downloads are allowed on any live link of the document (a label, not a filter). */
   downloadsEnabled?: boolean;
   /** `?byLink=1`: the same window per link slug; the rows sum to `totals`. */
-  byLink?: Array<{ shareId: string; views: number; viewers: number; downloads: number }>;
+  byLink?: Array<{ shareId: string; views: number; viewers: number; downloads: number; lastViewedAt?: string | null }>;
 };
 
 const DAYS = 15;
@@ -98,6 +98,60 @@ function relativeAge(iso: string | null | undefined): string | null {
   const hours = Math.round(mins / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+/** One row of `LinkMiniList`. */
+type LinkMiniRow = { shareId: string; label: string | null; viewers: number; views: number; lastViewedAt: string | null };
+
+/**
+ * A three-row ranking of links, each row opening the metrics page already filtered to that link.
+ *
+ * The label is the target, not a separate "view" affordance: the name of a link is what a reader
+ * reaches for when they want to know more about it, and the card has no room for a second control
+ * per row.
+ */
+function LinkMiniList({
+  title,
+  docId,
+  rows,
+  empty,
+  right,
+}: {
+  title: string;
+  docId: string;
+  rows: LinkMiniRow[];
+  empty: string;
+  right: (row: LinkMiniRow) => React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">{title}</div>
+      {rows.length ? (
+        <ul className="mt-1 space-y-1">
+          {rows.map((r) => (
+            <li key={r.shareId} className="flex items-baseline justify-between gap-3 text-[11px]">
+              {r.label ? (
+                <Link
+                  href={`/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(r.shareId)}`}
+                  className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                  title={`${r.label} — see who opened it`}
+                >
+                  {r.label}
+                </Link>
+              ) : (
+                <span className="min-w-0 truncate text-[var(--muted)]" title="This link was deleted; its traffic is still counted above">
+                  Deleted link
+                </span>
+              )}
+              <span className="shrink-0 text-[var(--muted)]">{right(r)}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="mt-1 text-[11px] text-[var(--muted-2)]">{empty}</div>
+      )}
+    </div>
+  );
 }
 
 function ViewsSparkline({ series }: { series: Array<{ date: string; views: number }> }) {
@@ -245,14 +299,52 @@ export default function DocQuickStats({
   // this line and the Viewers tile are the same kind of thing and can be compared. Ranked over
   // `byLink`, not over `links`: iterating the live links skipped a deleted link that out-performed
   // every surviving one, and the traffic it is being compared against is in the tiles regardless.
-  const topLink = useMemo(() => {
-    if (coveredLinkCount < 2) return null;
+  /**
+   * The per-link rows behind the two lists below, labelled from the links list.
+   *
+   * A slug with traffic but no label is a deleted link: its numbers are still in the tiles above,
+   * so hiding it would make the lists fail to explain the totals they sit under — but it gets no
+   * link out, because the metrics page has nothing to filter to.
+   */
+  const linkRows = useMemo(() => {
     const labelByShareId = new Map((links ?? []).map((l) => [l.shareId, l.label]));
-    const ranked = [...(live?.byLink ?? [])]
-      .map((r) => ({ label: labelByShareId.get(r.shareId) ?? "Deleted link", views: num(r.viewers) }))
-      .sort((a, b) => b.views - a.views);
-    return ranked[0] && ranked[0].views > 0 ? ranked[0] : null;
-  }, [links, live, coveredLinkCount]);
+    return (live?.byLink ?? []).map((r) => ({
+      shareId: r.shareId,
+      label: labelByShareId.get(r.shareId) ?? null,
+      viewers: num(r.viewers),
+      views: num(r.views),
+      downloads: num(r.downloads),
+      lastViewedAt: typeof r.lastViewedAt === "string" ? r.lastViewedAt : null,
+    }));
+  }, [links, live]);
+
+  /**
+   * Which links are working, and which are live right now — the two questions a sender actually
+   * has once a document has more than one link, and neither was answerable from this card. It used
+   * to print a single "most viewed" name, which says nothing about whether second place is close
+   * behind or has never been opened.
+   *
+   * Ranked on viewers, the same quantity as the Viewers tile, so the column adds up to the number
+   * three lines above it instead of inviting a comparison between two different kinds of thing.
+   */
+  const topLinks = useMemo(
+    () =>
+      [...linkRows]
+        .filter((r) => r.viewers > 0)
+        .sort((a, b) => b.viewers - a.viewers || b.views - a.views)
+        .slice(0, 3),
+    [linkRows],
+  );
+
+  /** Most recently opened first — "is anyone reading it *now*", which ranking by volume hides. */
+  const recentLinks = useMemo(
+    () =>
+      [...linkRows]
+        .filter((r) => Boolean(r.lastViewedAt))
+        .sort((a, b) => Date.parse(b.lastViewedAt!) - Date.parse(a.lastViewedAt!))
+        .slice(0, 3),
+    [linkRows],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -369,16 +461,27 @@ export default function DocQuickStats({
         {tile("Pages", stats.pages)}
       </div>
 
-      {coveredLinkCount > 1 ? (
-        <div className="mt-3 text-[11px] text-[var(--muted-2)]">
-          <span className="font-medium text-[var(--muted)]">{coveredLinkCount} links</span>
-          {topLink ? (
-            <>
-              {" · most viewed: "}
-              <span className="font-medium text-[var(--fg)]">{topLink.label}</span>{" "}
-              <span className="tabular-nums">({topLink.views.toLocaleString()})</span>
-            </>
-          ) : null}
+      {/* Only once there is more than one link: on a single-link document both lists would be the
+          same one row, restating the tiles above. */}
+      {coveredLinkCount > 1 && (topLinks.length || recentLinks.length) ? (
+        <div className="mt-3 grid gap-x-6 gap-y-3 border-t border-[var(--border)] pt-3 sm:grid-cols-2">
+          <LinkMiniList
+            // Name what the number is. "Top links" over a bare column invites the reader to guess
+            // views, and views and viewers are the same figure on all-anonymous traffic, so the
+            // guess is right often enough to never be corrected and wrong as soon as it matters.
+            title="Top links · by viewers"
+            docId={docId}
+            rows={topLinks}
+            empty="No link opened yet"
+            right={(r) => <span className="tabular-nums">{r.viewers.toLocaleString()}</span>}
+          />
+          <LinkMiniList
+            title="Recently opened"
+            docId={docId}
+            rows={recentLinks}
+            empty="Nothing opened yet"
+            right={(r) => <span className="whitespace-nowrap">{relativeAge(r.lastViewedAt) ?? "—"}</span>}
+          />
         </div>
       ) : null}
 

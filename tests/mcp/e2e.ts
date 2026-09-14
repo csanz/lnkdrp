@@ -22,6 +22,10 @@
  *   E2E_TIMEOUT_SECONDS      share_pdf waitForReady timeout, 5..120 (default 90)
  *   E2E_CLIENT_NAME/_VERSION MCP client identity sent at initialize (default lnkdrp-e2e / 1.0)
  *
+ * Pacing: steps are spaced 1.5-5s apart by default so the activity rows this run writes land at
+ * believable intervals instead of all on one timestamp. `--fast` removes the gaps (use it in CI);
+ * `--pace 3-12` widens them when you want the feed to look like a working morning.
+ *
  * Prints one line per step with its duration, then a one-line JSON summary. Exits 1 on the first
  * failed assertion (the key is still revoked). The docs it creates ("MCP e2e", "MCP e2e agent
  * summary") are deleted again at the end so the Free active-link cap is not consumed; set
@@ -35,6 +39,7 @@ import { performance } from "node:perf_hooks";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport, StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
+import { describePacing, pause, resolvePacing } from "../pace";
 import { connectMongo } from "@/lib/mongodb";
 import { apiKeyPrefix, createApiKey, revokeApiKey } from "@/lib/agents/apiKeys";
 import { creditsForRun } from "@/lib/credits/schedule";
@@ -98,8 +103,18 @@ type StepRecord = { name: string; ms: number; ok: boolean };
 const steps: StepRecord[] = [];
 
 /** Run `fn` as a numbered step, printing its outcome and duration. Rethrows so the run stops. */
+/**
+ * Spacing between steps. On by default so the activity feed this run produces reads as a sequence
+ * of things that happened rather than twenty rows sharing one timestamp — see `./pace.ts`. Pass
+ * `--fast` in CI.
+ */
+const PACING = resolvePacing();
+
 async function step<T>(name: string, fn: () => Promise<T>): Promise<T> {
   const n = steps.length + 1;
+  // Before the step, not after: the gap belongs between two actions, and pausing after the last
+  // one would only delay the summary.
+  if (steps.length) await pause(PACING);
   const t0 = performance.now();
   process.stdout.write(`[${String(n).padStart(2, " ")}] ${name} … `);
   try {
@@ -240,7 +255,9 @@ async function closeQuietly(client: Client, transport: StreamableHTTPClientTrans
 /** Run every step in order; the `finally` block revokes the key no matter where it stops. */
 async function main(): Promise<void> {
   const t0 = performance.now();
-  console.log(`lnkdrp MCP e2e -> ${MCP_URL} (org ${ORG_ID}, client ${CLIENT_INFO.name}/${CLIENT_INFO.version})`);
+  console.log(
+    `lnkdrp MCP e2e -> ${MCP_URL} (org ${ORG_ID}, client ${CLIENT_INFO.name}/${CLIENT_INFO.version}) · ${describePacing(PACING)}`,
+  );
 
   let keyId: string | null = null;
   let plaintext: string | null = null;
