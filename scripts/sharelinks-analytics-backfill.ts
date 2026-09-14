@@ -39,16 +39,13 @@ import { ShareLinkModel } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { reconcileShareLinkCounters } from "@/lib/analytics/reconcileLinkCounters";
 
 type LinkRow = {
   _id: Types.ObjectId;
   shareId: string;
   docId: Types.ObjectId;
   orgId?: Types.ObjectId | null;
-  /** The denormalized counters this pass reconciles against the analytics rows. */
-  viewCount?: number | null;
-  downloadCount?: number | null;
-  lastViewedAt?: Date | null;
 };
 
 function argValue(flag: string): string | null {
@@ -74,7 +71,7 @@ async function main(): Promise<void> {
   await connectMongo();
 
   const links = (await ShareLinkModel.find(orgRaw ? { orgId: new Types.ObjectId(orgRaw) } : {})
-    .select({ _id: 1, shareId: 1, docId: 1, orgId: 1, viewCount: 1, downloadCount: 1, lastViewedAt: 1 })
+    .select({ _id: 1, shareId: 1, docId: 1, orgId: 1 })
     .lean()) as unknown as LinkRow[];
 
   // A link row may predate `orgId` (or have been created from a doc that had none); the document
@@ -176,44 +173,7 @@ async function main(): Promise<void> {
       ? { shareId: link.shareId, viewerUserId: { $in: ownerSide }, isOwnerPreview: { $ne: true } }
       : null;
 
-    // The link's denormalized counters vs the rows they summarise. Flagging a row as an owner
-    // preview above changes what it counts towards, and the counters were incremented when the row
-    // was written — so without this pass `/links` reported 4 views for a link whose analytics said
-    // 3, and a Last viewed two minutes later than the last recipient view. The counters are only a
-    // read-path fallback now, but a stored number that contradicts the page beside it is still a
-    // bug waiting to be found by a user instead of by this script.
-    //
-    // Computed before the dry-run branch on purpose: a maintenance pass that silently does more on
-    // apply than it reported on dry run is the kind nobody trusts enough to run.
-    const agg = (await ShareViewModel.aggregate([
-      { $match: { shareId: link.shareId, isOwnerPreview: { $ne: true } } },
-      {
-        $group: {
-          _id: null,
-          viewCount: { $sum: 1 },
-          downloadCount: { $sum: { $ifNull: ["$downloads", 0] } },
-          lastViewedAt: { $max: { $ifNull: ["$lastViewedAt", "$updatedDate"] } },
-        },
-      },
-    ])) as Array<{ viewCount?: number; downloadCount?: number; lastViewedAt?: Date | null }>;
-    const truth = {
-      viewCount: typeof agg[0]?.viewCount === "number" ? agg[0].viewCount : 0,
-      downloadCount: typeof agg[0]?.downloadCount === "number" ? agg[0].downloadCount : 0,
-      lastViewedAt: agg[0]?.lastViewedAt ? new Date(agg[0].lastViewedAt) : null,
-    };
-    // `lastViewedAt` gets a tolerance for the same reason `scripts/verify-share-analytics.ts` has
-    // one: the link and the row are stamped by two statements milliseconds apart, so comparing them
-    // exactly made this pass report drift on every healthy link that had just been viewed and
-    // rewrite it on every run — a maintenance script that never converges.
-    const storedLast = link.lastViewedAt ? link.lastViewedAt.getTime() : null;
-    const truthLast = truth.lastViewedAt ? truth.lastViewedAt.getTime() : null;
-    const lastDrifted =
-      storedLast === null || truthLast === null ? storedLast !== truthLast : Math.abs(storedLast - truthLast) > 2000;
-    const counterDrift =
-      (link.viewCount ?? 0) !== truth.viewCount || (link.downloadCount ?? 0) !== truth.downloadCount || lastDrifted;
-
     if (dryRun) {
-      if (counterDrift) linkCountersReconciled += 1;
       viewsLinked += await ShareViewModel.countDocuments(linkFilter);
       visitsLinked += await ShareVisitModel.countDocuments(linkFilter);
       if (orgId) {
@@ -264,11 +224,14 @@ async function main(): Promise<void> {
       visitsMarkedOwnerPreview += s3.modifiedCount ?? 0;
     }
 
-    if (counterDrift) {
-      await ShareLinkModel.updateOne({ _id: link._id }, { $set: truth }, { timestamps: false });
-      linkCountersReconciled += 1;
-    }
   }
+
+  // The counters, once, from the module the nightly cron uses — not re-derived here. Flagging rows
+  // as owner previews above changes what they count towards, and the counters were incremented when
+  // those rows were written, so this pass must always follow that one. Duplicating the arithmetic is
+  // how the two definitions drifted in the first place.
+  const counters = await reconcileShareLinkCounters({ orgId: orgRaw ?? null, dryRun });
+  linkCountersReconciled = counters.linksReconciled;
 
   const after = {
     shareViewsMissingLink: await ShareViewModel.countDocuments(MISSING("shareLinkId")),

@@ -13,6 +13,13 @@ is added without the others.
 | `usage-agg-reconcile` | `20 * * * *` (hourly at :20) | `/api/cron/usage-agg-reconcile` | `npm run cron:usage-agg-reconcile` |
 | `notification-emails` | `*/5 * * * *` (every 5 minutes) | `/api/cron/notification-emails` | `npm run cron:notification-emails` |
 | `plan-limits` | `40 * * * *` (hourly at :40) | `/api/cron/plan-limits` | `npm run cron:plan-limits` |
+| `analytics-reconcile` | `50 3 * * *` (nightly at 03:50 UTC) | `/api/cron/analytics-reconcile` | `npm run cron:analytics-reconcile` |
+
+`analytics-reconcile` is the one job whose output you should read rather than just check for a 200.
+It repairs `ShareLink`'s denormalized counters from the analytics rows, and separately *reports*
+rows whose per-page time exceeds their total — the signature of an ingest double count, which it
+deliberately never repairs, because overwriting the rows would hide the bug. A run that finds any
+marks itself `error` in `CronHealth`. See DEPLOY.md section 9.1.
 
 ## How they run in production
 

@@ -250,10 +250,11 @@ async function main(): Promise<void> {
   }
   log(`${failures.length} invariant failure(s):`);
   for (const f of failures) log(`  [${f.invariant}] ${f.scope}: ${f.detail}`);
-  // A drift in the link counters is repairable: scripts/sharelinks-analytics-backfill.ts
-  // recomputes them. A page-time overrun is a code bug and needs a fix, not a repair.
+  // Counter drift is repairable and a nightly job already does it. A page-time overrun is a code
+  // bug: the ingest counted an interval twice, and repairing the rows would hide it.
   log("");
-  log("Counter drift is repairable with: npm run sharelinks:analytics-backfill");
+  log("Counter drift is repairable with: npm run cron:analytics-reconcile");
+  log("A page-time overrun is not — it means the ingest double counted. See src/lib/analytics/shareTiming.ts.");
   process.exit(1);
 }
 

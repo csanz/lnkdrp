@@ -12,7 +12,7 @@ The older first-deployment checklist with key-generation walkthroughs lives in
 ```
                      ┌──────────────────────────────────────────────┐
   browser / agent ─▶ │  lnkdrp.com  · Next.js on Vercel             │ ─▶ MongoDB Atlas (replica set)
-                     │  web app + REST API + 7 cron routes          │ ─▶ Vercel Blob (PDF storage)
+                     │  web app + REST API + 8 cron routes          │ ─▶ Vercel Blob (PDF storage)
                      └───────────────┬──────────────────────────────┘ ─▶ OpenAI (summary, AI compare)
                                      │ REST with the caller's lnk_ key  ─▶ Stripe (Pro + on-demand credits)
                                      │                                  ─▶ Google OAuth (sign-in)
@@ -159,6 +159,7 @@ fails when they drift:
 | `usage-agg-reconcile` | `20 * * * *` | `npm run cron:usage-agg-reconcile` |
 | `notification-emails` | `*/5 * * * *` | `npm run cron:notification-emails` |
 | `plan-limits` | `40 * * * *` | `npm run cron:plan-limits` |
+| `analytics-reconcile` | `50 3 * * *` | `npm run cron:analytics-reconcile` |
 
 - **Production:** Vercel Cron calls `GET /api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`
   on the schedule. Routes take a Mongo lease so an overlapping run is skipped, record a
@@ -275,6 +276,9 @@ Run in this order; each step depends on the previous.
    database you point `MONGODB_URI` at; only run it with a key you then revoke).
 7. Trigger one cron by hand and confirm 200:
    `curl -X POST https://lnkdrp.com/api/cron/plan-limits -H "Authorization: Bearer $CRON_SECRET"`.
+   Then the analytics reconcile, which reports rather than just succeeding:
+   `npm run cron:analytics-reconcile -- --dry-run --target=https://lnkdrp.com`. Expect
+   `linksReconciled: 0` and `pageTimeOverruns: 0` on a healthy deploy — see section 9.1.
 8. Stripe: buy Pro with a real card, confirm the subscription shows in the dashboard and the
    webhook delivery log shows `checkout.session.completed` handled. Cancel it from the portal.
 9. Revoke the test key from `/connect`; the sidebar returns to Not connected.
@@ -290,6 +294,28 @@ Run in this order; each step depends on the previous.
   compatible with the web app across ordinary releases; deploy the web app first when both change.
 - Adding a cron job means a route, a `vercel.json` entry and a `scripts/cron/cron.<job>.ts`
   runner; the lib test suite enforces the trio.
+
+### 9.1 Share analytics: the gate before shipping a change to them
+
+Run `npm run verify:analytics` against the target database before and after any release that
+touches the share analytics. It is read-only, safe against production, and exits non-zero, so it
+also works as a CI step.
+
+It asserts four properties, each of which failed silently in production shape at least once:
+
+| Property | The bug it catches |
+| --- | --- |
+| Per-page time fits inside a row's total | The ingest counted an interval twice. Per-page time ran 26% over real dwell for weeks. |
+| A link's counters equal the recomputation from its rows | A write path touched the link but wrote no row, so `/links` and the metrics page disagreed. |
+| A document equals the sum of its links | The per-link table stopped adding up to the tiles above it. |
+| Only signed-in rows carry the owner-preview flag | Something set the flag that cannot know the answer. |
+
+Counter drift is repairable and the nightly `analytics-reconcile` job fixes it on its own; you can
+force it with `npm run cron:analytics-reconcile`. A **page-time overrun is not repairable and is
+never repaired automatically** — it means the ingest double counted, and overwriting the rows would
+hide the bug instead of fixing it. The job reports those in `CronHealth.lastResult` and marks itself
+`error` so the run is visible, which is the signal to look at `src/lib/analytics/shareTiming.ts` and
+the flush logic in `PdfJsViewer`.
 - Local gate before pushing: `npx tsc --noEmit -p .`, `npx eslint src realtime mcp tests`,
   the four vitest suites (`npm run tests:credits:vitest` etc.), `npx next build`, and
   `npx tsx --env-file=.env.local tests/mcp/e2e.ts` when the MCP or the API-key seam changed.
