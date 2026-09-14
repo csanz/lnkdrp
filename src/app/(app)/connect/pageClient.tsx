@@ -1,5 +1,6 @@
 "use client";
 
+import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import Link from "next/link";
 
 /**
@@ -60,23 +61,16 @@ export default function ConnectPageClient() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          <div className="flex items-center gap-2">
-            <CpuChipIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
-            <h1 className="text-sm font-semibold text-[var(--fg)]">Connect your agent</h1>
-          </div>
-          <StatusPill status={status} loading={loading} href={connected || verified ? "/activity?who=agents" : undefined} />
-        </div>
-        <p className="mt-1 max-w-2xl text-xs leading-5 text-[var(--muted-2)]">
-          Create links and read the numbers from Claude Code, Cursor, Codex, or any MCP client. One key per agent or machine.
-        </p>
-        <div className="mt-4">
-          <StepsRail current={currentStep} done={connected || verified} />
-        </div>
-      </div>
+      <AppPageHeader
+        icon={CpuChipIcon}
+        title="Agents"
+        description="Create links and read the numbers from Claude Code, Cursor, Codex, or any MCP client. One key per agent or machine."
+        actions={<StatusPill status={status} loading={loading} href={connected || verified ? "/activity?who=agents" : undefined} />}
+      >
+        <StepsRail current={currentStep} done={connected || verified} />
+      </AppPageHeader>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-6 py-6" aria-busy={loading && !status}>
+      <div className={`min-h-0 flex-1 overflow-auto bg-[var(--bg)] ${APP_PAGE_GUTTER} py-6`} aria-busy={loading && !status}>
         {/* Left-aligned under the header like the other app pages, growing with the viewport. On wide
             screens the reference material (tool catalog, troubleshooting) moves into a side column so
             the page uses the width instead of leaving a narrow strip in the middle. */}
@@ -99,8 +93,8 @@ export default function ConnectPageClient() {
             </Link>
           </div>
         ) : null}
-        <div className="grid w-full max-w-7xl gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:items-start">
-          <div className="grid min-w-0 gap-6">
+        <div className="grid w-full max-w-7xl grid-cols-[minmax(0,1fr)] gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(320px,400px)] xl:items-start">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6">
             <KeysPanel status={status} loading={loading} plaintextKey={plaintextKey} onCreated={onCreated} onUse={onUse} onRevoked={onRevoked} />
 
             <Panel id="client" step={2} title="Add lnkdrp to your client" caption="Pick your client">
@@ -112,7 +106,7 @@ export default function ConnectPageClient() {
             </Panel>
           </div>
 
-          <aside className="grid min-w-0 gap-6 xl:sticky xl:top-0">
+          <aside className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-6 xl:sticky xl:top-0">
             <Panel id="tools" title="What your agent can do" caption="Ships with launch">
               {/* Table below xl (full width), stacked rows in the xl side column. */}
               <div className="xl:hidden">

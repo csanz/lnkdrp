@@ -4,6 +4,7 @@
  * Client UI for `/requests`.
  */
 
+import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import { InboxArrowDownIcon } from "@heroicons/react/24/outline";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -82,14 +83,8 @@ export default function RequestsPageClient() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
-        <div className="flex items-center gap-2">
-          <InboxArrowDownIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
-          <div className="text-sm font-semibold text-[var(--fg)]">Received</div>
-        </div>
-        <div className="mt-1 text-xs text-[var(--muted-2)]">Your request repositories (inboxes) in this workspace.</div>
-
-        <div className="mt-4 flex items-center justify-between gap-3">
+      <AppPageHeader icon={InboxArrowDownIcon} title="Received" description="Your request repositories (inboxes) in this workspace.">
+        <div className="flex items-center justify-between gap-3">
           <input
             value={q}
             onChange={(e) => {
@@ -101,9 +96,9 @@ export default function RequestsPageClient() {
           />
           <div className="shrink-0 text-xs text-[var(--muted-2)]">{data.total} total</div>
         </div>
-      </div>
+      </AppPageHeader>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-6 py-6">
+      <div className={`min-h-0 flex-1 overflow-auto bg-[var(--bg)] ${APP_PAGE_GUTTER} py-6`}>
         {error ? (
           <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 text-sm text-red-700">
             {error}

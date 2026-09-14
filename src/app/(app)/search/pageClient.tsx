@@ -10,6 +10,7 @@
  * refetched — and `loading.tsx` never flashes — on every keystroke.
  */
 
+import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MagnifyingGlassIcon, XMarkIcon } from "@heroicons/react/24/outline";
@@ -284,14 +285,8 @@ export default function SearchPageClient() {
 
   return (
     <div className="flex h-full flex-col" onKeyDown={onRootKeyDown}>
-      <div className="border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
-        <div className="flex items-center gap-2">
-          <MagnifyingGlassIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
-          <div className="text-sm font-semibold text-[var(--fg)]">Search</div>
-        </div>
-        <div className="mt-1 text-xs text-[var(--muted-2)]">Find documents and projects across this workspace.</div>
-
-        <div className="relative mt-4">
+      <AppPageHeader icon={MagnifyingGlassIcon} title="Search" description="Find documents and projects across this workspace.">
+        <div className="relative">
           <MagnifyingGlassIcon className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-[var(--muted-2)]" aria-hidden="true" />
           <input
             ref={inputRef}
@@ -362,11 +357,11 @@ export default function SearchPageClient() {
             </select>
           </label>
         </div>
-      </div>
+      </AppPageHeader>
 
-      <div ref={listRef} onKeyDown={onListKeyDown} className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-6 py-6" aria-busy={pending || loading}>
+      <div ref={listRef} onKeyDown={onListKeyDown} className={`relative min-h-0 flex-1 overflow-auto bg-[var(--bg)] ${APP_PAGE_GUTTER} py-6`} aria-busy={pending || loading}>
         {pending ? (
-          <div aria-hidden="true" className="pointer-events-none sticky top-0 z-10 -mx-6 -mt-6 mb-4 h-0.5 overflow-hidden bg-transparent">
+          <div aria-hidden="true" className="pointer-events-none sticky top-0 z-10 -mx-5 -mt-6 mb-4 sm:-mx-8 h-0.5 overflow-hidden bg-transparent">
             <div className="h-full w-1/3 bg-[var(--fg)]/60 motion-safe:animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
           </div>
         ) : null}

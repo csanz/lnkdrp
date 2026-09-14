@@ -1,5 +1,6 @@
 "use client";
 
+import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -230,7 +231,7 @@ export default function HomeAuthedClient() {
   return (
     <AppShellLayout>
       <div
-        className="relative h-full min-h-[100svh] overflow-y-auto bg-[var(--bg)] text-[var(--fg)]"
+        className="relative flex h-full min-h-[100svh] flex-col overflow-y-auto bg-[var(--bg)] text-[var(--fg)]"
         // The whole page is a drop target; a depth counter keeps child enter/leave pairs from flickering.
         onDragEnter={(e) => {
           if (!Array.from(e.dataTransfer?.types ?? []).includes("Files")) return;
@@ -255,19 +256,12 @@ export default function HomeAuthedClient() {
           if (file) stageFile(file);
         }}
       >
-        <div className="mx-auto w-full max-w-[920px] px-6 pb-16 pt-10 sm:px-8 md:pt-14">
-          {/* Header: same rhythm as Activity (icon + title, one-line description), plan room on the right. */}
-          <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2.5">
-                <DocumentPlusIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
-                <h1 className="text-lg font-semibold tracking-tight text-[var(--fg)]">Upload</h1>
-              </div>
-              <p className="mt-1.5 text-[13px] text-[var(--muted-2)]">
-                Turn a PDF into a share link, and see how it is read from the first open.
-              </p>
-            </div>
-            {freeLinks ? (
+        <AppPageHeader
+          icon={DocumentPlusIcon}
+          title="Upload"
+          description="Turn a PDF into a share link, and see how it is read from the first open."
+          actions={
+            freeLinks ? (
               <button
                 type="button"
                 onClick={openLinkUpgrade}
@@ -285,13 +279,14 @@ export default function HomeAuthedClient() {
                 <span aria-hidden="true" className="h-3 w-px bg-current opacity-30" />
                 <span className="font-medium">Free</span>
               </button>
-            ) : null}
-          </div>
-
+            ) : null
+          }
+        />
+        <div className={`w-full max-w-[920px] ${APP_PAGE_GUTTER} pb-16 pt-6`}>
           {/* Primary action: one large drop zone. */}
           <div
             className={[
-              "relative mt-7 overflow-hidden rounded-2xl border transition-[border-color,background-color,box-shadow] duration-200",
+              "relative overflow-hidden rounded-2xl border transition-[border-color,background-color,box-shadow] duration-200",
               dragActive && !atLinkLimit
                 ? "border-[var(--feed-new-bar)] bg-[var(--feed-new-bg)] shadow-[0_0_0_4px_var(--feed-new-bg)]"
                 : "border-[var(--border)] bg-[var(--panel)]",

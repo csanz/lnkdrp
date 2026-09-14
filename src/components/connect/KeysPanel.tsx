@@ -147,7 +147,7 @@ function KeyRow({
 
   return (
     <li className={["flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3", row.revoked ? "opacity-60" : ""].join(" ")}>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-[14rem] flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px]">
           <span className="font-medium text-[var(--fg)]">{row.name}</span>
           <code className="font-mono text-[12px] text-[var(--muted-2)]">{row.prefix}…</code>

@@ -7,6 +7,7 @@
  * (cursor-based under the hood: the cursor that opened each page is kept so Previous can replay it).
  */
 
+import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import {
@@ -450,11 +451,12 @@ export default function ActivityPageClient() {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--border)] bg-[var(--panel)] px-8 pb-5 pt-6">
-        <div className="flex items-center gap-2.5">
-          <ClockIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
-          <div className="text-lg font-semibold tracking-tight text-[var(--fg)]">Activity</div>
-          {live ? (
+      <AppPageHeader
+        icon={ClockIcon}
+        title="Activity"
+        description="Uploads, share changes, views and agent activity in this workspace, by everyone in it."
+        badge={
+          live ? (
             <span
               className="ml-1 inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
               title="Updates arrive over the realtime connection"
@@ -462,14 +464,11 @@ export default function ActivityPageClient() {
               <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--chart-views)]" />
               Live
             </span>
-          ) : null}
-        </div>
-        <div className="mt-1.5 text-[13px] text-[var(--muted-2)]">
-          Uploads, share changes, views and agent activity in this workspace, by everyone in it.
-        </div>
-
+          ) : null
+        }
+      >
         {/* Two filter axes on one row (wrapping on narrow screens), separated by a hairline. */}
-        <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Activity filters">
           {ACTIVITY_FILTERS.map((f) => {
             const active = f.id === filter;
@@ -534,9 +533,9 @@ export default function ActivityPageClient() {
           })}
         </div>
         </div>
-      </div>
+      </AppPageHeader>
 
-      <div ref={feedRef} className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)] px-8 py-6" aria-busy={pending || loading}>
+      <div ref={feedRef} className={`relative min-h-0 flex-1 overflow-auto bg-[var(--bg)] ${APP_PAGE_GUTTER} py-6`} aria-busy={pending || loading}>
         {pending ? (
           <div aria-hidden="true" className="pointer-events-none sticky top-0 z-10 -mx-8 -mt-6 mb-4 h-0.5 overflow-hidden bg-transparent">
             <div className="h-full w-1/3 bg-[var(--fg)]/60 motion-safe:animate-[lnkdrpIndeterminate_1.05s_ease-in-out_infinite]" />
