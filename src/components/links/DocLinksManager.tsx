@@ -350,7 +350,9 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     return (
       <div>
         <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 text-xs font-medium text-[var(--muted)]">Share link</div>
+          <div className="min-w-0 text-xs font-medium text-[var(--muted)]">
+            Default link{count > 1 ? ` · ${count} total` : ""}
+          </div>
           {canManage ? (
             <button type="button" onClick={openCreate} className={NEW_LINK_CLASS}>
               <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -390,14 +392,14 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
           <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--muted)]">
             <SettingItem label="Download" value={defaultLink.allowDownload ? "on" : "off"} />
             <SettingItem label="Password" value={defaultLink.passwordEnabled ? "set" : "none"} />
-            <SettingItem label="Versions" value={defaultLink.allowRevisionHistory ? "on" : "off"} />
+            <SettingItem label="Version history" value={defaultLink.allowRevisionHistory ? "on" : "off"} />
             <SettingItem label="Expires" value={formatDate(defaultLink.expiresAt) || "Never"} />
           </div>
         ) : null}
 
         <div className="mt-2 flex flex-wrap items-center gap-x-1.5 text-[12px] text-[var(--muted)]">
           <span>
-            {count <= 1 ? "Default link only" : `${count - 1} more ${count - 1 === 1 ? "link" : "links"}`}
+            {count <= 1 ? "No other links yet" : `${count - 1} other ${count - 1 === 1 ? "link" : "links"}`}
           </span>
           <span aria-hidden="true">·</span>
           {/* Say where it goes: "Manage" was ambiguous next to "Edit settings", which edits the
