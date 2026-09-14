@@ -1,7 +1,9 @@
 {
   "name": "www_lnkdrp",
   "version": "0.1.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "private": true,
   "scripts": {
     "dev": "next dev -p 3001",
@@ -37,7 +39,9 @@
     "tests:credits:vitest": "vitest run --config tests/credits/vitest.config.ts",
     "tests:lib:vitest": "vitest run --config tests/lib/vitest.config.ts",
     "tests:routes": "node scripts/tests-routes.mjs",
-    "tests:benchmark": "tsx scripts/tests-benchmark.ts"
+    "tests:benchmark": "tsx scripts/tests-benchmark.ts",
+    "verify:analytics": "tsx --env-file=.env.local scripts/verify-share-analytics.ts",
+    "sharelinks:analytics-backfill": "tsx --env-file=.env.local scripts/sharelinks-analytics-backfill.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",

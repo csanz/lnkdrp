@@ -201,10 +201,16 @@ async function main(): Promise<void> {
       downloadCount: typeof agg[0]?.downloadCount === "number" ? agg[0].downloadCount : 0,
       lastViewedAt: agg[0]?.lastViewedAt ? new Date(agg[0].lastViewedAt) : null,
     };
+    // `lastViewedAt` gets a tolerance for the same reason `scripts/verify-share-analytics.ts` has
+    // one: the link and the row are stamped by two statements milliseconds apart, so comparing them
+    // exactly made this pass report drift on every healthy link that had just been viewed and
+    // rewrite it on every run — a maintenance script that never converges.
+    const storedLast = link.lastViewedAt ? link.lastViewedAt.getTime() : null;
+    const truthLast = truth.lastViewedAt ? truth.lastViewedAt.getTime() : null;
+    const lastDrifted =
+      storedLast === null || truthLast === null ? storedLast !== truthLast : Math.abs(storedLast - truthLast) > 2000;
     const counterDrift =
-      (link.viewCount ?? 0) !== truth.viewCount ||
-      (link.downloadCount ?? 0) !== truth.downloadCount ||
-      (link.lastViewedAt ? link.lastViewedAt.getTime() : null) !== (truth.lastViewedAt ? truth.lastViewedAt.getTime() : null);
+      (link.viewCount ?? 0) !== truth.viewCount || (link.downloadCount ?? 0) !== truth.downloadCount || lastDrifted;
 
     if (dryRun) {
       if (counterDrift) linkCountersReconciled += 1;
