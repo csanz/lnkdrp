@@ -20,6 +20,8 @@ import { creditsForRun } from "@/lib/credits/schedule";
 import { idempotencyKeyFromRequest, generateIdempotencyKey } from "@/lib/credits/idempotency";
 import { DAILY_CAP_CODE, isDailyCapError, isOutOfCreditsError, OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { UploadModel } from "@/lib/models/Upload";
+import { attachPageContext, loadChangedPages, type ChangedPage } from "@/lib/history/changedPages";
 
 export const runtime = "nodejs";
 // Diff generation can take a while for long docs; allow the function to outlive the 90s AI timeout.
@@ -83,7 +85,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
       docId: docObjectId,
       ...(allowLegacyByUserId ? {} : { orgId }),
     })
-      .select({ _id: 1, docId: 1, previousText: 1, newText: 1 })
+      .select({ _id: 1, docId: 1, previousText: 1, newText: 1, fromVersion: 1, toUploadId: 1 })
       .lean();
     if (!change) return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
 
@@ -91,6 +93,26 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     const newText = (change as any).newText?.toString?.() ?? "";
     if (!previousText.trim() || !newText.trim()) {
       return applyTempUserHeaders(NextResponse.json({ error: "Missing extracted text for diff" }, { status: 400 }), actor);
+    }
+
+    // Same page-level context as the automatic compare (changed pages with both versions' text and
+    // thumbnails), built before any credits are reserved. Best-effort: full text only on failure.
+    let changedPages: ChangedPage[] = [];
+    try {
+      // Resolve the previous version by number: older rows stored the new upload as `fromUploadId`.
+      const fromVersion = Number((change as { fromVersion?: unknown }).fromVersion);
+      const toUploadId = (change as { toUploadId?: unknown }).toUploadId;
+      if (Number.isFinite(fromVersion) && fromVersion >= 1 && toUploadId && Types.ObjectId.isValid(String(toUploadId))) {
+        const [prevUpload, newUpload] = await Promise.all([
+          UploadModel.findOne({ docId: docObjectId, version: fromVersion, isDeleted: { $ne: true } })
+            .select({ blobUrl: 1, slideNodes: 1 })
+            .lean(),
+          UploadModel.findById(String(toUploadId)).select({ blobUrl: 1, slideNodes: 1 }).lean(),
+        ]);
+        changedPages = await loadChangedPages({ prevUpload, newUpload });
+      }
+    } catch {
+      changedPages = [];
     }
 
     const idKey = idempotencyKeyFromRequest(request) ?? generateIdempotencyKey(`history:${docId}:${changeId}`);
@@ -121,12 +143,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     }
 
     try {
-      const diff = await runDocChangeDiff({
-        previousText,
-        newText,
-        qualityTier,
-        abortSignal: AbortSignal.timeout(DIFF_TIMEOUT_MS),
-      });
+      const diff = attachPageContext(
+        await runDocChangeDiff({
+          previousText,
+          newText,
+          changedPages,
+          qualityTier,
+          abortSignal: AbortSignal.timeout(DIFF_TIMEOUT_MS),
+        }),
+        changedPages,
+      );
       if (!diff) {
         await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: reserved.ledgerId });
         return applyTempUserHeaders(NextResponse.json({ ok: false, error: "AI compare unavailable" }, { status: 503 }), actor);

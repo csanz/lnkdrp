@@ -23,6 +23,7 @@ import {
 } from "@/lib/blob/clientUpload";
 import { analyzePdfText, isFallbackAnalysis, analysisTelemetry } from "@/lib/ai/analyzePdfText";
 import { runDocChangeDiff } from "@/lib/ai/docChangeDiff";
+import { attachPageContext, extractPdfTextByPage, fetchPdfBytes, loadChangedPages, type ChangedPage } from "@/lib/history/changedPages";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
 import { runRequestReviewInvestorFocused } from "@/lib/ai/requestReviewInvestorFocused";
 import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger, recordUnbilledRun } from "@/lib/credits/creditService";
@@ -95,17 +96,6 @@ function asNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function normalizeForPageHash(input: string): string {
-  return (input ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function pageTextHash(input: string): string {
-  const normalized = normalizeForPageHash(input);
-  return crypto.createHash("sha256").update(normalized).digest("hex");
-}
 
 type SlideNode = {
   pageNumber: number;
@@ -191,12 +181,6 @@ async function renderPdfPageJpeg(params: {
   return { jpeg, width, height };
 }
 
-async function fetchPdfBytes(url: string): Promise<Uint8Array> {
-  const res = await fetch(url, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Failed to fetch PDF (${res.status})`);
-  const ab = await res.arrayBuffer();
-  return new Uint8Array(ab);
-}
 /**
  * Unique Lower Tags (uses isArray, toLowerCase, trim).
  */
@@ -851,43 +835,6 @@ async function ensureReviewForUpload(params: {
   }
 }
 /**
- * Extract Pdf Text By Page (uses getDocument, Number, getPage).
- */
-
-
-async function extractPdfTextByPage(pdfBytes: Uint8Array): Promise<
-  Array<{ page_number: number; text: string }>
-> {
-  // `openPdfDocument` copies the bytes (pdfjs detaches the buffer it is given).
-  const pdf = await openPdfDocument(pdfBytes);
-  try {
-    const pages: Array<{ page_number: number; text: string }> = [];
-    const n = Number(pdf.numPages) || 0;
-    for (let i = 1; i <= n; i++) {
-      const page = await pdf.getPage(i);
-      if (!isRecord(page) || typeof page.getTextContent !== "function") {
-        pages.push({ page_number: i, text: "" });
-        continue;
-      }
-      const content = (await (page.getTextContent as () => Promise<unknown>)()) as unknown;
-      const contentObj = isRecord(content) ? content : null;
-      const items = (contentObj?.items ?? []) as unknown;
-      const itemArr = Array.isArray(items) ? items : [];
-      const text = itemArr
-        .map((it: unknown) => {
-          if (!isRecord(it)) return "";
-          return typeof it.str === "string" ? it.str : "";
-        })
-        .filter(Boolean)
-        .join(" ");
-      pages.push({ page_number: i, text });
-    }
-    return pages;
-  } finally {
-    await pdf.destroy?.().catch(() => undefined);
-  }
-}
-/**
  * Render Pdf First Page Png (uses getDocument, getPage, isRecord).
  */
 
@@ -1276,7 +1223,7 @@ export async function POST(
                 version: toVersion - 1,
                 isDeleted: { $ne: true },
               })
-                .select({ _id: 1, rawExtractedText: 1, pdfText: 1 })
+                .select({ _id: 1, rawExtractedText: 1, pdfText: 1, blobUrl: 1, slideNodes: 1 })
                 .lean();
               const previousText = (prev?.rawExtractedText ?? (prev as any)?.pdfText ?? "").toString();
               const newText = (upload.rawExtractedText ?? upload.pdfText ?? "").toString();
@@ -1312,7 +1259,11 @@ export async function POST(
             let diff = null as any;
             if (historyLedgerId) {
               try {
-                diff = await runDocChangeDiff({ previousText, newText, changedPages: [], qualityTier: historyTier });
+                const backfillPages = await loadChangedPages({ prevUpload: prev, newUpload: upload }).catch(() => []);
+                diff = attachPageContext(
+                  await runDocChangeDiff({ previousText, newText, changedPages: backfillPages, qualityTier: historyTier }),
+                  backfillPages,
+                );
                 if (!diff) {
                   await failAndRefundLedger({ workspaceId: actor.orgId, ledgerId: historyLedgerId });
                   diff = null;
@@ -1936,104 +1887,30 @@ export async function POST(
           const previousText = priorExtractedTextRaw.toString();
           const newText = (extractedText ?? "").toString();
           if (previousText.trim() && newText.trim()) {
-            // Best-effort: compute changed pages for richer diff output (page-numbered links).
-            let changedPages: Array<{ pageNumber: number; previousText: string; newText: string }> = [];
+            // Best-effort: pages that changed (text or slide image), with both versions' text and
+            // thumbnails, so the compare can cite pages. Shared with the manual rerun.
+            let changedPages: ChangedPage[] = [];
+            let previousUploadId: Types.ObjectId | null = null;
             try {
-              // New version: extract per-page text from the PDF we already fetched.
               if (!extractedPages) {
                 extractedPages = await extractPdfTextByPage(pdfBytes).catch(() => []);
               }
-              const newPages = extractedPages ?? [];
-              const newByPage = new Map<number, string>(
-                newPages
-                  .map((p) => ({ n: Math.floor(Number(p.page_number)), t: String(p.text ?? "") }))
-                  .filter((p) => Number.isFinite(p.n) && p.n >= 1)
-                  .map((p) => [p.n, p.t]),
-              );
-
-              // Previous version: fetch the previous upload PDF and extract per-page text.
-              const prevUpload =
-                priorUploadId
-                  ? await UploadModel.findById(priorUploadId).select({ blobUrl: 1, slideNodes: 1 }).lean()
-                  : null;
-              const prevBlobUrl = prevUpload && typeof (prevUpload as any).blobUrl === "string" ? (prevUpload as any).blobUrl : "";
-              const prevSlideNodesRaw = prevUpload && Array.isArray((prevUpload as any).slideNodes) ? ((prevUpload as any).slideNodes as unknown[]) : [];
-              const prevSlideByPage = new Map<number, { imageHash: string | null; thumbUrl: string | null; imageUrl: string | null }>(
-                prevSlideNodesRaw
-                  .map((p: any) => (p && typeof p === "object" ? p : null))
-                  .filter(Boolean)
-                  .map((p: any) => ({
-                    n: Math.floor(Number(p.pageNumber ?? p.page_number)),
-                    imageHash: typeof p.imageHash === "string" && p.imageHash.trim() ? p.imageHash.trim() : null,
-                    thumbUrl: typeof p.thumbUrl === "string" && p.thumbUrl.trim() ? p.thumbUrl.trim() : null,
-                    imageUrl: typeof p.imageUrl === "string" && p.imageUrl.trim() ? p.imageUrl.trim() : null,
-                  }))
-                  .filter((p: any) => Number.isFinite(p.n) && p.n >= 1)
-                  .map((p: any) => [p.n, { imageHash: p.imageHash, thumbUrl: p.thumbUrl, imageUrl: p.imageUrl }]),
-              );
-
-              const nextSlideByPage = new Map<number, { imageHash: string | null; thumbUrl: string | null; imageUrl: string | null }>(
-                (Array.isArray(slideNodes) ? slideNodes : [])
-                  .map((p) => ({
-                    n: Math.floor(Number(p.pageNumber)),
-                    imageHash: typeof p.imageHash === "string" && p.imageHash.trim() ? p.imageHash.trim() : null,
-                    thumbUrl: typeof p.thumbUrl === "string" && p.thumbUrl.trim() ? p.thumbUrl.trim() : null,
-                    imageUrl: typeof p.imageUrl === "string" && p.imageUrl.trim() ? p.imageUrl.trim() : null,
-                  }))
-                  .filter((p) => Number.isFinite(p.n) && p.n >= 1)
-                  .map((p) => [p.n, { imageHash: p.imageHash, thumbUrl: p.thumbUrl, imageUrl: p.imageUrl }]),
-              );
-
-              if (prevBlobUrl) {
-                const prevPdfBytes = await fetchPdfBytes(prevBlobUrl);
-                const prevPages = await extractPdfTextByPage(prevPdfBytes).catch(() => []);
-                const prevByPage = new Map<number, string>(
-                  prevPages
-                    .map((p) => ({ n: Math.floor(Number(p.page_number)), t: String(p.text ?? "") }))
-                    .filter((p) => Number.isFinite(p.n) && p.n >= 1)
-                    .map((p) => [p.n, p.t]),
-                );
-
-                const maxPages = Math.max(...[...prevByPage.keys(), ...newByPage.keys(), ...prevSlideByPage.keys(), ...nextSlideByPage.keys(), 0]);
-                const changedNums: number[] = [];
-                for (let p = 1; p <= maxPages; p++) {
-                  const prevText = prevByPage.get(p) ?? "";
-                  const nextText = newByPage.get(p) ?? "";
-                  const textChanged = pageTextHash(prevText) !== pageTextHash(nextText);
-
-                  const prevImg = prevSlideByPage.get(p) ?? null;
-                  const nextImg = nextSlideByPage.get(p) ?? null;
-                  const imgChanged = (() => {
-                    if (!prevImg && !nextImg) return false;
-                    const prevHash = prevImg?.imageHash ?? null;
-                    const nextHash = nextImg?.imageHash ?? null;
-                    if (prevHash && nextHash) return prevHash !== nextHash;
-                    const prevUrl = prevImg?.thumbUrl ?? prevImg?.imageUrl ?? "";
-                    const nextUrl = nextImg?.thumbUrl ?? nextImg?.imageUrl ?? "";
-                    return Boolean(prevUrl && nextUrl && prevUrl !== nextUrl);
-                  })();
-
-                  if (textChanged || imgChanged) changedNums.push(p);
-                }
-
-                // Cap page-level AI context to keep costs bounded.
-                const MAX_PAGE_CONTEXT = 12;
-                changedPages = changedNums.slice(0, MAX_PAGE_CONTEXT).map((p) => {
-                  const prevImg = prevSlideByPage.get(p) ?? null;
-                  const nextImg = nextSlideByPage.get(p) ?? null;
-                  const prevHash = prevImg?.imageHash ?? null;
-                  const nextHash = nextImg?.imageHash ?? null;
-                  const imageChanged = prevHash && nextHash ? prevHash !== nextHash : null;
-                  return {
-                    pageNumber: p,
-                    previousText: prevByPage.get(p) ?? "",
-                    newText: newByPage.get(p) ?? "",
-                    previousImageUrl: prevImg?.thumbUrl ?? prevImg?.imageUrl ?? null,
-                    newImageUrl: nextImg?.thumbUrl ?? nextImg?.imageUrl ?? null,
-                    imageChanged,
-                  } as any;
-                });
-              }
+              // The previous version by number. `priorUploadId` (the doc's current upload) already points
+              // at this new upload by the time processing runs, so it cannot be used here.
+              const prevUpload = await UploadModel.findOne({
+                docId,
+                version: { $lt: uploadVersion },
+                isDeleted: { $ne: true },
+              })
+                .sort({ version: -1 })
+                .select({ _id: 1, blobUrl: 1, slideNodes: 1 })
+                .lean();
+              previousUploadId = prevUpload?._id ?? null;
+              changedPages = await loadChangedPages({
+                prevUpload,
+                newUpload: { slideNodes: Array.isArray(slideNodes) ? slideNodes : [] },
+                newPages: extractedPages ?? [],
+              });
             } catch (e) {
               warningDetails.historyPages = e instanceof Error ? e.message : String(e);
               changedPages = [];
@@ -2111,63 +1988,9 @@ export async function POST(
               }
             }
 
-            // Best-effort: augment per-page diffs with slide image URLs + graphics-change hints.
+            // Best-effort: attach slide thumbnails and graphics-change hints to the per-page diff.
             try {
-              const changedPagesAny = Array.isArray(changedPages) ? (changedPages as any[]) : [];
-              const ctxByPage = new Map<
-                number,
-                { previousImageUrl: string | null; newImageUrl: string | null; imageChanged: boolean | null }
-              >(
-                changedPagesAny
-                  .map((p) => ({
-                    n: typeof p?.pageNumber === "number" ? Math.floor(p.pageNumber) : NaN,
-                    previousImageUrl:
-                      typeof p?.previousImageUrl === "string" && p.previousImageUrl.trim()
-                        ? p.previousImageUrl.trim()
-                        : null,
-                    newImageUrl:
-                      typeof p?.newImageUrl === "string" && p.newImageUrl.trim()
-                        ? p.newImageUrl.trim()
-                        : null,
-                    imageChanged: typeof p?.imageChanged === "boolean" ? Boolean(p.imageChanged) : null,
-                  }))
-                  .filter((p) => Number.isFinite(p.n) && p.n >= 1)
-                  .map((p) => [p.n, { previousImageUrl: p.previousImageUrl, newImageUrl: p.newImageUrl, imageChanged: p.imageChanged }]),
-              );
-
-              const basePages = Array.isArray(diff?.pagesThatChanged) ? (diff.pagesThatChanged as any[]) : [];
-              const seen = new Set<number>();
-              const augmented = basePages
-                .map((p) => {
-                  const n = typeof p?.pageNumber === "number" ? Math.floor(p.pageNumber) : NaN;
-                  if (!Number.isFinite(n) || n < 1) return p;
-                  seen.add(n);
-                  const ctx = ctxByPage.get(n) ?? null;
-                  return {
-                    ...p,
-                    previousImageUrl: ctx?.previousImageUrl ?? null,
-                    newImageUrl: ctx?.newImageUrl ?? null,
-                    imageChanged: ctx?.imageChanged ?? null,
-                  };
-                })
-                .filter(Boolean);
-
-              // Add "graphics changed" pages that the agent didn't include.
-              const imageOnly = [...ctxByPage.entries()]
-                .filter(([n, ctx]) => !seen.has(n) && ctx.imageChanged === true)
-                .slice(0, Math.max(0, 30 - augmented.length))
-                .map(([n, ctx]) => ({
-                  pageNumber: n,
-                  summary: "Graphics/visuals changed on this page.",
-                  previousImageUrl: ctx.previousImageUrl ?? null,
-                  newImageUrl: ctx.newImageUrl ?? null,
-                  imageChanged: true,
-                }));
-
-              const nextPagesThatChanged = [...augmented, ...imageOnly].slice(0, 30);
-              if (diff && typeof diff === "object") {
-                diff = { ...diff, pagesThatChanged: nextPagesThatChanged };
-              }
+              diff = attachPageContext(diff, changedPages);
             } catch {
               // ignore; best-effort
             }
@@ -2179,7 +2002,7 @@ export async function POST(
                   orgId: existingDocOrgId,
                   docId,
                   createdByUserId: new Types.ObjectId(actor.userId),
-                  fromUploadId: priorUploadId,
+                  fromUploadId: previousUploadId ?? priorUploadId,
                   toUploadId: upload._id,
                   fromVersion: uploadVersion - 1,
                   toVersion: uploadVersion,
