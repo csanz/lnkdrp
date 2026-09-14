@@ -136,10 +136,90 @@ This is separate from share links and is used for internal History/recipients to
   - File: `src/app/api/docs/[docId]/history/[version]/viewer/[userId]/route.ts`
   - Returns per-page aggregates (sum duration per page), plus first/last seen timestamps.
 
+## Which collections are share analytics (and which are not)
+
+Exactly three collections can answer a per-link question, because they are the only ones that carry
+`shareId`:
+
+- `ShareView` — lifetime per (link, viewer/device). Carries `shareId`, `shareLinkId`, `orgId`.
+- `ShareVisit` — per-tab visit for the same keys. Carries `shareId`, `shareLinkId`, `orgId`.
+- `ShareDownloadRequest` — download requests. Carries `shareId` and `docId`.
+
+Everything else in the metrics surface is orthogonal to share links and must not be reconciled
+against a link's numbers:
+
+- `PageTiming` — route-level time for signed-in/temp actors. It has no `docId` and no `shareId`; the
+  document identity only ever appears inside the free-text `path`, which is not a join key. Share
+  routes do produce rows here (the session tracker runs everywhere), but anonymous visitors — most
+  share recipients — are dropped at ingest, so these rows are neither complete nor attributable.
+- `ProjectView` / `ProjectClick` — keyed on `projectId`. A share viewer never writes them.
+- `DocPageTiming` — internal-member page timing per doc **version**. It now carries `shareId` /
+  `shareLinkId` for the case where a member reads through a link, but a public share visitor can
+  never write one (`/api/metrics/events` attributes only an existing actor whose workspace can see
+  the document). External per-page time lives on `ShareView.pageTimeMsByPage` and
+  `ShareVisit.pageTimeMsByPage`, both keyed by `shareId`.
+
+## Per link vs. whole document (owner analytics)
+
+`GET /api/docs/:docId/shareviews` answers both questions with **one pipeline and a different
+`$match`** — `{ shareId }` for a link (`?shareId=<slug>`), `{ docId }` for the document. No
+denormalized counter feeds the response (`Doc.numberOfViews` / `Doc.numberOfPagesViewed` are legacy
+and only act as a floor), because a counter and a row count drift.
+
+- `totals` covers the requested `days`, like `series` and `viewerCount`. `totalsAllTime` carries the
+  lifetime figures for cards that want "ever".
+- A window on `ShareView` means *viewers first seen in the window* (`createdDate`) — the same basis
+  the views-by-day series has always used.
+- `views`, `downloads` and **viewers** are additive: the document's figure equals the sum over its
+  links. `pagesViewed` is the one **distinct set** ("how much of the deck was reached"), so the
+  document's figure is the union across links — ≤ the sum of the per-link figures, and never more
+  than the page count.
+- **A viewer is counted once per link, not once per document.** One browser that opens the Sequoia
+  link and the Accel link is two link-recipients, and the document reads 2. This is a deliberate
+  choice in favour of *the aggregate equalling the sum of its parts*: the per-link table renders
+  directly under the "All links" tiles and readers add the column up, so a document-level
+  distinct-people count made the card say "3 people" over a table summing to 4 with nothing on the
+  page to reconcile them. If a true distinct-people figure is ever needed it has to be a separate,
+  separately-labelled number — not this one.
+- **`views` means "link-recipients first seen in the window", not "opens".** A `ShareView` row is
+  unique per (link, viewer) for life, so counting rows in a window and counting link-recipients in a
+  window are the same arithmetic: `totals.views == totals.authenticatedViewers +
+  totals.anonymousViewers`, always. Consequences to keep in mind: a recipient who reads the deck
+  every day adds nothing after day one, and a day's `downloads` can exceed that day's `views`
+  because downloads are bucketed from `downloadsByDay` rather than from row creation. Surfaces must
+  therefore never print `views` and `viewers` side by side as two facts — the doc-page card and both
+  per-link tables show **Viewers** only. Real per-open counting needs `ShareVisit` (one row per tab
+  session); that collection is only populated from the visit-upsert fix onwards, so it cannot answer
+  for historical traffic yet and has not been made the source.
+- **"Last viewed" comes from `ShareView.lastViewedAt`, never `updatedDate`.** Mongoose stamps
+  `updatedDate` on every update query, so any maintenance write — the analytics backfill, the
+  viewer-name repair the metrics route itself fires in `after()`, a retention sweep — used to rewrite
+  the whole Last-viewed column to the instant it ran, and an owner reloading their own metrics page
+  made every link read "just now". `lastViewedAt` is written only by the view ingest paths
+  (`POST /api/share/:shareId/stats`, `/s/:shareId/pdf`); every maintenance write passes
+  `timestamps: false`; rows older than the field fall back to `updatedDate` and self-heal on the next
+  real view.
+- `?byLink=1` adds the same window grouped by link slug, in one aggregation. It is always the whole
+  document's breakdown (the table compares links, so it ignores `?shareId=`), and unfiltered
+  `sum(byLink[].views) == totals.views`. It includes slugs whose link was deleted — their rows stay
+  in the document total — which is why the metrics table can render a "Deleted links" row that makes
+  the column reconcile with the card above it.
+- `downloadsEnabled` is a **label, not a filter**: it says whether downloads are allowed (this link,
+  or any **live** link of the document — `isLinkActive`: enabled, not archived, not expired).
+  Recorded downloads are counted either way, so turning a toggle off never erases history.
+- `totalsAllTime`'s fallback to `Doc.numberOfViews` applies **only in document scope**. That counter
+  is the sum over every link, so applying it under `?shareId=` reported the whole document's lifetime
+  traffic as one link's.
+
 ## Best-effort caveats / interpretation notes
 
 - **Time spent** counts **foreground time only** (we avoid counting hidden tab time).
 - **Session/visit boundaries** are best-effort (per-tab sessionStorage).
 - **Revisit counts** are derived from page segments recorded; they’re a signal, not ground truth.
 - Clock skew can exist between client and server; we clamp/validate timestamps to reduce abuse.
+- **Schema changes need a dev-server restart.** `mongoose.models.X` is cached per process, and Next's
+  dev server keeps the model it compiled at boot; a path added to a schema after the server started
+  is silently stripped by strict mode, so rows land with the new field missing while a fresh `tsx`
+  process writes it correctly. If a newly added field is null on everything the running app writes
+  and correct everywhere else, restart `next dev` before looking for a bug.
 

@@ -110,6 +110,17 @@ const docSchema = new Schema(
       default: [],
     },
 
+    /**
+     * Legacy denormalized counters. Owner analytics no longer reads them: the numbers come from
+     * `ShareView` rows so that "all links" is the sum of its links and so that a figure can be
+     * recomputed after a cleanup. `numberOfViews` is still incremented on a new viewer (and by the
+     * PDF download path) and acts as a floor when a document has no rows left.
+     *
+     * `numberOfPagesViewed` is kept only for the rollback build and reads nowhere: it counts
+     * (viewer, link, page) first-touches, i.e. a *sum over viewers*, which grows with every extra
+     * link and can exceed the document's page count — a different quantity from the "distinct pages
+     * reached" that the word "pages" means in the UI.
+     */
     numberOfViews: { type: Number, default: 0, min: 0 },
     numberOfPagesViewed: { type: Number, default: 0, min: 0 },
     // Backward-compat artifact fields (older code)
@@ -463,6 +474,11 @@ docSchema.post("save", async function () {
     });
   }
 });
+
+// The doc-metrics rollup walks documents stalest-snapshot-first
+// (`src/lib/metrics/rollupDocMetrics.ts`); without this it fetch-filtered and then blocking-sorted
+// every non-deleted document in the deployment to pick 50.
+docSchema.index({ "metricsSnapshot.updatedAt": 1, _id: 1 });
 
 export type Doc = InferSchemaType<typeof docSchema>;
 

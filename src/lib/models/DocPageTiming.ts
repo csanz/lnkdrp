@@ -20,6 +20,15 @@ const docPageTimingSchema = new Schema(
     /** Upload version (matches Upload.version / Doc.currentUploadVersion). */
     version: { type: Number, required: true, min: 1, index: true },
 
+    /**
+     * Which share link the page was read through, when it was read through one
+     * (docs/prds/lnkdrp-multi-links.md). `shareId` is the analytics key everywhere else, so it is
+     * stored beside the `ShareLink` join handle. Both are null for plain in-app reading, which is
+     * the common case for this collection.
+     */
+    shareId: { type: String, trim: true, index: true, default: null },
+    shareLinkId: { type: Schema.Types.ObjectId, ref: "ShareLink", index: true, default: null },
+
     /** Viewer identity (internal member). */
     viewerUserId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
 
@@ -42,6 +51,9 @@ const docPageTimingSchema = new Schema(
 // Common query patterns:
 docPageTimingSchema.index({ docId: 1, version: 1, viewerUserId: 1, createdDate: -1 });
 docPageTimingSchema.index({ docId: 1, version: 1, pageNumber: 1, createdDate: -1 });
+// Per-link scope: "how did the recipients of the Sequoia link read v3".
+docPageTimingSchema.index({ shareLinkId: 1, createdDate: -1 });
+docPageTimingSchema.index({ docId: 1, version: 1, shareId: 1, createdDate: -1 });
 
 export type DocPageTiming = InferSchemaType<typeof docPageTimingSchema>;
 

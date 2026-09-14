@@ -69,6 +69,36 @@ export function trackProjectClick(args: { projectId: string; fromPath: string; t
   });
 }
 
+/**
+ * Track time spent on one page (slide) of a document version — the `DocPageTiming` collection,
+ * which answers "did this member open v3, and how far did they read?".
+ *
+ * Internal-member telemetry: `/api/metrics/events` attributes an event only to a signed-in or
+ * already-existing temp user whose workspace can see the document, so an anonymous share-page
+ * visitor can never write one. Pass `shareId` when the reader arrived through a share link, so
+ * the row can be scoped to that link.
+ */
+export function trackDocPageTiming(args: {
+  docId: string;
+  version: number;
+  pageNumber: number;
+  enteredAtMs: number;
+  leftAtMs: number;
+  shareId?: string | null;
+}) {
+  const sessionId = getSessionId();
+  void postEvent({
+    type: "doc_page_timing",
+    sessionId,
+    docId: args.docId,
+    version: args.version,
+    pageNumber: args.pageNumber,
+    enteredAtMs: args.enteredAtMs,
+    leftAtMs: args.leftAtMs,
+    ...(args.shareId ? { shareId: args.shareId } : {}),
+  });
+}
+
 /** Track a page timing event, measured in epoch milliseconds. */
 export function trackPageTiming(args: {
   path: string;

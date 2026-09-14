@@ -36,6 +36,13 @@ type MetricsResponse = {
     anonymousViewers?: number;
   };
   downloadsEnabled?: boolean;
+  /**
+   * `?byLink=1`: the same window, per link slug — including slugs whose link has since been
+   * deleted, which `GET /api/docs/:docId/links` does not return. `sum(views)` equals
+   * `totals.views` and `sum(downloads)` equals `totals.downloads`, so the table reconciles with
+   * the cards above it.
+   */
+  byLink?: Array<{ shareId: string; views: number; viewers: number; downloads: number; pagesViewed: number; lastViewedAt: string | null }>;
   series: Array<{ date: string; views: number; downloads: number }>;
   viewers: Array<{
     userId: string;
@@ -77,7 +84,7 @@ type ShareLinkRow = {
 };
 
 /** One link's totals inside the selected window (from `/shareviews?shareId=…&lite=1`). */
-type LinkWindowStats = { views: number; downloads: number; viewers: number };
+type LinkWindowStats = { views: number; downloads: number; viewers: number; lastViewedAt: string | null };
 
 type ShareViewerVisitSummary = {
   visitId: string;
@@ -313,20 +320,26 @@ function LockedViewersBlock({
   loading,
   count,
   days,
+  linkLabel,
   onUpgrade,
 }: {
   pending: boolean;
   loading: boolean;
   count: number;
   days: number;
+  /** The selected link, when the page is filtered — the count is that link's, not the document's. */
+  linkLabel: string | null;
   onUpgrade: () => void;
 }) {
+  // This is the only viewer information a Free workspace gets, so it must name what it counted:
+  // under a link filter, "no one has viewed this document" is a false statement about the document.
+  const subject = linkLabel ?? "this document";
   const countLine =
     count <= 0
-      ? `No one has viewed this document in the last ${days} days.`
+      ? `No one has opened ${subject} in the last ${days} days.`
       : count === 1
-        ? `1 person viewed this document in the last ${days} days.`
-        : `${count.toLocaleString()} people viewed this document in the last ${days} days.`;
+        ? `1 person opened ${subject} in the last ${days} days.`
+        : `${count.toLocaleString()} people opened ${subject} in the last ${days} days.`;
 
   return (
     <section className="mt-1" aria-label="Viewers" aria-busy={pending || loading}>
@@ -403,7 +416,8 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   // and the per-link table below compares them (docs/prds/lnkdrp-multi-links.md).
   const [links, setLinks] = useState<ShareLinkRow[] | null>(null);
   const [shareId, setShareId] = useState<string | null>(null);
-  const [linkStats, setLinkStats] = useState<Record<string, LinkWindowStats>>({});
+  /** Set when a filtered request 404s because the link was deleted elsewhere; the scope then resets. */
+  const [filterDroppedNotice, setFilterDroppedNotice] = useState(false);
   /** `&shareId=…` for the selected link, or "" for "All links". */
   const linkFilterParam = shareId ? `&shareId=${encodeURIComponent(shareId)}` : "";
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
@@ -517,14 +531,19 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       setViewersLoaded(false);
       try {
         const res = await fetchWithTempUser(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1${linkFilterParam}`,
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1&byLink=1${linkFilterParam}`,
           { cache: "no-store" },
         );
         if (res.status === 404) {
           // A filtered request 404s when that link is gone (deleted elsewhere): drop the filter
-          // rather than treating it as a missing document.
+          // rather than treating it as a missing document — and say so, because otherwise every
+          // number on the page silently grows into the document's totals while the reader still
+          // believes they are looking at one link.
           if (linkFilterParam) {
-            if (!cancelled) setShareId(null);
+            if (!cancelled) {
+              setShareId(null);
+              setFilterDroppedNotice(true);
+            }
             return;
           }
           if (!cancelled) router.replace("/dashboard");
@@ -622,44 +641,48 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     };
   }, [docId]);
 
-  // Per-link totals for the window. One lite request per link (capped), so the table can show
-  // unique viewers, which the link row itself does not carry.
-  useEffect(() => {
-    const rows = (links ?? []).slice(0, 12);
-    if (rows.length < 2) return;
-    let cancelled = false;
-    void (async () => {
-      const entries = await Promise.all(
-        rows.map(async (l) => {
-          try {
-            const res = await fetchWithTempUser(
-              `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1&shareId=${encodeURIComponent(l.shareId)}`,
-              { cache: "no-store" },
-            );
-            if (!res.ok) return null;
-            const json = (await res.json()) as MetricsResponse;
-            return [
-              l.id,
-              {
-                views: Math.max(0, Math.floor(json?.totals?.views ?? 0)),
-                downloads: Math.max(0, Math.floor(json?.totals?.downloads ?? 0)),
-                viewers: Math.max(0, Math.floor(json?.viewerCount ?? 0)),
-              },
-            ] as const;
-          } catch {
-            return null;
-          }
-        }),
-      );
-      if (cancelled) return;
-      const next: Record<string, LinkWindowStats> = {};
-      for (const entry of entries) if (entry) next[entry[0]] = entry[1];
-      setLinkStats(next);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [docId, days, links]);
+  // Per-link totals for the window, derived from the page's own response (`?byLink=1`) instead of
+  // one request per link. Grouped server-side by slug over the same rows as the cards above, so the
+  // rows add up to the header — and nothing is capped, so a link that sorts last no longer reads
+  // as dead just because its request was never made.
+  /** The label of the selected link, for copy that must not say "this document" under a filter. */
+  const selectedLinkLabel = useMemo(
+    () => (shareId ? ((links ?? []).find((l) => l.shareId === shareId)?.label ?? "this link") : null),
+    [shareId, links],
+  );
+
+  const linkStats = useMemo(() => {
+    const next: Record<string, LinkWindowStats> = {};
+    if (!links || !data?.byLink) return next;
+    const bySlug = new Map(data.byLink.map((r) => [r.shareId, r]));
+    for (const l of links) {
+      const row = bySlug.get(l.shareId);
+      next[l.id] = {
+        views: Math.max(0, Math.floor(row?.views ?? 0)),
+        downloads: Math.max(0, Math.floor(row?.downloads ?? 0)),
+        viewers: Math.max(0, Math.floor(row?.viewers ?? 0)),
+        lastViewedAt: typeof row?.lastViewedAt === "string" ? row.lastViewedAt : null,
+      };
+    }
+    return next;
+  }, [links, data]);
+
+  /**
+   * Views and downloads recorded on slugs the table cannot show: links that were deleted (their
+   * rows stay in the document total by design) and any slug the links endpoint omits. Rendered as
+   * its own row so the column reconciles with the "All links" card instead of quietly falling short.
+   */
+  const deletedLinkResidual = useMemo(() => {
+    if (!links || !data?.byLink) return null;
+    const known = new Set(links.map((l) => l.shareId));
+    const rest = data.byLink.filter((r) => !known.has(r.shareId));
+    if (!rest.length) return null;
+    const views = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.views ?? 0)), 0);
+    const downloads = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.downloads ?? 0)), 0);
+    const viewers = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.viewers ?? 0)), 0);
+    if (!views && !downloads) return null;
+    return { count: rest.length, views, downloads, viewers };
+  }, [links, data]);
 
   const views = data?.totals?.views ?? 0;
   const downloads = data?.totals?.downloads ?? 0;
@@ -807,6 +830,9 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       params.set("limit", "50");
       if (viewerDetail.kind === "authed") params.set("userId", viewerDetail.key);
       else params.set("botIdHash", viewerDetail.key);
+      // Follow the page's link filter, like every other request here. Without it the modal listed
+      // this viewer's sessions through every link while the tiles above showed one link's numbers.
+      if (shareId) params.set("shareId", shareId);
       const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/shareviews/visits?${params.toString()}`, {
         cache: "no-store",
       });
@@ -831,7 +857,9 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     setVisitDetailLoading(true);
     try {
       const res = await fetchWithTempUser(
-        `/api/docs/${encodeURIComponent(docId)}/shareviews/visits/${encodeURIComponent(visitId)}`,
+        `/api/docs/${encodeURIComponent(docId)}/shareviews/visits/${encodeURIComponent(visitId)}${
+          shareId ? `?shareId=${encodeURIComponent(shareId)}` : ""
+        }`,
         { cache: "no-store" },
       );
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
@@ -891,7 +919,30 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
           <div className="mt-1 grid gap-5">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="text-base font-semibold text-[var(--fg)]">Metrics</div>
+                {/* The scope belongs in the heading, not only in a chip row that scrolls away:
+                    a reader who lands further down the page was otherwise reading one link's
+                    numbers under a heading that said "Metrics" and section titles that said
+                    "this document". */}
+                <div className="flex flex-wrap items-baseline gap-x-2 text-base font-semibold text-[var(--fg)]">
+                  <span>Metrics</span>
+                  {selectedLinkLabel ? (
+                    <>
+                      <span className="text-[var(--muted-2)]" aria-hidden="true">
+                        ·
+                      </span>
+                      <span className="max-w-[260px] truncate">{selectedLinkLabel}</span>
+                      <button
+                        type="button"
+                        onClick={() => setShareId(null)}
+                        className="text-[12px] font-medium text-[var(--muted)] underline-offset-2 hover:text-[var(--fg)] hover:underline"
+                      >
+                        Clear
+                      </button>
+                    </>
+                  ) : links && links.length > 1 ? (
+                    <span className="text-[13px] font-normal text-[var(--muted-2)]">· all {links.length} links</span>
+                  ) : null}
+                </div>
                 <div className="mt-1 text-sm text-[var(--muted)]">{dateRangeLabel}</div>
                 {analyticsDaysLimit !== null ? (
                   <div className="mt-1 text-xs text-[var(--muted-2)]">
@@ -947,6 +998,19 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 ) : null}
               </div>
             </div>
+
+            {filterDroppedNotice ? (
+              <div className="flex items-start justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-2.5 text-[13px] text-[var(--fg)]">
+                <span>That link was deleted — showing all links, so every number below is the whole document now.</span>
+                <button
+                  type="button"
+                  onClick={() => setFilterDroppedNotice(false)}
+                  className="shrink-0 font-medium text-[var(--muted)] underline-offset-2 hover:text-[var(--fg)] hover:underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
 
             {links && links.length > 1 ? (
               <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter by link">
@@ -1050,7 +1114,13 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                     ) : downloadsEnabled ? (
                       <span className="text-[var(--muted)]">PDF downloads</span>
                     ) : (
-                      <span className="text-[var(--muted)]">PDF download is disabled for this share link.</span>
+                      // "this share link" named one link on a surface that aggregates all of them,
+                      // so the reader could not tell what the sentence was about.
+                      <span className="text-[var(--muted)]">
+                        {selectedLinkLabel
+                          ? `PDF download is off for ${selectedLinkLabel}.`
+                          : "No link of this document allows PDF download."}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -1097,7 +1167,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               </div>
             </div>
 
-            {links && links.length > 1 ? (
+            {/* One live link plus a deleted one that still contributes rows is still two links
+                worth of traffic in the tiles above, and this table is the only thing that
+                reconciles them — gating it on the live count alone hid the explanation exactly
+                when it was needed. */}
+            {links && links.length + (deletedLinkResidual ? 1 : 0) > 1 ? (
               <div className="mt-1">
                 <div className="text-sm font-semibold text-[var(--fg)]">Links</div>
                 <div className="mt-1 text-sm text-[var(--muted)]">
@@ -1110,7 +1184,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                       <thead>
                         <tr className="border-b border-[var(--border)] text-[11px] uppercase tracking-wide text-[var(--muted-2)]">
                           <th scope="col" className="px-4 py-2 font-semibold">Link</th>
-                          <th scope="col" className="px-4 py-2 text-right font-semibold">Views</th>
+                          {/* No "Views" column beside this one: a `ShareView` row is unique per
+                              (link, viewer) for life, so the per-link view count and the per-link
+                              viewer count are the same number by construction — two columns of
+                              identical figures invited the reader to look for a difference that
+                              cannot exist. See the header of the shareviews route. */}
                           <th scope="col" className="px-4 py-2 text-right font-semibold">Viewers</th>
                           <th scope="col" className="px-4 py-2 text-right font-semibold">Downloads</th>
                           <th scope="col" className="px-4 py-2 text-right font-semibold">Last viewed</th>
@@ -1142,15 +1220,38 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                                   {l.status !== "active" ? <span className="capitalize">{l.status}</span> : null}
                                 </div>
                               </td>
-                              <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.views : "—"}</td>
                               <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.viewers : "—"}</td>
                               <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.downloads : "—"}</td>
+                              {/* The analytics timestamp first: the link row's own `lastViewedAt`
+                                  only started moving when links shipped, so a link that adopted a
+                                  document's older traffic printed "—" beside a non-zero Views cell. */}
                               <td className="px-4 py-2 text-right text-[var(--muted)]">
-                                {l.lastViewedAt ? formatDateTime(l.lastViewedAt) : "—"}
+                                {s?.lastViewedAt
+                                  ? formatDateTime(s.lastViewedAt)
+                                  : l.lastViewedAt
+                                    ? formatDateTime(l.lastViewedAt)
+                                    : "—"}
                               </td>
                             </tr>
                           );
                         })}
+                        {/* Deleted links keep their analytics (that is the promise the links page
+                            makes) and their rows are still in the document total, but the links
+                            endpoint does not return them — so without this row the column silently
+                            fails to add up to the card above it. */}
+                        {deletedLinkResidual ? (
+                          <tr className="border-b border-[var(--border)] text-[var(--muted)] last:border-b-0">
+                            <td className="px-4 py-2">
+                              <span className="font-medium">
+                                {deletedLinkResidual.count === 1 ? "Deleted link" : `${deletedLinkResidual.count} deleted links`}
+                              </span>
+                              <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">Still counted in the totals above</div>
+                            </td>
+                            <td className="px-4 py-2 text-right tabular-nums">{deletedLinkResidual.viewers}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">{deletedLinkResidual.downloads}</td>
+                            <td className="px-4 py-2 text-right">—</td>
+                          </tr>
+                        ) : null}
                       </tbody>
                     </table>
                   </div>
@@ -1164,6 +1265,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 loading={loading || !hasData}
                 count={viewerCount}
                 days={days}
+                linkLabel={selectedLinkLabel}
                 onUpgrade={() => openUpgrade("analytics_history")}
               />
             ) : (

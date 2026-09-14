@@ -3,11 +3,17 @@
  * Route: `/api/docs/:docId/shareviews/visits`
  *
  * Deep analytics: Free workspaces get `402 plan_limit` (`analytics_history`); Pro gets the visits.
+ *
+ * `?shareId=<slug>` scopes the timeline to one link of the document, exactly as on
+ * `/api/docs/:docId/shareviews`. Without it the answer covers every link. The same browser
+ * (`botIdHash` lives in localStorage) opens every link of a document, so an unscoped answer under
+ * a link filter attributed other links' sessions to the selected one.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
@@ -78,7 +84,22 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const gate = await checkLimit(actor.orgId, "analytics_history");
     if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
 
-    const query: Record<string, unknown> = { docId: docObjectId };
+    // Per-link scope. An unknown slug is a 404, like the metrics route — never a silent whole-doc read.
+    const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();
+    const link = shareIdFilter
+      ? await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId }).lean<ShareLink>()
+      : null;
+    if (shareIdFilter && !link) {
+      return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+    }
+
+    // `docId` stays in the filter even under a link filter: `sharevisits.shareId` is only unique
+    // together with (botIdHash, visitIdHash), so a slug is not by itself a tenancy boundary on
+    // this collection — only `sharelinks.shareId` is globally unique, and nothing re-checks that
+    // invariant on the analytics rows after a slug rotation, a restored backup or a doc clone.
+    // `visits/[visitId]` already anchors on both; the route that returns a *list* must not be the
+    // looser of the two.
+    const query: Record<string, unknown> = link ? { docId: docObjectId, shareId: link.shareId } : { docId: docObjectId };
     if (kind === "authed") query.viewerUserId = new Types.ObjectId(userId!);
     if (kind === "anon") query.botIdHash = botIdHash!.trim();
 
@@ -101,6 +122,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         {
           ok: true,
           docId,
+          /** The link these visits are scoped to, or null for "every link of the document". */
+          shareId: link ? link.shareId : null,
           kind,
           visits: visits.map((v: any) => ({
             visitId: String(v._id),

@@ -22,8 +22,15 @@ import { usePlan } from "@/lib/client/usePlan";
  * window; both open the `analytics_history` upsell.
  */
 
-/** The few `ShareLinkDTO` fields the summary line needs (`GET /api/docs/:docId/links`). */
-type LinkSummary = { id: string; label: string; viewCount: number };
+/**
+ * The few `ShareLinkDTO` fields the summary line needs (`GET /api/docs/:docId/links`).
+ *
+ * `viewCount` is deliberately absent: that counter only started counting when links shipped, so on
+ * a document with older traffic it ranked the wrong link "most viewed" and printed a number that
+ * contradicted the Views tile three lines above it. The ranking comes from `byLink` below — the
+ * same aggregate the tiles come from.
+ */
+type LinkSummary = { id: string; label: string; shareId: string };
 
 type Snapshot = {
   updatedAt: string | null;
@@ -46,16 +53,33 @@ type StatsResponse = {
     views?: number;
     downloads?: number;
     pagesViewed?: number;
+    /** Total time on the document within the window (ms), summed across every viewer. */
+    timeSpentMs?: number;
     authenticatedViewers?: number;
     anonymousViewers?: number;
   };
   series?: Array<{ date: string; views: number; downloads: number }>;
+  /** Whether downloads are allowed on any live link of the document (a label, not a filter). */
+  downloadsEnabled?: boolean;
+  /** `?byLink=1`: the same window per link slug; the rows sum to `totals`. */
+  byLink?: Array<{ shareId: string; views: number; viewers: number; downloads: number }>;
 };
 
 const DAYS = 15;
 
 function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
+}
+
+/** Compact reading time for a tile: "0s", "45s", "12m", "3h 20m". */
+function formatDurationMs(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
 function formatDayLabel(isoDay: string): string {
@@ -203,17 +227,38 @@ export default function DocQuickStats({
     };
   }, [docId, rev]);
 
+  /**
+   * How many links these tiles actually cover.
+   *
+   * `GET /api/docs/:docId/links` omits archived links, but the tiles are `{ docId }`-scoped
+   * aggregates and include a deleted link's rows by design — so a document whose second link was
+   * deleted printed "all 1 links" over totals that counted two. The union with the slugs `byLink`
+   * reports (the same aggregate the tiles come from) names the real set.
+   */
+  const coveredLinkCount = useMemo(() => {
+    const slugs = new Set<string>((links ?? []).map((l) => l.shareId));
+    for (const row of live?.byLink ?? []) if (row?.shareId) slugs.add(row.shareId);
+    return slugs.size;
+  }, [links, live]);
+
+  // Ranked by the windowed per-link viewers from the same response as the tiles, so the number on
+  // this line and the Viewers tile are the same kind of thing and can be compared. Ranked over
+  // `byLink`, not over `links`: iterating the live links skipped a deleted link that out-performed
+  // every surviving one, and the traffic it is being compared against is in the tiles regardless.
   const topLink = useMemo(() => {
-    if (!links || links.length < 2) return null;
-    const best = [...links].sort((a, b) => num(b.viewCount) - num(a.viewCount))[0];
-    return best && num(best.viewCount) > 0 ? best : null;
-  }, [links]);
+    if (coveredLinkCount < 2) return null;
+    const labelByShareId = new Map((links ?? []).map((l) => [l.shareId, l.label]));
+    const ranked = [...(live?.byLink ?? [])]
+      .map((r) => ({ label: labelByShareId.get(r.shareId) ?? "Deleted link", views: num(r.viewers) }))
+      .sort((a, b) => b.views - a.views);
+    return ranked[0] && ranked[0].views > 0 ? ranked[0] : null;
+  }, [links, live, coveredLinkCount]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/shareviews?days=${DAYS}&lite=1`, {
+        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/shareviews?days=${DAYS}&lite=1&byLink=1`, {
           cache: "no-store",
         });
         if (!res.ok) throw new Error(String(res.status));
@@ -232,10 +277,14 @@ export default function DocQuickStats({
     const t = live?.totals;
     // `viewerCount` is the unique-people figure every tier receives; older responses only carry the split.
     const viewers = typeof live?.viewerCount === "number" ? num(live.viewerCount) : t ? num(t.authenticatedViewers) + num(t.anonymousViewers) : null;
+    // Both the snapshot and the live response now speak the same language — the window, not
+    // lifetime — so the first paint and the second show the same kind of number instead of the
+    // tile jumping from "3 this week" to "41 ever" when the fetch lands.
     const views = t ? num(t.views) : snapshot ? num(snapshot.lastDaysViews) : null;
-    const downloads = t ? num(t.downloads) : snapshot ? num(snapshot.downloadsTotal) : null;
+    const downloads = t ? num(t.downloads) : snapshot ? num(snapshot.lastDaysDownloads) : null;
     const pages = t ? num(t.pagesViewed) : null;
-    return { viewers, views, downloads, pages };
+    const timeSpentMs = t && typeof t.timeSpentMs === "number" ? num(t.timeSpentMs) : null;
+    return { viewers, views, downloads, pages, timeSpentMs };
   }, [live, snapshot]);
 
   const series = useMemo(
@@ -288,28 +337,46 @@ export default function DocQuickStats({
         <div className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
           <ChartBarIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
           <span className="truncate">Analytics</span>
-          <span className="font-normal normal-case tracking-normal text-[var(--muted)]">· last {shownDays} days</span>
+          {/* Name the scope, not just the window. This card sits directly under the links panel,
+              which is headed with the DEFAULT link's address and settings, so without "all N links"
+              the reader takes these tiles for the default link's numbers and concludes the other
+              links got nothing. "All links" is the same wording as the metrics page chip. */}
+          <span className="font-normal normal-case tracking-normal text-[var(--muted)]">
+            {coveredLinkCount > 1 ? `· all ${coveredLinkCount} links · ` : "· "}last {shownDays} days
+          </span>
         </div>
         <div className="text-[11px] text-[var(--muted-2)]">{failed ? "Live stats unavailable" : (freshness ?? "")}</div>
       </div>
 
+      {/* Four tiles, four different facts. "Views" used to sit beside "Viewers" and print the
+          same number: a `ShareView` row is unique per (link, viewer) for life, so counting rows
+          in the window and counting link-recipients in the window are the same arithmetic, and on
+          all-anonymous traffic the card read "Viewers 18 / Views 18" forever. Time on document is
+          the fact that was missing — it comes from the same windowed `totals` object. */}
       <div className="mt-3 grid grid-cols-4 gap-3">
         {tile("Viewers", stats.viewers, viewersSub)}
-        {tile("Views", stats.views)}
-        {/* `downloadsEnabled` is the legacy document-level flag; downloads are per link now, so a
-            real count always wins and "Off" is only the honest answer when there is nothing to show. */}
-        {tile("Downloads", downloadsEnabled || (typeof stats.downloads === "number" && stats.downloads > 0) ? stats.downloads : "Off")}
+        {tile("Time", stats.timeSpentMs === null ? null : formatDurationMs(stats.timeSpentMs))}
+        {/* The prop is the legacy document-level flag, which only mirrors the DEFAULT link, so it
+            said "Off" on a document whose second link was being downloaded daily. The response's
+            `downloadsEnabled` is "any live link allows it"; and a real count still always wins, so
+            "Off" is only the honest answer when nothing allows it and nothing was ever downloaded. */}
+        {tile(
+          "Downloads",
+          (live?.downloadsEnabled ?? downloadsEnabled) || (typeof stats.downloads === "number" && stats.downloads > 0)
+            ? stats.downloads
+            : "Off",
+        )}
         {tile("Pages", stats.pages)}
       </div>
 
-      {links && links.length > 1 ? (
+      {coveredLinkCount > 1 ? (
         <div className="mt-3 text-[11px] text-[var(--muted-2)]">
-          <span className="font-medium text-[var(--muted)]">{links.length} links</span>
+          <span className="font-medium text-[var(--muted)]">{coveredLinkCount} links</span>
           {topLink ? (
             <>
               {" · most viewed: "}
               <span className="font-medium text-[var(--fg)]">{topLink.label}</span>{" "}
-              <span className="tabular-nums">({num(topLink.viewCount).toLocaleString()})</span>
+              <span className="tabular-nums">({topLink.views.toLocaleString()})</span>
             </>
           ) : null}
         </div>

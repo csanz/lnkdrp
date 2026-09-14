@@ -359,7 +359,8 @@ export default function DocMetricsModal({
                 ) : downloadsEnabled ? (
                   <span className="text-[var(--muted)]">PDF downloads</span>
                 ) : (
-                  <span className="text-[var(--muted)]">PDF download is disabled for this share link.</span>
+                  // This modal always shows the whole document, so it cannot name "this share link".
+                  <span className="text-[var(--muted)]">No link of this document allows PDF download.</span>
                 )}
               </div>
             </div>

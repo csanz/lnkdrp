@@ -56,6 +56,13 @@ const shareDownloadRequestSchema = new Schema(
   { timestamps: { createdAt: "createdDate", updatedAt: "updatedDate" }, minimize: false },
 );
 
+// The two questions this collection can answer, both of them prefix-covered by one compound:
+// "pending requests on the Sequoia link" and "requests on this document", newest first. The
+// single-field `shareId` / `docId` indexes stay as the prefix of these (dropping them is a
+// separate migration).
+shareDownloadRequestSchema.index({ shareId: 1, status: 1, createdDate: -1 });
+shareDownloadRequestSchema.index({ docId: 1, status: 1, createdDate: -1 });
+
 export type ShareDownloadRequest = InferSchemaType<typeof shareDownloadRequestSchema>;
 
 export const ShareDownloadRequestModel: Model<ShareDownloadRequest> = (() => {

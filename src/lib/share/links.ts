@@ -518,13 +518,30 @@ export async function setAllLinksEnabled(input: { orgId: string | Types.ObjectId
   return { changed, limit };
 }
 
-/** Record a view/download on the link row (best effort; analytics rows are the source of truth). */
-export async function touchShareLink(shareId: string, kind: "view" | "download"): Promise<void> {
+/**
+ * Record activity on the link row (best effort; the analytics rows stay the source of truth).
+ *
+ * `lastViewedAt` is a timestamp, not a side effect of a counter: it moves on every view and on
+ * every download. It used to be written only when a brand-new viewer appeared, so a recipient who
+ * came back every day never moved it and a download-only link read "Never viewed" — beside a
+ * non-zero Views column, which readers took as proof the numbers were junk.
+ *
+ * `viewCount` counts *viewers* (one per new `ShareView` row), so `opts.countView: false` lets a
+ * returning viewer move the timestamp without inflating it. `$max` sets a null/absent field.
+ */
+export async function touchShareLink(
+  shareId: string,
+  kind: "view" | "download",
+  opts: { countView?: boolean } = {},
+): Promise<void> {
   try {
     await connectMongo();
+    const now = new Date();
     await ShareLinkModel.updateOne(
       { shareId },
-      kind === "view" ? { $set: { lastViewedAt: new Date() }, $inc: { viewCount: 1 } } : { $inc: { downloadCount: 1 } },
+      kind === "view"
+        ? { $max: { lastViewedAt: now }, ...(opts.countView === false ? {} : { $inc: { viewCount: 1 } }) }
+        : { $max: { lastViewedAt: now }, $inc: { downloadCount: 1 } },
     );
   } catch {
     // never fail a share page over a counter

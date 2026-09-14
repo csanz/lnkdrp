@@ -80,7 +80,22 @@ updatedDate, archivedAt, lastViewedAt, viewCount, downloadCount }`. Indexes: `sh
 one release; stop reading `shareAllowPdfDownload`, `sharePasswordHash`,
 `shareAllowRevisionHistory` from the document after migration. `ShareView` / `ShareVisit` /
 `DocPageTiming`: add `shareLinkId` (ObjectId) beside `shareId` for joins; `shareId` stays the
-analytics key.
+analytics key. All three also carry `orgId` (denormalized tenancy) on `ShareView` / `ShareVisit`, so
+workspace-level analytics is an indexed scan rather than a `$lookup` into `docs`. `shareLinkId` is
+written with `$set` (never `$setOnInsert`) so a pre-existing row self-heals, and
+`scripts/sharelinks-analytics-backfill.ts` fills the rows nobody visits again — a null join handle is
+worse than no field, because a query written as `{ shareLinkId }` then returns a plausible fraction
+of the truth. On `DocPageTiming` the link dimension only ever applies to a workspace member reading
+through a link: a public share visitor cannot write that collection, and its per-page external
+equivalent is `ShareView.pageTimeMsByPage` / `ShareVisit.pageTimeMsByPage`.
+
+**Status of the `DocPageTiming` link dimension: schema and ingest done, emitter NOT done.** The
+fields, the indexes, the `POST /api/metrics/events` handling and the client helper
+(`trackDocPageTiming`) are in place and verified end to end, but nothing calls the helper: the only
+surface that reads a document page in-app is the owner doc viewer, and `docpagetimings` is empty. So
+`/history/:version/recipients` still answers `opened: false` for everyone, and "how did the
+recipients of the Sequoia link read v3" cannot be answered yet. Do not mark this requirement
+satisfied until a reader calls `trackDocPageTiming` with the slug it was opened through.
 
 ### Resolution
 

@@ -8,6 +8,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
@@ -56,7 +57,21 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const gate = await checkLimit(actor.orgId, "analytics_history");
     if (!gate.ok) return applyTempUserHeaders(planLimitResponse(gate), actor);
 
-    const visit = await ShareVisitModel.findOne({ _id: new Types.ObjectId(visitId), docId: docObjectId })
+    // `?shareId=` makes the lookup refuse a visit that belongs to another link of this document,
+    // so a link-filtered page cannot open a session it is not showing.
+    const shareIdFilter = (new URL(request.url).searchParams.get("shareId") ?? "").trim();
+    const link = shareIdFilter
+      ? await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId }).lean<ShareLink>()
+      : null;
+    if (shareIdFilter && !link) {
+      return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+    }
+
+    const visit = await ShareVisitModel.findOne({
+      _id: new Types.ObjectId(visitId),
+      docId: docObjectId,
+      ...(link ? { shareId: link.shareId } : {}),
+    })
       .select({
         _id: 1,
         shareId: 1,

@@ -17,7 +17,27 @@ const shareViewSchema = new Schema(
      * handle and is null for rows written before the model existed.
      */
     shareLinkId: { type: Schema.Types.ObjectId, ref: "ShareLink", index: true, default: null },
+    /**
+     * Workspace that owns the document this view belongs to. Denormalized so workspace-level
+     * questions ("how did this org's documents do this month") are one indexed range scan instead
+     * of a `$lookup` into `docs`. Null on rows written before the field existed until
+     * `scripts/sharelinks-analytics-backfill.ts` has run.
+     */
+    orgId: { type: Schema.Types.ObjectId, ref: "Org", index: true, default: null },
     botIdHash: { type: String, trim: true, index: true, required: true },
+    /**
+     * When this viewer last actually read the share — written **only** by the view ingest path
+     * (`POST /api/share/:shareId/stats`, `/s/:shareId/pdf`).
+     *
+     * "Last viewed" used to be `$max: "$updatedDate"`, and Mongoose stamps `updatedDate` on every
+     * update query: a maintenance pass (`scripts/sharelinks-analytics-backfill.ts`, the
+     * viewer-name backfill the metrics route itself fires in `after()`, any future repair) rewrote
+     * the entire column to the instant it ran, so every link in the table read "just now" after an
+     * owner reloaded their own metrics page. A field nothing but a view touches cannot do that.
+     * Null on rows written before the field existed; they fall back to `updatedDate` and self-heal
+     * on that viewer's next visit.
+     */
+    lastViewedAt: { type: Date, default: null },
     pagesSeen: { type: [Number], default: [] },
     /**
      * Best-effort total time spent viewing this share (milliseconds).
@@ -71,6 +91,15 @@ shareViewSchema.index({ shareId: 1, botIdHash: 1 }, { unique: true });
 shareViewSchema.index({ updatedDate: -1 });
 shareViewSchema.index({ docId: 1, updatedDate: -1 });
 shareViewSchema.index({ docId: 1, createdDate: -1 });
+
+// Per-link mirrors of the two docId compounds above. Every owner analytics read is scoped either
+// to one link (`{ shareId }`) or to the document (`{ docId }`) and then bounded by a date window;
+// without these the per-link path planned an IXSCAN on `shareId_1` and fetch-filtered the date.
+shareViewSchema.index({ shareId: 1, createdDate: -1 });
+shareViewSchema.index({ shareId: 1, updatedDate: -1 });
+
+// Workspace-level reads (usage meter, org exports, retention sweeps).
+shareViewSchema.index({ orgId: 1, createdDate: -1 });
 
 export type ShareView = InferSchemaType<typeof shareViewSchema>;
 

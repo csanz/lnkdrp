@@ -12,6 +12,33 @@
  * Multiple links per document (docs/prds/lnkdrp-multi-links.md): without `?shareId=` every number
  * covers the whole document (all of its links); with `?shareId=<slug>` the same response is scoped
  * to that one link. The response shape is identical either way.
+ *
+ * One rule holds the two scopes together: **every figure comes from the same pipeline, and only
+ * the `$match` changes** (`scopeMatch` is `{ shareId }` or `{ docId }`). No denormalized counter
+ * is read here any more — `Doc.numberOfViews` / `Doc.numberOfPagesViewed` only survive as a
+ * fallback for a document whose rows have been swept — because a counter and a row count drift
+ * (the `/s/:shareId/pdf` download path creates rows, cleanup deletes them) and the drift is
+ * visible now that the per-link table sits directly under the "All links" tile.
+ *
+ * Two consequences worth knowing:
+ * - `totals` covers the `days` window, like `series` and `viewerCount`, so one response speaks one
+ *   language. Lifetime figures are still returned, separately, as `totalsAllTime`.
+ * - A window on `ShareView` means "viewers first seen in the window" (`createdDate`): a row is
+ *   lifetime-per-(link, viewer), which is exactly what the views-by-day series already counted.
+ * - `views`, `downloads` and `viewers` are additive, so the document's number equals the sum over
+ *   its links. A viewer is counted **once per link**: the same browser opening two links is two
+ *   link-recipients, because the per-link table sits under the "All links" tiles and readers add
+ *   the column up (see `LINK_VIEWER_KEY_EXPR`). `pagesViewed` is the one exception — a *distinct*
+ *   set ("how much of the deck was reached"), so the document's figure is the union across links
+ *   and is ≤ the sum of the per-link figures, never > the deck.
+ *
+ * Known limitation, stated so nobody reads more into the number than is there: a `ShareView` row
+ * is unique per (link, viewer) for life, so `totals.views` counts the (link, viewer) pairs *first
+ * seen* in the window and is equal to `totals.authenticatedViewers + totals.anonymousViewers` by
+ * construction. It is "how many new recipients opened this", not "how many times it was opened" —
+ * per-open counting needs `ShareVisit` (one row per tab session), whose coverage only starts from
+ * the visit-upsert fix and so cannot answer for historical traffic yet. Surfaces must not print
+ * `views` and `viewers` side by side as if they were two facts.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -23,7 +50,13 @@ import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
-import { listShareLinks } from "@/lib/share/links";
+import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import {
+  LAST_ACTIVITY_EXPR,
+  LINK_VIEWER_KEY_EXPR,
+  pageTimeMergeExpr,
+  windowStartUtc,
+} from "@/lib/analytics/shareViewAggregates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,42 +81,49 @@ function utcDayKey(d: Date): string {
 }
 
 /**
- * Merge an array of objects like [{k, v}] into a summed object.
- * (Used in Mongo aggregation projections.)
+ * Sum the `pageTimeMsByPage` maps pushed by the viewer `$group` into one object.
+ *
+ * Built from the `$group` output field directly — see `pageTimeMergeExpr`, which documents why
+ * referencing a sibling alias of the same `$project` silently produced `{}` for every viewer.
  */
-const MERGE_PAGE_TIME_OBJECTS = {
-  $let: {
-    vars: {
-      allItems: {
-        $reduce: {
-          input: "$pageTimeItemsArrays",
-          initialValue: [],
-          in: { $concatArrays: ["$$value", "$$this"] },
+const MERGE_PAGE_TIME_OBJECTS = pageTimeMergeExpr("pageTimeMaps");
+type ScopeTotals = { views: number; pagesViewed: number; lastSeen: Date | null };
+
+/**
+ * Views and distinct pages for one scope. The caller supplies the `$match` — `{ shareId }` for a
+ * link, `{ docId }` for the document, either of them optionally bounded by `createdDate` — so the
+ * two scopes are the same arithmetic on different rows and cannot disagree about what a number means.
+ */
+async function totalsForMatch(match: Record<string, unknown>): Promise<ScopeTotals> {
+  const rows = (await ShareViewModel.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: null,
+        views: { $sum: 1 },
+        // Real view activity only — never `updatedDate`, which any maintenance write stamps.
+        lastSeen: { $max: LAST_ACTIVITY_EXPR },
+        pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
+      },
+    },
+    {
+      $project: {
+        _id: 0,
+        views: 1,
+        lastSeen: 1,
+        pagesViewed: {
+          $size: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
         },
       },
     },
-    in: {
-      $arrayToObject: {
-        $map: {
-          input: { $setUnion: [{ $map: { input: "$$allItems", as: "it", in: "$$it.k" } }, []] },
-          as: "k",
-          in: {
-            k: "$$k",
-            v: {
-              $sum: {
-                $map: {
-                  input: "$$allItems",
-                  as: "it",
-                  in: { $cond: [{ $eq: ["$$it.k", "$$k"] }, { $ifNull: ["$$it.v", 0] }, 0] },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-};
+  ])) as Array<{ views?: number; pagesViewed?: number; lastSeen?: Date | null }>;
+  const row = rows[0];
+  return {
+    views: typeof row?.views === "number" && Number.isFinite(row.views) ? row.views : 0,
+    pagesViewed: typeof row?.pagesViewed === "number" && Number.isFinite(row.pagesViewed) ? row.pagesViewed : 0,
+    lastSeen: row?.lastSeen ? new Date(row.lastSeen) : null,
+  };
+}
 /**
  * Handle GET requests.
  */
@@ -101,6 +141,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       }
 
       const requestedDays = Math.min(60, asPositiveInt(url.searchParams.get("days")) ?? 15);
+      /** `?byLink=1` adds the same window broken down per link, in the same response. */
+      const wantsByLink = url.searchParams.get("byLink") === "1";
       /** Optional per-link filter: the slug of one of the document's share links. */
       const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();
       const wantsViewers = url.searchParams.get("viewers") === "1";
@@ -154,10 +196,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
 
       // `?shareId=` scopes every aggregate to one link of this document; without it the numbers
       // cover the document (all its links). An unknown slug is a 404, not a silent whole-doc read.
+      //
+      // One hit on the unique `shareId_1` index, with `docId` keeping the ownership check. This
+      // used to go through `listShareLinks`, which lists every link of the document *and* runs
+      // `ensureDefaultLink` — i.e. a read-only analytics GET could create a share link and update
+      // the document as a side effect, twelve times over on a twelve-link metrics page.
       const link = shareIdFilter
-        ? (await listShareLinks({ orgId: docOrgIdRaw ? String(docOrgIdRaw) : actor.orgId, docId: docObjectId, includeArchived: true })).find(
-            (l) => l.shareId === shareIdFilter,
-          ) ?? null
+        ? await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId }).lean<ShareLink>()
         : null;
       if (shareIdFilter && !link) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -165,49 +210,50 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       /** What every `ShareView` aggregate matches on: one link, or the whole document. */
       const scopeMatch: Record<string, unknown> = link ? { shareId: link.shareId } : { docId: docObjectId };
 
-      const start = new Date();
-      start.setUTCHours(0, 0, 0, 0);
-      start.setUTCDate(start.getUTCDate() - (days - 1));
-
+      const start = windowStartUtc(days);
       const startKey = utcDayKey(start);
+      // A capability, never a gate. This is what the UI may *say* about downloads; it decides
+      // nothing about what is counted. The document-level `shareAllowPdfDownload` is only a mirror
+      // of the default link's setting, so reading it here reported "Off" for a document whose
+      // second link was being downloaded daily — and, worse, suppressed the download aggregates
+      // entirely, hiding rows that exist.
       const downloadsEnabled = link
         ? Boolean(link.allowDownload)
-        : Boolean((doc as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload);
+        : // "Live" is `isLinkActive`: enabled, not archived, **and** not expired. Checking only
+          // `archivedAt` reported "PDF downloads enabled" for a document whose one
+          // download-allowing link had been switched off or had expired.
+          Boolean(
+            await ShareLinkModel.exists({
+              docId: docObjectId,
+              archivedAt: null,
+              enabled: true,
+              allowDownload: true,
+              $or: [{ expiresAt: null }, { expiresAt: { $exists: false } }, { expiresAt: { $gt: new Date() } }],
+            }),
+          ) ||
+          Boolean((doc as unknown as { shareAllowPdfDownload?: unknown }).shareAllowPdfDownload);
 
-      // Document totals come from the denormalized counters; a per-link read recomputes them from
-      // the link's own rows (`numberOfViews` is incremented once per new ShareView row, so the two
-      // agree by construction).
-      const linkTotals = link
-        ? ((
-            await ShareViewModel.aggregate([
-              { $match: { shareId: link.shareId } },
-              { $group: { _id: null, views: { $sum: 1 }, pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } } } },
-              {
-                $project: {
-                  _id: 0,
-                  views: 1,
-                  pagesViewed: {
-                    $size: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
-                  },
-                },
-              },
-            ])
-          )[0] as { views?: number; pagesViewed?: number } | undefined) ?? { views: 0, pagesViewed: 0 }
-        : null;
+      // Totals for the window, and the lifetime figures beside them. Both scopes run the same
+      // aggregation over `scopeMatch`, so "All links" is the sum of its links by construction.
+      const [windowTotals, allTimeTotals] = await Promise.all([
+        totalsForMatch({ ...scopeMatch, createdDate: { $gte: start } }),
+        totalsForMatch(scopeMatch),
+      ]);
 
-      const totalViews = linkTotals
-        ? (typeof linkTotals.views === "number" ? linkTotals.views : 0)
-        : typeof (doc as any).numberOfViews === "number"
-          ? (doc as any).numberOfViews
-          : 0;
-      const pagesViewed = linkTotals
-        ? (typeof linkTotals.pagesViewed === "number" ? linkTotals.pagesViewed : 0)
-        : typeof doc.numberOfPagesViewed === "number"
-          ? doc.numberOfPagesViewed
-          : 0;
+      // The counters are a floor for a document whose rows were swept by a cleanup script; they
+      // are never allowed to *replace* the row count, which is the only recomputable number.
+      //
+      // Document scope only. `Doc.numberOfViews` is the sum over every link, so applying it in the
+      // filtered branch reported the whole document's lifetime traffic as the traffic of one link
+      // — a link nobody had ever opened answered `totalsAllTime.views: 20`.
+      const legacyViews = link ? 0 : typeof (doc as any).numberOfViews === "number" ? (doc as any).numberOfViews : 0;
+      const allTimeViews = allTimeTotals.views > 0 ? allTimeTotals.views : legacyViews;
+      const totalViews = windowTotals.views;
+      const pagesViewed = windowTotals.pagesViewed;
 
       const series: Array<{ date: string; views: number; downloads: number }> = [];
       let totalDownloads = 0;
+      let allTimeDownloads = 0;
       if (!viewersOnly) {
         const [seriesAgg, downloadsSeriesAgg, downloadsAgg] = await Promise.all([
           ShareViewModel.aggregate([
@@ -220,26 +266,24 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             },
             { $sort: { _id: 1 } },
           ]) as Promise<Array<{ _id: string; views: number }>>,
-          downloadsEnabled
-            ? (ShareViewModel.aggregate([
-                { $match: { ...scopeMatch } },
-                {
-                  $project: {
-                    items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } },
-                  },
-                },
-                { $unwind: "$items" },
-                { $match: { "items.k": { $gte: startKey } } },
-                { $group: { _id: "$items.k", downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
-                { $sort: { _id: 1 } },
-              ]) as Promise<Array<{ _id: string; downloads: number }>>)
-            : Promise.resolve([] as Array<{ _id: string; downloads: number }>),
-          downloadsEnabled
-            ? (ShareViewModel.aggregate([
-                { $match: { ...scopeMatch } },
-                { $group: { _id: null, downloads: { $sum: { $ifNull: ["$downloads", 0] } } } },
-              ]) as Promise<Array<{ downloads?: number }>>)
-            : Promise.resolve([] as Array<{ downloads?: number }>),
+          // Always run, whatever the settings flag says: a download that happened is a fact, and
+          // turning a link's download toggle off later must not retroactively erase it.
+          ShareViewModel.aggregate([
+            { $match: { ...scopeMatch } },
+            {
+              $project: {
+                items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } },
+              },
+            },
+            { $unwind: "$items" },
+            { $match: { "items.k": { $gte: startKey } } },
+            { $group: { _id: "$items.k", downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
+            { $sort: { _id: 1 } },
+          ]) as Promise<Array<{ _id: string; downloads: number }>>,
+          ShareViewModel.aggregate([
+            { $match: { ...scopeMatch } },
+            { $group: { _id: null, downloads: { $sum: { $ifNull: ["$downloads", 0] } } } },
+          ]) as Promise<Array<{ downloads?: number }>>,
         ]);
 
         const byDay = new Map<string, number>(seriesAgg.map((x) => [x._id, x.views]));
@@ -251,8 +295,90 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           series.push({ date: key, views: byDay.get(key) ?? 0, downloads: downloadsByDay.get(key) ?? 0 });
         }
 
-        totalDownloads =
+        // The windowed total is the area under the chart, by construction: same rows, same bound.
+        totalDownloads = downloadsSeriesAgg.reduce(
+          (acc, x) => acc + (typeof x.downloads === "number" && Number.isFinite(x.downloads) ? x.downloads : 0),
+          0,
+        );
+        allTimeDownloads =
           downloadsAgg && downloadsAgg[0] && typeof downloadsAgg[0].downloads === "number" ? downloadsAgg[0].downloads : 0;
+      }
+
+      // The same window, grouped by link. One aggregation instead of one request per link, and —
+      // because it is the same pipeline as `totals` with a `$group` on `$shareId` — the rows add up
+      // to the header by construction, archived links included (their rows are in the document
+      // scope even though the link no longer resolves).
+      //
+      // Always the whole document, whatever `?shareId=` says: this breakdown exists to compare the
+      // links with each other, and a filtered page still renders the full table under its cards.
+      // So `sum(byLink) === totals` holds exactly when no link filter is applied.
+      type ByLinkRow = { shareId: string; views: number; viewers: number; downloads: number; pagesViewed: number; lastViewedAt: string | null };
+      let byLink: ByLinkRow[] | null = null;
+      if (wantsByLink) {
+        const [perLinkAgg, perLinkDownloadsAgg] = await Promise.all([
+          ShareViewModel.aggregate([
+            // Matched all-time so every slug that ever had traffic gets a row (and a real
+            // `lastViewedAt`); the window is applied inside the accumulators, so the counts still
+            // cover `days`.
+            { $match: { docId: docObjectId } },
+            {
+              $group: {
+                // One bucket per (link, viewer identity): the inner group is what makes `viewers`
+                // a count of people rather than of rows. The document-scope `windowAgg` below
+                // groups on the same key, which is what makes `sum(byLink[].viewers)` equal the
+                // document's `viewerCount` instead of undercounting it by the shared browsers.
+                _id: LINK_VIEWER_KEY_EXPR,
+                views: { $sum: { $cond: [{ $gte: ["$createdDate", start] }, 1, 0] } },
+                lastSeen: { $max: LAST_ACTIVITY_EXPR },
+                pagesSeenArrays: {
+                  $push: { $cond: [{ $gte: ["$createdDate", start] }, { $ifNull: ["$pagesSeen", []] }, []] },
+                },
+              },
+            },
+            {
+              $group: {
+                _id: "$_id.shareId",
+                views: { $sum: "$views" },
+                viewers: { $sum: { $cond: [{ $gt: ["$views", 0] }, 1, 0] } },
+                lastSeen: { $max: "$lastSeen" },
+                pagesSeenArrays: {
+                  $push: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
+                },
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                shareId: "$_id",
+                views: 1,
+                viewers: 1,
+                lastSeen: 1,
+                pagesViewed: {
+                  $size: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
+                },
+              },
+            },
+          ]) as Promise<Array<{ shareId: string; views: number; viewers: number; pagesViewed: number; lastSeen?: Date | null }>>,
+          ShareViewModel.aggregate([
+            { $match: { docId: docObjectId } },
+            { $project: { shareId: 1, items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } } } },
+            { $unwind: "$items" },
+            { $match: { "items.k": { $gte: startKey } } },
+            { $group: { _id: "$shareId", downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
+          ]) as Promise<Array<{ _id: string; downloads: number }>>,
+        ]);
+        const downloadsBySlug = new Map<string, number>(perLinkDownloadsAgg.map((r) => [r._id, r.downloads]));
+        byLink = perLinkAgg
+          .map((r) => ({
+            shareId: typeof r.shareId === "string" ? r.shareId : "",
+            views: typeof r.views === "number" ? r.views : 0,
+            viewers: typeof r.viewers === "number" ? r.viewers : 0,
+            downloads: downloadsBySlug.get(r.shareId) ?? 0,
+            pagesViewed: typeof r.pagesViewed === "number" ? r.pagesViewed : 0,
+            lastViewedAt: r.lastSeen ? new Date(r.lastSeen).toISOString() : null,
+          }))
+          .filter((r) => Boolean(r.shareId))
+          .sort((a, b) => b.views - a.views);
       }
 
       const [viewersAgg, anonymousAgg] = includeViewers
@@ -284,13 +410,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   timeSpentMs: 1,
                   viewerName: 1,
                   viewerEmailSnapshot: 1,
-                  pageTimeItemsArrays: {
-                    $map: {
-                      input: "$pageTimeMaps",
-                      as: "m",
-                      in: { $objectToArray: { $ifNull: ["$$m", {}] } },
-                    },
-                  },
                   pageTimeMsByPage: MERGE_PAGE_TIME_OBJECTS,
                   pagesSeen: {
                     $reduce: {
@@ -310,7 +429,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   },
                 },
               },
-              { $unset: ["pageTimeItemsArrays", "pageTimeMaps"] },
               { $sort: { lastSeen: -1 } },
               { $limit: 100 },
             ]) as Promise<
@@ -353,13 +471,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   timeSpentMs: 1,
                   viewerName: 1,
                   viewerEmailSnapshot: 1,
-                  pageTimeItemsArrays: {
-                    $map: {
-                      input: "$pageTimeMaps",
-                      as: "m",
-                      in: { $objectToArray: { $ifNull: ["$$m", {}] } },
-                    },
-                  },
                   pageTimeMsByPage: MERGE_PAGE_TIME_OBJECTS,
                   pagesSeen: {
                     $reduce: {
@@ -379,7 +490,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   },
                 },
               },
-              { $unset: ["pageTimeItemsArrays", "pageTimeMaps"] },
               { $sort: { lastSeen: -1 } },
               { $limit: 100 },
             ]) as Promise<
@@ -401,21 +511,30 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
 
       // Window summary (both tiers): unique viewers and total time on the document within `days`.
       // Groups by viewer identity without projecting it, so it is safe to run on Basic.
+      //
+      // The bucket is (link, viewer), not viewer: a person who opened two links of this document
+      // is two link-recipients. That is the choice that keeps the document figure equal to the sum
+      // of the `byLink` rows rendered directly beneath it — grouping by person alone made the card
+      // say "3 people" over a table whose Viewers column added up to 4, with nothing on the page
+      // to reconcile them.
       const windowAgg = (await ShareViewModel.aggregate([
         { $match: { ...scopeMatch, createdDate: { $gte: start } } },
         {
           $group: {
             _id: {
-              $cond: [
-                { $ne: [{ $ifNull: ["$viewerUserId", null] }, null] },
-                { kind: "user", key: { $toString: "$viewerUserId" } },
-                { kind: "anon", key: { $ifNull: ["$botIdHash", ""] } },
-              ],
+              shareId: "$shareId",
+              viewer: {
+                $cond: [
+                  { $ne: [{ $ifNull: ["$viewerUserId", null] }, null] },
+                  { kind: "user", key: { $toString: "$viewerUserId" } },
+                  { kind: "anon", key: { $ifNull: ["$botIdHash", ""] } },
+                ],
+              },
             },
             timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
           },
         },
-        { $group: { _id: "$_id.kind", viewers: { $sum: 1 }, timeSpentMs: { $sum: "$timeSpentMs" } } },
+        { $group: { _id: "$_id.viewer.kind", viewers: { $sum: 1 }, timeSpentMs: { $sum: "$timeSpentMs" } } },
       ])) as Array<{ _id: "user" | "anon"; viewers?: number; timeSpentMs?: number }>;
       let windowAuthedViewers = 0;
       let windowAnonymousViewers = 0;
@@ -428,12 +547,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       }
       const viewerCount = windowAuthedViewers + windowAnonymousViewers;
 
-      // Deep keeps the all-time breakdown from the viewer rows (when requested); Basic reports the
-      // window counts so the UI can still say "4 people viewed this" without any identity.
-      const uniqueAuthedViewers =
-        analyticsTier === "deep" ? (includeViewers ? viewersAgg.length : 0) : windowAuthedViewers;
-      const uniqueAnonymousViewers =
-        analyticsTier === "deep" ? (includeViewers ? anonymousAgg.length : 0) : windowAnonymousViewers;
+      // Both tiers report the *window* counts, on every tier and whether or not viewer rows were
+      // asked for. They used to come from `viewersAgg.length` / `anonymousAgg.length` on Pro —
+      // lifetime aggregates with no date bound and a `$limit: 100` — so a `totals` object
+      // documented as covering `days` rendered "2 views · 0 authenticated viewers · 18 anonymous
+      // viewers" on one line of the Views card, and stopped growing past a hundred viewers.
+      // `viewerCount === authenticatedViewers + anonymousViewers` now holds by construction.
+      const uniqueAuthedViewers = windowAuthedViewers;
+      const uniqueAnonymousViewers = windowAnonymousViewers;
 
       // Best-effort background backfill for older ShareView rows that predate denormalized snapshots.
       // Keeps the read path join-free while allowing names/emails to appear over time.
@@ -483,7 +604,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   };
                 })
                 .filter(Boolean) as any[];
-              if (ops.length) await ShareViewModel.bulkWrite(ops, { ordered: false });
+              // `timestamps: false`: this is maintenance, not a view. Mongoose stamps
+              // `updatedDate` on any update query, and "Last viewed" is the `$max` over the rows,
+              // so an owner opening the metrics page used to reset the whole Last-viewed column of
+              // the links table to "just now" — the read path rewriting the number it reports.
+              if (ops.length) await ShareViewModel.bulkWrite(ops, { ordered: false, timestamps: false });
             } catch {
               // ignore
             }
@@ -500,8 +625,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         analyticsDaysLimit,
         /** `"basic"` (Free: no viewer identities / per-page data) or `"deep"` (Pro: everything). */
         analyticsTier,
-        /** Unique viewers (signed-in + anonymous) within the window; available on both tiers. */
+        /**
+         * Link-recipients (signed-in + anonymous) within the window; available on both tiers.
+         * One per (link, viewer), so the document's figure is the sum of the `byLink` rows and
+         * always equals `totals.authenticatedViewers + totals.anonymousViewers`.
+         */
         viewerCount,
+        /** Every figure here covers `days`, like `series` and `viewerCount`. No lifetime figure leaks in. */
         totals: {
           views: totalViews,
           downloads: totalDownloads,
@@ -511,6 +641,30 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           authenticatedViewers: uniqueAuthedViewers,
           anonymousViewers: uniqueAnonymousViewers,
         },
+        /** Lifetime figures for the same scope, for cards that genuinely want "ever". */
+        totalsAllTime: {
+          views: allTimeViews,
+          downloads: allTimeDownloads,
+          pagesViewed: allTimeTotals.pagesViewed,
+        },
+        /**
+         * Most recent recorded activity in this scope, from the rows themselves. The `ShareLink`
+         * row's own `lastViewedAt` only started moving when links shipped, so a link that adopted
+         * a document's older traffic reported "Never" beside a non-zero view count.
+         */
+        lastViewedAt: allTimeTotals.lastSeen ? allTimeTotals.lastSeen.toISOString() : null,
+        /**
+         * `?byLink=1`: the same window, per link slug, always for the whole document (the table
+         * compares links, so it does not follow `?shareId=`). Unfiltered,
+         * `sum(byLink[].views) === totals.views` and `sum(byLink[].downloads) === totals.downloads`,
+         * so the rows reconcile with the "All links" figures above them — including slugs whose
+         * link has since been archived, which `GET /api/docs/:docId/links` does not return.
+         */
+        ...(byLink ? { byLink } : {}),
+        /**
+         * Whether downloads are *allowed* (this link, or any live link of the document) — a label,
+         * not a filter: the download numbers above are counted either way.
+         */
         downloadsEnabled,
         series,
         // On Basic both viewer arrays are `[]` (the aggregates never run), which also omits the

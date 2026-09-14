@@ -3,6 +3,16 @@ import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 /**
  * Per-session per-page timing record.
  * The client reports enter/leave timestamps; the server stores a normalized duration.
+ *
+ * NOT share analytics, and it cannot be made into share analytics: there is no `docId`, no
+ * `shareId` and no `orgId` here — the document identity only ever appears inside the free-text
+ * `path` (`/doc/<id>/…`, `/s/<slug>`), which is not a join key and which nothing parses. Rows for
+ * `/s/` routes do exist (the session tracker runs on share pages too) but they are not
+ * attributable, and anonymous visitors — i.e. most share recipients — are dropped at ingest
+ * because `/api/metrics/events` only attributes an already-existing actor.
+ *
+ * Share-link analytics lives in `ShareView` / `ShareVisit` / `ShareDownloadRequest` (see
+ * docs/METRICS.md). Do not try to reconcile a link's numbers against this collection.
  */
 const pageTimingSchema = new Schema(
   {

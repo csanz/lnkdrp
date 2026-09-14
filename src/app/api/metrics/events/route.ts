@@ -9,6 +9,7 @@ import { ProjectClickModel } from "@/lib/models/ProjectClick";
 import { ProjectViewModel } from "@/lib/models/ProjectView";
 import { DocModel } from "@/lib/models/Doc";
 import { DocPageTimingModel } from "@/lib/models/DocPageTiming";
+import { ShareLinkModel } from "@/lib/models/ShareLink";
 
 export const runtime = "nodejs";
 /**
@@ -59,6 +60,8 @@ type MetricsEvent =
       pageNumber: number;
       enteredAtMs: number;
       leftAtMs: number;
+      /** The share link the page was read through, when it was read through one. */
+      shareId?: string | null;
     }
   | {
       type: "project_view";
@@ -178,11 +181,31 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
 
+      // Which link the reader came through, when they came through one. Only a link that belongs
+      // to this document counts — a slug from anywhere else is dropped rather than trusted, so the
+      // per-link scope cannot be spoofed by the payload.
+      //
+      // The `docId` is part of the QUERY, not a check applied to whatever came back. This used to
+      // call `resolveShareLink(shareIdRaw)` on the raw body string and compare afterwards, and
+      // `resolveShareLink` is a write: for a legacy slug with no link row it falls back to
+      // `Doc.findOne({ shareId })` and then `ensureDefaultLink`, which creates a `ShareLink` and
+      // `$set`s `Doc.shareId` — on a document in someone else's workspace. Any authenticated user
+      // could trigger that by posting a foreign slug with their own `docId`, and the result was
+      // then discarded, so nothing surfaced the write. One indexed lookup, no side effects, and no
+      // link materialisation on a fire-and-forget ingest path.
+      const shareIdRaw = asNonEmptyString((body as { shareId?: unknown })?.shareId, 64);
+      const ownLink = shareIdRaw
+        ? await ShareLinkModel.findOne({ shareId: shareIdRaw, docId: docObjectId }).select({ _id: 1 }).lean<{ _id: Types.ObjectId }>()
+        : null;
+      const shareLinkId = ownLink ? ownLink._id : null;
+
       const durationMs = Math.max(0, Math.min(24 * 60 * 60 * 1000, Math.round(leftAtMs - enteredAtMs)));
       await DocPageTimingModel.create({
         orgId,
         docId: docObjectId,
         version: Math.floor(version),
+        shareId: shareLinkId ? shareIdRaw : null,
+        shareLinkId,
         viewerUserId,
         sessionIdHash,
         pageNumber: Math.floor(pageNumber),

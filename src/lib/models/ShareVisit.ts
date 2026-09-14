@@ -26,6 +26,12 @@ const shareVisitSchema = new Schema(
      */
     shareLinkId: { type: Schema.Types.ObjectId, ref: "ShareLink", index: true, default: null },
 
+    /**
+     * Workspace that owns the document (denormalized, same reason as `ShareView.orgId`): it makes
+     * org-wide analytics an indexed range scan instead of a `$lookup` into `docs`.
+     */
+    orgId: { type: Schema.Types.ObjectId, ref: "Org", index: true, default: null },
+
     /** Viewer identity (best-effort, per browser/device). */
     botIdHash: { type: String, trim: true, index: true, required: true },
 
@@ -98,6 +104,15 @@ shareVisitSchema.index({ shareId: 1, botIdHash: 1, visitIdHash: 1 }, { unique: t
 shareVisitSchema.index({ docId: 1, lastEventAt: -1 });
 shareVisitSchema.index({ docId: 1, viewerUserId: 1, lastEventAt: -1 });
 shareVisitSchema.index({ docId: 1, botIdHash: 1, lastEventAt: -1 });
+
+// Per-link mirrors: the visits endpoint now scopes a viewer's timeline to one link (`?shareId=`),
+// so the same three reads exist keyed on the link instead of the document.
+shareVisitSchema.index({ shareId: 1, lastEventAt: -1 });
+shareVisitSchema.index({ shareId: 1, viewerUserId: 1, lastEventAt: -1 });
+shareVisitSchema.index({ shareId: 1, botIdHash: 1, lastEventAt: -1 });
+
+// Workspace-level reads.
+shareVisitSchema.index({ orgId: 1, createdDate: -1 });
 
 export type ShareVisit = InferSchemaType<typeof shareVisitSchema>;
 

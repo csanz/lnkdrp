@@ -3,6 +3,7 @@ import { Types } from "mongoose";
 import { recordActivity } from "@/lib/activity/log";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { resolveShareLink, touchShareLink } from "@/lib/share/links";
+import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import crypto from "node:crypto";
@@ -199,28 +200,40 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     try {
       const botIdHash = crypto.createHash("sha256").update(botId.trim()).digest("hex");
       const docId = (doc as { _id: unknown })._id;
+      const docOrgId = (doc as { orgId?: unknown }).orgId;
       const day = utcDayKey(new Date());
-      await ShareViewModel.updateOne(
+      const dl = await ShareViewModel.updateOne(
         { shareId, botIdHash },
         {
           $setOnInsert: {
             shareId,
             docId,
-            shareLinkId: link._id,
             botIdHash,
             pagesSeen: [],
           },
-          ...(viewerIp ? { $set: { viewerIp } } : {}),
+          // `$set`, not `$setOnInsert`: an existing row (the common case) must also get the join
+          // handle and the workspace, or it keeps a null one forever.
+          $set: {
+            shareLinkId: link._id,
+            ...(docOrgId ? { orgId: new Types.ObjectId(String(docOrgId)) } : {}),
+            ...(viewerIp ? { viewerIp } : {}),
+            // A download is real activity, so it moves "Last viewed" (see `ShareView.lastViewedAt`,
+            // which exists because `updatedDate` is stamped by maintenance writes too).
+            lastViewedAt: new Date(),
+          },
           $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
         },
         { upsert: true },
       );
+      // A `ShareView` row IS a view everywhere downstream (the per-link total counts rows), so a
+      // download by a botId we have never seen has to move the same counters a first view does —
+      // otherwise the document's counter reads lower than the sum of its links.
+      if ((dl as { upsertedCount?: number })?.upsertedCount) {
+        await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
+        void touchShareLink(shareId, "view", { countView: true });
+      }
       // Per-link counters (best effort; the ShareView rows above stay the source of truth).
       void touchShareLink(shareId, "download");
-      void recordDownloadActivity(doc as Record<string, unknown>, shareId, request, {
-        linkLabel: link.label ?? null,
-        isDefaultLink: Boolean(link.isDefault),
-      });
     } catch (e) {
       // Ignore tracking failures (never block download).
       // If a duplicate key race occurs, retry once without upsert.
@@ -230,15 +243,23 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         await ShareViewModel.updateOne(
           { shareId, botIdHash },
           {
-            ...(viewerIp ? { $set: { viewerIp } } : {}),
+            $set: { shareLinkId: link._id, ...(viewerIp ? { viewerIp } : {}), lastViewedAt: new Date() },
             $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
           },
         );
+        // The retry used to increment `ShareView.downloads` and stop there, so the link's
+        // `downloadCount` undercounted exactly the races it was meant to survive.
+        void touchShareLink(shareId, "download");
       } catch {
         // ignore
       }
       void e;
     }
+    // Runs on both paths: the activity feed must not lose a download to a duplicate-key race.
+    void recordDownloadActivity(doc as Record<string, unknown>, shareId, request, {
+      linkLabel: link.label ?? null,
+      isDefaultLink: Boolean(link.isDefault),
+    });
   }
 
   const range = request.headers.get("range");

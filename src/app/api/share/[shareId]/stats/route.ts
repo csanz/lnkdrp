@@ -170,28 +170,44 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
       // Resolve through the link so a disabled/expired link stops answering, like the share page.
       const resolved = await resolveShareLink(shareId, {
-        select: { title: 1, numberOfViews: 1, numberOfPagesViewed: 1 } as Record<string, 1>,
+        select: { title: 1 } as Record<string, 1>,
       });
       if (!resolved || resolved.refusal) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
-      const doc = resolved.doc as {
-        userId?: unknown;
-        numberOfViews?: unknown;
-        numberOfPagesViewed?: unknown;
-      };
+      const doc = resolved.doc as { userId?: unknown };
 
       const isOwner = Boolean(session?.userId) && String(doc.userId) === String(session?.userId);
-      return NextResponse.json(
-        isOwner
-          ? {
-              isOwner: true,
-              stats: {
-                views: typeof doc.numberOfViews === "number" ? doc.numberOfViews : 0,
-                pagesViewed: typeof doc.numberOfPagesViewed === "number" ? doc.numberOfPagesViewed : 0,
+      if (!isOwner) {
+        return NextResponse.json({ isOwner: false }, { headers: { "cache-control": "no-store" } });
+      }
+
+      // This endpoint's whole address is one link, so it answers for that link. It used to return
+      // `Doc.numberOfViews` / `Doc.numberOfPagesViewed` — document-wide sums across every link —
+      // and the owner overlay then cached them under a per-shareId key, so a quiet second link
+      // reported the busy link's traffic. Same definitions as the owner metrics route.
+      const [views, pagesAgg] = await Promise.all([
+        ShareViewModel.countDocuments({ shareId }),
+        ShareViewModel.aggregate([
+          { $match: { shareId } },
+          { $group: { _id: null, pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } } } },
+          {
+            $project: {
+              _id: 0,
+              pagesViewed: {
+                $size: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
               },
-            }
-          : { isOwner: false },
+            },
+          },
+        ]) as Promise<Array<{ pagesViewed?: number }>>,
+      ]);
+      const pagesViewed =
+        pagesAgg[0] && typeof pagesAgg[0].pagesViewed === "number" && Number.isFinite(pagesAgg[0].pagesViewed)
+          ? pagesAgg[0].pagesViewed
+          : 0;
+
+      return NextResponse.json(
+        { isOwner: true, stats: { views, pagesViewed } },
         { headers: { "cache-control": "no-store" } },
       );
     } catch (err) {
@@ -246,6 +262,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       }
       const doc = resolved.doc;
       const shareLinkId = resolved.link._id;
+      // Denormalized tenancy on the analytics rows (see `ShareView.orgId`).
+      const shareOrgId = doc.orgId ? new Types.ObjectId(String(doc.orgId)) : null;
 
       // Perf: return immediately; analytics updates are best-effort.
       const docId = doc._id;
@@ -265,27 +283,46 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           // Anonymous-only: allow "introduce yourself" name/email snapshots.
           if (!viewerUserId && viewerNameIntro) setFields.viewerName = viewerNameIntro;
           if (!viewerUserId && viewerEmail) setFields.viewerEmailSnapshot = viewerEmail;
+          // `shareLinkId` / `orgId` are `$set`, not `$setOnInsert`: a row that already existed when
+          // the link was materialised would otherwise keep a null join handle forever, and the
+          // returning viewer who matches that row never gives us another chance to fill it.
+          setFields.shareLinkId = shareLinkId;
+          if (shareOrgId) setFields.orgId = shareOrgId;
+          // The one write that means "someone read this". `updatedDate` cannot carry it: Mongoose
+          // stamps that on every update query, so a backfill or a metrics-page read moved it too
+          // and "Last viewed" reported the maintenance instant (see `ShareView.lastViewedAt`).
+          setFields.lastViewedAt = new Date();
 
-          const upsert = await ShareViewModel.updateOne(
-            { shareId, botIdHash },
-            {
-              $setOnInsert: {
-                shareId,
-                docId,
-                shareLinkId,
-                botIdHash,
-                pagesSeen: [],
+          // The upsert is the write most likely to throw: two first-time POSTs for the same
+          // (shareId, botIdHash) race and the unique index makes the loser fail with E11000. That
+          // used to abort the whole analytics block — losing this heartbeat's pages and time too —
+          // because the outer catch swallowed it. A duplicate key just means "the row exists".
+          let created = false;
+          try {
+            const upsert = await ShareViewModel.updateOne(
+              { shareId, botIdHash },
+              {
+                $setOnInsert: {
+                  shareId,
+                  docId,
+                  botIdHash,
+                  pagesSeen: [],
+                },
+                $set: setFields,
               },
-              ...(Object.keys(setFields).length ? { $set: setFields } : {}),
-            },
-            { upsert: true },
-          );
+              { upsert: true },
+            );
+            created = Boolean((upsert as any)?.upsertedCount);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (!/E11000|duplicate key/i.test(msg)) throw e;
+          }
 
-          const created = Boolean((upsert as any)?.upsertedCount);
+          // The link's `lastViewedAt` moves for every view, not only a first-time viewer's: a
+          // recipient who comes back daily used to leave the links table reading "Never".
+          void touchShareLink(shareId, "view", { countView: created });
           if (created) {
             await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
-            // Per-link counters for the links list (best effort; ShareView rows stay the truth).
-            void touchShareLink(shareId, "view");
             // Activity feed: one "viewed" event per new viewer of this share (not per page/visit).
             void (async () => {
               try {
@@ -411,16 +448,20 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 $setOnInsert: {
                   shareId,
                   docId,
-                  shareLinkId,
                   botIdHash,
                   visitIdHash,
                   startedAt: enteredAt ?? leftAt,
-                  pagesSeen: [],
                 },
                 // `lastEventAt` lives only in `$max`: naming it in `$setOnInsert` too made Mongo
                 // refuse the whole upsert ("would create a conflict at 'lastEventAt'"), which the
                 // surrounding catch swallowed — no ShareVisit row was ever written. `$max` against
                 // a missing field sets it, so inserts still get the right value.
+                //
+                // `pagesSeen` was the same bug one field over: `pagesSeen: []` here collided with
+                // the `$addToSet: { pagesSeen }` below, and Mongo validates operator paths before
+                // applying, so EVERY payload carrying a pageNumber — which is every real one — was
+                // rejected outright. The schema default covers the no-page insert and `$addToSet`
+                // creates the array when it is absent, so the field must not be named here.
                 $max: { lastEventAt: leftAt },
               };
 
@@ -428,6 +469,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 ...(Object.keys(setFields).length ? setFields : {}),
                 ...(viewerName ? { viewerName } : {}),
                 ...(viewerEmailSnapshot ? { viewerEmailSnapshot } : {}),
+                // `$set`, not `$setOnInsert`, for the same self-healing reason as `ShareView`.
+                shareLinkId,
+                ...(shareOrgId ? { orgId: shareOrgId } : {}),
               };
               if (Object.keys(set).length) update.$set = set;
 
@@ -460,12 +504,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               if (Object.keys(inc).length) update.$inc = inc;
 
               await ShareVisitModel.updateOne({ shareId, botIdHash, visitIdHash }, update, { upsert: true });
-            } catch {
-              // ignore
+            } catch (e) {
+              // Loud on purpose: an operator-path conflict here silently emptied this collection
+              // for months, and the symptom (no visits anywhere) looks identical to "no traffic".
+              console.warn("[api/share/:shareId/stats] visit upsert failed", e);
             }
           }
-        } catch {
-          // ignore; best-effort analytics
+        } catch (e) {
+          // Best-effort analytics, but never silent: this is the only signal a write path is broken.
+          console.warn("[api/share/:shareId/stats] analytics write failed", e);
         }
       });
 

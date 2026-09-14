@@ -103,15 +103,15 @@ function SettingItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** One stat of a link card. */
-function StatItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="truncate text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">{label}</div>
-      <div className="mt-0.5 truncate text-[13px] font-semibold tabular-nums text-[var(--fg)]">{value}</div>
-    </div>
-  );
-}
+/**
+ * The analytics window the per-link numbers are *requested* for.
+ *
+ * Never printed: the server clamps it by plan (`clampAnalyticsDays`; Free is 7 days) and reports
+ * the window it actually served as `days`. The headers used to hardcode "(30d)" from this
+ * constant, so a Free workspace read a table headed "Views (30d)" over seven days of data and a
+ * link that was busy ten days ago looked dead.
+ */
+const LINK_STATS_DAYS = 30;
 
 const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLinksManager(
   { docId, variant, canManage = true },
@@ -124,7 +124,11 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   const [links, setLinks] = useState<ShareLinkDTO[] | null>(null);
   const [linksError, setLinksError] = useState<string | null>(null);
   const [linksRev, setLinksRev] = useState(0);
-  const [linkStats, setLinkStats] = useState<Record<string, { viewers: number; views: number; downloads: number }>>({});
+  const [linkStats, setLinkStats] = useState<
+    Record<string, { viewers: number; downloads: number; lastViewedAt: string | null }>
+  >({});
+  /** The window the server served (plan-clamped), used verbatim in the column headings. */
+  const [statsDays, setStatsDays] = useState<number | null>(null);
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -170,43 +174,55 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     [refreshLinks],
   );
 
-  // Views, viewers and downloads all come from the analytics window, in one call per link.
+  // Views, viewers and downloads all come from the analytics window — one request for the whole
+  // table (`?byLink=1`), grouped by link slug server-side.
   //
   // The counters on the link row (`viewCount`, `downloadCount`) only started counting when links
   // shipped, so on a document with older traffic they disagree with the analytics — a card would
-  // read "Views 1 · Viewers 18", which is nonsense. One source keeps the four numbers coherent;
-  // the row counters are only the fallback when the request fails.
+  // read "Views 1 · Viewers 18", which is nonsense. One source keeps the numbers coherent, and
+  // when the request fails the cells say "—" rather than quietly swapping in a lifetime counter.
+  //
+  // It used to be one request per link, capped at 8: link 9 onwards then fell back to those
+  // counters and printed "—" for viewers forever, so a busy link that happened to sort last read
+  // as a dead one. One request has no cap to hit.
   useEffect(() => {
     if (variant !== "page") return;
-    const rows = (links ?? []).slice(0, 8);
-    if (!rows.length) return;
+    if (!links?.length) return;
     let cancelled = false;
     void (async () => {
-      const entries = await Promise.all(
-        rows.map(async (l) => {
-          try {
-            const res = await fetchJson<{ viewerCount?: number; totals?: { views?: number; downloads?: number } }>(
-              `/api/docs/${encodeURIComponent(docId)}/shareviews?days=30&lite=1&shareId=${encodeURIComponent(l.shareId)}`,
-              { cache: "no-store" },
-            );
-            const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
-            return [l.id, { viewers: n(res.viewerCount), views: n(res.totals?.views), downloads: n(res.totals?.downloads) }] as const;
-          } catch {
-            return [l.id, null] as const;
+      try {
+        const res = await fetchJson<{
+          days?: number;
+          byLink?: Array<{ shareId?: string; views?: number; viewers?: number; downloads?: number; lastViewedAt?: string | null }>;
+        }>(`/api/docs/${encodeURIComponent(docId)}/shareviews?days=${LINK_STATS_DAYS}&lite=1&byLink=1`, { cache: "no-store" });
+        if (cancelled) return;
+        const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+        const bySlug = new Map((res.byLink ?? []).map((r) => [String(r.shareId ?? ""), r]));
+        // The window the server actually served, not the one we asked for.
+        setStatsDays(n(res.days) || null);
+        setLinkStats(() => {
+          const next: Record<string, { viewers: number; downloads: number; lastViewedAt: string | null }> = {};
+          for (const l of links) {
+            const row = bySlug.get(l.shareId);
+            next[l.id] = {
+              viewers: n(row?.viewers),
+              downloads: n(row?.downloads),
+              lastViewedAt: typeof row?.lastViewedAt === "string" ? row.lastViewedAt : null,
+            };
           }
-        }),
-      );
-      if (cancelled) return;
-      setLinkStats((prev) => {
-        const next = { ...prev };
-        for (const [id, stats] of entries) if (stats) next[id] = stats;
-        return next;
-      });
+          return next;
+        });
+      } catch {
+        // the row counters stay as the fallback
+      }
     })();
     return () => {
       cancelled = true;
     };
   }, [docId, links, variant]);
+
+  /** `" (7d)"` once the server has told us its window; blank until then, never a guess. */
+  const statsWindowLabel = statsDays ? ` (${statsDays}d)` : "";
 
   /** Default link first, then the rest in the order the API returned them. */
   const ordered = useMemo(() => {
@@ -460,9 +476,15 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
               <th scope="col" className="px-3 py-2.5 font-semibold">Address</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Status</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Settings</th>
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Views</th>
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Viewers</th>
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Downloads</th>
+              {/* Both cover the same window, so the window is named once, on the columns it
+                  applies to — and it names the window the SERVER served (Free is clamped to 7
+                  days), not the one this component asked for.
+                  There is no separate "Views" column: a `ShareView` row is unique per (link,
+                  viewer) for life, so the per-link view count and the per-link viewer count are
+                  the same number by construction, and printing both invited the reader to compare
+                  them. */}
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Viewers{statsWindowLabel}</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Downloads{statsWindowLabel}</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Last viewed</th>
               <th scope="col" className="px-4 py-2.5 text-right font-semibold">
                 <span className="sr-only">Actions</span>
@@ -473,14 +495,14 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
             {ordered === null ? (
               [0, 1, 2].map((i) => (
                 <tr key={i} className="border-b border-[var(--border)] last:border-0">
-                  <td colSpan={9} className="px-4 py-3">
+                  <td colSpan={8} className="px-4 py-3">
                     <div className="h-4 w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
                   </td>
                 </tr>
               ))
             ) : ordered.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-10 text-center">
+                <td colSpan={8} className="px-4 py-10 text-center">
                   <div className="text-sm font-semibold text-[var(--fg)]">No links yet</div>
                   <div className="mx-auto mt-1 max-w-sm text-[13px] text-[var(--muted)]">
                     Create one link per audience — each keeps its own settings and its own stats.
@@ -561,17 +583,22 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                       </div>
                     </td>
 
-                    <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
-                      {(stats ? stats.views : link.viewCount).toLocaleString()}
-                    </td>
+                    {/* "—" when the analytics request failed, never `link.viewCount` /
+                        `link.downloadCount`: those are all-time counters, and printing them under a
+                        windowed heading put two different quantities in one column depending on
+                        whether a fetch happened to succeed. */}
                     <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
                       {stats ? stats.viewers.toLocaleString() : "—"}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
-                      {(stats ? stats.downloads : link.downloadCount).toLocaleString()}
+                      {stats ? stats.downloads.toLocaleString() : "—"}
                     </td>
+                    {/* Prefer the analytics timestamp (newest row activity on this link) over the
+                        link row's own `lastViewedAt`, which only started moving when links shipped:
+                        a link that adopted a document's older traffic printed "Never" next to a
+                        non-zero Views cell, and readers took "Never" as the authoritative one. */}
                     <td className="whitespace-nowrap px-3 py-2.5 text-[var(--muted)]">
-                      {relativeWhen(link.lastViewedAt) || "Never"}
+                      {relativeWhen(stats?.lastViewedAt ?? link.lastViewedAt) || "Never"}
                     </td>
 
                     <td className="px-4 py-2.5">
