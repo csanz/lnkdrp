@@ -11,7 +11,7 @@
 "use client";
 
 import Link from "next/link";
-import { LockClosedIcon, PlusIcon } from "@heroicons/react/24/outline";
+import { LinkIcon, LockClosedIcon, PlusIcon } from "@heroicons/react/24/outline";
 import {
   forwardRef,
   useCallback,
@@ -348,10 +348,14 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     const count = links?.length ?? 0;
 
     return (
-      <div>
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0 text-xs font-medium text-[var(--muted)]">
-            Default link{count > 1 ? ` · ${count} total` : ""}
+      // Same card as the quick-stats and snapshot sections below it: bordered, rounded, on
+      // --panel-2. Before this the links block was bare text at the top of the panel and read as
+      // floating above two properly framed sections.
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
+        <div className="flex items-center justify-between gap-3 pb-3">
+          <div className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+            <LinkIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+            <span className="truncate">Default link{count > 1 ? ` · ${count} total` : ""}</span>
           </div>
           {canManage ? (
             <button type="button" onClick={openCreate} className={NEW_LINK_CLASS}>
@@ -361,7 +365,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
           ) : null}
         </div>
 
-        <div className="mt-2 flex items-stretch gap-2">
+        <div className="flex items-stretch gap-2">
           <input
             value={defaultUrl || (links === null ? "Loading…" : "Generating link…")}
             readOnly
