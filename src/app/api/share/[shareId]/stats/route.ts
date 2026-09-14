@@ -18,9 +18,9 @@ import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
-import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
-import { pageTimeIncrement, visitTimeIncrement } from "@/lib/analytics/shareTiming";
+import { isPageExit, pageTimeIncrement, visitTimeIncrement } from "@/lib/analytics/shareTiming";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
 import { UserModel } from "@/lib/models/User";
@@ -223,37 +223,6 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   });
 }
 /**
- * Is the signed-in viewer on the *owning* side of this document — its owner, or a member of the
- * workspace that owns it — rather than a recipient the link was sent to?
- *
- * Used to stamp `isOwnerPreview` on the analytics rows. The rows are still written; they are just
- * kept out of the owner's own numbers (see `ShareView.isOwnerPreview`). Returns `false` for anyone
- * signed out, which is the best-effort part: an owner testing their link in a private window is
- * indistinguishable from a recipient and will count as one.
- */
-async function isOwnerSideViewer(doc: Record<string, unknown>, viewerUserId: Types.ObjectId | null): Promise<boolean> {
-  if (!viewerUserId) return false;
-  try {
-    // Legacy documents predate workspaces and carry only an owner `userId`.
-    const ownerUserId = doc?.userId ? String(doc.userId) : "";
-    if (ownerUserId && ownerUserId === String(viewerUserId)) return true;
-    const docOrgId = doc?.orgId ? String(doc.orgId) : "";
-    if (!docOrgId || !Types.ObjectId.isValid(docOrgId)) return false;
-    // A teammate's open is an owner-side open too: on a shared workspace the deck's traffic must
-    // not include the four colleagues who clicked it in Slack before it was sent to anyone.
-    return Boolean(
-      await OrgMembershipModel.exists({
-        orgId: new Types.ObjectId(docOrgId),
-        userId: viewerUserId,
-        isDeleted: { $ne: true },
-      }),
-    );
-  } catch {
-    // A membership lookup that fails must not turn a real recipient's view into a dropped one.
-    return false;
-  }
-}
-/**
  * Handle POST requests.
  */
 
@@ -450,7 +419,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               },
             );
             const added = Boolean((add as any)?.modifiedCount);
-            if (added) {
+            // The same rule as `numberOfViews`: an owner-side open is recorded on the row and
+            // counted nowhere. This counter feeds the dashboard's "Pages viewed" tile, which read
+            // 13 against 11 real pages because the owner's own paging through the deck landed in it.
+            if (added && !ownerPreview) {
               await DocModel.updateOne({ _id: docId }, { $inc: { numberOfPagesViewed: 1 } });
             }
           }
@@ -550,12 +522,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 typeof derivedPageDurationMs === "number" && Number.isFinite(derivedPageDurationMs) && derivedPageDurationMs > 0;
               if (shouldIncTime && pageNumber) inc[`pageTimeMsByPage.${String(pageNumber)}`] = Math.floor(derivedPageDurationMs);
 
-              // Revisits/page-sequence require a well-defined page interval (enteredAt/leftAt).
-              const canRecordPageEvent =
-                Boolean(pageNumber) &&
-                Boolean(enteredAt) &&
-                shouldIncTime &&
-                enteredAt!.getTime() <= leftAt.getTime();
+              // Revisits and the page sequence describe a page the reader has *left*. `isPageExit`
+              // holds the rule: an interval means an exit, and the 30-second heartbeat sends none.
+              const canRecordPageEvent = Boolean(pageNumber) && shouldIncTime && isPageExit(timing);
 
               if (canRecordPageEvent) {
                 inc[`pageVisitCountByPage.${String(pageNumber!)}`] = 1;

@@ -109,7 +109,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     // the standard plan_limit body, exactly as the document-level PATCH does.
     if (!link) return applyTempUserHeaders(planLimitResponse(limit as Parameters<typeof planLimitResponse>[0]), actor);
 
-    const dto = toShareLinkDTO(link);
+    // Recomputed traffic, like the list route: a response that returns the stored counters made
+    // `update_share_link` and `list_share_links` disagree about the same link in the same session.
+    const dto = toShareLinkDTO(link, (await shareLinkStatsByShareId(docObjectId)).get(link.shareId) ?? null);
     void recordActivity({
       orgId: String(orgId),
       userId: actor.userId,

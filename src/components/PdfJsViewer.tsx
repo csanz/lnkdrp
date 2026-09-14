@@ -1746,9 +1746,17 @@ export function PdfJsViewer({
      * page-change flush sent the full segment again, time already counted included. A three-page
      * read of 7.9s + 5.6s + 6.7s stored 20.3s against page 3, and the document total ran 26% high.
      *
-     * Both clocks are reset here, so every millisecond is reported exactly once by each.
+     * Both clocks are reset by the flush that reports them, so every millisecond is reported once.
+     *
+     * `pageExit` says whether the reader is actually leaving the page. Only then does the payload
+     * carry the page interval, because the server turns an interval into a `pageEvents` segment and
+     * a `pageVisitCountByPage` increment — "they came back to page 2". The periodic heartbeat sent
+     * one too, so a single 25-second stay on page 2 arrived as two segments and the visit detail
+     * showed a revisit that never happened. A heartbeat is not a page exit; it reports the visit
+     * clock and leaves the page clock running, so the page's time is still reported exactly once,
+     * by the exit that ends it.
      */
-    function flushTime({ includePage }: { includePage: boolean }) {
+    function flushTime({ pageExit }: { pageExit: boolean }) {
       const enteredAtMs = shareTimingEnteredAtMsRef.current;
       if (!enteredAtMs) return;
       // Only accumulate while the tab is visible (foreground).
@@ -1766,22 +1774,20 @@ export function PdfJsViewer({
 
       const payload: Record<string, unknown> = { botId, visitId, durationMs };
       applyViewerProfileToStatsPayload(payload);
-      if (includePage) {
+      if (pageExit) {
         const p = shareTimingPageRef.current;
         const pageEnteredAtMs = shareTimingPageEnteredAtMsRef.current;
-        if (typeof p === "number" && Number.isFinite(p) && p >= 1) {
-          payload.pageNumber = Math.floor(p);
-          if (pageEnteredAtMs) {
-            const pageDurationMs = now - pageEnteredAtMs;
-            if (Number.isFinite(pageDurationMs) && pageDurationMs > 0) {
-              payload.pageDurationMs = Math.floor(pageDurationMs);
-              // The page interval, so the visit's page sequence gets a segment for the page the
-              // reader was on when they left. Without it the last page of every visit was missing
-              // from `pageEvents` and never counted in `pageVisitCountByPage`.
-              payload.enteredAtMs = Math.floor(pageEnteredAtMs);
-              payload.leftAtMs = Math.floor(now);
-            }
-            // The page clock restarts with the visit clock: this flush has now reported it.
+        if (typeof p === "number" && Number.isFinite(p) && p >= 1 && pageEnteredAtMs) {
+          const pageDurationMs = now - pageEnteredAtMs;
+          if (Number.isFinite(pageDurationMs) && pageDurationMs > 0) {
+            payload.pageNumber = Math.floor(p);
+            payload.pageDurationMs = Math.floor(pageDurationMs);
+            // The interval, so the visit's page sequence gets a segment for the page the reader was
+            // on when they left. Without it the last page of every visit was missing from
+            // `pageEvents` and never counted in `pageVisitCountByPage`.
+            payload.enteredAtMs = Math.floor(pageEnteredAtMs);
+            payload.leftAtMs = Math.floor(now);
+            // Reported: the page clock restarts from this exit.
             shareTimingPageEnteredAtMsRef.current = now;
           }
         }
@@ -1835,17 +1841,19 @@ export function PdfJsViewer({
       start(Date.now());
     }
     function onPageHide() {
-      // Flush only visible time; pagehide typically fires while still visible.
-      flushTime({ includePage: true });
+      // A real page exit: the reader is leaving, so the current page's segment ends here.
+      flushTime({ pageExit: true });
       stop();
     }
 
     window.addEventListener("pagehide", onPageHide);
     document.addEventListener("visibilitychange", onVisChange);
-    const interval = window.setInterval(() => flushTime({ includePage: true }), 30000);
+    // The heartbeat keeps the visit total moving for a long read. It is not a page exit, so it
+    // never ends the current page's segment — see `flushTime`.
+    const interval = window.setInterval(() => flushTime({ pageExit: false }), 30000);
     return () => {
-      // Best-effort on unmount too (route transitions).
-      flushTime({ includePage: true });
+      // Unmount (a route transition) is a real exit, like `pagehide`.
+      flushTime({ pageExit: true });
       stop();
       window.clearInterval(interval);
       window.removeEventListener("pagehide", onPageHide);
@@ -1899,10 +1907,22 @@ export function PdfJsViewer({
     if (pageNumber === prevPage) return;
 
     const durationMs = now - enteredAt;
+    // A page turn is a flush point for *both* clocks. Reporting only the page segment kept the
+    // visit total from ever moving between the 30s heartbeats, so a visit that ended without a
+    // final flush — a tab killed, a headless script navigating away — stored its real per-page
+    // times beside a `timeSpentMs` of 0. Flushing the visit clock here keeps the two in lockstep
+    // and still cannot double count, because this resets the clock it reports.
+    const visitEnteredAt = shareTimingEnteredAtMsRef.current;
+    const visitChunkMs = visitEnteredAt ? now - visitEnteredAt : null;
+    if (visitEnteredAt) {
+      shareTimingEnteredAtMsRef.current = now;
+      shareTimingLastFlushAtMsRef.current = now;
+    }
     if (Number.isFinite(durationMs) && durationMs >= 1500 && Number.isFinite(prevPage) && prevPage >= 1) {
       const payload: Record<string, unknown> = {
         botId,
         visitId,
+        ...(visitChunkMs && Number.isFinite(visitChunkMs) && visitChunkMs > 0 ? { durationMs: Math.floor(visitChunkMs) } : {}),
         pageNumber: Math.floor(prevPage),
         // `pageDurationMs`, never `durationMs`: this segment's time is already inside the visit
         // clock that the heartbeat reports, so sending it as `durationMs` added it to the document

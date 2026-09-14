@@ -12,7 +12,15 @@ import { Types } from "mongoose";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
-import { archiveShareLink, listShareLinks, setDefaultShareLink, toShareLinkDTO, updateShareLink, ShareLinkError } from "@/lib/share/links";
+import {
+  archiveShareLink,
+  listShareLinks,
+  setDefaultShareLink,
+  shareLinkStatsByShareId,
+  toShareLinkDTO,
+  updateShareLink,
+  ShareLinkError,
+} from "@/lib/share/links";
 import { planLimitResponse } from "@/lib/billing/planLimits";
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "../shared";
 
@@ -82,7 +90,9 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
         ? await updateShareLink({ orgId, linkId, settings })
         : { link: (await listShareLinks({ orgId, docId: docObjectId })).find((l) => String(l._id) === String(linkId))!, limit: null };
 
-    const dto = toShareLinkDTO(link);
+    // Recomputed from the rows, like every other surface: returning the stored counters here made
+    // an agent's `update_share_link` reply disagree with the `list_share_links` it had just read.
+    const dto = toShareLinkDTO(link, (await shareLinkStatsByShareId(docObjectId)).get(link.shareId) ?? null);
     const blocked = Boolean(limit && !limit.ok);
     if (!blocked) {
       void recordActivity({

@@ -5,6 +5,8 @@ import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { isOwnerSideViewer } from "@/lib/share/ownerSide";
+import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import crypto from "node:crypto";
 
@@ -195,6 +197,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     return new Response("Download disabled", { status: 403 });
   }
 
+  // Who is downloading. This route never asked, so an owner or a teammate downloading their own
+  // deck bumped the link's `downloadCount`, moved its "Last viewed", and wrote "Someone downloaded
+  // this · via Sequoia" into the owner's own activity feed — and, if it happened before the first
+  // stats POST, created an unflagged `ShareView` row that counted as a recipient forever. The stats
+  // ingest had been resolving the session for exactly this reason; these two paths had drifted.
+  const downloadSession = wantsDownload ? await tryResolveAuthUserId(request) : null;
+  const ownerPreview = wantsDownload
+    ? await isOwnerSideViewer(doc as { orgId?: unknown; userId?: unknown }, downloadSession?.userId ?? null)
+    : false;
+
   // Best-effort download tracking (only when an explicit download is requested).
   if (wantsDownload && typeof botId === "string" && botId.trim()) {
     try {
@@ -217,6 +229,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
             shareLinkId: link._id,
             ...(docOrgId ? { orgId: new Types.ObjectId(String(docOrgId)) } : {}),
             ...(viewerIp ? { viewerIp } : {}),
+            // Recorded, never counted — the same rule the stats ingest applies to owner views.
+            isOwnerPreview: ownerPreview,
             // A download is real activity, so it moves "Last viewed" (see `ShareView.lastViewedAt`,
             // which exists because `updatedDate` is stamped by maintenance writes too).
             lastViewedAt: new Date(),
@@ -228,12 +242,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       // A `ShareView` row IS a view everywhere downstream (the per-link total counts rows), so a
       // download by a botId we have never seen has to move the same counters a first view does —
       // otherwise the document's counter reads lower than the sum of its links.
-      if ((dl as { upsertedCount?: number })?.upsertedCount) {
+      if ((dl as { upsertedCount?: number })?.upsertedCount && !ownerPreview) {
         await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
         void touchShareLink(shareId, "view", { countView: true });
       }
       // Per-link counters (best effort; the ShareView rows above stay the source of truth).
-      void touchShareLink(shareId, "download");
+      if (!ownerPreview) void touchShareLink(shareId, "download");
     } catch (e) {
       // Ignore tracking failures (never block download).
       // If a duplicate key race occurs, retry once without upsert.
@@ -243,23 +257,32 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         await ShareViewModel.updateOne(
           { shareId, botIdHash },
           {
-            $set: { shareLinkId: link._id, ...(viewerIp ? { viewerIp } : {}), lastViewedAt: new Date() },
+            $set: {
+              shareLinkId: link._id,
+              ...(viewerIp ? { viewerIp } : {}),
+              isOwnerPreview: ownerPreview,
+              lastViewedAt: new Date(),
+            },
             $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
           },
         );
         // The retry used to increment `ShareView.downloads` and stop there, so the link's
         // `downloadCount` undercounted exactly the races it was meant to survive.
-        void touchShareLink(shareId, "download");
+        if (!ownerPreview) void touchShareLink(shareId, "download");
       } catch {
         // ignore
       }
       void e;
     }
-    // Runs on both paths: the activity feed must not lose a download to a duplicate-key race.
-    void recordDownloadActivity(doc as Record<string, unknown>, shareId, request, {
-      linkLabel: link.label ?? null,
-      isDefaultLink: Boolean(link.isDefault),
-    });
+    // Runs on both paths: the activity feed must not lose a download to a duplicate-key race. The
+    // owning side is the exception — "Someone downloaded this" about yourself is noise in your own
+    // feed, and it is the same event the counters above already decline to count.
+    if (!ownerPreview) {
+      void recordDownloadActivity(doc as Record<string, unknown>, shareId, request, {
+        linkLabel: link.label ?? null,
+        isDefaultLink: Boolean(link.isDefault),
+      });
+    }
   }
 
   const range = request.headers.get("range");

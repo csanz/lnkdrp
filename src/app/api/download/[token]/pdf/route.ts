@@ -12,6 +12,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
+import { ShareViewModel } from "@/lib/models/ShareView";
 import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { recordActivity } from "@/lib/activity/log";
 
@@ -114,6 +115,39 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     // invisible in both the link's counters and the activity feed.
     if (upstream.ok) {
       void touchShareLink(resolved.link.shareId, "download");
+      // ...and record it on the analytics rows, which are what every surface now counts. Touching
+      // only the link's counter made `ShareLink.downloadCount` read 4 where the rows summed to 3,
+      // and pushed the link's "Last viewed" ahead of any view that had actually happened. Both
+      // showed up the moment `scripts/verify-share-analytics.ts` compared the two.
+      //
+      // A claim-link download has no `botId` — there is no share page in this flow — so the viewer
+      // key is derived from who was approved. That gives one row per approved requester per link,
+      // which is the same unit `/s/:shareId/pdf` produces for a browser.
+      void (async () => {
+        try {
+          const identity = actor.userId || requesterEmail || "";
+          if (!identity) return;
+          const botIdHash = crypto.createHash("sha256").update(`dlreq:${identity}`).digest("hex");
+          const day = new Date().toISOString().slice(0, 10);
+          await ShareViewModel.updateOne(
+            { shareId: resolved.link.shareId, botIdHash },
+            {
+              $setOnInsert: { shareId: resolved.link.shareId, docId, botIdHash, pagesSeen: [] },
+              $set: {
+                shareLinkId: resolved.link._id,
+                ...((doc as { orgId?: unknown }).orgId ? { orgId: new Types.ObjectId(String((doc as { orgId: unknown }).orgId)) } : {}),
+                ...(requesterEmail ? { viewerEmail: requesterEmail, viewerEmailSnapshot: requesterEmail } : {}),
+                ...(actor.userId && Types.ObjectId.isValid(actor.userId) ? { viewerUserId: new Types.ObjectId(actor.userId) } : {}),
+                lastViewedAt: new Date(),
+              },
+              $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
+            },
+            { upsert: true },
+          );
+        } catch {
+          // Best-effort: never fail a download the owner already approved.
+        }
+      })();
       const orgIdForActivity = (doc as { orgId?: unknown }).orgId ? String((doc as { orgId: unknown }).orgId) : null;
       if (orgIdForActivity) {
         void recordActivity({

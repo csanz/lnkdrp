@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "vitest";
 
-import { pageTimeIncrement, visitTimeIncrement } from "@/lib/analytics/shareTiming";
+import { isPageExit, pageTimeIncrement, visitTimeIncrement } from "@/lib/analytics/shareTiming";
 
 /** Accumulate a sequence of heartbeats the way the ingest route does. */
 function accumulate(payloads: Array<{ pageNumber?: number | null } & Parameters<typeof visitTimeIncrement>[0]>) {
@@ -87,14 +87,52 @@ describe("pageTimeIncrement", () => {
     expect(pageTimeIncrement({ ...NONE, enteredAtMs: 1_000, leftAtMs: 4_000 })).toBe(3000);
   });
 
-  test("falls back last to durationMs, for tabs running the old build", () => {
-    // Over-counts exactly as that build always did, which beats dropping the page time of every
-    // tab open on the day this ships.
-    expect(pageTimeIncrement({ ...NONE, durationMs: 2500 })).toBe(2500);
+  test("never falls back to durationMs — that fallback was the double count", () => {
+    // A heartbeat carrying a page number and a visit chunk would otherwise credit visit time to the
+    // page, which is the original bug wearing a compatibility label.
+    expect(pageTimeIncrement({ ...NONE, durationMs: 2500 })).toBeNull();
     expect(pageTimeIncrement(NONE)).toBeNull();
   });
 
   test("ignores an interval that runs backwards", () => {
     expect(pageTimeIncrement({ ...NONE, enteredAtMs: 9_000, leftAtMs: 1_000 })).toBeNull();
+  });
+});
+
+describe("isPageExit", () => {
+  test("a heartbeat is not an exit, so it cannot manufacture a revisit", () => {
+    // The 30s heartbeat reports the visit clock and the page clock but no interval. It used to send
+    // one, and a single 25-second stay on page 2 arrived as two segments — the visit detail showed
+    // a reader coming back to a page they had never left.
+    expect(isPageExit({ durationMs: 30000, pageDurationMs: 25000, enteredAtMs: null, leftAtMs: null })).toBe(false);
+  });
+
+  test("a page turn or a close carries the interval and is an exit", () => {
+    expect(isPageExit({ durationMs: null, pageDurationMs: 7962, enteredAtMs: 1000, leftAtMs: 8962 })).toBe(true);
+  });
+
+  test("an interval that does not advance is not an exit", () => {
+    expect(isPageExit({ durationMs: null, pageDurationMs: null, enteredAtMs: 5000, leftAtMs: 5000 })).toBe(false);
+    expect(isPageExit({ durationMs: null, pageDurationMs: null, enteredAtMs: 9000, leftAtMs: 1000 })).toBe(false);
+  });
+});
+
+describe("a long stay on one page, flushed by heartbeats", () => {
+  test("accrues time once and produces exactly one segment", () => {
+    const t0 = 1_760_000_000_000;
+    const payloads = [
+      // Two heartbeats during a 70-second stay on page 2. The viewer sends no page number on a
+      // heartbeat, so these move the visit total and touch no page at all.
+      { durationMs: 30000, pageDurationMs: null, enteredAtMs: null, leftAtMs: null },
+      { durationMs: 30000, pageDurationMs: null, enteredAtMs: null, leftAtMs: null },
+      // The close: the page's whole 70-second segment, and the last 10s of the visit clock.
+      { pageNumber: 2, durationMs: 10000, pageDurationMs: 70000, enteredAtMs: t0, leftAtMs: t0 + 70000 },
+    ];
+    const segments = payloads.filter((p) => isPageExit(p));
+    expect(segments).toHaveLength(1);
+    expect(payloads.reduce((a, p) => a + (visitTimeIncrement(p) ?? 0), 0)).toBe(70000);
+    // Page time comes only from the exit: the heartbeats carry no page clock, so nothing is
+    // credited twice even though all three payloads name page 2.
+    expect(payloads.reduce((a, p) => a + (pageTimeIncrement(p) ?? 0), 0)).toBe(70000);
   });
 });

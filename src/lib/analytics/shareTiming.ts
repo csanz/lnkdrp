@@ -52,15 +52,20 @@ export function visitTimeIncrement(payload: TimingPayload): number | null {
 }
 
 /**
- * Time to add to `pageTimeMsByPage[page]` — the page clock.
+ * Time to add to `pageTimeMsByPage[page]` — the page clock, and never the visit clock.
  *
- * Falls back to the reported interval (`leftAtMs - enteredAtMs`) and then, last, to `durationMs`.
- * That final fallback is the compatibility path for a tab still running the build that sent one
- * number for both clocks: it over-counts exactly as that build always did, which is better than
- * silently dropping the page time of every open tab on the day this ships.
+ * Falls back to the reported interval (`leftAtMs - enteredAtMs`), which describes the same page,
+ * and stops there. It used to fall back once more, to `durationMs`, as a compatibility path for a
+ * tab still running the build that sent one number for both clocks — and that fallback is the
+ * original double count, preserved. A heartbeat carrying a page number and a visit chunk would have
+ * its visit time credited to the page, which is precisely the bug the split was made to kill.
+ *
+ * The current viewer sends no page number on a heartbeat at all, so the path is unreachable from
+ * it; the fallback only ever applied to stale tabs, and an honest undercount for those beats a
+ * silent over-count that looks exactly like real reading time.
  */
 export function pageTimeIncrement(payload: TimingPayload): number | null {
-  const { pageDurationMs, enteredAtMs, leftAtMs, durationMs } = payload;
+  const { pageDurationMs, enteredAtMs, leftAtMs } = payload;
   if (typeof pageDurationMs === "number" && Number.isFinite(pageDurationMs) && pageDurationMs > 0) {
     return Math.floor(Math.min(pageDurationMs, MAX_INTERVAL_MS));
   }
@@ -73,8 +78,28 @@ export function pageTimeIncrement(payload: TimingPayload): number | null {
   ) {
     return Math.floor(Math.min(leftAtMs - enteredAtMs, MAX_INTERVAL_MS));
   }
-  if (typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs > 0) {
-    return Math.floor(Math.min(durationMs, MAX_INTERVAL_MS));
-  }
   return null;
+}
+
+/**
+ * Does this heartbeat describe a page the reader has *left*?
+ *
+ * Only then may it become a `pageEvents` segment and a `pageVisitCountByPage` increment — that
+ * counter means "they came back to page 2", and it is read as a revisit in the visit detail. The
+ * signal is the page interval: the viewer sends `enteredAtMs`/`leftAtMs` only when a page ends (a
+ * page turn, `pagehide`, the tab being hidden, unmount), never on the 30-second heartbeat.
+ *
+ * The heartbeat used to send an interval too, so a single 25-second stay on page 2 arrived as two
+ * segments and the visit detail showed a revisit that never happened. Keeping the rule here, next
+ * to the two increments, is what stops the next change to the flush logic from reintroducing it.
+ */
+export function isPageExit(payload: TimingPayload): boolean {
+  const { enteredAtMs, leftAtMs } = payload;
+  return (
+    typeof enteredAtMs === "number" &&
+    typeof leftAtMs === "number" &&
+    Number.isFinite(enteredAtMs) &&
+    Number.isFinite(leftAtMs) &&
+    leftAtMs > enteredAtMs
+  );
 }
