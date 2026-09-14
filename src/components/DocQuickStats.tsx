@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ChartBarIcon } from "@heroicons/react/24/outline";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Area, AreaChart, CartesianGrid, Tooltip, YAxis } from "recharts";
 
@@ -279,9 +280,16 @@ export default function DocQuickStats({
     ) : undefined;
 
   return (
-    <section aria-label="Quick stats" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="text-[12px] font-medium text-[var(--fg)]">Last {shownDays} days</div>
+    // Same frame and the same titled header as the links and snapshot sections of the panel: an
+    // uppercase section name with an icon, the window as secondary text, freshness on the right.
+    // Before this it opened with "Last 7 days" and no title, so it read as an unlabelled block.
+    <section aria-label="Analytics" className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+          <ChartBarIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+          <span className="truncate">Analytics</span>
+          <span className="font-normal normal-case tracking-normal text-[var(--muted)]">· last {shownDays} days</span>
+        </div>
         <div className="text-[11px] text-[var(--muted-2)]">{failed ? "Live stats unavailable" : (freshness ?? "")}</div>
       </div>
 
@@ -333,7 +341,8 @@ export default function DocQuickStats({
 
       {clamped || basicTier ? (
         <div className="mt-2 text-[11px] text-[var(--muted-2)]">
-          Basic analytics · last {analyticsDaysLimit ?? shownDays} days ·{" "}
+          {/* The window is already in the card header; repeating it here just doubled up. */}
+          Basic analytics ·{" "}
           <button
             type="button"
             className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
