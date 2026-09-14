@@ -37,12 +37,14 @@
  *   and is ≤ the sum of the per-link figures, never > the deck.
  *
  * Known limitation, stated so nobody reads more into the number than is there: a `ShareView` row
- * is unique per (link, viewer) for life, so `totals.views` counts the (link, viewer) pairs *active*
- * in the window and is equal to `totals.authenticatedViewers + totals.anonymousViewers` by
- * construction. It is "how many recipients read this lately", not "how many times it was opened" —
- * per-open counting needs `ShareVisit` (one row per tab session), whose coverage only starts from
- * the visit-upsert fix and so cannot answer for historical traffic yet. Surfaces must not print
- * `views` and `viewers` side by side as if they were two facts.
+ * is unique per (link, browser) for life, so `totals.views` counts the (link, browser) pairs
+ * *active* in the window. It is "how many recipients read this lately", not "how many times it was
+ * opened". It is also not quite the viewer count beside it: `LINK_VIEWER_KEY_EXPR` keys a signed-in
+ * person as `u:<userId>`, so one account on two browsers is two rows but one viewer, and `views`
+ * can exceed `authenticatedViewers + anonymousViewers`. For anonymous traffic the two are equal, so
+ * a surface printing both side by side is usually restating one number under two names. Neither is
+ * a count of openings: that needs `ShareVisit` (one row per tab session), whose coverage only starts
+ * from the visit-upsert fix and so cannot answer for historical traffic yet.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
