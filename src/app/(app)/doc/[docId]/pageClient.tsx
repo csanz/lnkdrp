@@ -1112,16 +1112,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return { label: "Preparing…", tone: "neutral" as const };
   }, [doc.status, hasHydratedFromServer]);
 
-  const metricsGlimpse = useMemo(() => {
-    const ms = doc.metricsSnapshot;
-    if (!ms || !ms.updatedAt) return null;
-    const days = typeof ms.days === "number" && Number.isFinite(ms.days) ? ms.days : 15;
-    const views = typeof ms.lastDaysViews === "number" && Number.isFinite(ms.lastDaysViews) ? ms.lastDaysViews : 0;
-    const downloads =
-      typeof ms.lastDaysDownloads === "number" && Number.isFinite(ms.lastDaysDownloads) ? ms.lastDaysDownloads : 0;
-    return { days, views, downloads };
-  }, [doc.metricsSnapshot]);
-
   const displayDocName = useMemo(
     () => {
       // `/doc/:id` is client-first and initially hydrates from `/api/docs/:id`.
@@ -2212,27 +2202,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 </div>
               ) : null}
 
-              {hasHydratedFromServer && doc.status === "ready" && metricsGlimpse && !isReceivedViaRequest ? (
-                <div
-                  className="hidden rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--muted)] xl:flex xl:flex-wrap xl:items-center xl:gap-x-3 xl:gap-y-1"
-                  aria-label="Metrics snapshot"
-                  title="Cached metrics snapshot (updated by cron)"
-                >
-                  <span className="font-semibold text-[var(--fg)] whitespace-nowrap">Last {metricsGlimpse.days}d</span>
-                  <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
-                    <span className="tabular-nums font-semibold text-[var(--fg)]">{metricsGlimpse.views}</span>
-                    <span>views</span>
-                  </span>
-                  {Boolean(doc.shareAllowPdfDownload) ? (
-                    <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
-                      <span className="tabular-nums font-semibold text-[var(--fg)]">{metricsGlimpse.downloads}</span>
-                      <span>downloads</span>
-                    </span>
-                  ) : (
-                    <span className="whitespace-nowrap">downloads off</span>
-                  )}
-                </div>
-              ) : null}
+              {/* Views and downloads live in the side panel's quick stats (plan-aware window, per-link downloads). */}
 
               {hasHydratedFromServer && !isReceivedViaRequest ? (
                 <UploadButton
