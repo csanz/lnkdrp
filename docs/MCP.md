@@ -242,10 +242,23 @@ Views, downloads and viewers for a link over a window of days.
   only a document's default link.
 - Out: `{ docId, shareId, perLink, days, analyticsTier: "basic"|"deep", viewerCount, totals: { views,
   downloads, pagesViewed, timeSpentMs, authenticatedViewers, anonymousViewers }, series: [{ date,
-  views, downloads? }], viewers?: [{ name: untrusted, email: untrusted, views, timeSpentMs,
-  pagesViewed, pagesSeen, firstSeen, lastSeen }] }`. On Free (`analyticsTier: "basic"`) the API
-  withholds per-viewer rows, so `viewers` is absent even with `includeViewers: true`; the count is
-  still there.
+  views, downloads? }], viewers?: [...], anonymousViewers?: [...] }`, where each viewer row is
+  `{ name: untrusted, email: untrusted, views, timeSpentMs, pagesViewed, pagesSeen,
+  pageTimeMsByPage, firstSeen, lastSeen }`.
+- **Read both viewer lists.** `viewers` holds the recipients who were signed in; `anonymousViewers`
+  holds those who were not, and on a normal deck that is most of them — one in eight on the deck
+  this was tested against. An agent that reads only `viewers` answers "who read this" with a
+  fraction of the readers and no indication that it is doing so.
+- `pageTimeMsByPage` is milliseconds per page, keyed by page number. It is the figure that
+  separates opening a deck from reading it, and the reason to ask for viewers at all: a recipient
+  who spent four minutes on the pricing page is a different signal from one who spent eight seconds
+  on page 1.
+- A signed-in person is one row however many browsers they used; an anonymous reader is one row per
+  browser, because there is nothing to join them by. So `viewers` counts people and the view total
+  counts devices, and the two are not the same number.
+- On Free (`analyticsTier: "basic"`) the API withholds per-viewer rows, so both lists are absent
+  even with `includeViewers: true`; the counts are still there. Identities are recorded throughout,
+  so upgrading reveals them retroactively.
 - Errors: `validation`, `not_found`.
 
 ## Share links (many per document)

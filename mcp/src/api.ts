@@ -146,6 +146,8 @@ export type ShareViewsViewer = {
   timeSpentMs: number;
   pagesViewed: number;
   pagesSeen: number[];
+  /** Milliseconds on each page, keyed by page number ("1", "2", …). Deep tier only. */
+  pageTimeMsByPage: Record<string, number>;
   firstSeen: string | null;
   lastSeen: string | null;
 };
@@ -254,6 +256,18 @@ function asShareLink(raw: unknown): ApiShareLink {
 }
 
 /** Normalise one viewer row from the shareviews route (drops userId and per-page maps). */
+/** `{ "3": 8146 }` — a page-number-keyed map of milliseconds, with anything unusable dropped. */
+function pageTimeMap(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const page = Number(k);
+    if (!Number.isFinite(page) || page < 1) continue;
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) out[String(Math.floor(page))] = Math.floor(v);
+  }
+  return out;
+}
+
 function asViewer(raw: unknown): ShareViewsViewer {
   const v = rec(raw);
   return {
@@ -263,6 +277,7 @@ function asViewer(raw: unknown): ShareViewsViewer {
     timeSpentMs: num(v.timeSpentMs),
     pagesViewed: num(v.pagesViewed),
     pagesSeen: Array.isArray(v.pagesSeen) ? v.pagesSeen.filter((n): n is number => typeof n === "number") : [],
+    pageTimeMsByPage: pageTimeMap(v.pageTimeMsByPage),
     firstSeen: strOrNull(v.firstSeen),
     lastSeen: strOrNull(v.lastSeen),
   };
