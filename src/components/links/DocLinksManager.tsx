@@ -11,7 +11,15 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowDownTrayIcon, CalendarDaysIcon, ClockIcon, LinkIcon, LockClosedIcon, PlusIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowDownTrayIcon,
+  CalendarDaysIcon,
+  ChartBarIcon,
+  ClockIcon,
+  LinkIcon,
+  LockClosedIcon,
+  PlusIcon,
+} from "@heroicons/react/24/outline";
 import {
   forwardRef,
   useCallback,
@@ -439,6 +447,21 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
           >
             View all links
           </Link>
+          {/* The default link's own numbers. On a document with one link this is the only per-link
+              route on the page: the analytics card's link lists appear only from two links up, and
+              its "Open metrics" goes to the document, which for one link happens to be the same
+              figures but does not tell the reader that. */}
+          {defaultLink ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <Link
+                href={metricsHref(defaultLink.shareId)}
+                className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
+              >
+                Link analytics
+              </Link>
+            </>
+          ) : null}
           {canManage && defaultLink ? (
             <>
               <span aria-hidden="true">·</span>
@@ -607,7 +630,6 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                         <Link
                           href={metricsHref(link.shareId)}
                           className="underline-offset-2 hover:underline"
-                          title={`Who opened ${link.label}`}
                         >
                           {stats.viewers.toLocaleString()}
                         </Link>
@@ -620,7 +642,6 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                         <Link
                           href={metricsHref(link.shareId)}
                           className="underline-offset-2 hover:underline"
-                          title={`Downloads of ${link.label}`}
                         >
                           {stats.downloads.toLocaleString()}
                         </Link>
@@ -638,6 +659,23 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
 
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-end gap-1.5">
+                        {/* First, and present whatever the row's state or the reader's role: seeing
+                            how a link performed is the thing people come to this table for, and it
+                            was the one thing the table did not offer. The numbers in the Viewers and
+                            Downloads columns link to the same place, but an underlined number is not
+                            a control anybody reads as "analytics" — this is the labelled version of
+                            that path, and it is why the complaint was "I still don't see the link". */}
+                        <Link
+                          href={metricsHref(link.shareId)}
+                          className={`${LINK_ACTION_CLASS} inline-flex items-center gap-1.5`}
+                          title={`Views, viewers and time on page for ${link.label}`}
+                        >
+                          <ChartBarIcon className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden="true" />
+                          Analytics
+                        </Link>
+                        {/* A hairline, so the read action does not read as the fifth management
+                            button. It is also the only control here carrying an icon; keep it that way. */}
+                        {canManage ? <span aria-hidden="true" className="mx-0.5 h-4 w-px shrink-0 bg-[var(--border)]" /> : null}
                         {!canManage ? null : confirming ? (
                           <>
                             <span className="text-[12px] text-[var(--muted)]">Delete?</span>

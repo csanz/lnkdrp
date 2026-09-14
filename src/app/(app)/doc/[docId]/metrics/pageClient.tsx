@@ -1228,7 +1228,9 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               <div className="mt-1">
                 <div className="text-sm font-semibold text-[var(--fg)]">Links</div>
                 <div className="mt-1 text-sm text-[var(--muted)]">
-                  What each link brought in over the last {days} days. Click a row to filter the page.
+                  {/* The row has no click handler — only the link name does. The old wording sent
+                      readers clicking dead space and concluding the filter was broken. */}
+                  What each link brought in over the last {days} days. Select a link name to filter the page.
                 </div>
 
                 <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">

@@ -408,6 +408,9 @@ export default function DocQuickStats({
     </div>
   );
 
+  /** The one link's label, when a document has exactly one, so the header can name what it counts. */
+  const soleLinkLabel = coveredLinkCount === 1 && links?.length === 1 ? links[0]!.label : null;
+
   /**
    * How many of those opens were somebody coming back. Only shown when it is a real fact: equal
    * numbers mean nobody returned, and "0 returns" under every tile is noise.
@@ -449,8 +452,16 @@ export default function DocQuickStats({
               which is headed with the DEFAULT link's address and settings, so without "all N links"
               the reader takes these tiles for the default link's numbers and concludes the other
               links got nothing. "All links" is the same wording as the metrics page chip. */}
+          {/* Name the scope in both cases. On a one-link document these tiles *are* that link's
+              numbers, and saying so is the difference between a reader knowing that and guessing —
+              the link lists below are hidden at one link, so nothing else on the card says it. */}
           <span className="font-normal normal-case tracking-normal text-[var(--muted)]">
-            {coveredLinkCount > 1 ? `· all ${coveredLinkCount} links · ` : "· "}last {shownDays} days
+            {coveredLinkCount > 1
+              ? `· all ${coveredLinkCount} links · `
+              : soleLinkLabel
+                ? `· ${soleLinkLabel} · `
+                : "· "}
+            last {shownDays} days
           </span>
         </div>
         <div className="text-[11px] text-[var(--muted-2)]">{failed ? "Live stats unavailable" : (freshness ?? "")}</div>
@@ -526,7 +537,7 @@ export default function DocQuickStats({
           href={`/doc/${encodeURIComponent(docId)}/metrics`}
           className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
         >
-          Open metrics
+          Open full metrics
         </Link>
       </div>
 
