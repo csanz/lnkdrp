@@ -38,6 +38,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { ShareLinkModel } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
+import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 
 type LinkRow = {
   _id: Types.ObjectId;
@@ -83,6 +84,16 @@ async function main(): Promise<void> {
     for (const d of docs) if (d.orgId) docOrgById.set(String(d._id), String(d.orgId));
   }
 
+  // The document's owner, for every link — a legacy doc has no workspace, so `userId` is the only
+  // handle on "the owning side" there, and an owner who has since left the workspace still is one.
+  const docOwnerById = new Map<string, string>();
+  if (links.length) {
+    const ownerRows = (await DocModel.find({ _id: { $in: links.map((l) => l.docId) } })
+      .select({ _id: 1, userId: 1 })
+      .lean()) as unknown as Array<{ _id: Types.ObjectId; userId?: Types.ObjectId | null }>;
+    for (const d of ownerRows) if (d.userId) docOwnerById.set(String(d._id), String(d.userId));
+  }
+
   const before = {
     shareViewsMissingLink: await ShareViewModel.countDocuments(MISSING("shareLinkId")),
     shareViewsMissingOrg: await ShareViewModel.countDocuments(MISSING("orgId")),
@@ -114,6 +125,33 @@ async function main(): Promise<void> {
   let visitsOrged = 0;
   let skippedLinks = 0;
   let viewsLastViewedSeeded = 0;
+  let viewsMarkedOwnerPreview = 0;
+  let visitsMarkedOwnerPreview = 0;
+
+  /**
+   * Workspace members, by workspace — the owning side, whose own opens must not be counted as
+   * recipient views (see `ShareView.isOwnerPreview`). Cached because a workspace usually owns many
+   * links and the membership list does not change mid-run.
+   */
+  const membersByOrg = new Map<string, Types.ObjectId[]>();
+  async function ownerSideUserIds(orgIdStr: string | null, docId: Types.ObjectId): Promise<Types.ObjectId[]> {
+    const ids = new Map<string, Types.ObjectId>();
+    // Legacy documents predate workspaces and carry only an owner `userId`.
+    const ownerUserId = docOwnerById.get(String(docId)) ?? null;
+    if (ownerUserId) ids.set(ownerUserId, new Types.ObjectId(ownerUserId));
+    if (orgIdStr && Types.ObjectId.isValid(orgIdStr)) {
+      let members = membersByOrg.get(orgIdStr);
+      if (!members) {
+        const rows = await OrgMembershipModel.find({ orgId: new Types.ObjectId(orgIdStr), isDeleted: { $ne: true } })
+          .select({ userId: 1 })
+          .lean();
+        members = rows.map((r) => new Types.ObjectId(String((r as { userId: unknown }).userId)));
+        membersByOrg.set(orgIdStr, members);
+      }
+      for (const m of members) ids.set(String(m), m);
+    }
+    return Array.from(ids.values());
+  }
 
   for (const link of links) {
     if (mismatches.some((m) => m.startsWith(`${link.shareId}:`))) {
@@ -125,6 +163,13 @@ async function main(): Promise<void> {
 
     const linkFilter = { shareId: link.shareId, ...MISSING("shareLinkId") };
     const orgFilter = { shareId: link.shareId, ...MISSING("orgId") };
+    // Only signed-in rows can be classified: an owner who opened their own link in a logged-out
+    // browser left a row indistinguishable from a recipient's, and guessing would delete real
+    // traffic. The flag understates owner previews on historical data, which is the safe direction.
+    const ownerSide = await ownerSideUserIds(orgIdStr, link.docId);
+    const ownerPreviewFilter = ownerSide.length
+      ? { shareId: link.shareId, viewerUserId: { $in: ownerSide }, isOwnerPreview: { $ne: true } }
+      : null;
 
     if (dryRun) {
       viewsLinked += await ShareViewModel.countDocuments(linkFilter);
@@ -134,6 +179,10 @@ async function main(): Promise<void> {
         visitsOrged += await ShareVisitModel.countDocuments(orgFilter);
       }
       viewsLastViewedSeeded += await ShareViewModel.countDocuments({ shareId: link.shareId, ...MISSING("lastViewedAt") });
+      if (ownerPreviewFilter) {
+        viewsMarkedOwnerPreview += await ShareViewModel.countDocuments(ownerPreviewFilter);
+        visitsMarkedOwnerPreview += await ShareVisitModel.countDocuments(ownerPreviewFilter);
+      }
       continue;
     }
 
@@ -165,6 +214,13 @@ async function main(): Promise<void> {
       { timestamps: false },
     );
     viewsLastViewedSeeded += seeded.modifiedCount ?? 0;
+
+    if (ownerPreviewFilter) {
+      const v3 = await ShareViewModel.updateMany(ownerPreviewFilter, { $set: { isOwnerPreview: true } }, { timestamps: false });
+      viewsMarkedOwnerPreview += v3.modifiedCount ?? 0;
+      const s3 = await ShareVisitModel.updateMany(ownerPreviewFilter, { $set: { isOwnerPreview: true } }, { timestamps: false });
+      visitsMarkedOwnerPreview += s3.modifiedCount ?? 0;
+    }
   }
 
   const after = {
@@ -181,7 +237,15 @@ async function main(): Promise<void> {
         dryRun,
         links: links.length,
         before,
-        updated: { viewsLinked, viewsOrged, visitsLinked, visitsOrged, viewsLastViewedSeeded },
+        updated: {
+          viewsLinked,
+          viewsOrged,
+          visitsLinked,
+          visitsOrged,
+          viewsLastViewedSeeded,
+          viewsMarkedOwnerPreview,
+          visitsMarkedOwnerPreview,
+        },
         after,
         skippedLinks,
         // Slugs with analytics rows but no `sharelinks` row: nothing can be attributed to a link

@@ -18,6 +18,8 @@ import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
+import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
 import { UserModel } from "@/lib/models/User";
@@ -186,10 +188,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       // `Doc.numberOfViews` / `Doc.numberOfPagesViewed` — document-wide sums across every link —
       // and the owner overlay then cached them under a per-shareId key, so a quiet second link
       // reported the busy link's traffic. Same definitions as the owner metrics route.
+      // `RECIPIENT_ONLY_MATCH`, like the metrics route: this overlay is read by the owner while
+      // they are looking at their own share page, which is the single most reliable way to
+      // manufacture the owner-preview rows it must not count.
       const [views, pagesAgg] = await Promise.all([
-        ShareViewModel.countDocuments({ shareId }),
+        ShareViewModel.countDocuments({ shareId, ...RECIPIENT_ONLY_MATCH }),
         ShareViewModel.aggregate([
-          { $match: { shareId } },
+          { $match: { shareId, ...RECIPIENT_ONLY_MATCH } },
           { $group: { _id: null, pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } } } },
           {
             $project: {
@@ -215,6 +220,37 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       return NextResponse.json({ error: message }, { status: 400 });
     }
   });
+}
+/**
+ * Is the signed-in viewer on the *owning* side of this document — its owner, or a member of the
+ * workspace that owns it — rather than a recipient the link was sent to?
+ *
+ * Used to stamp `isOwnerPreview` on the analytics rows. The rows are still written; they are just
+ * kept out of the owner's own numbers (see `ShareView.isOwnerPreview`). Returns `false` for anyone
+ * signed out, which is the best-effort part: an owner testing their link in a private window is
+ * indistinguishable from a recipient and will count as one.
+ */
+async function isOwnerSideViewer(doc: Record<string, unknown>, viewerUserId: Types.ObjectId | null): Promise<boolean> {
+  if (!viewerUserId) return false;
+  try {
+    // Legacy documents predate workspaces and carry only an owner `userId`.
+    const ownerUserId = doc?.userId ? String(doc.userId) : "";
+    if (ownerUserId && ownerUserId === String(viewerUserId)) return true;
+    const docOrgId = doc?.orgId ? String(doc.orgId) : "";
+    if (!docOrgId || !Types.ObjectId.isValid(docOrgId)) return false;
+    // A teammate's open is an owner-side open too: on a shared workspace the deck's traffic must
+    // not include the four colleagues who clicked it in Slack before it was sent to anyone.
+    return Boolean(
+      await OrgMembershipModel.exists({
+        orgId: new Types.ObjectId(docOrgId),
+        userId: viewerUserId,
+        isDeleted: { $ne: true },
+      }),
+    );
+  } catch {
+    // A membership lookup that fails must not turn a real recipient's view into a dropped one.
+    return false;
+  }
 }
 /**
  * Handle POST requests.
@@ -292,6 +328,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           // stamps that on every update query, so a backfill or a metrics-page read moved it too
           // and "Last viewed" reported the maintenance instant (see `ShareView.lastViewedAt`).
           setFields.lastViewedAt = new Date();
+          // Recorded, not counted: the owner's own opens stay visible to anyone debugging a link
+          // and stay out of every figure the owner reads (`RECIPIENT_ONLY_MATCH`). `$set` on every
+          // heartbeat, so a row first written while signed out self-heals once they sign in.
+          const ownerPreview = await isOwnerSideViewer(doc as Record<string, unknown>, viewerUserId);
+          setFields.isOwnerPreview = ownerPreview;
 
           // The upsert is the write most likely to throw: two first-time POSTs for the same
           // (shareId, botIdHash) race and the unique index makes the loser fail with E11000. That
@@ -319,9 +360,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           }
 
           // The link's `lastViewedAt` moves for every view, not only a first-time viewer's: a
-          // recipient who comes back daily used to leave the links table reading "Never".
-          void touchShareLink(shareId, "view", { countView: created });
-          if (created) {
+          // recipient who comes back daily used to leave the links table reading "Never". An owner
+          // preview moves nothing: "Last viewed 2 minutes ago" on a link nobody has received yet is
+          // the same lie as counting the view.
+          if (!ownerPreview) void touchShareLink(shareId, "view", { countView: created });
+          if (created && !ownerPreview) {
             await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
             // Activity feed: one "viewed" event per new viewer of this share (not per page/visit).
             void (async () => {
@@ -467,6 +510,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
               const set: Record<string, unknown> = {
                 ...(Object.keys(setFields).length ? setFields : {}),
+                // Same flag as the `ShareView` row, so the per-visit timeline the owner reads
+                // beside the counts excludes exactly the sessions the counts do.
+                isOwnerPreview: ownerPreview,
                 ...(viewerName ? { viewerName } : {}),
                 ...(viewerEmailSnapshot ? { viewerEmailSnapshot } : {}),
                 // `$set`, not `$setOnInsert`, for the same self-healing reason as `ShareView`.

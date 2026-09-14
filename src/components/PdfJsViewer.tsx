@@ -1774,10 +1774,13 @@ export function PdfJsViewer({
   }, [hasFirstPaint, shareIdSafe]);
 
   useEffect(() => {
-    // Keep the "current page" ref in sync for time flushes.
     if (!shareIdSafe) return;
     if (!hasFirstPaint) return;
-    shareTimingPageRef.current = pageNumber;
+    // NOTE: this effect must NOT advance `shareTimingPageRef`. That ref names the page whose dwell
+    // segment is currently being timed, and the dwell effect below compares it against the new page
+    // to decide whether to flush. Setting it here ran first, so the comparison always said "same
+    // page" and the flush never fired: every page's time was credited to whichever page happened to
+    // be open when some other path flushed. The dwell effect owns the ref.
     // If we're visible and the page timer isn't running yet, start it now.
     try {
       if (typeof document !== "undefined" && document.visibilityState === "visible" && !shareTimingPageEnteredAtMsRef.current) {
@@ -1801,6 +1804,7 @@ export function PdfJsViewer({
     if (!visitId) return;
     shareVisitIdRef.current = visitId;
 
+    // The page still being timed; `pageNumber` is where the reader has just moved to.
     const prevPage = shareTimingPageRef.current;
     const enteredAt = shareTimingPageEnteredAtMsRef.current;
     const now = Date.now();

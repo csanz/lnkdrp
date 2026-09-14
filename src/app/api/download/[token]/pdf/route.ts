@@ -12,6 +12,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink, touchShareLink } from "@/lib/share/links";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -53,7 +55,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     await connectMongo();
     const claimTokenHash = sha256Hex(rawToken);
     const reqDoc = await ShareDownloadRequestModel.findOne({ claimTokenHash, status: "approved" })
-      .select({ requesterEmail: 1, docId: 1 })
+      .select({ requesterEmail: 1, docId: 1, shareId: 1 })
       .lean();
     if (!reqDoc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -68,8 +70,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     }
 
     const docId = (reqDoc as { docId?: unknown }).docId;
-    const doc = await DocModel.findOne({ _id: docId, isDeleted: { $ne: true } })
-      .select({ blobUrl: 1, title: 1, fileName: 1 })
+
+    // An approval is permission to download *through that link*, not a standing right to the file.
+    // Without this the owner could disable, expire or archive the link and an approved requester
+    // would keep downloading: the claim token went straight to the document and never consulted
+    // the link. Same gate the public `/s/:shareId/pdf` route applies.
+    const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
+    const resolved = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
+    if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    const doc = await DocModel.findOne({ _id: docId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
+      .select({ blobUrl: 1, title: 1, fileName: 1, userId: 1, orgId: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -98,6 +109,31 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
         ((doc as { title?: unknown }).title as string | null | undefined),
     );
     headers.set("content-disposition", `attachment; filename="${filename}"`);
+
+    // The owner asked to be told when this person downloads; before, an approved download was
+    // invisible in both the link's counters and the activity feed.
+    if (upstream.ok) {
+      void touchShareLink(resolved.link.shareId, "download");
+      const orgIdForActivity = (doc as { orgId?: unknown }).orgId ? String((doc as { orgId: unknown }).orgId) : null;
+      if (orgIdForActivity) {
+        void recordActivity({
+          orgId: orgIdForActivity,
+          userId: actor.userId,
+          actorKind: "viewer",
+          type: "share.downloaded",
+          docId: String(docId),
+          title: typeof (doc as { title?: unknown }).title === "string" ? String((doc as { title: string }).title) : null,
+          meta: {
+            shareId: resolved.link.shareId,
+            linkLabel: resolved.link.label ?? null,
+            isDefaultLink: Boolean(resolved.link.isDefault),
+            viewerEmail: requesterEmail,
+            viaDownloadRequest: true,
+          },
+          request,
+        });
+      }
+    }
 
     return new Response(upstream.body, { status: upstream.status, headers });
   } catch (err) {

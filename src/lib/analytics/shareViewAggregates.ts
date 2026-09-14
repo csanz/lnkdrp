@@ -125,3 +125,46 @@ export function windowStartUtc(days: number, now: Date = new Date()): Date {
   start.setUTCDate(start.getUTCDate() - (Math.max(1, Math.floor(days)) - 1));
   return start;
 }
+
+/**
+ * Rows that belong to a *recipient*, i.e. everything the owner did not generate themselves.
+ *
+ * Every owner-facing aggregate must carry this. An owner opening their own link to check it is
+ * recorded (see `ShareView.isOwnerPreview`) but never counted: "4 views · 1 person" on a deck no
+ * investor had opened is worse than no number at all. `$ne: true` rather than `false` so the rows
+ * written before the field existed — which have no value at all — still count as recipients.
+ */
+export const RECIPIENT_ONLY_MATCH = { isOwnerPreview: { $ne: true } } as const;
+
+/**
+ * "Active in the last `days`" — the window every owner-facing figure is bounded by.
+ *
+ * Bounded by last activity, not by `createdDate`. A `ShareView` row is lifetime-per-(link, viewer),
+ * so a `createdDate` bound answered "who was *first seen* this week" — an investor who received the
+ * link in January and re-read the deck this morning was absent from every 7-day figure on the page,
+ * and the one moment the owner most wants to know about was the one the window hid. The owner's
+ * question is "who read this lately", and a returning reader is the best possible answer to it.
+ *
+ * `{ lastViewedAt: null }` also matches rows where the field is absent, so the `$or` covers the
+ * pre-`lastViewedAt` rows via their `updatedDate` without a third clause.
+ */
+export function activityWindowMatch(start: Date): Record<string, unknown> {
+  return { $or: [{ lastViewedAt: { $gte: start } }, { lastViewedAt: null, updatedDate: { $gte: start } }] };
+}
+
+/** {@link activityWindowMatch} as an aggregation expression, for `$cond` inside an accumulator. */
+export function activityInWindowExpr(start: Date): Record<string, unknown> {
+  return { $gte: [LAST_ACTIVITY_EXPR, start] };
+}
+
+/**
+ * The UTC day a row's last activity falls on — the bucket of the views-by-day series.
+ *
+ * Same expression as the window bound, which is what keeps the area under the chart equal to
+ * `totals.views`. It also means a reader appears on the day they last read, not the day they were
+ * first seen: the chart answers "when was this deck being read", which is the question a spike on
+ * it is taken to answer anyway.
+ */
+export const ACTIVITY_DAY_KEY_EXPR = {
+  $dateToString: { date: LAST_ACTIVITY_EXPR, format: "%Y-%m-%d", timezone: "UTC" },
+} as const;

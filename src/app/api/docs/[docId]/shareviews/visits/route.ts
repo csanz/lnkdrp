@@ -17,6 +17,7 @@ import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
+import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -99,7 +100,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     // invariant on the analytics rows after a slug rotation, a restored backup or a doc clone.
     // `visits/[visitId]` already anchors on both; the route that returns a *list* must not be the
     // looser of the two.
-    const query: Record<string, unknown> = link ? { docId: docObjectId, shareId: link.shareId } : { docId: docObjectId };
+    //
+    // `RECIPIENT_ONLY_MATCH`: the owner's own sessions are recorded but never listed here, so this
+    // timeline shows exactly the sessions the counts beside it are built from.
+    const query: Record<string, unknown> = {
+      ...(link ? { docId: docObjectId, shareId: link.shareId } : { docId: docObjectId }),
+      ...RECIPIENT_ONLY_MATCH,
+    };
     if (kind === "authed") query.viewerUserId = new Types.ObjectId(userId!);
     if (kind === "anon") query.botIdHash = botIdHash!.trim();
 

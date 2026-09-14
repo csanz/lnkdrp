@@ -26,6 +26,22 @@ const shareViewSchema = new Schema(
     orgId: { type: Schema.Types.ObjectId, ref: "Org", index: true, default: null },
     botIdHash: { type: String, trim: true, index: true, required: true },
     /**
+     * True when the person behind this row is on the *owning* side of the document — its owner, or
+     * a member of the workspace that owns it — rather than a recipient the link was sent to.
+     *
+     * The row is still written. An owner checking their own link is real, debuggable activity
+     * ("did the password page work?", "does the Sequoia link open?"), and deleting it would make
+     * the absence of a view indistinguishable from a broken link. What it must not do is inflate
+     * the numbers the owner reads: a deck opened four times by its author and never by an investor
+     * reported "4 views · 1 person", which is the opposite of the truth the page exists to tell.
+     *
+     * So: recorded here, and filtered out of every owner-facing aggregate by
+     * `RECIPIENT_ONLY_MATCH` (src/lib/analytics/shareViewAggregates.ts). Best-effort — it needs a
+     * signed-in session on the ingest request, so an owner who opens their own link in a logged-out
+     * browser is indistinguishable from a recipient and counts as one.
+     */
+    isOwnerPreview: { type: Boolean, default: false },
+    /**
      * When this viewer last actually read the share — written **only** by the view ingest path
      * (`POST /api/share/:shareId/stats`, `/s/:shareId/pdf`).
      *

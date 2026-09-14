@@ -12,6 +12,7 @@ import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
+import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,10 +68,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
 
+    // Owner previews are excluded here too, so a session id that the list route refuses to show
+    // cannot be opened directly by guessing at the URL.
     const visit = await ShareVisitModel.findOne({
       _id: new Types.ObjectId(visitId),
       docId: docObjectId,
       ...(link ? { shareId: link.shareId } : {}),
+      ...RECIPIENT_ONLY_MATCH,
     })
       .select({
         _id: 1,

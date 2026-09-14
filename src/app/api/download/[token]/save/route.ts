@@ -11,6 +11,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink } from "@/lib/share/links";
 import { newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
@@ -33,7 +34,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ token: str
     await connectMongo();
     const claimTokenHash = sha256Hex(rawToken);
     const reqDoc = await ShareDownloadRequestModel.findOne({ claimTokenHash, status: "approved" })
-      .select({ requesterEmail: 1, docId: 1, savedDocId: 1 })
+      .select({ requesterEmail: 1, docId: 1, savedDocId: 1, shareId: 1 })
       .lean();
     if (!reqDoc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -53,7 +54,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ token: str
     }
 
     const sourceDocId = (reqDoc as { docId?: unknown }).docId;
-    const src = await DocModel.findOne({ _id: sourceDocId, isDeleted: { $ne: true } })
+    // Saving a copy is a download by another name, so it answers to the same link gate: a disabled,
+    // expired or archived link must not keep handing out the file to an approved requester.
+    const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
+    const resolvedLink = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
+    if (!resolvedLink || resolvedLink.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    const src = await DocModel.findOne({ _id: sourceDocId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
       .select({ title: 1, fileName: 1, blobUrl: 1, previewImageUrl: 1, firstPagePngUrl: 1 })
       .lean();
     if (!src) return NextResponse.json({ error: "Not found" }, { status: 404 });

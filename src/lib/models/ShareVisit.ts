@@ -35,6 +35,13 @@ const shareVisitSchema = new Schema(
     /** Viewer identity (best-effort, per browser/device). */
     botIdHash: { type: String, trim: true, index: true, required: true },
 
+    /**
+     * The owning side opened the link, not a recipient — see `ShareView.isOwnerPreview`, which
+     * carries the full reasoning. Kept in step by the same ingest write, so a session excluded
+     * from the view counts is also excluded from the per-visit timeline the owner reads beside them.
+     */
+    isOwnerPreview: { type: Boolean, default: false },
+
     /** Per-tab visit/session id (sha256 of a random client-generated string). */
     visitIdHash: { type: String, trim: true, index: true, required: true },
 

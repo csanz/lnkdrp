@@ -15,6 +15,7 @@ import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { debugError } from "@/lib/debug";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { ownerCanShowVersionHistory } from "@/lib/share/ownerPlan";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { Types } from "mongoose";
 
@@ -51,24 +52,15 @@ function encodeCursor(c: { toVersion: number; createdDate: string; id: string })
 }
 
 /**
- * True when the workspace that owns the doc is on Pro.
+ * True when the workspace that owns the doc may show recipients its version history.
  *
- * Legacy docs may carry no `orgId`; those belong to the uploader's personal workspace. Any failure
- * (malformed ids, DB errors) reads as "not Pro" so a paywalled feature never leaks by accident.
+ * Delegates to the shared read-path gate so this route and `/s/:shareId/changes` cannot answer the
+ * same question differently — they did, and the cookie-scoped one was the permissive half.
  */
 async function ownerIsPro(doc: { orgId?: unknown; userId?: unknown }): Promise<boolean> {
-  try {
-    let orgId: Types.ObjectId | null =
-      doc.orgId && Types.ObjectId.isValid(String(doc.orgId)) ? new Types.ObjectId(String(doc.orgId)) : null;
-    if (!orgId && doc.userId && Types.ObjectId.isValid(String(doc.userId))) {
-      orgId = (await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(String(doc.userId)) })).orgId;
-    }
-    if (!orgId) return false;
-    return (await getWorkspacePlan(orgId)) === "pro";
-  } catch (e) {
-    debugError(1, "[api/share/:shareId/changes] plan lookup failed", { message: e instanceof Error ? e.message : String(e) });
-    return false;
-  }
+  const allowed = await ownerCanShowVersionHistory(doc);
+  if (!allowed) debugError(1, "[api/share/:shareId/changes] version history withheld (plan)");
+  return allowed;
 }
 
 function getCookie(request: Request, name: string): string | null {

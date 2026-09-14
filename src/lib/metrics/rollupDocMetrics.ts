@@ -2,6 +2,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { RECIPIENT_ONLY_MATCH, activityWindowMatch } from "@/lib/analytics/shareViewAggregates";
 
 /**
  * Server-side metrics rollups.
@@ -85,13 +86,16 @@ export async function rollupDocMetrics(opts?: {
   for (const doc of docs) {
     const docId = new Types.ObjectId(String(doc._id));
 
+    // Same two rules as the live metrics route, or the snapshot on the dashboard card disagrees
+    // with the page it links to: recipients only, bounded by last activity rather than first sighting.
     const lastDaysViews = await ShareViewModel.countDocuments({
       docId,
-      createdDate: { $gte: start },
+      ...RECIPIENT_ONLY_MATCH,
+      ...activityWindowMatch(start),
     });
 
     const downloadsLastAgg = (await ShareViewModel.aggregate([
-      { $match: { docId } },
+      { $match: { docId, ...RECIPIENT_ONLY_MATCH } },
       { $project: { items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } } } },
       { $unwind: "$items" },
       { $match: { "items.k": { $gte: startKey } } },
@@ -103,7 +107,7 @@ export async function rollupDocMetrics(opts?: {
         : 0;
 
     const downloadsTotalAgg = (await ShareViewModel.aggregate([
-      { $match: { docId } },
+      { $match: { docId, ...RECIPIENT_ONLY_MATCH } },
       { $group: { _id: null, downloads: { $sum: { $ifNull: ["$downloads", 0] } } } },
     ])) as Array<{ downloads?: number }>;
     const downloadsTotal =

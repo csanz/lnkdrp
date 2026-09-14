@@ -23,8 +23,12 @@
  * Two consequences worth knowing:
  * - `totals` covers the `days` window, like `series` and `viewerCount`, so one response speaks one
  *   language. Lifetime figures are still returned, separately, as `totalsAllTime`.
- * - A window on `ShareView` means "viewers first seen in the window" (`createdDate`): a row is
- *   lifetime-per-(link, viewer), which is exactly what the views-by-day series already counted.
+ * - A window means "active in the window", bounded by last activity rather than by `createdDate`
+ *   (see `activityWindowMatch`). A `ShareView` row is lifetime-per-(link, viewer), so the old
+ *   `createdDate` bound answered "first seen this week" and hid the investor who received the link
+ *   in January and re-read the deck this morning — the single event the owner most wants to see.
+ * - Nothing here counts the owner's own opens. They are recorded (`ShareView.isOwnerPreview`, so
+ *   "did my link work?" stays answerable) and excluded from every figure by `RECIPIENT_ONLY_MATCH`.
  * - `views`, `downloads` and `viewers` are additive, so the document's number equals the sum over
  *   its links. A viewer is counted **once per link**: the same browser opening two links is two
  *   link-recipients, because the per-link table sits under the "All links" tiles and readers add
@@ -33,9 +37,9 @@
  *   and is ≤ the sum of the per-link figures, never > the deck.
  *
  * Known limitation, stated so nobody reads more into the number than is there: a `ShareView` row
- * is unique per (link, viewer) for life, so `totals.views` counts the (link, viewer) pairs *first
- * seen* in the window and is equal to `totals.authenticatedViewers + totals.anonymousViewers` by
- * construction. It is "how many new recipients opened this", not "how many times it was opened" —
+ * is unique per (link, viewer) for life, so `totals.views` counts the (link, viewer) pairs *active*
+ * in the window and is equal to `totals.authenticatedViewers + totals.anonymousViewers` by
+ * construction. It is "how many recipients read this lately", not "how many times it was opened" —
  * per-open counting needs `ShareVisit` (one row per tab session), whose coverage only starts from
  * the visit-upsert fix and so cannot answer for historical traffic yet. Surfaces must not print
  * `views` and `viewers` side by side as if they were two facts.
@@ -52,8 +56,12 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
 import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import {
+  ACTIVITY_DAY_KEY_EXPR,
   LAST_ACTIVITY_EXPR,
   LINK_VIEWER_KEY_EXPR,
+  RECIPIENT_ONLY_MATCH,
+  activityInWindowExpr,
+  activityWindowMatch,
   pageTimeMergeExpr,
   windowStartUtc,
 } from "@/lib/analytics/shareViewAggregates";
@@ -207,8 +215,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       if (shareIdFilter && !link) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }
-      /** What every `ShareView` aggregate matches on: one link, or the whole document. */
-      const scopeMatch: Record<string, unknown> = link ? { shareId: link.shareId } : { docId: docObjectId };
+      /**
+       * What every `ShareView` aggregate matches on: one link, or the whole document — and never
+       * the owner's own opens (`RECIPIENT_ONLY_MATCH`), on any figure, on either scope.
+       */
+      const scopeMatch: Record<string, unknown> = {
+        ...(link ? { shareId: link.shareId } : { docId: docObjectId }),
+        ...RECIPIENT_ONLY_MATCH,
+      };
+      /** The document scope of the per-link breakdown, which never follows `?shareId=`. */
+      const docScopeMatch: Record<string, unknown> = { docId: docObjectId, ...RECIPIENT_ONLY_MATCH };
 
       const start = windowStartUtc(days);
       const startKey = utcDayKey(start);
@@ -236,7 +252,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // Totals for the window, and the lifetime figures beside them. Both scopes run the same
       // aggregation over `scopeMatch`, so "All links" is the sum of its links by construction.
       const [windowTotals, allTimeTotals] = await Promise.all([
-        totalsForMatch({ ...scopeMatch, createdDate: { $gte: start } }),
+        totalsForMatch({ ...scopeMatch, ...activityWindowMatch(start) }),
         totalsForMatch(scopeMatch),
       ]);
 
@@ -257,12 +273,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       if (!viewersOnly) {
         const [seriesAgg, downloadsSeriesAgg, downloadsAgg] = await Promise.all([
           ShareViewModel.aggregate([
-            { $match: { ...scopeMatch, createdDate: { $gte: start } } },
+            { $match: { ...scopeMatch, ...activityWindowMatch(start) } },
             {
-              $group: {
-                _id: { $dateToString: { date: "$createdDate", format: "%Y-%m-%d", timezone: "UTC" } },
-                views: { $sum: 1 },
-              },
+              // Bucketed by last activity, like the window itself — so the bars still add up to
+              // `totals.views`, and a reader who came back shows on the day they came back.
+              $group: { _id: ACTIVITY_DAY_KEY_EXPR, views: { $sum: 1 } },
             },
             { $sort: { _id: 1 } },
           ]) as Promise<Array<{ _id: string; views: number }>>,
@@ -320,7 +335,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             // Matched all-time so every slug that ever had traffic gets a row (and a real
             // `lastViewedAt`); the window is applied inside the accumulators, so the counts still
             // cover `days`.
-            { $match: { docId: docObjectId } },
+            { $match: docScopeMatch },
             {
               $group: {
                 // One bucket per (link, viewer identity): the inner group is what makes `viewers`
@@ -328,10 +343,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 // groups on the same key, which is what makes `sum(byLink[].viewers)` equal the
                 // document's `viewerCount` instead of undercounting it by the shared browsers.
                 _id: LINK_VIEWER_KEY_EXPR,
-                views: { $sum: { $cond: [{ $gte: ["$createdDate", start] }, 1, 0] } },
+                // Same bound as the header figures: last activity, not first sighting.
+                views: { $sum: { $cond: [activityInWindowExpr(start), 1, 0] } },
                 lastSeen: { $max: LAST_ACTIVITY_EXPR },
                 pagesSeenArrays: {
-                  $push: { $cond: [{ $gte: ["$createdDate", start] }, { $ifNull: ["$pagesSeen", []] }, []] },
+                  $push: { $cond: [activityInWindowExpr(start), { $ifNull: ["$pagesSeen", []] }, []] },
                 },
               },
             },
@@ -360,7 +376,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             },
           ]) as Promise<Array<{ shareId: string; views: number; viewers: number; pagesViewed: number; lastSeen?: Date | null }>>,
           ShareViewModel.aggregate([
-            { $match: { docId: docObjectId } },
+            { $match: docScopeMatch },
             { $project: { shareId: 1, items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } } } },
             { $unwind: "$items" },
             { $match: { "items.k": { $gte: startKey } } },
@@ -518,7 +534,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // say "3 people" over a table whose Viewers column added up to 4, with nothing on the page
       // to reconcile them.
       const windowAgg = (await ShareViewModel.aggregate([
-        { $match: { ...scopeMatch, createdDate: { $gte: start } } },
+        { $match: { ...scopeMatch, ...activityWindowMatch(start) } },
         {
           $group: {
             _id: {

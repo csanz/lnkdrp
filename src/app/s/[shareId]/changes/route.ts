@@ -12,6 +12,7 @@ import { resolveShareLink } from "@/lib/share/links";
 import { DocChangeModel } from "@/lib/models/DocChange";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { ownerCanShowVersionHistory } from "@/lib/share/ownerPlan";
 import { Types } from "mongoose";
 
 export const runtime = "nodejs";
@@ -110,6 +111,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         return NextResponse.json({ error: "Version history disabled" }, { status: 403 });
       }
 
+      // ...and a Pro feature. The per-link toggle is gated when it is *set*, which only covers the
+      // moment of the write: a workspace that turned it on while on Pro and then downgraded kept
+      // serving recipient-facing history forever, because nothing on the read path asked what plan
+      // the owner is on today. The owner's own history page is unaffected — it is not plan-gated.
+      // A plain 403 rather than `planLimitResponse`: this reply goes to the recipient, who must
+      // not be shown the owner's billing state or an upgrade prompt for someone else's workspace.
+      if (!(await ownerCanShowVersionHistory(doc as { orgId?: unknown; userId?: unknown }))) {
+        return NextResponse.json({ error: "Version history disabled" }, { status: 403 });
+      }
+
       const sharePasswordHash = link.passwordHash;
       const sharePasswordSalt = link.passwordSalt;
       const passwordEnabled =
@@ -182,7 +193,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         };
       });
 
-      const cacheControl = passwordEnabled ? "no-store" : "public, max-age=60, stale-while-revalidate=300";
+      // `private`, never `public`: a shared cache keyed on the URL alone would keep serving this
+      // history for the life of the entry after the link is disabled, expires, or is archived —
+      // the three controls whose whole purpose is to stop a recipient reading the document. The
+      // short `max-age` still absorbs a recipient's own repeated loads of the history drawer.
+      const cacheControl = passwordEnabled ? "no-store" : "private, max-age=30";
       return NextResponse.json(
         { ok: true, changes: mapped, nextCursor },
         { headers: { "cache-control": cacheControl } },

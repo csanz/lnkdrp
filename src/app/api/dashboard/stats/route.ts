@@ -9,6 +9,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
@@ -116,7 +117,9 @@ export async function GET(request: Request) {
         { $group: { _id: "$day", count: { $sum: 1 } } },
       ]),
       ShareViewModel.aggregate([
-        { $match: { $or: [{ createdDate: { $gte: since30d } }, { updatedDate: { $gte: since30d } }] } },
+        // Recipients only, like every other view figure in the product: the workspace dashboard
+        // must not be the one surface where the team's own opens inflate the chart.
+        { $match: { ...RECIPIENT_ONLY_MATCH, $or: [{ createdDate: { $gte: since30d } }, { updatedDate: { $gte: since30d } }] } },
         // Keep the working set small: we only need docId + dates + downloadsByDay for the dashboard series.
         { $project: { docId: 1, createdDate: 1, updatedDate: 1, downloadsByDay: 1 } },
         {
