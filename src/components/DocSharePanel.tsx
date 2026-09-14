@@ -245,98 +245,80 @@ export default function DocSharePanel({
         open={aiExtractOpen}
         onClose={() => setAiExtractOpen(false)}
         ariaLabel="Summary and key points"
-        panelClassName="w-[min(860px,calc(100vw-32px))]"
+        width={920}
+        contentClassName="px-8 pb-8 pt-7"
       >
-        <div className="flex items-center gap-2 text-base font-semibold text-[var(--fg)]">
-          <span>Summary</span>
-          <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
+        <div className="flex items-center gap-2 pr-10">
+          <span className="text-[15px] font-semibold text-[var(--fg)]">Summary</span>
+          <span className="rounded-md border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
             {summaryBadge}
           </span>
         </div>
-        <div className="mt-2 text-sm text-[var(--muted)]">
-          Summary and key points, written after every upload.
-        </div>
 
         {oneLiner ? (
-          <div className="mt-5 text-lg font-semibold text-[var(--fg)]">{oneLiner}</div>
+          <p className="mt-4 max-w-[46rem] text-[20px] font-semibold leading-snug tracking-tight text-[var(--fg)]">{oneLiner}</p>
         ) : null}
 
-        <div className="mt-5 grid gap-4">
-          {why ? (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                Why this exists
-              </div>
-              <div className="mt-1 text-sm leading-relaxed text-[var(--fg)]">{why}</div>
-            </div>
-          ) : null}
+        {/* Two columns: the prose on the left, the facts as a compact list on the right. */}
+        <div className="mt-6 grid gap-8 md:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+          <div className="min-w-0">
+            {summary ? (
+              <section>
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">Overview</h3>
+                <div className="mt-2 text-[14px] leading-7 text-[var(--fg)]">
+                  <Markdown>{summary}</Markdown>
+                </div>
+              </section>
+            ) : null}
 
-          {context ? (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                Context
-              </div>
-              <div className="mt-1 text-sm leading-relaxed text-[var(--fg)]">{context}</div>
-            </div>
-          ) : null}
+            {scope.length ? (
+              <section className={summary ? "mt-7" : ""}>
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">What it covers</h3>
+                <ul className="mt-3 space-y-2">
+                  {scope.slice(0, 12).map((s) => (
+                    <li key={`scope_full:${s}`} className="flex gap-3 text-[14px] leading-6 text-[var(--fg)]">
+                      <span aria-hidden="true" className="mt-[0.6rem] h-1 w-1 shrink-0 rounded-full bg-[var(--muted-2)]" />
+                      <span>{s}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
 
-          {value ? (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                Value
-              </div>
-              <div className="mt-1 text-sm leading-relaxed text-[var(--fg)]">{value}</div>
-            </div>
-          ) : null}
+          <aside className="min-w-0">
+            {why || context || value || maturity || ask ? (
+              <dl className="divide-y divide-[var(--border)] rounded-xl border border-[var(--border)] bg-[var(--panel-2)]">
+                {[
+                  { label: "Why it exists", text: why },
+                  { label: "Where it applies", text: context },
+                  { label: "Value", text: value },
+                  { label: "Status", text: maturity },
+                  { label: "Ask", text: ask },
+                ]
+                  .filter((row) => row.text)
+                  .map((row) => (
+                    <div key={row.label} className="px-4 py-3.5">
+                      <dt className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">{row.label}</dt>
+                      <dd className="mt-1 text-[13px] leading-6 text-[var(--fg)]">{row.text}</dd>
+                    </div>
+                  ))}
+              </dl>
+            ) : null}
 
-          {maturity ? (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                Status
-              </div>
-              <div className="mt-1 text-sm leading-relaxed text-[var(--fg)]">{maturity}</div>
-            </div>
-          ) : null}
-
-          {ask ? (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                Ask
-              </div>
-              <div className="mt-1 text-sm leading-relaxed text-[var(--fg)]">{ask}</div>
-            </div>
-          ) : null}
-
-          {scope.length ? (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                What it covers
-              </div>
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-[var(--fg)]">
-                {scope.slice(0, 12).map((s) => (
-                  <li key={`scope_full:${s}`}>{s}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-
-          {metrics.length ? (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-[var(--muted)]">
-                Key metrics
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {metrics.slice(0, 12).map((m) => (
-                  <span
-                    key={`metric:${m}`}
-                    className="rounded-full bg-[var(--panel)] px-3 py-1 text-xs font-medium text-[var(--muted)] ring-1 ring-[var(--border)]"
-                  >
-                    {m}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ) : null}
+            {metrics.length ? (
+              <section className="mt-6">
+                <h3 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">Key numbers</h3>
+                <ul className="mt-3 space-y-1.5">
+                  {metrics.slice(0, 12).map((m) => (
+                    <li key={`metric:${m}`} className="text-[13px] leading-6 text-[var(--fg)]">
+                      {m}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </aside>
         </div>
       </Modal>
 

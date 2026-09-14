@@ -40,6 +40,7 @@ import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { openPdfDocument, renderPdfPageToPng, type PdfJsDocument } from "@/lib/pdf/renderPage";
 import { agentFromRequest, recordActivity } from "@/lib/activity/log";
 import { agentSummaryToAnalysis, readStoredAgentSummary } from "@/lib/ai/agentSummary";
+import { findRaiseAmount, resolveAsk } from "@/lib/ai/askFromText";
 import { INTERNAL_PROCESS_HEADER, verifyInternalProcessToken } from "@/lib/uploads/internalProcess";
 
 export const runtime = "nodejs";
@@ -207,63 +208,10 @@ type AiOutputRecord = Record<string, unknown> & {
   page_slugs?: unknown;
   relevant_projects?: unknown;
 };
-/**
- * Extract Ask Detail From Text (uses replace, exec, trim).
- */
-
-
-function extractAskDetailFromText(text: string, amount: string): string | null {
-  const t = text || "";
-  const escaped = amount.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  // Common patterns in decks
-  const patterns: RegExp[] = [
-    new RegExp(`Raising\\s+${escaped}\\s+to\\s+([^\\n.]+)`, "i"),
-    new RegExp(`Raise\\s+${escaped}\\s+to\\s+([^\\n.]+)`, "i"),
-    new RegExp(`${escaped}\\s+to\\s+([^\\n.]+)`, "i"),
-  ];
-  for (const rx of patterns) {
-    const m = rx.exec(t);
-    if (m?.[1]) return m[1].trim();
-  }
-  return null;
-}
-/**
- * Extract Dollar Amounts (uses map, from, matchAll).
- */
-
-
-function extractDollarAmounts(text: string): string[] {
-  const t = text || "";
-  const rx = /\$[0-9]+(?:\.[0-9]+)?\s*(?:[MBK])?/gi;
-  const found = Array.from(t.matchAll(rx)).map((m) => (m[0] ?? "").replace(/\s+/g, ""));
-  // de-dupe, keep order
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const a of found) {
-    const key = a.toUpperCase();
-    if (!key) continue;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(a);
-  }
-  return out;
-}
-/**
- * Ensure Ask (uses trim, asString, test).
- */
-
-
+/** The funding ask to store, from the model or a raise amount stated in the text. */
 function ensureAsk(ai: Record<string, unknown>, extractedText: string): string {
-  const ask = (asString(ai.ask) ?? "").trim();
-  if (ask && ask.length >= 12 && /\s/.test(ask)) return ask;
-
-  const amounts = extractDollarAmounts(extractedText);
-  const amount = ask || amounts[0] || "";
-  if (!amount) return "";
-
-  const detail = extractAskDetailFromText(extractedText, amount) || asString(ai.document_purpose);
-  if (detail && detail.trim()) return `${amount} to ${detail.replace(/^to\\s+/i, "").trim()}.`;
-  return amount;
+  // Only an amount the text states as a raise; see src/lib/ai/askFromText.ts.
+  return resolveAsk(asString(ai.ask) ?? "", extractedText, asString(ai.document_purpose));
 }
 /**
  * Ensure Key Metrics (uses isArray, filter, map).
@@ -278,17 +226,11 @@ function ensureKeyMetrics(ai: Record<string, unknown>, extractedText: string): s
     .filter(Boolean);
   if (cleaned.length >= 2) return cleaned.slice(0, 8);
 
-  const out: string[] = [];
-  // Pull any dollar amounts as a "metric"
-  for (const amt of extractDollarAmounts(extractedText)) {
-    out.push(`Funding ask: ${amt}`);
-  }
-  // Heuristic milestone phrases from common deck language
-  if (/prototype/i.test(extractedText)) out.push("Milestone: complete first prototype");
-  if (/take\s*off|stabilize|fly|land/i.test(extractedText))
-    out.push("Milestone: autonomous takeoff/stabilize/fly/land");
-  if (/edge/i.test(extractedText) && /cloud/i.test(extractedText))
-    out.push("Claim: edge-native autonomy without cloud dependency");
+  const out: string[] = [...cleaned];
+  // Only facts the text states: the raise amount, if any. (Earlier heuristics labelled every dollar
+  // figure a "Funding ask" and invented milestones from words like "fly"; they are gone.)
+  const raise = findRaiseAmount(extractedText);
+  if (raise) out.push(`Funding ask: ${raise}`);
 
   // de-dupe and cap
   const uniq: string[] = [];
@@ -332,7 +274,8 @@ function ensureStructureSignals(ai: Record<string, unknown>, extractedText: stri
   if (cat) candidates.push(cat.replace(/_/g, " "));
   const stage = asString(ai.stage);
   if (stage) candidates.push(stage);
-  for (const amt of extractDollarAmounts(extractedText)) candidates.push(`Raising ${amt}`);
+  const raise = findRaiseAmount(extractedText);
+  if (raise) candidates.push(`Raising ${raise}`);
 
   const uniq: string[] = [];
   const seen = new Set<string>();

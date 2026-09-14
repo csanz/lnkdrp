@@ -23,7 +23,7 @@ type Props = {
    * Useful to tweak spacing per-modal without changing global defaults.
    */
   contentClassName?: string;
-  /** Panel width in px (capped to the viewport); defaults to 520. */
+  /** Panel width in px (capped to the viewport); defaults to 520. Ignored when `panelClassName` sets a `w-` class. */
   width?: number;
 };
 /**
@@ -72,7 +72,9 @@ export default function Modal({
           "rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl ring-1 ring-[var(--border)]",
           panelClassName ?? "",
         ].join(" ")}
-        style={{ width: `min(${width}px, calc(100vw - 32px))` }}
+        // A width class in `panelClassName` (e.g. `w-[min(860px,…)]`) wins; the inline default would
+        // otherwise override it and pin every such modal to 520px.
+        style={/(^|\s)!?w-/.test(panelClassName ?? "") ? undefined : { width: `min(${width}px, calc(100vw - 32px))` }}
       >
         <div className="relative">
           <IconButton
