@@ -28,7 +28,7 @@ export const ACTIVITY_FILTERS = [
       "download_request.denied",
     ],
   },
-  { id: "documents", label: "Documents", types: ["doc.created", "doc.deleted", "request_repo.created"] },
+  { id: "documents", label: "Documents", types: ["doc.created", "doc.deleted", "doc.archived", "doc.unarchived", "request_repo.created"] },
   { id: "views", label: "Views", types: ["share.viewed", "share.downloaded"] },
 ] as const;
 
@@ -113,6 +113,37 @@ function linkSuffix(meta: Record<string, unknown>): string | null {
   return `via ${label}`;
 }
 
+/**
+ * Verb for a link update from `meta.values` (new values; the password only as set/cleared). One
+ * change reads specifically ("turned off downloads on"); several fall back to "updated".
+ */
+function linkUpdateVerb(meta: Record<string, unknown>): string {
+  const values = meta?.values && typeof meta.values === "object" ? (meta.values as Record<string, unknown>) : null;
+  if (!values) return "updated link";
+  const keys = Object.keys(values);
+  if (keys.length !== 1) return keys.length === 0 ? "updated link" : "changed settings of link";
+  const [k] = keys;
+  const v = values[k!];
+  switch (k) {
+    case "enabled":
+      return v ? "turned on link" : "turned off link";
+    case "allowDownload":
+      return v ? "allowed downloads on link" : "turned off downloads on link";
+    case "allowRevisionHistory":
+      return v ? "let recipients browse versions on link" : "hid versions on link";
+    case "label":
+      return "renamed a link to";
+    case "expires":
+      return v === "set" ? "set an expiry on link" : "removed the expiry from link";
+    case "password":
+      return v === "set" ? "set a password on link" : "removed the password from link";
+    case "isDefault":
+      return "made default the link";
+    default:
+      return "updated link";
+  }
+}
+
 /** Label the default link of a document carries; never shown as a "via …" suffix. */
 const DEFAULT_LINK_LABEL = "Default link";
 
@@ -154,6 +185,10 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     }
     case "doc.deleted":
       return { subject, verb: "deleted", object: docTitle, suffix: null };
+    case "doc.archived":
+      return { subject, verb: "archived", object: docTitle, suffix: "(its links stop working)" };
+    case "doc.unarchived":
+      return { subject, verb: "unarchived", object: docTitle, suffix: null };
     case "share.updated": {
       // Project share toggle (no doc on the row): meta.scope === "project" with shareEnabled.
       if (!item.doc && item.project?.name) {
@@ -177,7 +212,7 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     }
     case "share_link.updated": {
       const label = metaString(item.meta, "linkLabel") || "a link";
-      return { subject, verb: "updated link", object: `“${label}”`, suffix: `on ${docTitle}` };
+      return { subject, verb: linkUpdateVerb(item.meta), object: `“${label}”`, suffix: `on ${docTitle}` };
     }
     case "share_link.revoked": {
       const label = metaString(item.meta, "linkLabel") || "a link";
@@ -195,10 +230,12 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
       return { subject: who, verb: "viewed", object: docTitle, suffix: linkSuffix(item.meta) };
     }
-    case "share.downloaded":
-      return { subject: user || "Someone", verb: "downloaded", object: docTitle, suffix: linkSuffix(item.meta) };
+    case "share.downloaded": {
+      const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
+      return { subject: who, verb: "downloaded", object: docTitle, suffix: linkSuffix(item.meta) };
+    }
     case "download_request.created":
-      return { subject: email || "Someone", verb: "requested to download", object: docTitle, suffix: null };
+      return { subject: email || "Someone", verb: "requested to download", object: docTitle, suffix: linkSuffix(item.meta) };
     case "download_request.approved":
       return { subject, verb: "approved a download request for", object: docTitle, suffix: email ? `(${email})` : null };
     case "download_request.denied":

@@ -965,6 +965,20 @@ export async function PATCH(
       }
     }
 
+    // Archive and unarchive change what recipients can open (every link of an archived doc 404s),
+    // so the owner's feed records them.
+    if (wantsArchiveChange && before && Boolean((before as { isArchived?: unknown }).isArchived) !== body.isArchived) {
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: body.isArchived ? "doc.archived" : "doc.unarchived",
+        docId: doc._id,
+        title: doc.title ?? null,
+        request,
+      });
+    }
+
     if (wantsShareChange) {
       const prev = shareSettingsOf(before as Record<string, unknown> | null);
       const next = shareSettingsOf(doc as unknown as Record<string, unknown>);

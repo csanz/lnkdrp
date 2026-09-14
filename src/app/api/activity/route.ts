@@ -17,6 +17,8 @@ import { errorJson } from "@/lib/http/errorResponse";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { agentLabel } from "@/lib/activity/log";
+import { ShareViewModel } from "@/lib/models/ShareView";
+import { getWorkspacePlan } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,6 +104,8 @@ export async function GET(request: Request) {
     else if (who === "me") {
       filter.userId = new Types.ObjectId(actor.userId);
       filter["agent.client"] = { $exists: false };
+      // "Me" is what I did in the app, not me reading my own link as a recipient.
+      filter.actorKind = { $nin: ["viewer", "secret"] };
     } else if (who === "team") {
       filter.actorKind = "user";
       filter.userId = { $ne: new Types.ObjectId(actor.userId) };
@@ -132,7 +136,19 @@ export async function GET(request: Request) {
       if (r.projectId) projectIds.set(String(r.projectId), r.projectId as Types.ObjectId);
     }
 
-    const [users, docs, projects] = await Promise.all([
+    // Recipients who introduced themselves after their "viewed"/"downloaded" row was written: pick
+    // up the name from their ShareView row (keyed by the viewer key stored on the event).
+    const viewerKeys = new Map<string, { shareId: string; botIdHash: string }>();
+    for (const r of page) {
+      if (r.type !== "share.viewed" && r.type !== "share.downloaded") continue;
+      const m = (r.meta ?? {}) as Record<string, unknown>;
+      if (typeof m.viewerName === "string" && m.viewerName) continue;
+      if (typeof m.viewerKey === "string" && m.viewerKey && typeof m.shareId === "string" && m.shareId) {
+        viewerKeys.set(`${m.shareId}:${m.viewerKey}`, { shareId: m.shareId, botIdHash: m.viewerKey });
+      }
+    }
+
+    const [users, docs, projects, knownViewers, plan] = await Promise.all([
       userIds.size
         ? UserModel.find({ _id: { $in: Array.from(userIds.values()) } })
             .select({ _id: 1, name: 1, email: 1, isTemp: 1 })
@@ -148,7 +164,20 @@ export async function GET(request: Request) {
             .select({ _id: 1, name: 1 })
             .lean()
         : Promise.resolve([]),
+      viewerKeys.size
+        ? ShareViewModel.find({ $or: Array.from(viewerKeys.values()) })
+            .select({ shareId: 1, botIdHash: 1, viewerName: 1, viewerEmail: 1 })
+            .lean()
+        : Promise.resolve([]),
+      getWorkspacePlan(orgId).catch(() => "free" as const),
     ]);
+    const viewerByKey = new Map<string, { name: string | null; email: string | null }>();
+    for (const v of knownViewers as Array<{ shareId?: string; botIdHash?: string; viewerName?: string | null; viewerEmail?: string | null }>) {
+      if (v.shareId && v.botIdHash) viewerByKey.set(`${v.shareId}:${v.botIdHash}`, { name: v.viewerName ?? null, email: v.viewerEmail ?? null });
+    }
+    // Who read a document is deep analytics, a Pro feature: on Free, recipient rows stay anonymous
+    // here exactly as they are on the metrics page.
+    const showViewerIdentity = plan === "pro";
 
     const userById = new Map<string, { name: string | null; email: string | null; isTemp: boolean }>();
     for (const u of users) {
@@ -171,8 +200,20 @@ export async function GET(request: Request) {
     }
 
     const items = page.map((r) => {
-      const uid = r.userId ? String(r.userId) : null;
+      const isRecipientRow = r.actorKind === "viewer" && (r.type === "share.viewed" || r.type === "share.downloaded");
+      const hideIdentity = isRecipientRow && !showViewerIdentity;
+      const uid = r.userId && !hideIdentity ? String(r.userId) : null;
       const u = uid ? userById.get(uid) ?? null : null;
+      let meta = r.meta && typeof r.meta === "object" ? { ...(r.meta as Record<string, unknown>) } : {};
+      if (isRecipientRow) {
+        const known = typeof meta.viewerKey === "string" && typeof meta.shareId === "string" ? viewerByKey.get(`${meta.shareId}:${meta.viewerKey}`) : undefined;
+        if (known && !meta.viewerName) meta = { ...meta, viewerName: known.name, viewerEmail: meta.viewerEmail ?? known.email };
+        delete meta.viewerKey;
+        if (hideIdentity) {
+          delete meta.viewerName;
+          delete meta.viewerEmail;
+        }
+      }
       const did = r.docId ? String(r.docId) : null;
       const d = did ? docById.get(did) ?? null : null;
       const pid = r.projectId ? String(r.projectId) : null;
@@ -201,7 +242,7 @@ export async function GET(request: Request) {
             }
           : null,
         project: pid ? { id: pid, name: p?.name ?? (isProjectEvent ? r.title ?? null : null) } : null,
-        meta: r.meta && typeof r.meta === "object" ? (r.meta as Record<string, unknown>) : {},
+        meta,
       };
     });
 

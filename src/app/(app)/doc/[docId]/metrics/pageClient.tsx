@@ -688,6 +688,8 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
 
   const views = data?.totals?.views ?? 0;
   const downloads = data?.totals?.downloads ?? 0;
+  // `totals.downloads` is omitted by viewers-only responses: undefined means "not loaded", not zero.
+  const downloadsKnown = typeof data?.totals?.downloads === "number";
   const pagesViewed = data?.totals?.pagesViewed ?? 0;
   const authedViewers = data?.totals?.authenticatedViewers ?? 0;
   const anonViewers = data?.totals?.anonymousViewers ?? 0;
@@ -1104,10 +1106,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                     <div className="mt-1 h-9 w-20 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
                   ) : error ? (
                     <div className="mt-1 text-sm text-red-700">{error}</div>
-                  ) : downloadsEnabled ? (
+                  ) : downloadsKnown ? (
+                    // Real downloads stay visible after downloads are turned off: they happened.
                     <div className="mt-1 text-3xl font-semibold text-[var(--fg)] tabular-nums">{downloads}</div>
                   ) : (
-                    <div className="mt-2 text-sm font-semibold text-[var(--muted)]">Not enabled</div>
+                    <div className="mt-1 h-9 w-20 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
                   )}
 
                   <div className="mt-2 text-sm text-[var(--muted)]">
@@ -1115,6 +1118,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                       <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
                     ) : downloadsEnabled ? (
                       <span className="text-[var(--muted)]">PDF downloads</span>
+                    ) : downloadsKnown && downloads > 0 ? (
+                      <span className="text-[var(--muted)]">
+                        {selectedLinkLabel ? `Downloads are now off for ${selectedLinkLabel}.` : "Downloads are now off on every link."}
+                      </span>
                     ) : (
                       // "this share link" named one link on a surface that aggregates all of them,
                       // so the reader could not tell what the sentence was about.
@@ -1151,7 +1158,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-sm font-semibold text-[var(--fg)]">Downloads</div>
-                  {!loading && !downloadsEnabled ? <div className="text-xs font-medium text-[var(--muted)]">Not enabled</div> : null}
+                  {!loading && !downloadsEnabled ? <div className="text-xs font-medium text-[var(--muted)]">Downloads off</div> : null}
                 </div>
                 <div className="mt-3 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
                   {loading ? (

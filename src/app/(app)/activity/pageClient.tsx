@@ -11,6 +11,9 @@ import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import {
+  AdjustmentsHorizontalIcon,
+  ArchiveBoxIcon,
+  ArchiveBoxXMarkIcon,
   ArrowDownTrayIcon,
   ArrowPathIcon,
   ArrowUpTrayIcon,
@@ -18,9 +21,11 @@ import {
   ClockIcon,
   CpuChipIcon,
   DocumentPlusIcon,
+  EyeIcon,
   GlobeAltIcon,
   InboxArrowDownIcon,
   LinkIcon,
+  LinkSlashIcon,
   LockClosedIcon,
   LockOpenIcon,
   TrashIcon,
@@ -56,6 +61,13 @@ const ICON_BY_TYPE: Record<string, HeroIcon> = {
   "doc.processed": CpuChipIcon,
   "doc.replaced": ArrowPathIcon,
   "doc.deleted": TrashIcon,
+  "doc.archived": ArchiveBoxIcon,
+  "doc.unarchived": ArchiveBoxXMarkIcon,
+  "share.viewed": EyeIcon,
+  "share.downloaded": ArrowDownTrayIcon,
+  "share_link.created": LinkIcon,
+  "share_link.updated": AdjustmentsHorizontalIcon,
+  "share_link.revoked": LinkSlashIcon,
   "share.updated": LinkIcon,
   "share.password_set": LockClosedIcon,
   "share.password_cleared": LockOpenIcon,
@@ -158,6 +170,10 @@ type RowEnter = "enter" | "fresh" | "none";
 
 function ActivityRow({ item, index = 0, enter = "enter" }: { item: ActivityItem; index?: number; enter?: RowEnter }) {
   const Icon = ICON_BY_TYPE[item.type] ?? ClockIcon;
+  // Open the link the event came through (meta.shareId), not always the document's default link.
+  const eventShareId = typeof item.meta?.shareId === "string" && item.meta.shareId ? item.meta.shareId : null;
+  const shareId = eventShareId ?? item.doc?.shareId ?? null;
+  const shareHref = shareId ? `/s/${encodeURIComponent(shareId)}` : null;
   const s = describeActivity(item);
   const href = hrefFor(item);
   const when = formatRelative(item.createdDate);
@@ -207,11 +223,11 @@ function ActivityRow({ item, index = 0, enter = "enter" }: { item: ActivityItem;
           <time dateTime={item.createdDate} title={exact}>
             {when}
           </time>
-          {item.doc?.shareId && item.type !== "doc.deleted" ? (
+          {shareHref && item.type !== "doc.deleted" && item.type !== "share_link.revoked" && item.type !== "doc.archived" ? (
             <>
               <span aria-hidden="true">·</span>
               <Link
-                href={`/s/${encodeURIComponent(item.doc.shareId)}`}
+                href={shareHref}
                 className="hover:text-[var(--fg)] hover:underline underline-offset-4"
                 target="_blank"
                 rel="noreferrer"
@@ -397,9 +413,12 @@ export default function ActivityPageClient() {
         });
     };
     // Push: a new activity row in this workspace arrives as an "activity" frame; refetch page one
-    // right away. The 10s timer stays as the fallback when the socket is not available.
+    // right away. The 10s timer is only a fallback: it skips its fetch while the socket is open.
     const unsubscribe = subscribeRealtime("activity", () => tick());
-    const timer = window.setInterval(tick, 10_000);
+    const timer = window.setInterval(() => {
+      if (realtimeState() === "open") return;
+      tick();
+    }, 10_000);
     window.addEventListener("focus", tick);
     return () => {
       unsubscribe();

@@ -129,6 +129,7 @@ async function recordDownloadActivity(
   shareId: string,
   request: Request,
   linkMeta: { linkLabel: string | null; isDefaultLink: boolean },
+  viewer: { userId: string | null; botId: string | null },
 ) {
   try {
     const ownerUserId = doc.userId ? new Types.ObjectId(String(doc.userId)) : null;
@@ -138,14 +139,32 @@ async function recordDownloadActivity(
         ? String((await ensurePersonalOrgForUserId({ userId: ownerUserId })).orgId)
         : null;
     if (!orgId) return;
+    // Name the downloader when we know them: a signed-in recipient, or one who introduced themselves
+    // on the share page (their ShareView row carries the name). The viewer key lets the feed pick up
+    // a name given later, the same way view rows do.
+    const viewerKey = viewer.botId && viewer.botId.trim() ? crypto.createHash("sha256").update(viewer.botId.trim()).digest("hex") : null;
+    // Attribution only: if the lookup fails the row is still written, just unnamed.
+    const known = viewerKey
+      ? ((await ShareViewModel.findOne({ shareId, botIdHash: viewerKey })
+          .select({ viewerName: 1, viewerEmail: 1 })
+          .lean()
+          .catch(() => null)) as { viewerName?: string | null; viewerEmail?: string | null } | null)
+      : null;
     await recordActivity({
       orgId,
-      userId: null,
+      userId: viewer.userId,
       actorKind: "viewer",
       type: "share.downloaded",
       docId: String(doc._id),
       title: typeof doc.title === "string" ? doc.title : null,
-      meta: { shareId, linkLabel: linkMeta.linkLabel, isDefaultLink: linkMeta.isDefaultLink },
+      meta: {
+        shareId,
+        linkLabel: linkMeta.linkLabel,
+        isDefaultLink: linkMeta.isDefaultLink,
+        viewerKey,
+        viewerName: known?.viewerName ?? null,
+        viewerEmail: known?.viewerEmail ?? null,
+      },
       request,
     });
   } catch {
@@ -278,10 +297,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     // owning side is the exception — "Someone downloaded this" about yourself is noise in your own
     // feed, and it is the same event the counters above already decline to count.
     if (!ownerPreview) {
-      void recordDownloadActivity(doc as Record<string, unknown>, shareId, request, {
-        linkLabel: link.label ?? null,
-        isDefaultLink: Boolean(link.isDefault),
-      });
+      void recordDownloadActivity(
+        doc as Record<string, unknown>,
+        shareId,
+        request,
+        { linkLabel: link.label ?? null, isDefaultLink: Boolean(link.isDefault) },
+        { userId: downloadSession?.userId ? String(downloadSession.userId) : null, botId: typeof botId === "string" ? botId : null },
+      );
     }
   }
 

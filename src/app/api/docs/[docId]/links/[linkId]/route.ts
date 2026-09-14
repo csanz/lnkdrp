@@ -102,7 +102,23 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
         type: "share_link.updated",
         docId: docObjectId,
         title,
-        meta: { linkId: dto.id, shareId: dto.shareId, linkLabel: dto.label, changed: Object.keys(settings), enabled: dto.enabled },
+        meta: {
+          linkId: dto.id,
+          shareId: dto.shareId,
+          linkLabel: dto.label,
+          changed: Object.keys(settings),
+          enabled: dto.enabled,
+          // New values for the feed's wording. The password is reduced to set/cleared; the secret is never logged.
+          values: {
+            ...(settings.enabled !== undefined ? { enabled: settings.enabled } : {}),
+            ...(settings.allowDownload !== undefined ? { allowDownload: settings.allowDownload } : {}),
+            ...(settings.allowRevisionHistory !== undefined ? { allowRevisionHistory: settings.allowRevisionHistory } : {}),
+            ...(settings.label !== undefined ? { label: dto.label } : {}),
+            ...(settings.expiresAt !== undefined ? { expires: settings.expiresAt ? "set" : "cleared" } : {}),
+            ...(settings.password !== undefined ? { password: settings.password ? "set" : "cleared" } : {}),
+            ...(makeDefault ? { isDefault: true } : {}),
+          },
+        },
         request,
       });
     }

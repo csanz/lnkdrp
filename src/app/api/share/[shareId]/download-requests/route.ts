@@ -155,7 +155,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
         type: "download_request.created",
         docId: docId as Types.ObjectId,
         title: docTitle,
-        meta: { email: maskEmail(email), shareId, requestId: String(created._id) },
+        meta: {
+          email: maskEmail(email),
+          shareId,
+          requestId: String(created._id),
+          // Which link the request came through, so the feed can say "via Benchmark".
+          linkLabel: resolved.link.label ?? null,
+          isDefaultLink: Boolean(resolved.link.isDefault),
+        },
         request,
       });
     }

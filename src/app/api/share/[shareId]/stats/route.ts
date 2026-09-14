@@ -363,6 +363,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                   title: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
                   meta: {
                     authenticated: Boolean(viewerUserId),
+                    // Viewer key (sha256 of the browser's botId): lets the feed show the name a recipient
+                    // gives after this row was written (see src/app/api/activity/route.ts).
+                    viewerKey: botIdHash,
                     viewerName: viewerNameIntro ?? null,
                     viewerEmail: viewerEmail ?? null,
                     shareId,
