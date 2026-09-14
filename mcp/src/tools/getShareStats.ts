@@ -25,8 +25,10 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
     {
       title: "Get share stats",
       description:
-        "Analytics for a share link by docId, shareId, or both (at least one): totals (views, downloads, pagesViewed, timeSpentMs, " +
-        "authenticated/anonymous viewers), a per-day series and the unique viewerCount for the window. A shareId scopes every " +
+        "Analytics for a share link by docId, shareId, or both (at least one): totals (views, opens, downloads, pagesViewed, " +
+        "timeSpentMs, authenticated/anonymous viewers), a per-day series and the unique viewerCount for the window. views counts " +
+        "recipients and opens counts tab sessions, so a reader who came back three times is one view and three opens - the gap " +
+        "between them is what a returning reader looks like. A shareId scopes every " +
         "number to that one link (perLink: true); a docId covers the document and all of its links. To read one non-default " +
         "link, pass its docId and shareId together (both come from lnkdrp_list_share_links). analyticsTier is " +
         "basic on Free (window clamped, no viewer identities) or deep on Pro; with includeViewers on Pro, viewers lists the " +

@@ -30,6 +30,8 @@ type MetricsResponse = {
   viewerCount?: number;
   totals: {
     views: number;
+    /** Tab sessions in the window: the count of *opens*, where `views` counts recipients. */
+    opens?: number;
     /** Absent on a `?viewersOnly=1` response, which never computes it — see the route header. */
     downloads?: number;
     pagesViewed: number;
@@ -43,7 +45,15 @@ type MetricsResponse = {
    * `totals.views` and `sum(downloads)` equals `totals.downloads`, so the table reconciles with
    * the cards above it.
    */
-  byLink?: Array<{ shareId: string; views: number; viewers: number; downloads: number; pagesViewed: number; lastViewedAt: string | null }>;
+  byLink?: Array<{
+    shareId: string;
+    views: number;
+    viewers: number;
+    opens?: number;
+    downloads: number;
+    pagesViewed: number;
+    lastViewedAt: string | null;
+  }>;
   /** Absent on a `?viewersOnly=1` response. */
   series?: Array<{ date: string; views: number; downloads: number }>;
   viewers: Array<{
@@ -86,7 +96,7 @@ type ShareLinkRow = {
 };
 
 /** One link's totals inside the selected window (from `/shareviews?shareId=…&lite=1`). */
-type LinkWindowStats = { views: number; downloads: number; viewers: number; lastViewedAt: string | null };
+type LinkWindowStats = { views: number; downloads: number; viewers: number; opens: number; lastViewedAt: string | null };
 
 type ShareViewerVisitSummary = {
   visitId: string;
@@ -678,6 +688,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
         views: Math.max(0, Math.floor(row?.views ?? 0)),
         downloads: Math.max(0, Math.floor(row?.downloads ?? 0)),
         viewers: Math.max(0, Math.floor(row?.viewers ?? 0)),
+        opens: Math.max(0, Math.floor(row?.opens ?? 0)),
         lastViewedAt: typeof row?.lastViewedAt === "string" ? row.lastViewedAt : null,
       };
     }
@@ -697,11 +708,14 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     const views = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.views ?? 0)), 0);
     const downloads = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.downloads ?? 0)), 0);
     const viewers = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.viewers ?? 0)), 0);
+    const opens = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.opens ?? 0)), 0);
     if (!views && !downloads) return null;
-    return { count: rest.length, views, downloads, viewers };
+    return { count: rest.length, views, downloads, viewers, opens };
   }, [links, data]);
 
   const views = data?.totals?.views ?? 0;
+  /** Tab sessions in the window: opens, not recipients. `null` on a response from before it existed. */
+  const opens = typeof data?.totals?.opens === "number" ? Math.max(0, Math.floor(data.totals.opens)) : null;
   const downloads = data?.totals?.downloads ?? 0;
   // `totals.downloads` is omitted by viewers-only responses: undefined means "not loaded", not zero.
   const downloadsKnown = typeof data?.totals?.downloads === "number";
@@ -1076,6 +1090,21 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                       <div className="h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
                     ) : (
                       <>
+                        {/* Opens first: it is the fact the big number above cannot carry. That
+                            number counts recipients, so a reader who came back every morning for a
+                            week is one view — the returns only show up here. */}
+                        {opens !== null ? (
+                          <>
+                            <span className="tabular-nums">{opens}</span> open{opens === 1 ? "" : "s"}
+                            {opens > views ? (
+                              <span className="text-[var(--muted-2)]">
+                                {" "}
+                                ({(opens - views).toLocaleString()} return{opens - views === 1 ? "" : "s"})
+                              </span>
+                            ) : null}{" "}
+                            ·{" "}
+                          </>
+                        ) : null}
                         <span className="tabular-nums">{pagesViewed}</span> pages viewed ·{" "}
                         {analyticsTier === null ? (
                           <span className="inline-flex items-center gap-1.5">
@@ -1204,7 +1233,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
 
                 <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                   <div className="overflow-x-auto">
-                    <table className="w-full min-w-[560px] border-collapse text-left text-sm">
+                    <table className="w-full min-w-[640px] border-collapse text-left text-sm">
                       <thead>
                         <tr className="border-b border-[var(--border)] text-[11px] uppercase tracking-wide text-[var(--muted-2)]">
                           <th scope="col" className="px-4 py-2 font-semibold">Link</th>
@@ -1214,6 +1243,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                               identical figures invited the reader to look for a difference that
                               cannot exist. See the header of the shareviews route. */}
                           <th scope="col" className="px-4 py-2 text-right font-semibold">Viewers</th>
+                          {/* Opens earns a column where Views could not: Views and Viewers are the
+                              same arithmetic on a `ShareView` row, but Opens counts sessions, so a
+                              link read twice by one person reads 1 viewer, 2 opens. */}
+                          <th scope="col" className="px-4 py-2 text-right font-semibold">Opens</th>
                           <th scope="col" className="px-4 py-2 text-right font-semibold">Downloads</th>
                           <th scope="col" className="px-4 py-2 text-right font-semibold">Last viewed</th>
                         </tr>
@@ -1245,6 +1278,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                                 </div>
                               </td>
                               <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.viewers : "—"}</td>
+                              <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.opens : "—"}</td>
                               <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.downloads : "—"}</td>
                               {/* The analytics timestamp first: the link row's own `lastViewedAt`
                                   only started moving when links shipped, so a link that adopted a
@@ -1272,6 +1306,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                               <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">Still counted in the totals above</div>
                             </td>
                             <td className="px-4 py-2 text-right tabular-nums">{deletedLinkResidual.viewers}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">{deletedLinkResidual.opens}</td>
                             <td className="px-4 py-2 text-right tabular-nums">{deletedLinkResidual.downloads}</td>
                             <td className="px-4 py-2 text-right">—</td>
                           </tr>

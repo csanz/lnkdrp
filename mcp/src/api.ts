@@ -132,6 +132,8 @@ export type DocPatch = Partial<{
 
 export type ShareViewsTotals = {
   views: number;
+  /** Tab sessions in the window. Counts events, where `views` counts recipients. */
+  opens: number;
   downloads: number;
   pagesViewed: number;
   timeSpentMs: number;
@@ -512,6 +514,7 @@ export class ApiClient {
       viewerCount: num(body.viewerCount),
       totals: {
         views: num(totals.views),
+        opens: num(totals.opens),
         downloads: num(totals.downloads),
         pagesViewed: num(totals.pagesViewed),
         timeSpentMs: num(totals.timeSpentMs),

@@ -67,7 +67,16 @@ async function callTool<T = ToolResult>(client: Client, name: string, args: Reco
   return JSON.parse(text) as T;
 }
 
-type Totals = { views?: number; downloads?: number; pagesViewed?: number; timeSpentMs?: number; authenticatedViewers?: number; anonymousViewers?: number };
+type Totals = {
+  views?: number;
+  /** Tab sessions: the count of opens, where `views` counts recipients. */
+  opens?: number;
+  downloads?: number;
+  pagesViewed?: number;
+  timeSpentMs?: number;
+  authenticatedViewers?: number;
+  anonymousViewers?: number;
+};
 type Viewer = {
   name?: unknown;
   email?: unknown;
@@ -135,9 +144,14 @@ function printViewers(s: Stats, indent = "    "): void {
 
 function printTotals(label: string, s: Stats): void {
   const t = s.totals ?? {};
+  const views = t.views ?? 0;
+  const opens = typeof t.opens === "number" ? t.opens : null;
+  // Opens beside views, because the gap between them is the only thing on this line that says
+  // somebody came back: views counts recipients and opens counts sittings.
+  const returns = opens !== null && opens > views ? ` (${opens - views} returned)` : "";
   log(
-    `${label}  views ${t.views ?? 0} · viewers ${s.viewerCount ?? 0} · pages ${t.pagesViewed ?? 0} · ` +
-      `time ${secs(t.timeSpentMs)} · downloads ${t.downloads ?? 0}`,
+    `${label}  views ${views} · opens ${opens ?? "–"}${returns} · viewers ${s.viewerCount ?? 0} · ` +
+      `pages ${t.pagesViewed ?? 0} · time ${secs(t.timeSpentMs)} · downloads ${t.downloads ?? 0}`,
   );
 }
 

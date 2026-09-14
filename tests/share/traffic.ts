@@ -27,14 +27,21 @@
  * real reader would create. Those are real view counts on a real link — point it at a test
  * workspace, never at a customer's document.
  *
+ * `--spread 14` puts the readers across the last 14 days instead of all in the last minute, so the
+ * views-by-day chart has a shape rather than one tall bar. The ingest cannot backdate — it stamps
+ * `lastViewedAt` with its own clock — so this rewrites the timestamps of the rows it has just
+ * created, and only those: it records each `botId` it invents and touches nothing else. Without
+ * `--spread` nothing in the database is rewritten.
+ *
  * Run:
  *   npx tsx --env-file=.env.local tests/share/traffic.ts --doc "Live Audit Deck"
  *   npx tsx --env-file=.env.local tests/share/traffic.ts --docId <id> --readers 8 --pace 2-6
+ *   npx tsx --env-file=.env.local tests/share/traffic.ts --doc "Deck" --readers 20 --spread 14
  *
  * Then read it back the way an agent would:
  *   npx tsx --env-file=.env.local tests/mcp/analytics.ts --doc "Live Audit Deck"
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { Types } from "mongoose";
 
@@ -42,6 +49,10 @@ import { describePacing, pause, pauseBetweenActors, resolvePacing, type Pacing }
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareLinkModel } from "@/lib/models/ShareLink";
+import { ShareViewModel } from "@/lib/models/ShareView";
+import { ShareVisitModel } from "@/lib/models/ShareVisit";
+import { getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
+import { reconcileShareLinkCounters } from "@/lib/analytics/reconcileLinkCounters";
 
 const APP_URL = (process.env.TRAFFIC_APP_URL ?? "http://localhost:3001").replace(/\/+$/, "");
 
@@ -195,19 +206,71 @@ async function readVisit(
   return total;
 }
 
+/** UTC day key, the shape `ShareView.downloadsByDay` is keyed by. */
+function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Move the rows this run created back in time, so the views-by-day chart has a shape.
+ *
+ * The ingest stamps `lastViewedAt` with its own clock and there is no way to ask it not to, so the
+ * only way to produce a multi-day history is to rewrite the rows afterwards. That is acceptable for
+ * a generator and nowhere else, so the blast radius is pinned to the `botId`s this process invented
+ * — it never touches a row it did not create, and it is a no-op without `--spread`.
+ *
+ * Every timestamp that any surface reads moves together, or the numbers stop agreeing with each
+ * other: `createdDate` and `lastViewedAt` on the view, `startedAt`/`lastEventAt` on the visit (which
+ * also carry the visit's duration, so the shift preserves it), and the `downloadsByDay` key, which
+ * is a string and would otherwise leave the download on today's bar under a view dated last week.
+ */
+async function backdateOwnRows(botIdHashes: Map<string, Date>): Promise<number> {
+  let moved = 0;
+  for (const [botIdHash, when] of botIdHashes) {
+    const views = await ShareViewModel.find({ botIdHash }).select({ _id: 1, createdDate: 1, downloadsByDay: 1 }).lean();
+    for (const v of views as Array<{ _id: unknown; createdDate?: Date; downloadsByDay?: Record<string, number> }>) {
+      const set: Record<string, unknown> = { createdDate: when, lastViewedAt: when };
+      const byDay = v.downloadsByDay ?? {};
+      if (Object.keys(byDay).length) {
+        // Re-key the whole map onto the backdated day; these rows only ever have today's key.
+        const total = Object.values(byDay).reduce((a, b) => a + (typeof b === "number" ? b : 0), 0);
+        set.downloadsByDay = { [dayKey(when)]: total };
+      }
+      await ShareViewModel.updateOne({ _id: v._id }, { $set: set }, { timestamps: false });
+      moved += 1;
+    }
+    const visits = await ShareVisitModel.find({ botIdHash }).select({ _id: 1, startedAt: 1, lastEventAt: 1 }).lean();
+    for (const vis of visits as Array<{ _id: unknown; startedAt?: Date; lastEventAt?: Date }>) {
+      const started = vis.startedAt ? new Date(vis.startedAt) : null;
+      const ended = vis.lastEventAt ? new Date(vis.lastEventAt) : null;
+      // Preserve how long the sitting lasted; only move where it sits on the calendar.
+      const span = started && ended ? Math.max(0, ended.getTime() - started.getTime()) : 0;
+      await ShareVisitModel.updateOne(
+        { _id: vis._id },
+        { $set: { startedAt: new Date(when.getTime() - span), lastEventAt: when, createdDate: when } },
+        { timestamps: false },
+      );
+      moved += 1;
+    }
+  }
+  return moved;
+}
+
 async function main(): Promise<void> {
   const pacing = resolvePacing();
   const realtime = process.argv.includes("--realtime");
   const readerCount = Math.max(1, Math.min(40, Number(arg("readers") ?? 6)));
+  /** Spread the readers across this many days back. 0 = leave everything at "now". */
+  const spreadDays = Math.max(0, Math.min(90, Number(arg("spread") ?? 0)));
   await connectMongo();
 
   const docIdArg = arg("docId");
   const titleArg = arg("doc");
   const doc = docIdArg
-    ? await DocModel.findById(new Types.ObjectId(docIdArg)).select({ _id: 1, title: 1, numberOfPages: 1 }).lean()
+    ? await DocModel.findById(new Types.ObjectId(docIdArg)).select({ _id: 1, title: 1, numberOfPages: 1, orgId: 1 }).lean()
     : await DocModel.findOne({ title: titleArg ?? /./, isDeleted: { $ne: true } })
         .sort({ createdDate: -1 })
-        .select({ _id: 1, title: 1, numberOfPages: 1 })
+        .select({ _id: 1, title: 1, numberOfPages: 1, orgId: 1 })
         .lean();
   if (!doc) throw new Error("no document matched; pass --docId or --doc <title>");
   const d = doc as unknown as { _id: Types.ObjectId; title?: string; numberOfPages?: number };
@@ -224,15 +287,39 @@ async function main(): Promise<void> {
   log(`document: ${d.title} (${String(d._id)}) · ${maxPage} pages`);
   log(`links: ${open.map((l) => `${l.label} (${l.shareId})`).join(", ")}`);
   log(`${readers.length} readers · ${describePacing(pacing)}${realtime ? " · REAL-TIME dwell" : " · dwell is reported, not waited"}`);
+
+  // A reader placed outside the workspace's analytics window is invisible on every screen — the
+  // rows exist and no figure counts them, which reads as the generator having silently done
+  // nothing. Free clamps to 7 days, so `--spread 30` on a Free workspace hides most of the run.
+  if (spreadDays) {
+    const ownerOrgId = (doc as unknown as { orgId?: unknown }).orgId;
+    const windowDays = ownerOrgId ? limitsForPlan(await getWorkspacePlan(String(ownerOrgId))).analyticsDays : null;
+    if (windowDays && spreadDays > windowDays) {
+      log(
+        `warning: this workspace's analytics window is ${windowDays} days, so readers placed further ` +
+          `back than that will not appear in any figure. Use --spread ${windowDays} or upgrade the workspace.`,
+      );
+    }
+  }
   log();
 
   let visits = 0;
   let downloads = 0;
+  /** `botIdHash` -> when that reader should appear to have read, for `--spread`. */
+  const backdate = new Map<string, Date>();
   for (let i = 0; i < readers.length; i++) {
     const reader = readers[i]!;
     // Round-robin so every link gets traffic and the per-link table has something to compare.
     const link = open[i % open.length]!;
     const botId = `b_${randomUUID().replace(/-/g, "")}`;
+    if (spreadDays) {
+      // Somewhere in the window, at a plausible hour — not 03:00, and not all on the same day.
+      const dayBack = Math.floor(Math.random() * spreadDays);
+      const when = new Date();
+      when.setDate(when.getDate() - dayBack);
+      when.setHours(8 + Math.floor(Math.random() * 11), Math.floor(Math.random() * 60), 0, 0);
+      backdate.set(createHash("sha256").update(botId).digest("hex"), when);
+    }
 
     if (i) await pauseBetweenActors(pacing);
     const firstMs = await readVisit(link.shareId, botId, reader, { pages: reader.pages, dwellMs: reader.dwellMs }, pacing, realtime);
@@ -261,6 +348,20 @@ async function main(): Promise<void> {
   }
 
   log();
+  if (backdate.size) {
+    // After the traffic, never during: the ingest writes in `after()`, so a row rewritten mid-run
+    // would be stamped with the live clock again by the heartbeat that follows it.
+    await new Promise((r) => setTimeout(r, 1500));
+    const moved = await backdateOwnRows(backdate);
+    // Backdating the rows leaves the link's denormalized counters pointing at the moment the run
+    // happened, so `/links` would report "Last viewed 2 minutes ago" over analytics dated last
+    // week — the exact two-surfaces-disagree bug `npm run verify:analytics` exists to catch. A tool
+    // that rewrites timestamps has to leave the database consistent, not merely populated.
+    const reconciled = await reconcileShareLinkCounters({
+      orgId: (doc as unknown as { orgId?: unknown }).orgId ? String((doc as unknown as { orgId: unknown }).orgId) : null,
+    });
+    log(`spread across the last ${spreadDays} days (${moved} rows moved, ${reconciled.linksReconciled} link counters realigned).`);
+  }
   log(`${readers.length} readers, ${visits} visits, ${downloads} downloads.`);
   log(`Analytics are written by the ingest in the background; give it a second, then:`);
   log(`  npx tsx --env-file=.env.local tests/mcp/analytics.ts --docId ${String(d._id)}`);

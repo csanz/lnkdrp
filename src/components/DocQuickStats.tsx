@@ -51,6 +51,8 @@ type StatsResponse = {
   viewerCount?: number;
   totals?: {
     views?: number;
+    /** Tab sessions in the window: the count of *opens*, where `views` counts recipients. */
+    opens?: number;
     downloads?: number;
     pagesViewed?: number;
     /** Total time on the document within the window (ms), summed across every viewer. */
@@ -62,7 +64,7 @@ type StatsResponse = {
   /** Whether downloads are allowed on any live link of the document (a label, not a filter). */
   downloadsEnabled?: boolean;
   /** `?byLink=1`: the same window per link slug; the rows sum to `totals`. */
-  byLink?: Array<{ shareId: string; views: number; viewers: number; downloads: number; lastViewedAt?: string | null }>;
+  byLink?: Array<{ shareId: string; views: number; viewers: number; opens?: number; downloads: number; lastViewedAt?: string | null }>;
 };
 
 const DAYS = 15;
@@ -376,7 +378,10 @@ export default function DocQuickStats({
     const downloads = t ? num(t.downloads) : snapshot ? num(snapshot.lastDaysDownloads) : null;
     const pages = t ? num(t.pagesViewed) : null;
     const timeSpentMs = t && typeof t.timeSpentMs === "number" ? num(t.timeSpentMs) : null;
-    return { viewers, views, downloads, pages, timeSpentMs };
+    // `opens` is absent on a response from before it existed; `null` keeps the tile reserved
+    // rather than asserting zero opens on a document that has plainly been read.
+    const opens = t && typeof t.opens === "number" ? num(t.opens) : null;
+    return { viewers, views, downloads, pages, timeSpentMs, opens };
   }, [live, snapshot]);
 
   const series = useMemo(
@@ -402,6 +407,17 @@ export default function DocQuickStats({
       {sub ? <div className="mt-0.5 min-h-[14px] text-[10px] leading-[14px]">{sub}</div> : null}
     </div>
   );
+
+  /**
+   * How many of those opens were somebody coming back. Only shown when it is a real fact: equal
+   * numbers mean nobody returned, and "0 returns" under every tile is noise.
+   */
+  const opensSub =
+    stats.opens !== null && stats.viewers !== null && stats.opens > stats.viewers ? (
+      <span className="text-[var(--muted-2)]">
+        {(stats.opens - stats.viewers).toLocaleString()} return{stats.opens - stats.viewers === 1 ? "" : "s"}
+      </span>
+    ) : undefined;
 
   // Free: the count stays, the identities are Pro. Reserve the line while the plan is unknown.
   const viewersSub =
@@ -445,8 +461,13 @@ export default function DocQuickStats({
           in the window and counting link-recipients in the window are the same arithmetic, and on
           all-anonymous traffic the card read "Viewers 18 / Views 18" forever. Time on document is
           the fact that was missing — it comes from the same windowed `totals` object. */}
-      <div className="mt-3 grid grid-cols-4 gap-3">
+      <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-5">
         {tile("Viewers", stats.viewers, viewersSub)}
+        {/* The one count of events on this card. `Viewers` answers how many people, `Opens` how
+            many times they came — and the gap between them is a returning reader, which no other
+            figure here can show. A `ShareView` row is per (link, browser) for life, so a person who
+            read the deck every morning for a week was one viewer, one view, and nothing else. */}
+        {tile("Opens", stats.opens, opensSub)}
         {tile("Time", stats.timeSpentMs === null ? null : formatDurationMs(stats.timeSpentMs))}
         {/* The prop is the legacy document-level flag, which only mirrors the DEFAULT link, so it
             said "Off" on a document whose second link was being downloaded daily. The response's

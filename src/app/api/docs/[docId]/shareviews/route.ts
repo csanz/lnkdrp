@@ -29,6 +29,10 @@
  *   in January and re-read the deck this morning — the single event the owner most wants to see.
  * - Nothing here counts the owner's own opens. They are recorded (`ShareView.isOwnerPreview`, so
  *   "did my link work?" stays answerable) and excluded from every figure by `RECIPIENT_ONLY_MATCH`.
+ * - `opens` counts tab sessions (`ShareVisit`), the one figure here that counts events rather than
+ *   recipients: a reader who came back three times is one view and three opens, and the gap
+ *   between those two numbers is what a returning reader looks like. It is `0` for traffic older
+ *   than the visit-upsert fix, which wrote no visit rows at all.
  * - `views`, `downloads` and `viewers` are additive, so the document's number equals the sum over
  *   its links. A viewer is counted **once per link**: the same browser opening two links is two
  *   link-recipients, because the per-link table sits under the "All links" tiles and readers add
@@ -52,6 +56,7 @@ import { after } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
@@ -258,6 +263,22 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         totalsForMatch(scopeMatch),
       ]);
 
+      // `opens`: how many times the document was actually opened, one per tab session
+      // (`ShareVisit`). This is the only figure here that counts *events* rather than recipients —
+      // `views` counts (link, browser) pairs, so a reader who came back three times is one view
+      // and three opens, and the difference between those two numbers is the whole signal of a
+      // returning reader. Bounded by `lastEventAt`, the same "active in the window" rule the rest
+      // of the response uses.
+      //
+      // Coverage note, because a number that silently under-reports is worse than none: visit rows
+      // only exist from the visit-upsert fix onwards. Traffic older than that has views and no
+      // opens, so `opens < views` on historical data is missing rows, not a quiet document.
+      const visitMatch: Record<string, unknown> = { ...scopeMatch, ...RECIPIENT_ONLY_MATCH };
+      const [windowOpens, allTimeOpens] = await Promise.all([
+        ShareVisitModel.countDocuments({ ...visitMatch, lastEventAt: { $gte: start } }),
+        ShareVisitModel.countDocuments(visitMatch),
+      ]);
+
       // The counters are a floor for a document whose rows were swept by a cleanup script; they
       // are never allowed to *replace* the row count, which is the only recomputable number.
       //
@@ -335,7 +356,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // Always the whole document, whatever `?shareId=` says: this breakdown exists to compare the
       // links with each other, and a filtered page still renders the full table under its cards.
       // So `sum(byLink) === totals` holds exactly when no link filter is applied.
-      type ByLinkRow = { shareId: string; views: number; viewers: number; downloads: number; pagesViewed: number; lastViewedAt: string | null };
+      type ByLinkRow = {
+        shareId: string;
+        views: number;
+        viewers: number;
+        /** Tab sessions on this link in the window; see `totals.opens`. */
+        opens: number;
+        downloads: number;
+        pagesViewed: number;
+        lastViewedAt: string | null;
+      };
       let byLink: ByLinkRow[] | null = null;
       if (wantsByLink) {
         const [perLinkAgg, perLinkDownloadsAgg] = await Promise.all([
@@ -391,12 +421,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             { $group: { _id: "$shareId", downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
           ]) as Promise<Array<{ _id: string; downloads: number }>>,
         ]);
+        // Opens per link, over the same window, so the column adds up to `totals.opens` above it.
+        const perLinkOpensAgg = (await ShareVisitModel.aggregate([
+          { $match: { docId: docObjectId, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start } } },
+          { $group: { _id: "$shareId", opens: { $sum: 1 } } },
+        ])) as Array<{ _id: string; opens: number }>;
+        const opensBySlug = new Map<string, number>(perLinkOpensAgg.map((r) => [r._id, r.opens]));
         const downloadsBySlug = new Map<string, number>(perLinkDownloadsAgg.map((r) => [r._id, r.downloads]));
         byLink = perLinkAgg
           .map((r) => ({
             shareId: typeof r.shareId === "string" ? r.shareId : "",
             views: typeof r.views === "number" ? r.views : 0,
             viewers: typeof r.viewers === "number" ? r.viewers : 0,
+            opens: opensBySlug.get(r.shareId) ?? 0,
             downloads: downloadsBySlug.get(r.shareId) ?? 0,
             pagesViewed: typeof r.pagesViewed === "number" ? r.pagesViewed : 0,
             lastViewedAt: r.lastSeen ? new Date(r.lastSeen).toISOString() : null,
@@ -658,6 +695,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         /** Every figure here covers `days`, like `series` and `viewerCount`. No lifetime figure leaks in. */
         totals: {
           views: totalViews,
+          /**
+           * Times the document was opened in the window, one per tab session. The only count of
+           * events here: `views` counts recipients, so a reader who returned three times is one
+           * view and three opens. `0` on traffic older than the visit-upsert fix, which wrote none.
+           */
+          opens: windowOpens,
           // Absent, not zero, when `?viewersOnly=1` skipped the aggregate that produces it.
           ...(viewersOnly ? {} : { downloads: totalDownloads }),
           pagesViewed,
@@ -669,6 +712,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         /** Lifetime figures for the same scope, for cards that genuinely want "ever". */
         totalsAllTime: {
           views: allTimeViews,
+          opens: allTimeOpens,
           ...(viewersOnly ? {} : { downloads: allTimeDownloads }),
           pagesViewed: allTimeTotals.pagesViewed,
         },
