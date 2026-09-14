@@ -75,7 +75,7 @@ export default function LinksPageClient({ docId }: { docId: string }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-        <div className="w-full max-w-[1400px] px-4 py-6 sm:px-6">
+        <div className="w-full px-4 py-6 sm:px-6">
           <div className="mb-5">
             <div className="text-base font-semibold text-[var(--fg)]">Links</div>
             <div className="mt-1 text-sm text-[var(--muted)]">

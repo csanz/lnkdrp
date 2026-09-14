@@ -11,7 +11,7 @@
 "use client";
 
 import Link from "next/link";
-import { LinkIcon, LockClosedIcon, PlusIcon } from "@heroicons/react/24/outline";
+import { ArrowDownTrayIcon, CalendarDaysIcon, ClockIcon, LinkIcon, LockClosedIcon, PlusIcon } from "@heroicons/react/24/outline";
 import {
   forwardRef,
   useCallback,
@@ -440,7 +440,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     );
   }
 
-  // --- Page: one card per link ---------------------------------------------------------------
+  // --- Page: a table of every link ---------------------------------------------------------------
   return (
     <div>
       {linksError ? (
@@ -449,209 +449,202 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
         </div>
       ) : null}
 
-      {/* One column while a card still needs the room; two across from 1280px so a wide window is
-          used by the list instead of being padded away either side. */}
-      <div className={variant === "page" ? "grid gap-3 xl:grid-cols-2 xl:items-start" : "grid gap-3"}>
-        {ordered === null ? (
-          <>
-            <div className="h-[180px] animate-pulse rounded-2xl bg-[var(--panel-hover)]" aria-hidden="true" />
-            <div className="h-[180px] animate-pulse rounded-2xl bg-[var(--panel-hover)]" aria-hidden="true" />
-          </>
-        ) : ordered.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-[var(--border)] px-6 py-10 text-center">
-            <div className="text-sm font-semibold text-[var(--fg)]">No links yet</div>
-            <div className="mx-auto mt-1 max-w-sm text-[13px] text-[var(--muted)]">
-              Create one link per audience — each keeps its own settings and its own stats.
-            </div>
-            {canManage ? (
-              <button type="button" onClick={openCreate} className={`${NEW_LINK_CLASS} mt-4`}>
-                <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                New link
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          ordered.map((link) => {
-            const pill = LINK_STATUS_PILL[link.status] ?? LINK_STATUS_PILL.disabled;
-            const stats = linkStats[link.id];
-            const lastViewed = relativeWhen(link.lastViewedAt);
-            const busy = rowBusyId === link.id;
-            const confirming = confirmDeleteId === link.id;
-            const url = buildPublicShareUrl(link.shareId) || `/s/${link.shareId}`;
-            const expires = formatDate(link.expiresAt);
-
-            return (
-              <div
-                key={link.id}
-                className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-4 sm:px-5"
-              >
-                {/* Header: label, audience, status */}
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-                  <span className="truncate text-[15px] font-semibold text-[var(--fg)]">{link.label}</span>
-                  {link.audience ? (
-                    <span className="truncate text-[13px] text-[var(--muted)]">{link.audience}</span>
+      {/* A table, not cards: a document can carry dozens of links, and the useful comparison is
+          across rows — who opened what, which are still open. Thin rows, full width, and the
+          settings collapse to icons so a row stays on one line. */}
+      <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+        <table className="w-full min-w-[980px] border-collapse text-[13px]">
+          <thead>
+            <tr className="border-b border-[var(--border)] text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+              <th scope="col" className="px-4 py-2.5 font-semibold">Link</th>
+              <th scope="col" className="px-3 py-2.5 font-semibold">Address</th>
+              <th scope="col" className="px-3 py-2.5 font-semibold">Status</th>
+              <th scope="col" className="px-3 py-2.5 font-semibold">Settings</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Views</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Viewers</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Downloads</th>
+              <th scope="col" className="px-3 py-2.5 font-semibold">Last viewed</th>
+              <th scope="col" className="px-4 py-2.5 text-right font-semibold">
+                <span className="sr-only">Actions</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordered === null ? (
+              [0, 1, 2].map((i) => (
+                <tr key={i} className="border-b border-[var(--border)] last:border-0">
+                  <td colSpan={9} className="px-4 py-3">
+                    <div className="h-4 w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                  </td>
+                </tr>
+              ))
+            ) : ordered.length === 0 ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-10 text-center">
+                  <div className="text-sm font-semibold text-[var(--fg)]">No links yet</div>
+                  <div className="mx-auto mt-1 max-w-sm text-[13px] text-[var(--muted)]">
+                    Create one link per audience — each keeps its own settings and its own stats.
+                  </div>
+                  {canManage ? (
+                    <button type="button" onClick={openCreate} className={`${NEW_LINK_CLASS} mt-4`}>
+                      <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                      New link
+                    </button>
                   ) : null}
-                  <span
+                </td>
+              </tr>
+            ) : (
+              ordered.map((link) => {
+                const pill = LINK_STATUS_PILL[link.status] ?? LINK_STATUS_PILL.disabled;
+                const stats = linkStats[link.id];
+                const busy = rowBusyId === link.id;
+                const confirming = confirmDeleteId === link.id;
+                const url = buildPublicShareUrl(link.shareId) || `/s/${link.shareId}`;
+                const expires = formatDate(link.expiresAt);
+
+                return (
+                  <tr
+                    key={link.id}
                     className={[
-                      "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset",
-                      pill.className,
+                      "border-b border-[var(--border)] align-middle last:border-0 hover:bg-[var(--panel-hover)]",
+                      link.status === "active" ? "" : "text-[var(--muted)]",
                     ].join(" ")}
                   >
-                    {pill.label}
-                  </span>
-                  {link.passwordEnabled ? (
-                    <LockClosedIcon
-                      className="h-4 w-4 shrink-0 text-[var(--muted)]"
-                      aria-label="Password protected"
-                      title="Password protected"
-                    />
-                  ) : null}
-                  {link.isDefault ? (
-                    <span className="shrink-0 rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                      Default
-                    </span>
-                  ) : null}
-                </div>
+                    <td className="max-w-[260px] px-4 py-2.5">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-medium text-[var(--fg)]">{link.label}</span>
+                        {link.isDefault ? (
+                          <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-2)] ring-1 ring-inset ring-[var(--border)]">
+                            Default
+                          </span>
+                        ) : null}
+                      </div>
+                      {link.audience ? <div className="truncate text-[12px] text-[var(--muted)]">{link.audience}</div> : null}
+                    </td>
 
-                {/* The share URL */}
-                <div className="mt-3 flex items-center gap-2">
-                  <span className="min-w-0 flex-1 select-all truncate rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[13px] font-medium text-[var(--fg)]">
-                    {url}
-                  </span>
-                  <CopyButton
-                    copyDone={copiedLinkId === link.id}
-                    onCopy={() => void copyLinkUrl(link)}
-                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                    copyAriaLabel={`Copy the link “${link.label}”`}
-                    copiedAriaLabel="Copied"
-                  />
-                </div>
+                    <td className="max-w-[280px] px-3 py-2.5">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <span className="truncate font-mono text-[12px] text-[var(--muted)]" title={url}>
+                          /s/{link.shareId}
+                        </span>
+                        <CopyButton
+                          copyDone={copiedLinkId === link.id}
+                          onCopy={() => void copyLinkUrl(link)}
+                          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--fg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                          copyAriaLabel={`Copy the link for ${link.label}`}
+                          copiedAriaLabel="Copied"
+                        />
+                      </div>
+                    </td>
 
-                {/* Settings summary */}
-                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--muted)]">
-                  <SettingItem label="Download" value={link.allowDownload ? "on" : "off"} />
-                  <SettingItem label="Password" value={link.passwordEnabled ? "set" : "none"} />
-                  <SettingItem label="Version history" value={link.allowRevisionHistory ? "on" : "off"} />
-                  <SettingItem label="Expires" value={expires || "Never"} />
-                </div>
+                    <td className="px-3 py-2.5">
+                      <span
+                        className={[
+                          "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset",
+                          pill.className,
+                        ].join(" ")}
+                      >
+                        {pill.label}
+                      </span>
+                    </td>
 
-                {/* Stats */}
-                <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3 sm:grid-cols-4">
-                  <StatItem label="Views" value={(stats ? stats.views : link.viewCount).toLocaleString()} />
-                  <StatItem label="Viewers" value={stats ? stats.viewers.toLocaleString() : "—"} />
-                  <StatItem label="Downloads" value={(stats ? stats.downloads : link.downloadCount).toLocaleString()} />
-                  <StatItem label="Last viewed" value={lastViewed || "Never"} />
-                </div>
+                    {/* Icons, not words: four settings spelled out would push the row onto two lines. */}
+                    <td className="px-3 py-2.5">
+                      <div className="flex items-center gap-1.5 text-[var(--muted)]">
+                        {link.allowDownload ? <ArrowDownTrayIcon className="h-4 w-4" title="Downloads allowed" /> : null}
+                        {link.passwordEnabled ? <LockClosedIcon className="h-4 w-4" title="Password protected" /> : null}
+                        {link.allowRevisionHistory ? <ClockIcon className="h-4 w-4" title="Recipients can browse versions" /> : null}
+                        {expires ? <CalendarDaysIcon className="h-4 w-4" title={`Expires ${expires}`} /> : null}
+                        {!link.allowDownload && !link.passwordEnabled && !link.allowRevisionHistory && !expires ? (
+                          <span className="text-[12px] text-[var(--muted-2)]">—</span>
+                        ) : null}
+                      </div>
+                    </td>
 
-                {/* Actions */}
-                {confirming ? (
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <span className="text-[12px] text-[var(--muted)]">
-                      Delete this link? Recipients lose access; its stats stay.
-                    </span>
-                    <span className="flex-1" />
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void deleteLink(link)}
-                      className="rounded-lg border border-red-200 bg-[var(--panel)] px-2.5 py-1.5 text-[12px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-300/30 dark:text-red-300 dark:hover:bg-red-400/10"
-                    >
-                      {busy ? "Deleting…" : "Delete"}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => setConfirmDeleteId(null)}
-                      className={LINK_ACTION_CLASS}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <button type="button" onClick={() => void copyLinkUrl(link)} className={LINK_ACTION_CLASS}>
-                      {copiedLinkId === link.id ? "Copied" : "Copy"}
-                    </button>
-                    {canManage ? (
-                      <>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            setLinkModalError(null);
-                            setLinkModal({ mode: "edit", link });
-                          }}
-                          className={LINK_ACTION_CLASS}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void setLinkEnabled(link, !link.enabled)}
-                          className={LINK_ACTION_CLASS}
-                        >
-                          {busy ? "Saving…" : link.enabled ? "Disable" : "Enable"}
-                        </button>
-                        {link.isDefault ? null : (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void makeDefault(link)}
-                            className={LINK_ACTION_CLASS}
-                            title="Show this link in the document's side panel and use it as the document's primary link"
-                          >
-                            Make default
-                          </button>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
+                      {(stats ? stats.views : link.viewCount).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
+                      {stats ? stats.viewers.toLocaleString() : "—"}
+                    </td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-[var(--fg)]">
+                      {(stats ? stats.downloads : link.downloadCount).toLocaleString()}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2.5 text-[var(--muted)]">
+                      {relativeWhen(link.lastViewedAt) || "Never"}
+                    </td>
+
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {!canManage ? null : confirming ? (
+                          <>
+                            <span className="text-[12px] text-[var(--muted)]">Delete?</span>
+                            <button type="button" disabled={busy} onClick={() => void deleteLink(link)} className={LINK_ACTION_CLASS}>
+                              {busy ? "Deleting…" : "Delete"}
+                            </button>
+                            <button type="button" disabled={busy} onClick={() => setConfirmDeleteId(null)} className={LINK_ACTION_CLASS}>
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => {
+                                setLinkModalError(null);
+                                setLinkModal({ mode: "edit", link });
+                              }}
+                              className={LINK_ACTION_CLASS}
+                            >
+                              Edit
+                            </button>
+                            <button type="button" disabled={busy} onClick={() => void setLinkEnabled(link, !link.enabled)} className={LINK_ACTION_CLASS}>
+                              {busy ? "Saving…" : link.enabled ? "Disable" : "Enable"}
+                            </button>
+                            {link.isDefault ? null : (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void makeDefault(link)}
+                                  className={LINK_ACTION_CLASS}
+                                  title="Show this link in the document's side panel and make it the document's primary link"
+                                >
+                                  Make default
+                                </button>
+                                <button type="button" disabled={busy} onClick={() => setConfirmDeleteId(link.id)} className={LINK_ACTION_CLASS}>
+                                  Delete
+                                </button>
+                              </>
+                            )}
+                          </>
                         )}
-                        {link.isDefault ? null : (
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => setConfirmDeleteId(link.id)}
-                            className={LINK_ACTION_CLASS}
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-
-        {/* A document with only its default link leaves half the row empty. Rather than stretch one
-            card across the page, use the space to say what a second link is for — the whole point
-            of the feature — and offer the action. It disappears as soon as a second link exists. */}
-        {variant === "page" && canManage && ordered !== null && ordered.length === 1 ? (
-          <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--panel-2)] p-5">
-            <div className="text-[14px] font-semibold text-[var(--fg)]">Add a link per audience</div>
-            <p className="mt-1 text-[13px] leading-6 text-[var(--muted)]">
-              The same document, a separate link for each person or firm you send it to. Nothing is
-              re-uploaded and the file stays identical.
-            </p>
-            <ul className="mt-3 grid gap-1.5 text-[13px] leading-6 text-[var(--muted)]">
-              {[
-                "See which firm opened it, not just that someone did.",
-                "Revoke one recipient without touching anyone else.",
-                "Give one link a password or an expiry date and leave the rest open.",
-              ].map((line) => (
-                <li key={line} className="flex gap-2">
-                  <span aria-hidden="true" className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[var(--muted-2)]" />
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ul>
-            <button type="button" onClick={openCreate} className={`${NEW_LINK_CLASS} mt-4`}>
-              <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              New link
-            </button>
-          </div>
-        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
       </div>
+
+      {/* With only the default link there is nothing to compare yet, so say what a second link is
+          for. A slim strip under the table, not a card competing with it. */}
+      {canManage && ordered !== null && ordered.length === 1 ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-xl border border-dashed border-[var(--border)] px-4 py-3">
+          <div className="min-w-0 text-[13px] leading-6 text-[var(--muted)]">
+            <span className="font-semibold text-[var(--fg)]">Add a link per audience.</span> The same document, a separate
+            link for each person or firm — see which one opened it, revoke one without touching the rest, give one a
+            password or an expiry.
+          </div>
+          <button type="button" onClick={openCreate} className={`${NEW_LINK_CLASS} shrink-0`}>
+            <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            New link
+          </button>
+        </div>
+      ) : null}
 
       {/* a11y: announce copy state */}
       <div className="sr-only" aria-live="polite">
