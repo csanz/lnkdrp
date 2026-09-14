@@ -395,11 +395,13 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
             {count <= 1 ? "Default link only" : `${count - 1} more ${count - 1 === 1 ? "link" : "links"}`}
           </span>
           <span aria-hidden="true">·</span>
+          {/* Say where it goes: "Manage" was ambiguous next to "Edit settings", which edits the
+              default link here rather than opening the page. */}
           <Link
             href={`/doc/${encodeURIComponent(docId)}/links`}
             className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
           >
-            {count <= 1 ? "Manage" : "Manage all"}
+            View all links
           </Link>
           {canManage && defaultLink ? (
             <>
