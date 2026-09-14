@@ -49,8 +49,6 @@ const PAGE_SIZES = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = 25;
 /** Minimum time a page transition takes, so the leave/enter choreography reads as one motion. */
 const PAGE_TRANSITION_MIN_MS = 280;
-/** Rows beyond this index enter together (stagger stops growing) so long pages never feel slow. */
-const STAGGER_CAP = 14;
 
 type HeroIcon = ComponentType<SVGProps<SVGSVGElement>>;
 
@@ -166,9 +164,9 @@ function ActorAvatar({ item }: { item: ActivityItem }) {
 }
 
 /** How a row enters: staggered page enter, the live-arrival highlight, or nothing (already shown). */
-type RowEnter = "enter" | "fresh" | "none";
+type RowEnter = "fresh" | "none";
 
-function ActivityRow({ item, index = 0, enter = "enter" }: { item: ActivityItem; index?: number; enter?: RowEnter }) {
+function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: RowEnter }) {
   const Icon = ICON_BY_TYPE[item.type] ?? ClockIcon;
   // Open the link the event came through (meta.shareId), not always the document's default link.
   const eventShareId = typeof item.meta?.shareId === "string" && item.meta.shareId ? item.meta.shareId : null;
@@ -191,19 +189,14 @@ function ActivityRow({ item, index = 0, enter = "enter" }: { item: ActivityItem;
 
   return (
     <li
-      style={{ animationDelay: enter === "enter" ? `${Math.min(index, STAGGER_CAP) * 28}ms` : "0ms" }}
       className={[
         // Grid wrapper: a live arrival animates grid-template-rows 0fr -> 1fr, so the rows below
         // slide down with it instead of jumping; the inner div clips during the expand.
         "grid",
-        // "fresh" (arrived live): expand into place, hold a soft tint, fade back over a few seconds.
-        // "enter": the regular staggered page enter. "none": a row that already played its
-        // highlight; giving it no animation is what stops the blink when its class changes.
-        enter === "fresh"
-          ? "motion-safe:animate-[ldFeedRowNew_7s_cubic-bezier(0.22,0.61,0.36,1)_both]"
-          : enter === "enter"
-            ? "motion-safe:animate-[ldFeedRowIn_360ms_cubic-bezier(0.2,0.7,0.2,1)_both]"
-            : "",
+        // Only a row that arrived live (a realtime frame while the page is open) animates: it expands
+        // into place, holds a soft tint and fades back. Rows from a load, refresh, filter or page
+        // change render still; a row that finished its highlight goes back to "none" without a blink.
+        enter === "fresh" ? "motion-safe:animate-[ldFeedRowNew_7s_cubic-bezier(0.22,0.61,0.36,1)_both]" : "",
       ].join(" ")}
     >
       <div className="min-h-0 overflow-hidden">
@@ -249,11 +242,9 @@ export default function ActivityPageClient() {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
-  // Live arrivals: highlighted while fresh, then "settled" (no animation) so a later class change
-  // never replays the enter fade. New rows are queued and inserted one at a time, oldest first,
-  // so a burst reads as a sequence instead of a wall.
+  // Live arrivals: highlighted while fresh, then back to no animation. New rows are queued and
+  // inserted one at a time, oldest first, so a burst reads as a sequence instead of a wall.
   const [freshIds, setFreshIds] = useState<Set<string>>(() => new Set());
-  const settledIdsRef = useRef<Set<string>>(new Set());
   const freshTimersRef = useRef<number[]>([]);
   const arrivalQueueRef = useRef<ActivityItem[]>([]);
   const drainTimerRef = useRef<number | null>(null);
@@ -284,7 +275,6 @@ export default function ActivityPageClient() {
     setItems((prev) => (prev.some((it) => it.id === next.id) ? prev : [next, ...prev].slice(0, pageSize)));
     setFreshIds((cur) => new Set([...cur, next.id]));
     const t = window.setTimeout(() => {
-      settledIdsRef.current.add(next.id);
       setFreshIds((cur) => {
         const out = new Set(cur);
         out.delete(next.id);
@@ -403,7 +393,6 @@ export default function ActivityPageClient() {
             // server order mid-stage is what made rows appear below the top one. Once the queue is
             // empty, mirror quietly (a delete elsewhere, or a row aging out of the page).
             if (arrivalQueueRef.current.length) return prev;
-            for (const it of page.items) settledIdsRef.current.add(it.id);
             return page.items;
           });
           setNextCursor(page.nextCursor);
@@ -595,7 +584,7 @@ export default function ActivityPageClient() {
               leaving ? "translate-y-1 opacity-40" : "translate-y-0 opacity-100",
             ].join(" ")}
           >
-            {(() => { let i = 0; return groups.map((g) => (
+            {groups.map((g) => (
               <section key={g.key} aria-label={g.label}>
                 <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
                   {g.label}
@@ -604,17 +593,12 @@ export default function ActivityPageClient() {
                 <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                   <ul className="divide-y divide-[var(--border)]">
                     {g.items.map((item) => (
-                      <ActivityRow
-                        key={item.id}
-                        item={item}
-                        index={i++}
-                        enter={freshIds.has(item.id) ? "fresh" : settledIdsRef.current.has(item.id) ? "none" : "enter"}
-                      />
+                      <ActivityRow key={item.id} item={item} enter={freshIds.has(item.id) ? "fresh" : "none"} />
                     ))}
                   </ul>
                 </div>
               </section>
-            )); })()}
+            ))}
 
             {(pageIndex > 0 || nextCursor || items.length >= pageSize) ? (
               <nav aria-label="Activity pages" className="flex flex-wrap items-center justify-between gap-3 pt-1">
