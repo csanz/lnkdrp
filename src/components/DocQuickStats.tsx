@@ -288,7 +288,9 @@ export default function DocQuickStats({
       <div className="mt-3 grid grid-cols-4 gap-3">
         {tile("Viewers", stats.viewers, viewersSub)}
         {tile("Views", stats.views)}
-        {tile("Downloads", downloadsEnabled ? stats.downloads : "Off")}
+        {/* `downloadsEnabled` is the legacy document-level flag; downloads are per link now, so a
+            real count always wins and "Off" is only the honest answer when there is nothing to show. */}
+        {tile("Downloads", downloadsEnabled || (typeof stats.downloads === "number" && stats.downloads > 0) ? stats.downloads : "Off")}
         {tile("Pages", stats.pages)}
       </div>
 

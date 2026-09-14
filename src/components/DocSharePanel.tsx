@@ -230,13 +230,9 @@ export default function DocSharePanel({
             >
               <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
               <span className="truncate">Summary</span>
-              {/* No author badge when there is no summary yet: "Written by LinkDrop" next to
-                  "Skipped: …" claims authorship of something that was never written. */}
-              {summaryMissing ? null : (
-                <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
-                  {summaryBadge}
-                </span>
-              )}
+              {/* This whole block is the no-summary state, so there is no author to credit:
+                  "Written by LinkDrop" beside "not available yet" or "Skipped: …" would claim
+                  authorship of something that was never written. */}
             </div>
             <div className="mt-2 text-[13px] leading-relaxed text-[var(--muted)]">
               {summaryMissing ?? aiMissingMessage}
