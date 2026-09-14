@@ -12,7 +12,7 @@ import { Types } from "mongoose";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
-import { archiveShareLink, listShareLinks, toShareLinkDTO, updateShareLink, ShareLinkError } from "@/lib/share/links";
+import { archiveShareLink, listShareLinks, setDefaultShareLink, toShareLinkDTO, updateShareLink, ShareLinkError } from "@/lib/share/links";
 import { planLimitResponse } from "@/lib/billing/planLimits";
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "../shared";
 
@@ -39,6 +39,8 @@ type LinkPatch = Partial<{
   allowRevisionHistory: boolean;
   expiresAt: string | null;
   password: string | null;
+  /** `true` promotes this link to the document's default. */
+  isDefault: boolean;
 }>;
 
 /**
@@ -66,12 +68,19 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
     if (typeof body.allowRevisionHistory === "boolean") settings.allowRevisionHistory = body.allowRevisionHistory;
     if (body.expiresAt !== undefined) settings.expiresAt = body.expiresAt;
     if (body.password !== undefined) settings.password = body.password;
-    if (Object.keys(settings).length === 0) {
+    // `isDefault: true` promotes this link (it is not a settings field; `isDefault: false` is a
+    // no-op — promote another link instead, so a document always has exactly one default).
+    const makeDefault = body.isDefault === true;
+    if (Object.keys(settings).length === 0 && !makeDefault) {
       return applyTempUserHeaders(NextResponse.json({ error: "No settings to update." }, { status: 400 }), actor);
     }
 
     await assertLinkOnDoc(orgId, docObjectId, linkId);
-    const { link, limit } = await updateShareLink({ orgId, linkId, settings });
+    if (makeDefault) await setDefaultShareLink({ orgId, docId: docObjectId, linkId });
+    const { link, limit } =
+      Object.keys(settings).length > 0
+        ? await updateShareLink({ orgId, linkId, settings })
+        : { link: (await listShareLinks({ orgId, docId: docObjectId })).find((l) => String(l._id) === String(linkId))!, limit: null };
 
     const dto = toShareLinkDTO(link);
     const blocked = Boolean(limit && !limit.ok);

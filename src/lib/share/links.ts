@@ -462,6 +462,31 @@ export async function updateShareLink(input: {
   return { link: updated ?? link, limit };
 }
 
+/**
+ * Promote a link to be the document's default: the one the side panel shows, the one
+ * `share_pdf` and the legacy document-level routes write to, and the one `Doc.shareId` points at.
+ *
+ * The previous default stays a perfectly good link (same URL, same stats) and becomes deletable.
+ * A link on another document, or an archived one, is refused.
+ */
+export async function setDefaultShareLink(input: {
+  orgId: string | Types.ObjectId;
+  docId: string | Types.ObjectId;
+  linkId: string | Types.ObjectId;
+}): Promise<ShareLink> {
+  await connectMongo();
+  const orgId = oid(input.orgId);
+  const docId = oid(input.docId);
+  const next = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId, docId, archivedAt: null }).lean<ShareLink>();
+  if (!next) throw new ShareLinkError("not_found", "Link not found.");
+  if (next.isDefault) return next;
+  await ShareLinkModel.updateMany({ docId, isDefault: true }, { $set: { isDefault: false } });
+  const updated = await ShareLinkModel.findOneAndUpdate({ _id: next._id }, { $set: { isDefault: true } }, { new: true }).lean<ShareLink>();
+  // Moves `Doc.shareId` and mirrors the new default's settings onto the legacy document fields.
+  await syncDocShareState(docId);
+  return updated ?? next;
+}
+
 /** Soft-delete a link: it stops resolving; its analytics stay. The default link cannot be archived (disable it instead). */
 export async function archiveShareLink(input: { orgId: string | Types.ObjectId; linkId: string | Types.ObjectId }): Promise<ShareLink> {
   await connectMongo();

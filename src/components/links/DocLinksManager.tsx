@@ -252,6 +252,27 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     }
   }
 
+  /**
+   * Promote a link to the document's default: it becomes the one the side panel shows and the one
+   * `Doc.shareId` points at. The old default keeps its URL and its stats, and becomes deletable.
+   */
+  async function makeDefault(link: ShareLinkDTO) {
+    setRowBusyId(link.id);
+    setLinksError(null);
+    try {
+      await fetchJson<LinkMutationResponse>(`/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(link.id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ isDefault: true }),
+      });
+      refreshLinks();
+    } catch (e) {
+      setLinksError(e instanceof Error ? e.message : "Failed to set the default link");
+    } finally {
+      setRowBusyId(null);
+    }
+  }
+
   /** Delete (soft-archive) a link; its stats stay. The default link cannot be deleted. */
   async function deleteLink(link: ShareLinkDTO) {
     setRowBusyId(link.id);
@@ -358,17 +379,40 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
           />
         </div>
 
+        {/* The default link's own settings, so the panel answers "what does this link do?" without
+            a trip to the links page. */}
+        {defaultLink ? (
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--muted)]">
+            <SettingItem label="Download" value={defaultLink.allowDownload ? "on" : "off"} />
+            <SettingItem label="Password" value={defaultLink.passwordEnabled ? "set" : "none"} />
+            <SettingItem label="Versions" value={defaultLink.allowRevisionHistory ? "on" : "off"} />
+            <SettingItem label="Expires" value={formatDate(defaultLink.expiresAt) || "Never"} />
+          </div>
+        ) : null}
+
         <div className="mt-2 flex flex-wrap items-center gap-x-1.5 text-[12px] text-[var(--muted)]">
           <span>
-            {count} {count === 1 ? "link" : "links"}
+            {count <= 1 ? "Default link only" : `${count - 1} more ${count - 1 === 1 ? "link" : "links"}`}
           </span>
           <span aria-hidden="true">·</span>
           <Link
             href={`/doc/${encodeURIComponent(docId)}/links`}
             className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
           >
-            Manage
+            {count <= 1 ? "Manage" : "Manage all"}
           </Link>
+          {canManage && defaultLink ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                onClick={() => setLinkModal({ mode: "edit", link: defaultLink })}
+                className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
+              >
+                Edit settings
+              </button>
+            </>
+          ) : null}
         </div>
 
         {linksError ? <div className="mt-2 text-[12px] font-medium text-red-700">{linksError}</div> : null}
@@ -392,7 +436,9 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
         </div>
       ) : null}
 
-      <div className="grid gap-3">
+      {/* One column while a card still needs the room; two across from 1280px so a wide window is
+          used by the list instead of being padded away either side. */}
+      <div className={variant === "page" ? "grid gap-3 xl:grid-cols-2 xl:items-start" : "grid gap-3"}>
         {ordered === null ? (
           <>
             <div className="h-[180px] animate-pulse rounded-2xl bg-[var(--panel-hover)]" aria-hidden="true" />
@@ -534,6 +580,17 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                         >
                           {busy ? "Saving…" : link.enabled ? "Disable" : "Enable"}
                         </button>
+                        {link.isDefault ? null : (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void makeDefault(link)}
+                            className={LINK_ACTION_CLASS}
+                            title="Show this link in the document's side panel and use it as the document's primary link"
+                          >
+                            Make default
+                          </button>
+                        )}
                         {link.isDefault ? null : (
                           <button
                             type="button"
