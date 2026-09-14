@@ -20,6 +20,7 @@ import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
+import { pageTimeIncrement, visitTimeIncrement } from "@/lib/analytics/shareTiming";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
 import { UserModel } from "@/lib/models/User";
@@ -269,6 +270,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const botId = asNonEmptyString((body as { botId?: unknown })?.botId);
       const pageNumber = asPositiveInt((body as { pageNumber?: unknown })?.pageNumber);
       const durationMs = asDurationMs((body as { durationMs?: unknown })?.durationMs);
+      /**
+       * Time on the *current page*, which is a different interval from `durationMs` and must never
+       * be derived from it. The viewer runs two clocks — one for the visit, one for the page — and
+       * they start at different moments; crediting the visit chunk to the page double counted both
+       * totals, because the page's own segment arrived again on the next page turn. See the
+       * `flushTime` comment in `PdfJsViewer`.
+       */
+      const pageDurationMs = asDurationMs((body as { pageDurationMs?: unknown })?.pageDurationMs);
       const visitId = asNonEmptyString((body as { visitId?: unknown })?.visitId, 256);
       const enteredAtMs = asEpochMs((body as { enteredAtMs?: unknown })?.enteredAtMs);
       const leftAtMs = asEpochMs((body as { leftAtMs?: unknown })?.leftAtMs);
@@ -446,11 +455,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             }
           }
 
-          if (durationMs) {
-            // Increment total time spent, and best-effort per-page time if we know the page number.
-            const inc: Record<string, number> = { timeSpentMs: durationMs };
-            if (pageNumber) inc[`pageTimeMsByPage.${String(pageNumber)}`] = durationMs;
-            await ShareViewModel.updateOne({ shareId, botIdHash }, { $inc: inc });
+          // Each counter is fed by its own clock — see `src/lib/analytics/shareTiming.ts`, which
+          // holds the rules and the reasons they are not four lines inline any more.
+          {
+            const timing = { durationMs, pageDurationMs, enteredAtMs, leftAtMs };
+            const visitMs = visitTimeIncrement(timing);
+            const pageMs = pageNumber ? pageTimeIncrement(timing) : null;
+            const inc: Record<string, number> = {};
+            if (visitMs) inc.timeSpentMs = visitMs;
+            if (pageNumber && pageMs) inc[`pageTimeMsByPage.${String(pageNumber)}`] = pageMs;
+            if (Object.keys(inc).length) await ShareViewModel.updateOne({ shareId, botIdHash }, { $inc: inc });
           }
 
           // Per-visit tracking (best-effort). This enables per-session details in owner metrics.
@@ -459,9 +473,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               const now = Date.now();
               const leftAt = leftAtMs ? new Date(leftAtMs) : new Date(now);
               const enteredAt = enteredAtMs ? new Date(enteredAtMs) : null;
-              const derivedDurationMs =
-                durationMs ??
-                (enteredAt ? Math.max(0, Math.min(24 * 60 * 60 * 1000, leftAt.getTime() - enteredAt.getTime())) : null);
+              // Same two rules as the `ShareView` row above, from the same module, so a visit's
+              // numbers and a viewer's numbers cannot disagree about what an interval means.
+              const timing = {
+                durationMs,
+                pageDurationMs,
+                enteredAtMs: enteredAt ? enteredAt.getTime() : null,
+                leftAtMs: leftAt.getTime(),
+              };
+              const derivedPageDurationMs = pageTimeIncrement(timing);
 
               const setFields: Record<string, unknown> = {};
               if (viewerIp) setFields.viewerIp = viewerIp;
@@ -522,9 +542,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               if (Object.keys(set).length) update.$set = set;
 
               const inc: Record<string, number> = {};
-              const shouldIncTime = typeof derivedDurationMs === "number" && Number.isFinite(derivedDurationMs) && derivedDurationMs > 0;
-              if (shouldIncTime) inc.timeSpentMs = Math.floor(derivedDurationMs);
-              if (shouldIncTime && pageNumber) inc[`pageTimeMsByPage.${String(pageNumber)}`] = Math.floor(derivedDurationMs);
+              // The visit's own total comes from the visit clock alone: a page-turn POST reports a
+              // segment already inside the heartbeat's chunk, so counting it here added it twice.
+              const visitMs = visitTimeIncrement(timing);
+              if (visitMs) inc.timeSpentMs = visitMs;
+              const shouldIncTime =
+                typeof derivedPageDurationMs === "number" && Number.isFinite(derivedPageDurationMs) && derivedPageDurationMs > 0;
+              if (shouldIncTime && pageNumber) inc[`pageTimeMsByPage.${String(pageNumber)}`] = Math.floor(derivedPageDurationMs);
 
               // Revisits/page-sequence require a well-defined page interval (enteredAt/leftAt).
               const canRecordPageEvent =
@@ -538,7 +562,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 update.$addToSet = { pagesSeen: pageNumber };
                 update.$push = {
                   pageEvents: {
-                    $each: [{ pageNumber, enteredAt, leftAt, durationMs: Math.floor(derivedDurationMs!) }],
+                    $each: [{ pageNumber, enteredAt, leftAt, durationMs: Math.floor(derivedPageDurationMs!) }],
                     $slice: -500,
                   },
                 };

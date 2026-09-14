@@ -97,8 +97,12 @@ export async function generateMetadata(props: {
       firstPagePngUrl: 1,
     } as Record<string, 1>,
   });
+  // A password-protected link gets the same generic card as a refused one. Otherwise pasting the
+  // URL into Slack unfurled the deck's real title and its first page to the whole channel, which is
+  // the leak the password exists to prevent — and the unfurl happens before anyone types anything.
+  const linkIsLocked = Boolean(resolved && !resolved.refusal && resolved.link.passwordHash && resolved.link.passwordSalt);
   const doc =
-    resolved && !resolved.refusal
+    resolved && !resolved.refusal && !linkIsLocked
       ? (resolved.doc as {
           title?: unknown;
           aiOutput?: unknown;
@@ -238,13 +242,11 @@ export default async function SharePage(props: {
       sharePasswordHash: sharePasswordHash as string,
     });
     if (!cookie || cookie !== expected) {
-      return (
-        <PasswordGate
-          shareId={shareId}
-          title={typeof doc.title === "string" ? doc.title : null}
-          previewUrl={typeof previewUrl === "string" ? previewUrl : null}
-        />
-      );
+      // Nothing about the document before the password: not its name, and certainly not the
+      // rendered first page, which is the document. A gate that shows a deck's title and its cover
+      // slide to anyone holding the URL has already given away most of what the password was set
+      // to protect — and the sender chose a password precisely because the URL is not the secret.
+      return <PasswordGate shareId={shareId} title={null} previewUrl={null} />;
     }
   }
 

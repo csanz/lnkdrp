@@ -269,6 +269,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const totalViews = windowTotals.views;
       const pagesViewed = windowTotals.pagesViewed;
 
+      // `?viewersOnly=1` skips the series and the download aggregates for latency — it is the
+      // second request the metrics page fires, and it only wants viewer rows. What it must not do
+      // is report the figures it never computed: it answered `totals.downloads: 0` and `series: []`
+      // beside a first response that said 3, so the same field of the same endpoint contradicted
+      // itself depending on a query param. Fields this branch did not compute are now absent from
+      // the response, which a reader can detect; a zero is indistinguishable from the truth.
       const series: Array<{ date: string; views: number; downloads: number }> = [];
       let totalDownloads = 0;
       let allTimeDownloads = 0;
@@ -652,7 +658,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         /** Every figure here covers `days`, like `series` and `viewerCount`. No lifetime figure leaks in. */
         totals: {
           views: totalViews,
-          downloads: totalDownloads,
+          // Absent, not zero, when `?viewersOnly=1` skipped the aggregate that produces it.
+          ...(viewersOnly ? {} : { downloads: totalDownloads }),
           pagesViewed,
           /** Total time on the document within the window (ms), summed across all viewers. */
           timeSpentMs: Math.max(0, Math.floor(windowTimeSpentMs)),
@@ -662,7 +669,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         /** Lifetime figures for the same scope, for cards that genuinely want "ever". */
         totalsAllTime: {
           views: allTimeViews,
-          downloads: allTimeDownloads,
+          ...(viewersOnly ? {} : { downloads: allTimeDownloads }),
           pagesViewed: allTimeTotals.pagesViewed,
         },
         /**
@@ -684,7 +691,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
          * not a filter: the download numbers above are counted either way.
          */
         downloadsEnabled,
-        series,
+        ...(viewersOnly ? {} : { series }),
         // On Basic both viewer arrays are `[]` (the aggregates never run), which also omits the
         // per-viewer `pageTimeMsByPage` / `pagesSeen` maps.
         viewers: viewersAgg.map((v) => {

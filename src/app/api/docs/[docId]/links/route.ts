@@ -15,7 +15,7 @@ import { NextResponse } from "next/server";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
-import { createShareLink, listShareLinks, toShareLinkDTO } from "@/lib/share/links";
+import { createShareLink, listShareLinks, shareLinkStatsByShareId, toShareLinkDTO } from "@/lib/share/links";
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "./shared";
 import { planLimitResponse } from "@/lib/billing/planLimits";
 
@@ -49,8 +49,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
   try {
     const includeArchived = new URL(request.url).searchParams.get("includeArchived") === "1";
     const links = await listShareLinks({ orgId, docId: docObjectId, includeArchived });
+    // One aggregation for the whole document, so every row's traffic comes from the same rows the
+    // metrics page reads. Without it this list served `ShareLink.viewCount`, which drifts from the
+    // analytics the moment anything reclassifies a row.
+    const stats = await shareLinkStatsByShareId(docObjectId);
     return applyTempUserHeaders(
-      NextResponse.json({ links: links.map(toShareLinkDTO) }, { headers: { "cache-control": "no-store" } }),
+      NextResponse.json(
+        { links: links.map((l) => toShareLinkDTO(l, stats.get(l.shareId) ?? null)) },
+        { headers: { "cache-control": "no-store" } },
+      ),
       actor,
     );
   } catch (err) {

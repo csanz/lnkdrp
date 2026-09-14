@@ -30,7 +30,8 @@ type MetricsResponse = {
   viewerCount?: number;
   totals: {
     views: number;
-    downloads: number;
+    /** Absent on a `?viewersOnly=1` response, which never computes it — see the route header. */
+    downloads?: number;
     pagesViewed: number;
     authenticatedViewers: number;
     anonymousViewers?: number;
@@ -43,7 +44,8 @@ type MetricsResponse = {
    * the cards above it.
    */
   byLink?: Array<{ shareId: string; views: number; viewers: number; downloads: number; pagesViewed: number; lastViewedAt: string | null }>;
-  series: Array<{ date: string; views: number; downloads: number }>;
+  /** Absent on a `?viewersOnly=1` response. */
+  series?: Array<{ date: string; views: number; downloads: number }>;
   viewers: Array<{
     userId: string;
     name: string | null;

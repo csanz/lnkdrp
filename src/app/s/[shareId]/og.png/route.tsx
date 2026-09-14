@@ -32,6 +32,10 @@ export async function GET(
     select: { title: 1, aiOutput: 1, previewImageUrl: 1, firstPagePngUrl: 1 } as Record<string, 1>,
   });
   if (!resolved || resolved.refusal) notFound();
+  // A password-protected link has no preview either. This image is rendered from the document's
+  // title and its first page, which is exactly what the password withholds — and an unfurl fetches
+  // it with no cookie, so the gate upstream never sees the request.
+  if (resolved.link.passwordHash && resolved.link.passwordSalt) notFound();
   const doc = resolved.doc as {
     title?: unknown;
     aiOutput?: unknown;

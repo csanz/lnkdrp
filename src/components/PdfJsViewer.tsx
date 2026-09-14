@@ -128,6 +128,47 @@ function isRenderingCancelled(e: unknown): boolean {
 const SHARE_LOCAL_STATS_PREFIX = "lnkdrp_share_local_stats_v1:";
 const SHARE_OWNER_STATS_PREFIX = "lnkdrp_share_owner_stats_v1:";
 const SHARE_VISIT_SESSION_PREFIX = "lnkdrp_share_visit_session_v1:";
+/**
+ * Pages this *visit* has already reported, in sessionStorage.
+ *
+ * Suppressing a repeat POST is right; suppressing it forever is not. The load POST and the initial
+ * page POSTs used to be gated on a localStorage record that survives the visit, so a reader coming
+ * back tomorrow sent nothing at load: their `ShareVisit` row only appeared when they turned a page,
+ * and a returning reader who read one page and left produced no visit row at all until the 30s
+ * heartbeat. A visit is a tab session, so its own storage is where "already reported" belongs.
+ */
+const SHARE_VISIT_PAGES_PREFIX = "lnkdrp_share_visit_pages_v1:";
+
+/** Pages already reported during this tab session, and whether the load POST has gone out. */
+function readVisitReported(shareId: string): { loaded: boolean; pages: Set<number> } {
+  if (!isBrowser()) return { loaded: false, pages: new Set() };
+  try {
+    const raw = window.sessionStorage.getItem(`${SHARE_VISIT_PAGES_PREFIX}${shareId}`);
+    if (!raw) return { loaded: false, pages: new Set() };
+    const parsed = JSON.parse(raw) as unknown;
+    const loaded = Boolean(parsed && typeof parsed === "object" && (parsed as { loaded?: unknown }).loaded);
+    const pagesRaw = parsed && typeof parsed === "object" ? (parsed as { pages?: unknown }).pages : null;
+    const pages = Array.isArray(pagesRaw)
+      ? pagesRaw.filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1)
+      : [];
+    return { loaded, pages: new Set(pages) };
+  } catch {
+    return { loaded: false, pages: new Set() };
+  }
+}
+
+/** Persist what this visit has reported. Best-effort: a private window may refuse to store. */
+function writeVisitReported(shareId: string, next: { loaded: boolean; pages: Set<number> }): void {
+  if (!isBrowser()) return;
+  try {
+    window.sessionStorage.setItem(
+      `${SHARE_VISIT_PAGES_PREFIX}${shareId}`,
+      JSON.stringify({ loaded: next.loaded, pages: Array.from(next.pages).sort((a, b) => a - b) }),
+    );
+  } catch {
+    // ignore
+  }
+}
 const SHARE_VIEWER_PROFILE_KEY = "lnkdrp_share_viewer_profile_v1";
 
 type OwnerStats = { views: number; pagesViewed: number };
@@ -1692,6 +1733,21 @@ export function PdfJsViewer({
 
     start(Date.now());
 
+    /**
+     * Flush elapsed time. Two clocks run here and each is reported by its own field, because each
+     * feeds a different counter on the server and they measure overlapping intervals:
+     *
+     * - the *visit* clock (`shareTimingEnteredAtMsRef`) feeds `timeSpentMs`
+     * - the *page* clock (`shareTimingPageEnteredAtMsRef`) feeds `pageTimeMsByPage`
+     *
+     * Sending one number for both double counted both totals. This flush used to send its visit
+     * chunk as `durationMs` *with* a `pageNumber`, and the server credited that same number to the
+     * page — without resetting the page clock, so when the reader finally turned the page the
+     * page-change flush sent the full segment again, time already counted included. A three-page
+     * read of 7.9s + 5.6s + 6.7s stored 20.3s against page 3, and the document total ran 26% high.
+     *
+     * Both clocks are reset here, so every millisecond is reported exactly once by each.
+     */
     function flushTime({ includePage }: { includePage: boolean }) {
       const enteredAtMs = shareTimingEnteredAtMsRef.current;
       if (!enteredAtMs) return;
@@ -1712,7 +1768,23 @@ export function PdfJsViewer({
       applyViewerProfileToStatsPayload(payload);
       if (includePage) {
         const p = shareTimingPageRef.current;
-        if (typeof p === "number" && Number.isFinite(p) && p >= 1) payload.pageNumber = Math.floor(p);
+        const pageEnteredAtMs = shareTimingPageEnteredAtMsRef.current;
+        if (typeof p === "number" && Number.isFinite(p) && p >= 1) {
+          payload.pageNumber = Math.floor(p);
+          if (pageEnteredAtMs) {
+            const pageDurationMs = now - pageEnteredAtMs;
+            if (Number.isFinite(pageDurationMs) && pageDurationMs > 0) {
+              payload.pageDurationMs = Math.floor(pageDurationMs);
+              // The page interval, so the visit's page sequence gets a segment for the page the
+              // reader was on when they left. Without it the last page of every visit was missing
+              // from `pageEvents` and never counted in `pageVisitCountByPage`.
+              payload.enteredAtMs = Math.floor(pageEnteredAtMs);
+              payload.leftAtMs = Math.floor(now);
+            }
+            // The page clock restarts with the visit clock: this flush has now reported it.
+            shareTimingPageEnteredAtMsRef.current = now;
+          }
+        }
       }
       void fetchWithTempUser(`/api/share/${shareId}/stats`, {
         method: "POST",
@@ -1734,11 +1806,19 @@ export function PdfJsViewer({
             const payload: Record<string, unknown> = { botId, visitId, durationMs };
             applyViewerProfileToStatsPayload(payload);
             const p = shareTimingPageRef.current;
+            const pageEnteredAtMs = shareTimingPageEnteredAtMsRef.current;
             if (typeof p === "number" && Number.isFinite(p) && p >= 1) {
               payload.pageNumber = Math.floor(p);
-              // Provide best-effort timing bounds so the server can record per-visit page segments.
-              payload.enteredAtMs = Math.max(0, Math.floor(now - durationMs));
-              payload.leftAtMs = Math.floor(now);
+              // The page's own interval, never the visit chunk: they start at different moments,
+              // and the bounds below are what the server turns into a `pageEvents` segment. Using
+              // `now - durationMs` claimed the reader entered this page when the visit chunk began.
+              const pageStart = pageEnteredAtMs ?? now - durationMs;
+              const pageDurationMs = now - pageStart;
+              if (Number.isFinite(pageDurationMs) && pageDurationMs > 0) {
+                payload.pageDurationMs = Math.floor(pageDurationMs);
+                payload.enteredAtMs = Math.max(0, Math.floor(pageStart));
+                payload.leftAtMs = Math.floor(now);
+              }
             }
             void fetchWithTempUser(`/api/share/${shareId}/stats`, {
               method: "POST",
@@ -1824,7 +1904,10 @@ export function PdfJsViewer({
         botId,
         visitId,
         pageNumber: Math.floor(prevPage),
-        durationMs,
+        // `pageDurationMs`, never `durationMs`: this segment's time is already inside the visit
+        // clock that the heartbeat reports, so sending it as `durationMs` added it to the document
+        // and visit totals a second time.
+        pageDurationMs: Math.floor(durationMs),
         enteredAtMs: Math.floor(enteredAt),
         leftAtMs: Math.floor(now),
       };
@@ -1853,11 +1936,11 @@ export function PdfJsViewer({
     const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareIdSafe);
     if (visitId) shareVisitIdRef.current = visitId;
 
-    const local = readLocalShareStats(shareIdSafe);
-    const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
-
-    // Record the view once per browser (localStorage) to reduce spam.
-    if (!local.viewedAt) {
+    // Gated on the visit, not on the browser. The server's unique (shareId, botIdHash) index is
+    // what stops a repeat view being counted twice, so this gate only saves a request — and paying
+    // for it with a missing `ShareVisit` row on every return visit was a bad trade.
+    const reported = readVisitReported(shareIdSafe);
+    if (!reported.loaded || !reported.pages.has(pageNumber)) {
       scheduleAfterPaint(() => {
         const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), pageNumber };
         applyViewerProfileToStatsPayload(payload);
@@ -1867,29 +1950,14 @@ export function PdfJsViewer({
           body: JSON.stringify(payload),
         }).catch(() => void 0);
       });
-
+      reported.pages.add(pageNumber);
+      writeVisitReported(shareIdSafe, { loaded: true, pages: reported.pages });
+      // Kept for anything still reading it; it no longer gates a request.
+      const local = readLocalShareStats(shareIdSafe);
+      const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
       pagesSeen.add(pageNumber);
       writeLocalShareStats(shareIdSafe, {
-        viewedAt: Date.now(),
-        pagesSeen: Array.from(pagesSeen).sort((a, b) => a - b),
-      });
-      return;
-    }
-
-    // If we've already recorded a view, still record the initial page if it wasn't stored yet.
-    if (!pagesSeen.has(pageNumber)) {
-      scheduleAfterPaint(() => {
-        const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), pageNumber };
-        applyViewerProfileToStatsPayload(payload);
-        void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
-        }).catch(() => void 0);
-      });
-      pagesSeen.add(pageNumber);
-      writeLocalShareStats(shareIdSafe, {
-        viewedAt: local.viewedAt,
+        viewedAt: local.viewedAt ?? Date.now(),
         pagesSeen: Array.from(pagesSeen).sort((a, b) => a - b),
       });
     }
@@ -1904,9 +1972,11 @@ export function PdfJsViewer({
     if (!botId) return;
     const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareIdSafe);
     if (visitId) shareVisitIdRef.current = visitId;
-    const local = readLocalShareStats(shareIdSafe);
-    const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
-    if (pagesSeen.has(pageNumber)) return;
+    // Per visit, for the same reason as the load POST above: a `ShareVisit` row's `pagesSeen` is
+    // what "which pages did they read this time" is built from, and gating on a browser-lifetime
+    // record meant a returning reader's second visit recorded no pages they had seen before.
+    const reported = readVisitReported(shareIdSafe);
+    if (reported.pages.has(pageNumber)) return;
 
     scheduleAfterPaint(() => {
       const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), pageNumber };
@@ -1918,9 +1988,13 @@ export function PdfJsViewer({
       }).catch(() => void 0);
     });
 
+    reported.pages.add(pageNumber);
+    writeVisitReported(shareIdSafe, { loaded: true, pages: reported.pages });
+    const local = readLocalShareStats(shareIdSafe);
+    const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
     pagesSeen.add(pageNumber);
     writeLocalShareStats(shareIdSafe, {
-      viewedAt: local.viewedAt,
+      viewedAt: local.viewedAt ?? Date.now(),
       pagesSeen: Array.from(pagesSeen).sort((a, b) => a - b),
     });
   }, [hasFirstPaint, pageNumber, shareIdSafe]);

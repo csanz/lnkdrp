@@ -16,6 +16,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { ShareViewModel } from "@/lib/models/ShareView";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 import { checkLimit, type LimitCheck } from "@/lib/billing/planLimits";
@@ -97,7 +98,55 @@ export function isLinkActive(link: Pick<ShareLink, "enabled" | "archivedAt" | "e
   return Boolean(link.enabled) && !link.archivedAt && !isExpired(link, now);
 }
 
-export function toShareLinkDTO(link: ShareLink): ShareLinkDTO {
+/**
+ * Recomputed traffic for one link, from the analytics rows.
+ *
+ * `ShareLink.viewCount` / `downloadCount` / `lastViewedAt` are denormalized counters, and a counter
+ * and a row count drift: the owner-preview pass reclassified rows that the counters had already
+ * counted, so `/links` reported 4 views and a 02:03:16 last view for a link whose analytics said 3
+ * and 02:02:56. Two surfaces of the same product disagreeing about one link is worse than either
+ * being slightly stale, so the rows win wherever they are available.
+ */
+export type ShareLinkStats = { viewCount: number; downloadCount: number; lastViewedAt: Date | null };
+
+/**
+ * Recompute every link's traffic for one document, in one aggregation.
+ *
+ * Recipients only (`isOwnerPreview: { $ne: true }`) and `lastViewedAt` before `updatedDate`, which
+ * are the same two rules the metrics route runs — so the links table and the metrics page cannot
+ * report different numbers for the same link.
+ */
+export async function shareLinkStatsByShareId(docId: string | Types.ObjectId): Promise<Map<string, ShareLinkStats>> {
+  await connectMongo();
+  const rows = (await ShareViewModel.aggregate([
+    { $match: { docId: oid(docId), isOwnerPreview: { $ne: true } } },
+    {
+      $group: {
+        _id: "$shareId",
+        viewCount: { $sum: 1 },
+        downloadCount: { $sum: { $ifNull: ["$downloads", 0] } },
+        lastViewedAt: { $max: { $ifNull: ["$lastViewedAt", "$updatedDate"] } },
+      },
+    },
+  ])) as Array<{ _id: string; viewCount?: number; downloadCount?: number; lastViewedAt?: Date | null }>;
+  const out = new Map<string, ShareLinkStats>();
+  for (const r of rows) {
+    if (typeof r._id !== "string" || !r._id) continue;
+    out.set(r._id, {
+      viewCount: typeof r.viewCount === "number" && Number.isFinite(r.viewCount) ? r.viewCount : 0,
+      downloadCount: typeof r.downloadCount === "number" && Number.isFinite(r.downloadCount) ? r.downloadCount : 0,
+      lastViewedAt: r.lastViewedAt ? new Date(r.lastViewedAt) : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * @param stats Recomputed traffic from {@link shareLinkStatsByShareId}. When omitted the link's own
+ * counters are used, which is right for a link that has just been created or edited and has no
+ * rows yet — and wrong, slowly, for anything the owner reads more than once.
+ */
+export function toShareLinkDTO(link: ShareLink, stats?: ShareLinkStats | null): ShareLinkDTO {
   const status: ShareLinkDTO["status"] = link.archivedAt ? "archived" : !link.enabled ? "disabled" : isExpired(link) ? "expired" : "active";
   return {
     id: String(link._id),
@@ -115,9 +164,11 @@ export function toShareLinkDTO(link: ShareLink): ShareLinkDTO {
     status,
     createdVia: link.createdVia ?? "web",
     createdAt: link.createdDate ? link.createdDate.toISOString() : new Date(0).toISOString(),
-    lastViewedAt: link.lastViewedAt ? link.lastViewedAt.toISOString() : null,
-    viewCount: link.viewCount ?? 0,
-    downloadCount: link.downloadCount ?? 0,
+    // A link with no analytics rows reports zero rather than its counter: the rows are the
+    // recomputable truth, and a link whose rows were swept is genuinely a link with no traffic.
+    lastViewedAt: stats ? (stats.lastViewedAt ? stats.lastViewedAt.toISOString() : null) : link.lastViewedAt ? link.lastViewedAt.toISOString() : null,
+    viewCount: stats ? stats.viewCount : link.viewCount ?? 0,
+    downloadCount: stats ? stats.downloadCount : link.downloadCount ?? 0,
   };
 }
 
