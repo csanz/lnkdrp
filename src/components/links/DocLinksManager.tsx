@@ -124,7 +124,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   const [links, setLinks] = useState<ShareLinkDTO[] | null>(null);
   const [linksError, setLinksError] = useState<string | null>(null);
   const [linksRev, setLinksRev] = useState(0);
-  const [linkViewers, setLinkViewers] = useState<Record<string, number>>({});
+  const [linkStats, setLinkStats] = useState<Record<string, { viewers: number; views: number; downloads: number }>>({});
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -170,31 +170,36 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     [refreshLinks],
   );
 
-  // Unique viewers are not on the link row (they need the analytics window), so ask for them per
-  // link — only for links that have been viewed at all, and only for the first few.
+  // Views, viewers and downloads all come from the analytics window, in one call per link.
+  //
+  // The counters on the link row (`viewCount`, `downloadCount`) only started counting when links
+  // shipped, so on a document with older traffic they disagree with the analytics — a card would
+  // read "Views 1 · Viewers 18", which is nonsense. One source keeps the four numbers coherent;
+  // the row counters are only the fallback when the request fails.
   useEffect(() => {
     if (variant !== "page") return;
-    const rows = (links ?? []).filter((l) => l.viewCount > 0).slice(0, 8);
+    const rows = (links ?? []).slice(0, 8);
     if (!rows.length) return;
     let cancelled = false;
     void (async () => {
       const entries = await Promise.all(
         rows.map(async (l) => {
           try {
-            const res = await fetchJson<{ viewerCount?: number }>(
+            const res = await fetchJson<{ viewerCount?: number; totals?: { views?: number; downloads?: number } }>(
               `/api/docs/${encodeURIComponent(docId)}/shareviews?days=30&lite=1&shareId=${encodeURIComponent(l.shareId)}`,
               { cache: "no-store" },
             );
-            return [l.id, typeof res.viewerCount === "number" ? Math.max(0, Math.floor(res.viewerCount)) : -1] as const;
+            const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
+            return [l.id, { viewers: n(res.viewerCount), views: n(res.totals?.views), downloads: n(res.totals?.downloads) }] as const;
           } catch {
-            return [l.id, -1] as const;
+            return [l.id, null] as const;
           }
         }),
       );
       if (cancelled) return;
-      setLinkViewers((prev) => {
+      setLinkStats((prev) => {
         const next = { ...prev };
-        for (const [id, count] of entries) if (count >= 0) next[id] = count;
+        for (const [id, stats] of entries) if (stats) next[id] = stats;
         return next;
       });
     })();
@@ -462,7 +467,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
         ) : (
           ordered.map((link) => {
             const pill = LINK_STATUS_PILL[link.status] ?? LINK_STATUS_PILL.disabled;
-            const viewers = linkViewers[link.id];
+            const stats = linkStats[link.id];
             const lastViewed = relativeWhen(link.lastViewedAt);
             const busy = rowBusyId === link.id;
             const confirming = confirmDeleteId === link.id;
@@ -526,9 +531,9 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
 
                 {/* Stats */}
                 <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3 sm:grid-cols-4">
-                  <StatItem label="Views" value={link.viewCount.toLocaleString()} />
-                  <StatItem label="Viewers" value={typeof viewers === "number" ? viewers.toLocaleString() : "—"} />
-                  <StatItem label="Downloads" value={link.downloadCount.toLocaleString()} />
+                  <StatItem label="Views" value={(stats ? stats.views : link.viewCount).toLocaleString()} />
+                  <StatItem label="Viewers" value={stats ? stats.viewers.toLocaleString() : "—"} />
+                  <StatItem label="Downloads" value={(stats ? stats.downloads : link.downloadCount).toLocaleString()} />
                   <StatItem label="Last viewed" value={lastViewed || "Never"} />
                 </div>
 
@@ -611,6 +616,35 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
             );
           })
         )}
+
+        {/* A document with only its default link leaves half the row empty. Rather than stretch one
+            card across the page, use the space to say what a second link is for — the whole point
+            of the feature — and offer the action. It disappears as soon as a second link exists. */}
+        {variant === "page" && canManage && ordered !== null && ordered.length === 1 ? (
+          <div className="rounded-2xl border border-dashed border-[var(--border)] bg-[var(--panel-2)] p-5">
+            <div className="text-[14px] font-semibold text-[var(--fg)]">Add a link per audience</div>
+            <p className="mt-1 text-[13px] leading-6 text-[var(--muted)]">
+              The same document, a separate link for each person or firm you send it to. Nothing is
+              re-uploaded and the file stays identical.
+            </p>
+            <ul className="mt-3 grid gap-1.5 text-[13px] leading-6 text-[var(--muted)]">
+              {[
+                "See which firm opened it, not just that someone did.",
+                "Revoke one recipient without touching anyone else.",
+                "Give one link a password or an expiry date and leave the rest open.",
+              ].map((line) => (
+                <li key={line} className="flex gap-2">
+                  <span aria-hidden="true" className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[var(--muted-2)]" />
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+            <button type="button" onClick={openCreate} className={`${NEW_LINK_CLASS} mt-4`}>
+              <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+              New link
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {/* a11y: announce copy state */}
