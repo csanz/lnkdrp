@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useAuthEnabled } from "@/app/providers";
+import { CREDITS_COPY } from "@/lib/client/planLimit";
 
 const AUTH_TRANSITION_STORAGE_KEY = "ld_auth_transition";
 const AUTH_TRANSITION_COOKIE_NAME = "ld_auth_transition";
@@ -36,14 +37,35 @@ export default function LoginPage() {
 
   const helperText = useMemo(() => {
     if (!authEnabled) return "Login isn’t available (auth is disabled).";
-    return "Continue to LinkDrop with Google.";
+    return "Sign in or create your account with Google.";
   }, [authEnabled]);
 
   return (
     <main className="grid min-h-[100svh] place-items-center bg-[#050506] px-6 text-white">
       <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 px-8 py-7">
-        <h1 className="text-xl font-semibold tracking-tight">Log in</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Log in or sign up</h1>
         <p className="mt-3 text-sm leading-6 text-white/60">{helperText}</p>
+
+        {/* What a new account gets, stated before sign-up: links are free; the starter credits exist to try the AI features. */}
+        <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5">
+          <div className="text-[13px] font-semibold text-white">New accounts start free</div>
+          <ul className="mt-2 space-y-1.5 text-[13px] leading-5 text-white/65">
+            <li className="flex gap-2">
+              <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
+              <span>3 share links with view and download tracking, free forever.</span>
+            </li>
+            <li className="flex gap-2">
+              <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
+              <span>
+                {CREDITS_COPY.freeStarter} free credits to try the AI features: summaries on every link and AI compare between versions.
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
+              <span>No card needed. Upgrade to Pro when you want more.</span>
+            </li>
+          </ul>
+        </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <button

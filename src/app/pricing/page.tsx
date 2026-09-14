@@ -136,7 +136,7 @@ export default async function PricingPage() {
                 if you have fewer, and Free uses at most 15 credits a day.
               </p>
               <div className="mt-8 flex-1" />
-              <PricingCta plan="free" variant="dark" helper="Sign in with Google. No card needed." />
+              <PricingCta plan="free" variant="dark" helper={`Sign in with Google. ${FREE_STARTER_CREDITS} free credits to try the AI features. No card needed.`} />
             </div>
 
             {/* Pro */}

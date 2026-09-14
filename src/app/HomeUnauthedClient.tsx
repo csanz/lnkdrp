@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { signIn } from "next-auth/react";
 import PublicFooter from "@/components/PublicFooter";
+import { CREDITS_COPY } from "@/lib/client/planLimit";
 import PublicHeader from "@/components/PublicHeader";
 import McpInstallExample from "@/components/McpInstallExample";
 import { useAuthEnabled } from "@/app/providers";
@@ -207,7 +208,7 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
               recipients (and their own agents) know what they&apos;re getting before they commit time.
             </p>
 
-            <div className="mt-7 flex items-center gap-4">
+            <div className="mt-7 flex flex-wrap items-center gap-x-4 gap-y-2">
               {authEnabled ? (
                 <button
                   type="button"
@@ -218,6 +219,11 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
                 >
                   {isSigningIn ? "Opening Google…" : "Get Started"}
                 </button>
+              ) : null}
+              {authEnabled ? (
+                <span className="text-[13px] leading-5 text-white/55">
+                  Free, with {CREDITS_COPY.freeStarter} credits to try the AI features. No card needed.
+                </span>
               ) : (
                 <div className="text-sm text-white/60">Login isn’t available (auth is disabled).</div>
               )}
