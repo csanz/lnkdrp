@@ -62,7 +62,14 @@ export default function LoginPage() {
             </li>
             <li className="flex gap-2">
               <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
-              <span>No card needed. Upgrade to Pro when you want more.</span>
+              <span>
+                Credits top back up to {CREDITS_COPY.freeMonthlyTopUp} on the 1st of every month. Need more anytime? Pro includes{" "}
+                {CREDITS_COPY.proPerMonth} a month.
+              </span>
+            </li>
+            <li className="flex gap-2">
+              <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
+              <span>No card needed.</span>
             </li>
           </ul>
         </div>

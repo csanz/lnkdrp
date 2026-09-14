@@ -222,7 +222,7 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
               ) : null}
               {authEnabled ? (
                 <span className="text-[13px] leading-5 text-white/55">
-                  Free, with {CREDITS_COPY.freeStarter} credits to try the AI features. No card needed.
+                  Free, with {CREDITS_COPY.freeStarter} credits to try the AI features, topped up every month. No card needed.
                 </span>
               ) : (
                 <div className="text-sm text-white/60">Login isn’t available (auth is disabled).</div>

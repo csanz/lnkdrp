@@ -46,6 +46,8 @@ export const CREDITS_COPY = {
   proPerMonth: 300,
   /** Free daily brake (`FREE_DAILY_CREDIT_CAP` in `src/lib/credits/creditService.ts`). */
   freeDailyCap: 15,
+  /** Free monthly floor (`FREE_MONTHLY_FLOOR_CREDITS` in `src/lib/credits/grants.ts`): balance tops back up to this on the 1st. */
+  freeMonthlyTopUp: 10,
 } as const;
 
 /**
