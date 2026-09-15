@@ -356,7 +356,7 @@ export default function LeftSidebar({
 
   const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
   const [newProjectLimitError, setNewProjectLimitError] = useState<PlanLimitError | null>(null);
-  // Plan meter: Free workspaces get a proactive "Links 2 of 3 · Projects 1 of 1" block above the
+  // Plan meter: Free workspaces get a proactive "Docs 2 of 3 · Projects 1 of 1" block above the
   // account menu. The session flag below (`markPlanLimitHit`) is only a fallback for when the
   // snapshot could not be loaded.
   const { plan, loading: planLoading } = usePlan();

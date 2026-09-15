@@ -58,7 +58,7 @@ Pro clears it and logs `plan.upgraded`. Reminders are deduped by day bucket so r
 ### M1 — Free plan limits
 
 - Add `src/lib/billing/planLimits.ts` with the launch constants and a `getWorkspacePlanLimits(orgId)` reader; make `src/app/pricing/page.tsx` import from it.
-- Enforce the active-link cap when sharing is enabled (doc create with share, `PATCH /api/docs/:id` shareEnabled, MCP `share_pdf` / `set_share_access`).
+- Enforce the cap when sharing is enabled (doc create with share, `PATCH /api/docs/:id` shareEnabled, MCP `share_pdf` / `set_share_access`). *(Written as "active-link cap"; the cap has always counted shared **documents**, and links are not capped — see `FREE_DOCUMENTS`. The wording is left recognisable here as a record.)*
 - Enforce the project cap on `POST /api/projects` and the MCP create path.
 - Gate invites on Free: `POST /api/org-invites` and `/api/orgs/claim-join` reject when the workspace has no seat allowance; return `plan_limit`.
 - Clamp the analytics window to 7 days on Free in `/api/docs/:id/shareviews`, the metrics page range picker and `lnkdrp_get_share_stats`.

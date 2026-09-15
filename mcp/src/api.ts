@@ -24,7 +24,7 @@
  * - `GET  /api/plan`                           -> `{ plan: "free"|"pro", limits, usage, … }`
  * - `GET  /api/docs/:id/shareviews?days&viewers=1&shareId=` -> `{ ok, days, analyticsDaysLimit, analyticsTier, viewerCount, totals, series, viewers, anonymousViewers }` (`shareId` scopes every number to one link)
  * - `GET  /api/docs/:id/links`                 -> `{ links: ShareLinkDTO[] }` (default link first)
- * - `POST /api/docs/:id/links` `{ label, … }`  -> 201 `{ link, planWarning? }` (at the Free cap the link is created disabled and `planWarning` explains why)
+ * - `POST /api/docs/:id/links` `{ label, … }`  -> 201 `{ link, planWarning? }` (always enabled — links are never plan-capped; `planWarning` only flags nearness to the shared-document cap)
  * - `PATCH /api/docs/:id/links/:linkId`        -> `{ link, planWarning? }`
  * - `DELETE /api/docs/:id/links/:linkId`       -> 204 (soft archive; analytics kept)
  */
@@ -430,9 +430,10 @@ export class ApiClient {
   }
 
   /**
-   * `POST /api/docs/:id/links` — create a link. At the Free active-link cap the link is created
-   * **disabled** and `planWarning` says so (201, never a 402), so the agent can report the cap
-   * without losing the link.
+   * `POST /api/docs/:id/links` — create a link. Links are never plan-capped: the link always comes
+   * back enabled (201). `planWarning` is only a heads-up that the workspace is near its separate
+   * cap on shared *documents*. It used to say the link was "created disabled at the cap" — the
+   * wording of the bug 1ce4413 removed, kept out of here so nobody wires it back in.
    */
   async createShareLink(docId: string, settings: ShareLinkPatch & { label: string }): Promise<{ link: ApiShareLink; planWarning?: PlanWarning }> {
     const body = rec(await this.request("POST", `/api/docs/${encodeURIComponent(docId)}/links`, { body: settings }));

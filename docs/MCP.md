@@ -294,9 +294,12 @@ Create an extra link for a document.
   password?: string|null (8–128), expiresAt?: ISO date|null (must be future),
   allowRevisionHistory? = false, enabled? = true }`.
 - Out: `{ link, shareUrl, planWarning?, planNote? }`. `shareUrl` works immediately.
-- At the Free active-link cap the link is **still created, disabled**, and `planWarning`
-  (`{ limit, used, max, grace, message, upgradeUrl }`) plus a one-sentence `planNote` say so. It is
-  never a `402`, so the agent should report the cap and offer the upgrade rather than retrying.
+- **Links are never plan-capped.** A document may carry one link per investor or counterparty on
+  any plan, and this call always creates the link enabled. The Free cap counts shared *documents*;
+  `planWarning` (`{ limit, used, max, grace, message, upgradeUrl }`) and a one-sentence `planNote`
+  appear only when the workspace is near that document cap, as a heads-up — never as a refusal of
+  the link. (Until 2026-09-15 this said the link was "created disabled at the cap"; that was the
+  bug that made a two-document workspace read "11 of 3", and it is gone.)
 - Errors: `validation` (missing label, past expiry, short password), `not_found` (document),
   `forbidden` (read-only key or viewer role), `upstream`. More than 50 links on one document is a
   `validation` error carrying `code: "too_many_links"` (HTTP 409).

@@ -1,5 +1,5 @@
 /**
- * PlanUsageMeter — a labelled thin bar for one plan limit ("Links 2 of 3").
+ * PlanUsageMeter — a labelled thin bar for one plan limit ("Docs 2 of 3").
  *
  * Used by the left sidebar (Free plan block) and the dashboard Plan card. `used` may be `null`
  * while the plan snapshot is still loading; the row then keeps its height and shows an empty bar,

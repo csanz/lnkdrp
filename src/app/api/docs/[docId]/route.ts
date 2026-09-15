@@ -682,9 +682,9 @@ export async function GET(
  * Applies user-scoped updates to doc metadata (title/status/share settings/project membership/archive state).
  * Side effects: may update project membership fields and keep legacy pointers (`uploadId`) in sync.
  * Plan limits: re-enabling sharing (`shareEnabled: false → true`) is checked against the Free
- * active-link cap; disabling never is. Inside a grace window the update succeeds with `planWarning`.
+ * shared-document cap; disabling never is. Inside a grace window the update succeeds with `planWarning`.
  * Turning on `shareAllowRevisionHistory` is gated by the `version_history` Pro feature (no grace).
- * Errors: 400 for invalid IDs/body, 402 (`code: "plan_limit"`) when the link cap or the
+ * Errors: 400 for invalid IDs/body, 402 (`code: "plan_limit"`) when the document cap or the
  * version-history gate blocks, 404 when doc not found.
  */
 export async function PATCH(

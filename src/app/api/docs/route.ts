@@ -339,10 +339,10 @@ export async function GET(request: Request) {
  *
  * Creates a new draft doc for the active workspace with an initial public `shareId`.
  * Permissions: temp users are limited to a single non-deleted doc.
- * Plan limits: new docs default to `shareEnabled: true`, so the Free active-link cap is checked
- * first. The upload itself is never blocked: at the cap the doc is created with
- * `shareEnabled: false` (201 with `planWarning` in the body) and the owner enables sharing later via
- * `PATCH /api/docs/:docId`, which is where the 402 lives. A workspace inside its grace window is
+ * Plan limits: new docs default to `shareEnabled: true`, so the Free shared-*document* cap is
+ * checked first and a workspace at the cap gets a 402 `plan_limit` (see the check below; the
+ * client opens the upgrade modal). Links are never capped — a document may carry any number. A
+ * workspace inside its grace window is
  * created shared with `planWarning`.
  * Errors: 403 for temp-user limit, 400 for unexpected failures, 201 on success.
  */
