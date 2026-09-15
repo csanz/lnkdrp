@@ -393,10 +393,11 @@ whether it can be undone — and gets a human's yes in one of two ways:
 
 1. **Through the protocol**, when the connecting client declared the `elicitation` capability at
    `initialize`. The user is shown the preview and a single checkbox; the agent cannot answer it.
-   Claude Code declares this (`{"elicitation":{"form":{}}}` as of 2.1.261), so on Claude Code the
-   prompt appears in the client and the tool proceeds only on an explicit accept. Decline, cancel or
-   an unticked box all mean no, and the tool returns `validation` with nothing changed.
-2. **Through `confirm: true`**, when the client did not declare elicitation. The first call is
+   The tool proceeds only on an explicit accept. Decline, cancel or an unticked box all mean no,
+   and the tool returns `validation` with nothing changed — `confirm: true` does not override a
+   human who answered.
+2. **Through `confirm: true`**, when the client did not declare elicitation **or the elicitation
+   request failed to reach a human** (timeout, transport error). The first call is
    **refused** with `validation`, `details.requiresConfirmation: true` and `details.preview`
    (`headline`, `facts[]`, `severity`, `reversible`). The agent must show that preview to its user,
    ask, and only if the user says yes call again with `confirm: true`. The tool descriptions say
@@ -417,9 +418,13 @@ it logs the client's declared capabilities:
 [mcp] client capabilities: {"elicitation":{"form":{}},"roots":{"listChanged":true}} (client claude-code/2.1.261)
 ```
 
-If `elicitation` is present the prompt appears in the client; if it is absent the tool refuses
-until `confirm: true`. Each client differs and versions change, so check the log for the client
-you are actually connecting rather than relying on the Claude Code example above.
+If `elicitation` is absent the tool refuses until `confirm: true`. If it is present the server
+asks through the protocol — but declaring the capability and surfacing the prompt are different
+facts. Claude Code 2.1.261 declares `elicitation.form` and, measured live, never shows the prompt:
+the request times out after the SDK's 60 s (`-32001`). When that happens the tool answers as the
+no-elicitation path would (`validation`, `details.elicitationFailed: true`, the preview), and a
+second call with `confirm: true` proceeds. Only a human who actually answered no is final. Each
+client differs and versions change, so check the log for the client you are actually connecting.
 
 ### Untrusted text
 

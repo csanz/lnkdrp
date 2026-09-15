@@ -24,6 +24,15 @@
  *
  * Both paths show the same preview first. A person cannot consent to a deletion they have not
  * seen described: what will go, how much traffic it carried, and whether it can come back.
+ *
+ * Declaring the capability and being able to answer a request are two different facts. A client
+ * can say `elicitation.form` at `initialize` and then never surface the prompt — measured live on
+ * Claude Code 2.1.261, where the request times out at the protocol level (`-32001`) every time.
+ * Until mt_N2E6syf6Lq, that client had no way through: `confirm` was read only on the
+ * no-capability branch, so the escape hatch built for "cannot show the user a prompt" was
+ * unreachable for the one client that claimed it could. Now a request that fails to *deliver*
+ * (error or timeout) falls through to the `confirm: true` check, exactly as if the capability had
+ * never been declared. A human who answered and said no still blocks regardless of `confirm`.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
@@ -67,7 +76,7 @@ export async function requireHumanConfirmation(
   server: McpServer,
   preview: DestructivePreview,
   args: { confirm?: boolean | undefined },
-): Promise<{ via: "elicitation" | "confirm_flag" }> {
+): Promise<{ via: "elicitation" | "confirm_flag"; elicitationFailed?: true }> {
   const previewDetails = {
     requiresConfirmation: true,
     preview,
@@ -97,8 +106,10 @@ export async function requireHumanConfirmation(
         },
       });
     } catch (err) {
-      // An elicitation that errors out is not a yes. Surface it as a refusal with the preview so
-      // the agent can fall back to asking in conversation.
+      // The request never reached a human (timeout, transport error): nobody said no, nobody said
+      // yes. Treat it exactly like a client without elicitation — proceed on the agent's explicit
+      // `confirm: true`, otherwise refuse with the preview so the agent can ask in conversation.
+      if (args.confirm === true) return { via: "confirm_flag", elicitationFailed: true };
       throw new ToolError(
         "validation",
         `Could not ask the user to confirm (${err instanceof Error ? err.message : String(err)}). Nothing was changed. ` +
@@ -107,7 +118,8 @@ export async function requireHumanConfirmation(
       );
     }
     if (result.action === "accept" && result.content?.confirmed === true) return { via: "elicitation" };
-    // Declined, cancelled, or accepted with the box unticked: all of these mean no.
+    // Declined, cancelled, or accepted with the box unticked: all of these mean no. A human answered,
+    // so `confirm: true` does not override it.
     throw new ToolError("validation", "The user did not confirm. Nothing was changed.", {
       status: 400,
       details: { ...previewDetails, userAction: result.action },

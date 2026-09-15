@@ -171,8 +171,12 @@ links affected, whether it is reversible, a `low`/`high` severity — and gets a
 
 1. **Elicitation**, when the client declared `elicitation` at `initialize` (`server.server.getClientCapabilities()`; the
    server logs it per connection). The user sees the preview and one checkbox through the protocol; the agent cannot
-   answer it. Claude Code 2.1.261 declares `{"elicitation":{"form":{}}}`. Decline, cancel or unticked all mean no.
-2. **`confirm: true`**, when it did not. The first call is refused with `validation`, `details.requiresConfirmation: true`
+   answer it. Decline, cancel or unticked all mean no, and `confirm: true` does not override a human who answered.
+   Declaring the capability is not the same as surfacing the prompt: Claude Code 2.1.261 declares
+   `{"elicitation":{"form":{}}}` and, measured live, the request times out (`-32001`) without a prompt appearing. A
+   request that fails to deliver (error or timeout) falls through to path 2 — `mcp/src/confirm.ts`, mt_N2E6syf6Lq.
+2. **`confirm: true`**, when it did not — or when the elicitation could not reach a human. The first call is refused with
+   `validation`, `details.requiresConfirmation: true` (plus `details.elicitationFailed: true` in the timeout case)
    and `details.preview`; the tool description tells the agent to show the preview, ask, and call again with the flag only
    on a yes. Weaker — it trusts the agent to ask — but the agent has to make the ask rather than proceed quietly.
 
