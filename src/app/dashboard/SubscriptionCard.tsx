@@ -176,7 +176,9 @@ export default function SubscriptionCard() {
       {/* Three meters on one row; analytics is a window, not a count, so it lives in the note below. */}
       <div className="grid gap-x-8 gap-y-4 sm:grid-cols-3">
         <PlanUsageMeter
-          label="Links"
+          // "Docs", not "Links": this meter reads `usage.documents`, and the cap counts shared
+          // documents — links are unlimited on every plan. The sidebar meter says the same.
+          label="Docs"
           used={freeSnapshot ? freeSnapshot.usage.documents : null}
           max={freeSnapshot ? freeSnapshot.limits.documents : FREE_PLAN_LIMITS_COPY.documents}
           warn={Boolean(freeSnapshot?.atLimit.documents)}
