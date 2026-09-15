@@ -628,7 +628,9 @@ Run in this order; each step depends on the previous.
 13. Revoke the test key from `/connect`; the sidebar returns to Not connected.
 14. Vercel → Settings → Cron Jobs lists 8 jobs. An hour after the deploy, open `/a/cron-health` as
     an admin (5.5): every hourly job has a `lastRunAt` within the hour and status `ok`. The next
-    morning all eight are `ok`, including `analytics-reconcile` after 03:50 UTC.
+    morning all eight are `ok`, including `analytics-reconcile` after 03:50 UTC — and
+    `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/monitor/crons`
+    answers 200. Point the uptime monitor at it then, not before (11, Crons).
 
 ## 9. Release workflow
 
@@ -730,14 +732,24 @@ signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `Pdf
 
 ## 11. Operating notes
 
-- **Health:** `/api/health` (web), `/healthz` (both services). Point an uptime monitor at all
-  three. Realtime `/healthz` proves the process and sockets, not the change streams: a log line
+- **Health:** `/api/health` (web), `/healthz` (both services), and `/api/monitor/crons` (below).
+  Point an uptime monitor at all four. Realtime `/healthz` proves the process and sockets, not the
+  change streams: a log line
   `activity stream error`, `apikeys stream error` or `docs stream error` can mean that stream has
   stopped for good while `/healthz` stays ok and browsers fall back to slow polling. Alert on those
   lines if your log drain supports it, and restart with `fly apps restart lnkdrp-realtime`; clients
   reconnect on their own. MCP `/healthz` `version` is fixed at `0.1.0`; use `fly releases -a lnkdrp-mcp`
   to see what is deployed.
-- **Crons:** nothing alerts, and a 200 does not mean the job worked. Vercel Cron does not retry.
+- **Crons:** a 200 from a job does not mean the job worked, and Vercel Cron does not retry. Point
+  an uptime monitor at `GET /api/monitor/crons` with `Authorization: Bearer $CRON_SECRET` — same secret and header as
+  the schedules, because a monitor cannot hold the admin session `/a/cron-health` needs. It answers
+  **200 while every job is healthy and 503 when any is not**, so an ordinary HTTP check alerts, and
+  the body names the job and its state: `late` (no run for two whole intervals), `error`, `stuck`
+  (left at `running`, so the function died mid-run, usually at the 300 s limit), or `never-run`.
+  Add `?strict=0` to read the same body with a 200 by hand. Expect red until the first full round
+  of jobs has run, which is deliberate: the alternative is a monitor that stays green for a cron
+  that never fired. `src/lib/cron/jobs.ts` holds the schedules it judges against, and
+  `tests/lib/cronMap.test.ts` fails if they drift from `vercel.json`.
   `credits-cycle-reconcile` counts failures in `errors` (and Free floor failures in `freeFloor`)
   and still answers 200, and `analytics-reconcile` answers 200 while marking itself `error`. Check
   `/a/cron-health` (admin, 5.5) daily after launch, then weekly: every job `ok`, with `lastRunAt`
@@ -825,8 +837,6 @@ signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `Pdf
   outbound IP (allocate one with `fly ips allocate-egress -a lnkdrp-mcp -r iad`), because every
   agent's REST call leaves from that one address. Nothing collects temp workspaces once created:
   watch the count of `users` with `isTemp: true` and write a reaper if it grows.
-- No machine-readable cron health for an uptime monitor: `/api/admin/cron-health` needs an admin
-  session. Until one exists, cron failures are found by reading `/a/cron-health` (11, Crons).
 - Free workspaces cannot buy extra credits; sign-up copy promises only the monthly top-up to 10
   and Pro for more. Selling credit packs to Free would need a Checkout product and webhook grant.
 - If production starts from an existing database, run the one-time data jobs in 5.2.

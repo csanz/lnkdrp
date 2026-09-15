@@ -28,6 +28,7 @@ import { errorJson } from "@/lib/http/errorResponse";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Handle GET requests: 200 while every cron is healthy, 503 when any is not. */
 export async function GET(request: Request) {
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
