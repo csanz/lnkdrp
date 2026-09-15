@@ -273,6 +273,14 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   >({});
   /** The window the server served (plan-clamped), used verbatim in the column headings. */
   const [statsDays, setStatsDays] = useState<number | null>(null);
+  /**
+   * Traffic on links this table cannot show: slugs the analytics still carry but no live link row
+   * owns — deleted links, whose rows stay in the document's totals by design. Without this row the
+   * table quietly fails to add up to the document's figures, and the only surface that used to
+   * explain the gap (the compare table on the metrics page) is gone at the owner's request. This
+   * is now the one place that says so.
+   */
+  const [deletedLinkResidual, setDeletedLinkResidual] = useState<{ count: number; viewers: number; downloads: number } | null>(null);
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -344,6 +352,13 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
         const bySlug = new Map((res.byLink ?? []).map((r) => [String(r.shareId ?? ""), r]));
         // The window the server actually served, not the one we asked for.
         setStatsDays(n(res.days) || null);
+        // Slugs with traffic that no live link claims. Compared against `links` as loaded, so a
+        // link archived between two fetches shows up here on the next one rather than vanishing.
+        const known = new Set(links.map((l) => l.shareId));
+        const orphan = (res.byLink ?? []).filter((r) => r.shareId && !known.has(String(r.shareId)));
+        const orphanViewers = orphan.reduce((a, r) => a + n(r.viewers), 0);
+        const orphanDownloads = orphan.reduce((a, r) => a + n(r.downloads), 0);
+        setDeletedLinkResidual(orphan.length && (orphanViewers || orphanDownloads) ? { count: orphan.length, viewers: orphanViewers, downloads: orphanDownloads } : null);
         setLinkStats(() => {
           const next: Record<string, { viewers: number; downloads: number; lastViewedAt: string | null }> = {};
           for (const l of links) {
@@ -870,6 +885,25 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                 );
               })
             )}
+            {/* Deleted links keep their analytics — that is the promise the delete confirm makes —
+                and their traffic is in the document totals, but no row above can carry it. Shown
+                unlinked and muted: there is nothing left to open or filter to, only a number to
+                account for. Hidden when there is nothing to account for, so a healthy table has no
+                mysterious extra row. */}
+            {deletedLinkResidual ? (
+              <tr className="border-t border-[var(--border)] text-[var(--muted)]">
+                <td className="px-4 py-2.5" colSpan={4}>
+                  <span className="font-medium">
+                    {deletedLinkResidual.count === 1 ? "1 deleted link" : `${deletedLinkResidual.count} deleted links`}
+                  </span>
+                  <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">Still counted in the document&apos;s totals; nothing left to open.</div>
+                </td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{deletedLinkResidual.viewers.toLocaleString()}</td>
+                <td className="px-3 py-2.5 text-right tabular-nums">{deletedLinkResidual.downloads.toLocaleString()}</td>
+                <td className="px-3 py-2.5 text-[var(--muted-2)]">—</td>
+                <td className="px-4 py-2.5" />
+              </tr>
+            ) : null}
           </tbody>
         </table>
       </div>
