@@ -174,7 +174,7 @@ export default function HomeAuthedClient() {
       router.push(`/doc/${encodeURIComponent(docId)}`);
     } catch (e) {
       if (e instanceof PlanLimitClientError) {
-        openUpgrade("active_links", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
+        openUpgrade("documents", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
       } else {
         setError(e instanceof Error ? e.message : "Link upload failed");
       }
@@ -199,11 +199,11 @@ export default function HomeAuthedClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingFile, router]);
 
-  const atLinkLimit = plan?.plan === "free" && plan.atLimit.activeLinks;
+  const atLinkLimit = plan?.plan === "free" && plan.atLimit.documents;
   const pickerDisabled = urlBusy || Boolean(atLinkLimit);
   const openLinkUpgrade = () => {
     if (!plan) return;
-    openUpgrade("active_links", { used: plan.usage.activeLinks, max: plan.limits.activeLinks ?? undefined });
+    openUpgrade("documents", { used: plan.usage.documents, max: plan.limits.documents ?? undefined });
   };
 
   /** Stage a picked or dropped file for the preview route (PDF only). */
@@ -223,8 +223,8 @@ export default function HomeAuthedClient() {
   }
 
   const freeLinks =
-    plan?.plan === "free" && typeof plan.limits.activeLinks === "number"
-      ? { used: plan.usage.activeLinks, max: plan.limits.activeLinks }
+    plan?.plan === "free" && typeof plan.limits.documents === "number"
+      ? { used: plan.usage.documents, max: plan.limits.documents }
       : null;
   const connectedClient = agentStatus?.connected ? (agentStatus.clients[0]?.client ?? agentStatus.lastUsedClient) : null;
 
@@ -271,7 +271,7 @@ export default function HomeAuthedClient() {
                     ? "border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
                     : "border-[var(--border)] text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
                 ].join(" ")}
-                title="Free workspaces can have this many active share links"
+                title="Free workspaces can share this many documents"
               >
                 <span className="tabular-nums">
                   {freeLinks.used} of {freeLinks.max} links

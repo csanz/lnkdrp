@@ -114,7 +114,7 @@ async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null>
 export class PlanLimitClientError extends Error {
   readonly planLimit: PlanLimitError;
   constructor(limit: PlanLimitError) {
-    super("This workspace is at its link limit.");
+    super("This workspace is at its shared-document limit.");
     this.name = "PlanLimitClientError";
     this.planLimit = limit;
   }

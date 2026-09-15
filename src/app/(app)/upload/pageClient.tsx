@@ -41,7 +41,7 @@ export default function UploadPageClient() {
   // Free workspaces at the link cap cannot upload: `POST /api/docs` answers 402 and the upgrade modal
   // opens. Say so up front and disable the pickers (only once the plan is known).
   const { plan } = usePlan();
-  const atLinkLimit = plan?.plan === "free" && plan.atLimit.activeLinks;
+  const atLinkLimit = plan?.plan === "free" && plan.atLimit.documents;
   const { openUpgrade } = useUpgradeModal();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -126,7 +126,7 @@ export default function UploadPageClient() {
     if (!selectedFile) return;
     if (busy) return;
     if (atLinkLimit && plan) {
-      openUpgrade("active_links", { used: plan.usage.activeLinks, max: plan.limits.activeLinks ?? undefined });
+      openUpgrade("documents", { used: plan.usage.documents, max: plan.limits.documents ?? undefined });
       return;
     }
     setBusy(true);
@@ -154,7 +154,7 @@ export default function UploadPageClient() {
     } catch (e) {
       if (e instanceof PlanLimitClientError) {
         // The API refused the doc at the link cap (plan snapshot may have been stale).
-        openUpgrade("active_links", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
+        openUpgrade("documents", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
         refreshPlan();
         setBusy(false);
         return;
@@ -234,13 +234,13 @@ export default function UploadPageClient() {
           className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] leading-5 text-[var(--muted-2)] md:px-6"
         >
           <span>
-            This workspace is at its {plan.limits.activeLinks ?? 3}-link limit. Free a link, or upgrade to keep uploading.
+            This workspace is sharing {plan.limits.documents ?? 3} documents, its Free limit. Archive one, or upgrade to keep uploading.
           </span>
           <button
             type="button"
             className="font-semibold text-[var(--fg)] underline underline-offset-2"
             onClick={() =>
-              openUpgrade("active_links", { used: plan.usage.activeLinks, max: plan.limits.activeLinks ?? undefined })
+              openUpgrade("documents", { used: plan.usage.documents, max: plan.limits.documents ?? undefined })
             }
           >
             Upgrade

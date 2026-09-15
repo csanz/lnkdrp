@@ -54,7 +54,7 @@ export default function PlanLimitNotice({
   className,
 }: Props) {
   const { openUpgrade } = useUpgradeModal();
-  const key: PlanLimitKey = error?.limit ?? limit ?? "active_links";
+  const key: PlanLimitKey = error?.limit ?? limit ?? "documents";
   const upsellKey = upsellKeyForLimit(key);
   const copy = UPSELL_COPY[upsellKey];
   const usage = planLimitUsageSuffix({ used: error?.used, max: error?.max });

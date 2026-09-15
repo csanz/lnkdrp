@@ -4,7 +4,7 @@
  * Used by the left sidebar (Free plan block) and the dashboard Plan card. `used` may be `null`
  * while the plan snapshot is still loading; the row then keeps its height and shows an empty bar,
  * so the surrounding layout never jumps once numbers arrive. `warn` switches to the amber tone
- * (used when the workspace is at its link limit). Bar width animates only when motion is allowed.
+ * (used when the workspace is at its document limit). Bar width animates only when motion is allowed.
  */
 import { cn } from "@/lib/cn";
 

@@ -2392,10 +2392,12 @@ export default function LeftSidebar({
           <div className="px-3 pb-3">
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3.5 pb-3 pt-3.5">
               <PlanUsageMeter
-                label="Links"
-                used={plan.usage.activeLinks}
-                max={plan.limits.activeLinks}
-                warn={plan.atLimit.activeLinks}
+                // "Docs", not "Links": the cap counts shared documents. Labelling this meter
+                // "Links" is what made a workspace holding two documents read "11 of 3".
+                label="Docs"
+                used={plan.usage.documents}
+                max={plan.limits.documents}
+                warn={plan.atLimit.documents}
                 compact
               />
               <PlanUsageMeter
@@ -2406,8 +2408,8 @@ export default function LeftSidebar({
                 className="mt-3"
               />
               <div className="mt-3.5 flex items-center justify-between gap-2 border-t border-[var(--border)] pt-3 text-[11px] leading-4">
-                {plan.atLimit.activeLinks ? (
-                  <span className="truncate font-semibold text-amber-700 dark:text-amber-300">At your link limit</span>
+                {plan.atLimit.documents ? (
+                  <span className="truncate font-semibold text-amber-700 dark:text-amber-300">At your document limit</span>
                 ) : (
                   <span className="truncate text-[var(--muted-2)]">Free plan</span>
                 )}

@@ -2493,20 +2493,20 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     shareEnabled={doc.shareEnabled !== false}
                     onShareEnabledChange={(next) => void setShareEnabled(next)}
                     shareNotice={
-                      isFreePlan && plan && doc.shareEnabled === false && plan.atLimit.activeLinks ? (
-                        // Pre-empt the 402: the workspace has no free link slot for this doc.
+                      isFreePlan && plan && doc.shareEnabled === false && plan.atLimit.documents ? (
+                        // Pre-empt the 402: the workspace is at its shared-document cap.
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[12px] leading-5 text-[var(--muted-2)]">
                           <span>
-                            Turning this on needs a free link slot ({plan.usage.activeLinks} of {plan.limits.activeLinks ?? 3}{" "}
+                            Sharing this needs a free document slot ({plan.usage.documents} of {plan.limits.documents ?? 3}{" "}
                             used).
                           </span>
                           <button
                             type="button"
                             className="font-semibold text-[var(--fg)] underline underline-offset-2"
                             onClick={() =>
-                              openUpgrade("active_links", {
-                                used: plan.usage.activeLinks,
-                                max: plan.limits.activeLinks ?? undefined,
+                              openUpgrade("documents", {
+                                used: plan.usage.documents,
+                                max: plan.limits.documents ?? undefined,
                               })
                             }
                           >

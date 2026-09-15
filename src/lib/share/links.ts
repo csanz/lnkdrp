@@ -5,8 +5,8 @@
  * Rules enforced here, so routes, the MCP and scripts cannot disagree:
  * - `resolveShareLink(shareId)` is the only way a public share route turns a slug into a
  *   document, and it materialises the default link for pre-model documents on first touch.
- * - The Free cap ("3 active share links") counts enabled, unexpired, unarchived links across the
- *   workspace; creating or enabling a link goes through `checkLimit("active_links")`.
+ * - The Free cap counts shared *documents*, never links: a document may own any number of links,
+ *   workspace; creating or enabling a link goes through `checkLimit("documents")`.
  * - `Doc.shareEnabled` is kept equal to "the document has at least one enabled link", and the
  *   default link's settings are mirrored onto the legacy Doc fields for one release, so older
  *   readers and the rollback build keep working.
@@ -443,7 +443,7 @@ export async function createShareLink(input: {
   if (historyLimit && !historyLimit.ok) return { link: null, limit: historyLimit };
 
   const wantsEnabled = input.settings.enabled !== false;
-  const limit = wantsEnabled ? await checkLimit(orgId, "active_links") : ({ ok: true, warning: null } as LimitCheck);
+  const limit = wantsEnabled ? await checkLimit(orgId, "documents") : ({ ok: true, warning: null } as LimitCheck);
   const enabled = wantsEnabled && limit.ok;
 
   let created: ShareLink | null = null;
@@ -502,7 +502,7 @@ export async function updateShareLink(input: {
   let limit: LimitCheck | null = null;
   if (s.enabled !== undefined) {
     if (s.enabled && !link.enabled) {
-      limit = await checkLimit(link.orgId, "active_links");
+      limit = await checkLimit(link.orgId, "documents");
       if (!limit.ok) return { link, limit };
     }
     set.enabled = Boolean(s.enabled);

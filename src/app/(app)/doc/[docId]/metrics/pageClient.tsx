@@ -7,7 +7,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftIcon, LockClosedIcon, UserIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, ChevronDownIcon, LockClosedIcon, UserIcon } from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
@@ -329,6 +329,133 @@ const LOCKED_ROW_WIDTHS: ReadonlyArray<[string, string, string, string]> = [
  * same footprint (plain skeleton, no prompt) while the plan snapshot is still loading, so the page
  * does not jump once it resolves.
  */
+/**
+ * Pick one link to scope the page to, from a list that may be long.
+ *
+ * Replaces a row of pills. Pills read well at three links, wrap at twelve and are unusable at a
+ * hundred — and a document is allowed a hundred: one link per investor is the feature. A picker
+ * costs one click and stays the same size whatever the count, with a filter box that appears only
+ * when there are enough links to need it.
+ *
+ * Each row carries the link's viewers, because choosing between "Sequoia" and "Benchmark" without
+ * knowing which one anybody opened is choosing blind — the same reason the table below exists.
+ */
+function LinkPicker({
+  links,
+  shareId,
+  stats,
+  onSelect,
+  open,
+  setOpen,
+}: {
+  links: ShareLinkRow[];
+  shareId: string | null;
+  stats: Record<string, LinkWindowStats>;
+  onSelect: (next: string | null) => void;
+  open: boolean;
+  setOpen: (next: boolean) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const selected = shareId ? links.find((l) => l.shareId === shareId) ?? null : null;
+  const needsFilter = links.length > 8;
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? links.filter((l) => l.label.toLowerCase().includes(q) || (l.audience ?? "").toLowerCase().includes(q))
+    : links;
+
+  useEffect(() => {
+    if (!open) setQuery("");
+  }, [open]);
+
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="inline-flex max-w-[320px] items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+      >
+        <span className="truncate">{selected ? selected.label : "All links"}</span>
+        <span className="shrink-0 text-[var(--muted-2)]">{links.length}</span>
+        <ChevronDownIcon className="h-4 w-4 shrink-0 text-[var(--muted)]" aria-hidden="true" />
+      </button>
+
+      {open ? (
+        <>
+          {/* Click-away, behind the menu: a picker that only closes by re-clicking its own button
+              feels stuck when the page behind it is what you meant to get back to. */}
+          <div className="fixed inset-0 z-10" aria-hidden="true" onClick={() => setOpen(false)} />
+          <div
+            role="listbox"
+            className="absolute left-0 z-20 mt-1 max-h-[22rem] w-[22rem] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+          >
+            {needsFilter ? (
+              <div className="border-b border-[var(--border)] p-2">
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Filter links"
+                  aria-label="Filter links"
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[13px] text-[var(--fg)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                />
+              </div>
+            ) : null}
+            <div className="max-h-[18rem] overflow-y-auto p-1">
+              <button
+                type="button"
+                role="option"
+                aria-selected={!shareId}
+                onClick={() => {
+                  onSelect(null);
+                  setOpen(false);
+                }}
+                className={[
+                  "flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px]",
+                  !shareId ? "bg-[var(--panel-hover)] text-[var(--fg)]" : "text-[var(--fg)] hover:bg-[var(--panel-hover)]",
+                ].join(" ")}
+              >
+                <span className="font-medium">All links</span>
+                <span className="text-[11px] text-[var(--muted-2)]">the whole document</span>
+              </button>
+              {shown.map((l) => {
+                const active = shareId === l.shareId;
+                const s = stats[l.id];
+                return (
+                  <button
+                    key={l.id}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => {
+                      onSelect(l.shareId);
+                      setOpen(false);
+                    }}
+                    className={[
+                      "flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px]",
+                      active ? "bg-[var(--panel-hover)] text-[var(--fg)]" : "text-[var(--fg)] hover:bg-[var(--panel-hover)]",
+                    ].join(" ")}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{l.label}</span>
+                      {l.audience ? <span className="block truncate text-[11px] text-[var(--muted-2)]">{l.audience}</span> : null}
+                    </span>
+                    <span className="shrink-0 text-[11px] tabular-nums text-[var(--muted)]">
+                      {s ? `${s.viewers} ${s.viewers === 1 ? "viewer" : "viewers"}` : "—"}
+                    </span>
+                  </button>
+                );
+              })}
+              {!shown.length ? <div className="px-2.5 py-3 text-[13px] text-[var(--muted-2)]">No link matches that.</div> : null}
+            </div>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function LockedViewersBlock({
   pending,
   loading,
@@ -426,6 +553,8 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [anonViewersModalPage, setAnonViewersModalPage] = useState(0);
   const [days, setDays] = useState(15);
   const [rangeOpen, setRangeOpen] = useState(false);
+  /** The link picker that replaced the chip row; see `LinkPicker`. */
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false);
   // Links of this document: the chip row filters every figure on the page through `?shareId=`,
   // and the per-link table below compares them (docs/prds/lnkdrp-multi-links.md).
   const [links, setLinks] = useState<ShareLinkRow[] | null>(null);
@@ -1050,30 +1179,20 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               </div>
             ) : null}
 
+            {/* The chip row that used to live here listed every link as a pill. It wrapped to two
+                rows at twelve links and would have buried the page at a hundred — and it duplicated
+                the Links table below, which lists the same links, scales, and carries the numbers
+                that make the choice an informed one. One picker for "jump to a link", one table for
+                "compare links". See `LinkPicker`. */}
             {links && links.length > 1 ? (
-              <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Filter by link">
-                {[{ key: "all", label: "All links", value: null as string | null }, ...links.map((l) => ({ key: l.id, label: l.label, value: l.shareId }))].map(
-                  (chip) => {
-                    const active = shareId === chip.value;
-                    return (
-                      <button
-                        key={chip.key}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => selectLink(chip.value)}
-                        className={[
-                          "max-w-[220px] truncate rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors",
-                          active
-                            ? "border-[var(--fg)] bg-[var(--fg)] text-[var(--bg)]"
-                            : "border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] hover:bg-[var(--panel-hover)]",
-                        ].join(" ")}
-                      >
-                        {chip.label}
-                      </button>
-                    );
-                  },
-                )}
-              </div>
+              <LinkPicker
+                links={links}
+                shareId={shareId}
+                stats={linkStats}
+                onSelect={selectLink}
+                open={linkPickerOpen}
+                setOpen={setLinkPickerOpen}
+              />
             ) : null}
 
             <div className="grid gap-5 sm:grid-cols-2">
@@ -1231,11 +1350,19 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 when it was needed. */}
             {links && links.length + (deletedLinkResidual ? 1 : 0) > 1 ? (
               <div className="mt-1">
-                <div className="text-sm font-semibold text-[var(--fg)]">Links</div>
+                <div className="text-sm font-semibold text-[var(--fg)]">Compare links</div>
                 <div className="mt-1 text-sm text-[var(--muted)]">
-                  {/* The row has no click handler — only the link name does. The old wording sent
-                      readers clicking dead space and concluding the filter was broken. */}
-                  What each link brought in over the last {days} days. Select a link name to filter the page.
+                  {/* Two things a reader could not tell before: what the section was for, and what
+                      its relationship to the cards above is. "Links" over a table of links says
+                      nothing, and with a link selected the cards show one link while this table
+                      still shows them all — which reads as a bug unless the page says otherwise.
+                      The row has no click handler, only the link name does, so the instruction
+                      names the link rather than the row. */}
+                  Every link on this document over the last {days} days, so the rows add up to the
+                  figures above.{" "}
+                  {shareId
+                    ? "The cards are showing one link — select another name to switch, or Clear to see them all together."
+                    : "Select a link name to narrow every figure above to it."}
                 </div>
 
                 <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">

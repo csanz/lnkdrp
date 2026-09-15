@@ -10,11 +10,11 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { Types } from "mongoose";
 
-const resolveActor = vi.fn();
+const resolveExistingActor = vi.fn();
 const userFindOne = vi.fn();
 
 vi.mock("@/lib/mongodb", () => ({ connectMongo: vi.fn(async () => undefined) }));
-vi.mock("@/lib/gating/actor", () => ({ resolveActor }));
+vi.mock("@/lib/gating/actor", () => ({ resolveExistingActor }));
 vi.mock("@/lib/models/User", () => ({ UserModel: { findOne: userFindOne } }));
 
 const { requireAdmin } = await import("@/lib/gating/requireAdmin");
@@ -32,11 +32,11 @@ function role(value: string | null): void {
 }
 
 function sessionActor(): void {
-  resolveActor.mockResolvedValue({ kind: "user", userId: USER, orgId: ORG, personalOrgId: ORG });
+  resolveExistingActor.mockResolvedValue({ kind: "user", userId: USER, orgId: ORG, personalOrgId: ORG });
 }
 
 function apiKeyActor(): void {
-  resolveActor.mockResolvedValue({
+  resolveExistingActor.mockResolvedValue({
     kind: "user",
     userId: USER,
     orgId: ORG,
@@ -47,7 +47,7 @@ function apiKeyActor(): void {
 
 describe("gating/requireAdmin", () => {
   beforeEach(() => {
-    resolveActor.mockReset();
+    resolveExistingActor.mockReset();
     userFindOne.mockReset();
     vi.stubEnv("NODE_ENV", "production");
   });
@@ -66,8 +66,17 @@ describe("gating/requireAdmin", () => {
   });
 
   test("refuses an anonymous request", async () => {
-    resolveActor.mockResolvedValue({ kind: "temp", userId: USER, orgId: ORG, personalOrgId: ORG, temp: { id: "t" }, isNew: true });
+    resolveExistingActor.mockResolvedValue({ kind: "temp", userId: USER, orgId: ORG, personalOrgId: ORG, temp: { id: "t" }, isNew: true });
     expect(await requireAdmin(req())).toEqual({ ok: false, status: 401, error: "Not authenticated" });
+  });
+
+  test("refuses a caller with no identity without minting one", async () => {
+    // `resolveActor` would have created a temp user, a personal org and a membership before
+    // returning this same 401, letting an unauthenticated caller fill the database from a door
+    // they were never let through.
+    resolveExistingActor.mockResolvedValue(null);
+    expect(await requireAdmin(req())).toEqual({ ok: false, status: 401, error: "Not authenticated" });
+    expect(resolveExistingActor).toHaveBeenCalledTimes(1);
   });
 
   test("refuses an API key even when its owner is an admin", async () => {
@@ -94,7 +103,7 @@ describe("gating/requireAdmin", () => {
   test("the localhost bypass is development-only and can be switched off", async () => {
     const local = () => new Request("http://localhost:3001/api/admin/data/users", { headers: { host: "localhost:3001" } });
     vi.stubEnv("NODE_ENV", "production");
-    resolveActor.mockResolvedValue({ kind: "temp", userId: USER, orgId: ORG, personalOrgId: ORG, temp: { id: "t" }, isNew: true });
+    resolveExistingActor.mockResolvedValue({ kind: "temp", userId: USER, orgId: ORG, personalOrgId: ORG, temp: { id: "t" }, isNew: true });
     expect(await requireAdmin(local())).toEqual({ ok: false, status: 401, error: "Not authenticated" });
 
     vi.stubEnv("NODE_ENV", "development");

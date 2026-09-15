@@ -177,9 +177,9 @@ export default function SubscriptionCard() {
       <div className="grid gap-x-8 gap-y-4 sm:grid-cols-3">
         <PlanUsageMeter
           label="Links"
-          used={freeSnapshot ? freeSnapshot.usage.activeLinks : null}
-          max={freeSnapshot ? freeSnapshot.limits.activeLinks : FREE_PLAN_LIMITS_COPY.activeLinks}
-          warn={Boolean(freeSnapshot?.atLimit.activeLinks)}
+          used={freeSnapshot ? freeSnapshot.usage.documents : null}
+          max={freeSnapshot ? freeSnapshot.limits.documents : FREE_PLAN_LIMITS_COPY.documents}
+          warn={Boolean(freeSnapshot?.atLimit.documents)}
         />
         <PlanUsageMeter
           label="Projects"
@@ -202,10 +202,10 @@ export default function SubscriptionCard() {
           className="shrink-0 self-start font-semibold text-[var(--fg)] underline underline-offset-2 sm:self-auto"
           onClick={() => {
             // Lead with whichever cap is hit; otherwise the generic Pro pitch.
-            if (freeSnapshot?.atLimit.activeLinks) {
-              openUpgrade("active_links", {
-                used: freeSnapshot.usage.activeLinks,
-                max: freeSnapshot.limits.activeLinks ?? undefined,
+            if (freeSnapshot?.atLimit.documents) {
+              openUpgrade("documents", {
+                used: freeSnapshot.usage.documents,
+                max: freeSnapshot.limits.documents ?? undefined,
               });
             } else if (freeSnapshot?.atLimit.projects) {
               openUpgrade("projects", { used: freeSnapshot.usage.projects, max: freeSnapshot.limits.projects ?? undefined });

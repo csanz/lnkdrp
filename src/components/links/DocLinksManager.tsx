@@ -255,7 +255,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   /** At (or inside the grace window of) the Free cap: show the standard upgrade prompt. */
   function handlePlanWarning(warning: LinkPlanWarning | undefined) {
     if (!warning) return;
-    openUpgrade("active_links", { used: warning.used, max: warning.max });
+    openUpgrade("documents", { used: warning.used, max: warning.max });
   }
 
   /** Copy one link's public URL and flash the check icon on that row. */

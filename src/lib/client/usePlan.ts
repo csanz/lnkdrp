@@ -16,13 +16,13 @@ export type PlanSnapshot = {
   plan: "free" | "pro";
   orgId: string;
   isPersonalOrg: boolean;
-  limits: { plan: "free" | "pro"; activeLinks: number | null; projects: number | null; analyticsDays: number | null; collaborators: number };
-  usage: { activeLinks: number; projects: number; members: number };
+  limits: { plan: "free" | "pro"; documents: number | null; projects: number | null; analyticsDays: number | null; collaborators: number };
+  usage: { documents: number; projects: number; members: number };
   grace: { startedAt: string; endsAt: string; blockedAt: string | null } | null;
   /** True while a Free workspace is inside its unblocked launch grace window; `atLimit` is then all false. */
   graceActive: boolean;
-  atLimit: { activeLinks: boolean; projects: boolean; collaborators: boolean };
-  fraction: { activeLinks: number; projects: number };
+  atLimit: { documents: boolean; projects: boolean; collaborators: boolean };
+  fraction: { documents: number; projects: number };
   upgradeUrl: string;
 };
 

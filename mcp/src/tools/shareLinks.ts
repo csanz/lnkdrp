@@ -36,7 +36,7 @@ function withUrl(api: ApiClient, link: ApiShareLink): ShareLinkResult {
 /** Human sentence for the Free active-link cap, so the agent reports it instead of silently returning a dead link. */
 function planNote(warning: PlanWarning | undefined, siteUrl: string): string | undefined {
   if (!warning) return undefined;
-  return `Free workspaces allow ${warning.max} active share links (${warning.used} in use). Upgrade at ${siteUrl}/pricing to lift the cap.`;
+  return `Free workspaces can share ${warning.max} documents (${warning.used} in use); a document may carry any number of links. Upgrade at ${siteUrl}/pricing to lift the cap.`;
 }
 
 export const createShareLinkInputShape = {

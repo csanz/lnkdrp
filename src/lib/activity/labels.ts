@@ -259,10 +259,10 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject: client, verb: "connected to", object: "this workspace", suffix: keyName ? `using “${keyName}”` : null };
     }
     case "plan.limit_reached": {
-      // meta.limit is the LimitKey ("active_links", "projects", …); name the wall that was hit.
+      // meta.limit is the LimitKey ("documents", "projects", …); name the wall that was hit.
       const limit = metaString(item.meta, "limit") ?? "";
       const wall =
-        limit === "active_links" ? "the link limit" : limit === "projects" ? "the project limit" : limit === "collaborators" ? "the collaborator limit" : "a plan limit";
+        limit === "documents" ? "the document limit" : limit === "projects" ? "the project limit" : limit === "collaborators" ? "the collaborator limit" : "a plan limit";
       const target = item.doc?.title?.trim() ? `sharing ${docTitle}` : item.project?.name?.trim() ? `on ${item.project.name.trim()}` : "";
       return { subject, verb: `hit ${wall}`, object: target, suffix: null };
     }

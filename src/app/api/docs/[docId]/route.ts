@@ -805,7 +805,7 @@ export async function PATCH(
       beforeState.shareEnabled !== false &&
       body.shareEnabled !== false;
     if (turningSharingOn || unarchivingSharedDoc) {
-      limitCheck = await checkLimit(actor.orgId, "active_links");
+      limitCheck = await checkLimit(actor.orgId, "documents");
       if (!limitCheck.ok) {
         void recordActivity({
           orgId: actor.orgId,

@@ -121,7 +121,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. Optional: allowDownload, password. " +
         "Each upload's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them from the document). " +
         "A skipped AI step (for example out of credits) does not fail the call: the link is still valid and warnings says what was skipped. " +
-        "Free workspaces have a cap on active share links: when it is hit the document is created with sharing off and " +
+        "Free workspaces have a cap on shared documents: when it is hit the document is created with sharing off and " +
         "planWarning explains it. " +
         SAFETY_TAIL,
       inputSchema: sharePdfInputShape,

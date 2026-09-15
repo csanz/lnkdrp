@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
  */
 const state = {
   subscriptionStatus: null as string | null,
-  activeLinks: 0,
+  documents: 0,
   projects: 0,
   members: 1,
   planGrace: null as { startedAt: Date; endsAt: Date; blockedAt: Date | null } | null,
@@ -38,15 +38,12 @@ vi.mock("@/lib/models/Org", () => ({
 }));
 
 vi.mock("@/lib/models/Doc", () => ({
-  DocModel: { countDocuments: vi.fn(async () => state.activeLinks) },
+  DocModel: { countDocuments: vi.fn(async () => state.documents) },
 }));
 
-// `getWorkspaceUsage` counts share links through the links service now (a document can own
-// several). Stub the service rather than its two aggregations: how a link is counted is covered
-// by tests/lib/shareLinks.test.ts; this file is about caps, warnings and grace.
-vi.mock("@/lib/share/links", () => ({
-  countActiveShareLinks: vi.fn(async () => state.activeLinks),
-}));
+// No `@/lib/share/links` stub any more: `getWorkspaceUsage` counts shared *documents* through
+// `DocModel` above. It briefly counted links, which is what told a workspace holding two documents
+// that it was at "11 of 3" — see `FREE_DOCUMENTS`.
 
 vi.mock("@/lib/models/Project", () => ({
   ProjectModel: { countDocuments: vi.fn(async () => state.projects) },
@@ -57,7 +54,7 @@ vi.mock("@/lib/models/OrgMembership", () => ({
 }));
 
 import {
-  FREE_ACTIVE_LINKS,
+  FREE_DOCUMENTS,
   FREE_ANALYTICS_DAYS,
   FREE_PROJECTS,
   LIMIT_GRACE_DAYS,
@@ -75,7 +72,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 beforeEach(() => {
   state.subscriptionStatus = null;
-  state.activeLinks = 0;
+  state.documents = 0;
   state.projects = 0;
   state.members = 1;
   state.planGrace = null;
@@ -89,7 +86,7 @@ describe("billing/planLimits limitsForPlan", () => {
   test("free caps links/projects/analytics and allows no collaborators", () => {
     expect(limitsForPlan("free")).toEqual({
       plan: "free",
-      activeLinks: FREE_ACTIVE_LINKS,
+      documents: FREE_DOCUMENTS,
       projects: FREE_PROJECTS,
       analyticsDays: FREE_ANALYTICS_DAYS,
       collaborators: 0,
@@ -99,7 +96,7 @@ describe("billing/planLimits limitsForPlan", () => {
   test("pro is unlimited with one included collaborator", () => {
     expect(limitsForPlan("pro")).toEqual({
       plan: "pro",
-      activeLinks: null,
+      documents: null,
       projects: null,
       analyticsDays: null,
       collaborators: PRO_INCLUDED_COLLABORATORS,
@@ -108,17 +105,17 @@ describe("billing/planLimits limitsForPlan", () => {
 
   test("returns a copy so callers cannot mutate the table", () => {
     const a = limitsForPlan("free");
-    a.activeLinks = 99;
-    expect(limitsForPlan("free").activeLinks).toBe(FREE_ACTIVE_LINKS);
+    a.documents = 99;
+    expect(limitsForPlan("free").documents).toBe(FREE_DOCUMENTS);
   });
 });
 
 describe("billing/planLimits getWorkspaceUsage", () => {
   test("reports the three counts", async () => {
-    state.activeLinks = 2;
+    state.documents = 2;
     state.projects = 1;
     state.members = 3;
-    expect(await getWorkspaceUsage(ORG_ID)).toEqual({ activeLinks: 2, projects: 1, members: 3 });
+    expect(await getWorkspaceUsage(ORG_ID)).toEqual({ documents: 2, projects: 1, members: 3 });
   });
 
   test("rejects a malformed orgId", async () => {
@@ -128,8 +125,8 @@ describe("billing/planLimits getWorkspaceUsage", () => {
 
 describe("billing/planLimits checkLimit", () => {
   test("under the cap → ok without warning", async () => {
-    state.activeLinks = FREE_ACTIVE_LINKS - 1;
-    expect(await checkLimit(ORG_ID, "active_links")).toEqual({ ok: true, warning: null });
+    state.documents = FREE_DOCUMENTS - 1;
+    expect(await checkLimit(ORG_ID, "documents")).toEqual({ ok: true, warning: null });
   });
 
   test("exactly at the cap after adding one → ok (used == max is allowed)", async () => {
@@ -138,28 +135,28 @@ describe("billing/planLimits checkLimit", () => {
   });
 
   test("over the cap with no grace → blocked with the plan_limit shape", async () => {
-    state.activeLinks = FREE_ACTIVE_LINKS;
-    const check = await checkLimit(ORG_ID, "active_links");
+    state.documents = FREE_DOCUMENTS;
+    const check = await checkLimit(ORG_ID, "documents");
     expect(check.ok).toBe(false);
     if (check.ok) throw new Error("expected blocked");
     expect(check).toEqual({
       ok: false,
       code: "plan_limit",
-      limit: "active_links",
-      used: FREE_ACTIVE_LINKS + 1,
-      max: FREE_ACTIVE_LINKS,
+      limit: "documents",
+      used: FREE_DOCUMENTS + 1,
+      max: FREE_DOCUMENTS,
       grace: null,
       upgradeUrl: "/pricing",
-      message: `Free workspaces can have ${FREE_ACTIVE_LINKS} active share links. Disable one or upgrade to Pro.`,
+      message: `Free workspaces can share ${FREE_DOCUMENTS} documents. Archive one or upgrade to Pro.`,
     });
   });
 
   test("`adding` is honoured (bulk create)", async () => {
-    state.activeLinks = 0;
-    const check = await checkLimit(ORG_ID, "active_links", { adding: FREE_ACTIVE_LINKS + 2 });
+    state.documents = 0;
+    const check = await checkLimit(ORG_ID, "documents", { adding: FREE_DOCUMENTS + 2 });
     expect(check.ok).toBe(false);
     if (check.ok) throw new Error("expected blocked");
-    expect(check.used).toBe(FREE_ACTIVE_LINKS + 2);
+    expect(check.used).toBe(FREE_DOCUMENTS + 2);
   });
 
   test("collaborators: Free workspace with only the owner cannot add one", async () => {
@@ -179,15 +176,15 @@ describe("billing/planLimits checkLimit", () => {
     const startedAt = new Date("2026-09-10T00:00:00.000Z");
     const endsAt = new Date(startedAt.getTime() + LIMIT_GRACE_DAYS * DAY_MS);
     state.planGrace = { startedAt, endsAt, blockedAt: null };
-    state.activeLinks = FREE_ACTIVE_LINKS + 5;
+    state.documents = FREE_DOCUMENTS + 5;
 
-    const check = await checkLimit(ORG_ID, "active_links");
+    const check = await checkLimit(ORG_ID, "documents");
     expect(check).toEqual({
       ok: true,
       warning: {
-        limit: "active_links",
-        used: FREE_ACTIVE_LINKS + 6,
-        max: FREE_ACTIVE_LINKS,
+        limit: "documents",
+        used: FREE_DOCUMENTS + 6,
+        max: FREE_DOCUMENTS,
         grace: { startedAt: startedAt.toISOString(), endsAt: endsAt.toISOString(), blockedAt: null },
       },
     });
@@ -214,9 +211,9 @@ describe("billing/planLimits checkLimit", () => {
     const endsAt = new Date(startedAt.getTime() + LIMIT_GRACE_DAYS * DAY_MS);
     const blockedAt = new Date("2026-09-11T00:00:00.000Z");
     state.planGrace = { startedAt, endsAt, blockedAt };
-    state.activeLinks = FREE_ACTIVE_LINKS;
+    state.documents = FREE_DOCUMENTS;
 
-    const check = await checkLimit(ORG_ID, "active_links");
+    const check = await checkLimit(ORG_ID, "documents");
     expect(check.ok).toBe(false);
     if (check.ok) throw new Error("expected blocked");
     expect(check.code).toBe("plan_limit");
@@ -225,10 +222,10 @@ describe("billing/planLimits checkLimit", () => {
 
   test.each(["active", "trialing", "ACTIVE"])("pro (%s) → unlimited links and projects, collaborators capped at the included seat", async (status) => {
     state.subscriptionStatus = status;
-    state.activeLinks = 500;
+    state.documents = 500;
     state.projects = 50;
     state.members = 20;
-    expect(await checkLimit(ORG_ID, "active_links")).toEqual({ ok: true, warning: null });
+    expect(await checkLimit(ORG_ID, "documents")).toEqual({ ok: true, warning: null });
     expect(await checkLimit(ORG_ID, "projects")).toEqual({ ok: true, warning: null });
     const collab = await checkLimit(ORG_ID, "collaborators");
     expect(collab.ok).toBe(false);
@@ -247,8 +244,8 @@ describe("billing/planLimits checkLimit", () => {
 
   test.each(["canceled", "past_due", "free"])("non-pro status (%s) is Free", async (status) => {
     state.subscriptionStatus = status;
-    state.activeLinks = FREE_ACTIVE_LINKS;
-    expect((await checkLimit(ORG_ID, "active_links")).ok).toBe(false);
+    state.documents = FREE_DOCUMENTS;
+    expect((await checkLimit(ORG_ID, "documents")).ok).toBe(false);
   });
 });
 
@@ -390,8 +387,8 @@ describe("billing/planLimits clampAnalyticsDays", () => {
 
 describe("billing/planLimits planLimitResponse", () => {
   test("returns 402 with the check as the body and error mirroring message", async () => {
-    state.activeLinks = FREE_ACTIVE_LINKS;
-    const check = await checkLimit(ORG_ID, "active_links");
+    state.documents = FREE_DOCUMENTS;
+    const check = await checkLimit(ORG_ID, "documents");
     if (check.ok) throw new Error("expected blocked");
 
     const res = planLimitResponse(check);
@@ -403,9 +400,9 @@ describe("billing/planLimits planLimitResponse", () => {
       error: check.message,
       message: check.message,
       code: "plan_limit",
-      limit: "active_links",
-      used: FREE_ACTIVE_LINKS + 1,
-      max: FREE_ACTIVE_LINKS,
+      limit: "documents",
+      used: FREE_DOCUMENTS + 1,
+      max: FREE_DOCUMENTS,
       grace: null,
       upgradeUrl: "/pricing",
     });

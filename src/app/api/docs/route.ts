@@ -372,10 +372,10 @@ export async function POST(request: Request) {
       }
     }
 
-    // Free plan: every new doc is an active share link (schema default `shareEnabled: true`), so at
+    // Free plan: every new doc is shared by default (schema default `shareEnabled: true`), so at
     // the cap the upload itself is refused with a 402 `plan_limit` (web, URL import and MCP all land
     // here). The client opens the upgrade modal; freeing a link or upgrading lifts the gate.
-    const limitCheck = await checkLimit(actor.orgId, "active_links");
+    const limitCheck = await checkLimit(actor.orgId, "documents");
     if (!limitCheck.ok) {
       void recordActivity({
         orgId: actor.orgId,

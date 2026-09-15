@@ -50,7 +50,10 @@ working unchanged.
    `enabled`, `allowDownload`, `password`, `allowRevisionHistory`, `expiresAt`. Everything the
    doc-level share panel offers today, plus expiry. Settings the document had are copied into the
    default link on migration and the document-level fields stop being read.
-3. **Plan limits stay literal.** The Free cap is "3 active share links" and now means exactly
+3. **Plan limits stay literal.** *(Reversed 2026-09-15: this was the wrong call and shipped as a
+   regression — the cap counts shared **documents**, as it always had. Counting links made the
+   one-link-per-audience feature the thing a Free workspace ran out of, and a workspace holding two
+   documents was told "11 of 3". See `FREE_DOCUMENTS`.)* The Free cap was read as "3 active share links" and meant exactly
    that: enabled, unexpired links across the workspace, whichever documents they belong to. Pro
    is unlimited. Multiple links per document is therefore usable on Free (three investors on one
    deck) and is the clearest Pro trigger in the product. Archiving a document or disabling a link

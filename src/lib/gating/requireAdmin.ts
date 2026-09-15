@@ -23,7 +23,7 @@
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { resolveActor } from "@/lib/gating/actor";
+import { resolveExistingActor } from "@/lib/gating/actor";
 import { UserModel } from "@/lib/models/User";
 
 export type AdminGate =
@@ -41,8 +41,12 @@ function isLocalhostBypassAllowed(request: Request): boolean {
 export async function requireAdmin(request: Request): Promise<AdminGate> {
   if (isLocalhostBypassAllowed(request)) return { ok: true, userId: null, email: null };
 
-  const actor = await resolveActor(request);
-  if (actor.kind !== "user" || !Types.ObjectId.isValid(actor.userId)) {
+  // `resolveExistingActor`, never `resolveActor`: the latter *mints*. One anonymous GET to an admin
+  // endpoint created a temp user, a personal org and a membership, and then returned 401 — so an
+  // unauthenticated caller could fill the database from a door they were never let through. This
+  // returns null for a caller with no identity, which lands on the same 401 without writing anything.
+  const actor = await resolveExistingActor(request);
+  if (!actor || actor.kind !== "user" || !Types.ObjectId.isValid(actor.userId)) {
     return { ok: false, status: 401, error: "Not authenticated" };
   }
   // Before the role lookup on purpose: an API key must be refused whether or not its owner happens

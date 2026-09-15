@@ -12,7 +12,7 @@
  */
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
 import {
-  FREE_ACTIVE_LINKS,
+  FREE_DOCUMENTS,
   FREE_PROJECTS,
   PRO_INCLUDED_COLLABORATORS,
 } from "@/lib/billing/planLimits";
@@ -23,7 +23,7 @@ export type SendPlanLimitEmailParams = {
   to: string;
   kind: PlanLimitEmailKind;
   workspaceName: string;
-  usage: { activeLinks: number; projects: number; members: number };
+  usage: { documents: number; projects: number; members: number };
   /** When the grace window ends (or ended, for `blocked`). */
   endsAt: Date;
   /** Absolute URL to the pricing page. */
@@ -51,9 +51,9 @@ function plural(n: number, one: string, many: string): string {
 /** Human summary of what is over the Free limits, one line per limit. */
 function overLimitLines(usage: SendPlanLimitEmailParams["usage"]): string[] {
   const lines: string[] = [];
-  if (usage.activeLinks > FREE_ACTIVE_LINKS) {
+  if (usage.documents > FREE_DOCUMENTS) {
     lines.push(
-      `- Active share links: ${usage.activeLinks} (Free includes ${plural(FREE_ACTIVE_LINKS, "link", "links")})`,
+      `- Active share links: ${usage.documents} (Free includes ${plural(FREE_DOCUMENTS, "link", "links")})`,
     );
   }
   if (usage.projects > FREE_PROJECTS) {

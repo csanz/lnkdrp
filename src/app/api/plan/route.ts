@@ -39,12 +39,12 @@ export async function GET(request: Request) {
         grace,
         graceActive,
         atLimit: {
-          activeLinks: !graceActive && limits.activeLinks !== null && usage.activeLinks >= limits.activeLinks,
+          documents: !graceActive && limits.documents !== null && usage.documents >= limits.documents,
           projects: !graceActive && limits.projects !== null && usage.projects >= limits.projects,
           collaborators: !graceActive && Math.max(0, usage.members - 1) >= limits.collaborators,
         },
         fraction: {
-          activeLinks: pct(usage.activeLinks, limits.activeLinks),
+          documents: pct(usage.documents, limits.documents),
           projects: pct(usage.projects, limits.projects),
         },
         upgradeUrl: "/pricing",

@@ -12,7 +12,7 @@
 import type { PlanLimitKey } from "@/lib/client/planLimit";
 
 /** Which upsell to show. `pro` is the generic pitch (sidebar link, no wall hit); the next five mirror API limit keys; `credits` is passive. */
-export type UpsellKey = "pro" | "version_history" | "active_links" | "projects" | "collaborators" | "analytics_history" | "credits";
+export type UpsellKey = "pro" | "version_history" | "documents" | "projects" | "collaborators" | "analytics_history" | "credits";
 
 /** Copy for one upsell: title, one-sentence reason, and three concrete Pro benefits. */
 export type UpsellCopy = {
@@ -35,7 +35,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     title: "Pro is for sending every day",
     reason: "Free covers a few links. Pro removes the caps and shows you who actually read what you sent.",
     bullets: [
-      "Unlimited active share links and projects",
+      "Unlimited documents, share links and projects",
       "Deep analytics: who opened it, time per page, full history",
       "300 AI credits a month, and a version list recipients can browse",
     ],
@@ -51,9 +51,9 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     ],
     secondaryLabel: "Compare plans",
   },
-  active_links: {
-    title: "You're at the Free link limit",
-    reason: "Free workspaces can have 3 active share links across all documents; Pro removes the cap.",
+  documents: {
+    title: "You're at the Free document limit",
+    reason: "Free workspaces can share 3 documents. Each one can carry as many links as you need — Pro removes the cap on documents.",
     bullets: [
       "Unlimited links per document, one per investor",
       "Unlimited active links and projects across the workspace",
@@ -66,7 +66,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     reason: "Free workspaces get one project; Pro lets you create as many as you need.",
     bullets: [
       "Unlimited projects",
-      "Unlimited active share links",
+      "Unlimited shared documents",
       "Version history and AI compare on every doc",
     ],
     secondaryLabel: "Manage projects",
@@ -106,17 +106,17 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
 /**
  * Map an API limit key (`402 plan_limit` body, `LimitKey` on the server) to an upsell key.
  *
- * Unknown strings fall back to `active_links`, the most common cap.
+ * Unknown strings fall back to `documents`, the most common cap.
  */
 export function upsellKeyForLimit(limit: string): UpsellKey {
   switch (limit as PlanLimitKey) {
-    case "active_links":
+    case "documents":
     case "projects":
     case "collaborators":
     case "version_history":
     case "analytics_history":
       return limit as UpsellKey;
     default:
-      return "active_links";
+      return "documents";
   }
 }

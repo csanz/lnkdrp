@@ -13,7 +13,7 @@ import { UPSELL_COPY, upsellKeyForLimit } from "@/lib/client/upsellCopy";
  * `version_history` and `analytics_history` (deep analytics: viewer identities, per-page time,
  * visit timelines) are Pro feature gates (no count; `used`/`max` are 0).
  */
-export type PlanLimitKey = "active_links" | "projects" | "collaborators" | "version_history" | "analytics_history";
+export type PlanLimitKey = "documents" | "projects" | "collaborators" | "version_history" | "analytics_history";
 
 /** Grace window for workspaces that were over the limits at launch (ISO strings). */
 export type PlanLimitGrace = { startedAt: string; endsAt: string; blockedAt: string | null } | null;
@@ -30,7 +30,7 @@ export type PlanLimitError = {
 
 /** Free-plan numbers, mirrored from `src/lib/billing/planLimits.ts` for copy on client surfaces. */
 export const FREE_PLAN_LIMITS_COPY = {
-  activeLinks: 3,
+  documents: 3,
   projects: 1,
   analyticsDays: 7,
 } as const;
@@ -63,7 +63,7 @@ export const PLAN_LIMIT_HIT_STORAGE_KEY = "lnkdrp_plan_limit_hit";
 export const PLAN_LIMIT_HIT_EVENT = "lnkdrp:plan-limit-hit";
 
 const LIMIT_KEYS: ReadonlySet<string> = new Set([
-  "active_links",
+  "documents",
   "projects",
   "collaborators",
   "version_history",

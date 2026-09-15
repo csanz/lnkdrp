@@ -159,7 +159,7 @@ export default function TermsOfServicePage() {
               The Service has a Free plan and a paid Pro plan. Plans are bound to a workspace, not to an individual. Current limits and prices are listed on our <Link href="/pricing" className="text-white/80 underline hover:text-white">pricing page</Link>, which forms part of these Terms.
             </p>
             <p className="mb-4 leading-7">
-              <strong>Free:</strong> 3 active share links, 1 project, 7 days of basic analytics, and no collaborators. AI summaries, version history compares, and other AI features use credits; letting recipients browse earlier versions is not available. When you reach a limit, existing links keep working; you can archive a document to free a slot or upgrade to Pro.
+              <strong>Free:</strong> 3 shared documents (each with as many share links as you need), 1 project, 7 days of basic analytics, and no collaborators. AI summaries, version history compares, and other AI features use credits; letting recipients browse earlier versions is not available. When you reach a limit, existing links keep working; you can archive a document to free a slot or upgrade to Pro.
             </p>
             <p className="mb-4 leading-7">
               <strong>Pro:</strong> unlimited share links and projects, deep analytics with full history, a version list recipients can browse, and collaborators. One collaborator is included; additional collaborators are available on request. Collaborators are people; software agents acting under a collaborator's account never take a seat.

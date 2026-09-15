@@ -16,7 +16,7 @@ import type { Metadata } from "next";
 import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
 import {
-  FREE_ACTIVE_LINKS,
+  FREE_DOCUMENTS,
   FREE_ANALYTICS_DAYS,
   FREE_PROJECTS,
   PRO_INCLUDED_COLLABORATORS,
@@ -120,7 +120,7 @@ export default async function PricingPage() {
               <FeatureList
                 muted="text-white/75"
                 items={[
-                  `${FREE_ACTIVE_LINKS} active share links`,
+                  `${FREE_DOCUMENTS} shared documents, each with unlimited share links`,
                   `${FREE_PROJECTS} project`,
                   `Basic analytics: views and downloads, last ${FREE_ANALYTICS_DAYS} days`,
                   "AI summary on every link, 1 credit; free when your agent writes it",
@@ -132,7 +132,7 @@ export default async function PricingPage() {
                 ]}
               />
               <p className="mt-4 text-[12px] leading-5 text-white/45">
-                Archive a document any time to free up a link slot. Credits top up to 10 on the 1st of each month
+                Archive a document any time to free up a slot. Credits top up to 10 on the 1st of each month
                 if you have fewer, and Free uses at most 15 credits a day.
               </p>
               <div className="mt-8 flex-1" />
@@ -163,7 +163,7 @@ export default async function PricingPage() {
               <FeatureList
                 muted="text-black/80"
                 items={[
-                  "Unlimited active share links",
+                  "Unlimited documents and share links",
                   "Unlimited projects",
                   "Deep analytics: who opened it, time per page, full history",
                   "Recipients can browse every version and see what changed",

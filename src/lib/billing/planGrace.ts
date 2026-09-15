@@ -81,12 +81,12 @@ export type PlanLimitsGraceSweepResult = {
   dryRun: boolean;
 };
 
-type Usage = { activeLinks: number; projects: number; members: number };
+type Usage = { documents: number; projects: number; members: number };
 
 /** Whether `usage` exceeds any Free limit. */
 function isOverFreeLimits(usage: Usage): boolean {
   const limits = limitsForPlan("free");
-  if (limits.activeLinks !== null && usage.activeLinks > limits.activeLinks) return true;
+  if (limits.documents !== null && usage.documents > limits.documents) return true;
   if (limits.projects !== null && usage.projects > limits.projects) return true;
   if (Math.max(0, usage.members - 1) > limits.collaborators) return true;
   return false;
@@ -317,7 +317,7 @@ export async function runPlanLimitsGraceSweep(
     const isPro = proOrgIds.has(String(org._id));
     try {
       // Pro workspaces without grace need no usage lookup.
-      const usage: Usage = isPro && !org.planGrace ? { activeLinks: 0, projects: 0, members: 0 } : await getWorkspaceUsage(org._id);
+      const usage: Usage = isPro && !org.planGrace ? { documents: 0, projects: 0, members: 0 } : await getWorkspaceUsage(org._id);
       await processWorkspace({ org, usage, now, dryRun, result }, isPro);
     } catch (err) {
       result.errors += 1;

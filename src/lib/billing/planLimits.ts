@@ -2,7 +2,7 @@
  * Plan limits (Free vs Pro) and the enforcement helpers API routes call.
  *
  * Plan status lives in `SubscriptionModel` (one row per org; `active`/`trialing` = Pro). Free
- * workspaces are capped on active share links, projects, and collaborators, and their viewer
+ * workspaces are capped on shared documents, projects, and collaborators, and their viewer
  * analytics window is clamped. Pro workspaces are unlimited on all three counts.
  *
  * Feature gates: some `LimitKey`s are not counts but Pro-only features (`version_history`: letting
@@ -30,14 +30,23 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 // The share-links service owns the definition of "an active link"; importing it here keeps the
 // cap and the link routes from ever disagreeing (the cycle is import-only: both sides call at runtime).
-import { countActiveShareLinks } from "@/lib/share/links";
 
-/** Free plan: docs with sharing enabled (not deleted, not archived). */
-export const FREE_ACTIVE_LINKS = 3;
+/**
+ * Free plan: **documents** with sharing enabled (not deleted, not archived).
+ *
+ * Documents, never share links. A document owns as many links as its sender needs — one per
+ * investor, per counterparty, per audience — and that is the product's headline feature, so making
+ * links the thing you run out of turns the feature into the wall. It briefly did: the multi-links
+ * work (664c50a) pointed this count at `countActiveShareLinks`, and a workspace holding two
+ * documents was told "11 of 3 · At your link limit". The cap was always on documents and the gates
+ * were always on creating or sharing one; only the counting drifted.
+ */
+export const FREE_DOCUMENTS = 3;
 /** Free plan: non-request projects. */
 export const FREE_PROJECTS = 1;
 /** Free plan: viewer analytics window in days. */
@@ -52,7 +61,7 @@ export type PlanId = "free" | "pro";
 /** Per-plan caps; `null` means unlimited. `collaborators` = members allowed beyond the owner. */
 export type PlanLimits = {
   plan: PlanId;
-  activeLinks: number | null;
+  documents: number | null;
   projects: number | null;
   analyticsDays: number | null;
   collaborators: number;
@@ -63,7 +72,7 @@ export type PlanLimits = {
  * `analytics_history` are Pro feature gates (blocked on Free regardless of usage, never subject to
  * grace).
  */
-export type LimitKey = "active_links" | "projects" | "collaborators" | "version_history" | "analytics_history";
+export type LimitKey = "documents" | "projects" | "collaborators" | "version_history" | "analytics_history";
 
 /** Limits that gate a Pro feature rather than count usage. */
 export type FeatureGateKey = Extract<LimitKey, "version_history" | "analytics_history">;
@@ -104,14 +113,14 @@ const UPGRADE_URL = "/pricing" as const;
 const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
   free: {
     plan: "free",
-    activeLinks: FREE_ACTIVE_LINKS,
+    documents: FREE_DOCUMENTS,
     projects: FREE_PROJECTS,
     analyticsDays: FREE_ANALYTICS_DAYS,
     collaborators: 0,
   },
   pro: {
     plan: "pro",
-    activeLinks: null,
+    documents: null,
     projects: null,
     analyticsDays: null,
     collaborators: PRO_INCLUDED_COLLABORATORS,
@@ -154,19 +163,24 @@ export async function getWorkspacePlan(orgId: string | Types.ObjectId): Promise<
 /**
  * Count what a workspace is using against its caps (three `countDocuments` calls).
  *
- * - `activeLinks`: `sharelinks` rows that are enabled, unarchived and unexpired, across every
- *   document of the workspace (`countActiveShareLinks`). A document may own several links, so the
- *   cap counts links, not documents (docs/prds/lnkdrp-multi-links.md).
+ * - `documents`: docs with sharing enabled, not deleted and not archived. Documents, never share
+ *   links: a document may own any number of links and that is the point of the feature, so counting
+ *   links here made the headline feature the thing a Free workspace ran out of. See `FREE_DOCUMENTS`.
  * - `projects`: non-request projects, not deleted (request repos are not capped).
  * - `members`: non-deleted memberships, owner included.
  */
 export async function getWorkspaceUsage(
   orgId: string | Types.ObjectId,
-): Promise<{ activeLinks: number; projects: number; members: number }> {
+): Promise<{ documents: number; projects: number; members: number }> {
   const id = toOrgObjectId(orgId);
   await connectMongo();
-  const [activeLinks, projects, members] = await Promise.all([
-    countActiveShareLinks(id),
+  const [documents, projects, members] = await Promise.all([
+    DocModel.countDocuments({
+      orgId: id,
+      shareEnabled: { $ne: false },
+      isDeleted: { $ne: true },
+      isArchived: { $ne: true },
+    }),
     ProjectModel.countDocuments({
       orgId: id,
       isDeleted: { $ne: true },
@@ -176,7 +190,7 @@ export async function getWorkspaceUsage(
     }),
     OrgMembershipModel.countDocuments({ orgId: id, isDeleted: { $ne: true } }),
   ]);
-  return { activeLinks, projects, members };
+  return { documents, projects, members };
 }
 
 /** Convert a stored `Org.planGrace` value into the ISO-string `GraceState` shape. */
@@ -209,14 +223,16 @@ export async function getWorkspaceGrace(orgId: string | Types.ObjectId): Promise
   return graceStateOf((org as { planGrace?: unknown } | null)?.planGrace);
 }
 
-/** Human message for a blocked limit, e.g. "Free workspaces can have 3 active share links. Disable one or upgrade to Pro." */
+/** Human message for a blocked limit, e.g. "Free workspaces can share 3 documents. Archive one or upgrade to Pro." */
 function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): string {
   if (plan === "pro" && limit === "collaborators") {
     return `Pro includes ${max} collaborator${max === 1 ? "" : "s"}. Contact us to add more seats to this workspace.`;
   }
   switch (limit) {
-    case "active_links":
-      return `Free workspaces can have ${max} active share link${max === 1 ? "" : "s"}. Disable one or upgrade to Pro.`;
+    case "documents":
+      // "Archive one" rather than "disable a link": the cap counts shared documents, and a link is
+      // never the thing to remove — a document may carry a dozen of them by design.
+      return `Free workspaces can share ${max} document${max === 1 ? "" : "s"}. Archive one or upgrade to Pro.`;
     case "projects":
       return `Free workspaces can have ${max} project${max === 1 ? "" : "s"}. Delete one or upgrade to Pro.`;
     case "collaborators":
@@ -274,9 +290,9 @@ export async function checkLimit(
   let current: number;
   let max: number;
   switch (limit) {
-    case "active_links":
-      current = usage.activeLinks;
-      max = limits.activeLinks ?? Number.POSITIVE_INFINITY;
+    case "documents":
+      current = usage.documents;
+      max = limits.documents ?? Number.POSITIVE_INFINITY;
       break;
     case "projects":
       current = usage.projects;
