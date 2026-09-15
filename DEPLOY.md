@@ -609,7 +609,10 @@ Run in this order; each step depends on the previous.
    `MONGODB_URI='mongodb+srv://…/lnkdrp' E2E_ORG_ID=<your workspace id> E2E_USER_ID=<your user id> MCP_URL=https://mcp.lnkdrp.com/mcp npx tsx tests/mcp/e2e.ts`.
    It mints and revokes its own key directly in that database and deletes the docs it creates; it
    spends real credits in that workspace and leaves activity rows. Without the two ids it uses the
-   local dev workspace ids and fails.
+   local dev workspace ids and fails. Its first step checks headroom: on a Free workspace it needs
+   one open document slot (it creates a second document only after releasing the first) and stops
+   there with the numbers rather than failing twenty steps in with a `plan_limit` that reads like
+   a broken tool. Archive a document or use a Pro workspace. 22 steps when it passes.
 9. Trigger one cron by hand and confirm 200:
    `curl -X POST https://lnkdrp.com/api/cron/plan-limits -H "Authorization: Bearer $CRON_SECRET"`.
    Then the analytics reconcile, which reports rather than just succeeding:
@@ -641,7 +644,8 @@ Run in this order; each step depends on the previous.
   Before every push to `main`: `npx tsc --noEmit -p .`, `npx eslint src realtime mcp tests`,
   `npm run tests:lib:vitest`, `npm run tests:credits:vitest`, `npm run tests:upload:vitest`,
   `npm run tests:agent:vitest`, `npx next build`, and
-  `npx tsx --env-file=.env.local tests/mcp/e2e.ts` when the MCP or the API-key seam changed.
+  `npx tsx --env-file=.env.local tests/mcp/e2e.ts` when the MCP or the API-key seam changed (it
+  needs one open document slot on a Free workspace; 8 step 8).
 - Before merging anything touching data shapes: add a migration under `db/migration/` and run it
   against production (4.1, snapshot first) before the deploy lands, since functions roll forward
   first. Mongoose `autoIndex` is on: any index declared in `src/lib/models/` is built by the first
