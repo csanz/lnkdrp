@@ -7,7 +7,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftIcon, ChevronDownIcon, LockClosedIcon, UserIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, LockClosedIcon, UserIcon } from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
@@ -41,21 +41,6 @@ type MetricsResponse = {
     anonymousViewers?: number;
   };
   downloadsEnabled?: boolean;
-  /**
-   * `?byLink=1`: the same window, per link slug — including slugs whose link has since been
-   * deleted, which `GET /api/docs/:docId/links` does not return. `sum(views)` equals
-   * `totals.views` and `sum(downloads)` equals `totals.downloads`, so the table reconciles with
-   * the cards above it.
-   */
-  byLink?: Array<{
-    shareId: string;
-    views: number;
-    viewers: number;
-    opens?: number;
-    downloads: number;
-    pagesViewed: number;
-    lastViewedAt: string | null;
-  }>;
   /** Absent on a `?viewersOnly=1` response. */
   series?: Array<{ date: string; views: number; downloads: number }>;
   viewers: Array<{
@@ -97,8 +82,6 @@ type ShareLinkRow = {
   downloadCount: number;
 };
 
-/** One link's totals inside the selected window (from `/shareviews?shareId=…&lite=1`). */
-type LinkWindowStats = { views: number; downloads: number; viewers: number; opens: number; lastViewedAt: string | null };
 
 type ShareViewerVisitSummary = {
   visitId: string;
@@ -329,132 +312,6 @@ const LOCKED_ROW_WIDTHS: ReadonlyArray<[string, string, string, string]> = [
  * same footprint (plain skeleton, no prompt) while the plan snapshot is still loading, so the page
  * does not jump once it resolves.
  */
-/**
- * Pick one link to scope the page to, from a list that may be long.
- *
- * Replaces a row of pills. Pills read well at three links, wrap at twelve and are unusable at a
- * hundred — and a document is allowed a hundred: one link per investor is the feature. A picker
- * costs one click and stays the same size whatever the count, with a filter box that appears only
- * when there are enough links to need it.
- *
- * Each row carries the link's viewers, because choosing between "Sequoia" and "Benchmark" without
- * knowing which one anybody opened is choosing blind — the same reason the table below exists.
- */
-function LinkPicker({
-  links,
-  shareId,
-  stats,
-  onSelect,
-  open,
-  setOpen,
-}: {
-  links: ShareLinkRow[];
-  shareId: string | null;
-  stats: Record<string, LinkWindowStats>;
-  onSelect: (next: string | null) => void;
-  open: boolean;
-  setOpen: (next: boolean) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const selected = shareId ? links.find((l) => l.shareId === shareId) ?? null : null;
-  const needsFilter = links.length > 8;
-  const q = query.trim().toLowerCase();
-  const shown = q
-    ? links.filter((l) => l.label.toLowerCase().includes(q) || (l.audience ?? "").toLowerCase().includes(q))
-    : links;
-
-  useEffect(() => {
-    if (!open) setQuery("");
-  }, [open]);
-
-  return (
-    <div className="relative inline-block">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="inline-flex max-w-[320px] items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)]"
-      >
-        <span className="truncate">{selected ? selected.label : "All links"}</span>
-        <span className="shrink-0 text-[var(--muted-2)]">{links.length}</span>
-        <ChevronDownIcon className="h-4 w-4 shrink-0 text-[var(--muted)]" aria-hidden="true" />
-      </button>
-
-      {open ? (
-        <>
-          {/* Click-away, behind the menu: a picker that only closes by re-clicking its own button
-              feels stuck when the page behind it is what you meant to get back to. */}
-          <div className="fixed inset-0 z-10" aria-hidden="true" onClick={() => setOpen(false)} />
-          <div
-            role="listbox"
-            className="absolute left-0 z-20 mt-1 max-h-[22rem] w-[22rem] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
-          >
-            {needsFilter ? (
-              <div className="border-b border-[var(--border)] p-2">
-                <input
-                  autoFocus
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Filter links"
-                  aria-label="Filter links"
-                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1.5 text-[13px] text-[var(--fg)] outline-none focus:ring-2 focus:ring-[var(--ring)]"
-                />
-              </div>
-            ) : null}
-            <div className="max-h-[18rem] overflow-y-auto p-1">
-              <button
-                type="button"
-                role="option"
-                aria-selected={!shareId}
-                onClick={() => {
-                  onSelect(null);
-                  setOpen(false);
-                }}
-                className={[
-                  "flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px]",
-                  !shareId ? "bg-[var(--panel-hover)] text-[var(--fg)]" : "text-[var(--fg)] hover:bg-[var(--panel-hover)]",
-                ].join(" ")}
-              >
-                <span className="font-medium">All links</span>
-                <span className="text-[11px] text-[var(--muted-2)]">the whole document</span>
-              </button>
-              {shown.map((l) => {
-                const active = shareId === l.shareId;
-                const s = stats[l.id];
-                return (
-                  <button
-                    key={l.id}
-                    type="button"
-                    role="option"
-                    aria-selected={active}
-                    onClick={() => {
-                      onSelect(l.shareId);
-                      setOpen(false);
-                    }}
-                    className={[
-                      "flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px]",
-                      active ? "bg-[var(--panel-hover)] text-[var(--fg)]" : "text-[var(--fg)] hover:bg-[var(--panel-hover)]",
-                    ].join(" ")}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate font-medium">{l.label}</span>
-                      {l.audience ? <span className="block truncate text-[11px] text-[var(--muted-2)]">{l.audience}</span> : null}
-                    </span>
-                    <span className="shrink-0 text-[11px] tabular-nums text-[var(--muted)]">
-                      {s ? `${s.viewers} ${s.viewers === 1 ? "viewer" : "viewers"}` : "—"}
-                    </span>
-                  </button>
-                );
-              })}
-              {!shown.length ? <div className="px-2.5 py-3 text-[13px] text-[var(--muted-2)]">No link matches that.</div> : null}
-            </div>
-          </div>
-        </>
-      ) : null}
-    </div>
-  );
-}
 
 function LockedViewersBlock({
   pending,
@@ -553,10 +410,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [anonViewersModalPage, setAnonViewersModalPage] = useState(0);
   const [days, setDays] = useState(15);
   const [rangeOpen, setRangeOpen] = useState(false);
-  /** The link picker that replaced the chip row; see `LinkPicker`. */
-  const [linkPickerOpen, setLinkPickerOpen] = useState(false);
-  // Links of this document: the chip row filters every figure on the page through `?shareId=`,
-  // and the per-link table below compares them (docs/prds/lnkdrp-multi-links.md).
+  // Links of this document, for the selected link's label. Choosing a link happens on the Links
+  // page, which is the per-link table; this page shows one link (`?shareId=`) or the document.
+  // A picker and a comparison table lived here once and were removed at the user's request: a
+  // reader who chose a link on the Links page had already decided, and both controls stopped
+  // scaling long before the hundred links a document is allowed.
   const [links, setLinks] = useState<ShareLinkRow[] | null>(null);
   // The selected link lives in the URL, not only in React state. A per-link view is a thing people
   // want to keep and pass on — "here is what Sequoia actually read" — and while it was state alone
@@ -689,7 +547,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       setViewersLoaded(false);
       try {
         const res = await fetchWithTempUser(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1&byLink=1${linkFilterParam}`,
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1${linkFilterParam}`,
           { cache: "no-store" },
         );
         if (res.status === 404) {
@@ -799,50 +657,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     };
   }, [docId]);
 
-  // Per-link totals for the window, derived from the page's own response (`?byLink=1`) instead of
-  // one request per link. Grouped server-side by slug over the same rows as the cards above, so the
-  // rows add up to the header — and nothing is capped, so a link that sorts last no longer reads
-  // as dead just because its request was never made.
   /** The label of the selected link, for copy that must not say "this document" under a filter. */
   const selectedLinkLabel = useMemo(
     () => (shareId ? ((links ?? []).find((l) => l.shareId === shareId)?.label ?? "this link") : null),
     [shareId, links],
   );
-
-  const linkStats = useMemo(() => {
-    const next: Record<string, LinkWindowStats> = {};
-    if (!links || !data?.byLink) return next;
-    const bySlug = new Map(data.byLink.map((r) => [r.shareId, r]));
-    for (const l of links) {
-      const row = bySlug.get(l.shareId);
-      next[l.id] = {
-        views: Math.max(0, Math.floor(row?.views ?? 0)),
-        downloads: Math.max(0, Math.floor(row?.downloads ?? 0)),
-        viewers: Math.max(0, Math.floor(row?.viewers ?? 0)),
-        opens: Math.max(0, Math.floor(row?.opens ?? 0)),
-        lastViewedAt: typeof row?.lastViewedAt === "string" ? row.lastViewedAt : null,
-      };
-    }
-    return next;
-  }, [links, data]);
-
-  /**
-   * Views and downloads recorded on slugs the table cannot show: links that were deleted (their
-   * rows stay in the document total by design) and any slug the links endpoint omits. Rendered as
-   * its own row so the column reconciles with the "All links" card instead of quietly falling short.
-   */
-  const deletedLinkResidual = useMemo(() => {
-    if (!links || !data?.byLink) return null;
-    const known = new Set(links.map((l) => l.shareId));
-    const rest = data.byLink.filter((r) => !known.has(r.shareId));
-    if (!rest.length) return null;
-    const views = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.views ?? 0)), 0);
-    const downloads = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.downloads ?? 0)), 0);
-    const viewers = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.viewers ?? 0)), 0);
-    const opens = rest.reduce((a, r) => a + Math.max(0, Math.floor(r.opens ?? 0)), 0);
-    if (!views && !downloads) return null;
-    return { count: rest.length, views, downloads, viewers, opens };
-  }, [links, data]);
 
   const views = data?.totals?.views ?? 0;
   /** Tab sessions in the window: opens, not recipients. `null` on a response from before it existed. */
@@ -1195,22 +1014,6 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               </div>
             ) : null}
 
-            {/* The chip row that used to live here listed every link as a pill. It wrapped to two
-                rows at twelve links and would have buried the page at a hundred — and it duplicated
-                the Links table below, which lists the same links, scales, and carries the numbers
-                that make the choice an informed one. One picker for "jump to a link", one table for
-                "compare links". See `LinkPicker`. */}
-            {links && links.length > 1 ? (
-              <LinkPicker
-                links={links}
-                shareId={shareId}
-                stats={linkStats}
-                onSelect={selectLink}
-                open={linkPickerOpen}
-                setOpen={setLinkPickerOpen}
-              />
-            ) : null}
-
             <div className="grid gap-5 sm:grid-cols-2">
               {/* Views card */}
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
@@ -1359,135 +1162,6 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 </div>
               </div>
             </div>
-
-            {/* One live link plus a deleted one that still contributes rows is still two links
-                worth of traffic in the tiles above, and this table is the only thing that
-                reconciles them — gating it on the live count alone hid the explanation exactly
-                when it was needed. */}
-            {links && links.length + (deletedLinkResidual ? 1 : 0) > 1 ? (
-              <div className="mt-1">
-                <div className="text-sm font-semibold text-[var(--fg)]">Which link is doing the work</div>
-                <div className="mt-1 text-sm text-[var(--muted)]">
-                  {/* One sentence, one job: say what the table answers. The previous copy tried to
-                      explain the table, its relationship to the cards and the filter mechanics in
-                      one breath, and the user asked what the section meant — the clearest possible
-                      signal it explained nothing. It also claimed the rows "add up to the figures
-                      above", which is false whenever a link is selected (cards show one link, rows
-                      show all), so it told readers to check arithmetic that cannot reconcile. The
-                      row has no click handler, only the link name does, hence "select a name". */}
-                  Every link on this document, side by side, over the last {days} days.{" "}
-                  {shareId ? (
-                    <>
-                      The highlighted row is the link the cards above are showing. Select another name to switch,
-                      or{" "}
-                      <button
-                        type="button"
-                        onClick={() => selectLink(null)}
-                        className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
-                      >
-                        show all links together
-                      </button>
-                      .
-                    </>
-                  ) : (
-                    "Select a name to see that link alone in the cards above."
-                  )}
-                </div>
-
-                <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[640px] border-collapse text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-[var(--border)] text-[11px] uppercase tracking-wide text-[var(--muted-2)]">
-                          <th scope="col" className="px-4 py-2 font-semibold">Link</th>
-                          {/* No "Views" column beside this one: a `ShareView` row is unique per
-                              (link, viewer) for life, so the per-link view count and the per-link
-                              viewer count are the same number by construction — two columns of
-                              identical figures invited the reader to look for a difference that
-                              cannot exist. See the header of the shareviews route. */}
-                          <th scope="col" className="px-4 py-2 text-right font-semibold">Viewers</th>
-                          {/* Opens earns a column where Views could not: Views and Viewers are the
-                              same arithmetic on a `ShareView` row, but Opens counts sessions, so a
-                              link read twice by one person reads 1 viewer, 2 opens. */}
-                          <th scope="col" className="px-4 py-2 text-right font-semibold">Opens</th>
-                          <th scope="col" className="px-4 py-2 text-right font-semibold">Downloads</th>
-                          <th scope="col" className="px-4 py-2 text-right font-semibold">Last viewed</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {links.map((l) => {
-                          const s = linkStats[l.id];
-                          const active = shareId === l.shareId;
-                          return (
-                            <tr
-                              key={l.id}
-                              className={[
-                                "border-b border-[var(--border)] last:border-b-0",
-                                active ? "bg-[var(--panel-hover)]" : "",
-                              ].join(" ")}
-                            >
-                              <td className={["px-4 py-2", active ? "border-l-2 border-[var(--fg)]" : "border-l-2 border-transparent"].join(" ")}>
-                                <button
-                                  type="button"
-                                  onClick={() => selectLink(active ? null : l.shareId)}
-                                  className="max-w-[260px] truncate text-left font-medium text-[var(--fg)] underline-offset-2 hover:underline"
-                                  title={l.audience ?? l.label}
-                                  aria-pressed={active}
-                                >
-                                  {l.label}
-                                </button>
-                                {/* A tinted row is not a state anyone reads; the user screenshotted
-                                    the selected row and could not tell it was selected. */}
-                                {active ? (
-                                  <span className="ml-2 rounded-full border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
-                                    Selected
-                                  </span>
-                                ) : null}
-                                <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-2)]">
-                                  {l.audience ? <span className="truncate">{l.audience}</span> : null}
-                                  {l.status !== "active" ? <span className="capitalize">{l.status}</span> : null}
-                                </div>
-                              </td>
-                              <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.viewers : "—"}</td>
-                              <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.opens : "—"}</td>
-                              <td className="px-4 py-2 text-right tabular-nums text-[var(--fg)]">{s ? s.downloads : "—"}</td>
-                              {/* The analytics timestamp first: the link row's own `lastViewedAt`
-                                  only started moving when links shipped, so a link that adopted a
-                                  document's older traffic printed "—" beside a non-zero Views cell. */}
-                              <td className="px-4 py-2 text-right text-[var(--muted)]">
-                                {s?.lastViewedAt
-                                  ? formatDateTime(s.lastViewedAt)
-                                  : l.lastViewedAt
-                                    ? formatDateTime(l.lastViewedAt)
-                                    : "—"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                        {/* Deleted links keep their analytics (that is the promise the links page
-                            makes) and their rows are still in the document total, but the links
-                            endpoint does not return them — so without this row the column silently
-                            fails to add up to the card above it. */}
-                        {deletedLinkResidual ? (
-                          <tr className="border-b border-[var(--border)] text-[var(--muted)] last:border-b-0">
-                            <td className="px-4 py-2">
-                              <span className="font-medium">
-                                {deletedLinkResidual.count === 1 ? "Deleted link" : `${deletedLinkResidual.count} deleted links`}
-                              </span>
-                              <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">Still counted in the totals above</div>
-                            </td>
-                            <td className="px-4 py-2 text-right tabular-nums">{deletedLinkResidual.viewers}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">{deletedLinkResidual.opens}</td>
-                            <td className="px-4 py-2 text-right tabular-nums">{deletedLinkResidual.downloads}</td>
-                            <td className="px-4 py-2 text-right">—</td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            ) : null}
 
             {!deepAnalytics ? (
               <LockedViewersBlock
