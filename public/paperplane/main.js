@@ -45,13 +45,13 @@ const CONFIG = {
   PLANE_VIEW_X_FRAC: 0.2,
   // Vertical placement in CSS pixels from the top of the viewport to the plane's centre. The
   // headline is pixel-fixed, so anchoring the plane in pixels (not a fraction of the height) keeps
-  // it beside headline lines 2-3 on 800-, 900- and 1080-tall frames alike.
-  PLANE_VIEW_Y_PX: 700,
-  // ...but never lower than this fraction of the frame. A pixel anchor tuned on a 1000-tall
-  // screen put the plane's centre 30px above the bottom of a 730-tall laptop frame — inside the
-  // horizon fade, half clipped. On frames taller than PLANE_VIEW_Y_PX / this fraction (~1030px)
-  // the pixel value wins and nothing changes; on shorter ones the plane rides up with the frame.
-  PLANE_VIEW_Y_MAX_FRAC: 0.68,
+  // it at the same line of copy on 800-, 900- and 1080-tall frames alike. 430 puts it beside the
+  // paragraph under the headline, over black, with the globe's rim well below it — where the
+  // wind streaks read as airflow. The launch redesign had it at 700, sitting on the rim: half
+  // clipped on a laptop, and the streaks vanished against the arcs.
+  PLANE_VIEW_Y_PX: 430,
+  // ...but never lower than this fraction of the frame, so a short laptop frame lifts it further.
+  PLANE_VIEW_Y_MAX_FRAC: 0.55,
   // Fraction of the frame height the tuned PLANE_BASE_POS.y lands at on a desktop (16:10 / 16:9)
   // frame; the runtime offsets from this reference to reach PLANE_VIEW_Y_PX.
   PLANE_BASE_VIEW_Y_FRAC: 0.334,
