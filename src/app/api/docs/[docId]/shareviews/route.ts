@@ -29,6 +29,10 @@
  *   in January and re-read the deck this morning — the single event the owner most wants to see.
  * - Nothing here counts the owner's own opens. They are recorded (`ShareView.isOwnerPreview`, so
  *   "did my link work?" stays answerable) and excluded from every figure by `RECIPIENT_ONLY_MATCH`.
+ *   How many were excluded is reported as `totals.ownerPreviews`, because a silent exclusion
+ *   leaves "nobody opened it" and "only the owner opened it" looking identical. The flag is
+ *   best-effort: it needs a signed-in session on the ingest request, so an owner opening their own
+ *   link in a logged-out browser is counted as a recipient, and `ownerPreviews` is a floor.
  * - `opens` counts tab sessions (`ShareVisit`), the one figure here that counts events rather than
  *   recipients: a reader who came back three times is one view and three opens, and the gap
  *   between those two numbers is what a returning reader looks like. It is `0` for traffic older
@@ -66,6 +70,7 @@ import {
   ACTIVITY_DAY_KEY_EXPR,
   LAST_ACTIVITY_EXPR,
   LINK_VIEWER_KEY_EXPR,
+  OWNER_PREVIEW_MATCH,
   RECIPIENT_ONLY_MATCH,
   activityInWindowExpr,
   activityWindowMatch,
@@ -258,9 +263,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
 
       // Totals for the window, and the lifetime figures beside them. Both scopes run the same
       // aggregation over `scopeMatch`, so "All links" is the sum of its links by construction.
-      const [windowTotals, allTimeTotals] = await Promise.all([
+      // The owner-side rows this response is deliberately not counting. Same scope, opposite
+      // flag, so a reader can see that the exclusion happened and how large it was.
+      const ownerScopeMatch: Record<string, unknown> = {
+        ...(link ? { shareId: link.shareId } : { docId: docObjectId }),
+        ...OWNER_PREVIEW_MATCH,
+      };
+      const [windowTotals, allTimeTotals, windowOwnerPreviews, allTimeOwnerPreviews] = await Promise.all([
         totalsForMatch({ ...scopeMatch, ...activityWindowMatch(start) }),
         totalsForMatch(scopeMatch),
+        ShareViewModel.countDocuments({ ...ownerScopeMatch, ...activityWindowMatch(start) }),
+        ShareViewModel.countDocuments(ownerScopeMatch),
       ]);
 
       // `opens`: how many times the document was actually opened, one per tab session
@@ -696,6 +709,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         totals: {
           views: totalViews,
           /**
+           * Owner-side opens in the window, recorded and *not* counted anywhere else in this
+           * response. Reported so the negative space is visible: `views: 0, ownerPreviews: 3` is
+           * "only you have opened this", not "nobody has". A floor, not a count — the flag needs
+           * a signed-in session, so a logged-out owner is indistinguishable from a recipient.
+           */
+          ownerPreviews: windowOwnerPreviews,
+          /**
            * Times the document was opened in the window, one per tab session. The only count of
            * events here: `views` counts recipients, so a reader who returned three times is one
            * view and three opens. `0` on traffic older than the visit-upsert fix, which wrote none.
@@ -722,6 +742,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         /** Lifetime figures for the same scope, for cards that genuinely want "ever". */
         totalsAllTime: {
           views: allTimeViews,
+          ownerPreviews: allTimeOwnerPreviews,
           opens: allTimeOpens,
           opensPartial: allTimeOpens < allTimeViews,
           ...(viewersOnly ? {} : { downloads: allTimeDownloads }),

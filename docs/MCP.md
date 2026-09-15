@@ -241,10 +241,20 @@ Views, downloads and viewers for a link over a window of days.
   (its `docId` and `shareId` both come from `lnkdrp_list_share_links`); a bare `shareId` resolves
   only a document's default link.
 - Out: `{ docId, shareId, perLink, days, analyticsTier: "basic"|"deep", viewerCount, totals: { views,
-  downloads, pagesViewed, timeSpentMs, authenticatedViewers, anonymousViewers }, series: [{ date,
+  ownerPreviews, opens, opensPartial, downloads, pagesViewed, timeSpentMs, authenticatedViewers,
+  anonymousViewers }, series: [{ date,
   views, downloads? }], viewers?: [...], anonymousViewers?: [...] }`, where each viewer row is
   `{ name: untrusted, email: untrusted, views, timeSpentMs, pagesViewed, pagesSeen,
   pageTimeMsByPage, firstSeen, lastSeen }`.
+- **Owner opens are excluded from every figure and counted separately.** The workspace owner and
+  their teammates opening a link are recorded (so "did my link work?" stays answerable) but never
+  counted in `views`, `opens`, `viewers` or the series; how many were set aside is
+  `totals.ownerPreviews`. So `views: 0, ownerPreviews: 3` means only the owner has opened it — not
+  that nobody has. **The split is best-effort.** It relies on the opener being signed in to lnkdrp
+  at the moment they opened the link. An owner who opens their own link in a private window, a
+  logged-out browser or a script is recorded as an anonymous recipient and lands in `views`. Two
+  anonymous views seconds after a link was created are therefore most likely the owner testing it,
+  and nothing in this response can prove otherwise — say so rather than reporting outreach landed.
 - **Read both viewer lists.** `viewers` holds the recipients who were signed in; `anonymousViewers`
   holds those who were not, and on a normal deck that is most of them — one in eight on the deck
   this was tested against. An agent that reads only `viewers` answers "who read this" with a

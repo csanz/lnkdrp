@@ -132,6 +132,12 @@ export type DocPatch = Partial<{
 
 export type ShareViewsTotals = {
   views: number;
+  /**
+   * Owner-side opens that were recorded and excluded from every other figure. `views: 0,
+   * ownerPreviews: 3` is "only the owner has opened this", not "nobody has". A floor: the flag
+   * needs a signed-in session, so a logged-out owner counts as a recipient.
+   */
+  ownerPreviews: number;
   /** Tab sessions in the window. Counts events, where `views` counts recipients. */
   opens: number;
   /** `opens` is missing rows for traffic older than per-session tracking: a floor, not a count. */
@@ -516,6 +522,7 @@ export class ApiClient {
       viewerCount: num(body.viewerCount),
       totals: {
         views: num(totals.views),
+        ownerPreviews: num(totals.ownerPreviews),
         opens: num(totals.opens),
         opensPartial: totals.opensPartial === true,
         downloads: num(totals.downloads),

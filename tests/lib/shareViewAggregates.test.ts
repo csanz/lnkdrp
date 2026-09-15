@@ -12,6 +12,7 @@ import {
   ACTIVITY_DAY_KEY_EXPR,
   LAST_ACTIVITY_EXPR,
   LINK_VIEWER_KEY_EXPR,
+  OWNER_PREVIEW_MATCH,
   RECIPIENT_ONLY_MATCH,
   activityInWindowExpr,
   activityWindowMatch,
@@ -186,5 +187,28 @@ describe("ACTIVITY_DAY_KEY_EXPR", () => {
     expect((ACTIVITY_DAY_KEY_EXPR as any).$dateToString.date).toEqual(LAST_ACTIVITY_EXPR);
     expect((ACTIVITY_DAY_KEY_EXPR as any).$dateToString.timezone).toBe("UTC");
     expect((ACTIVITY_DAY_KEY_EXPR as any).$dateToString.format).toBe("%Y-%m-%d");
+  });
+});
+
+describe("OWNER_PREVIEW_MATCH", () => {
+  test("is the strict complement of RECIPIENT_ONLY_MATCH", () => {
+    // `$ne: true` on the recipient side means a row with no value at all — written before the flag
+    // existed — is a recipient. The owner side must therefore require `true` outright, or those
+    // legacy rows would be counted on both sides and the two totals would sum past the row count.
+    expect(OWNER_PREVIEW_MATCH).toEqual({ isOwnerPreview: true });
+    expect(RECIPIENT_ONLY_MATCH).toEqual({ isOwnerPreview: { $ne: true } });
+  });
+
+  test("partitions every row exactly once", () => {
+    // A tiny Mongo stand-in for the two match shapes, so the partition claim is checked against
+    // the semantics Mongo actually has: `$ne: true` matches false, null and missing alike.
+    const rows: Array<{ isOwnerPreview?: boolean | null }> = [{ isOwnerPreview: true }, { isOwnerPreview: false }, { isOwnerPreview: null }, {}];
+    const isOwner = (r: { isOwnerPreview?: boolean | null }) => r.isOwnerPreview === true;
+    const isRecipient = (r: { isOwnerPreview?: boolean | null }) => r.isOwnerPreview !== true;
+    const owners = rows.filter(isOwner).length;
+    const recipients = rows.filter(isRecipient).length;
+    expect(owners).toBe(1);
+    expect(recipients).toBe(3);
+    expect(owners + recipients).toBe(rows.length);
   });
 });

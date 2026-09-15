@@ -137,6 +137,19 @@ export function windowStartUtc(days: number, now: Date = new Date()): Date {
 export const RECIPIENT_ONLY_MATCH = { isOwnerPreview: { $ne: true } } as const;
 
 /**
+ * The complement of {@link RECIPIENT_ONLY_MATCH}: rows the owning side generated.
+ *
+ * Excluding these from every figure is right, but excluding them *silently* leaves a reader no way
+ * to tell "nobody has opened this" from "only I have opened this, and you filtered me out". An
+ * agent judging whether outreach landed needs the second case named, so the excluded count is
+ * surfaced as its own total (`ownerPreviews`) beside the recipient figures — never mixed in.
+ *
+ * Strict `true` rather than `$ne: false`: rows written before the flag existed have no value and
+ * are recipients by the rule above, so they must not appear on this side either.
+ */
+export const OWNER_PREVIEW_MATCH = { isOwnerPreview: true } as const;
+
+/**
  * "Active in the last `days`" — the window every owner-facing figure is bounded by.
  *
  * Bounded by last activity, not by `createdDate`. A `ShareView` row is lifetime-per-(link, viewer),
