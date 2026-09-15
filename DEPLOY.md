@@ -7,6 +7,97 @@ one needs, the order to bring them up, how to verify a release, and how to roll 
 The older first-deployment checklist with key-generation walkthroughs lives in
 `docs/deploy/Deploy_1.md`; this file is the source of truth and links to it where useful.
 
+## 0. Launch sequence
+
+The whole runbook as one ordered list. Each line names the section that has the detail; do them
+in this order, because almost every step needs the one before it. Sections 11 and 12 are what
+you read after launch and what is deliberately not done.
+
+**A. Before anything — no traffic, one sitting**
+
+- [ ] Accounts and access in hand: Atlas, Vercel **Pro**, Stripe live, Google Cloud, Blob, OpenAI,
+      Resend, DNS for the three hosts, `flyctl` logged in (2).
+- [ ] Generate the five secrets once and store them (3). `REALTIME_SECRET` goes to three places.
+- [ ] `package.json` `engines` → `"22.x"` so Vercel matches the `node:22` service images (2).
+- [ ] Local gate on the exact commit you will release: `npx tsc --noEmit -p .`, `npx eslint src
+      realtime mcp tests`, the four vitest suites, `npx next build` (9).
+
+**B. Managed services (4)**
+
+- [ ] Atlas: cluster in **us-east-1**, database user, network access, URI **with `/lnkdrp` in the
+      path**, Cloud Backup + point-in-time ON, then run the migrations (4.1).
+- [ ] Stripe live: Pro $29 price · `ai_credits` meter · $0.10 metered price · webhook with the six
+      events and its signing secret · portal saved · revenue recovery on. Then verify both price
+      ids with the live key (4.2 step 9) — nothing in the code checks them.
+- [ ] Google OAuth: client with the exact callback URI; consent screen External and **In
+      production**, or only test users can sign in (4.3).
+- [ ] Blob: **public** store, connected to Production only (4.4).
+- [ ] OpenAI project key that allows `gpt-4o-mini` (4.5).
+- [ ] Resend: `lnkdrp.com` verified (SPF, DKIM, DMARC), API key, From addresses (4.6).
+
+**C. Web app on Vercel (5)**
+
+- [ ] Import the repo, Node 22, domains `lnkdrp.com` and `www` → redirect (5, steps 1–2).
+- [ ] Production env: every required row of the table in 5 step 3. Leave `NEXT_PUBLIC_REALTIME_URL`
+      **unset** until D is done; the app polls meanwhile.
+- [ ] Never set `API_TEST_BYPASS_AUTH`, `API_TEST_USER_ID`, `ADMIN_LOCALHOST_BYPASS`, `DEBUG_*`;
+      delete the legacy aliases (5, after the table).
+- [ ] Deployment Protection **off** for the production domain, or summary reruns silently never
+      start (5 step 5).
+- [ ] Deploy (5 step 6).
+- [ ] **Cron jobs.** Nothing to configure by hand: `vercel.json` registers all eight on deploy, and
+      Vercel sends `CRON_SECRET` from the env as the bearer. Confirm Vercel → Settings → Cron Jobs
+      lists exactly these eight (5.1 has flags and leases):
+
+      | Job | UTC schedule | What it does |
+      |---|---|---|
+      | `notification-emails` | every 5 min | doc-update emails and daily digests, download-request mail |
+      | `credits-cycle-reconcile` | hourly :10 | credit cycle grants, Free monthly floor top-up, re-queues skipped summaries |
+      | `usage-agg-reconcile` | hourly :20 | rebuilds usage aggregates from the credit ledger |
+      | `stripe-credits-report` | hourly :30 | sends on-demand credit usage to the Stripe meter — **this is billing** |
+      | `plan-limits` | hourly :40 | Free grace period: start, day-7/day-12 reminders, block, clear |
+      | `doc-metrics` | every 6 h | per-document metric snapshots |
+      | `stripe-credits-reconcile` | every 6 h :15 | syncs Stripe periods onto subscriptions, backstops cycle grants |
+      | `analytics-reconcile` | daily 03:50 | repairs link counter drift; reports page-time overruns as `error` |
+
+      Vercel **Pro is mandatory** — seven of the eight run more than once a day and Hobby rejects
+      the file. Not on Vercel Cron? Schedule the same eight with the crontab in 5.1 from one
+      always-on host; never two schedulers. The realtime and MCP services have no scheduled work.
+- [ ] Existing database only: snapshot, then the nine one-time data jobs in order (5.2). A fresh
+      database needs nothing beyond the migrations.
+- [ ] Preview environment scoped on its own: sandbox Stripe, its own database and Blob store,
+      different secrets (5.3).
+
+**D. Services on Fly (6, 7)**
+
+- [ ] Realtime: `fly launch`, **allocate the egress IP and add it to Atlas before the first
+      deploy**, secrets, `fly deploy --ha=false`, cert, CNAME, `/healthz` (6.2).
+- [ ] Set `NEXT_PUBLIC_REALTIME_URL=wss://realtime.lnkdrp.com` in Vercel and redeploy the web app
+      with a fresh build (6.2).
+- [ ] MCP: `fly launch`, `REALTIME_SECRET`, `fly deploy --ha=false`, **exactly one machine**, cert,
+      CNAME, `/healthz` (7).
+- [ ] Remember the services do not auto-deploy: `fly deploy` again whenever a file listed in 9
+      changes.
+
+**E. Verify (8) and hand over**
+
+- [ ] The fourteen release checks in 8, in order. The ones that fail silently without them:
+      security headers (1), published consent screen (2), pdf.js fonts (3), index check (4),
+      Stripe subscription showing two items (10), every cron `ok` an hour later (14).
+- [ ] Make one admin, on a dedicated account that never holds an API key (5.5).
+
+**F. Watch (11) — first week**
+
+- [ ] Uptime monitor on four URLs: `/api/health`, both `/healthz`, and `/api/monitor/crons` with
+      `Authorization: Bearer $CRON_SECRET` (200 healthy / 503 not). Point it at the cron monitor
+      after the first full round of jobs, not before (11, Crons).
+- [ ] Budgets and alerts: OpenAI, Vercel Spend Management, Atlas, Fly; Resend on a paid plan (11,
+      Costs).
+- [ ] Vercel Firewall rate-limit rule on `/api/*` with the exclusions in 12; the in-app ceilings
+      are a floor, not the answer.
+- [ ] One test restore of an Atlas snapshot before launch (11, Backups).
+- [ ] Read 12: the gaps that are known and deliberately open.
+
 ## 1. Topology
 
 ```
@@ -264,11 +355,13 @@ The auth bypass is refused whenever `NODE_ENV=production` (Vercel production, pr
 any member who can open the doc, and logs turn verbose. Debug on a preview instead.
 
 The admin API has a second bypass that needs no flag: outside `NODE_ENV=production`, any request
-whose `Host` header starts with `localhost:` or `127.0.0.1:` is an admin on 25 of the 26
-`/api/admin/*` routes, including deleting users and workspaces and changing credits. A browser
-tab on any website can send such a request to a running `next dev`. So never run `next dev`
-against a shared or production database, never expose it through a tunnel that rewrites the host
-header (for example `ngrok --host-header=rewrite`), and never serve staging from `next dev`.
+whose `Host` header starts with `localhost:` or `127.0.0.1:` is an admin on every `/api/admin/*`
+route (one shared gate, `src/lib/gating/requireAdmin.ts`), including deleting users and
+workspaces and changing credits. A browser tab on any website can send such a request to a
+running `next dev`. So never run `next dev` against a shared or production database, never expose
+it through a tunnel that rewrites the host header (for example `ngrok --host-header=rewrite`),
+and never serve staging from `next dev`. `ADMIN_LOCALHOST_BYPASS=0` turns it off in development
+when you need the real gate.
 
 4. Crons come from `vercel.json`; see 5.1. **Vercel Pro is required** because seven of the eight
    jobs run more than once a day (`notification-emails` every 5 minutes). PDF processing, URL
