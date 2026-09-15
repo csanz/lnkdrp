@@ -705,7 +705,8 @@ Run in this order; each step depends on the previous.
    local dev workspace ids and fails. Its first step checks headroom: on a Free workspace it needs
    one open document slot (it creates a second document only after releasing the first) and stops
    there with the numbers rather than failing twenty steps in with a `plan_limit` that reads like
-   a broken tool. Archive a document or use a Pro workspace. 22 steps when it passes.
+   a broken tool. Archive a document or use a Pro workspace. Its last line is a JSON summary
+   with the step count; exit 0 is the pass.
 9. Trigger one cron by hand and confirm 200:
    `curl -X POST https://lnkdrp.com/api/cron/plan-limits -H "Authorization: Bearer $CRON_SECRET"`.
    Then the analytics reconcile, which reports rather than just succeeding:
