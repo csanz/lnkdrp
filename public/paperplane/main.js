@@ -47,6 +47,11 @@ const CONFIG = {
   // headline is pixel-fixed, so anchoring the plane in pixels (not a fraction of the height) keeps
   // it beside headline lines 2-3 on 800-, 900- and 1080-tall frames alike.
   PLANE_VIEW_Y_PX: 700,
+  // ...but never lower than this fraction of the frame. A pixel anchor tuned on a 1000-tall
+  // screen put the plane's centre 30px above the bottom of a 730-tall laptop frame — inside the
+  // horizon fade, half clipped. On frames taller than PLANE_VIEW_Y_PX / this fraction (~1030px)
+  // the pixel value wins and nothing changes; on shorter ones the plane rides up with the frame.
+  PLANE_VIEW_Y_MAX_FRAC: 0.68,
   // Fraction of the frame height the tuned PLANE_BASE_POS.y lands at on a desktop (16:10 / 16:9)
   // frame; the runtime offsets from this reference to reach PLANE_VIEW_Y_PX.
   PLANE_BASE_VIEW_Y_FRAC: 0.334,
@@ -1226,7 +1231,10 @@ function placePlane() {
       : window.innerWidth < 1024
         ? CONFIG.PLANE_VIEW_X_FRAC + 0.05
         : CONFIG.PLANE_VIEW_X_FRAC;
-  const yPx = PLACE.yfrac != null ? PLACE.yfrac * window.innerHeight : CONFIG.PLANE_VIEW_Y_PX;
+  const yPx =
+    PLACE.yfrac != null
+      ? PLACE.yfrac * window.innerHeight
+      : Math.min(CONFIG.PLANE_VIEW_Y_PX, window.innerHeight * CONFIG.PLANE_VIEW_Y_MAX_FRAC);
   basePos.x = viewWidthAtPlane() * xFrac;
   // PLANE_BASE_POS.y was tuned to land PLANE_BASE_VIEW_Y_FRAC down a desktop frame, whose view
   // height is viewH / aspectComp() (narrow frames pull the camera back, which would otherwise
