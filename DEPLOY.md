@@ -12,7 +12,7 @@ The older first-deployment checklist with key-generation walkthroughs lives in
 ```
                      ┌──────────────────────────────────────────────┐
   browser / agent ─▶ │  lnkdrp.com  · Next.js on Vercel             │ ─▶ MongoDB Atlas (replica set)
-                     │  web app + REST API + 8 cron routes          │ ─▶ Vercel Blob (PDF storage)
+                     │  web app + REST API + 8 cron routes          │ ─▶ Vercel Blob (PDF storage), Resend (email)
                      └───────────────┬──────────────────────────────┘ ─▶ OpenAI (summary, AI compare)
                                      │ REST with the caller's lnk_ key  ─▶ Stripe (Pro + on-demand credits)
                                      │                                  ─▶ Google OAuth (sign-in)
@@ -35,12 +35,13 @@ All three share one Mongo cluster and one secret family. Nothing else is statefu
 
 - **MongoDB Atlas** cluster, M10 or larger for change streams under load (M0 works for a
   smoke test). It must be a replica set; Atlas always is.
-- **Vercel** project connected to this repository, Node 22 runtime (declared in
-  `package.json` `engines`).
+- **Vercel** project on the **Pro** plan connected to this repository, Node 22 runtime (declared
+  in `package.json` `engines`). Hobby cannot run the 5-minute cron or 300-second functions.
 - **Stripe** live account with the catalog from section 4.
 - **Google Cloud** OAuth client for sign-in.
 - **Vercel Blob** store.
 - **OpenAI** API key.
+- **Resend** account with the sending domain verified (4.6).
 - DNS control for `lnkdrp.com`, `mcp.lnkdrp.com`, `realtime.lnkdrp.com`.
 - A machine with Docker for the two services, or an account on a container host.
 
@@ -78,9 +79,12 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
 `docs/SUBSCRIPTION.md`; the live ones will differ.
 
 1. Product **Pro** with one recurring licensed price: $29 / month. Description:
-   "Unlimited share links and projects, deep viewer analytics, version history with AI compare,
-   1 collaborator included, and 300 AI credits a month (about 60 standard AI compares).
-   Summaries never use credits." No unit label.
+   "Unlimited share links and projects, deep viewer analytics, a version list recipients can
+   browse, 1 collaborator included, and 300 AI credits a month (about 60 standard AI compares)."
+   No unit label. Earlier revisions of this runbook said "version history with AI compare" and
+   "Summaries never use credits"; both stopped being true on 2026-09-13 (the summary costs 1
+   credit and version history with AI compare runs on credits on every plan). If the sandbox
+   product was created from that text, update it as well.
 2. Billing Meter **AI credits (on-demand)**: event name `ai_credits`, aggregation sum, customer
    mapped by `stripe_customer_id`, value key `value`.
 3. Product **On-demand AI credits** with one metered monthly price at $0.10 per unit on that
@@ -104,6 +108,11 @@ Web client with authorised redirect URI `https://lnkdrp.com/api/auth/callback/go
 Env: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Anyone with a Google account can sign in;
 there are no invite codes.
 
+OAuth consent screen: user type **External**, scopes `openid`, `email`, `profile` only, app
+domain and privacy/terms links set to `https://lnkdrp.com/privacy` and `https://lnkdrp.com/tos`,
+and publishing status **In production**. While the app is still "Testing", only the listed test
+users can sign in and everyone else gets an access error, which looks like a broken login.
+
 ### 4.4 Vercel Blob
 
 Create a store in the Vercel project, copy `BLOB_READ_WRITE_TOKEN`. Uploads go browser → Blob
@@ -113,6 +122,24 @@ with a server-issued token; the completion callback reaches the app at the publi
 ### 4.5 OpenAI
 
 `OPENAI_API_KEY`. All tiers currently use `gpt-4o-mini`; the tier changes depth, not model.
+Without the key uploads still complete and links work, but every AI summary is skipped (no credit
+is charged), so check it before announcing anything.
+
+### 4.6 Email (Resend)
+
+Every outbound email goes through Resend's HTTP API: download-request notices to the owner,
+approvals to the requester, workspace invites, plan-limit grace reminders and the notification
+digest.
+
+1. Add the sending domain `lnkdrp.com` in Resend and create the DNS records it asks for (SPF and
+   DKIM, plus a DMARC record if the domain has none). Wait for "Verified"; unverified domains
+   silently drop to spam or fail.
+2. Create an API key with send access. Env on the web app: `RESEND_API_KEY`,
+   `NOTIFICATION_EMAIL_FROM` (`LinkDrop <hi@lnkdrp.com>`), `INVITE_EMAIL_FROM` (same, or a
+   dedicated address).
+3. Leave `EMAIL_TRANSPORT` **unset** in production. `EMAIL_TRANSPORT=console` only logs emails
+   and is for local development; with neither it set to console nor `RESEND_API_KEY` present,
+   sending throws.
 
 ## 5. Web app on Vercel
 
@@ -133,16 +160,34 @@ with a server-issued token; the completion callback reaches the app at the publi
 | `CRON_SECRET` | generated; Vercel Cron sends it as `Authorization: Bearer` automatically |
 | `REALTIME_SECRET` | generated; same value on the services host |
 | `NEXT_PUBLIC_REALTIME_URL` | `wss://realtime.lnkdrp.com` (leave unset until section 6 is live; the app polls meanwhile) |
-| `NOTIFICATION_EMAIL_FROM` | `LinkDrop <hi@lnkdrp.com>` plus the email transport settings in `docs/DEV.md` |
+| `NEXT_PUBLIC_APP_URL` | `https://lnkdrp.com`; Stripe Checkout and portal return URLs are built from it (falls back to the request origin, which is wrong behind a preview or proxy) |
+| `RESEND_API_KEY`, `NOTIFICATION_EMAIL_FROM`, `INVITE_EMAIL_FROM` | from 4.6; leave `EMAIL_TRANSPORT` unset |
 | `LNKDRP_SHARE_PASSWORD_SECRET`, `LNKDRP_ORG_INVITE_TOKEN_SECRET` | optional |
 | `NEXT_PUBLIC_MCP_URL` | optional; default already `https://mcp.lnkdrp.com/mcp` |
+| `MONGODB_DB_NAME` | optional; only if the database name is not in the URI |
+| `BLOB_BASE_URL` | optional; the store host is derived from `BLOB_READ_WRITE_TOKEN`. Production refuses blob URLs from any other store when neither identifies it |
+| `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | optional overrides of the Checkout redirects |
+| `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it |
+| `ERROR_LOGGING_*` | optional; defaults are production-safe, see `docs/ERROR_LOGGING.md` |
+
+`NEXT_PUBLIC_*` values are baked into the client bundle at build time: after changing one, redeploy.
+`NEXTAUTH_SECRET` also signs the short-lived server-to-server token the app uses to re-run
+processing (writing a skipped summary, the Free monthly re-queue), so rotate it on a deploy, not
+mid-traffic.
 
 Never set `API_TEST_BYPASS_AUTH` or `ADMIN_LOCALHOST_BYPASS` in production. The code refuses
 the auth bypass outside development, but do not rely on that.
 
-4. Crons come from `vercel.json`; see section 5.1. Vercel Pro is required for schedules more
-   frequent than daily (notification emails run every 5 minutes).
-5. Deploy. The first production build takes a few minutes because of the PDF and canvas native
+4. Crons come from `vercel.json`; see section 5.1. **Vercel Pro is required**: for schedules more
+   frequent than daily (notification emails run every 5 minutes) and for function durations. PDF
+   processing, URL import, uploads, compare reruns and the plan-limits sweep declare
+   `maxDuration = 300`; on Hobby they are cut at 60 seconds and large decks fail mid-processing.
+5. Deployment Protection: keep **Vercel Authentication off for the production domain**. The app
+   calls its own `/api/uploads/:id/process` from the server (summary rerun, Free monthly re-queue
+   from the `credits-cycle-reconcile` cron); a protected deployment answers those calls with a
+   login page and the reruns silently never start. Protection on previews is fine; those two
+   features simply do not work there.
+6. Deploy. The first production build takes a few minutes because of the PDF and canvas native
    packages.
 
 ### 5.1 Cron jobs
@@ -172,6 +217,27 @@ fails when they drift:
   `scripts/cron/README.md` has the crontab lines. Keep the two schedules identical; leases make an
   accidental double scheduler harmless.
 - Job details and manual-trigger examples: `docs/CRON.md`.
+
+### 5.2 One-time data jobs
+
+A fresh production database needs only the migrations (4.1). If production starts from a
+database that already holds documents, run these once, in order, from a trusted machine, before
+announcing the release. Each is idempotent and prints what it would change; run it without the
+apply flag first. The `npm run` aliases hard-code `--env-file=.env.local`, so call the scripts
+directly with a production env file:
+
+| Step | Command | What it fixes |
+|---|---|---|
+| 1 | `node db/migration/run.mjs` | Indexes, including `sharelinks` (20260913) |
+| 2 | `npx tsx --env-file=prod.env scripts/sharelinks-backfill.ts` (add `--dry-run` first) | Creates the default share link row for documents from before multiple links |
+| 3 | `npx tsx --env-file=prod.env scripts/sharelinks-analytics-backfill.ts` (`--dry-run` first) | Gives old analytics rows their `shareLinkId`, `orgId` and `lastViewedAt`, flags owner previews and reconciles link counters |
+| 4 | `npx tsx --env-file=prod.env scripts/docchange-from-upload-repair.ts --apply` | Old version-change rows pointed "from" at the new upload |
+| 5 | `npx tsx --env-file=prod.env scripts/credit-balances-reconcile.ts --apply --reset-compare-tier` | Team workspaces seeded with Free starter credits; Free workspaces missing the 15-a-day cap; Free rows still on the old "standard" compare default (a replacement cost 6 instead of 3) |
+| 6 | `npx tsx --env-file=prod.env scripts/ai-ask-repair.ts --apply` | Stored summaries with an operating cost taken as the funding ask, and invented "Funding ask"/milestone metrics |
+| 7 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Must print "All share-analytics invariants hold" (see 9.1) |
+
+`prod.env` is a local file with at least `MONGODB_URI` (and `MONGODB_DB_NAME` if used); keep it out
+of the repository and delete it afterwards.
 
 ## 6. Realtime server
 
@@ -264,24 +330,33 @@ caller's own key. Details: `docs/MCP.md`.
 Run in this order; each step depends on the previous.
 
 1. `curl https://lnkdrp.com/api/health` → `{"ok":true,"mongo":"ok"}`.
-2. Sign in with Google. A personal workspace is created on first sign-in.
-3. Upload a PDF, open the share link in a private window, confirm the summary renders and the
-   view shows in the doc's quick stats.
-4. Open `/connect`, create a key, run the Verify curl. The pill reads "Key verified".
-5. `curl https://realtime.lnkdrp.com/healthz` shows at least one socket while your tab is open.
-6. Add the MCP to Claude Code with that key, open a session; the sidebar flips to
+2. Sign in with Google with an account that is not on the OAuth test-user list (proves the consent
+   screen is published). A personal workspace is created on first sign-in, on Free, with
+   **50 AI credits** in the sidebar.
+3. Upload a PDF, open the share link in a private window, confirm the summary renders, the
+   sidebar drops to **49 credits**, and the view shows in the doc's quick stats and as a
+   "Someone viewed" row on `/activity` without a reload.
+4. Replace the file once: expect the AI compare on `/doc/:id/history` and **46 credits** (summary 1
+   plus basic compare 2).
+5. Open `/connect`, create a key, run the Verify curl. The pill reads "Key verified".
+6. `curl https://realtime.lnkdrp.com/healthz` shows at least one socket while your tab is open.
+7. Add the MCP to Claude Code with that key, open a session; the sidebar flips to
    "1 connected · Claude Code" without a click. Ask it to share a PDF by URL and confirm the
    link. Or run the harness against production with a production key:
    `MCP_URL=https://mcp.lnkdrp.com/mcp npx tsx tests/mcp/e2e.ts` (it mints its own key from the
    database you point `MONGODB_URI` at; only run it with a key you then revoke).
-7. Trigger one cron by hand and confirm 200:
+8. Trigger one cron by hand and confirm 200:
    `curl -X POST https://lnkdrp.com/api/cron/plan-limits -H "Authorization: Bearer $CRON_SECRET"`.
    Then the analytics reconcile, which reports rather than just succeeding:
    `npm run cron:analytics-reconcile -- --dry-run --target=https://lnkdrp.com`. Expect
    `linksReconciled: 0` and `pageTimeOverruns: 0` on a healthy deploy — see section 9.1.
-8. Stripe: buy Pro with a real card, confirm the subscription shows in the dashboard and the
-   webhook delivery log shows `checkout.session.completed` handled. Cancel it from the portal.
-9. Revoke the test key from `/connect`; the sidebar returns to Not connected.
+9. Stripe: buy Pro with a real card, confirm the subscription shows in the dashboard, the credits
+   read 300, the Stripe return lands on `https://lnkdrp.com` (not a preview URL), and the webhook
+   delivery log shows `checkout.session.completed` handled. Cancel it from the portal.
+10. Email: request a download on a link with downloads off, from a private window; the owner
+    receives the notice from `NOTIFICATION_EMAIL_FROM` in the inbox, not spam.
+11. Run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` against production (read-only).
+12. Revoke the test key from `/connect`; the sidebar returns to Not connected.
 
 ## 9. Release workflow
 
@@ -348,6 +423,11 @@ the flush logic in `PdfJsViewer`.
 - Stripe live catalog and webhook do not exist yet; only the sandbox is configured.
 - Neither service is deployed yet. Fly.io is the chosen host (section 6.1), configs are in
   `deploy/fly/`; DNS for `mcp.lnkdrp.com` and `realtime.lnkdrp.com` still has to be created.
-- The uncommitted edits from the parallel session (doc page, dashboard subscription card,
-  history page, global styles, plan usage meter, paper plane) must be committed or discarded
-  before the release that follows this runbook.
+- Resend sending domain (4.6) and the Google consent screen publishing status (4.3) are not done.
+- Check the sandbox Stripe Pro product description against 4.2 (older text said summaries never use credits).
+- **Decision pending:** view counts can be inflated by anyone who posts made-up visitor ids to
+  `/api/share/:shareId/stats` (only a 120 requests per minute per IP limit applies). Decide on an
+  abuse budget or tighter rate limits before relying on view counts for billing or reports.
+- Free workspaces cannot buy extra credits; sign-up copy promises only the monthly top-up to 10
+  and Pro for more. Selling credit packs to Free would need a Checkout product and webhook grant.
+- If production starts from an existing database, run the one-time data jobs in 5.2.
