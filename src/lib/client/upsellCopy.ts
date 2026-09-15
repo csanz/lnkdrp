@@ -4,7 +4,7 @@
  * Two modes read from it: the blocking `UpgradeModal` (opened via `useUpgradeModal()` when an
  * action is refused or a Pro-only control is tapped) and the quiet inline `PlanLimitNotice`
  * (passive states such as the sidebar fallback nudge). Facts mirror `/pricing` and
- * `src/lib/billing/planLimits.ts`: Free = 3 active links, 1 project, 7-day analytics, single user,
+ * `src/lib/billing/planLimits.ts`: Free = 3 shared documents (links are unlimited), 1 project, 7-day analytics, single user,
  * version history and AI compare on credits; Pro = unlimited links and projects, full analytics
  * history, a version list recipients can browse, 300 credits a month, 1 collaborator included (more on
  * request), agents never take a seat.

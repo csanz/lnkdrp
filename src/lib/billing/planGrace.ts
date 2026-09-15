@@ -1,8 +1,8 @@
 /**
  * Plan-limit grace period sweep (Free workspaces).
  *
- * Free workspaces that are over a Free limit (active links, projects, collaborators) get a
- * `LIMIT_GRACE_DAYS` window before new links/projects are blocked. State lives on
+ * Free workspaces that are over a Free limit (shared documents, projects, collaborators) get a
+ * `LIMIT_GRACE_DAYS` window before new documents/projects are blocked. State lives on
  * `Org.planGrace = { startedAt, endsAt, blockedAt, remindersSent }` and is advanced by this sweep:
  *
  * - over limit, no grace   → start grace, email owners ("started"), activity `plan.grace_started`

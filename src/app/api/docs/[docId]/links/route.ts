@@ -3,7 +3,7 @@
  * (docs/prds/lnkdrp-multi-links.md).
  *
  * A document owns any number of links, each with its own label, audience, settings and analytics.
- * All the rules (the Free "3 active links" cap, the 50-per-document guard, validation, keeping
+ * All the rules (the 50-per-document guard, validation, keeping
  * `Doc.shareEnabled` coherent) live in `src/lib/share/links.ts`; this route is authorization,
  * shape and activity only.
  *
