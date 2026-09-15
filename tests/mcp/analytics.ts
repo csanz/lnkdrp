@@ -71,6 +71,8 @@ type Totals = {
   views?: number;
   /** Tab sessions: the count of opens, where `views` counts recipients. */
   opens?: number;
+  /** `opens` is missing rows for older traffic, so it is a floor rather than a count. */
+  opensPartial?: boolean;
   downloads?: number;
   pagesViewed?: number;
   timeSpentMs?: number;
@@ -145,12 +147,12 @@ function printViewers(s: Stats, indent = "    "): void {
 function printTotals(label: string, s: Stats): void {
   const t = s.totals ?? {};
   const views = t.views ?? 0;
-  const opens = typeof t.opens === "number" ? t.opens : null;
+  const opens = typeof t.opens === "number" && t.opensPartial !== true ? t.opens : null;
   // Opens beside views, because the gap between them is the only thing on this line that says
   // somebody came back: views counts recipients and opens counts sittings.
   const returns = opens !== null && opens > views ? ` (${opens - views} returned)` : "";
   log(
-    `${label}  views ${views} · opens ${opens ?? "–"}${returns} · viewers ${s.viewerCount ?? 0} · ` +
+    `${label}  views ${views} · opens ${opens ?? (t.opensPartial ? "not tracked for older traffic" : "–")}${returns} · viewers ${s.viewerCount ?? 0} · ` +
       `pages ${t.pagesViewed ?? 0} · time ${secs(t.timeSpentMs)} · downloads ${t.downloads ?? 0}`,
   );
 }

@@ -134,6 +134,8 @@ export type ShareViewsTotals = {
   views: number;
   /** Tab sessions in the window. Counts events, where `views` counts recipients. */
   opens: number;
+  /** `opens` is missing rows for traffic older than per-session tracking: a floor, not a count. */
+  opensPartial: boolean;
   downloads: number;
   pagesViewed: number;
   timeSpentMs: number;
@@ -515,6 +517,7 @@ export class ApiClient {
       totals: {
         views: num(totals.views),
         opens: num(totals.opens),
+        opensPartial: totals.opensPartial === true,
         downloads: num(totals.downloads),
         pagesViewed: num(totals.pagesViewed),
         timeSpentMs: num(totals.timeSpentMs),

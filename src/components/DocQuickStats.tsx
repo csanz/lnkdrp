@@ -53,6 +53,8 @@ type StatsResponse = {
     views?: number;
     /** Tab sessions in the window: the count of *opens*, where `views` counts recipients. */
     opens?: number;
+    /** `opens` is missing rows (traffic older than visit tracking); show it as unknown, not as a count. */
+    opensPartial?: boolean;
     downloads?: number;
     pagesViewed?: number;
     /** Total time on the document within the window (ms), summed across every viewer. */
@@ -380,8 +382,12 @@ export default function DocQuickStats({
     const timeSpentMs = t && typeof t.timeSpentMs === "number" ? num(t.timeSpentMs) : null;
     // `opens` is absent on a response from before it existed; `null` keeps the tile reserved
     // rather than asserting zero opens on a document that has plainly been read.
-    const opens = t && typeof t.opens === "number" ? num(t.opens) : null;
-    return { viewers, views, downloads, pages, timeSpentMs, opens };
+    // Withheld when the server says the figure is missing rows: every viewer had at least one
+    // sitting, so an `opens` below `views` is not a smaller number, it is an unknown one, and
+    // printing it invites the reader to conclude the deck was opened fewer times than it was read.
+    const opens = t && typeof t.opens === "number" && t.opensPartial !== true ? num(t.opens) : null;
+    const opensPartial = Boolean(t?.opensPartial);
+    return { viewers, views, downloads, pages, timeSpentMs, opens, opensPartial };
   }, [live, snapshot]);
 
   const series = useMemo(
@@ -415,12 +421,15 @@ export default function DocQuickStats({
    * How many of those opens were somebody coming back. Only shown when it is a real fact: equal
    * numbers mean nobody returned, and "0 returns" under every tile is noise.
    */
-  const opensSub =
-    stats.opens !== null && stats.viewers !== null && stats.opens > stats.viewers ? (
-      <span className="text-[var(--muted-2)]">
-        {(stats.opens - stats.viewers).toLocaleString()} return{stats.opens - stats.viewers === 1 ? "" : "s"}
-      </span>
-    ) : undefined;
+  const opensSub = stats.opensPartial ? (
+    <span className="text-[var(--muted-2)]" title="Some of this traffic predates per-session tracking, so opens cannot be counted for it">
+      not tracked yet
+    </span>
+  ) : stats.opens !== null && stats.viewers !== null && stats.opens > stats.viewers ? (
+    <span className="text-[var(--muted-2)]">
+      {(stats.opens - stats.viewers).toLocaleString()} return{stats.opens - stats.viewers === 1 ? "" : "s"}
+    </span>
+  ) : undefined;
 
   // Free: the count stays, the identities are Pro. Reserve the line while the plan is unknown.
   const viewersSub =

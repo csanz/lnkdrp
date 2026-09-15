@@ -701,6 +701,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
            * view and three opens. `0` on traffic older than the visit-upsert fix, which wrote none.
            */
           opens: windowOpens,
+          /**
+           * True when `opens` is known to be missing rows, so a reader can withhold it instead of
+           * printing something impossible.
+           *
+           * Every viewer had at least one sitting, so `opens` can never honestly be below `views`.
+           * When it is, the visit rows for that traffic were never written — it predates the
+           * visit-upsert fix — and the figure is a floor, not a count. Deriving this in each UI
+           * would be three copies of one rule; the server knows, so the server says.
+           */
+          opensPartial: windowOpens < totalViews,
           // Absent, not zero, when `?viewersOnly=1` skipped the aggregate that produces it.
           ...(viewersOnly ? {} : { downloads: totalDownloads }),
           pagesViewed,
@@ -713,6 +723,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         totalsAllTime: {
           views: allTimeViews,
           opens: allTimeOpens,
+          opensPartial: allTimeOpens < allTimeViews,
           ...(viewersOnly ? {} : { downloads: allTimeDownloads }),
           pagesViewed: allTimeTotals.pagesViewed,
         },

@@ -32,6 +32,8 @@ type MetricsResponse = {
     views: number;
     /** Tab sessions in the window: the count of *opens*, where `views` counts recipients. */
     opens?: number;
+    /** `opens` is missing rows for older traffic; the figure is a floor, not a count. */
+    opensPartial?: boolean;
     /** Absent on a `?viewersOnly=1` response, which never computes it — see the route header. */
     downloads?: number;
     pagesViewed: number;
@@ -715,7 +717,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
 
   const views = data?.totals?.views ?? 0;
   /** Tab sessions in the window: opens, not recipients. `null` on a response from before it existed. */
-  const opens = typeof data?.totals?.opens === "number" ? Math.max(0, Math.floor(data.totals.opens)) : null;
+  const opens =
+    typeof data?.totals?.opens === "number" && data.totals.opensPartial !== true
+      ? Math.max(0, Math.floor(data.totals.opens))
+      : null;
   const downloads = data?.totals?.downloads ?? 0;
   // `totals.downloads` is omitted by viewers-only responses: undefined means "not loaded", not zero.
   const downloadsKnown = typeof data?.totals?.downloads === "number";

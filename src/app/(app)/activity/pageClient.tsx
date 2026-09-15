@@ -172,6 +172,19 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
   const eventShareId = typeof item.meta?.shareId === "string" && item.meta.shareId ? item.meta.shareId : null;
   const shareId = eventShareId ?? item.doc?.shareId ?? null;
   const shareHref = shareId ? `/s/${encodeURIComponent(shareId)}` : null;
+  /**
+   * That link's own numbers, not the document's.
+   *
+   * The feed is where an owner finds out someone read the deck, and it already knows which link the
+   * event came through (`meta.shareId`) — but the only control on the row opened the recipient's
+   * view of the file. "Sequoia opened it" and "so how is the Sequoia link doing" is one thought,
+   * and answering it meant leaving the feed, finding the document, opening its links table and
+   * picking the row. Gone once the document is deleted: there is nothing left to scope to.
+   */
+  const linkMetricsHref =
+    shareId && item.doc?.id && item.type !== "doc.deleted"
+      ? `/doc/${encodeURIComponent(item.doc.id)}/metrics?shareId=${encodeURIComponent(shareId)}`
+      : null;
   const s = describeActivity(item);
   const href = hrefFor(item);
   const when = formatRelative(item.createdDate);
@@ -226,6 +239,16 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
                 rel="noreferrer"
               >
                 Share link
+              </Link>
+            </>
+          ) : null}
+          {/* Stays available on a revoked or archived link, unlike "Share link": the link no longer
+              opens, and what it did while it was live is exactly what an owner wants at that point. */}
+          {linkMetricsHref ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <Link href={linkMetricsHref} className="hover:text-[var(--fg)] hover:underline underline-offset-4">
+                Analytics
               </Link>
             </>
           ) : null}
