@@ -10,6 +10,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { UploadModel } from "@/lib/models/Upload";
 import { DocModel, allocateDocUploadVersion } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
+import { actorRateLimitResponse } from "@/lib/gating/actorRateLimit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -103,6 +104,8 @@ export async function GET(request: Request) {
       actor,
     );
   } catch (err) {
+    const limited = actorRateLimitResponse(err);
+    if (limited) return limited;
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/uploads] GET failed", { message });
     return NextResponse.json({ error: message }, { status: 400 });
@@ -286,6 +289,8 @@ export async function POST(request: Request) {
       actor,
     );
   } catch (err) {
+    const limited = actorRateLimitResponse(err);
+    if (limited) return limited;
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/uploads] POST failed", { traceId, message });
     return NextResponse.json({ error: message, traceId }, { status: 400 });

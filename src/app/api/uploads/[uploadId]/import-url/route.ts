@@ -11,6 +11,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import { debugError, debugLog } from "@/lib/debug";
+import { actorRateLimitResponse } from "@/lib/gating/actorRateLimit";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { safeFetchUrl, SafeFetchError } from "@/lib/http/safeFetchUrl";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -451,6 +452,8 @@ export async function POST(
 
     return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
   } catch (err) {
+    const limited = actorRateLimitResponse(err);
+    if (limited) return limited;
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[import-url] failed", { message, code: err instanceof SafeFetchError ? err.code : undefined });
     const friendly =

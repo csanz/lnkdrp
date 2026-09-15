@@ -8,6 +8,7 @@
  */
 import { NextResponse } from "next/server";
 import { ApiKeyAuthError } from "@/lib/gating/apiKeyActor";
+import { actorRateLimitResponse } from "@/lib/gating/actorRateLimit";
 import { debugError } from "@/lib/debug";
 
 export type ErrorJsonOptions = {
@@ -38,6 +39,9 @@ export function errorMessage(err: unknown): string {
  * In non-production environments the response also carries `detail` with the raw message.
  */
 export function errorJson(err: unknown, opts: ErrorJsonOptions): NextResponse {
+  // Over a temp-workspace or API-key ceiling: a 429 with `Retry-After`, not a 500.
+  const limited = actorRateLimitResponse(err);
+  if (limited) return limited;
   // A bad or read-only API key is a client error with its own status, not a 500.
   if (err instanceof ApiKeyAuthError) {
     return NextResponse.json({ error: err.code, message: err.message }, { status: err.status, headers: { "cache-control": "no-store" } });

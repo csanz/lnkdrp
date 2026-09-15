@@ -6,6 +6,7 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER } from "@/lib/gating/tempUserHeaders";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { tryResolveApiKeyActor } from "@/lib/gating/apiKeyActor";
+import { guardTempWorkspaceCreation } from "@/lib/gating/actorRateLimit";
 
 const ACTOR_CACHE = new WeakMap<Request, Promise<Actor>>();
 
@@ -475,6 +476,9 @@ async function resolveActorUncached(request: Request): Promise<Actor> {
   if (tempActor) return tempActor;
 
   // 3) Create a new temp user
+  // Charged only here, after both identity paths came up empty: a caller that keeps sending the
+  // temp-user headers it was given never pays again, so a returning visitor is never throttled.
+  await guardTempWorkspaceCreation(request);
   await connectMongo();
   const created = await createTempUser();
   const { orgId } = await ensurePersonalOrgForUserId({ userId: new Types.ObjectId(created.id) });

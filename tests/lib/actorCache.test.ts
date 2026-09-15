@@ -22,6 +22,7 @@ const {
   orgFindOne,
   membershipExists,
   getToken,
+  rateLimit,
 } = vi.hoisted(() => {
   // `vi.mock` factories are hoisted above imports, so everything they reference must be hoisted
   // too (and cannot use imported modules such as mongoose, hence fixed ObjectId hex literals).
@@ -38,6 +39,7 @@ const {
     orgFindOne: vi.fn(() => ({ select: () => ({ lean: async () => null }) })),
     membershipExists: vi.fn(async () => null),
     getToken: vi.fn(async (): Promise<unknown> => null),
+    rateLimit: vi.fn(async () => ({ ok: true, remaining: 1, retryAfterSec: 0 })),
   };
 });
 
@@ -55,6 +57,12 @@ vi.mock("@/lib/models/OrgMembership", () => ({
   OrgMembershipModel: { exists: membershipExists },
 }));
 vi.mock("next-auth/jwt", () => ({ getToken }));
+// The limiter itself is tested in actorRateLimit.test.ts; the guard around it stays real here so
+// these tests still prove *when* a temp workspace is charged for.
+vi.mock("@/lib/http/rateLimit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/http/rateLimit")>()),
+  rateLimit,
+}));
 
 import { resolveActor, resolveActorForStats, resolveExistingActor } from "@/lib/gating/actor";
 
@@ -170,5 +178,54 @@ describe("gating/actor.resolveExistingActor", () => {
     expect(actor?.userId).toBe(TEST_TEMP_ID);
     if (actor?.kind === "temp") expect(actor.isNew).toBe(false);
     expect(createTempUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("gating/actor temp-workspace ceiling", () => {
+  test("charges the IP once when a temp workspace is actually minted", async () => {
+    const request = new Request("http://localhost/api/sidebar", {
+      headers: { "x-forwarded-for": "203.0.113.7" },
+    });
+
+    await withinTimeout(resolveActor(request));
+
+    expect(createTempUser).toHaveBeenCalledTimes(1);
+    expect(rateLimit).toHaveBeenCalledTimes(1);
+    expect(rateLimit).toHaveBeenCalledWith(expect.objectContaining({ key: "temp-workspace:203.0.113.7" }));
+  });
+
+  test("does not charge a returning visitor whose temp-user headers verify", async () => {
+    userFindOne.mockReturnValueOnce({
+      select: () => ({ lean: async () => ({ _id: new Types.ObjectId(TEST_TEMP_ID), tempSecretHash: "hash" }) as never }),
+    });
+    verifyTempUserSecret.mockReturnValueOnce(true);
+    const request = new Request("http://localhost/api/sidebar", {
+      headers: {
+        "x-forwarded-for": "203.0.113.7",
+        "x-temp-user-id": TEST_TEMP_ID,
+        "x-temp-user-secret": "s3cret",
+      },
+    });
+
+    const actor = await withinTimeout(resolveActor(request));
+
+    expect(actor.kind).toBe("temp");
+    expect(createTempUser).not.toHaveBeenCalled();
+    expect(rateLimit).not.toHaveBeenCalled();
+  });
+
+  test("refuses to mint when the IP is over the limit, and mints nothing", async () => {
+    rateLimit.mockResolvedValueOnce({ ok: false, remaining: 0, retryAfterSec: 42 });
+    const request = new Request("http://localhost/api/sidebar", {
+      headers: { "x-forwarded-for": "203.0.113.7" },
+    });
+
+    await expect(withinTimeout(resolveActor(request))).rejects.toMatchObject({
+      status: 429,
+      code: "temp_workspace_rate_limited",
+      retryAfterSec: 42,
+    });
+    expect(createTempUser).not.toHaveBeenCalled();
+    expect(ensurePersonalOrgForUserId).not.toHaveBeenCalled();
   });
 });

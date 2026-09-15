@@ -16,6 +16,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ApiKeyModel, type ApiKeyScope } from "@/lib/models/ApiKey";
 import { API_KEY_PREFIX, hashApiKey, looksLikeApiKey, touchApiKeyUse } from "@/lib/agents/apiKeys";
 import { agentFromRequest, agentLabel } from "@/lib/activity/log";
+import { guardApiKeyRequest } from "@/lib/gating/actorRateLimit";
 import type { Actor } from "@/lib/gating/actor";
 
 /** Client label stored on a key when the request carries no agent identification. */
@@ -95,13 +96,21 @@ export async function verifyBearerToken(token: string | null | undefined): Promi
 }
 
 /**
- * Verify the request's bearer token and record the use (best-effort, throttled).
+ * Verify the request's bearer token, charge it against the key's ceiling, and record the use.
  *
  * Returns the same shape as `verifyBearerToken`; `key.useCount` reflects the count before this use.
+ *
+ * Throws `ActorRateLimitError` when the key is over its ceiling. The charge lives here rather than
+ * in `tryResolveApiKeyActor` so it also covers `GET /api/agent/whoami`, which authenticates the
+ * key directly and never goes through the REST seam. It is charged only for a key that already
+ * verified, so nobody can burn a real key's budget by guessing at it, and only once per `Request`.
  */
 export async function verifyBearer(request: Request): Promise<VerifyBearerResult> {
   const result = await verifyBearerToken(bearerTokenFromRequest(request));
   if (!result.ok) return result;
+  // Charged per key, not per IP: every agent's REST call leaves the MCP server from one address,
+  // so an IP limit would make one runaway loop everybody else's problem.
+  await guardApiKeyRequest(request, result.key.id);
   await touchApiKeyUse({ keyId: result.key.id, client: clientLabelFromRequest(request) });
   return result;
 }

@@ -5,8 +5,14 @@ import { Types } from "mongoose";
 const apiKeyFindOne = vi.fn();
 const apiKeyUpdateOne = vi.fn();
 const connectMongo = vi.fn(async () => undefined);
+/** The per-key ceiling has its own tests; here it must only stay out of the way (and off Mongo). */
+const rateLimit = vi.fn(async () => ({ ok: true, remaining: 1, retryAfterSec: 0 }));
 
 vi.mock("@/lib/mongodb", () => ({ connectMongo }));
+vi.mock("@/lib/http/rateLimit", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/http/rateLimit")>()),
+  rateLimit,
+}));
 vi.mock("@/lib/models/ActivityEvent", () => ({ ActivityEventModel: { create: vi.fn() } }));
 vi.mock("@/lib/models/ApiKey", () => ({
   API_KEY_SCOPES: ["read", "write"],

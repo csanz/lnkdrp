@@ -34,6 +34,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { resolveExistingActor } from "@/lib/gating/actor";
 import { debugError, debugLog } from "@/lib/debug";
+import { actorRateLimitResponse } from "@/lib/gating/actorRateLimit";
 
 export const runtime = "nodejs";
 
@@ -157,6 +158,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json(jsonResponse);
   } catch (err) {
+    const limited = actorRateLimitResponse(err);
+    if (limited) return limited;
     const message = err instanceof Error ? err.message : "Unknown error";
     if (err instanceof BlobUploadAuthError) {
       debugLog(1, "[api/blob/upload] rejected", { traceId, status: err.status, message });
