@@ -2,7 +2,7 @@
  * End-to-end harness for the lnkdrp MCP server (`mcp/`, see docs/MCP.md).
  *
  * Drives the real stack over the wire: mints a temporary API key straight in Mongo, connects an
- * MCP client to the running server, exercises the nine tools in the order an agent would use
+ * MCP client to the running server, exercises the eleven tools in the order an agent would use
  * them (including the share-link lifecycle: create a second link, fetch it, disable it, delete
  * it), checks that a bad key is rejected at `initialize`, and revokes the key again.
  *
@@ -73,6 +73,8 @@ const EXPECTED_TOOLS = [
   "lnkdrp_list_share_links",
   "lnkdrp_update_share_link",
   "lnkdrp_delete_share_link",
+  "lnkdrp_archive_doc",
+  "lnkdrp_delete_doc",
 ] as const;
 
 /** A syntactically valid key (`lnk_` + 32 base62 chars) that was never minted. */
@@ -346,7 +348,7 @@ async function main(): Promise<void> {
     });
 
     // 4. Tool catalogue.
-    await step("listTools exposes the nine lnkdrp tools", async () => {
+    await step("listTools exposes the eleven lnkdrp tools", async () => {
       const { tools } = await live.listTools();
       const names = tools.map((t) => t.name);
       for (const expected of EXPECTED_TOOLS) assert(names.includes(expected), `missing tool ${expected}; got ${names.join(", ")}`);
@@ -577,10 +579,40 @@ async function main(): Promise<void> {
       }
     });
 
-    // 17. Deleting it leaves the document with just its default link.
-    await step("lnkdrp_delete_share_link leaves one link", async () => {
-      const res = await callTool<{ ok: boolean }>(live, "lnkdrp_delete_share_link", { docId: shared.docId, linkId: extra.link.id });
+    // 17a. Destructive tools confirm with the human first. This Client declares no elicitation
+    // capability, so the server cannot prompt the user itself and must fall back to demanding an
+    // explicit `confirm: true`. An unconfirmed call therefore has to be REFUSED — with a preview the
+    // agent can show the user — and must delete nothing. This is the property that stops an agent
+    // deleting a link with 30 views because it thought that was what "clean up" meant.
+    await step("lnkdrp_delete_share_link without confirm is refused with a preview and deletes nothing", async () => {
+      let refused: ToolCallError | null = null;
+      try {
+        await callTool(live, "lnkdrp_delete_share_link", { docId: shared.docId, linkId: extra.link.id });
+      } catch (e) {
+        if (!(e instanceof ToolCallError)) throw e;
+        refused = e;
+      }
+      assert(refused, "an unconfirmed delete went through — the confirmation gate is not enforced");
+      const d = (refused.details ?? {}) as { requiresConfirmation?: unknown; preview?: { headline?: unknown; facts?: unknown; severity?: unknown }; reversible?: unknown };
+      assert(d.requiresConfirmation === true, "refusal did not carry requiresConfirmation: true");
+      assert(typeof d.preview?.headline === "string" && d.preview.headline.includes(extra.link.label), "preview does not name the link");
+      assert(Array.isArray(d.preview?.facts) && d.preview.facts.length > 0, "preview carries no facts for the user to weigh");
+      assert(d.preview?.severity === "low", `a never-opened link should be severity low, got ${String(d.preview?.severity)}`);
+      assert(d.reversible === false, "delete must be reported as irreversible");
+      const still = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId });
+      assert(still.links.length === 2, `the refused delete removed something: ${still.links.length} links remain`);
+      info("preview", `${d.preview?.headline} · severity ${String(d.preview?.severity)}`);
+    });
+
+    // 17b. With the human's yes relayed as confirm: true, the same call proceeds.
+    await step("lnkdrp_delete_share_link with confirm: true leaves one link", async () => {
+      const res = await callTool<{ ok: boolean; deleted?: { label?: string } }>(live, "lnkdrp_delete_share_link", {
+        docId: shared.docId,
+        linkId: extra.link.id,
+        confirm: true,
+      });
       assert(res.ok === true, "delete_share_link did not return ok");
+      assert(res.deleted?.label === extra.link.label, "response does not echo what was deleted");
       const list = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId });
       assert(list.links.length === 1, `expected 1 link after delete, got ${list.links.length}`);
       assert(list.links[0]?.isDefault === true, "the surviving link is not the default one");

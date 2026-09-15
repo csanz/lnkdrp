@@ -267,7 +267,9 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   { name: "lnkdrp_create_share_link", purpose: "Add another link to a document, one per recipient, with its own label, password and expiry.", access: "write" },
   { name: "lnkdrp_list_share_links", purpose: "Every link of a document with its settings, status and view counts.", access: "read" },
   { name: "lnkdrp_update_share_link", purpose: "Change or disable one link without touching the document's other links.", access: "write" },
-  { name: "lnkdrp_delete_share_link", purpose: "Delete one link; its past analytics are kept.", access: "write" },
+  { name: "lnkdrp_delete_share_link", purpose: "Delete one link after confirming with you; its past analytics are kept.", access: "write" },
+  { name: "lnkdrp_archive_doc", purpose: "Archive a document to free a slot, or bring it back. Reversible; keeps analytics. Confirms with you first.", access: "write" },
+  { name: "lnkdrp_delete_doc", purpose: "Delete a document permanently, after confirming with you. Prefer archive if you might want it back.", access: "write" },
 ];
 
 /** Short answers to the questions people hit first. Shared by `/connect` and the public guides. */

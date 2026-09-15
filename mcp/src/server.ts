@@ -16,6 +16,7 @@ import {
   registerListShareLinksTool,
   registerUpdateShareLinkTool,
 } from "./tools/shareLinks";
+import { registerArchiveDocTool, registerDeleteDocTool } from "./tools/docLifecycle";
 import { registerSharePdfTool } from "./tools/sharePdf";
 import { registerWhoamiTool } from "./tools/whoami";
 
@@ -41,6 +42,8 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   registerListShareLinksTool(server, ctx);
   registerUpdateShareLinkTool(server, ctx);
   registerDeleteShareLinkTool(server, ctx);
+  registerArchiveDocTool(server, ctx);
+  registerDeleteDocTool(server, ctx);
 
   server.registerResource(
     "workspace",

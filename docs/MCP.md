@@ -318,11 +318,61 @@ Create an extra link for a document.
   nothing and comes back with `planWarning`.
 - Errors: `validation`, `not_found` (unknown link, or a link on another document), `forbidden`.
 
-### `lnkdrp_delete_share_link` (write, destructive)
+### `lnkdrp_delete_share_link` (write, destructive, confirms first)
 
-- In: `{ linkId, docId }`.
-- Out: `{ ok: true }`. The link stops resolving at once; its analytics rows are kept.
-- Errors: `validation` (the default link cannot be deleted - disable it instead), `not_found`.
+- In: `{ linkId, docId, confirm?: boolean }`.
+- Out: `{ ok: true, deleted: { linkId, shareId, label }, severity }`. The link stops resolving at
+  once and cannot be brought back; its analytics rows are kept in the document's totals.
+- **Confirms with the human before acting** — see "Destructive tools" below.
+- Errors: `validation` (the default link cannot be deleted - disable it instead; or the user did
+  not confirm), `not_found`.
+
+### `lnkdrp_archive_doc` (write, destructive when archiving, confirms first)
+
+- In: `{ docId, archived: boolean, confirm?: boolean }`.
+- Out: `{ ok, docId, isArchived, linksAffected, planWarning? }`; `{ unchanged: true }` when the
+  document was already in the requested state.
+- Archiving is **reversible**: every link on the document stops resolving, the document leaves
+  the Free plan's shared-document count, and all analytics are kept. It is the third alternative
+  `lnkdrp_share_pdf`'s `plan_limit` error offers. `archived: false` brings everything back and
+  re-checks the cap (may fail with `plan_limit` on Free).
+- Archiving confirms with the human first, because it takes every link down at once. Unarchiving
+  needs no confirmation.
+- Errors: `validation` (not confirmed), `not_found`, `plan_limit` (unarchiving at the cap).
+
+### `lnkdrp_delete_doc` (write, destructive, confirms first)
+
+- In: `{ docId, confirm?: boolean }`.
+- Out: `{ ok: true, deleted: { docId, title, links } }`. Permanent from the owner's side: the
+  document, its file and every link disappear from the workspace.
+- Prefer `lnkdrp_archive_doc` when the document might be wanted again.
+- Errors: `validation` (still processing; or not confirmed), `not_found`.
+
+### Destructive tools: how confirmation works
+
+Nothing irreversible happens on an agent's say-so alone. Before `lnkdrp_delete_share_link`,
+`lnkdrp_delete_doc` or `lnkdrp_archive_doc(archived: true)` changes anything, the server builds a
+**preview** — what will go, how many recipients opened it and when, how many links are affected,
+whether it can be undone — and gets a human's yes in one of two ways:
+
+1. **Through the protocol**, when the connecting client declared the `elicitation` capability at
+   `initialize`. The user is shown the preview and a single checkbox; the agent cannot answer it.
+   Claude Code declares this (`{"elicitation":{"form":{}}}` as of 2.1.261), so on Claude Code the
+   prompt appears in the client and the tool proceeds only on an explicit accept. Decline, cancel or
+   an unticked box all mean no, and the tool returns `validation` with nothing changed.
+2. **Through `confirm: true`**, when the client did not declare elicitation. The first call is
+   **refused** with `validation`, `details.requiresConfirmation: true` and `details.preview`
+   (`headline`, `facts[]`, `severity`, `reversible`). The agent must show that preview to its user,
+   ask, and only if the user says yes call again with `confirm: true`. The tool descriptions say
+   this in plain terms, so an agent without elicitation support still has to make the ask rather
+   than proceed quietly.
+
+`severity` is `high` when the target has any recipient traffic, recent views, or several live
+links — the description tells the agent never to confirm a `high` preview on its own judgement.
+`low` means nothing has ever been opened.
+
+`confirm: true` is an assertion that the human agreed; setting it pre-emptively is a misuse of
+the tool, not a shortcut.
 
 ### Untrusted text
 
@@ -451,7 +501,7 @@ What it does, in order, printing each step with its timing:
    (`createApiKey`; override the workspace with `E2E_ORG_ID` / `E2E_USER_ID`).
 3. Asserts that a client with a well-formed but unknown key gets **HTTP 401** from `initialize`.
 4. Connects as client `lnkdrp-e2e/1.0` (this is the name the workspace shows under Agents).
-5. `listTools` contains the nine tools.
+5. `listTools` contains the eleven tools.
 6. `lnkdrp_whoami` returns the expected `orgId`, `userId`, the key's prefix, and a `client` that
    identifies `lnkdrp-e2e`.
 7. `lnkdrp_share_pdf` with the W3C dummy PDF (`E2E_PDF_URL` to change), `title: "MCP e2e"`,

@@ -17,6 +17,7 @@ import { z } from "zod";
 import type { ApiClient, ApiShareLink, PlanWarning, ShareLinkPatch } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, ToolError } from "../errors";
+import { requireHumanConfirmation, severityFromTraffic } from "../confirm";
 import { docIdSchema, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
 
 const linkIdSchema = z.string().regex(OBJECT_ID_RE, "linkId must be a 24-character hex id").describe("Share link id (24 hex chars), from lnkdrp_list_share_links");
@@ -73,6 +74,12 @@ export const updateShareLinkInputShape = {
 };
 
 export const deleteShareLinkInputShape = {
+  confirm: z
+    .boolean()
+    .optional()
+    .describe(
+      "Only for clients that cannot show the user a confirmation prompt. Set to true ONLY after you have shown the user what will be deleted and they have explicitly said yes in conversation. Never set it pre-emptively.",
+    ),
   linkId: linkIdSchema,
   docId: docIdSchema,
 };
@@ -183,15 +190,45 @@ export function registerDeleteShareLinkTool(server: McpServer, ctx: ToolContext)
     {
       title: "Delete share link",
       description:
-        "Delete one share link. The link stops resolving immediately; its past analytics are kept. A document's default link " +
-        "cannot be deleted (validation error) - disable it with lnkdrp_update_share_link instead. " +
+        "Delete one share link. The link stops resolving immediately and this cannot be undone; its past analytics are kept. " +
+        "A document's default link cannot be deleted (validation error) - disable it with lnkdrp_update_share_link instead. " +
+        "DESTRUCTIVE: this tool confirms with the human before acting. If the client supports it, the user is shown the link, " +
+        "its traffic and a yes/no prompt directly. If not, the call fails with requiresConfirmation and a preview in details - " +
+        "show that preview to the user, ask them, and call again with confirm: true only if they say yes. A preview with " +
+        "severity 'high' means recipients have opened this link; do not confirm that on your own judgement. " +
         SAFETY_TAIL,
       inputSchema: deleteShareLinkInputShape,
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
+      // Look before deleting: the preview is built from the same list the agent already reads, so
+      // the person confirming sees the link's real label and real traffic, not an id.
+      const links = await ctx.api.listShareLinks(args.docId);
+      const link = links.find((l) => l.id === args.linkId);
+      if (!link) throw new ToolError("not_found", "No share link with that id on this document.");
+      if (link.isDefault) throw new ToolError("validation", "The default link cannot be deleted; disable it with lnkdrp_update_share_link instead.");
+      const doc = await ctx.api.getDoc(args.docId);
+      const severity = severityFromTraffic({ recipientViews: link.viewCount });
+      await requireHumanConfirmation(
+        server,
+        {
+          headline: `Delete the share link "${link.label}" on "${doc.title ?? "this document"}"`,
+          facts: [
+            link.viewCount > 0
+              ? `Opened by ${link.viewCount} recipient${link.viewCount === 1 ? "" : "s"}${link.lastViewedAt ? `, most recently ${link.lastViewedAt.slice(0, 10)}` : ""}`
+              : "Never opened by a recipient",
+            link.downloadCount > 0 ? `Downloaded ${link.downloadCount} time${link.downloadCount === 1 ? "" : "s"}` : "Never downloaded",
+            `Anyone holding ${link.shareId} will get "not found" from now on`,
+            "Its analytics stay in the document's totals",
+            ...(link.audience ? [`Audience note: ${link.audience}`] : []),
+          ],
+          severity,
+          reversible: false,
+        },
+        args,
+      );
       await ctx.api.deleteShareLink(args.docId, args.linkId);
-      return { ok: true };
+      return { ok: true, deleted: { linkId: link.id, shareId: link.shareId, label: link.label }, severity };
     }),
   );
 }

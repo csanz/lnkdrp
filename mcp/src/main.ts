@@ -203,6 +203,12 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
         state.agentHeader = header;
       }
     }
+    // What the client can do for us. Whether it declares `elicitation` decides how the destructive
+    // tools confirm with the human: a real prompt through the protocol, or the `confirm: true`
+    // fallback that makes the agent do the asking. Logged so a live connection answers the question
+    // instead of a guess.
+    const caps = server.server.getClientCapabilities();
+    log(`client capabilities: ${JSON.stringify(caps ?? {})} (client ${known?.name ?? "?"}/${known?.version ?? "?"})`);
   };
 
   await server.connect(session.transport);
