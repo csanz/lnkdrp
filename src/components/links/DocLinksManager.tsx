@@ -16,6 +16,7 @@ import {
   CalendarDaysIcon,
   ChartBarIcon,
   ClockIcon,
+  EllipsisHorizontalIcon,
   LinkIcon,
   LockClosedIcon,
   PlusIcon,
@@ -26,8 +27,10 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { CopyButton } from "@/components/CopyButton";
 import ShareLinkModal, { type ShareLinkFormValues } from "@/components/modals/ShareLinkModal";
@@ -100,6 +103,130 @@ const LINK_ACTION_CLASS =
 
 const NEW_LINK_CLASS =
   "inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 text-[12px] font-semibold text-[var(--fg)] shadow-sm transition-colors hover:bg-[var(--panel-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]";
+
+const ROW_MENU_WIDTH = 200;
+
+type RowMenuItem = {
+  label: string;
+  onSelect: () => void;
+  /** Extra line under the label, for the action whose consequence is not obvious from its name. */
+  hint?: string;
+  destructive?: boolean;
+};
+
+/**
+ * The "⋯" at the end of a link row, holding the management actions that used to be laid out as
+ * buttons — five per row on a `min-w-[980px]` table inside `overflow-x-auto`, so the last one,
+ * Delete, was cut off rather than wrapped, and "Make default" wrapping to two lines made the
+ * default row and the others come out different heights.
+ *
+ * Rendered through a portal with `position: fixed`, the same way `DocActionsMenu` does it: an
+ * absolutely-positioned menu inside the scroll container would be clipped by the very overflow
+ * that caused the problem. Opens below the button, right-aligned to it, and flips above when the
+ * viewport ends first.
+ *
+ * Nothing destructive completes in here. Delete only *starts* the row's existing inline confirm
+ * ("Delete? / Delete / Cancel"), so a mis-click in a popover cannot remove a link that has analytics.
+ */
+function RowMenu({ label, items, disabled }: { label: string; items: RowMenuItem[]; disabled?: boolean }) {
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  const reposition = useCallback(() => {
+    const btn = buttonRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    const margin = 8;
+    const gap = 6;
+    const left = Math.max(margin, Math.min(window.innerWidth - ROW_MENU_WIDTH - margin, rect.right - ROW_MENU_WIDTH));
+    const measuredH = menuRef.current?.getBoundingClientRect().height ?? 160;
+    let top = rect.bottom + gap;
+    if (top + measuredH + margin > window.innerHeight) top = Math.max(margin, rect.top - gap - measuredH);
+    setPos({ top, left });
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    // Position after paint so the menu can be measured, then the first item takes focus so the
+    // keyboard path works: Escape closes, Tab moves through the items, Enter picks.
+    window.requestAnimationFrame(() => {
+      reposition();
+      menuRef.current?.querySelector<HTMLButtonElement>("[role=menuitem]")?.focus();
+    });
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (buttonRef.current?.contains(t) || menuRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open, reposition]);
+
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      role="menu"
+      aria-label={label}
+      style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, width: ROW_MENU_WIDTH }}
+      className="fixed z-[1000] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] p-1 shadow-lg"
+    >
+      {items.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setOpen(false);
+            item.onSelect();
+          }}
+          className={[
+            "block w-full rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors focus:outline-none focus-visible:bg-[var(--panel-hover)] hover:bg-[var(--panel-hover)]",
+            item.destructive ? "text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40" : "text-[var(--fg)]",
+          ].join(" ")}
+        >
+          <span className="block font-medium">{item.label}</span>
+          {item.hint ? <span className="block text-[11px] leading-4 text-[var(--muted)]">{item.hint}</span> : null}
+        </button>
+      ))}
+    </div>
+  ) : null;
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={label}
+        title={label}
+        onClick={() => setOpen((v) => !v)}
+        className={`${LINK_ACTION_CLASS} inline-flex h-[30px] w-[30px] items-center justify-center px-0!`}
+      >
+        <EllipsisHorizontalIcon className="h-4 w-4" aria-hidden="true" />
+      </button>
+      {menu && typeof document !== "undefined" ? createPortal(menu, document.body) : null}
+    </>
+  );
+}
 
 /** One "Label · value" cell of the settings summary row. */
 function SettingItem({ label, value }: { label: string; value: string }) {
@@ -665,20 +792,26 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                             Downloads columns link to the same place, but an underlined number is not
                             a control anybody reads as "analytics" — this is the labelled version of
                             that path, and it is why the complaint was "I still don't see the link". */}
-                        <Link
-                          href={metricsHref(link.shareId)}
-                          className={`${LINK_ACTION_CLASS} inline-flex items-center gap-1.5`}
-                          title={`Views, viewers and time on page for ${link.label}`}
-                        >
-                          <ChartBarIcon className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden="true" />
-                          Analytics
-                        </Link>
-                        {/* A hairline, so the read action does not read as the fifth management
+                        {/* The confirm beat takes the whole cell, Analytics included. Squeezed in
+                            beside the other controls it was wider than Analytics · Edit · ⋯ and
+                            reflowed every column header onto two lines for as long as the question
+                            stood; on its own it fits in the same space. */}
+                        {confirming ? null : (
+                          <Link
+                            href={metricsHref(link.shareId)}
+                            className={`${LINK_ACTION_CLASS} inline-flex items-center gap-1.5`}
+                            title={`Views, viewers and time on page for ${link.label}`}
+                          >
+                            <ChartBarIcon className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden="true" />
+                            Analytics
+                          </Link>
+                        )}
+                        {/* A hairline, so the read action does not read as the third management
                             button. It is also the only control here carrying an icon; keep it that way. */}
-                        {canManage ? <span aria-hidden="true" className="mx-0.5 h-4 w-px shrink-0 bg-[var(--border)]" /> : null}
+                        {canManage && !confirming ? <span aria-hidden="true" className="mx-0.5 h-4 w-px shrink-0 bg-[var(--border)]" /> : null}
                         {!canManage ? null : confirming ? (
                           <>
-                            <span className="text-[12px] text-[var(--muted)]">Delete?</span>
+                            <span className="whitespace-nowrap text-[12px] text-[var(--muted)]">Delete?</span>
                             <button type="button" disabled={busy} onClick={() => void deleteLink(link)} className={LINK_ACTION_CLASS}>
                               {busy ? "Deleting…" : "Delete"}
                             </button>
@@ -688,6 +821,10 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                           </>
                         ) : (
                           <>
+                            {/* Edit stays a button: it is the management action people reach for in
+                                a normal sitting, and the modal it opens is where every other setting
+                                lives. The rest go behind "⋯" — every row then has the same two
+                                controls and the same height, whether or not it is the default. */}
                             <button
                               type="button"
                               disabled={busy}
@@ -697,27 +834,34 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                               }}
                               className={LINK_ACTION_CLASS}
                             >
-                              Edit
+                              {busy ? "Saving…" : "Edit"}
                             </button>
-                            <button type="button" disabled={busy} onClick={() => void setLinkEnabled(link, !link.enabled)} className={LINK_ACTION_CLASS}>
-                              {busy ? "Saving…" : link.enabled ? "Disable" : "Enable"}
-                            </button>
-                            {link.isDefault ? null : (
-                              <>
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => void makeDefault(link)}
-                                  className={LINK_ACTION_CLASS}
-                                  title="Show this link in the document's side panel and make it the document's primary link"
-                                >
-                                  Make default
-                                </button>
-                                <button type="button" disabled={busy} onClick={() => setConfirmDeleteId(link.id)} className={LINK_ACTION_CLASS}>
-                                  Delete
-                                </button>
-                              </>
-                            )}
+                            <RowMenu
+                              label={`More actions for ${link.label}`}
+                              disabled={busy}
+                              items={[
+                                {
+                                  label: link.enabled ? "Disable link" : "Enable link",
+                                  hint: link.enabled ? "The address stops resolving; its stats stay" : undefined,
+                                  onSelect: () => void setLinkEnabled(link, !link.enabled),
+                                },
+                                ...(link.isDefault
+                                  ? []
+                                  : [
+                                      {
+                                        label: "Make default",
+                                        hint: "Shown in the side panel as the document's primary link",
+                                        onSelect: () => void makeDefault(link),
+                                      },
+                                      {
+                                        label: "Delete…",
+                                        destructive: true,
+                                        // Starts the inline confirm; nothing is deleted from the menu.
+                                        onSelect: () => setConfirmDeleteId(link.id),
+                                      },
+                                    ]),
+                              ]}
+                            />
                           </>
                         )}
                       </div>
