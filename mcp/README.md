@@ -138,8 +138,34 @@ lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the
 - list — In `{ docId }` → `GET /api/docs/:id/links` → `{ docId, links }`, default link first.
 - update — In `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?, expiresAt?, allowRevisionHistory? }`
   (≥1 setting) → `PATCH /api/docs/:id/links/:linkId` → `{ link, shareUrl, planWarning?, planNote? }`.
-- delete — In `{ linkId, docId }` → `DELETE /api/docs/:id/links/:linkId` → `{ ok: true }`. Soft archive; analytics kept; the
-  default link refuses (disable it instead).
+- delete — In `{ linkId, docId, confirm? }` → confirms with the human first (below) → `DELETE /api/docs/:id/links/:linkId`
+  → `{ ok: true, deleted: { linkId, shareId, label }, severity }`. Soft archive; analytics kept; the default link refuses
+  (disable it instead).
+
+### Documents (`lnkdrp_archive_doc`, `lnkdrp_delete_doc`)
+The two document-level operations the app has always had and the MCP lacked. Both confirm with the human first.
+
+- archive — In `{ docId, archived: boolean, confirm? }` → `PATCH /api/docs/:id { isArchived }` → `{ ok, docId, isArchived,
+  linksAffected, planWarning? }`. Reversible: every link stops resolving, the document leaves the Free plan's shared-document
+  count, analytics are kept. `archived: false` brings it back and re-checks the cap. Gated despite being reversible because it
+  takes every link down at once; unarchiving needs no confirmation.
+- delete — In `{ docId, confirm? }` → `DELETE /api/docs/:id` → `{ ok: true, deleted: { docId, title, links } }`. Permanent from
+  the owner's side. Refuses while `status` is `preparing`.
+
+### Destructive tools confirm with the human (`src/confirm.ts`)
+`destructiveHint: true` is metadata a client may display, not a gate. Before `delete_share_link`, `delete_doc` or
+`archive_doc(archived: true)` changes anything, the server builds a preview — what goes, recipient views and last-viewed,
+links affected, whether it is reversible, a `low`/`high` severity — and gets a yes one of two ways:
+
+1. **Elicitation**, when the client declared `elicitation` at `initialize` (`server.server.getClientCapabilities()`; the
+   server logs it per connection). The user sees the preview and one checkbox through the protocol; the agent cannot
+   answer it. Claude Code 2.1.261 declares `{"elicitation":{"form":{}}}`. Decline, cancel or unticked all mean no.
+2. **`confirm: true`**, when it did not. The first call is refused with `validation`, `details.requiresConfirmation: true`
+   and `details.preview`; the tool description tells the agent to show the preview, ask, and call again with the flag only
+   on a yes. Weaker — it trusts the agent to ask — but the agent has to make the ask rather than proceed quietly.
+
+`tests/mcp/e2e.ts` exercises path 2 (its client declares no elicitation): an unconfirmed delete must be refused with the
+preview and delete nothing; the same call with `confirm: true` proceeds.
 
 Also registered: resource `lnkdrp://workspace` (whoami JSON) and prompt `share-and-report`.
 
