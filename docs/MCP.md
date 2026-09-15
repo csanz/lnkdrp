@@ -374,6 +374,17 @@ links — the description tells the agent never to confirm a `high` preview on i
 `confirm: true` is an assertion that the human agreed; setting it pre-emptively is a misuse of
 the tool, not a shortcut.
 
+**Which path does my client take?** Do not guess — the server tells you. At every `initialize`
+it logs the client's declared capabilities:
+
+```
+[mcp] client capabilities: {"elicitation":{"form":{}},"roots":{"listChanged":true}} (client claude-code/2.1.261)
+```
+
+If `elicitation` is present the prompt appears in the client; if it is absent the tool refuses
+until `confirm: true`. Each client differs and versions change, so check the log for the client
+you are actually connecting rather than relying on the Claude Code example above.
+
 ### Untrusted text
 
 Anything that came from a document or a viewer is wrapped, not returned bare:
