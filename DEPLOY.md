@@ -29,21 +29,26 @@ The older first-deployment checklist with key-generation walkthroughs lives in
 | Realtime server | Fly.io machine (`deploy/fly/realtime.fly.toml`); any socket-capable host works | Vercel functions cannot keep a WebSocket open; see 6.1 |
 | MCP server | Fly.io machine (`deploy/fly/mcp.fly.toml`) | Long-lived MCP sessions; holds client identity per session |
 
-All three share one Mongo cluster and one secret family. Nothing else is stateful.
+The web app and the realtime server share one Mongo cluster; all three share one secret family.
+Nothing else is stateful.
 
 ## 2. Prerequisites
 
-- **MongoDB Atlas** cluster, M10 or larger for change streams under load (M0 works for a
-  smoke test). It must be a replica set; Atlas always is.
-- **Vercel** project on the **Pro** plan connected to this repository, Node 22 runtime (declared
-  in `package.json` `engines`). Hobby cannot run the 5-minute cron or 300-second functions.
+- **MongoDB Atlas** cluster, M10 or larger for change streams under load and for backups (M0
+  works for a smoke test). It must be a replica set; Atlas always is.
+- **Vercel** project on the **Pro** plan connected to this repository, Node 22 runtime, Fluid
+  compute on (the default). Hobby rejects this `vercel.json`: its crons run at most once a day.
+  `package.json` `engines` overrides the project setting, and the current `">=22"` deploys the
+  latest 24.x; change it to `"22.x"` to match the services images (`node:22-alpine`).
 - **Stripe** live account with the catalog from section 4.
 - **Google Cloud** OAuth client for sign-in.
 - **Vercel Blob** store.
 - **OpenAI** API key.
 - **Resend** account with the sending domain verified (4.6).
 - DNS control for `lnkdrp.com`, `mcp.lnkdrp.com`, `realtime.lnkdrp.com`.
-- A machine with Docker for the two services, or an account on a container host.
+- `flyctl` installed and `fly auth login` done against an org with a payment method (static
+  egress IP and always-on machines are billed). Docker is only needed for the non-Fly paths in
+  6.3 and 7.
 
 ## 3. Secrets
 
@@ -53,25 +58,47 @@ Generate once, store in a password manager, paste into each service's env:
 openssl rand -base64 32   # NEXTAUTH_SECRET
 openssl rand -hex 32      # CRON_SECRET
 openssl rand -hex 32      # REALTIME_SECRET   (shared by web app, realtime, mcp)
+openssl rand -hex 32      # LNKDRP_SHARE_PASSWORD_SECRET
+openssl rand -hex 32      # LNKDRP_ORG_INVITE_TOKEN_SECRET
 ```
 
-`LNKDRP_SHARE_PASSWORD_SECRET` and `LNKDRP_ORG_INVITE_TOKEN_SECRET` fall back to
-`NEXTAUTH_SECRET`; set them separately only if you want independent rotation.
+Set the last two before first traffic and change them only after a leak. They fall back to
+`NEXTAUTH_SECRET`, but they are encryption keys for stored data: link passwords and pending
+invite tokens are saved encrypted with them, so an owner can read a link's password back and a
+workspace owner can copy a pending invite URL. Adding one later works like a rotation (11,
+Secrets rotation).
 
 ## 4. Managed services, in order
 
 ### 4.1 MongoDB Atlas
 
-1. Create the cluster and a database user with read/write on `lnkdrp`.
+1. Create the cluster on **AWS us-east-1 (N. Virginia)** and a database user with read/write on
+   `lnkdrp` (it includes the `changeStream` action realtime needs). Vercel functions run in
+   `iad1` (Settings → Functions → Function Region; leave it there) and both Fly apps in `iad`; a
+   cluster anywhere else adds latency to every request.
 2. Network access: allow Vercel's egress (or `0.0.0.0/0` with a strong password, which is what
-   Vercel recommends) and the static IP of the services host.
-3. Copy the `mongodb+srv://…/lnkdrp` URI. This is `MONGODB_URI` for all three pieces.
-4. Run migrations from a trusted machine with that URI in the environment:
+   Vercel recommends) and the realtime host's egress IP (on Fly, allocate one first; see 6.2).
+   The MCP server never talks to Atlas.
+3. Copy the URI with the database name in the path:
+   `mongodb+srv://user:pass@cluster.x.mongodb.net/lnkdrp?retryWrites=true&w=majority`. Atlas's
+   Connect string has no database path; add `/lnkdrp`. This is `MONGODB_URI` for the web app and
+   the realtime server. The MCP server takes none.
+4. Backups: turn on Cloud Backup and Continuous Cloud Backup (point-in-time restore) before any
+   real customer data exists. M0 has no backups. Before every migration run or one-time data job
+   against a database with real data, take an on-demand snapshot (Atlas → Backup → Take Snapshot
+   Now) and write its time down. Migrations and data jobs have no down step; restoring that
+   snapshot is the only undo (11, Backups).
+5. Run migrations from a trusted machine with that URI in the environment:
    ```
-   MONGODB_URI='mongodb+srv://…' node db/migration/run.mjs --dry-run
-   MONGODB_URI='mongodb+srv://…' node db/migration/run.mjs
+   MONGODB_URI='mongodb+srv://…/lnkdrp' node db/migration/run.mjs --dry-run
+   MONGODB_URI='mongodb+srv://…/lnkdrp' node db/migration/run.mjs
    ```
-   Migrations create indexes only; they are idempotent and safe to re-run.
+   `--dry-run` only lists migration files; it does not connect. The real run prints
+   `skip (already applied)` or `run:` for each file, so read that output. Migrations create and
+   drop indexes and also rewrite data (orgId backfills, personal-org dedupe, `$unset` of null
+   `slug` and `claimTokenHash`). Applied ones are recorded in the `migrations` collection and
+   skipped on re-run. A failing migration (for example E11000 while building a unique index)
+   stops the runner at that file; a re-run resumes there once the data is fixed.
 
 ### 4.2 Stripe (live mode)
 
@@ -84,7 +111,8 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
    No unit label. Earlier revisions of this runbook said "version history with AI compare" and
    "Summaries never use credits"; both stopped being true on 2026-09-13 (the summary costs 1
    credit and version history with AI compare runs on credits on every plan). If the sandbox
-   product was created from that text, update it as well.
+   product was created from that text, update it as well. Checkout shows a promotion code field,
+   so every active live promotion code applies to Pro; create codes deliberately.
 2. Billing Meter **AI credits (on-demand)**: event name `ai_credits`, aggregation sum, customer
    mapped by `stripe_customer_id`, value key `value`.
 3. Product **On-demand AI credits** with one metered monthly price at $0.10 per unit on that
@@ -95,18 +123,47 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
    `checkout.session.completed`, `customer.subscription.created`,
    `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`,
    `invoice.payment_failed`. Copy the signing secret to `STRIPE_WEBHOOK_SECRET`.
-5. Customer portal: enable cancel and payment-method update; return URL `https://lnkdrp.com/dashboard`.
-6. Env: `STRIPE_SECRET_KEY` (sk_live), `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_PRICE_ID`
-   (the $29 price), `STRIPE_AI_CREDITS_PRICE_ID` (the $0.10 price), `STRIPE_CREDITS_METER_EVENT_NAME=ai_credits`.
+5. Customer portal (live mode): enable cancel, payment-method update and invoice history. Turn
+   **off** subscription updates (switch plans, change quantity): the app sells one Pro seat at
+   quantity 1 and ignores quantity, so a change only raises the bill. Click Save once; until the
+   live configuration is saved, `/api/stripe/portal` returns 400 and Manage subscription fails.
+   The app sets the return URL on every session (`NEXT_PUBLIC_APP_URL` + `/dashboard?tab=overview`).
+6. Revenue recovery (Billing settings, live mode): turn on Smart Retries and the failed-payment
+   email, and cancel the subscription after the last retry. The app treats only `active` and
+   `trialing` as Pro. A failed renewal moves the subscription to `past_due`, which drops the
+   workspace to Free limits and turns on-demand off at once. It returns to Pro on the next
+   successful payment (`invoice.paid`); on-demand stays off until an owner turns it on again.
+7. Env: `STRIPE_SECRET_KEY` (sk_live), `STRIPE_PRICE_ID` (the $29 price),
+   `STRIPE_AI_CREDITS_PRICE_ID` (the $0.10 price). `STRIPE_CREDITS_METER_EVENT_NAME` defaults to
+   `ai_credits`; set it only if the live meter uses another event name.
+   `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` is optional; no current page reads it.
+8. Set `STRIPE_AI_CREDITS_PRICE_ID` before the first live Checkout. Nothing checks it at startup.
+   Without it Checkout still sells Pro, but with no metered item; workspaces can still turn
+   on-demand on and spend credits, and `stripe-credits-report` never sends that usage to Stripe.
+   Setting the variable later does not fix existing subscriptions: add the $0.10 price to each
+   one in Stripe; the `customer.subscription.updated` event that follows links it. Resending an
+   old event does nothing, the webhook skips events it already processed.
+9. Before the first production deploy, check both ids with the live key:
+   ```
+   curl -s https://api.stripe.com/v1/prices/$STRIPE_PRICE_ID -u "$STRIPE_SECRET_KEY:"
+   curl -s https://api.stripe.com/v1/prices/$STRIPE_AI_CREDITS_PRICE_ID -u "$STRIPE_SECRET_KEY:"
+   ```
+   Both must return a price with `"livemode": true`; a sandbox id returns `No such price`. The
+   credits price must show `recurring.usage_type` `metered` and `recurring.meter` equal to the id
+   of the meter whose `event_name` is `ai_credits`. The code checks neither: a sandbox id fails
+   only when a customer clicks Upgrade, and a price on another meter accepts usage that never
+   reaches an invoice.
 
-Keep the sandbox for the preview environment; never point a preview at live keys.
+Keep the sandbox for the preview environment (5.3); never point a preview at live keys.
 
 ### 4.3 Google OAuth
 
-Web client with authorised redirect URI `https://lnkdrp.com/api/auth/callback/google`, and
-`https://<preview-domain>/api/auth/callback/google` for previews if you want sign-in there.
-Env: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Anyone with a Google account can sign in;
-there are no invite codes.
+Web client with authorised redirect URI `https://lnkdrp.com/api/auth/callback/google`. On Vercel,
+NextAuth builds the callback from the request host, not `NEXTAUTH_URL`, so sign-in works only on
+hosts listed here; the production `*.vercel.app` URL fails with `redirect_uri_mismatch`. Google
+accepts no wildcards and every preview deployment URL is new, so for previews list a stable host
+(a branch URL or `staging.lnkdrp.com`). Env: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Anyone
+with a Google account can sign in; there are no invite codes.
 
 OAuth consent screen: user type **External**, scopes `openid`, `email`, `profile` only, app
 domain and privacy/terms links set to `https://lnkdrp.com/privacy` and `https://lnkdrp.com/tos`,
@@ -115,37 +172,51 @@ users can sign in and everyone else gets an access error, which looks like a bro
 
 ### 4.4 Vercel Blob
 
-Create a store in the Vercel project, copy `BLOB_READ_WRITE_TOKEN`. Uploads go browser → Blob
-with a server-issued token; the completion callback reaches the app at the public site URL, so
-`VERCEL_BLOB_CALLBACK_URL` is only needed when the app is not reachable there (local tunnels).
+Create a store with **public** access. Every write uses `access: "public"`, and production accepts
+only URLs on `<storeId>.public.blob.vercel-storage.com`, derived from `BLOB_READ_WRITE_TOKEN`.
+Connect the store to Production only and give Preview its own store; with one store on every
+environment, preview uploads land beside production files and each environment accepts the
+other's URLs. Copy `BLOB_READ_WRITE_TOKEN`.
+
+Uploads go browser → Blob with a token minted by `/api/blob/upload`: PDF up to 250 MB and the page
+preview PNG under `docs/`, PNG/JPEG/WebP under `org-avatars/`. The browser tells the app when an
+upload is done; the app registers no Blob completion callback, so `VERCEL_BLOB_CALLBACK_URL` is
+not used.
 
 ### 4.5 OpenAI
 
 `OPENAI_API_KEY`. All tiers currently use `gpt-4o-mini`; the tier changes depth, not model.
 Without the key uploads still complete and links work, but every AI summary is skipped (no credit
-is charged), so check it before announcing anything.
+is charged), so check it before announcing anything. Use a project key; if the project restricts
+models, allow `gpt-4o-mini`. A refused or budget-capped call does not fail the upload either: the
+document completes without a summary.
 
 ### 4.6 Email (Resend)
 
-Every outbound email goes through Resend's HTTP API: download-request notices to the owner,
-approvals to the requester, workspace invites, plan-limit grace reminders and the notification
-digest.
+Every outbound email goes through Resend's HTTP API: a confirmation to the requester and a notice
+to the owner on a download request, the approval link to the requester, doc-update emails
+(immediate, or a daily digest after 23:00 UTC), plan-limit grace emails and workspace invites.
 
 1. Add the sending domain `lnkdrp.com` in Resend and create the DNS records it asks for (SPF and
    DKIM, plus a DMARC record if the domain has none). Wait for "Verified"; unverified domains
    silently drop to spam or fail.
 2. Create an API key with send access. Env on the web app: `RESEND_API_KEY`,
    `NOTIFICATION_EMAIL_FROM` (`LinkDrop <hi@lnkdrp.com>`), `INVITE_EMAIL_FROM` (same, or a
-   dedicated address).
-3. Leave `EMAIL_TRANSPORT` **unset** in production. `EMAIL_TRANSPORT=console` only logs emails
-   and is for local development; with neither it set to console nor `RESEND_API_KEY` present,
-   sending throws.
+   dedicated address). Invites read only `INVITE_EMAIL_FROM`; everything else uses
+   `NOTIFICATION_EMAIL_FROM`, falling back to `INVITE_EMAIL_FROM`. No email sets a Reply-To, so
+   replies go to the From address: give it a real inbox.
+3. Leave `EMAIL_TRANSPORT` **unset** in production. `EMAIL_TRANSPORT=console` logs instead of
+   sending and is for local development, but invites ignore it and always call Resend. Without
+   `RESEND_API_KEY`, sending throws.
 
 ## 5. Web app on Vercel
 
-1. Import the repository; framework preset Next.js; root directory `/`; Node 22.
+1. Import the repository; framework preset Next.js; root directory `/`; Node 22 (see 2 on
+   `engines`; confirm with `process.version` in a function log).
 2. Domains: `lnkdrp.com` (primary) and `www.lnkdrp.com` redirecting to it.
-3. Environment variables (Production). Required unless marked optional:
+3. Environment variables (Production; Preview is in 5.3). Required unless marked optional.
+   `.env.example` is the development template and is incomplete for production; this table is
+   the source of truth.
 
 | Variable | Value |
 |---|---|
@@ -153,35 +224,55 @@ digest.
 | `NEXTAUTH_URL` | `https://lnkdrp.com` |
 | `NEXTAUTH_SECRET` | generated |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | from 4.3 |
-| `MONGODB_URI` | from 4.1 |
+| `MONGODB_URI` | from 4.1, with `/lnkdrp` in the path |
 | `BLOB_READ_WRITE_TOKEN` | from 4.4 |
 | `OPENAI_API_KEY` | from 4.5 |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, `STRIPE_AI_CREDITS_PRICE_ID`, `STRIPE_CREDITS_METER_EVENT_NAME`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | from 4.2 |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, `STRIPE_AI_CREDITS_PRICE_ID` | from 4.2; a missing credits price fails silently (4.2 step 8) |
 | `CRON_SECRET` | generated; Vercel Cron sends it as `Authorization: Bearer` automatically |
 | `REALTIME_SECRET` | generated; same value on the services host |
 | `NEXT_PUBLIC_REALTIME_URL` | `wss://realtime.lnkdrp.com` (leave unset until section 6 is live; the app polls meanwhile) |
 | `NEXT_PUBLIC_APP_URL` | `https://lnkdrp.com`; Stripe Checkout and portal return URLs are built from it (falls back to the request origin, which is wrong behind a preview or proxy) |
 | `RESEND_API_KEY`, `NOTIFICATION_EMAIL_FROM`, `INVITE_EMAIL_FROM` | from 4.6; leave `EMAIL_TRANSPORT` unset |
-| `LNKDRP_SHARE_PASSWORD_SECRET`, `LNKDRP_ORG_INVITE_TOKEN_SECRET` | optional |
-| `NEXT_PUBLIC_MCP_URL` | optional; default already `https://mcp.lnkdrp.com/mcp` |
-| `MONGODB_DB_NAME` | optional; only if the database name is not in the URI |
+| `LNKDRP_SHARE_PASSWORD_SECRET`, `LNKDRP_ORG_INVITE_TOKEN_SECRET` | generated (3); rotate only after a leak |
+| `ERROR_LOGGING_ENABLED` | `true`. The default is off outside development, so production records nothing in `errorevents` without it |
+| `STRIPE_CREDITS_METER_EVENT_NAME` | optional; defaults to `ai_credits` |
+| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | optional; no current page reads it (Checkout is created on the server) |
+| `NEXT_PUBLIC_MCP_URL` | optional; default `https://mcp.lnkdrp.com/mcp`. Without it, `/connect` shows `http://localhost:8787/mcp` on any origin other than `NEXT_PUBLIC_SITE_URL` (a `*.vercel.app` or preview URL) |
+| `MONGODB_DB_NAME` | leave unset. The realtime server ignores it and takes the database from the URI path. A URI without `/lnkdrp` plus this variable makes realtime watch another database: sockets connect, `/healthz` is ok, and no live events arrive |
 | `BLOB_BASE_URL` | optional; the store host is derived from `BLOB_READ_WRITE_TOKEN`. Production refuses blob URLs from any other store when neither identifies it |
-| `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | optional overrides of the Checkout redirects |
+| `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | optional; leave unset. They apply only when both are set; one alone is ignored and both redirects come from `NEXT_PUBLIC_APP_URL` |
 | `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it |
-| `ERROR_LOGGING_*` | optional; defaults are production-safe, see `docs/ERROR_LOGGING.md` |
+| other `ERROR_LOGGING_*` | optional; see `docs/ERROR_LOGGING.md` |
 
-`NEXT_PUBLIC_*` values are baked into the client bundle at build time: after changing one, redeploy.
+`NEXT_PUBLIC_*` values are inlined at build time into the browser bundle and the server routes
+(the realtime ticket, Stripe return URLs, email links). After changing one, redeploy with a fresh
+build. Promoting an older deployment brings back the values it was built with. Any other Vercel
+env change also reaches functions only on the next deployment.
 `NEXTAUTH_SECRET` also signs the short-lived server-to-server token the app uses to re-run
 processing (writing a skipped summary, the Free monthly re-queue), so rotate it on a deploy, not
 mid-traffic.
 
-Never set `API_TEST_BYPASS_AUTH` or `ADMIN_LOCALHOST_BYPASS` in production. The code refuses
-the auth bypass outside development, but do not rely on that.
+Never set `API_TEST_BYPASS_AUTH`, `API_TEST_USER_ID` or `ADMIN_LOCALHOST_BYPASS` in production.
+The auth bypass is refused whenever `NODE_ENV=production` (Vercel production, previews and
+`next start`), but do not rely on that. Delete the legacy aliases `LNKDRP_CRON_SECRET` and
+`STRIPE_USAGE_PRICE_ID`; the code still reads them when the current name is unset. Leave
+`DEBUG_LEVEL`, `DEBUG_MODE` and `NEXT_PUBLIC_DEBUG_LEVEL` unset: at level 1 or higher,
+`GET /api/docs/:id?debug=1` returns the raw document record, including password hash fields, to
+any member who can open the doc, and logs turn verbose. Debug on a preview instead.
 
-4. Crons come from `vercel.json`; see section 5.1. **Vercel Pro is required**: for schedules more
-   frequent than daily (notification emails run every 5 minutes) and for function durations. PDF
-   processing, URL import, uploads, compare reruns and the plan-limits sweep declare
-   `maxDuration = 300`; on Hobby they are cut at 60 seconds and large decks fail mid-processing.
+The admin API has a second bypass that needs no flag: outside `NODE_ENV=production`, any request
+whose `Host` header starts with `localhost:` or `127.0.0.1:` is an admin on 25 of the 26
+`/api/admin/*` routes, including deleting users and workspaces and changing credits. A browser
+tab on any website can send such a request to a running `next dev`. So never run `next dev`
+against a shared or production database, never expose it through a tunnel that rewrites the host
+header (for example `ngrok --host-header=rewrite`), and never serve staging from `next dev`.
+
+4. Crons come from `vercel.json`; see 5.1. **Vercel Pro is required** because seven of the eight
+   jobs run more than once a day (`notification-emails` every 5 minutes). PDF processing, URL
+   import, uploads, compare reruns and all eight cron routes declare `maxDuration = 300`.
+   Processing continues in `after()` inside that same 300 s budget, so a deck that cannot be
+   processed in 5 minutes fails on any plan unless `maxDuration` is raised (Pro with Fluid compute
+   allows up to 800 s).
 5. Deployment Protection: keep **Vercel Authentication off for the production domain**. The app
    calls its own `/api/uploads/:id/process` from the server (summary rerun, Free monthly re-queue
    from the `credits-cycle-reconcile` cron); a protected deployment answers those calls with a
@@ -192,52 +283,166 @@ the auth bypass outside development, but do not rely on that.
 
 ### 5.1 Cron jobs
 
-Every job is one HTTP route, one schedule, and one runner script, and `tests/lib/cronMap.test.ts`
-fails when they drift:
+Every job is one HTTP route, one schedule, one runner script (`scripts/cron/cron.<job>.ts`) and
+one `cron:<job>` npm script, and `tests/lib/cronMap.test.ts` fails when they drift:
 
-| Job | Schedule (`vercel.json`) | Run by hand |
-|---|---|---|
-| `doc-metrics` | `0 */6 * * *` | `npm run cron:doc-metrics` |
-| `stripe-credits-reconcile` | `15 */6 * * *` | `npm run cron:stripe-credits-reconcile` |
-| `stripe-credits-report` | `30 * * * *` | `npm run cron:stripe-credits-report` |
-| `credits-cycle-reconcile` | `10 * * * *` | `npm run cron:credits-cycle-reconcile` |
-| `usage-agg-reconcile` | `20 * * * *` | `npm run cron:usage-agg-reconcile` |
-| `notification-emails` | `*/5 * * * *` | `npm run cron:notification-emails` |
-| `plan-limits` | `40 * * * *` | `npm run cron:plan-limits` |
-| `analytics-reconcile` | `50 3 * * *` | `npm run cron:analytics-reconcile` |
+| Job | Schedule (`vercel.json`, UTC) | `--dry-run` | Lease |
+|---|---|---|---|
+| `doc-metrics` | `0 */6 * * *` | ignored | no |
+| `stripe-credits-reconcile` | `15 */6 * * *` | ignored | yes |
+| `stripe-credits-report` | `30 * * * *` | ignored | yes |
+| `credits-cycle-reconcile` | `10 * * * *` | yes | no |
+| `usage-agg-reconcile` | `20 * * * *` | ignored | no |
+| `notification-emails` | `*/5 * * * *` | yes | yes |
+| `plan-limits` | `40 * * * *` | yes | yes |
+| `analytics-reconcile` | `50 3 * * *` | yes | no |
+
+Never pass `--dry-run` to a job marked "ignored" expecting a preview: the runner still adds
+`?dryRun=1`, the route ignores it and does the real work, including Stripe meter events and credit
+grants.
 
 - **Production:** Vercel Cron calls `GET /api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`
-  on the schedule. Routes take a Mongo lease so an overlapping run is skipped, record a
-  `CronHealth` row, and accept `POST` as well.
-- **By hand, any environment:** `npm run cron:<job> -- --target=https://lnkdrp.com` with
-  `CRON_SECRET` in the shell (add `--dry-run` where the route supports it). Against a local dev
-  server the secret is optional. The runners in `scripts/cron/` only call the route; they never
+  on the schedule. Every route records a `CronHealth` row and accepts `POST` as well. The four
+  jobs marked "Lease" hold a Mongo lease (6 minutes) and answer `{ skipped: "locked" }` while
+  another run holds it. The other four have no lease but are idempotent, so a double run repeats
+  work without double-granting or double-sending.
+- **By hand, any environment:** from a checkout,
+  `CRON_SECRET='…' npx tsx scripts/cron/cron.<job>.ts --target=https://lnkdrp.com` (add
+  `--dry-run` only where the table says yes, `--limit=N` to shrink a run). Do not use
+  `npm run cron:<job>` against production: the alias loads `--env-file=.env.local`, exits with
+  `.env.local: not found` where that file is missing, and without `--target` calls
+  `CRON_TARGET_URL`, then `NEXT_PUBLIC_SITE_URL`, then `http://localhost:3001`. Without a
+  checkout, use curl: `curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/<job>`.
+  Against a local dev server the secret is optional. The runners only call the route; they never
   re-implement a job.
-- **Without Vercel Cron:** the same runners work from a system crontab on the services host;
-  `scripts/cron/README.md` has the crontab lines. Keep the two schedules identical; leases make an
-  accidental double scheduler harmless.
-- Job details and manual-trigger examples: `docs/CRON.md`.
+- **Without Vercel Cron:** the Fly images contain neither the runners nor the repo, so schedule
+  the routes with curl from any always-on host. Vercel schedules are UTC; set the host or
+  `CRON_TZ=UTC` to match:
+  ```
+  CRON_SECRET=…
+  0 */6 * * *  curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/doc-metrics
+  15 */6 * * * curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/stripe-credits-reconcile
+  30 * * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/stripe-credits-report
+  10 * * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/credits-cycle-reconcile
+  20 * * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/usage-agg-reconcile
+  */5 * * * *  curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/notification-emails
+  40 * * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/plan-limits
+  50 3 * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/analytics-reconcile
+  ```
+  `scripts/cron/README.md` leaves `analytics-reconcile` out of its crontab, and its lines need
+  `.env.local`; use this list. Keep the schedules identical to `vercel.json` and run one scheduler
+  only: a second one is skipped by the leased jobs and only repeats work in the others.
+- Job details and manual-trigger examples: `docs/CRON.md` (it predates `analytics-reconcile`).
 
 ### 5.2 One-time data jobs
 
 A fresh production database needs only the migrations (4.1). If production starts from a
-database that already holds documents, run these once, in order, from a trusted machine, before
-announcing the release. Each is idempotent and prints what it would change; run it without the
-apply flag first. The `npm run` aliases hard-code `--env-file=.env.local`, so call the scripts
-directly with a production env file:
+database that already holds documents, take an Atlas snapshot first (4.1 step 4), then run these
+once, in order, from a trusted machine, before announcing the release. Each is idempotent. The
+flags differ: steps 4 and 5 **write unless you pass `--dry-run`**; steps 2, 3 and 6 to 8 only
+preview unless you pass `--apply`. Always run the preview form first and read its output. The
+`npm run` aliases hard-code `--env-file=.env.local`, so call the scripts directly with a
+production env file:
 
 | Step | Command | What it fixes |
 |---|---|---|
-| 1 | `node db/migration/run.mjs` | Indexes, including `sharelinks` (20260913) |
-| 2 | `npx tsx --env-file=prod.env scripts/sharelinks-backfill.ts` (add `--dry-run` first) | Creates the default share link row for documents from before multiple links |
-| 3 | `npx tsx --env-file=prod.env scripts/sharelinks-analytics-backfill.ts` (`--dry-run` first) | Gives old analytics rows their `shareLinkId`, `orgId` and `lastViewedAt`, flags owner previews and reconciles link counters |
-| 4 | `npx tsx --env-file=prod.env scripts/docchange-from-upload-repair.ts --apply` | Old version-change rows pointed "from" at the new upload |
-| 5 | `npx tsx --env-file=prod.env scripts/credit-balances-reconcile.ts --apply --reset-compare-tier` | Team workspaces seeded with Free starter credits; Free workspaces missing the 15-a-day cap; Free rows still on the old "standard" compare default (a replacement cost 6 instead of 3) |
-| 6 | `npx tsx --env-file=prod.env scripts/ai-ask-repair.ts --apply` | Stored summaries with an operating cost taken as the funding ask, and invented "Funding ask"/milestone metrics |
-| 7 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Must print "All share-analytics invariants hold" (see 9.1) |
+| 1 | `node --env-file=prod.env db/migration/run.mjs` | Indexes and data migrations, including `sharelinks` (20260913). Without `--env-file` (or the inline `MONGODB_URI=` of 4.1) the runner reads `.env.local` and migrates that database instead |
+| 2 | `node --env-file=prod.env scripts/project-shareid-backfill.mjs`, then `--apply` | Projects from before public project links have no `shareId`; the unique index cannot build and `/p/:shareId` fails for them |
+| 3 | `node --env-file=prod.env scripts/project-doc-count-recount.mjs`, then `--apply` | Recomputes the cached `Project.docCount` shown in project lists |
+| 4 | `npx tsx --env-file=prod.env scripts/sharelinks-backfill.ts` (`--dry-run` first) | Creates the default share link row for documents from before multiple links. `problems` must be empty; `no orgId` means step 1 did not run against this database |
+| 5 | `npx tsx --env-file=prod.env scripts/sharelinks-analytics-backfill.ts` (`--dry-run` first) | Gives old analytics rows their `shareLinkId`, `orgId` and `lastViewedAt`, flags owner previews and reconciles link counters. Runs only after step 4: it attributes rows to the links step 4 creates. `after` must be all zeros, `orphanShareIds` and `mismatches` empty; a second run reports zero |
+| 6 | `npx tsx --env-file=prod.env scripts/docchange-from-upload-repair.ts`, then `--apply` | Old version-change rows pointed "from" at the new upload |
+| 7 | `npx tsx --env-file=prod.env scripts/credit-balances-reconcile.ts`, then `--apply` | Team workspaces seeded with Free starter credits; Free workspaces missing the 15-a-day cap. Add `--reset-compare-tier` only if no Free user has chosen a compare tier on purpose: it moves every Free row stored as "standard" back to the plan default (a replacement cost 6 instead of 3) |
+| 8 | `npx tsx --env-file=prod.env scripts/ai-ask-repair.ts`, then `--apply` | Stored summaries with an operating cost taken as the funding ask, and invented "Funding ask"/milestone metrics |
+| 9 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Must print "All share-analytics invariants hold" (see 9.1) |
 
-`prod.env` is a local file with at least `MONGODB_URI` (and `MONGODB_DB_NAME` if used); keep it out
-of the repository and delete it afterwards.
+`scripts/request-docs-projectids-backfill.mjs` and `scripts/doc-received-via-request-backfill.mjs`
+repair Requests data. Requests are hidden at launch; run them (same form, dry run then `--apply`)
+before turning `NEXT_PUBLIC_FEATURE_REQUESTS` on.
+
+`prod.env` is a local file with at least `MONGODB_URI`; keep it out of the repository and delete it
+afterwards. `--env-file` never overrides a variable already set in your shell: run the jobs in a
+fresh shell, or prefix each command with `env -u MONGODB_URI -u MONGODB_DB_NAME`, and check the
+preview output shows production-sized counts before applying.
+
+### 5.3 Preview environment
+
+Scope every variable to Production or Preview on its own. Never use All Environments for these:
+
+| Variable | Preview value |
+|---|---|
+| `NEXT_PUBLIC_SITE_URL`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL` | a stable preview host (a branch URL or `staging.lnkdrp.com`, also listed in Google, 4.3), never `https://lnkdrp.com`. Share URLs, Stripe returns and email links are built from them |
+| `MONGODB_URI` | a separate Atlas database |
+| `STRIPE_*`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | sandbox keys and prices, and a sandbox webhook to the preview host (it fails while Vercel Authentication protects that host) |
+| `BLOB_READ_WRITE_TOKEN` | a separate Blob store (4.4) |
+| `NEXTAUTH_SECRET`, `CRON_SECRET`, `REALTIME_SECRET`, `LNKDRP_*_SECRET` | different from production |
+| `NEXT_PUBLIC_REALTIME_URL` | unset (previews poll) |
+| `ERROR_LOGGING_ENABLED`, `ERROR_LOGGING_ALLOWED_ENVS` | `true` and `preview`, only if you want preview errors recorded |
+
+### 5.4 Index check
+
+Migrations create only some indexes. Mongoose `autoIndex` is on, so every function builds the rest
+of the model indexes at cold start. A unique index that hits duplicate data fails **silently**,
+and the guarantee it gives (Stripe webhook dedupe, credit grant idempotency, one balance per
+workspace) is gone. Run this after the first real traffic (8 step 4) and after every release that
+changes `src/lib/models/`:
+
+```
+mongosh "$MONGODB_URI" --quiet --eval '
+const want = {
+  stripeevents: ["eventId_1"],
+  creditledgers: ["workspaceId_1_idempotencyKey_1", "workspaceId_1_eventType_1_cycleKey_1"],
+  workspacecreditbalances: ["workspaceId_1"],
+  subscriptions: ["orgId_1"],
+  apikeys: ["keyHash_1"],
+  cronhealths: ["jobKey_1"],
+  orgs: ["personalForUserId_1", "slug_1"],
+  orgmemberships: ["orgId_1_userId_1"],
+  users: ["email_1"],
+  docs: ["shareId_1"],
+  projects: ["shareId_1"],
+  docChanges: ["docId_1_toVersion_1", "docId_1_toUploadId_1"],
+  sharelinks: ["shareId_1"],
+  shareviews: ["shareId_1_botIdHash_1"],
+  sharevisits: ["shareId_1_botIdHash_1_visitIdHash_1"],
+  usageaggdailies: ["workspaceId_1_day_1"],
+  usageaggcycles: ["workspaceId_1_cycleKey_1"],
+  ratelimits: ["key_1", "expiresAt_1"],
+  errorevents: ["createdAt_1"],
+};
+for (const [c, names] of Object.entries(want)) {
+  let have;
+  try { have = db.getCollection(c).getIndexes().map((i) => i.name); } catch (e) { print("NO COLLECTION", c); continue; }
+  for (const n of names) if (!have.includes(n)) print("MISSING", c, n);
+}'
+```
+
+No output means every index is there. `NO COLLECTION` is fine before that feature has been used.
+For each `MISSING`, run the same `createIndex` by hand in mongosh to see the error. An E11000 names
+the duplicate key: fix or merge those rows (snapshot first), then re-run. The `projects`
+`{userId, name}` and `{userId, slug}` indexes and the model's `orginvites` partial index never
+build (MongoDB rejects `$exists:false` and `$ne` in partial filters); that is expected and not
+listed above.
+
+### 5.5 Admins
+
+Admin tools are `/a` (cron health, credits, data, AI runs) and `/api/admin/*`. An admin is a
+`users` row with `role: "admin"`. Nothing in the app grants it.
+
+1. Sign in once with the admin's Google account.
+2. From a trusted machine:
+   ```
+   mongosh "$MONGODB_URI" --eval 'db.users.updateOne({ email: "ops@lnkdrp.com" }, { $set: { role: "admin" } })'
+   ```
+3. Sign out and back in. The API reads the role from the database on every call, but the `/a`
+   pages read it from the session, which only reloads on sign-in.
+4. Use a dedicated admin account. Never create API keys from it on `/connect` and never connect it
+   to an MCP client. An `lnk_` key acts as the user who created it, and the admin API accepts it:
+   a read key lists every user and document, a write key deletes users and workspaces and changes
+   credits.
+
+To remove an admin, set `role` back to `"user"`. The API stops accepting them on the next call.
+Keep the list short.
 
 ## 6. Realtime server
 
@@ -258,35 +463,65 @@ Options weighed (September 2026):
 | Managed pub/sub (Ably, Pusher) | Yes | Would replace `realtime/server.ts` and the browser client with their SDK; pay per connection/message. | Not now; ours is one small process. |
 
 Decision: **Fly.io**, one machine each for realtime and MCP in `iad` (closest to Vercel's default
-region and to Atlas if the cluster is in us-east). Both configs live in `deploy/fly/`. Move to
-Railway or a VM by reusing the same Dockerfiles; nothing in the code is Fly-specific.
+region and to Atlas in us-east-1, 4.1). Both configs live in `deploy/fly/`. Move to Railway or a VM
+by reusing the same Dockerfiles; nothing in the code is Fly-specific.
 
 ### 6.2 Deploy on Fly
+
+Run every `fly` command from the repository root of a clean clone of `main` (no `npm install`).
+The build context is the current directory and there is no `.dockerignore` yet, so a working
+checkout uploads `node_modules`, `.next` and `.env.local` to Fly's builder.
 
 ```
 fly launch --no-deploy --copy-config --config deploy/fly/realtime.fly.toml \
   --dockerfile realtime/Dockerfile --name lnkdrp-realtime
-fly secrets set MONGODB_URI='mongodb+srv://…' REALTIME_SECRET='…' -a lnkdrp-realtime
-fly deploy --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile
+fly ips allocate-egress -a lnkdrp-realtime -r iad   # static outbound IPv4, $3.60/month
+fly ips list -a lnkdrp-realtime                     # add the egress IPv4 to the Atlas allowlist
+fly secrets set MONGODB_URI='mongodb+srv://…/lnkdrp' REALTIME_SECRET='…' -a lnkdrp-realtime
+fly deploy --ha=false --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile
+fly scale show -a lnkdrp-realtime                   # expect one machine
 fly certs add realtime.lnkdrp.com -a lnkdrp-realtime    # then CNAME realtime → lnkdrp-realtime.fly.dev
 curl https://realtime.lnkdrp.com/healthz
 ```
 
+- Fly outbound IPs change unless allocated as above, and without an allocation `fly ips list`
+  shows only inbound addresses. Add the egress IP to Atlas before the first deploy, or allow
+  `0.0.0.0/0` with a strong password. Without it the server exits on start and Fly restarts it in
+  a loop (`fly logs -a lnkdrp-realtime` shows `[realtime] fatal`); a good start logs
+  `mongo connected`.
+- `MONGODB_URI` must end in `/lnkdrp`: the realtime server does not read `MONGODB_DB_NAME`.
+- The server checks only `MONGODB_URI` at boot. Without `REALTIME_SECRET` `/healthz` answers, but
+  the first browser connection crashes the machine; a secret that differs from Vercel's rejects
+  every socket with 401. 8 step 7 catches both.
+- `fly deploy` creates two machines on an app's first deploy unless `--ha=false` is passed. Two
+  realtime machines work but double the change streams; for MCP see 7. If `fly scale show`
+  reports two, run `fly scale count 1 -a <app>`.
+
 Then set `NEXT_PUBLIC_REALTIME_URL=wss://realtime.lnkdrp.com` in Vercel and redeploy the web app.
-Until then the app polls and everything still works. Add the Fly egress IP (`fly ips list`) to the
-Atlas allowlist, or allow all with a strong password.
+Until then the app polls and everything still works.
 
 ### 6.3 Deploy with Docker anywhere else
 
-Host it anywhere that can keep a WebSocket open and reach Atlas. Single instance for launch.
+Host it anywhere that can keep a WebSocket open and reach Atlas. Single instance for launch. Add
+`--platform linux/amd64` to `docker build` when you build on one machine (an Apple Silicon Mac)
+and run on another.
 
 ```
 docker build -f realtime/Dockerfile -t lnkdrp-realtime .
 docker run -d --restart unless-stopped -p 8788:8788 \
-  -e MONGODB_URI='mongodb+srv://…' -e REALTIME_SECRET='…' lnkdrp-realtime
+  -e MONGODB_URI='mongodb+srv://…/lnkdrp' -e REALTIME_SECRET='…' lnkdrp-realtime
 ```
 
-Or with the compose file that runs both services: `docker compose -f deploy/docker-compose.yml up -d --build`.
+Or with the compose file that runs both services. Put `MONGODB_URI`, `REALTIME_SECRET`,
+`LNKDRP_API_URL`, `MCP_PUBLIC_URL` and `NEXT_PUBLIC_REALTIME_URL` in `.env.production.services` at
+the repository root, then run from the repository root:
+
+```
+docker compose -f deploy/docker-compose.yml --env-file .env.production.services up -d --build
+```
+
+Without `--env-file` Compose looks for `deploy/.env`, the secrets are empty and realtime exits on
+start.
 
 Put TLS in front (Caddy, nginx, the host's load balancer) so the public address is
 `wss://realtime.lnkdrp.com`; the proxy must pass WebSocket upgrades and keep idle connections
@@ -297,16 +532,18 @@ Details, frame formats and scaling notes: `docs/REALTIME.md`.
 
 ## 7. MCP server
 
-Same host class as the realtime server; on Fly:
+Same host class as the realtime server; on Fly, from the repository root (6.2). It never talks to
+Atlas, so it needs no egress IP for the allowlist (12 covers the rate-limit case):
 
 ```
 fly launch --no-deploy --copy-config --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile --name lnkdrp-mcp
 fly secrets set REALTIME_SECRET='…' -a lnkdrp-mcp
-fly deploy --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile
+fly deploy --ha=false --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile
+fly scale show -a lnkdrp-mcp                            # must be exactly one machine
 fly certs add mcp.lnkdrp.com -a lnkdrp-mcp              # then CNAME mcp → lnkdrp-mcp.fly.dev
 ```
 
-Or with Docker anywhere:
+Or with Docker anywhere (add `--platform linux/amd64` as in 6.3):
 
 ```
 docker build -f mcp/Dockerfile -t lnkdrp-mcp .
@@ -318,7 +555,9 @@ docker run -d --restart unless-stopped -p 8787:8787 \
 ```
 
 1. TLS in front so clients reach `https://mcp.lnkdrp.com/mcp`. Sessions are held in memory,
-   so run one instance or use sticky sessions on `Mcp-Session-Id`.
+   so run exactly one instance or use sticky sessions on `Mcp-Session-Id`. A second machine
+   without sticky routing answers `404 Session not found` to agents at random; on Fly fix it with
+   `fly scale count 1 -a lnkdrp-mcp`.
 2. `GET https://mcp.lnkdrp.com/healthz` → `{ ok: true, sessions, version, apiUrl }`.
 3. The public guides at `https://lnkdrp.com/mcp/<client>` already point clients here.
 
@@ -329,52 +568,93 @@ caller's own key. Details: `docs/MCP.md`.
 
 Run in this order; each step depends on the previous.
 
-1. `curl https://lnkdrp.com/api/health` → `{"ok":true,"mongo":"ok"}`.
+1. `curl https://lnkdrp.com/api/health` → 200 with `"ok":true`, `"mongo":"ok"`,
+   `"env":"production"`, and `"version"` equal to `git rev-parse --short HEAD` of the commit you
+   released.
 2. Sign in with Google with an account that is not on the OAuth test-user list (proves the consent
    screen is published). A personal workspace is created on first sign-in, on Free, with
    **50 AI credits** in the sidebar.
 3. Upload a PDF, open the share link in a private window, confirm the summary renders, the
    sidebar drops to **49 credits**, and the view shows in the doc's quick stats and as a
-   "Someone viewed" row on `/activity` without a reload.
-4. Replace the file once: expect the AI compare on `/doc/:id/history` and **46 credits** (summary 1
+   "Someone viewed" row on `/activity` without a reload. Use a PDF with non-embedded fonts (a Word
+   export with Helvetica or Times) and check the page previews show text (12, pdfjs).
+4. Run the index check in 5.4; it must print nothing.
+5. Replace the file once: expect the AI compare on `/doc/:id/history` and **46 credits** (summary 1
    plus basic compare 2).
-5. Open `/connect`, create a key, run the Verify curl. The pill reads "Key verified".
-6. `curl https://realtime.lnkdrp.com/healthz` shows at least one socket while your tab is open.
-7. Add the MCP to Claude Code with that key, open a session; the sidebar flips to
-   "1 connected · Claude Code" without a click. Ask it to share a PDF by URL and confirm the
-   link. Or run the harness against production with a production key:
-   `MCP_URL=https://mcp.lnkdrp.com/mcp npx tsx tests/mcp/e2e.ts` (it mints its own key from the
-   database you point `MONGODB_URI` at; only run it with a key you then revoke).
-8. Trigger one cron by hand and confirm 200:
+6. Open `/connect`, create a key, run the Verify curl. The pill reads "Key verified".
+7. `curl https://realtime.lnkdrp.com/healthz` shows `sockets` of at least 1 while your tab is open.
+   Then, with DevTools → Network → WS open on `/activity`, open the share link again: an `activity`
+   frame arrives within a second. A row that appears only after several seconds is polling, and
+   realtime is not working.
+8. Add the MCP to Claude Code with that key, open a session; the sidebar Agents entry flips to
+   "1 connected" with the client listed under it, without a click. Ask it to share a PDF by URL
+   and confirm the link. Or run the harness against production from a trusted machine:
+   `MONGODB_URI='mongodb+srv://…/lnkdrp' E2E_ORG_ID=<your workspace id> E2E_USER_ID=<your user id> MCP_URL=https://mcp.lnkdrp.com/mcp npx tsx tests/mcp/e2e.ts`.
+   It mints and revokes its own key directly in that database and deletes the docs it creates; it
+   spends real credits in that workspace and leaves activity rows. Without the two ids it uses the
+   local dev workspace ids and fails.
+9. Trigger one cron by hand and confirm 200:
    `curl -X POST https://lnkdrp.com/api/cron/plan-limits -H "Authorization: Bearer $CRON_SECRET"`.
    Then the analytics reconcile, which reports rather than just succeeding:
-   `npm run cron:analytics-reconcile -- --dry-run --target=https://lnkdrp.com`. Expect
-   `linksReconciled: 0` and `pageTimeOverruns: 0` on a healthy deploy — see section 9.1.
-9. Stripe: buy Pro with a real card, confirm the subscription shows in the dashboard, the credits
-   read 300, the Stripe return lands on `https://lnkdrp.com` (not a preview URL), and the webhook
-   delivery log shows `checkout.session.completed` handled. Cancel it from the portal.
-10. Email: request a download on a link with downloads off, from a private window; the owner
+   `CRON_SECRET='…' npx tsx scripts/cron/cron.analytics-reconcile.ts --dry-run --target=https://lnkdrp.com`.
+   Expect `linksReconciled: 0` and `pageTimeOverruns: 0` on a healthy deploy; see 9.1.
+10. Stripe: buy Pro with a real card, confirm the subscription shows in the dashboard, the credits
+    read 300, the Stripe return lands on `https://lnkdrp.com` (not a preview URL), and the webhook
+    delivery log shows `checkout.session.completed` handled. The subscription must show two items,
+    Pro and On-demand AI credits; only Pro means `STRIPE_AI_CREDITS_PRICE_ID` was missing on that
+    deployment (4.2 step 8). Cancel it from the portal and refund the charge in the Stripe
+    dashboard.
+11. Email: request a download on a link with downloads off, from a private window; the owner
     receives the notice from `NOTIFICATION_EMAIL_FROM` in the inbox, not spam.
-11. Run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` against production (read-only).
-12. Revoke the test key from `/connect`; the sidebar returns to Not connected.
+12. Recreate `prod.env`, run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts`
+    against production (read-only), and delete the file again.
+13. Revoke the test key from `/connect`; the sidebar returns to Not connected.
+14. Vercel → Settings → Cron Jobs lists 8 jobs. An hour after the deploy, open `/a/cron-health` as
+    an admin (5.5): every hourly job has a `lastRunAt` within the hour and status `ok`. The next
+    morning all eight are `ok`, including `analytics-reconcile` after 03:50 UTC.
 
 ## 9. Release workflow
 
-- `main` is production. Every push to `main` deploys the web app on Vercel; previews build from
-  branches with the preview env (sandbox Stripe, a separate Atlas database).
-- Before merging anything touching data shapes: add a migration under `db/migration/`, run it
-  against production (section 4.1) before the deploy lands, since functions roll forward first.
-- The realtime and MCP services do not auto-deploy. Run `fly deploy` (section 6.2 / 7) when a
-  commit touches `realtime/`, `mcp/`, or `src/lib/realtime/ticket.ts`. They are backwards
-  compatible with the web app across ordinary releases; deploy the web app first when both change.
-- Adding a cron job means a route, a `vercel.json` entry and a `scripts/cron/cron.<job>.ts`
-  runner; the lib test suite enforces the trio.
+- `main` of the repository connected under Vercel → Settings → Git is production. Every push to
+  `main` deploys the web app on Vercel; previews build from other branches with the preview env
+  (5.3).
+- There is no CI (`.github/` holds only a pull request template); the local gate is the only gate.
+  Before every push to `main`: `npx tsc --noEmit -p .`, `npx eslint src realtime mcp tests`,
+  `npm run tests:lib:vitest`, `npm run tests:credits:vitest`, `npm run tests:upload:vitest`,
+  `npm run tests:agent:vitest`, `npx next build`, and
+  `npx tsx --env-file=.env.local tests/mcp/e2e.ts` when the MCP or the API-key seam changed.
+- Before merging anything touching data shapes: add a migration under `db/migration/` and run it
+  against production (4.1, snapshot first) before the deploy lands, since functions roll forward
+  first. Mongoose `autoIndex` is on: any index declared in `src/lib/models/` is built by the first
+  functions after the deploy, on live data, and a failure is silent. For a new index on a large
+  collection (`shareviews`, `sharevisits`, `creditledgers`, `docpagetimings`, `activityevents`),
+  or any new unique index, put the same index (same key, name and options) in a migration so it
+  builds before traffic and a duplicate-key failure stops the runner where you can see it. Then run
+  the index check (5.4).
+- The realtime and MCP services do not auto-deploy. Run `fly deploy` (6.2 / 7) when a commit
+  touches `realtime/`, `mcp/`, `src/lib/realtime/ticket.ts`, `src/lib/credits/schedule.ts`,
+  `src/lib/credits/types.ts`, `tsconfig.json`, or the versions of `mongoose`, `ws`,
+  `@modelcontextprotocol/sdk`, `express`, `zod` or `tsx` in `package.json` (mirror them in the
+  Dockerfile). The MCP image copies the credit schedule, so a price change without an MCP deploy
+  leaves `lnkdrp_whoami` quoting old costs. The services are backwards compatible with the web app
+  across ordinary releases; deploy the web app first when both change. A services deploy restarts
+  the single machine: every browser socket reconnects within a few seconds and every MCP session
+  is dropped (clients get `404 Session not found` and must reconnect). Deploy MCP outside busy
+  hours.
+- Never point the analytics dev tools at production: `tests/share/traffic.ts` and
+  `tests/share/seed-links.ts` write real share links and analytics rows to whatever
+  `TRAFFIC_APP_URL`, `MCP_URL` and `MONGODB_URI` name, and `--spread` rewrites timestamps on rows they created.
+  They are not part of any verification step here.
+- Adding a cron job means a route with `runtime = "nodejs"` and `maxDuration`, a `vercel.json`
+  entry, a `scripts/cron/cron.<job>.ts` runner and a `cron:<job>` npm script;
+  `npm run tests:lib:vitest` fails when one is missing. Add it to the 5.1 table and crontab.
 
 ### 9.1 Share analytics: the gate before shipping a change to them
 
-Run `npm run verify:analytics` against the target database before and after any release that
-touches the share analytics. It is read-only, safe against production, and exits non-zero, so it
-also works as a CI step.
+Run `npx tsx --env-file=<target>.env scripts/verify-share-analytics.ts` against the target
+database before and after any release that touches the share analytics. `npm run verify:analytics`
+always reads `.env.local`, so use it only for the local database. The check is read-only, safe
+against production, and exits non-zero, so it also works as a CI step.
 
 It asserts four properties, each of which failed silently in production shape at least once:
 
@@ -386,48 +666,151 @@ It asserts four properties, each of which failed silently in production shape at
 | Only signed-in rows carry the owner-preview flag | Something set the flag that cannot know the answer. |
 
 Counter drift is repairable and the nightly `analytics-reconcile` job fixes it on its own; you can
-force it with `npm run cron:analytics-reconcile`. A **page-time overrun is not repairable and is
-never repaired automatically** — it means the ingest double counted, and overwriting the rows would
-hide the bug instead of fixing it. The job reports those in `CronHealth.lastResult` and marks itself
-`error` so the run is visible, which is the signal to look at `src/lib/analytics/shareTiming.ts` and
-the flush logic in `PdfJsViewer`.
-- Local gate before pushing: `npx tsc --noEmit -p .`, `npx eslint src realtime mcp tests`,
-  the four vitest suites (`npm run tests:credits:vitest` etc.), `npx next build`, and
-  `npx tsx --env-file=.env.local tests/mcp/e2e.ts` when the MCP or the API-key seam changed.
+force it with `CRON_SECRET='…' npx tsx scripts/cron/cron.analytics-reconcile.ts --target=https://lnkdrp.com`.
+A **page-time overrun is not repairable and is never repaired automatically**: it means the ingest
+double counted, and overwriting the rows would hide the bug instead of fixing it. The job reports
+those in `CronHealth.lastResult` and marks itself `error` so the run is visible, which is the
+signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `PdfJsViewer`.
 
 ## 10. Rollback
 
-- **Web app:** Vercel → Deployments → promote the previous production deployment. Instant.
-  Database migrations only add indexes, so an older build always runs against the newer schema.
-- **Services:** re-run the previous image tag. Keep the last two images.
-- **Stripe:** never delete prices; archive them. The app reads price ids from env, so a wrong
-  price is fixed by changing the env and redeploying.
-- **Kill switches:** rotate `CRON_SECRET` to stop all cron work; unset `NEXT_PUBLIC_REALTIME_URL`
-  to fall back to polling; stop the MCP container to refuse agents (keys stay valid for the REST API).
+- **Web app:** Vercel → Deployments → the last good production deployment → Instant Rollback.
+  Code rolls back; data does not. Then:
+  - Automatic promotion is off after a rollback. Pushes to `main` still build but do not go live
+    until you Undo Rollback or promote a deployment by hand.
+  - The rolled-back deployment runs with the env values it was built with. If you rotated
+    `REALTIME_SECRET`, `CRON_SECRET` or a Stripe key since, redeploy with current env instead.
+  - Check Settings → Cron Jobs still lists every job.
+- **Database:** migrations and the 5.2 jobs are forward-only and some rewrite data, so the older
+  build runs against migrated data; it is safe only against additive changes. If a release's data
+  change is what broke, restore the snapshot taken before it (4.1 step 4; 11, Backups) and accept
+  losing writes made since.
+- **Services on Fly:** find the last good image, then deploy it without rebuilding:
+  ```
+  fly releases --image -a lnkdrp-mcp
+  fly deploy --ha=false -a lnkdrp-mcp --config deploy/fly/mcp.fly.toml --image registry.fly.io/lnkdrp-mcp:deployment-<id>
+  ```
+  Same for `lnkdrp-realtime`. Do not roll back by rebuilding an old commit: the Dockerfiles install
+  dependency ranges without a lockfile, so a rebuild produces a different image.
+- **Services with Docker:** tag every build with the commit
+  (`docker build -f mcp/Dockerfile -t lnkdrp-mcp:$(git rev-parse --short HEAD) .`), keep the last
+  two tags, and roll back with `docker run` on the previous tag.
+- **Stripe:** never delete prices; archive them. Price ids are read from env only when a Checkout
+  starts. Changing `STRIPE_PRICE_ID` or `STRIPE_AI_CREDITS_PRICE_ID` and redeploying affects new
+  subscriptions only; existing ones keep their old items until you change them in Stripe.
+
+**Kill switches.** Any Vercel env change needs a redeploy to take effect.
+
+| Stop | How | Takes effect |
+|---|---|---|
+| All Vercel crons (including Stripe usage reporting) | Vercel → Settings → Cron Jobs → Disable Cron Jobs; re-enable in the same place | Immediately |
+| One cron | Remove its `vercel.json` entry and deploy (`tests/lib/cronMap.test.ts` then fails until the route, runner and npm script go too) | Next deploy |
+| Hand runs and external schedulers | Rotate `CRON_SECRET` and redeploy. This does **not** stop Vercel Cron, which sends the new value | Next deploy |
+| Realtime | Unset `NEXT_PUBLIC_REALTIME_URL` and redeploy the web app with a fresh build; browsers poll. The MCP server has its own copy (`deploy/fly/mcp.fly.toml`) and polls by itself when the socket fails | Next deploy |
+| MCP | `fly scale count 0 -a lnkdrp-mcp`. `fly machine stop` is not enough: `auto_start_machines = true` starts it again on the next request. Keys stay valid for the REST API; revoke them at `/connect` | Immediately |
+| AI spend | Remove `OPENAI_API_KEY` and redeploy; summaries and compares are skipped and not charged (4.5) | Next deploy |
+| Outbound email | `EMAIL_TRANSPORT=console` and redeploy; mail is logged and dropped, except invites, which still send (4.6) | Next deploy |
 
 ## 11. Operating notes
 
-- **Health:** `/api/health` (web), `/healthz` (both services). Point an uptime monitor at all three.
-- **Logs:** Vercel function logs for the app; `docker logs` for the services. Errors are also
-  recorded in the `errorevents` collection with a TTL (`ERROR_LOGGING_*` env, see `docs/ERROR_LOGGING.md`).
-- **Scaling:** the web app scales with Vercel. Realtime is one instance until you add Redis
-  pub/sub behind `broadcast()`. MCP is one instance or sticky sessions.
+- **Health:** `/api/health` (web), `/healthz` (both services). Point an uptime monitor at all
+  three. Realtime `/healthz` proves the process and sockets, not the change streams: a log line
+  `activity stream error`, `apikeys stream error` or `docs stream error` can mean that stream has
+  stopped for good while `/healthz` stays ok and browsers fall back to slow polling. Alert on those
+  lines if your log drain supports it, and restart with `fly apps restart lnkdrp-realtime`; clients
+  reconnect on their own. MCP `/healthz` `version` is fixed at `0.1.0`; use `fly releases -a lnkdrp-mcp`
+  to see what is deployed.
+- **Crons:** nothing alerts, and a 200 does not mean the job worked. Vercel Cron does not retry.
+  `credits-cycle-reconcile` counts failures in `errors` (and Free floor failures in `freeFloor`)
+  and still answers 200, and `analytics-reconcile` answers 200 while marking itself `error`. Check
+  `/a/cron-health` (admin, 5.5) daily after launch, then weekly: every job `ok`, with `lastRunAt`
+  inside its schedule. Treat `error`, or a `lastRunAt` older than two intervals, on
+  `stripe-credits-report`, `credits-cycle-reconcile` or `notification-emails` as an incident. A row
+  left at `running` means the function died before writing a result, usually at the 300 s limit;
+  run that job by hand with a smaller `--limit` (5.1) and read the function log. Leases expire on
+  their own after 6 minutes; only a job answering `{ skipped: "locked" }` for longer needs
+  `leaseUntil: null` set on its row in `cronhealths`.
+- **Logs:** Vercel → Logs for the app; runtime logs are kept only briefly, so add a Log Drain
+  (Settings → Log Drains) if you need history. `fly logs -a lnkdrp-realtime` and
+  `fly logs -a lnkdrp-mcp` for the services (`docker logs` off Fly); they stream recent output
+  only. With `ERROR_LOGGING_ENABLED=true`, server errors and cron failures are also stored in
+  `errorevents` for 14 days, readable by an admin at `/api/admin/errors`. There is no page for them
+  under `/a`.
+- **Email failures:** Resend errors do not reach Vercel logs unless `DEBUG_LEVEL=1`. Start in the
+  Resend dashboard Logs. Download requests store the error on the `sharedownloadrequests` row
+  (`requesterEmailError`, `ownerEmailError`, `claimEmailError`). `notification-emails` counts
+  `sendFailures` in `CronHealth.lastResult` and retries those recipients on the next run. A failed
+  emailed invite returns 500, but the invite row already exists and its link shows in the team
+  page's pending list.
+- **Backups:** set up in 4.1 step 4. Restore: Atlas → Cluster → Backup → Restore to a new cluster,
+  allowlist it as in 4.1, check it with `npx tsx --env-file=<restored>.env scripts/verify-share-analytics.ts`,
+  then point `MONGODB_URI` at it on the web app and the realtime server and redeploy both. Do one
+  test restore before launch. Vercel Blob has no backup: the app never deletes blobs, but a store
+  removed by hand is gone.
+- **Costs and quotas:** before launch, set a monthly budget and email alert on the OpenAI project
+  that owns `OPENAI_API_KEY`, a Vercel Spend Management amount, and billing alerts on Atlas (backup
+  storage adds to the cluster cost) and the Fly organization. Put Resend on a plan above the free
+  tier (100 emails a day); over quota, sends fail. Blob storage only grows: the app never deletes a
+  blob, including old versions and deleted documents.
+- **Scaling:** the web app scales with Vercel. MCP must stay at one machine (sessions are in
+  memory) unless you add sticky routing on `Mcp-Session-Id`. Realtime can run more than one
+  machine: each runs its own change streams and serves its own sockets, and each extra machine
+  adds three change streams on Atlas.
 - **Secrets rotation:** `REALTIME_SECRET` must change on all three pieces in one go; tickets are
-  60 seconds, so a brief mismatch only costs reconnects. `NEXTAUTH_SECRET` rotation signs
-  everyone out.
+  60 seconds, so a brief mismatch only costs reconnects. `NEXTAUTH_SECRET` rotation signs everyone
+  out and voids summary reruns started in the last 5 minutes; if `REALTIME_SECRET` or the two
+  secrets in 3 are unset, they fall back to it, so rotating it also breaks what those protect.
+  Changing `LNKDRP_SHARE_PASSWORD_SECRET` (or adding it later) makes every recipient re-enter link
+  passwords, and owners see existing link passwords as empty until they set them again; password
+  checks keep working. Changing `LNKDRP_ORG_INVITE_TOKEN_SECRET` hides the links of pending invites
+  in the workspace invite list; links already sent still work. `CRON_SECRET` rotation: update any
+  external runner too. Every rotation needs a redeploy.
 - **What is intentionally off at launch:** Requests, AI review and Deep Search are hidden
   (`NEXT_PUBLIC_FEATURE_REQUESTS` unset). Paid seats are not sold; Pro includes one collaborator.
 
 ## 12. Known gaps before first production traffic
 
+- **Blocks team workspaces:** `orgs.personalForUserId` is unique and sparse, but team orgs store
+  `personalForUserId: null`, and sparse indexes still index an explicit null. On a clean production
+  database the second team workspace fails with E11000 (shown as "An org with that slug already
+  exists"). Before launch, ship a migration that runs `$unset` on `personalForUserId` where it is
+  null and replaces `personalForUserId_1` with a partial unique index on
+  `{ personalForUserId: { $type: "objectId" } }`, and stop writing null (`Org.ts` default,
+  `api/orgs` POST), the same fix as `20260911_0001_orgs_slug_partial_unique_index`. Until then,
+  test by creating two team workspaces on a fresh database.
 - Stripe live catalog and webhook do not exist yet; only the sandbox is configured.
 - Neither service is deployed yet. Fly.io is the chosen host (section 6.1), configs are in
   `deploy/fly/`; DNS for `mcp.lnkdrp.com` and `realtime.lnkdrp.com` still has to be created.
 - Resend sending domain (4.6) and the Google consent screen publishing status (4.3) are not done.
 - Check the sandbox Stripe Pro product description against 4.2 (older text said summaries never use credits).
+- **pdfjs:** PDF page rendering on Vercel lacks pdfjs's `standard_fonts`, `cmaps` and `wasm`
+  folders: output tracing does not follow `renderPage.ts`'s runtime lookup. Previews of PDFs with
+  non-embedded fonts, CJK text or JPEG 2000 images break only in production. Fix before launch with
+  `outputFileTracingIncludes` in `next.config.ts` for `/api/uploads/[uploadId]/process` and
+  `/api/docs/[docId]/changes/[changeId]/rerun`: `./node_modules/pdfjs-dist/{standard_fonts,cmaps,wasm}/**`.
+- `/api/admin/*` accepts API keys (`src/lib/gating/actor.ts` resolves the key before the session).
+  Until admin routes refuse key actors, follow 5.5 step 4.
+- No security headers are set: `next.config.ts` has no `headers()` and there is no `proxy.ts`.
+  Share pages, including the password and download-request forms, can be framed by any site. Before
+  launch, add `X-Frame-Options: SAMEORIGIN` (or `Content-Security-Policy: frame-ancestors 'self'`),
+  `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin` for all
+  routes, then check with `curl -sI https://lnkdrp.com/s/<shareId>`. Do not use `DENY` or `'none'`:
+  the app frames its own pages (`/paperplane/index.html`, `/api/docs/:id/pdf`). Vercel adds HSTS on
+  its own. The API sends no CORS headers on purpose: API keys are for servers and agents.
 - **Decision pending:** view counts can be inflated by anyone who posts made-up visitor ids to
   `/api/share/:shareId/stats` (only a 120 requests per minute per IP limit applies). Decide on an
   abuse budget or tighter rate limits before relying on view counts for billing or reports.
+- **Decision pending:** anonymous callers create a temp user and a personal workspace on almost any
+  API call, with no rate limit and no cleanup. Each one can upload a document with 3 versions,
+  using Blob storage and, through starter credits, OpenAI. API-key requests have no per-key limit
+  either. Before launch, add a Vercel Firewall rate-limit rule on `/api/*` per IP. Exclude
+  `/api/cron/*`, `/api/stripe/webhook`, `/api/blob/upload` and the MCP server's outbound IP (allocate
+  one with `fly ips allocate-egress -a lnkdrp-mcp -r iad`), because every agent's REST call leaves
+  from that one address. Watch the count of `users` with `isTemp: true`.
+- No machine-readable cron health for an uptime monitor: `/api/admin/cron-health` needs an admin
+  session. Until one exists, cron failures are found by reading `/a/cron-health` (11, Crons).
+- Add a root `.dockerignore` (`node_modules`, `.next`, `tmp`, `.env*`, `.git`) so service builds do
+  not upload the checkout and local secrets (6.2).
 - Free workspaces cannot buy extra credits; sign-up copy promises only the monthly top-up to 10
   and Pro for more. Selling credit packs to Free would need a Checkout product and webhook grant.
 - If production starts from an existing database, run the one-time data jobs in 5.2.
