@@ -96,7 +96,10 @@ Secrets rotation).
    `--dry-run` only lists migration files; it does not connect. The real run prints
    `skip (already applied)` or `run:` for each file, so read that output. Migrations create and
    drop indexes and also rewrite data (orgId backfills, personal-org dedupe, `$unset` of null
-   `slug` and `claimTokenHash`). Applied ones are recorded in the `migrations` collection and
+   `slug`, `personalForUserId` and `claimTokenHash`). Two of them replace a unique+sparse index
+   with a partial one (`20260911_0001` for `orgs.slug`, `20260915_0001` for
+   `orgs.personalForUserId`); without the second, the *second* team workspace in the database
+   fails with E11000, reported to the user as "An org with that slug already exists". Applied ones are recorded in the `migrations` collection and
    skipped on re-run. A failing migration (for example E11000 while building a unique index)
    stops the runner at that file; a re-run resumes there once the data is fixed.
 
@@ -414,6 +417,12 @@ for (const [c, names] of Object.entries(want)) {
   let have;
   try { have = db.getCollection(c).getIndexes().map((i) => i.name); } catch (e) { print("NO COLLECTION", c); continue; }
   for (const n of names) if (!have.includes(n)) print("MISSING", c, n);
+}
+// Two orgs indexes must be *partial*, not sparse: sparse still indexes an explicit null, which is
+// what broke the second team workspace. A name check alone cannot see this.
+for (const n of ["slug_1", "personalForUserId_1"]) {
+  const i = db.orgs.getIndexes().find((x) => x.name === n);
+  if (i && !i.partialFilterExpression) print("NOT PARTIAL", "orgs", n, "- migration did not run");
 }'
 ```
 
@@ -436,10 +445,12 @@ Admin tools are `/a` (cron health, credits, data, AI runs) and `/api/admin/*`. A
    ```
 3. Sign out and back in. The API reads the role from the database on every call, but the `/a`
    pages read it from the session, which only reloads on sign-in.
-4. Use a dedicated admin account. Never create API keys from it on `/connect` and never connect it
-   to an MCP client. An `lnk_` key acts as the user who created it, and the admin API accepts it:
-   a read key lists every user and document, a write key deletes users and workspaces and changes
-   credits.
+4. Use a dedicated admin account anyway. `/api/admin/*` refuses any actor that came from an API
+   key (`src/lib/gating/requireAdmin.ts`, 403 "API keys cannot access admin endpoints"), before
+   the role lookup so a stolen key cannot learn whether its owner is an admin by comparing
+   replies. That gate is the only thing standing between an admin's `lnk_` key and every user's
+   data, so do not make it the only thing: keep the admin account separate from the account that
+   connects agents.
 
 To remove an admin, set `role` back to `"user"`. The API stops accepting them on the next call.
 Keep the list short.
@@ -468,9 +479,11 @@ by reusing the same Dockerfiles; nothing in the code is Fly-specific.
 
 ### 6.2 Deploy on Fly
 
-Run every `fly` command from the repository root of a clean clone of `main` (no `npm install`).
-The build context is the current directory and there is no `.dockerignore` yet, so a working
-checkout uploads `node_modules`, `.next` and `.env.local` to Fly's builder.
+Run every `fly` command from the repository root: both Dockerfiles build from there, because each
+imports a module or two out of `src/lib`. The root `.dockerignore` keeps `node_modules`, `.next`,
+`.git` and every `.env*` out of the context, so a working checkout is safe to deploy from — but
+whatever you add to it, keep the paths those Dockerfiles `COPY` out of the ignore list, or the
+build fails on a missing file.
 
 ```
 fly launch --no-deploy --copy-config --config deploy/fly/realtime.fly.toml \
@@ -570,14 +583,18 @@ Run in this order; each step depends on the previous.
 
 1. `curl https://lnkdrp.com/api/health` → 200 with `"ok":true`, `"mongo":"ok"`,
    `"env":"production"`, and `"version"` equal to `git rev-parse --short HEAD` of the commit you
-   released.
+   released. Then `curl -sI https://lnkdrp.com/s/<shareId> | grep -iE 'frame|content-type-options|referrer'`
+   → all four security headers (11, Security headers). They come from `next.config.ts`, so a
+   deployment that lost them looks completely normal otherwise.
 2. Sign in with Google with an account that is not on the OAuth test-user list (proves the consent
    screen is published). A personal workspace is created on first sign-in, on Free, with
    **50 AI credits** in the sidebar.
 3. Upload a PDF, open the share link in a private window, confirm the summary renders, the
    sidebar drops to **49 credits**, and the view shows in the doc's quick stats and as a
    "Someone viewed" row on `/activity` without a reload. Use a PDF with non-embedded fonts (a Word
-   export with Helvetica or Times) and check the page previews show text (12, pdfjs).
+   export with Helvetica or Times) and check the page previews show text — that is what proves
+   pdf.js's `standard_fonts`, `cmaps` and `wasm` folders were traced into the function, which
+   nothing else in this list exercises and which fails silently.
 4. Run the index check in 5.4; it must print nothing.
 5. Replace the file once: expect the AI compare on `/doc/:id/history` and **46 credits** (summary 1
    plus basic compare 2).
@@ -765,52 +782,51 @@ signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `Pdf
   checks keep working. Changing `LNKDRP_ORG_INVITE_TOKEN_SECRET` hides the links of pending invites
   in the workspace invite list; links already sent still work. `CRON_SECRET` rotation: update any
   external runner too. Every rotation needs a redeploy.
+- **Security headers:** `next.config.ts` sends `Content-Security-Policy: frame-ancestors 'self'`,
+  `X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: strict-origin-when-cross-origin` on every response Next serves. Check after a
+  deploy with `curl -sI https://lnkdrp.com/s/<shareId>`. Framing is SAMEORIGIN rather than DENY on
+  purpose: the app frames its own pages (`/paperplane/index.html`, `/api/docs/:id/pdf`). Vercel
+  adds HSTS on its own. The API sends no CORS headers on purpose: API keys are for servers and
+  agents.
+- **Rate limits:** all fixed-window counters in `ratelimits`, shared across functions, and all
+  fail open if Mongo is unreachable. Link unlock and download requests are per IP; share stats are
+  120/minute per IP; temp-workspace creation is `TEMP_WORKSPACE_CREATE_LIMIT` (20) per IP per hour,
+  charged only when a workspace is actually minted, so a visitor reusing its temp-user headers
+  never pays again; API keys are `API_KEY_REQUEST_LIMIT` (300) per key per minute, per key rather
+  than per IP because every agent's REST call leaves the MCP server from one address. A refused
+  caller gets 429 with `Retry-After` and an `error` code it can branch on
+  (`temp_workspace_rate_limited`, `api_key_rate_limited`). Both ceilings are env-overridable;
+  before lowering the key limit, note that a normal agent session bursts about seven tool calls in
+  200ms, so anything under roughly 30/minute breaks ordinary use. To clear a bucket by hand:
+  `db.ratelimits.deleteOne({ key: "api-key:<keyId>" })`.
 - **What is intentionally off at launch:** Requests, AI review and Deep Search are hidden
   (`NEXT_PUBLIC_FEATURE_REQUESTS` unset). Paid seats are not sold; Pro includes one collaborator.
 
 ## 12. Known gaps before first production traffic
 
-- **Blocks team workspaces:** `orgs.personalForUserId` is unique and sparse, but team orgs store
-  `personalForUserId: null`, and sparse indexes still index an explicit null. On a clean production
-  database the second team workspace fails with E11000 (shown as "An org with that slug already
-  exists"). Before launch, ship a migration that runs `$unset` on `personalForUserId` where it is
-  null and replaces `personalForUserId_1` with a partial unique index on
-  `{ personalForUserId: { $type: "objectId" } }`, and stop writing null (`Org.ts` default,
-  `api/orgs` POST), the same fix as `20260911_0001_orgs_slug_partial_unique_index`. Until then,
-  test by creating two team workspaces on a fresh database.
 - Stripe live catalog and webhook do not exist yet; only the sandbox is configured.
 - Neither service is deployed yet. Fly.io is the chosen host (section 6.1), configs are in
   `deploy/fly/`; DNS for `mcp.lnkdrp.com` and `realtime.lnkdrp.com` still has to be created.
 - Resend sending domain (4.6) and the Google consent screen publishing status (4.3) are not done.
 - Check the sandbox Stripe Pro product description against 4.2 (older text said summaries never use credits).
-- **pdfjs:** PDF page rendering on Vercel lacks pdfjs's `standard_fonts`, `cmaps` and `wasm`
-  folders: output tracing does not follow `renderPage.ts`'s runtime lookup. Previews of PDFs with
-  non-embedded fonts, CJK text or JPEG 2000 images break only in production. Fix before launch with
-  `outputFileTracingIncludes` in `next.config.ts` for `/api/uploads/[uploadId]/process` and
-  `/api/docs/[docId]/changes/[changeId]/rerun`: `./node_modules/pdfjs-dist/{standard_fonts,cmaps,wasm}/**`.
-- `/api/admin/*` accepts API keys (`src/lib/gating/actor.ts` resolves the key before the session).
-  Until admin routes refuse key actors, follow 5.5 step 4.
-- No security headers are set: `next.config.ts` has no `headers()` and there is no `proxy.ts`.
-  Share pages, including the password and download-request forms, can be framed by any site. Before
-  launch, add `X-Frame-Options: SAMEORIGIN` (or `Content-Security-Policy: frame-ancestors 'self'`),
-  `X-Content-Type-Options: nosniff` and `Referrer-Policy: strict-origin-when-cross-origin` for all
-  routes, then check with `curl -sI https://lnkdrp.com/s/<shareId>`. Do not use `DENY` or `'none'`:
-  the app frames its own pages (`/paperplane/index.html`, `/api/docs/:id/pdf`). Vercel adds HSTS on
-  its own. The API sends no CORS headers on purpose: API keys are for servers and agents.
+- **If you ever add a real Content-Security-Policy**, know what it breaks first. The app sends only
+  `frame-ancestors 'self'` today (11, Security headers). `public/paperplane/index.html` loads
+  `three` from `https://esm.sh` at runtime, so a `script-src` that omits that host kills the
+  marketing page's animation — and the page still renders, so the symptom is a blank space, not an
+  error anyone will see. Vendor `three` locally first, or allow the host explicitly.
 - **Decision pending:** view counts can be inflated by anyone who posts made-up visitor ids to
   `/api/share/:shareId/stats` (only a 120 requests per minute per IP limit applies). Decide on an
   abuse budget or tighter rate limits before relying on view counts for billing or reports.
-- **Decision pending:** anonymous callers create a temp user and a personal workspace on almost any
-  API call, with no rate limit and no cleanup. Each one can upload a document with 3 versions,
-  using Blob storage and, through starter credits, OpenAI. API-key requests have no per-key limit
-  either. Before launch, add a Vercel Firewall rate-limit rule on `/api/*` per IP. Exclude
-  `/api/cron/*`, `/api/stripe/webhook`, `/api/blob/upload` and the MCP server's outbound IP (allocate
-  one with `fly ips allocate-egress -a lnkdrp-mcp -r iad`), because every agent's REST call leaves
-  from that one address. Watch the count of `users` with `isTemp: true`.
+- **Still to do in infrastructure:** the app now caps temp-workspace creation and API-key traffic
+  itself (11, Rate limits), but every refused request has still woken a function and read Mongo.
+  Add a Vercel Firewall rate-limit rule on `/api/*` per IP so abuse is refused before it costs
+  anything. Exclude `/api/cron/*`, `/api/stripe/webhook`, `/api/blob/upload` and the MCP server's
+  outbound IP (allocate one with `fly ips allocate-egress -a lnkdrp-mcp -r iad`), because every
+  agent's REST call leaves from that one address. Nothing collects temp workspaces once created:
+  watch the count of `users` with `isTemp: true` and write a reaper if it grows.
 - No machine-readable cron health for an uptime monitor: `/api/admin/cron-health` needs an admin
   session. Until one exists, cron failures are found by reading `/a/cron-health` (11, Crons).
-- Add a root `.dockerignore` (`node_modules`, `.next`, `tmp`, `.env*`, `.git`) so service builds do
-  not upload the checkout and local secrets (6.2).
 - Free workspaces cannot buy extra credits; sign-up copy promises only the monthly top-up to 10
   and Pro for more. Selling credit packs to Free would need a Checkout product and webhook grant.
 - If production starts from an existing database, run the one-time data jobs in 5.2.

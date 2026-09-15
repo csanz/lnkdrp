@@ -1,0 +1,42 @@
+# Both service images (realtime/Dockerfile, mcp/Dockerfile) build from the REPO ROOT, because each
+# imports a couple of modules out of src/lib. Their COPY lines are already narrow, so nothing here
+# was ending up in an image — but the whole checkout was still being uploaded to the builder,
+# `.env.local` and `.git` included. On Fly that builder is a remote machine.
+#
+# Keep in step with those COPY lines: tsconfig.json, src/lib/realtime/ticket.ts,
+# src/lib/credits/{schedule,types}.ts, realtime/ and mcp/ must all survive this list.
+
+.git
+.gitignore
+node_modules
+**/node_modules
+
+# Secrets. Never in a build context, whatever the Dockerfile copies.
+.env
+.env.*
+!.env.example
+prod.env
+
+# Next.js build output and caches — large, and irrelevant to both services.
+.next
+out
+tmp
+.vercel
+.turbo
+*.tsbuildinfo
+
+# The app itself. The services take only the few src/lib modules named above.
+public
+db
+docs
+deploy
+tests
+scripts
+src/app
+src/components
+src/hooks
+src/types
+src/middleware.ts
+
+.DS_Store
+*.log
