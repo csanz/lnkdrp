@@ -1,5 +1,25 @@
 import type { NextConfig } from "next";
 
+/**
+ * pdf.js's data files, which nothing imports.
+ *
+ * `resolvePdfJsAssetUrls` in `src/lib/pdf/renderPage.ts` hands pdf.js `file://` URLs for these
+ * directories, built with `path.join` and probed with `fs.existsSync`. No import statement ever
+ * names them, so the build's file tracer has no reason to include them, and `serverExternalPackages`
+ * keeps pdfjs out of the bundle as well. Locally this is invisible because `node_modules` is right
+ * there; in a deployed function the directories are simply absent.
+ *
+ * The failure is quiet and late, which is why it is worth ~2.5MB per function: `existsSync` returns
+ * false, the options are dropped, and pdf.js renders anyway — so a deck with an embedded CJK or
+ * symbol font comes out with missing glyphs in its page images and its extracted text, on the first
+ * production upload, with nothing in the logs.
+ */
+const PDFJS_DATA_FILES = [
+  "./node_modules/pdfjs-dist/standard_fonts/**",
+  "./node_modules/pdfjs-dist/cmaps/**",
+  "./node_modules/pdfjs-dist/wasm/**",
+];
+
 const nextConfig: NextConfig = {
   /**
    * Native / binary deps must remain external for Turbopack builds.
@@ -9,36 +29,24 @@ const nextConfig: NextConfig = {
   // keeping it external lets Node resolve its fake worker / asset files from node_modules.
   serverExternalPackages: ["@napi-rs/canvas", "pdfjs-dist"],
   /**
-   * Ship pdf.js's data files with the two functions that render PDF pages.
+   * Which functions get {@link PDFJS_DATA_FILES}, and why the keys are globs.
    *
-   * `resolvePdfJsAssetUrls` in `src/lib/pdf/renderPage.ts` hands pdf.js `file://` URLs for
-   * `standard_fonts`, `cmaps` and `wasm`, built with `path.join` and checked with `fs.existsSync`.
-   * Nothing ever imports them, so the build's file tracer has no reason to include them, and
-   * `serverExternalPackages` keeps pdfjs out of the bundle as well. Locally this is invisible
-   * because `node_modules` is right there; in a deployed function the directories are absent.
+   * The exact route paths (`/api/uploads/[uploadId]/process`) match nothing — a build with those
+   * keys traced zero of the three directories, which is easy to mistake for the option not working.
+   * Glob keys do match. They are kept as narrow as possible so the ~2.5MB lands only in the two
+   * functions that render PDF pages; a broader `/api/**` put it in every API function.
    *
-   * The failure is quiet and late, which is why it is worth 3MB: the resolver's `existsSync` returns
-   * false, the options are dropped, and pdf.js renders without them — so a deck with an embedded
-   * CJK or symbol font comes out with missing glyphs in its page images and its extracted text,
-   * on the first production upload, with nothing in the logs. Verified against
-   * `.next/server/app/api/uploads/[uploadId]/process/route.js.nft.json`: 645 files traced, 3 from
-   * pdfjs-dist, none from these three directories.
+   * Verified against the trace output rather than assumed. After this change
+   * `/api/uploads/[uploadId]/process` traces 16 font files, 169 cmaps and 7 wasm, the compare rerun
+   * the same, and `/api/docs/[docId]/links` and `/api/health` none.
    *
-   * Keep this list in step with the routes that reach `renderPage`, currently the upload pipeline
-   * and the compare rerun.
+   * Keep in step with the routes that reach `renderPage`: the upload pipeline and the compare rerun.
    */
   outputFileTracingIncludes: {
-    "/api/uploads/[uploadId]/process": [
-      "./node_modules/pdfjs-dist/standard_fonts/**",
-      "./node_modules/pdfjs-dist/cmaps/**",
-      "./node_modules/pdfjs-dist/wasm/**",
-    ],
-    "/api/docs/[docId]/changes/[changeId]/rerun": [
-      "./node_modules/pdfjs-dist/standard_fonts/**",
-      "./node_modules/pdfjs-dist/cmaps/**",
-      "./node_modules/pdfjs-dist/wasm/**",
-    ],
+    "/api/uploads/*/process": PDFJS_DATA_FILES,
+    "/api/docs/*/changes/*/rerun": PDFJS_DATA_FILES,
   },
+
   /**
    * Baseline security headers on every response Next serves (pages, route handlers, `public/`).
    *
