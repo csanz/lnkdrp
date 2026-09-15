@@ -1,6 +1,6 @@
 # PRD — View notifications
 
-**Status:** Draft 2026-09-15, awaiting decisions in "Proposed decisions"
+**Status:** Draft 2026-09-15; decisions 3, 8 and 9 locked by the owner the same day
 **Owner:** chrissanz
 **Last updated:** 2026-09-15
 **Project:** lnkdrp
@@ -43,7 +43,8 @@ to decide whether to act, and never so often that they turn it off.
 - Per-link notification settings in the UI. The preference is per workspace member, like the
   two existing ones. A per-link "always notify me about this one" is listed under Future.
 - Recipient-side email (e.g. "your link was viewed by the sender"). Nothing goes to recipients.
-- Unsubscribe-link infrastructure beyond what the existing emails do. Same footer, same path.
+- A general unsubscribe centre across all email kinds. The one-click off link in decision 8 is
+  scoped to view emails only; extending it to the two existing kinds is a follow-up.
 
 ## Proposed decisions (to lock)
 
@@ -60,10 +61,10 @@ to decide whether to act, and never so often that they turn it off.
    that (see Email design, "first-view honesty").
 
 3. **Three modes, matching the two existing preferences:** `off` · `daily` · `immediate`.
-   **Default `daily`**, not `immediate`. Immediate on by default is how a product becomes the
-   thing people filter to spam; daily is the mode a new user tolerates, and the settings page
-   sells the upgrade to immediate with one line ("Know within minutes when an investor opens
-   the deck"). This is the decision most worth arguing about — see Open questions.
+   **On by default — decided by the owner 2026-09-15.** The concern that immediate-by-default
+   becomes the email people filter to spam is answered by decision 1 (one email per new
+   recipient, never per heartbeat) and decision 7 (batched per tick), not by defaulting to a
+   quieter mode. Which *mode* is the default is the remaining choice; see Open question 1.
 
 4. **Identity in the email follows the analytics tier.** On Pro the email names the viewer
    when known (signed-in name/email, or the name an anonymous reader gave), the link label,
@@ -86,6 +87,40 @@ to decide whether to act, and never so often that they turn it off.
 7. **Batch within a tick.** If three recipients open three links in the same five minutes,
    the immediate email lists all three rather than sending three emails. One email per member
    per tick, per document, at most.
+
+8. **Turning it off is a first-class action, reachable from the email itself — decided by the
+   owner 2026-09-15.** Because the feature is on by default, the off switch has to be at least
+   as easy to find as the email was to receive. Concretely:
+   - Every view email carries two footer links: **Turn off these emails** (one click, no sign-in
+     round trip beyond what the link already carries, sets this member's mode to `off` and
+     confirms on a plain page) and **Change how often** (to Preferences → Notifications).
+   - `off` is a real state that suppresses immediate *and* digest emails for views; it does not
+     touch the two existing preferences.
+   - The Preferences row shows the current mode with `Off` as a visible option, not buried
+     behind a "manage" link.
+   - A member who turns it off is never re-enabled by a deploy, a migration or a plan change.
+   The one-click link is a signed token (member id + purpose + expiry) rather than the session
+   cookie, because the email is opened on phones where the user is not signed in, and an
+   unsubscribe that demands a sign-in is one that does not happen.
+
+9. **The Terms of Service and the Privacy Policy say this before the first email goes out —
+   decided by the owner 2026-09-15.** Two current statements are contradicted by
+   on-by-default:
+   - Terms §2 lists "Email notifications about document activity, which you can turn off in
+     your settings" — accurate, but it does not say the notifications are on unless turned off,
+     and a reader would not infer that from it.
+   - Privacy §"How we use information" says we send "document activity notifications and
+     digests **you have opted into**". On-by-default is opt-out, so this sentence becomes false
+     the day the feature ships.
+   Both are amended in M1, before any send: Terms §2 gains a sentence that view notifications
+   are sent to workspace members by default and can be turned off per member from any such
+   email or from settings; Privacy replaces "you have opted into" with "which are on by default
+   and which you can turn off at any time from the email or your settings", and Privacy §5
+   (written for viewers) gains one line telling viewers that the person who shared the link
+   may be emailed when they open it — that is a disclosure owed to the *viewer*, not only the
+   account holder. The dated change-note convention already used in Terms §8 is followed, and
+   `tests/credits/gateSplitCopy.test.ts`'s pattern of pinning legal copy in a test is extended
+   so the statements cannot silently drift from the behaviour.
 
 ## Approach
 
@@ -152,6 +187,11 @@ now states; the email must not claim certainty the data does not have.
 **Digest:** one section per document, one line per link, viewers and returns as counts with
 the top viewer named on Pro. Footer link to the document's metrics.
 
+**Footer, every view email:** *You get this because someone opened a document in your
+workspace. **Turn off these emails** · **Change how often**.* The off link is the signed
+one-click token (decision 8). The line names the reason the email exists, because an email
+that arrives by default owes the reader that much.
+
 **Plain text and HTML both**, through `sendTextEmail`'s existing transport. `EMAIL_TRANSPORT=
 console` in dev prints the payload, which is how the copy gets reviewed before anything is
 sent.
@@ -159,7 +199,15 @@ sent.
 ### Web app
 
 - **Preferences → Notifications:** a third row, "When someone opens a link", with the three
-  modes, above the two existing rows because it is the one people come for.
+  modes and `Off` shown as a peer of the other two, above the two existing rows because it is
+  the one people come for.
+- **One-click off from the email:** `GET /api/notifications/views/off?t=<token>` verifies a
+  signed token (member id, purpose `view_emails_off`, 30-day expiry), sets the mode to `off`,
+  and renders a plain confirmation with a link back to Preferences to change it. Idempotent;
+  a used or expired token still lands on the same page with the current state. No sign-in
+  required, for the reason in decision 8.
+- **Legal pages:** Terms §2, Privacy "How we use information" and Privacy §5 updated per
+  decision 9, with the dated note, in the same commit as the pipeline so they cannot ship apart.
 - **Metrics page and links table:** no change. The email deep-links into the filtered metrics
   view that already exists.
 - **Onboarding:** after the first share link is created, one dismissible line on the document
@@ -204,13 +252,24 @@ of the last six months on day one.
 7. Two cron ticks overlap → the lease makes the second skip; the digest goes once per UTC day.
 8. `tests/share/traffic.ts --readers 6` with a member on `immediate` → the printed console
    emails match the readers the script created, minus none (no owner previews in that run).
+9. Click **Turn off these emails** in a received email while signed out → the confirmation
+   page renders, the member's mode reads `off` in Preferences, and the next tick sends nothing
+   for a fresh view. Click the same link again → same page, still off, no error.
+10. A new member joining a workspace after deploy → their mode is the default (on), and their
+    first email carries the footer with the off link.
+11. Terms §2 and Privacy say notifications are on by default and can be turned off, and the
+    copy test fails if either sentence is removed.
 
 ## Milestones
 
-### M1 — Pipeline (no UI change)
-- `viewEmailMode` on membership, `share_views` cursor key, event selection for new viewers,
-  the immediate block in `sendNotificationEmails`, plain-text email, console transport.
-- Proves: verification 1, 3, 6, 7 with the mode set directly in the database.
+### M1 — Pipeline, off switch and legal copy (no preferences UI yet)
+- `viewEmailMode` on membership (default on), `share_views` cursor key, event selection for
+  new viewers, the immediate block in `sendNotificationEmails`, plain-text email with the
+  footer and the signed one-click off route, console transport.
+- Terms §2, Privacy "How we use information" and Privacy §5 amended with the dated note, and
+  the copy test, **in this milestone** — the legal statements must be true before the first
+  send, so they cannot wait for M3.
+- Proves: verification 1, 3, 6, 7, 9, 10, 11 with the mode set directly in the database.
 
 ### M2 — Preferences and digest
 - Notifications row in Preferences; the daily digest with returns; the onboarding line.
@@ -223,11 +282,11 @@ of the last six months on day one.
 
 ## Open questions
 
-1. **Default mode: `daily` or `immediate`?** The draft says `daily` to protect the inbox and
-   sell the upgrade. The counter-argument is real: a founder who gets no email on the day an
-   investor opens the deck may never learn the feature exists, and the first immediate email is
-   the moment the product feels alive. A middle path: **first three views ever are immediate
-   regardless of mode**, then the chosen mode applies. Decide before M1.
+1. **Which mode is the default — `daily` or `immediate`?** On-by-default is decided; this is
+   the remaining half. `daily` protects the inbox; `immediate` is the moment the product feels
+   alive, and a founder who gets nothing the day an investor opens the deck may never learn the
+   feature exists. A middle path: **first three views ever are immediate regardless of mode**,
+   then the chosen mode applies. Decide before M1.
 2. **Is `immediate` a Pro feature?** It is the obvious plan lever and DocSend gates exactly
    this. The draft leaves it on every plan and gates *identity* instead, because a Free user
    who gets "Someone opened the Sequoia link" within five minutes and cannot see who is the
