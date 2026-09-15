@@ -17,6 +17,7 @@ import { randomBase62, newShareId } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { ensureDefaultLink } from "@/lib/share/links";
+import { ShareLinkModel } from "@/lib/models/ShareLink";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -139,7 +140,13 @@ export async function GET(request: Request) {
       filter._id = { $in: ids.map((id) => new Types.ObjectId(id)) };
     } else if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      filter.$or = [{ title: rx }, { shareId: rx }];
+      // A document owns many links, and `Doc.shareId` is only the default one's slug. Searching by
+      // slug has to match *any* of the document's links, or an agent handed the Sequoia link — the
+      // whole point of per-audience links — asks `get_share` about it and is told it does not
+      // exist. One indexed lookup on `sharelinks.shareId` (unique), then the doc ids join the `$or`.
+      const linkHits = await ShareLinkModel.find({ shareId: rx, orgId }).select({ docId: 1 }).limit(50).lean<Array<{ docId: Types.ObjectId }>>();
+      const linkDocIds = linkHits.map((l) => l.docId).filter(Boolean);
+      filter.$or = [{ title: rx }, { shareId: rx }, ...(linkDocIds.length ? [{ _id: { $in: linkDocIds } }] : [])];
     }
 
     const useIds = Boolean(ids.length);

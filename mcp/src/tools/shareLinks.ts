@@ -146,8 +146,8 @@ export function registerUpdateShareLinkTool(server: McpServer, ctx: ToolContext)
       description:
         "Change one share link: label, audience, enabled, allowDownload, password (string to set, null to remove), expiresAt " +
         "(ISO date or null), allowRevisionHistory. At least one setting is required. Disabling a link revokes that recipient's " +
-        "access without touching the document's other links. Re-enabling at the Free cap leaves the link off and returns " +
-        "planWarning. " +
+        "access without touching the document's other links. Links are never plan-capped, so re-enabling always succeeds; " +
+        "planWarning only notes when the workspace is near its separate cap on shared documents. " +
         SAFETY_TAIL,
       inputSchema: updateShareLinkInputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

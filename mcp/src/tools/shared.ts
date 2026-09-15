@@ -32,16 +32,27 @@ export function requireExactlyOneRef(ref: DocRef): DocRef {
 }
 
 /**
- * Resolve a doc by id or by shareId. shareId lookups go through `GET /api/docs?q=` (which matches
- * title or shareId, case-insensitively) and keep only the exact shareId; archived docs are not
- * listed by that route, so they resolve only by `docId`.
+ * Resolve a doc by id or by the shareId of *any* of its links.
+ *
+ * shareId lookups go through `GET /api/docs?q=`, which matches title, the default link's slug, and —
+ * since a document owns many links — every other link's slug too. The old version kept only rows
+ * whose `Doc.shareId` equalled the query, and `Doc.shareId` is the default link alone, so the ten
+ * per-investor links an agent is most likely to be handed all came back "not found". The route now
+ * returns the owning document for any slug; when it returns exactly one match for a slug-shaped
+ * query, that is the document. Archived docs are not listed by that route, so they resolve only by
+ * `docId`.
  */
 export async function resolveDoc(api: ApiClient, ref: DocRef): Promise<ApiDoc> {
   requireExactlyOneRef(ref);
   if (ref.docId) return api.getDoc(ref.docId);
   const shareId = ref.shareId as string;
   const matches = await api.listDocs({ q: shareId, limit: 50 });
-  const hit = matches.find((d) => d.shareId === shareId) ?? matches.find((d) => d.shareId?.toLowerCase() === shareId.toLowerCase());
+  // Prefer an exact default-slug match, then fall back to the single document the route returned
+  // for this slug (a non-default link). A slug is 12 random base62 chars, so a title matching it
+  // by accident is not a realistic collision; more than one hit means the query was not a slug.
+  const exact =
+    matches.find((d) => d.shareId === shareId) ?? matches.find((d) => d.shareId?.toLowerCase() === shareId.toLowerCase());
+  const hit = exact ?? (matches.length === 1 ? matches[0] : undefined);
   if (!hit?.id) throw new ToolError("not_found", "No document with that shareId in this workspace.");
   return api.getDoc(hit.id);
 }

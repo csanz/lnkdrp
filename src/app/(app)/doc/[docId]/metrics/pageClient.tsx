@@ -1350,19 +1350,32 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 when it was needed. */}
             {links && links.length + (deletedLinkResidual ? 1 : 0) > 1 ? (
               <div className="mt-1">
-                <div className="text-sm font-semibold text-[var(--fg)]">Compare links</div>
+                <div className="text-sm font-semibold text-[var(--fg)]">Which link is doing the work</div>
                 <div className="mt-1 text-sm text-[var(--muted)]">
-                  {/* Two things a reader could not tell before: what the section was for, and what
-                      its relationship to the cards above is. "Links" over a table of links says
-                      nothing, and with a link selected the cards show one link while this table
-                      still shows them all — which reads as a bug unless the page says otherwise.
-                      The row has no click handler, only the link name does, so the instruction
-                      names the link rather than the row. */}
-                  Every link on this document over the last {days} days, so the rows add up to the
-                  figures above.{" "}
-                  {shareId
-                    ? "The cards are showing one link — select another name to switch, or Clear to see them all together."
-                    : "Select a link name to narrow every figure above to it."}
+                  {/* One sentence, one job: say what the table answers. The previous copy tried to
+                      explain the table, its relationship to the cards and the filter mechanics in
+                      one breath, and the user asked what the section meant — the clearest possible
+                      signal it explained nothing. It also claimed the rows "add up to the figures
+                      above", which is false whenever a link is selected (cards show one link, rows
+                      show all), so it told readers to check arithmetic that cannot reconcile. The
+                      row has no click handler, only the link name does, hence "select a name". */}
+                  Every link on this document, side by side, over the last {days} days.{" "}
+                  {shareId ? (
+                    <>
+                      The highlighted row is the link the cards above are showing. Select another name to switch,
+                      or{" "}
+                      <button
+                        type="button"
+                        onClick={() => selectLink(null)}
+                        className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                      >
+                        show all links together
+                      </button>
+                      .
+                    </>
+                  ) : (
+                    "Select a name to see that link alone in the cards above."
+                  )}
                 </div>
 
                 <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
@@ -1397,15 +1410,23 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                                 active ? "bg-[var(--panel-hover)]" : "",
                               ].join(" ")}
                             >
-                              <td className="px-4 py-2">
+                              <td className={["px-4 py-2", active ? "border-l-2 border-[var(--fg)]" : "border-l-2 border-transparent"].join(" ")}>
                                 <button
                                   type="button"
                                   onClick={() => selectLink(active ? null : l.shareId)}
                                   className="max-w-[260px] truncate text-left font-medium text-[var(--fg)] underline-offset-2 hover:underline"
                                   title={l.audience ?? l.label}
+                                  aria-pressed={active}
                                 >
                                   {l.label}
                                 </button>
+                                {/* A tinted row is not a state anyone reads; the user screenshotted
+                                    the selected row and could not tell it was selected. */}
+                                {active ? (
+                                  <span className="ml-2 rounded-full border border-[var(--border)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                                    Selected
+                                  </span>
+                                ) : null}
                                 <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11px] text-[var(--muted-2)]">
                                   {l.audience ? <span className="truncate">{l.audience}</span> : null}
                                   {l.status !== "active" ? <span className="capitalize">{l.status}</span> : null}
