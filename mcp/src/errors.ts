@@ -48,6 +48,40 @@ export class ToolError extends Error {
 }
 
 /** Type guard for `ToolError`. */
+/**
+ * Things a workspace can still do on its current plan, given the limit it just hit.
+ *
+ * Written as instructions to an agent, because that is who reads them: each line names a tool call
+ * or an action that will actually succeed right now. A refusal whose only suggestion is "pay" is a
+ * dead end for an agent working on someone else's behalf — it cannot buy anything, and it stops.
+ */
+function planLimitAlternatives(limit: string): string[] {
+  switch (limit) {
+    case "documents":
+      return [
+        "add another share link to a document this workspace already has (lnkdrp_create_share_link — links are unlimited on every plan, one per investor or counterparty)",
+        "replace the file on an existing document so recipients see the new version on the links they already have",
+        "archive a document that is finished, which frees a slot and keeps its analytics",
+      ];
+    case "projects":
+      return ["put the document in an existing project", "archive a finished project to free the slot"];
+    case "collaborators":
+      return ["share a link with them instead of adding them to the workspace — recipients never need an account"];
+    case "version_history":
+      return [
+        "replace the file anyway: the new version is recorded and every existing link serves it",
+        "read the version history yourself (the owner's history page is not Pro-gated; only letting recipients browse versions is)",
+      ];
+    case "analytics_history":
+      return [
+        "read the basic figures, which every plan gets: views, downloads, pages viewed, total time and a unique viewer count",
+        "narrow to one link with lnkdrp_get_share_stats and a shareId — per-link totals are not Pro-gated",
+      ];
+    default:
+      return [];
+  }
+}
+
 export function isToolError(err: unknown): err is ToolError {
   return err instanceof ToolError;
 }
@@ -159,10 +193,22 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
         // Usage caps carry a positive `max`; feature gates (Pro-only) come back with `max: 0`.
         const max = typeof body.max === "number" && body.max > 0 ? body.max : null;
         const cap = max !== null ? ` The Free plan allows ${max} for "${str(body.limit)}".` : "";
-        return new ToolError("plan_limit", `${message || "Plan limit reached."}${cap} Upgrade at ${upgradeUrl} to lift the cap.`, {
-          status,
-          details: { ...body, upgradeUrl },
-        });
+        // What the caller can still do, not only what it cannot. An agent that hits a cap and is
+        // told "upgrade" has one move and it costs the user money; most of the time there is a
+        // free way to finish the job — another link on an existing document, an archive to free a
+        // slot — and the agent cannot know that unless the refusal says so.
+        const alternatives = planLimitAlternatives(str(body.limit));
+        const alsoCan = alternatives.length ? ` Without upgrading you can still: ${alternatives.join("; ")}.` : "";
+        return new ToolError(
+          "plan_limit",
+          `${message || "Plan limit reached."}${cap}${alsoCan} To lift the cap, the workspace owner can upgrade at ${upgradeUrl}.`,
+          {
+            status,
+            // Both in `details` for a client that reads structure, and in the message above for one
+            // that only shows text.
+            details: { ...body, upgradeUrl, alternatives },
+          },
+        );
       }
       return outOfCreditsError(status, body, bodyCode, siteUrl);
     }

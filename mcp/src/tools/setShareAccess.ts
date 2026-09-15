@@ -35,7 +35,8 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
       description:
         "Update a share link: shareEnabled, allowDownload, password (string to set, null to remove), allowRevisionHistory. " +
         "At least one setting is required. Returns the same shape as lnkdrp_get_share. Turning sharing on at the Free plan's " +
-        "active-link cap, or enabling revision history on Free, fails with code plan_limit and an upgrade link. " +
+        "shared-document cap, or enabling revision history on Free, fails with code plan_limit carrying an upgrade link and " +
+        "a list of what is still possible on the current plan. " +
         SAFETY_TAIL,
       inputSchema: setShareAccessInputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

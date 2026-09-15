@@ -2,6 +2,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
+import { CRON_JOBS } from "@/lib/cron/jobs";
+
 /**
  * Every cron job must exist in three places that stay in sync by construction:
  *   vercel.json  crons[].path = /api/cron/<job>   (production schedule)
@@ -47,5 +49,15 @@ describe("cron jobs are declared consistently", () => {
   });
   test("the runner library exists", () => {
     expect(existsSync(join(ROOT, "scripts/cron/lib.ts"))).toBe(true);
+  });
+
+  // A deployed function cannot read vercel.json, so `src/lib/cron/jobs.ts` repeats the schedules
+  // for the monitor to judge lateness against. This is what stops the copy from drifting.
+  test("src/lib/cron/jobs.ts lists exactly the scheduled jobs, with the same schedules", () => {
+    expect([...CRON_JOBS].map((j) => j.jobKey).sort()).toEqual([...scheduled].sort());
+    for (const c of vercel.crons) {
+      const job = CRON_JOBS.find((j) => `/api/cron/${j.jobKey}` === c.path);
+      expect(job?.schedule, `schedule for ${c.path}`).toBe(c.schedule);
+    }
   });
 });

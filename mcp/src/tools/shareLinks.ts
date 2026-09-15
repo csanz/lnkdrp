@@ -33,10 +33,16 @@ function withUrl(api: ApiClient, link: ApiShareLink): ShareLinkResult {
   return { ...link, shareUrl: api.shareUrl(link.shareId) };
 }
 
-/** Human sentence for the Free active-link cap, so the agent reports it instead of silently returning a dead link. */
+/**
+ * Human sentence for the Free *document* cap when a workspace is near it.
+ *
+ * It is a heads-up, never a refusal: links are not plan-capped, so creating one always succeeds.
+ * The note exists because an agent that has just made a link is well placed to tell its user the
+ * workspace is close to the limit on *documents*, which is the next thing that will stop them.
+ */
 function planNote(warning: PlanWarning | undefined, siteUrl: string): string | undefined {
   if (!warning) return undefined;
-  return `Free workspaces can share ${warning.max} documents (${warning.used} in use); a document may carry any number of links. Upgrade at ${siteUrl}/pricing to lift the cap.`;
+  return `This link is active. Note the workspace is using ${warning.used} of ${warning.max} shared documents on Free — links are unlimited, documents are not. The owner can upgrade at ${siteUrl}/pricing.`;
 }
 
 export const createShareLinkInputShape = {
@@ -81,7 +87,9 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
         "Create an extra share link for a document, with its own label, audience, password, download and expiry settings. " +
         "One link per recipient is the point: each link has separate view/download stats (lnkdrp_get_share_stats accepts its " +
         "shareId) and can be disabled on its own. The label and audience are private to the sender and never shown to viewers. " +
-        "At the Free plan's active-link cap the link is still created but disabled, and planWarning explains why. " +
+        "Links are never plan-capped: a document may carry one per investor or counterparty on any plan, and this call " +
+        "always creates the link enabled. planWarning only appears when the workspace is near its separate cap on shared " +
+        "documents. " +
         SAFETY_TAIL,
       inputSchema: createShareLinkInputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

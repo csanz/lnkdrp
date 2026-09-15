@@ -294,6 +294,31 @@ async function main(): Promise<void> {
     });
     const keyPrefix = apiKeyPrefix(plaintext);
 
+    // Headroom before anything else: this run creates two documents (the second only after the
+    // first is released), and the Free cap counts shared documents. Failing here with the number
+    // is worth more than failing at step 20 with a plan_limit that reads like a broken tool.
+    await step("the workspace has room for a document", async () => {
+      const health = await fetch(new URL(MCP_URL).origin + "/healthz", { signal: AbortSignal.timeout(10_000) })
+        .then((r) => (r.ok ? (r.json() as Promise<{ apiUrl?: string }>) : null))
+        .catch(() => null);
+      const apiUrl = (health?.apiUrl ?? "").replace(/\/+$/, "");
+      if (!apiUrl) return info("plan", "MCP server did not report its apiUrl; continuing");
+      const res = await fetch(`${apiUrl}/api/plan`, {
+        headers: { Authorization: `Bearer ${plaintext}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) return info("plan", `could not read (HTTP ${res.status}); continuing`);
+      const plan = (await res.json()) as { plan?: string; usage?: { documents?: number }; limits?: { documents?: number | null } };
+      const used = plan.usage?.documents ?? 0;
+      const max = plan.limits?.documents ?? null;
+      info("documents", `${used}${max === null ? " (no cap)" : ` of ${max}`} · plan ${plan.plan ?? "?"}`);
+      assert(
+        max === null || used < max,
+        `this workspace is already sharing ${used} of ${max} documents, so the run cannot create one. ` +
+          `Archive a document, or point E2E_ORG_ID at a workspace with a free slot.`,
+      );
+    });
+
     // 2. Bad key first: the server must reject the session at initialize with HTTP 401.
     await step("initialize with an unknown key is rejected with HTTP 401", async () => {
       const bad = makeClient(BAD_KEY);
@@ -553,6 +578,24 @@ async function main(): Promise<void> {
       const list = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId });
       assert(list.links.length === 1, `expected 1 link after delete, got ${list.links.length}`);
       assert(list.links[0]?.isDefault === true, "the surviving link is not the default one");
+    });
+
+    // Free the first document's slot before creating the second. The Free cap counts *shared
+    // documents*, and this run needs two — so on a workspace with one slot free it used to sail
+    // through nineteen steps and fail on the last one with a plan_limit that looked like a bug in
+    // the tool rather than a shortage of room. Everything the first document was for is done by
+    // here: its links were created, listed, disabled and deleted in steps 14 to 19.
+    await step("release the first document's slot (the Free cap counts documents)", async () => {
+      const first = createdDocs[0];
+      assert(first, "no document to release");
+      const res = await fetch(`${first.origin}/api/docs/${encodeURIComponent(first.docId)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${plaintext}` },
+        signal: AbortSignal.timeout(15_000),
+      });
+      assert(res.ok, `could not delete the first document (HTTP ${res.status})`);
+      createdDocs.shift();
+      info("released", first.docId);
     });
 
     // 17. Agent-written summary: no AI summary run, 0 credits, attributed to the calling client.
