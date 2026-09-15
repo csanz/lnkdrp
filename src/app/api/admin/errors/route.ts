@@ -6,15 +6,17 @@
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { resolveActor } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
-import { UserModel } from "@/lib/models/User";
 import { ErrorEventModel } from "@/lib/models/ErrorEvent";
 import type { ErrorCategory, ErrorSeverity } from "@/lib/errors/types";
 import { serializeErrorEventForAdmin } from "@/lib/errors/serializeErrorEvent";
+import { requireAdmin } from "@/lib/gating/requireAdmin";
 
 export const runtime = "nodejs";
 
+/**
+ *
+ */
 function parseBool(v: unknown): boolean | null {
   if (typeof v === "boolean") return v;
   if (typeof v === "number") return Number.isFinite(v) ? v !== 0 : null;
@@ -26,37 +28,18 @@ function parseBool(v: unknown): boolean | null {
   return null;
 }
 
+/**
+ *
+ */
 function envLabel(): string {
   return (process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "").trim().toLowerCase() || "unknown";
 }
 
-function isLocalhostBypassAllowed(request: Request) {
-  // Only allow a localhost bypass in development when explicitly enabled.
-  if (envLabel() !== "development") return false;
-  if (parseBool(process.env.ADMIN_LOCALHOST_BYPASS) !== true) return false;
-  const host = (request.headers.get("host") ?? "").toLowerCase();
-  return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
-}
 
-async function requireAdmin(request: Request) {
-  if (isLocalhostBypassAllowed(request)) {
-    return { ok: true as const, userId: null as string | null };
-  }
-  const actor = await resolveActor(request);
-  if (actor.kind !== "user" || !Types.ObjectId.isValid(actor.userId)) {
-    return { ok: false as const, status: 401, error: "Not authenticated" };
-  }
 
-  await connectMongo();
-  const u = await UserModel.findOne({ _id: new Types.ObjectId(actor.userId) })
-    .select({ role: 1 })
-    .lean();
-  const role = (u as { role?: unknown } | null)?.role;
-  if (role !== "admin") return { ok: false as const, status: 403, error: "Forbidden" };
-
-  return { ok: true as const, userId: actor.userId };
-}
-
+/**
+ *
+ */
 function asPositiveInt(v: unknown): number | null {
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) return null;
@@ -64,6 +47,9 @@ function asPositiveInt(v: unknown): number | null {
   return i >= 1 ? i : null;
 }
 
+/**
+ *
+ */
 function parseDate(v: string | null): Date | null {
   const s = (v ?? "").trim();
   if (!s) return null;
@@ -72,6 +58,9 @@ function parseDate(v: string | null): Date | null {
   return new Date(ms);
 }
 
+/**
+ *
+ */
 function parseSeverity(v: string | null): ErrorSeverity | null {
   const s = (v ?? "").trim().toLowerCase();
   if (s === "error" || s === "warn" || s === "info") return s;
@@ -90,6 +79,9 @@ const CATEGORIES: Set<ErrorCategory> = new Set([
   "unknown",
 ]);
 
+/**
+ *
+ */
 function parseCategory(v: string | null): ErrorCategory | null {
   const s = (v ?? "").trim().toLowerCase() as ErrorCategory;
   return CATEGORIES.has(s) ? s : null;
@@ -97,11 +89,17 @@ function parseCategory(v: string | null): ErrorCategory | null {
 
 type Cursor = { createdAt: string; id: string };
 
+/**
+ *
+ */
 function encodeCursor(c: Cursor): string {
   const json = JSON.stringify(c);
   return Buffer.from(json, "utf8").toString("base64url");
 }
 
+/**
+ *
+ */
 function decodeCursor(raw: string | null): Cursor | null {
   const s = (raw ?? "").trim();
   if (!s) return null;
@@ -119,6 +117,9 @@ function decodeCursor(raw: string | null): Cursor | null {
   }
 }
 
+/**
+ *
+ */
 export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });

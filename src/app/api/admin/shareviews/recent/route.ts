@@ -5,52 +5,20 @@
  * Used by the admin Share Views dashboard.
  */
 import { NextResponse } from "next/server";
-import { Types } from "mongoose";
-import { resolveActor } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
 import { ShareViewModel } from "@/lib/models/ShareView";
-import { UserModel } from "@/lib/models/User";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
+import { requireAdmin } from "@/lib/gating/requireAdmin";
 
 export const runtime = "nodejs";
-/**
- * Return whether localhost request.
- */
-
-
-function isLocalhostRequest(request: Request) {
-  if (process.env.NODE_ENV === "production") return false;
-  const host = (request.headers.get("host") ?? "").toLowerCase();
-  return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
-}
-/**
- * Require Admin (uses isLocalhostRequest, resolveActor, isValid).
- */
-
-
-async function requireAdmin(request: Request) {
-  if (isLocalhostRequest(request)) {
-    return { ok: true as const, userId: null as string | null };
-  }
-  const actor = await resolveActor(request);
-  if (actor.kind !== "user" || !Types.ObjectId.isValid(actor.userId)) {
-    return { ok: false as const, status: 401, error: "Not authenticated" };
-  }
-
-  await connectMongo();
-  const u = await UserModel.findOne({ _id: new Types.ObjectId(actor.userId) })
-    .select({ role: 1 })
-    .lean();
-  const role = (u as { role?: unknown } | null)?.role;
-  if (role !== "admin") return { ok: false as const, status: 403, error: "Forbidden" };
-
-  return { ok: true as const, userId: actor.userId };
-}
 /**
  * As Positive Int (uses Number, isFinite, floor).
  */
 
 
+/**
+ *
+ */
 function asPositiveInt(v: unknown): number | null {
   const n = typeof v === "number" ? v : Number(v);
   if (!Number.isFinite(n)) return null;
@@ -62,6 +30,9 @@ function asPositiveInt(v: unknown): number | null {
  */
 
 
+/**
+ *
+ */
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
     const auth = await requireAdmin(request);

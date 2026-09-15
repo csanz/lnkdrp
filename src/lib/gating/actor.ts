@@ -130,7 +130,24 @@ export { TEMP_USER_ID_HEADER, TEMP_USER_SECRET_HEADER };
 
 /** The authenticated identity making an API request. */
 export type Actor =
-  | { kind: "user"; userId: string; orgId: string; personalOrgId: string }
+  | {
+      kind: "user";
+      userId: string;
+      orgId: string;
+      personalOrgId: string;
+      /**
+       * Set when this actor came from an API key rather than a signed-in session.
+       *
+       * An API key resolves to the member who created it, which is what makes agent actions
+       * attributable — but it means a key silently carries everything its owner can do, including
+       * powers the key was never scoped for. `requireAdmin` refuses a key-derived actor for exactly
+       * that reason: an admin who connects an agent should not thereby hand it the admin console.
+       *
+       * Any future gate that authorises on who someone *is*, rather than on a key scope, must check
+       * this too.
+       */
+      viaApiKey?: { keyId: string; scopes: string[] };
+    }
   | {
       kind: "temp";
       userId: string;

@@ -73,7 +73,15 @@ export async function verifyBearerToken(token: string | null | undefined): Promi
 
   return {
     ok: true,
-    actor: { kind: "user", userId, orgId, personalOrgId: orgId },
+    // `viaApiKey` marks this actor as key-derived so gates that authorise on identity rather than
+    // on a scope can refuse it — see `Actor` and `requireAdmin`.
+    actor: {
+      kind: "user",
+      userId,
+      orgId,
+      personalOrgId: orgId,
+      viaApiKey: { keyId: String(doc._id), scopes: (doc.scopes ?? []) as ApiKeyScope[] },
+    },
     key: {
       id: String(doc._id),
       name: doc.name,

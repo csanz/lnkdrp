@@ -5,42 +5,20 @@
  * customer-facing endpoints can read it without hitting Stripe.
  */
 import { NextResponse } from "next/server";
-import { Types } from "mongoose";
 import Stripe from "stripe";
 
-import { resolveActor } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
-import { UserModel } from "@/lib/models/User";
 import { BillingConfigModel } from "@/lib/models/BillingConfig";
 import { revalidateBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
+import { requireAdmin } from "@/lib/gating/requireAdmin";
 
 export const runtime = "nodejs";
 
-function isLocalhostRequest(request: Request) {
-  if (process.env.NODE_ENV === "production") return false;
-  const host = (request.headers.get("host") ?? "").toLowerCase();
-  return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
-}
 
-async function requireAdmin(request: Request) {
-  if (isLocalhostRequest(request)) {
-    return { ok: true as const, userId: null as string | null };
-  }
-  const actor = await resolveActor(request);
-  if (actor.kind !== "user" || !Types.ObjectId.isValid(actor.userId)) {
-    return { ok: false as const, status: 401, error: "Not authenticated" };
-  }
 
-  await connectMongo();
-  const u = await UserModel.findOne({ _id: new Types.ObjectId(actor.userId) })
-    .select({ role: 1 })
-    .lean();
-  const role = (u as { role?: unknown } | null)?.role;
-  if (role !== "admin") return { ok: false as const, status: 403, error: "Forbidden" };
-
-  return { ok: true as const, userId: actor.userId };
-}
-
+/**
+ *
+ */
 function formatPriceLabel(params: { unitAmount: number; currency: string; interval: string }): string {
   const { unitAmount, currency, interval } = params;
   const amount = unitAmount / 100;
@@ -53,6 +31,9 @@ function formatPriceLabel(params: { unitAmount: number; currency: string; interv
   }
 }
 
+/**
+ *
+ */
 export async function GET(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -66,6 +47,9 @@ export async function GET(request: Request) {
   return NextResponse.json({ ok: true, proPriceLabel: proPriceLabel || null, updatedDate });
 }
 
+/**
+ *
+ */
 export async function POST(request: Request) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });

@@ -174,7 +174,16 @@ describe("gating/apiKeyActor.verifyBearerToken", () => {
     );
     expect(result).toEqual({
       ok: true,
-      actor: { kind: "user", userId: String(USER), orgId: String(ORG), personalOrgId: String(ORG) },
+      actor: {
+        kind: "user",
+        userId: String(USER),
+        orgId: String(ORG),
+        personalOrgId: String(ORG),
+        // The marker that keeps a key out of the admin endpoints. A key resolves to the member who
+        // created it, so without this an admin's agent key inherited the admin console — see
+        // `requireAdmin`, which refuses any actor carrying it.
+        viaApiKey: { keyId: String(KEY_ID), scopes: ["read", "write"] },
+      },
       key: {
         id: String(KEY_ID),
         name: "Claude Code on my laptop",

@@ -6,43 +6,25 @@
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { resolveActor } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
-import { UserModel } from "@/lib/models/User";
 import { ProjectModel } from "@/lib/models/Project";
 import { newSecretToken } from "@/lib/crypto/randomBase62";
+import { requireAdmin } from "@/lib/gating/requireAdmin";
 
 export const runtime = "nodejs";
 
+/**
+ *
+ */
 function newRequestUploadToken() {
   return newSecretToken(32);
 }
 
-function isLocalhostRequest(request: Request) {
-  if (process.env.NODE_ENV === "production") return false;
-  const host = (request.headers.get("host") ?? "").toLowerCase();
-  return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
-}
 
-async function requireAdmin(request: Request) {
-  if (isLocalhostRequest(request)) {
-    return { ok: true as const };
-  }
-  const actor = await resolveActor(request);
-  if (actor.kind !== "user" || !Types.ObjectId.isValid(actor.userId)) {
-    return { ok: false as const, status: 401, error: "Not authenticated" };
-  }
 
-  await connectMongo();
-  const u = await UserModel.findOne({ _id: new Types.ObjectId(actor.userId) })
-    .select({ role: 1 })
-    .lean();
-  const role = (u as { role?: unknown } | null)?.role;
-  if (role !== "admin") return { ok: false as const, status: 403, error: "Forbidden" };
-
-  return { ok: true as const };
-}
-
+/**
+ *
+ */
 export async function GET(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -65,6 +47,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ proj
   });
 }
 
+/**
+ *
+ */
 export async function POST(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
@@ -115,6 +100,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ pro
   return NextResponse.json({ ok: true, project: { id: projectId, isRequest } });
 }
 
+/**
+ *
+ */
 export async function DELETE(request: Request, { params }: { params: Promise<{ projectId: string }> }) {
   const auth = await requireAdmin(request);
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
