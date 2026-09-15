@@ -17,11 +17,13 @@ import {
   registerUpdateShareLinkTool,
 } from "./tools/shareLinks";
 import { registerArchiveDocTool, registerDeleteDocTool } from "./tools/docLifecycle";
+import { registerGetActivityTool, registerListDocsTool } from "./tools/discover";
 import { registerSharePdfTool } from "./tools/sharePdf";
 import { registerWhoamiTool } from "./tools/whoami";
 
 export const SERVER_INSTRUCTIONS =
-  "lnkdrp shares PDFs as trackable links. Start with lnkdrp_whoami to confirm the workspace. Use lnkdrp_share_pdf to turn a " +
+  "lnkdrp shares PDFs as trackable links. Start with lnkdrp_whoami to confirm the workspace. lnkdrp_list_docs finds documents " +
+  "by title, link slug or id, and lnkdrp_get_activity reads the workspace feed (who='agents' for what agents did). Use lnkdrp_share_pdf to turn a " +
   "public PDF URL into a share link, lnkdrp_get_share to read its state, lnkdrp_set_share_access to change access, and " +
   "lnkdrp_get_share_stats for views. A document can have many links, one per recipient: lnkdrp_create_share_link makes a " +
   "labelled link with its own password, download and expiry settings, lnkdrp_list_share_links shows them all, " +
@@ -34,6 +36,8 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION }, { instructions: SERVER_INSTRUCTIONS });
 
   registerWhoamiTool(server, ctx);
+  registerListDocsTool(server, ctx);
+  registerGetActivityTool(server, ctx);
   registerSharePdfTool(server, ctx);
   registerGetShareTool(server, ctx);
   registerSetShareAccessTool(server, ctx);

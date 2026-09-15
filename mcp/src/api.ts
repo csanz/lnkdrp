@@ -8,7 +8,8 @@
  * Envelopes verified against the route handlers on 2026-09-13:
  * - `GET  /api/agent/whoami`                   -> `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client }`
  * - `POST /api/docs` `{ title }`               -> 201 `{ doc: { id, shareId, title, status, shareEnabled, … }, planWarning? }`; 402 `{ code: "plan_limit", … }` at the Free shared-document cap
- * - `GET  /api/docs?q=<shareId>`               -> `{ docs: [{ id, shareId, title, status, … }] }` (`q` matches title or shareId)
+ * - `GET  /api/docs?q=&ids=&page=&limit=`     -> `{ total, page, limit, docs: [{ id, shareId, title, status, version, one_liner, … }] }` (`q` matches a title or any link slug; `ids` is a direct lookup)
+ * - `GET  /api/activity?limit=&cursor=&type=&docId=&who=` -> `{ items: [{ id, type, createdDate, actor, agent, doc, project, meta }], nextCursor }` (`who=agents` = anything an MCP/API client did)
  * - `GET  /api/docs/:id?lite=1`                -> `{ doc: { id, shareId, title, status, shareEnabled, shareAllowPdfDownload,
  *                                                  shareAllowRevisionHistory, sharePasswordEnabled, previewImageUrl,
  *                                                  currentUploadId, aiOutput, isArchived, … } }`
@@ -65,6 +66,31 @@ export type ApiDoc = {
 };
 
 export type ApiDocListItem = { id: string; shareId: string | null; title: string | null; status: string };
+
+/** One row of `GET /api/docs`, with the fields an agent can act on. */
+export type ApiDocsPageItem = ApiDocListItem & {
+  version: number | null;
+  oneLiner: string | null;
+  previewImageUrl: string | null;
+  createdDate: string | null;
+  updatedDate: string | null;
+};
+
+export type ApiDocsPage = { total: number; page: number; limit: number; docs: ApiDocsPageItem[] };
+
+/** One row of `GET /api/activity`. `meta` is the event's raw payload; its text fields are untrusted. */
+export type ApiActivityItem = {
+  id: string;
+  type: string;
+  createdDate: string;
+  actor: { userId: string | null; name: string | null; email: string | null; kind: string };
+  agent: { client: string; label: string | null; version: string | null } | null;
+  doc: { id: string; title: string | null; shareId: string | null } | null;
+  project: { id: string; name: string | null } | null;
+  meta: Record<string, unknown>;
+};
+
+export type ApiActivityPage = { items: ApiActivityItem[]; nextCursor: string | null };
 
 /** One share link of a document (`ShareLinkDTO` from `src/lib/share/links.ts`). */
 export type ApiShareLink = {
@@ -400,12 +426,98 @@ export class ApiClient {
 
   /** List docs matching `q` (title or shareId, case-insensitive substring). Archived docs are excluded by the API. */
   async listDocs(input: { q: string; limit?: number }): Promise<ApiDocListItem[]> {
-    const body = rec(await this.request("GET", "/api/docs", { query: { q: input.q, limit: input.limit ?? 50 } }));
+    const page = await this.listDocsPage({ q: input.q, limit: input.limit ?? 50 });
+    return page.docs.map((d) => ({ id: d.id, shareId: d.shareId, title: d.title, status: d.status }));
+  }
+
+  /**
+   * `GET /api/docs` with its full contract: a title/slug search or a direct `ids` lookup, page-based.
+   *
+   * Page-based rather than cursor-based because that is what the route does; the tool mirrors it
+   * faithfully instead of inventing a second pagination shape an agent would have to learn. `q`
+   * matches a title or *any* of a document's share-link slugs (not only the default's, since
+   * 4db0429). `ids` bypasses search and returns exactly those documents, in one call.
+   */
+  async listDocsPage(input: { q?: string | undefined; ids?: string[] | undefined; page?: number | undefined; limit?: number | undefined }): Promise<ApiDocsPage> {
+    const body = rec(
+      await this.request("GET", "/api/docs", {
+        query: {
+          q: input.q || undefined,
+          ids: input.ids?.length ? input.ids.join(",") : undefined,
+          page: input.page,
+          limit: input.limit,
+        },
+      }),
+    );
     const docs = Array.isArray(body.docs) ? body.docs : [];
-    return docs.map((raw) => {
-      const d = rec(raw);
-      return { id: strOrNull(d.id) ?? "", shareId: strOrNull(d.shareId), title: strOrNull(d.title), status: strOrNull(d.status) ?? "draft" };
-    });
+    return {
+      total: num(body.total),
+      page: num(body.page, 1),
+      limit: num(body.limit),
+      docs: docs.map((raw) => {
+        const d = rec(raw);
+        return {
+          id: strOrNull(d.id) ?? "",
+          shareId: strOrNull(d.shareId),
+          title: strOrNull(d.title),
+          status: strOrNull(d.status) ?? "draft",
+          version: typeof d.version === "number" ? d.version : null,
+          oneLiner: strOrNull(d.one_liner),
+          previewImageUrl: strOrNull(d.previewImageUrl),
+          createdDate: strOrNull(d.createdDate),
+          updatedDate: strOrNull(d.updatedDate),
+        };
+      }),
+    };
+  }
+
+  /**
+   * `GET /api/activity` — the workspace feed, newest first, cursor-paginated.
+   *
+   * `who: "agents"` is the route's own filter for "anything an MCP or API client did, whoever owns
+   * the key". It had been implemented and unused by every tool; it is exactly what an agent needs
+   * to answer "what did I (or another agent) do here". Viewer identity on `share.viewed` /
+   * `share.downloaded` rows is stripped server-side on Free, so the tool inherits the plan gate.
+   */
+  async listActivity(input: {
+    limit?: number | undefined;
+    cursor?: string | undefined;
+    types?: string[] | undefined;
+    docId?: string | undefined;
+    who?: "me" | "team" | "agents" | undefined;
+  }): Promise<ApiActivityPage> {
+    const body = rec(
+      await this.request("GET", "/api/activity", {
+        query: {
+          limit: input.limit,
+          cursor: input.cursor,
+          type: input.types?.length ? input.types.join(",") : undefined,
+          docId: input.docId,
+          who: input.who,
+        },
+      }),
+    );
+    const items = Array.isArray(body.items) ? body.items : [];
+    return {
+      nextCursor: strOrNull(body.nextCursor),
+      items: items.map((raw) => {
+        const r = rec(raw);
+        const actor = rec(r.actor);
+        const agent = r.agent ? rec(r.agent) : null;
+        const doc = r.doc ? rec(r.doc) : null;
+        const project = r.project ? rec(r.project) : null;
+        return {
+          id: strOrNull(r.id) ?? "",
+          type: strOrNull(r.type) ?? "",
+          createdDate: strOrNull(r.createdDate) ?? "",
+          actor: { userId: strOrNull(actor.userId), name: strOrNull(actor.name), email: strOrNull(actor.email), kind: strOrNull(actor.kind) ?? "" },
+          agent: agent ? { client: strOrNull(agent.client) ?? "", label: strOrNull(agent.label), version: strOrNull(agent.version) } : null,
+          doc: doc ? { id: strOrNull(doc.id) ?? "", title: strOrNull(doc.title), shareId: strOrNull(doc.shareId) } : null,
+          project: project ? { id: strOrNull(project.id) ?? "", name: strOrNull(project.name) } : null,
+          meta: r.meta && typeof r.meta === "object" ? (r.meta as Record<string, unknown>) : {},
+        };
+      }),
+    };
   }
 
   async patchDoc(docId: string, patch: DocPatch): Promise<{ doc: ApiDoc; planWarning?: PlanWarning }> {

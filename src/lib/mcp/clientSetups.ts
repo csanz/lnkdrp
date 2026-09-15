@@ -297,6 +297,39 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     },
   },
   {
+    name: "lnkdrp_list_docs",
+    purpose: "Find documents by title, by any share-link slug, or by id.",
+    access: "read",
+    detail: {
+      inputs: [
+        "query — optional; matches document titles and the slug of any share link on the document",
+        "ids — optional; up to 50 document ids to fetch directly (query and page are then ignored)",
+        "page — optional, default 1",
+        "limit — optional, 1 to 50, default 25",
+      ],
+      output: "total, page, limit, hasMore and the matching documents: id, default shareId and shareUrl, title, one-line summary, processing status, version and dates. Archived and deleted documents are left out.",
+      errors: ["validation — a malformed id or an out-of-range page or limit"],
+      note: "This is how an agent finds a document it was not handed. Pair a result's id with get_share, list_share_links or get_share_stats.",
+    },
+  },
+  {
+    name: "lnkdrp_get_activity",
+    purpose: "The workspace activity feed: uploads, link changes, views, downloads, plan and agent events.",
+    access: "read",
+    detail: {
+      inputs: [
+        "limit — optional, 1 to 100, default 40",
+        "cursor — optional; the nextCursor from the previous page",
+        "types — optional; only these event types, e.g. share.viewed, share_link.created, doc.archived",
+        "docId — optional; only events on one document",
+        "who — optional; agents (anything done by any MCP or API client), me (the key owner in the app) or team (other members)",
+      ],
+      output: "items newest first — each with type, time, who acted (and which agent client, if any), the document and project it concerns, and the event's payload — plus nextCursor for the next page.",
+      errors: ["validation — an unknown event type, a malformed cursor or an out-of-range limit"],
+      note: "who: agents is the audit trail for agents, including this one. On Free, viewer names and emails are withheld from share.viewed and share.downloaded rows, as in the app.",
+    },
+  },
+  {
     name: "lnkdrp_share_pdf",
     purpose: "Create a share link from a PDF URL, with optional password, download control and summary.",
     access: "write",

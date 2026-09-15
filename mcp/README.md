@@ -86,6 +86,18 @@ never fails over them), `costTiers: ["basic","standard","advanced"]`, `costs: { 
 and `mcpVersion`. `costs` are computed from `creditsForRun` (`src/lib/credits/schedule.ts`, imported by the MCP
 server and copied into the Docker image), so they always match what the app charges.
 
+### Discovery (`lnkdrp_list_docs`, `lnkdrp_get_activity`)
+How an agent finds documents it was not handed, and reads what happened in the workspace.
+
+- list_docs — In `{ query?, ids? (1–50), page? = 1, limit? = 25 }` → `GET /api/docs?q=&ids=&page=&limit=` →
+  `{ total, page, limit, hasMore, docs: [{ docId, shareId, shareUrl, title, oneLiner, status, version, previewImageUrl,
+  createdDate, updatedDate }] }`. `query` matches a title or any share-link slug; `ids` is a direct lookup. Page-based
+  because the route is. Archived/deleted documents excluded.
+- get_activity — In `{ limit? = 40 (≤100), cursor?, types? (enum of every event), docId?, who?: "me"|"team"|"agents" }` →
+  `GET /api/activity` → `{ nextCursor, items: [{ id, type, at, actor, agent|null, doc|null, project|null, meta }] }`.
+  `who: "agents"` = rows with agent attribution, whoever owns the key. Names, titles and `meta`'s free-text keys are
+  wrapped as untrusted. Free strips viewer identity from `share.viewed`/`share.downloaded` rows, as the app does.
+
 ### `lnkdrp_share_pdf`
 In `{ idempotencyKey (1–128), title? (≤200), sourceUrl (https; Google Drive share links and lnkdrp /s/ links accepted),
 allowDownload? = false, password? (8–128), waitForReady? = true, timeoutSeconds? 5–120 = 60,

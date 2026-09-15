@@ -2,7 +2,7 @@
  * End-to-end harness for the lnkdrp MCP server (`mcp/`, see docs/MCP.md).
  *
  * Drives the real stack over the wire: mints a temporary API key straight in Mongo, connects an
- * MCP client to the running server, exercises the eleven tools in the order an agent would use
+ * MCP client to the running server, exercises the thirteen tools in the order an agent would use
  * them (including the share-link lifecycle: create a second link, fetch it, disable it, delete
  * it), checks that a bad key is rejected at `initialize`, and revokes the key again.
  *
@@ -65,6 +65,8 @@ const CLIENT_INFO = {
 
 const EXPECTED_TOOLS = [
   "lnkdrp_whoami",
+  "lnkdrp_list_docs",
+  "lnkdrp_get_activity",
   "lnkdrp_share_pdf",
   "lnkdrp_get_share",
   "lnkdrp_set_share_access",
@@ -191,6 +193,8 @@ function isUntrusted(v: unknown): v is Untrusted {
   return Boolean(v) && typeof v === "object" && typeof (v as Untrusted).text === "string" && typeof (v as Untrusted)._source === "string";
 }
 
+type DocsPage = { total: number; page: number; limit: number; hasMore: boolean; docs: Array<{ docId: string; shareId: string | null; status: string; title: unknown }> };
+type ActivityPage = { nextCursor: string | null; items: Array<{ id: string; type: string; at: string; actor: { kind: string }; agent: { client: string } | null; doc: { docId: string } | null }> };
 type WhoAmI = { ok: boolean; userId: string; orgId: string; orgName: string | null; plan: string; keyPrefix: string; scopes: string[]; client: string; costs?: unknown; mcpVersion?: string };
 type SharePdfResult = { docId: string; shareId: string; shareUrl: string; replaceUrl: null; status: string; version: number; uploadId: string; title: string; planWarning?: unknown };
 type GetShareResult = { docId: string; shareId: string; title: Untrusted; status: string; shareEnabled: boolean; shareAllowPdfDownload: boolean; sharePasswordEnabled: boolean; shareAllowRevisionHistory: boolean; shareUrl: string; previewImageUrl: string | null; oneLiner: Untrusted | null; summary: Untrusted | null; isArchived: boolean };
@@ -348,7 +352,7 @@ async function main(): Promise<void> {
     });
 
     // 4. Tool catalogue.
-    await step("listTools exposes the eleven lnkdrp tools", async () => {
+    await step("listTools exposes the thirteen lnkdrp tools", async () => {
       const { tools } = await live.listTools();
       const names = tools.map((t) => t.name);
       for (const expected of EXPECTED_TOOLS) assert(names.includes(expected), `missing tool ${expected}; got ${names.join(", ")}`);
@@ -382,6 +386,42 @@ async function main(): Promise<void> {
       assert(JSON.stringify(me.costs?.compare) === JSON.stringify(compare), `whoami.costs.compare ${JSON.stringify(me.costs?.compare)} !== ${JSON.stringify(compare)}`);
       assert(me.creditsRemaining === null || typeof me.creditsRemaining === "number", "whoami.creditsRemaining is neither a number nor null");
       info("credits", `costs=${JSON.stringify(me.costs)} remaining=${String(me.creditsRemaining)} resetAt=${String(me.creditsResetAt)}`);
+    });
+
+    // 5c. Discovery, before anything is created: the list and the feed both answer with the
+    // route's shape, and the feed's `who: "agents"` filter returns only API/MCP-attributed rows.
+    await step("lnkdrp_list_docs pages the workspace and honours ids", async () => {
+      const first = await callTool<DocsPage>(live, "lnkdrp_list_docs", { limit: 2 });
+      assert(first.page === 1 && first.limit === 2, `list_docs page/limit ${first.page}/${first.limit}`);
+      assert(Array.isArray(first.docs) && first.docs.length <= 2, "list_docs returned more than limit");
+      assert(first.total >= first.docs.length, "list_docs total < docs on page");
+      assert(first.hasMore === (first.docs.length > 0 && first.total > 2), `list_docs hasMore=${first.hasMore} with total=${first.total}`);
+      if (first.docs.length > 0) {
+        const one = first.docs[0]!;
+        const byId = await callTool<DocsPage>(live, "lnkdrp_list_docs", { ids: [one.docId] });
+        assert(byId.docs.length === 1 && byId.docs[0]!.docId === one.docId, "list_docs ids lookup did not return exactly that doc");
+        const t = one.title as { _source?: string } | null;
+        assert(t === null || t._source === "document", "list_docs title is not wrapped as untrusted document text");
+      }
+      info("docs", `total=${first.total} first=${first.docs.map((d) => d.docId).join(",")}`);
+    });
+
+    await step("lnkdrp_get_activity pages the feed and who=agents is attributed", async () => {
+      const page = await callTool<ActivityPage>(live, "lnkdrp_get_activity", { limit: 5 });
+      assert(Array.isArray(page.items) && page.items.length <= 5, "get_activity returned more than limit");
+      for (const it of page.items) assert(typeof it.type === "string" && typeof it.at === "string", `activity row ${it.id} lacks type/at`);
+      // whoami above was recorded as agent.connected by this very key, so the agents filter cannot be empty.
+      const agents = await callTool<ActivityPage>(live, "lnkdrp_get_activity", { who: "agents", limit: 5 });
+      assert(agents.items.length > 0, "who=agents returned nothing although this client just connected");
+      for (const it of agents.items) assert(it.agent !== null, `who=agents row ${it.id} (${it.type}) has no agent attribution`);
+      const typed = await callTool<ActivityPage>(live, "lnkdrp_get_activity", { types: ["agent.connected"], limit: 3 });
+      for (const it of typed.items) assert(it.type === "agent.connected", `types filter leaked ${it.type}`);
+      if (page.nextCursor) {
+        const next = await callTool<ActivityPage>(live, "lnkdrp_get_activity", { limit: 5, cursor: page.nextCursor });
+        const seen = new Set(page.items.map((i) => i.id));
+        for (const it of next.items) assert(!seen.has(it.id), `cursor page repeated ${it.id}`);
+      }
+      info("activity", `first=${page.items.map((i) => i.type).join(",")} agents=${agents.items.length} cursor=${page.nextCursor ? "yes" : "none"}`);
     });
 
     // 6. share_pdf: create doc + upload + import + process, wait for ready.
