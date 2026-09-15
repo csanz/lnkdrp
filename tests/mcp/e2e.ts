@@ -497,13 +497,19 @@ async function main(): Promise<void> {
       return res;
     });
 
-    // 12b. Free-plan headroom: the active-link cap counts every enabled link in the workspace, so
-    // on a busy Free workspace the new link is created disabled (planWarning says so). Turn this
-    // document's default link off - it has done its job in the steps above - and enable the new
-    // one, so the link lifecycle below runs on a live link either way.
+    // 12b. Links are not plan-capped (1ce4413): a Free workspace may carry any number of links per
+    // document, so `lnkdrp_create_share_link` always returns the link enabled and `planWarning` can
+    // only be a heads-up that the workspace is near its *document* cap. This branch therefore does
+    // not fire from a cap any more. It stays as a guard against a future regression: if a link ever
+    // comes back disabled with a planWarning again, the lifecycle below would otherwise run on a
+    // dead link and pass, and this is the step that would make it fail loudly instead.
+    //
+    // It used to read "the active-link cap counts every enabled link" — the wording of the bug
+    // that made a two-document workspace report "11 of 3". A comment that still says links are
+    // capped is how that cap gets wired back in.
     let defaultLinkLive = true;
-    if (extra.planWarning) {
-      await step("free a slot at the Free active-link cap, then enable the new link", async () => {
+    if (extra.planWarning && extra.link.enabled === false) {
+      await step("REGRESSION: a link came back disabled at a plan cap; links must never be capped", async () => {
         const list = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId });
         const def = list.links.find((l) => l.isDefault);
         assert(def, "the document has no default link");
