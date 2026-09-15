@@ -4,6 +4,7 @@
 "use client";
 
 import SubscriptionCard from "./SubscriptionCard";
+import AgentsCard from "./AgentsCard";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -478,6 +479,13 @@ function DashboardPageInner() {
                   </ul>
                 </div>
               </div>
+
+              {/* The dashboard had no route to the agent docs at all: a signed-in user who wanted
+                  to know what an agent could do with their workspace had to find the Agents entry
+                  in the sidebar and guess that "Connect" also meant "reference". This card names
+                  the product's headline feature on its own overview and links to the full tool
+                  reference, showing live connection state so it is a status, not a brochure. */}
+              <AgentsCard />
             </div>
           </Section>
         ) : null}

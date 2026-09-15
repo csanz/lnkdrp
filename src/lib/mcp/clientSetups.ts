@@ -255,21 +255,170 @@ export function whoamiCurl(key: string, origin: string = SITE_ORIGIN): string[] 
 /** The prompt a user can paste into their agent to verify the connection end to end. */
 export const ASK_YOUR_AGENT = "Call lnkdrp_whoami and tell me which workspace you are connected to.";
 
-/** The MCP tool catalog (docs/prds/lnkdrp-mcp.md, "Tool catalog"). Ships with launch. */
-export type ToolCatalogEntry = { name: string; purpose: string; access: "read" | "write" };
+/**
+ * The MCP tool catalog: the single source of truth for what each tool does, on the web.
+ *
+ * Rendered by `/connect` (signed in) and the public `/mcp` pages. Every tool carries its full
+ * reference — inputs, output, errors, and whether it confirms with the human — not only a
+ * one-liner, because until this the only place a person could read what a tool took and returned
+ * was `docs/MCP.md`, a repo file no user ever sees. Two copies of the same reference drift; this
+ * one is the copy, and `docs/MCP.md` is the developer-facing long form that must agree with it.
+ *
+ * `purpose` is the one line a scanner reads. `detail` is what opens when they want more.
+ */
+export type ToolCatalogEntry = {
+  name: string;
+  purpose: string;
+  access: "read" | "write";
+  /** True for tools that ask the human before doing anything irreversible. */
+  confirms?: boolean;
+  detail: {
+    /** Each input, as `name — what it is`. Optional ones say so. */
+    inputs: string[];
+    /** What comes back, in one or two sentences. */
+    output: string;
+    /** Error codes an agent should expect, as `code — when`. */
+    errors: string[];
+    /** One thing worth knowing that the inputs and output do not say. */
+    note?: string;
+  };
+};
 
 export const TOOL_CATALOG: ToolCatalogEntry[] = [
-  { name: "lnkdrp_whoami", purpose: "Which workspace, plan and key the agent is using.", access: "read" },
-  { name: "lnkdrp_share_pdf", purpose: "Create a share link from a PDF URL, with optional password, download control and summary.", access: "write" },
-  { name: "lnkdrp_get_share", purpose: "Status, settings and summary of a link. Poll it after share_pdf.", access: "read" },
-  { name: "lnkdrp_set_share_access", purpose: "Turn sharing, downloads or the password on or off for a link.", access: "write" },
-  { name: "lnkdrp_get_share_stats", purpose: "Views, downloads and viewers for a link over a window of days.", access: "read" },
-  { name: "lnkdrp_create_share_link", purpose: "Add another link to a document, one per recipient, with its own label, password and expiry.", access: "write" },
-  { name: "lnkdrp_list_share_links", purpose: "Every link of a document with its settings, status and view counts.", access: "read" },
-  { name: "lnkdrp_update_share_link", purpose: "Change or disable one link without touching the document's other links.", access: "write" },
-  { name: "lnkdrp_delete_share_link", purpose: "Delete one link after confirming with you; its past analytics are kept.", access: "write" },
-  { name: "lnkdrp_archive_doc", purpose: "Archive a document to free a slot, or bring it back. Reversible; keeps analytics. Confirms with you first.", access: "write" },
-  { name: "lnkdrp_delete_doc", purpose: "Delete a document permanently, after confirming with you. Prefer archive if you might want it back.", access: "write" },
+  {
+    name: "lnkdrp_whoami",
+    purpose: "Which workspace, plan and key the agent is using.",
+    access: "read",
+    detail: {
+      inputs: ["none"],
+      output: "Your user id and email, the workspace id and name, plan (free or pro), the key's prefix and scopes, the client name lnkdrp recorded, credits remaining and when they reset, and the credit cost per AI action by tier.",
+      errors: ["unauthorized — the key is missing or invalid", "key_revoked — the key was revoked"],
+      note: "Call it first to confirm the connection; it costs nothing.",
+    },
+  },
+  {
+    name: "lnkdrp_share_pdf",
+    purpose: "Create a share link from a PDF URL, with optional password, download control and summary.",
+    access: "write",
+    detail: {
+      inputs: [
+        "idempotencyKey — required; reuse it on retries and you get the same document back",
+        "sourceUrl — an https URL to a PDF, up to 25 MB; Google Drive share links are accepted",
+        "title — optional, up to 200 characters",
+        "allowDownload — optional, default off",
+        "password — optional, 8–128 characters",
+        "waitForReady / timeoutSeconds — optional; wait for processing (default 60s, max 120s)",
+        "summary + keyPoints — optional, both or neither; when the agent writes them the AI summary is skipped and costs 0 credits",
+      ],
+      output: "docId, shareId, the shareUrl (valid at once, even while processing), status, version, uploadId, and any AI steps that were skipped as warnings.",
+      errors: [
+        "plan_limit — the Free plan's shared-document cap; the error lists what you can still do without upgrading",
+        "out_of_credits — the AI summary needs credits the workspace does not have; pass summary and keyPoints instead",
+        "fetch_blocked / unsupported_content_type / too_large — the URL could not be used",
+        "validation — including invalid_summary, whose message says how to fix it",
+      ],
+      note: "Every upload's automatic summary costs 1 credit unless the agent supplies its own.",
+    },
+  },
+  {
+    name: "lnkdrp_get_share",
+    purpose: "Status, settings and summary of a link. Poll it after share_pdf.",
+    access: "read",
+    detail: {
+      inputs: ["docId or shareId — exactly one; any of a document's links resolves"],
+      output: "Processing status, whether sharing is on, download/password/version-history settings, the share URL, preview image, and the AI one-liner and summary once ready. Asked about a specific link, it reports that link's own settings and a link block naming it.",
+      errors: ["validation — none or both ids given", "not_found — unknown id, or a document in another workspace"],
+    },
+  },
+  {
+    name: "lnkdrp_set_share_access",
+    purpose: "Turn sharing, downloads or the password on or off for a link.",
+    access: "write",
+    detail: {
+      inputs: ["idempotencyKey — required", "docId", "shareEnabled / allowDownload — optional booleans", "password — a string to set, null to remove", "allowRevisionHistory — optional; letting recipients browse versions is Pro"],
+      output: "The same shape as lnkdrp_get_share, after the change.",
+      errors: ["plan_limit — turning sharing on at the Free shared-document cap, or version history on Free", "forbidden — a read-only key", "not_found"],
+    },
+  },
+  {
+    name: "lnkdrp_get_share_stats",
+    purpose: "Views, downloads and viewers for a link over a window of days.",
+    access: "read",
+    detail: {
+      inputs: ["docId and/or shareId — a shareId scopes everything to that one link; a docId covers all its links", "days — 1–60, default 15; Free is clamped to 7", "includeViewers — per-viewer rows with per-page time (Pro only)"],
+      output: "Totals for views, opens, downloads, pages viewed and time spent, a unique viewer count, a per-day series, and — on Pro with includeViewers — every reader with their pages and time on each page. Owner and teammate opens are excluded from every figure and counted separately as ownerPreviews.",
+      errors: ["validation", "not_found"],
+      note: "views counts recipients; opens counts sittings. A reader who came back three times is one view and three opens.",
+    },
+  },
+  {
+    name: "lnkdrp_create_share_link",
+    purpose: "Add another link to a document, one per recipient, with its own label, password and expiry.",
+    access: "write",
+    detail: {
+      inputs: ["docId", "label — private name, 1–80 characters, never shown to viewers", "audience — optional private note, up to 120 characters", "allowDownload / allowRevisionHistory — optional", "password — optional, 8–128 characters", "expiresAt — optional ISO date in the future", "enabled — optional, default on"],
+      output: "The new link with its own shareUrl, working immediately.",
+      errors: ["validation — missing label, past expiry, short password", "not_found — the document"],
+      note: "Links are never plan-capped. A document may carry one per investor or counterparty on any plan.",
+    },
+  },
+  {
+    name: "lnkdrp_list_share_links",
+    purpose: "Every link of a document with its settings, status and view counts.",
+    access: "read",
+    detail: {
+      inputs: ["docId"],
+      output: "Every link, default first: label, audience, shareUrl, status (active, disabled, expired), password and expiry state, and that link's viewer and download counts.",
+      errors: ["not_found"],
+    },
+  },
+  {
+    name: "lnkdrp_update_share_link",
+    purpose: "Change or disable one link without touching the document's other links.",
+    access: "write",
+    detail: {
+      inputs: ["linkId and docId", "label / audience / enabled / allowDownload / password / expiresAt / allowRevisionHistory — any of them"],
+      output: "The updated link.",
+      errors: ["validation", "not_found — unknown link, or a link on another document", "forbidden"],
+      note: "Disabling a link revokes one recipient's access instantly; the document's other links are untouched.",
+    },
+  },
+  {
+    name: "lnkdrp_delete_share_link",
+    purpose: "Delete one link after confirming with you; its past analytics are kept.",
+    access: "write",
+    confirms: true,
+    detail: {
+      inputs: ["linkId and docId", "confirm — only for clients that cannot show you a prompt; the agent sets it after you say yes"],
+      output: "ok, and what was deleted (link id, shareId, label). The link stops resolving at once and cannot come back; its analytics stay in the document's totals.",
+      errors: ["validation — the default link cannot be deleted (disable it instead), or you did not confirm", "not_found"],
+      note: "Before acting it shows you the link, how many recipients opened it and when, and asks. It will not proceed without your yes.",
+    },
+  },
+  {
+    name: "lnkdrp_archive_doc",
+    purpose: "Archive a document to free a slot, or bring it back. Reversible; keeps analytics. Confirms with you first.",
+    access: "write",
+    confirms: true,
+    detail: {
+      inputs: ["docId", "archived — true to archive, false to bring it back", "confirm — only for clients that cannot show you a prompt"],
+      output: "ok, the document's new archived state, and how many links were affected.",
+      errors: ["validation — you did not confirm", "not_found", "plan_limit — unarchiving at the Free shared-document cap"],
+      note: "Archiving takes every link on the document down at once and frees a Free-plan slot; everything comes back on unarchive. It asks first because of the blast radius, even though it is reversible.",
+    },
+  },
+  {
+    name: "lnkdrp_delete_doc",
+    purpose: "Delete a document permanently, after confirming with you. Prefer archive if you might want it back.",
+    access: "write",
+    confirms: true,
+    detail: {
+      inputs: ["docId", "confirm — only for clients that cannot show you a prompt"],
+      output: "ok, and what was deleted (document id, title, how many links).",
+      errors: ["validation — still processing, or you did not confirm", "not_found"],
+      note: "Permanent from the owner's side: the document, its file and every link disappear. It shows you the document, its links and traffic first, and will not proceed without your yes.",
+    },
+  },
 ];
 
 /** Short answers to the questions people hit first. Shared by `/connect` and the public guides. */
