@@ -1059,12 +1059,18 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
 
   return (
     <div className="flex h-full flex-col">
+      {/* One link's metrics sit under the links list, not under the document: the back arrow and
+          the breadcrumb both say so when `?shareId=` is set. Before this, a reader who came from
+          /doc/:id/links and pressed back landed on the document page and had to find the list
+          again — the one place the link they were just reading about actually lives. Hierarchical
+          rather than referrer-based on purpose: the same URL is reached from the activity feed and
+          the side panel, and the parent of a link is the list either way. */}
       <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
         <Link
-          href={`/doc/${encodeURIComponent(docId)}`}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-          aria-label="Back to document"
-          title="Back to document"
+          href={shareId ? `/doc/${encodeURIComponent(docId)}/links` : `/doc/${encodeURIComponent(docId)}`}
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+          aria-label={shareId ? "Back to links" : "Back to document"}
+          title={shareId ? "Back to links" : "Back to document"}
         >
           <ArrowLeftIcon className="h-5 w-5" />
         </Link>
@@ -1076,7 +1082,17 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               Document
             </Link>
             <span aria-hidden="true">›</span>
-            <span className="font-medium text-[var(--fg)]">Metrics</span>
+            {shareId ? (
+              <>
+                <Link href={`/doc/${encodeURIComponent(docId)}/links`} className="hover:underline underline-offset-4">
+                  Links
+                </Link>
+                <span aria-hidden="true">›</span>
+                <span className="max-w-[240px] truncate font-medium text-[var(--fg)]">{selectedLinkLabel ?? "Link"}</span>
+              </>
+            ) : (
+              <span className="font-medium text-[var(--fg)]">Metrics</span>
+            )}
           </div>
         </div>
       </div>
