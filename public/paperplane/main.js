@@ -185,8 +185,11 @@ const CONFIG = {
   WIND_THICKNESS: 0.024, // world units
   WIND_LAYERS: 3, // 1=thin, 3=thicker
   WIND_POINTS: 28,
-  // Dark gray wind for black background.
-  WIND_COLOR: 0x374151,
+  // Same family as the borders and the arcs. It was 0x374151 (dark grey): at 12-24% opacity on
+  // #050506 that is about ten brightness units above the background — present in the frame
+  // buffer, invisible on a screen — and once the brighter arcs arrived beside it the wind read as
+  // gone. Light grey at the same opacity lands where the arc trails do.
+  WIND_COLOR: 0xd1d5db,
   // Flow tuning (lower freq => smoother flow).
   WIND_WIGGLE_AMP: 0.028,
   WIND_WIGGLE_TIME_X: 0.95,
