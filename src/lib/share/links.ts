@@ -6,7 +6,7 @@
  * - `resolveShareLink(shareId)` is the only way a public share route turns a slug into a
  *   document, and it materialises the default link for pre-model documents on first touch.
  * - The Free cap counts shared *documents*, never links: a document may own any number of links,
- *   workspace; creating or enabling a link goes through `checkLimit("documents")`.
+ *   workspace. Links themselves are never plan-capped — see `createShareLink`.
  * - `Doc.shareEnabled` is kept equal to "the document has at least one enabled link", and the
  *   default link's settings are mirrored onto the legacy Doc fields for one release, so older
  *   readers and the rollback build keep working.
@@ -267,65 +267,6 @@ export async function listShareLinks(input: { orgId: string | Types.ObjectId; do
   const rows = await ShareLinkModel.find(filter).lean<ShareLink[]>();
   return rows.sort((a, b) => (a.isDefault === b.isDefault ? (b.createdDate?.getTime() ?? 0) - (a.createdDate?.getTime() ?? 0) : a.isDefault ? -1 : 1));
 }
-
-/**
- * Enabled, unexpired, unarchived links across the workspace: the Free cap's unit.
- *
- * Default links are materialised lazily (`ensureDefaultLink`), so a workspace whose documents
- * predate this model would otherwise count zero and the cap would stop blocking. The second term
- * counts exactly those documents — shared, alive, and with no link row at all — which is the
- * legacy meaning of "active link". It goes to zero once `scripts/sharelinks-backfill.ts` has run,
- * and stays correct in the meantime (and for any document created while a deploy is half-rolled).
- */
-export async function countActiveShareLinks(orgId: string | Types.ObjectId): Promise<number> {
-  await connectMongo();
-  const id = oid(orgId);
-  const [fromLinks, legacyDocs] = await Promise.all([countActiveLinksOnLiveDocs(id), countSharedDocsWithoutLinks(id)]);
-  return fromLinks + legacyDocs;
-}
-
-/**
- * Active links whose document is still alive and unarchived.
- *
- * The document check is what keeps the promise on `/pricing`: "archive a document any time to
- * free up a link slot". `resolveShareLink` already refuses a link on an archived document, so
- * counting it would charge a Free workspace for a link nobody can open.
- */
-async function countActiveLinksOnLiveDocs(orgId: Types.ObjectId): Promise<number> {
-  const rows = await ShareLinkModel.aggregate<{ n: number }>([
-    {
-      $match: {
-        orgId,
-        enabled: true,
-        archivedAt: null,
-        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
-      },
-    },
-    { $project: { docId: 1 } },
-    { $lookup: { from: "docs", localField: "docId", foreignField: "_id", as: "doc", pipeline: [{ $project: { isDeleted: 1, isArchived: 1 } }] } },
-    { $unwind: "$doc" },
-    { $match: { "doc.isDeleted": { $ne: true }, "doc.isArchived": { $ne: true } } },
-    { $count: "n" },
-  ]);
-  return rows[0]?.n ?? 0;
-}
-
-/**
- * Documents that would be "one active link" under the pre-links model and have no link row yet.
- * One aggregation over the workspace's shared documents; the `$lookup` is on `sharelinks.docId`,
- * which is indexed.
- */
-async function countSharedDocsWithoutLinks(orgId: Types.ObjectId): Promise<number> {
-  const rows = await DocModel.aggregate<{ n: number }>([
-    { $match: { orgId, shareEnabled: { $ne: false }, isDeleted: { $ne: true }, isArchived: { $ne: true } } },
-    { $project: { _id: 1 } },
-    { $lookup: { from: "sharelinks", localField: "_id", foreignField: "docId", as: "links" } },
-    { $match: { links: { $size: 0 } } },
-    { $count: "n" },
-  ]);
-  return rows[0]?.n ?? 0;
-}
-
 export type ShareLinkSettingsInput = {
   label?: string;
   audience?: string | null;
@@ -442,9 +383,14 @@ export async function createShareLink(input: {
   const historyLimit = input.settings.allowRevisionHistory ? await checkLimit(orgId, "version_history") : null;
   if (historyLimit && !historyLimit.ok) return { link: null, limit: historyLimit };
 
-  const wantsEnabled = input.settings.enabled !== false;
-  const limit = wantsEnabled ? await checkLimit(orgId, "documents") : ({ ok: true, warning: null } as LimitCheck);
-  const enabled = wantsEnabled && limit.ok;
+  // No plan check on the link itself. The Free cap counts shared **documents**; a document may
+  // carry as many links as its sender needs, which is the entire point of the feature — one per
+  // investor, per counterparty, per audience. Gating link creation on the document cap meant a
+  // workspace sitting at three documents could not add a second link to any of them: the feature
+  // switched off at exactly the moment someone starts to use it. `SHARE_LINKS_PER_DOC_MAX` is the
+  // only ceiling, and it is a runaway guard rather than a plan limit.
+  const enabled = input.settings.enabled !== false;
+  const limit: LimitCheck = { ok: true, warning: null };
 
   let created: ShareLink | null = null;
   for (let i = 0; i < 5 && !created; i++) {
@@ -499,12 +445,10 @@ export async function updateShareLink(input: {
   }
   if (s.expiresAt !== undefined) set.expiresAt = validateExpiry(s.expiresAt);
   Object.assign(set, passwordFields(s.password));
-  let limit: LimitCheck | null = null;
+  const limit: LimitCheck | null = null;
   if (s.enabled !== undefined) {
-    if (s.enabled && !link.enabled) {
-      limit = await checkLimit(link.orgId, "documents");
-      if (!limit.ok) return { link, limit };
-    }
+    // Re-enabling a link is not a plan decision either: the Free cap counts the *document*, and
+    // that document is counted whether this link is switched on or off.
     set.enabled = Boolean(s.enabled);
   }
   if (Object.keys(set).length === 0) return { link, limit };
