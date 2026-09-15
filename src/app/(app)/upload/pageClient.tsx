@@ -38,10 +38,10 @@ function titleFromFileName(name: string) {
 export default function UploadPageClient() {
   const router = useRouter();
   const { pendingFile, setPendingFile } = usePendingUpload();
-  // Free workspaces at the link cap cannot upload: `POST /api/docs` answers 402 and the upgrade modal
+  // Free workspaces at the document cap cannot upload: `POST /api/docs` answers 402 and the upgrade modal
   // opens. Say so up front and disable the pickers (only once the plan is known).
   const { plan } = usePlan();
-  const atLinkLimit = plan?.plan === "free" && plan.atLimit.documents;
+  const atDocumentLimit = plan?.plan === "free" && plan.atLimit.documents;
   const { openUpgrade } = useUpgradeModal();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -125,7 +125,7 @@ export default function UploadPageClient() {
   async function handleUpload() {
     if (!selectedFile) return;
     if (busy) return;
-    if (atLinkLimit && plan) {
+    if (atDocumentLimit && plan) {
       openUpgrade("documents", { used: plan.usage.documents, max: plan.limits.documents ?? undefined });
       return;
     }
@@ -153,7 +153,7 @@ export default function UploadPageClient() {
       router.push(`/doc/${encodeURIComponent(docId)}`);
     } catch (e) {
       if (e instanceof PlanLimitClientError) {
-        // The API refused the doc at the link cap (plan snapshot may have been stale).
+        // The API refused the doc at the document cap (plan snapshot may have been stale).
         openUpgrade("documents", { used: e.planLimit.used, max: e.planLimit.max ?? undefined });
         refreshPlan();
         setBusy(false);
@@ -228,7 +228,7 @@ export default function UploadPageClient() {
         </div>
       </div>
 
-      {atLinkLimit && plan ? (
+      {atDocumentLimit && plan ? (
         <div
           role="status"
           className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] leading-5 text-[var(--muted-2)] md:px-6"
@@ -335,7 +335,7 @@ export default function UploadPageClient() {
                       label="Choose a PDF"
                       accept="pdf"
                       variant="cta"
-                      disabled={busy || atLinkLimit}
+                      disabled={busy || atDocumentLimit}
                       onFileRejected={setError}
                       onFileSelected={(file) => {
                         if (!isPdfFile(file)) {
@@ -387,7 +387,7 @@ export default function UploadPageClient() {
                   label="Choose a different PDF"
                   accept="pdf"
                   variant="link"
-                  disabled={busy || atLinkLimit}
+                  disabled={busy || atDocumentLimit}
                   onFileRejected={setError}
                   onFileSelected={(file) => {
                     if (!isPdfFile(file)) {

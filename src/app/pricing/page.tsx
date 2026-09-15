@@ -344,8 +344,8 @@ export default async function PricingPage() {
                   a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} collaborator; contact us to add more seats to a workspace.`,
                 },
                 {
-                  q: "I already have more than 3 links. What happens?",
-                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new links and projects wait until you disable some or upgrade. Existing links never stop working.",
+                  q: "I already have more than 3 shared documents. What happens?",
+                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new documents and projects wait until you archive some or upgrade. Existing links never stop working, and you can keep adding links to the documents you already have — links are not capped on any plan.",
                 },
                 {
                   q: "What do credits pay for?",

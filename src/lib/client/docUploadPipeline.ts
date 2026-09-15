@@ -110,7 +110,7 @@ async function renderPdfFirstPagePngBestEffort(file: File): Promise<Blob | null>
   }
 }
 
-/** Thrown by `apiCreateDoc` when the workspace is at its Free link cap (HTTP 402 `plan_limit`). */
+/** Thrown by `apiCreateDoc` when the workspace is at its Free document cap (HTTP 402 `plan_limit`). */
 export class PlanLimitClientError extends Error {
   readonly planLimit: PlanLimitError;
   constructor(limit: PlanLimitError) {
@@ -133,7 +133,7 @@ export async function apiCreateDoc(params: { title: string }): Promise<string> {
     body: JSON.stringify({ title: params.title }),
   });
   if (res.status === 402) {
-    // Free link cap: hand the parsed limit to the caller so it can open the upgrade modal.
+    // Free document cap: hand the parsed limit to the caller so it can open the upgrade modal.
     const body = (await res.json().catch(() => null)) as unknown;
     const limit = parsePlanLimitError(body);
     if (limit) throw new PlanLimitClientError(limit);

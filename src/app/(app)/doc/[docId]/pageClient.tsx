@@ -1436,7 +1436,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         const json = (await res.json().catch(() => null)) as unknown;
         const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
         if (limitErr) {
-          // Free link cap: keep the switch off and open the upgrade modal with the live numbers.
+          // Free document cap (enabling sharing counts a document): keep the switch off and open the
+          // upgrade modal with the live numbers.
           openUpgrade(upsellKeyForLimit(limitErr.limit), {
             used: limitErr.used,
             max: limitErr.max,
