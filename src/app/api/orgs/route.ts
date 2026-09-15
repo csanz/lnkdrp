@@ -189,7 +189,8 @@ export async function POST(request: Request) {
     const now = new Date();
     const created = await OrgModel.create({
       type: "team",
-      personalForUserId: null,
+      // No `personalForUserId`: the unique index is partial on real user ids, and an explicit null
+      // made the second team workspace in a database fail with E11000.
       name,
       avatarUrl: null,
       slug,

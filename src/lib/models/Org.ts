@@ -14,7 +14,9 @@ const orgSchema = new Schema(
   {
     type: { type: String, trim: true, required: true, enum: ["personal", "team"], index: true },
     /** For personal orgs only: points back to the owning user (unique, sparse). */
-    personalForUserId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    // No default: a team org must leave this field MISSING, not null. The unique index below is
+    // partial, and an explicit null would make every team org collide with the previous one.
+    personalForUserId: { type: Schema.Types.ObjectId, ref: "User" },
     name: { type: String, trim: true, required: true },
     /**
      * Optional org avatar/icon URL (e.g. a GSuite/Workspace logo or a custom upload).
@@ -70,8 +72,12 @@ const orgSchema = new Schema(
   },
 );
 
-// One personal org per user.
-orgSchema.index({ personalForUserId: 1 }, { unique: true, sparse: true });
+// One personal org per user. Partial (not `sparse`) for the same reason as `slug` below: `sparse`
+// still indexes an explicit null, so two team orgs written with `personalForUserId: null` collided.
+orgSchema.index(
+  { personalForUserId: 1 },
+  { unique: true, partialFilterExpression: { personalForUserId: { $type: "objectId" } } },
+);
 // Team org slugs are unique. Personal orgs omit `slug`; the partial filter (rather than `sparse`)
 // guarantees only string slugs participate, since `sparse` still indexes an explicit `null`.
 orgSchema.index({ slug: 1 }, { unique: true, partialFilterExpression: { slug: { $type: "string" } } });
