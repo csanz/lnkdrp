@@ -59,7 +59,7 @@ function SessionLoginControl() {
 }
 
 /**
- * Render the PublicHeader UI (static, transparent, logo left + About/Pricing/Log In right).
+ * Render the PublicHeader UI (static, transparent, logo left + About/MCP/Pricing/Log In right).
  */
 export default function PublicHeader({ containerClassName }: { containerClassName?: string } = {}) {
   const authEnabled = useAuthEnabled();
@@ -75,6 +75,9 @@ export default function PublicHeader({ containerClassName }: { containerClassNam
           <div className="flex items-center gap-1 sm:gap-2">
             <Link href="/about" className={NAV_LINK_CLASS}>
               About
+            </Link>
+            <Link href="/mcp" className={NAV_LINK_CLASS}>
+              MCP
             </Link>
             <Link href="/pricing" className={NAV_LINK_CLASS}>
               Pricing

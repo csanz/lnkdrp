@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { CLIENT_SETUPS, KEY_PLACEHOLDER, type ClientKey } from "@/lib/mcp/clientSetups";
@@ -57,7 +58,13 @@ export default function McpInstallExample() {
         </span>
       </div>
       <p className="mt-3 max-w-md text-pretty text-sm leading-6 text-white/55">
-        It takes one line in your MCP client. After that, your agent creates links and reads the numbers.
+        It takes one line in your MCP client. After that, your agent creates links and reads the numbers.{" "}
+        {/* This panel is one client's one line. The full guide is every client, every tool and
+            what each one asks before it acts — the thing a reader who is about to paste a key
+            into an agent wants to have read. */}
+        <Link href="/mcp" className="whitespace-nowrap font-medium text-white/80 underline-offset-4 hover:underline">
+          Full guide, every client and tool →
+        </Link>
       </p>
 
       <div className="mt-6 rounded-2xl bg-gradient-to-b from-white/[0.06] to-white/[0.02] p-px">
