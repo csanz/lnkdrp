@@ -39,6 +39,38 @@ const nextConfig: NextConfig = {
       "./node_modules/pdfjs-dist/wasm/**",
     ],
   },
+  /**
+   * Baseline security headers on every response Next serves (pages, route handlers, `public/`).
+   *
+   * - `frame-ancestors 'self'` + `X-Frame-Options: SAMEORIGIN` — SAMEORIGIN rather than DENY
+   *   because the app frames itself: `/paperplane/index.html` on the marketing pages, and the
+   *   PDF routes inside the doc page and the share viewer. `frame-ancestors` is the directive
+   *   browsers actually honour; `X-Frame-Options` is kept for anything that predates it.
+   *   Nothing here is meant to be embedded by another site, so third-party framing — and the
+   *   clickjacking it enables on the share and download-approval flows — is refused.
+   * - `X-Content-Type-Options: nosniff` — an uploaded PDF must never be sniffed into something
+   *   the browser will execute. Every route that returns bytes sets its own `content-type`
+   *   (the PDF routes fall back to `application/pdf`), so nothing depends on sniffing.
+   * - `Referrer-Policy: strict-origin-when-cross-origin` — share URLs carry a secret token in
+   *   the path, so a full referrer must never leave the origin.
+   *
+   * HSTS is deliberately absent: Vercel already sends `Strict-Transport-Security` for its own
+   * domains, and setting it here with `includeSubDomains` would speak for hosts this app does
+   * not serve (the realtime and MCP subdomains on Fly).
+   */
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "frame-ancestors 'self'" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
+    ];
+  },
   // Disable all in-browser dev indicators (including the "Rendering/Compiling" HUD).
   devIndicators: false,
   /**
