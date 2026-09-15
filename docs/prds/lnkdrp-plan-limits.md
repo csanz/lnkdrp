@@ -26,6 +26,10 @@ bill collaborator seats through Stripe, and hide the credit UI until a metered f
 ## Proposed decisions (to lock)
 
 1. **Active link** = a Doc with `shareEnabled: true` and not deleted. Disabling sharing frees the slot.
+   *(Note, 2026-09-15: this definition is the proof that the cap was always on **documents** — an
+   "active link" here is a Doc, not a `sharelinks` row. The multi-links work later counted link rows
+   against it, which is how a two-document workspace read "11 of 3". The code says `documents` now
+   so the name cannot be misread that way again.)*
 2. **Limits are per workspace** and read from one constants module shared by the pricing page.
 3. **Starter credits are granted once per user** (personal workspace), not per new workspace.
 4. **Seats count people, not agents.** Owner + 1 collaborator free; each further member is a Stripe seat line item with quantity, prorated.
@@ -64,7 +68,7 @@ Pro clears it and logs `plan.upgraded`. Reminders are deduped by day bucket so r
 - Clamp the analytics window to 7 days on Free in `/api/docs/:id/shareviews`, the metrics page range picker and `lnkdrp_get_share_stats`.
 - Grant starter credits once per user on the personal workspace; new team workspaces start at 0.
 - Hide the dashboard "AI Credits" pill, the Usage/Limits credit views and the credits-exhausted banner behind a `NEXT_PUBLIC_FEATURE_CREDITS` flag.
-- Upgrade prompts: dashboard Plan card and a sidebar nudge when at the link cap, linking to `/pricing`.
+- Upgrade prompts: dashboard Plan card and a sidebar nudge when at the document cap, linking to `/pricing`.
 - Grace period cron: `/api/cron/plan-limits` (hourly) + `runPlanLimitsGraceSweep` in `src/lib/billing/planGrace.ts` — start/remind/block over-limit Free workspaces via `Org.planGrace`, owner emails (`sendPlanLimitEmail`), activity `plan.grace_*` / `plan.upgraded`; local runner `scripts/plan-limits-grace.ts`.
 
 ### M2 — Collaborator seats (post-launch)

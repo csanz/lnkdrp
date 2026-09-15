@@ -33,8 +33,10 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-// The share-links service owns the definition of "an active link"; importing it here keeps the
-// cap and the link routes from ever disagreeing (the cycle is import-only: both sides call at runtime).
+// The cap counts shared documents directly through `DocModel` below. It used to import the
+// share-links service to count links instead — the drift that made two documents read "11 of 3"
+// — and this comment described that import as the thing keeping the cap honest. It was the thing
+// making it wrong.
 
 /**
  * Free plan: **documents** with sharing enabled (not deleted, not archived).

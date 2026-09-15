@@ -1446,7 +1446,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         }
         throw new Error(`Request failed (${res.status})`);
       }
-      // Sharing on/off changes the active-link count shown in plan meters.
+      // Sharing on/off changes the shared-document count shown in plan meters.
       refreshPlan();
     } catch {
       // Revert on failure

@@ -100,4 +100,4 @@ Each milestone is independent and can ship in any order. Ordered here by expecte
 ## Future
 
 - Seat licences for collaborators (owner + 1 free, then $5/month per member), tracked separately from credits.
-- Free-plan limits (3 active links, 1 project, 7 days of analytics) enforced in code.
+- Free-plan limits (3 shared documents — written "3 active links" at the time; links are not capped — 1 project, 7 days of analytics) enforced in code.

@@ -710,7 +710,7 @@ export default function LeftSidebar({
 
 
     function onDocsChanged() {
-      // Active-link counts feed the Free-plan meter; refetch it alongside the sidebar cache.
+      // Shared-document counts feed the Free-plan meter; refetch it alongside the sidebar cache.
       refreshPlan();
       void refresh();
     }

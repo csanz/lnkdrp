@@ -103,8 +103,9 @@ is a Pro feature."); a skipped step never fails the call. `lnkdrp_get_share` ret
 `DAILY_CREDIT_CAP` apart (`details.reason: "daily_cap"`).
 The same `idempotencyKey` within 24h returns the same document (status refreshed). If the import
 fails the empty draft is deleted again; failures after the file is stored keep the document and
-report `docId/shareId/shareUrl` in `details`. When a Free workspace is at its active-link cap the
-document is created with sharing off and `planWarning` says so.
+report `docId/shareId/shareUrl` in `details`. When a Free workspace is at its shared-document cap
+the call fails with `plan_limit` and creates nothing; the error names what the agent can still do
+without an upgrade (add a link to an existing document, replace a file, archive one).
 
 ### `lnkdrp_get_share`
 In `{ docId? | shareId? }` (exactly one). Out `{ docId, shareId, title*, status, shareEnabled, shareAllowPdfDownload,
@@ -132,7 +133,8 @@ lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the
 
 - create — In `{ docId, label (1–80), audience?, allowDownload? = false, password? (8–128) | null, expiresAt? ISO | null,
   allowRevisionHistory? = false, enabled? = true }` → `POST /api/docs/:id/links` → `{ link, shareUrl, planWarning?, planNote? }`.
-  At the Free active-link cap the link is created **disabled** with a `planWarning` instead of failing.
+  Links are never plan-capped, so the link always comes back enabled; `planWarning` only flags that the
+  workspace is near its separate cap on shared documents.
 - list — In `{ docId }` → `GET /api/docs/:id/links` → `{ docId, links }`, default link first.
 - update — In `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?, expiresAt?, allowRevisionHistory? }`
   (≥1 setting) → `PATCH /api/docs/:id/links/:linkId` → `{ link, shareUrl, planWarning?, planNote? }`.

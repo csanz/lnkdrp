@@ -56,7 +56,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     reason: "Free workspaces can share 3 documents. Each one can carry as many links as you need — Pro removes the cap on documents.",
     bullets: [
       "Unlimited links per document, one per investor",
-      "Unlimited active links and projects across the workspace",
+      "Unlimited shared documents and projects across the workspace",
       "Full analytics history on every link",
     ],
     secondaryLabel: "Manage links",

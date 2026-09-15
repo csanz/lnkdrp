@@ -7,7 +7,7 @@
  *
  * Envelopes verified against the route handlers on 2026-09-13:
  * - `GET  /api/agent/whoami`                   -> `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client }`
- * - `POST /api/docs` `{ title }`               -> 201 `{ doc: { id, shareId, title, status, shareEnabled, … }, planWarning? }`; 402 `{ code: "plan_limit", … }` at the Free link cap
+ * - `POST /api/docs` `{ title }`               -> 201 `{ doc: { id, shareId, title, status, shareEnabled, … }, planWarning? }`; 402 `{ code: "plan_limit", … }` at the Free shared-document cap
  * - `GET  /api/docs?q=<shareId>`               -> `{ docs: [{ id, shareId, title, status, … }] }` (`q` matches title or shareId)
  * - `GET  /api/docs/:id?lite=1`                -> `{ doc: { id, shareId, title, status, shareEnabled, shareAllowPdfDownload,
  *                                                  shareAllowRevisionHistory, sharePasswordEnabled, previewImageUrl,

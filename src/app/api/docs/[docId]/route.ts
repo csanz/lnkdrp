@@ -791,7 +791,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    // Free plan: turning sharing back on, or un-archiving a shared document, adds an active link.
+    // Free plan: turning sharing back on, or un-archiving a shared document, adds a shared document.
     // Legacy docs without the field are already enabled, so only an explicit `false → true` flip
     // counts. Disabling or archiving never checks.
     let limitCheck: LimitCheck | null = null;

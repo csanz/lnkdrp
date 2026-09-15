@@ -192,9 +192,9 @@ processing to finish.
 - Out: `{ docId, shareId, shareUrl, replaceUrl: null, status: "draft"|"preparing"|"ready"|"failed",
   version: 1, uploadId, title, planWarning?, timedOut?, warnings: string[], creditsRemaining? }`. `shareUrl` is `${LNKDRP_API_URL}/s/<shareId>` and
   is valid as soon as the call returns, even while `status` is still `preparing`. `replaceUrl` is
-  always `null`: the MCP server does not mint capability URLs. `planWarning` is present when a
-  Free workspace is at its link cap: the document is created with sharing **off**, and the agent
-  should say so and point at `/pricing`.
+  always `null`: the MCP server does not mint capability URLs. At the Free shared-document cap the
+  call fails with `plan_limit` and creates nothing — the error lists what the agent can still do
+  without upgrading. Below the cap, `planWarning` appears when the workspace is close to it.
 - When `waitForReady` is true and the timeout passes, the tool returns with the current status
   rather than failing; call `lnkdrp_get_share` later.
 - `warnings`: after processing finishes the tool reads `GET /api/uploads/:uploadId` (`upload.ai`) and lists
@@ -229,7 +229,7 @@ Turn sharing, downloads, revision history or the password on or off for a link.
   allowRevisionHistory? }`, at least one setting. `password: null` removes the password.
 - Out: the `lnkdrp_get_share` shape after the change.
 - Errors: `validation`, `not_found`, `forbidden`, `plan_limit` (turning sharing on at the Free
-  link cap; `details` carries the cap and `upgradeUrl: "/pricing"`).
+  shared-document cap; `details` carries the cap and `upgradeUrl: "/pricing"`).
 
 ### `lnkdrp_get_share_stats` (read)
 
