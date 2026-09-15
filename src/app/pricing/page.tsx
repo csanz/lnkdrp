@@ -328,7 +328,7 @@ export default async function PricingPage() {
             <dl className="mt-6 divide-y divide-white/10 border-y border-white/10">
               {[
                 {
-                  q: "What counts as an active link?",
+                  q: "What counts toward the Free limit?",
                   a: "A document with sharing switched on. Turn sharing off, or archive the document, and the link stops resolving and no longer counts. Your document and its stats stay in your workspace, and you can bring it back any time a slot is free.",
                 },
                 {
@@ -337,7 +337,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "Can I create more than one link for a document?",
-                  a: "Yes. Give a document a link per audience — one per investor, one per counterparty — each with its own label, password, download switch, expiry and stats, without uploading the file again. On Free every enabled link counts toward the 3 active links, so three investor links on one deck use the whole allowance; Pro is unlimited.",
+                  a: "Yes. Give a document a link per audience — one per investor, one per counterparty — each with its own label, password, download switch, expiry and stats, without uploading the file again. Links are not capped on any plan — Free counts shared documents (3), not the links on them, so three investor links on one deck use one slot.",
                 },
                 {
                   q: "Is Pro per person or per workspace?",

@@ -199,8 +199,8 @@ export default function HomeAuthedClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingFile, router]);
 
-  const atLinkLimit = plan?.plan === "free" && plan.atLimit.documents;
-  const pickerDisabled = urlBusy || Boolean(atLinkLimit);
+  const atDocumentLimit = plan?.plan === "free" && plan.atLimit.documents;
+  const pickerDisabled = urlBusy || Boolean(atDocumentLimit);
   const openLinkUpgrade = () => {
     if (!plan) return;
     openUpgrade("documents", { used: plan.usage.documents, max: plan.limits.documents ?? undefined });
@@ -212,7 +212,7 @@ export default function HomeAuthedClient() {
       setError(PDF_ONLY_MESSAGE);
       return;
     }
-    if (atLinkLimit) {
+    if (atDocumentLimit) {
       openLinkUpgrade();
       return;
     }
@@ -267,7 +267,7 @@ export default function HomeAuthedClient() {
                 onClick={openLinkUpgrade}
                 className={[
                   "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[12px] transition-colors",
-                  atLinkLimit
+                  atDocumentLimit
                     ? "border-amber-500/40 text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
                     : "border-[var(--border)] text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
                 ].join(" ")}
@@ -287,13 +287,13 @@ export default function HomeAuthedClient() {
           <div
             className={[
               "relative overflow-hidden rounded-2xl border transition-[border-color,background-color,box-shadow] duration-200",
-              dragActive && !atLinkLimit
+              dragActive && !atDocumentLimit
                 ? "border-[var(--feed-new-bar)] bg-[var(--feed-new-bg)] shadow-[0_0_0_4px_var(--feed-new-bg)]"
                 : "border-[var(--border)] bg-[var(--panel)]",
             ].join(" ")}
           >
             <div className="flex min-h-[300px] flex-col items-center justify-center px-6 py-12 text-center">
-              {atLinkLimit ? (
+              {atDocumentLimit ? (
                 <>
                   <div className="grid h-12 w-12 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)]">
                     <LockClosedIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
@@ -386,7 +386,7 @@ export default function HomeAuthedClient() {
                 className="mt-4 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-1 pl-3 focus-within:border-[var(--muted)]"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (atLinkLimit) {
+                  if (atDocumentLimit) {
                     openLinkUpgrade();
                     return;
                   }
