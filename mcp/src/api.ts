@@ -114,6 +114,18 @@ export type ApiShareLink = {
   downloadCount: number;
 };
 
+/** One `GET /api/share-links` search hit — a link plus enough of its document to tell it apart. */
+export type ApiShareLinkSearchHit = {
+  docId: string;
+  docTitle: string | null;
+  docShareId: string | null;
+  linkId: string;
+  shareId: string;
+  label: string;
+  audience: string | null;
+  isDefault: boolean;
+};
+
 /** Settings accepted when creating or updating a share link. */
 export type ShareLinkPatch = Partial<{
   label: string;
@@ -549,10 +561,36 @@ export class ApiClient {
     return { sharePasswordEnabled: Boolean(body.sharePasswordEnabled) };
   }
 
-  /** `GET /api/docs/:id/links` — every link of a document, default first. */
-  async listShareLinks(docId: string): Promise<ApiShareLink[]> {
-    const body = rec(await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/links`));
+  /**
+   * `GET /api/docs/:id/links` — every link of a document, default first, or (with `query`) only
+   * the ones matching it by label/audience, ranked by relevance (mt_9ceLy7DqEr).
+   */
+  async listShareLinks(docId: string, query?: string | undefined): Promise<ApiShareLink[]> {
+    const body = rec(await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/links`, { query: { q: query || undefined } }));
     return Array.isArray(body.links) ? body.links.map(asShareLink) : [];
+  }
+
+  /**
+   * `GET /api/share-links?q=` — full-text search for a link across the whole workspace by
+   * label/audience, when the caller does not already know which document it is on
+   * (mt_9ceLy7DqEr). The counterpart to `listShareLinks`'s scoped `query` above.
+   */
+  async findShareLinks(query: string, limit?: number | undefined): Promise<ApiShareLinkSearchHit[]> {
+    const body = rec(await this.request("GET", "/api/share-links", { query: { q: query, limit } }));
+    const rows = Array.isArray(body.links) ? body.links : [];
+    return rows.map((raw) => {
+      const r = rec(raw);
+      return {
+        docId: strOrNull(r.docId) ?? "",
+        docTitle: strOrNull(r.docTitle),
+        docShareId: strOrNull(r.docShareId),
+        linkId: strOrNull(r.linkId) ?? "",
+        shareId: strOrNull(r.shareId) ?? "",
+        label: strOrNull(r.label) ?? "",
+        audience: strOrNull(r.audience),
+        isDefault: Boolean(r.isDefault),
+      };
+    });
   }
 
   /**

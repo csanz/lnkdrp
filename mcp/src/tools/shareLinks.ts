@@ -59,6 +59,15 @@ export const createShareLinkInputShape = {
 
 export const listShareLinksInputShape = {
   docId: docIdSchema,
+  query: z
+    .string()
+    .trim()
+    .max(120)
+    .optional()
+    .describe(
+      "Full-text search this document's links by label/audience instead of listing all of them (mt_9ceLy7DqEr) - ranked by " +
+        "relevance, whole-word matches only (not substrings: \"a16z\" matches, \"nest\" does not). Omit to list every link, default first.",
+    ),
 };
 
 export const updateShareLinkInputShape = {
@@ -131,14 +140,17 @@ export function registerListShareLinksTool(server: McpServer, ctx: ToolContext):
       title: "List share links",
       description:
         "Every share link of a document, the default link first: label, audience, shareUrl, status (active|disabled|expired), " +
-        "whether a password is set, expiry, and that link's view and download counts. Use a link's id with " +
+        "whether a password is set, expiry, and that link's view and download counts. Pass query to search this document's " +
+        "links by label/audience instead of listing all of them, ranked by relevance. If you do not already know which " +
+        "document a link is on, use lnkdrp_find_share_link instead - it searches by name across the whole workspace. " +
+        "Use a link's id with " +
         "lnkdrp_update_share_link / lnkdrp_delete_share_link, or its shareId with lnkdrp_get_share_stats. " +
         SAFETY_TAIL,
       inputSchema: listShareLinksInputShape,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const links = await ctx.api.listShareLinks(args.docId);
+      const links = await ctx.api.listShareLinks(args.docId, args.query);
       return { docId: args.docId, links: links.map((l) => withUrl(ctx.api, l)) };
     }),
   );

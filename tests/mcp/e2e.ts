@@ -2,7 +2,7 @@
  * End-to-end harness for the lnkdrp MCP server (`mcp/`, see docs/MCP.md).
  *
  * Drives the real stack over the wire: mints a temporary API key straight in Mongo, connects an
- * MCP client to the running server, exercises the fourteen tools in the order an agent would use
+ * MCP client to the running server, exercises the fifteen tools in the order an agent would use
  * them (including the share-link lifecycle: create a second link, fetch it, disable it, delete
  * it), checks that a bad key is rejected at `initialize`, and revokes the key again.
  *
@@ -74,6 +74,7 @@ const EXPECTED_TOOLS = [
   "lnkdrp_get_share_stats",
   "lnkdrp_create_share_link",
   "lnkdrp_list_share_links",
+  "lnkdrp_find_share_link",
   "lnkdrp_update_share_link",
   "lnkdrp_delete_share_link",
   "lnkdrp_archive_doc",
@@ -217,6 +218,8 @@ type ShareLinkDTO = {
 };
 type CreateShareLinkResult = { link: ShareLinkDTO; shareUrl: string; planWarning?: unknown; planNote?: string };
 type ListShareLinksResult = { docId: string; links: ShareLinkDTO[] };
+type FindShareLinkHit = { docId: string; docTitle: string | null; docShareId: string | null; linkId: string; shareId: string; shareUrl: string; label: string; audience: string | null; isDefault: boolean };
+type FindShareLinkResult = { query: string; links: FindShareLinkHit[] };
 
 /** Credit/AI fields added to whoami and share_pdf (agent-written summaries, warnings). */
 type Capabilities = {
@@ -364,7 +367,7 @@ async function main(): Promise<void> {
     });
 
     // 4. Tool catalogue.
-    await step("listTools exposes the fourteen lnkdrp tools", async () => {
+    await step("listTools exposes the fifteen lnkdrp tools", async () => {
       const { tools } = await live.listTools();
       const names = tools.map((t) => t.name);
       for (const expected of EXPECTED_TOOLS) assert(names.includes(expected), `missing tool ${expected}; got ${names.join(", ")}`);
@@ -693,6 +696,33 @@ async function main(): Promise<void> {
       assert(res.links[0]?.isDefault === true, "the default link is not listed first");
       assert(res.links.some((l) => l.id === extra.link.id), "the new link is missing from the list");
       info("links", res.links.map((l) => `${l.label}${l.isDefault ? " (default)" : ""}=${l.status}`).join(", "));
+    });
+
+    // 13b. lnkdrp_list_share_links's query scopes the search to this document — mt_9ceLy7DqEr.
+    await step('lnkdrp_list_share_links { query: "Sequoia" } returns only that link', async () => {
+      const res = await callTool<ListShareLinksResult>(live, "lnkdrp_list_share_links", { docId: shared.docId, query: "Sequoia" });
+      assert(res.links.length === 1, `expected exactly 1 match for "Sequoia", got ${res.links.length}`);
+      assert(res.links[0]?.id === extra.link.id, "the scoped search matched the wrong link");
+    });
+
+    // 13c. lnkdrp_find_share_link: the actual gap this closes — find the link without already
+    // knowing which document it is on. Full-text, so this only works after the write above is
+    // visible to the sharelinks text index, which Mongo updates synchronously with the write.
+    await step('lnkdrp_find_share_link { query: "Sequoia" } finds it without a docId', async () => {
+      const res = await callTool<FindShareLinkResult>(live, "lnkdrp_find_share_link", { query: "Sequoia" });
+      assert(Array.isArray(res.links), "find_share_link.links is not an array");
+      const hit = res.links.find((l) => l.linkId === extra.link.id);
+      assert(hit, `"Sequoia" did not surface the link just created (got ${res.links.map((l) => l.label).join(", ")})`);
+      assert(hit.docId === shared.docId, `find_share_link matched the right link on the wrong doc: ${hit.docId} !== ${shared.docId}`);
+      assert(hit.docTitle === "MCP e2e", `find_share_link.docTitle "${hit.docTitle}" !== "MCP e2e"`);
+      assert(hit.shareUrl.endsWith(`/s/${hit.shareId}`), `find_share_link.shareUrl "${hit.shareUrl}" does not end with /s/${hit.shareId}`);
+      info("hit", `${hit.docTitle} / ${hit.label} (${hit.audience})`);
+    });
+
+    // 13d. A word that matches nothing returns [], never an error.
+    await step("lnkdrp_find_share_link with no match returns an empty array, not an error", async () => {
+      const res = await callTool<FindShareLinkResult>(live, "lnkdrp_find_share_link", { query: `nomatch${randomUUID().replace(/-/g, "")}` });
+      assert(Array.isArray(res.links) && res.links.length === 0, `expected [], got ${JSON.stringify(res.links)}`);
     });
 
     // 14. The new link resolves publicly, straight away.

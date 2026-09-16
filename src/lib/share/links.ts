@@ -11,7 +11,7 @@
  *   default link's settings are mirrored onto the legacy Doc fields for one release, so older
  *   readers and the rollback build keep working.
  */
-import { Types } from "mongoose";
+import { Types, type ProjectionType } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
@@ -287,6 +287,13 @@ export async function listShareLinksPage(input: {
   includeArchived?: boolean;
   page?: number;
   limit?: number;
+  /**
+   * Full-text search over this document's links (`label`/`audience`, via the `sharelinks` text
+   * index) instead of listing all of them — mt_9ceLy7DqEr. When given, results are ranked by
+   * relevance rather than default-first/newest-first, and `page` is ignored: a filtered lookup
+   * inside one document is "find the match," not something worth paging through.
+   */
+  query?: string;
 }): Promise<{ total: number; page: number; limit: number; links: ShareLink[] }> {
   await connectMongo();
   const docId = oid(input.docId);
@@ -295,8 +302,22 @@ export async function listShareLinksPage(input: {
   const doc = (await DocModel.findOne({ _id: docId, orgId: oid(input.orgId), isDeleted: { $ne: true } }).select(DOC_SHARE_FIELDS).lean()) as DocLike | null;
   if (!doc) return { total: 0, page, limit, links: [] };
   await ensureDefaultLink(doc);
+  const query = (input.query ?? "").trim();
   const filter: Record<string, unknown> = { docId };
   if (!input.includeArchived) filter.archivedAt = null;
+
+  if (query) {
+    Object.assign(filter, { $text: { $search: query } });
+    // `score` isn't a schema field — Mongoose's projection typing doesn't have a slot for a
+    // `$meta` projection, hence the cast on find()'s second argument; `.sort()` already accepts
+    // `{ $meta }` natively and needs none.
+    const rows = await ShareLinkModel.find(filter, { score: { $meta: "textScore" } } as unknown as ProjectionType<ShareLink>)
+      .sort({ score: { $meta: "textScore" } })
+      .limit(limit)
+      .lean<ShareLink[]>();
+    return { total: rows.length, page: 1, limit, links: rows };
+  }
+
   const [total, rows] = await Promise.all([
     ShareLinkModel.countDocuments(filter),
     // Default first, then newest — the same order `listShareLinks` sorts to in JS, done here in
@@ -309,6 +330,85 @@ export async function listShareLinksPage(input: {
   ]);
   return { total, page, limit, links: rows };
 }
+
+/** One workspace-wide search hit: enough to identify the link and the document it belongs to. */
+export type ShareLinkSearchHit = {
+  docId: string;
+  docTitle: string | null;
+  docShareId: string | null;
+  linkId: string;
+  shareId: string;
+  label: string;
+  audience: string | null;
+  isDefault: boolean;
+};
+
+/**
+ * Full-text search for a share link across the whole workspace, by `label`/`audience`
+ * (mt_9ceLy7DqEr) — "find the a16z link" without already knowing which document it is on, which
+ * `listShareLinksPage` above cannot answer (it needs a `docId` to start from).
+ *
+ * The text `$match` runs first (Mongo requires this, and it is also the selective step — the
+ * `sharelinks` text index does the work), then joins to `docs` and drops any hit whose document
+ * is deleted or archived, matching what `GET /api/docs` already excludes from search. That order —
+ * filter by the doc, then rank, then limit — costs a touch more than limiting first, but it means
+ * `limit` results really are the top `limit` *visible* matches, not `limit` candidates that might
+ * mostly get thrown away afterward.
+ */
+export async function searchShareLinks(input: {
+  orgId: string | Types.ObjectId;
+  query: string;
+  limit?: number;
+}): Promise<ShareLinkSearchHit[]> {
+  await connectMongo();
+  const orgId = oid(input.orgId);
+  const limit = Number.isFinite(input.limit) && (input.limit ?? 0) >= 1 ? Math.min(50, Math.floor(input.limit!)) : 20;
+  const query = input.query.trim();
+  if (!query) return [];
+
+  const rows = (await ShareLinkModel.aggregate([
+    { $match: { orgId, archivedAt: null, $text: { $search: query } } },
+    { $lookup: { from: "docs", localField: "docId", foreignField: "_id", as: "doc" } },
+    { $unwind: "$doc" },
+    { $match: { "doc.isDeleted": { $ne: true }, "doc.isArchived": { $ne: true } } },
+    { $sort: { score: { $meta: "textScore" } } },
+    { $limit: limit },
+    {
+      $project: {
+        _id: 0,
+        linkId: "$_id",
+        shareId: 1,
+        label: 1,
+        audience: 1,
+        isDefault: 1,
+        docId: "$doc._id",
+        docTitle: "$doc.title",
+        docShareId: "$doc.shareId",
+      },
+    },
+  ])) as Array<{
+    linkId: Types.ObjectId;
+    shareId: string;
+    label: string;
+    audience?: string | null;
+    isDefault?: boolean;
+    docId: Types.ObjectId;
+    docTitle?: string | null;
+    docShareId?: string | null;
+  }>;
+
+  return rows.map((r) => ({
+    docId: String(r.docId),
+    docTitle: typeof r.docTitle === "string" ? r.docTitle : null,
+    docShareId: typeof r.docShareId === "string" ? r.docShareId : null,
+    linkId: String(r.linkId),
+    shareId: r.shareId,
+    label: r.label,
+    audience: r.audience ?? null,
+    isDefault: Boolean(r.isDefault),
+  }));
+}
+
 export type ShareLinkSettingsInput = {
   label?: string;
   audience?: string | null;

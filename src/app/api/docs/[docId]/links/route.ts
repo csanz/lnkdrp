@@ -42,6 +42,9 @@ function createdViaFor(request: Request): "web" | "api" | "mcp" {
  * member of the workspace (viewers included). A document can carry hundreds of links, and this is
  * the one route a client cannot ask for "all of them" and get away with rendering the answer — the
  * sort/skip/limit happens in Mongo, so `total` can be in the thousands while `links` never is.
+ * `?q=` (mt_9ceLy7DqEr) full-text searches this document's links by label/audience instead of
+ * paging through them — the search a person actually wants once a document owns more than a few
+ * ("which one was Sequoia?"); ranked by relevance, `page` is ignored while `q` is set.
  * Out: `{ total, page, limit, links: ShareLinkDTO[] }`.
  */
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
@@ -54,12 +57,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const includeArchived = params.get("includeArchived") === "1";
     const pageParam = Number(params.get("page"));
     const limitParam = Number(params.get("limit"));
+    const query = (params.get("q") ?? "").trim();
     const { total, page, limit, links } = await listShareLinksPage({
       orgId,
       docId: docObjectId,
       includeArchived,
       page: Number.isFinite(pageParam) ? pageParam : undefined,
       limit: Number.isFinite(limitParam) ? limitParam : undefined,
+      query: query || undefined,
     });
     // One aggregation for this page's links, so every row's traffic comes from the same rows the
     // metrics page reads. Without it this list served `ShareLink.viewCount`, which drifts from the

@@ -407,4 +407,40 @@ describe("listShareLinksPage", () => {
     const page = await listShareLinksPage({ orgId: ORG_ID, docId: DOC_ID });
     expect(page).toEqual({ total: 0, page: 1, limit: 25, links: [] });
   });
+
+  // mt_9ceLy7DqEr. The mock can't simulate real $text relevance (there is no text-search engine
+  // behind it), so these only pin the wiring — always page 1, total === the row count returned,
+  // still scoped to this document and still excluding archived links — not the ranking itself,
+  // which is verified live against a real MongoDB text index instead.
+  describe("query (full-text search)", () => {
+    test("a query still scopes to this document and reports page 1", async () => {
+      docs = [docRow()];
+      links = [linkRow({ isDefault: true, label: "Default link" }), linkRow({ _id: new Types.ObjectId(), shareId: "seq0000001", label: "Sequoia" })];
+      const page = await listShareLinksPage({ orgId: ORG_ID, docId: DOC_ID, query: "Sequoia" });
+      expect(page.page).toBe(1);
+      expect(page.total).toBe(page.links.length);
+      expect(page.links.every((l) => String(l.docId) === String(DOC_ID))).toBe(true);
+    });
+
+    test("a query still excludes archived links unless includeArchived is set", async () => {
+      docs = [docRow()];
+      links = [
+        linkRow({ isDefault: true }),
+        linkRow({ _id: new Types.ObjectId(), shareId: "arch0000001", label: "Old Sequoia", archivedAt: new Date() }),
+      ];
+      const page = await listShareLinksPage({ orgId: ORG_ID, docId: DOC_ID, query: "Sequoia" });
+      expect(page.links.some((l) => l.shareId === "arch0000001")).toBe(false);
+      const withArchived = await listShareLinksPage({ orgId: ORG_ID, docId: DOC_ID, query: "Sequoia", includeArchived: true });
+      expect(withArchived.links.some((l) => l.shareId === "arch0000001")).toBe(true);
+    });
+
+    test("an empty or whitespace-only query is treated as no query", async () => {
+      docs = [docRow()];
+      links = [linkRow({ isDefault: true }), linkRow({ _id: new Types.ObjectId(), shareId: "other00001" })];
+      const page = await listShareLinksPage({ orgId: ORG_ID, docId: DOC_ID, query: "   " });
+      // Falls through to the plain listing, default-first — not the (empty-filter) search branch.
+      expect(page.total).toBe(2);
+      expect(page.links[0]?.isDefault).toBe(true);
+    });
+  });
 });

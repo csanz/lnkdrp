@@ -424,12 +424,24 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
   },
   {
     name: "lnkdrp_list_share_links",
-    purpose: "Every link of a document with its settings, status and view counts.",
+    purpose: "Every link of a document with its settings, status and view counts — or search its links by name.",
     access: "read",
     detail: {
-      inputs: ["docId"],
-      output: "Every link, default first: label, audience, shareUrl, status (active, disabled, expired), password and expiry state, and that link's viewer and download counts.",
+      inputs: ["docId", "query — optional; full-text search this document's links by label/audience, ranked by relevance"],
+      output: "Every link (or, with query, only the matches), default first: label, audience, shareUrl, status (active, disabled, expired), password and expiry state, and that link's viewer and download counts.",
       errors: ["not_found"],
+      note: "Don't know which document a link is on? lnkdrp_find_share_link searches by name across the whole workspace.",
+    },
+  },
+  {
+    name: "lnkdrp_find_share_link",
+    purpose: "Find a share link by name (its label or audience) across the whole workspace.",
+    access: "read",
+    detail: {
+      inputs: ["query — the name to search for, e.g. \"a16z\" or \"Sequoia\"", "limit — optional, 1 to 50, default 20"],
+      output: "The matching links, ranked by relevance: which document each is on (id, title, default shareId), the link's own id, shareId, shareUrl, label, audience and whether it's the default link.",
+      errors: [],
+      note: "Backed by a MongoDB text index: whole-word matches only (\"a16z\" matches, \"nest\" does not), fast at any workspace size. Returns [] rather than an error when nothing matches.",
     },
   },
   {

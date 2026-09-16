@@ -175,7 +175,14 @@ lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the
   allowRevisionHistory? = false, enabled? = true }` → `POST /api/docs/:id/links` → `{ link, shareUrl, planWarning?, planNote? }`.
   Links are never plan-capped, so the link always comes back enabled; `planWarning` only flags that the
   workspace is near its separate cap on shared documents.
-- list — In `{ docId }` → `GET /api/docs/:id/links` → `{ docId, links }`, default link first.
+- list — In `{ docId, query? }` → `GET /api/docs/:id/links?q=` → `{ docId, links }`, default link first, or —
+  with `query` — only the links matching by label/audience, ranked by relevance (mt_9ceLy7DqEr).
+- find — `lnkdrp_find_share_link`, the workspace-wide version of `query` above, for when the document isn't known
+  yet. In `{ query (1–120), limit? = 20 }` → `GET /api/share-links?q=&limit=` → `{ query, links: [{ docId, docTitle,
+  docShareId, linkId, shareId, shareUrl, label, audience, isDefault }] }`, ranked by relevance, `[]` on no match.
+  Backed by a MongoDB text index on `ShareLink.label`/`audience` (label weighted 5:1 over audience) — indexed and
+  fast at any size, whole-word matches only ("a16z" matches, "nest" does not); a document's title and a link's
+  random shareId are not searched here. Archived/deleted documents' links excluded.
 - update — In `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?, expiresAt?, allowRevisionHistory? }`
   (≥1 setting) → `PATCH /api/docs/:id/links/:linkId` → `{ link, shareUrl, planWarning?, planNote? }`.
 - delete — In `{ linkId, docId, confirm? }` → confirms with the human first (below) → `DELETE /api/docs/:id/links/:linkId`

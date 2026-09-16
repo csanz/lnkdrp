@@ -55,6 +55,19 @@ const ShareLinkSchema = new Schema(
 ShareLinkSchema.index({ orgId: 1, docId: 1, createdDate: 1 });
 /** The Free-plan cap counts enabled, unexpired, unarchived links across the workspace. */
 ShareLinkSchema.index({ orgId: 1, enabled: 1, archivedAt: 1, expiresAt: 1 });
+/**
+ * Full-text search over `label`/`audience` — mt_9ceLy7DqEr: the field a human actually names a
+ * link by ("Sequoia", "Inesto / a16z") had no search path at all; the only matches were on the
+ * document's title or a link's random public slug. `label` outweighs `audience` (5:1) since it is
+ * the name someone actually asks for ("the a16z link"); `audience` is a secondary free-text note.
+ *
+ * A Mongo text index only ever indexes whole tokens (split on non-alphanumeric boundaries, so
+ * "Inesto / a16z" indexes as "inesto" + "a16z"), not substrings — searching "a16z" or "inesto"
+ * matches, searching "nest" does not. That trade — indexed, ranked, workspace-wide lookups instead
+ * of an unindexed regex scan — is the point: a collection can only carry one text index, so this is
+ * it for `sharelinks`.
+ */
+ShareLinkSchema.index({ label: "text", audience: "text" }, { name: "sharelinks_label_audience_text", weights: { label: 5, audience: 1 } });
 
 export type ShareLink = InferSchemaType<typeof ShareLinkSchema> & { _id: mongoose.Types.ObjectId };
 
