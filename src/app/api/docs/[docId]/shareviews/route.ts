@@ -66,6 +66,7 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/l
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
 import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { toShareLinkDTO } from "@/lib/share/links";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   LAST_ACTIVITY_EXPR,
@@ -875,6 +876,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
          */
         ...(linksTotal !== null ? { linksTotal } : {}),
         ...(topLinksParam === 0 && wantsByLink ? { deletedLinkResidual } : {}),
+        /**
+         * The resolved link itself, only when `?shareId=` named one. The metrics page used to
+         * resolve a link's label (and had no way to show its settings at all) from a separate,
+         * unpaginated `GET /api/docs/:docId/links` fetch — which broke the moment the link a reader
+         * was looking at was not on that list's first page. This is the same row `link` already is,
+         * for free, in the DTO shape every other link surface uses.
+         */
+        ...(link ? { link: toShareLinkDTO(link) } : {}),
         /**
          * Whether downloads are *allowed* (this link, or any live link of the document) — a label,
          * not a filter: the download numbers above are counted either way.

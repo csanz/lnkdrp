@@ -43,6 +43,37 @@ type MetricsResponse = {
   downloadsEnabled?: boolean;
   /** Absent on a `?viewersOnly=1` response. */
   series?: Array<{ date: string; views: number; downloads: number }>;
+  /** Count of live links on the document — always present, regardless of `?shareId=` scope. */
+  linksTotal?: number;
+  /**
+   * Bounded ranking (top by views + top by recency, deduped, `topLinks=5` on the request) — never
+   * "every link". Always the whole document's ranking, whatever `?shareId=` says, same as `linksTotal`.
+   */
+  byLink?: Array<{
+    shareId: string;
+    views: number;
+    viewers: number;
+    opens?: number;
+    downloads: number;
+    lastViewedAt: string | null;
+    label?: string | null;
+    isDefault?: boolean;
+  }>;
+  /** Traffic on links no live row owns (one summary, never a list) — see `deletedLinkResidual` on the route. */
+  deletedLinkResidual?: { count: number; viewers: number; downloads: number } | null;
+  /** The resolved link, only when `?shareId=` named one. */
+  link?: {
+    shareId: string;
+    label: string;
+    audience: string | null;
+    isDefault: boolean;
+    enabled: boolean;
+    allowDownload: boolean;
+    allowRevisionHistory: boolean;
+    passwordEnabled: boolean;
+    expiresAt: string | null;
+    status: "active" | "disabled" | "expired" | "archived";
+  } | null;
   viewers: Array<{
     userId: string;
     name: string | null;
@@ -68,20 +99,6 @@ type MetricsResponse = {
     lastSeen: string | null;
   }>;
 };
-
-/** The `ShareLinkDTO` fields this page renders (`GET /api/docs/:docId/links`). */
-type ShareLinkRow = {
-  id: string;
-  shareId: string;
-  label: string;
-  audience: string | null;
-  isDefault: boolean;
-  status: "active" | "disabled" | "expired" | "archived";
-  lastViewedAt: string | null;
-  viewCount: number;
-  downloadCount: number;
-};
-
 
 type ShareViewerVisitSummary = {
   visitId: string;
@@ -122,6 +139,37 @@ function formatDateTime(iso: string | null): string {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return "-";
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(d);
+}
+
+/** "12 Sep 2026" for the scoped link's expiry — `formatDateTime` above is for viewer timestamps. */
+function formatDateShort(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(d);
+}
+
+/** "3h ago" / "12 Sep" for the LINKS card's mini lists, matching `DocQuickStats`. */
+function relativeAge(iso: string | null): string {
+  if (!iso) return "—";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "—";
+  const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+/** One "Label value" pair in the scoped link's settings row. */
+function SettingItem({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className="text-[var(--muted-2)]">{label}</span>
+      <span className="font-medium text-[var(--fg)]">{value}</span>
+    </span>
+  );
 }
 
 function formatShortId(id: string | null | undefined, { head = 4, tail = 4 }: { head?: number; tail?: number } = {}): string {
@@ -410,12 +458,13 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const [anonViewersModalPage, setAnonViewersModalPage] = useState(0);
   const [days, setDays] = useState(15);
   const [rangeOpen, setRangeOpen] = useState(false);
-  // Links of this document, for the selected link's label. Choosing a link happens on the Links
-  // page, which is the per-link table; this page shows one link (`?shareId=`) or the document.
-  // A picker and a comparison table lived here once and were removed at the user's request: a
-  // reader who chose a link on the Links page had already decided, and both controls stopped
-  // scaling long before the hundred links a document is allowed.
-  const [links, setLinks] = useState<ShareLinkRow[] | null>(null);
+  // Choosing a link happens on the Links page, which is the full per-link table; this page shows
+  // one link (`?shareId=`) or the document. A picker and a comparison table lived here once and
+  // were removed at the user's request: a reader who chose a link on the Links page had already
+  // decided, and both controls stopped scaling long before the hundred links a document is
+  // allowed. What replaced them is bounded on purpose: `data.link` (the one link this page is
+  // scoped to, resolved server-side) and `data.byLink` (a top-N ranking, never every link) — see
+  // the "LINKS" card and the per-link settings row below.
   // The selected link lives in the URL, not only in React state. A per-link view is a thing people
   // want to keep and pass on — "here is what Sequoia actually read" — and while it was state alone
   // it could not be bookmarked, reloaded, or linked to from the links table that shows the very
@@ -547,7 +596,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       setViewersLoaded(false);
       try {
         const res = await fetchWithTempUser(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1${linkFilterParam}`,
+          // `byLink=1&topLinks=5`, unconditionally: the ranking and `linksTotal` are document-wide
+          // regardless of `?shareId=` (the route computes them from `docScopeMatch`, not `scopeMatch`),
+          // and bounded, so asking for them even on a single-link view costs nothing worth skipping.
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${encodeURIComponent(String(days))}&lite=1&byLink=1&topLinks=5${linkFilterParam}`,
           { cache: "no-store" },
         );
         if (res.status === 404) {
@@ -639,28 +691,27 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId, days, linkFilterParam, data, deepAnalytics]);
 
-  // The links of this document, for the filter chips and the per-link table.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/links`, { cache: "no-store" });
-        if (!res.ok) return;
-        const json = (await res.json()) as { links?: ShareLinkRow[] };
-        if (!cancelled && Array.isArray(json?.links)) setLinks(json.links);
-      } catch {
-        // the page works without the link breakdown
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [docId]);
-
   /** The label of the selected link, for copy that must not say "this document" under a filter. */
-  const selectedLinkLabel = useMemo(
-    () => (shareId ? ((links ?? []).find((l) => l.shareId === shareId)?.label ?? "this link") : null),
-    [shareId, links],
+  const selectedLinkLabel = useMemo(() => (shareId ? (data?.link?.label ?? "this link") : null), [shareId, data]);
+
+  /**
+   * The "LINKS" card's two lists: which links are pulling the traffic, and which are live right
+   * now — ranked over `data.byLink`, the bounded top-5-by-views ∪ top-5-by-recency the server
+   * already sent, never a fetch of every link. Only rendered in master mode (`!shareId`): under a
+   * single-link filter this ranking would be comparing the very link the page is already about
+   * against the others, which is a different question than the one this card answers.
+   */
+  const topLinksByViewers = useMemo(
+    () => [...(data?.byLink ?? [])].sort((a, b) => b.viewers - a.viewers || b.views - a.views).slice(0, 3),
+    [data],
+  );
+  const recentlyOpenedLinks = useMemo(
+    () =>
+      [...(data?.byLink ?? [])]
+        .filter((r) => Boolean(r.lastViewedAt))
+        .sort((a, b) => Date.parse(b.lastViewedAt!) - Date.parse(a.lastViewedAt!))
+        .slice(0, 3),
+    [data],
   );
 
   const views = data?.totals?.views ?? 0;
@@ -941,10 +992,43 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                         Clear
                       </button>
                     </>
-                  ) : links && links.length > 1 ? (
-                    <span className="text-[13px] font-normal text-[var(--muted-2)]">· all {links.length} links</span>
+                  ) : typeof data?.linksTotal === "number" && data.linksTotal > 1 ? (
+                    // A pill, not a trailing clause: this is the top-level, every-link view, and
+                    // the count is the one fact that says so at a glance — the way a single-link
+                    // view is unmistakable the moment it names the link. Before this it was small
+                    // grey text that read as a footnote on "Metrics", so a reader had no way to
+                    // tell "the whole document" apart from "the one link I'm looking at" without
+                    // reading the number and doing the comparison themselves.
+                    <span className="inline-flex items-center rounded-full bg-[var(--panel-hover)] px-2.5 py-0.5 text-[12px] font-semibold text-[var(--fg)] ring-1 ring-inset ring-[var(--border)]">
+                      All {data.linksTotal} links
+                    </span>
                   ) : null}
                 </div>
+                {/* The scoped link's own settings — the one thing a single-link view has that the
+                    master view cannot (a document has no single "download" or "expiry" setting
+                    once it owns more than one link). Without this, a link's metrics page was
+                    indistinguishable from the document's except for a name in the breadcrumb: the
+                    same four tiles, the same chart, just narrower numbers. */}
+                {selectedLinkLabel && data?.link ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[var(--muted)]">
+                    {data.link.audience ? <SettingItem label="Audience" value={data.link.audience} /> : null}
+                    <SettingItem label="Download" value={data.link.allowDownload ? "on" : "off"} />
+                    <SettingItem label="Password" value={data.link.passwordEnabled ? "set" : "none"} />
+                    <SettingItem label="Version history" value={data.link.allowRevisionHistory ? "on" : "off"} />
+                    <SettingItem label="Expires" value={data.link.expiresAt ? formatDateShort(data.link.expiresAt) : "Never"} />
+                    {typeof data.linksTotal === "number" && data.linksTotal > 1 ? (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <Link
+                          href={`/doc/${encodeURIComponent(docId)}/links`}
+                          className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                        >
+                          Part of {data.linksTotal} links
+                        </Link>
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="mt-1 text-sm text-[var(--muted)]">{dateRangeLabel}</div>
                 {analyticsDaysLimit !== null ? (
                   <div className="mt-1 text-xs text-[var(--muted-2)]">
@@ -1122,6 +1206,99 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 </div>
               </div>
             </div>
+
+            {/* The card that makes this the *master* metrics page rather than a wider version of
+                a single link's: how many links this document has, which ones are pulling the
+                traffic, and which are live right now. Master mode only — under a single-link
+                filter this would be ranking the very link the page is about against the others,
+                a different question than the one the reader is asking. Ranked and bounded to a
+                handful of rows (`topLinksByViewers`/`recentlyOpenedLinks`, from the server's
+                already-bounded `byLink`), never every link — see `DocLinksManager` for that. */}
+            {!selectedLinkLabel && data && typeof data.linksTotal === "number" && data.linksTotal > 0 ? (
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">LINKS</div>
+                    <div className="mt-1 text-3xl font-semibold tabular-nums text-[var(--fg)]">{data.linksTotal}</div>
+                    <div className="mt-2 text-sm text-[var(--muted)]">
+                      {data.linksTotal === 1
+                        ? "One link, shown above"
+                        : "Every number above is the sum across all of them"}
+                    </div>
+                  </div>
+                  <Link
+                    href={`/doc/${encodeURIComponent(docId)}/links`}
+                    className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                  >
+                    Manage links
+                  </Link>
+                </div>
+
+                {topLinksByViewers.length || recentlyOpenedLinks.length ? (
+                  <div className="mt-4 grid gap-x-6 gap-y-3 border-t border-[var(--border)] pt-4 sm:grid-cols-2">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                        Top links · by viewers
+                      </div>
+                      <ul className="mt-1.5 space-y-1.5">
+                        {topLinksByViewers.map((r) => (
+                          <li key={r.shareId} className="flex items-baseline justify-between gap-3 text-[13px]">
+                            {r.label ? (
+                              <Link
+                                href={`/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(r.shareId)}`}
+                                className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                              >
+                                {r.label}
+                              </Link>
+                            ) : (
+                              <span className="min-w-0 truncate text-[var(--muted)]" title="This link was deleted; its traffic is still counted above">
+                                Deleted link
+                              </span>
+                            )}
+                            <span className="shrink-0 tabular-nums text-[var(--muted)]">{r.viewers.toLocaleString()}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">Recently opened</div>
+                      <ul className="mt-1.5 space-y-1.5">
+                        {recentlyOpenedLinks.map((r) => (
+                          <li key={r.shareId} className="flex items-baseline justify-between gap-3 text-[13px]">
+                            {r.label ? (
+                              <Link
+                                href={`/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(r.shareId)}`}
+                                className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                              >
+                                {r.label}
+                              </Link>
+                            ) : (
+                              <span className="min-w-0 truncate text-[var(--muted)]" title="This link was deleted; its traffic is still counted above">
+                                Deleted link
+                              </span>
+                            )}
+                            <span className="shrink-0 whitespace-nowrap text-[var(--muted)]">{relativeAge(r.lastViewedAt)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Traffic the two lists above cannot show: a link that was deleted still keeps
+                    its numbers in every total, and this is the one place that says why the rows
+                    above do not, between them, add up to the document's own figures. */}
+                {data.deletedLinkResidual ? (
+                  <div className="mt-3 border-t border-[var(--border)] pt-3 text-[12px] text-[var(--muted)]">
+                    <span className="font-medium text-[var(--fg)]">
+                      {data.deletedLinkResidual.count === 1 ? "1 deleted link" : `${data.deletedLinkResidual.count} deleted links`}
+                    </span>{" "}
+                    still carr{data.deletedLinkResidual.count === 1 ? "ies" : "y"} {data.deletedLinkResidual.viewers.toLocaleString()}{" "}
+                    viewer{data.deletedLinkResidual.viewers === 1 ? "" : "s"} in the totals above.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* Two separate charts (Views + Downloads) */}
             <div className="grid gap-5 lg:grid-cols-2">
