@@ -34,8 +34,10 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
       description:
         "Verify the lnkdrp API key and return the workspace it acts on: userId, email, orgId, orgName, plan, key prefix, " +
         "scopes and the client name lnkdrp recorded for this connection, plus the credit cost table (credits per tier " +
-        "basic/standard/advanced), creditsRemaining and creditsResetAt when readable, and the MCP server version. " +
-        "Call this first to confirm the connection works. " +
+        "basic/standard/advanced), creditsRemaining and creditsResetAt when readable, onDemand, and the MCP server " +
+        "version. plan: 'free' with onDemand: true means the workspace has added a card for pay-as-you-go - it is not " +
+        "on Pro's limits, but it will not simply run out of credits once its one-time starter credits are spent; do not " +
+        "read 'free' alone as 'will hit a wall'. Call this first to confirm the connection works. " +
         SAFETY_TAIL,
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -53,6 +55,9 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
         plan: plan?.plan ?? whoami.plan,
         creditsRemaining: credits?.creditsRemaining ?? null,
         creditsResetAt: credits?.resetAt ?? null,
+        // `false` when the snapshot could not be read, same as every other credits field here —
+        // a Pro workspace with this false just means the read failed, not that on-demand is off.
+        onDemand: credits?.onDemandEnabled ?? false,
         costTiers: [...COST_TIERS],
         costs: creditCosts(),
         mcpVersion: MCP_SERVER_VERSION,

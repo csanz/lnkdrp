@@ -81,10 +81,12 @@ truncated (title 300, summary 8000 chars) and stripped of control and bidi chara
 
 ### `lnkdrp_whoami`
 In `{}`. Out: the whoami payload (`userId, email, orgId, orgName, isPersonalOrg, plan, keyPrefix, scopes, client`)
-plus `creditsRemaining`, `creditsResetAt` (from `GET /api/credits/snapshot?fast=1`, `null` when unreadable; whoami
-never fails over them), `costTiers: ["basic","standard","advanced"]`, `costs: { summary: [1,2,5], compare: [2,5,12] }`
-and `mcpVersion`. `costs` are computed from `creditsForRun` (`src/lib/credits/schedule.ts`, imported by the MCP
-server and copied into the Docker image), so they always match what the app charges.
+plus `creditsRemaining`, `creditsResetAt`, `onDemand` (from `GET /api/credits/snapshot?fast=1`; `false`/`null` when
+unreadable; whoami never fails over them), `costTiers: ["basic","standard","advanced"]`, `costs: { summary: [1,2,5],
+compare: [2,5,12] }` and `mcpVersion`. `costs` are computed from `creditsForRun` (`src/lib/credits/schedule.ts`,
+imported by the MCP server and copied into the Docker image), so they always match what the app charges.
+`onDemand: true` alongside `plan: "free"` is a Free workspace that added a card for pay-as-you-go credits — the
+document/project limits are still Free's, but it will not just run dry once its one-time starter credits are gone.
 
 ### Discovery (`lnkdrp_list_docs`, `lnkdrp_get_activity`)
 How an agent finds documents it was not handed, and reads what happened in the workspace.

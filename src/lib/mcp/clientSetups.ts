@@ -291,7 +291,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     access: "read",
     detail: {
       inputs: ["none"],
-      output: "Your user id and email, the workspace id and name, plan (free or pro), the key's prefix and scopes, the client name lnkdrp recorded, credits remaining and when they reset, and the credit cost per AI action by tier.",
+      output: "Your user id and email, the workspace id and name, plan (free or pro), the key's prefix and scopes, the client name lnkdrp recorded, credits remaining and when they reset, whether the workspace can be billed for on-demand credits (onDemand), and the credit cost per AI action by tier.",
       errors: ["unauthorized — the key is missing or invalid", "key_revoked — the key was revoked"],
       note: "Call it first to confirm the connection; it costs nothing.",
     },

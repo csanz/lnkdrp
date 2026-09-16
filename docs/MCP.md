@@ -158,16 +158,19 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
 
 - In: `{}`
 - Out: `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan: "free"|"pro", keyPrefix, scopes,
-  client, creditsRemaining: number|null, creditsResetAt: string|null, costTiers: ["basic","standard","advanced"],
-  costs: { summary: [1,2,5], compare: [2,5,12] }, mcpVersion }`. `client` is the label
+  client, creditsRemaining: number|null, creditsResetAt: string|null, onDemand: boolean, costTiers:
+  ["basic","standard","advanced"], costs: { summary: [1,2,5], compare: [2,5,12] }, mcpVersion }`. `client` is the label
   derived from the `initialize` client name (`"claude-code"` → `"Claude Code"`; unknown names are
   title-cased). `costs` are credits per tier (basic, standard, advanced) for the AI actions, computed from
   `creditsForRun` in `src/lib/credits/schedule.ts` (the MCP server imports it, so the table cannot drift);
   `compare` is the `history` action. The automatic summary runs at basic (1 credit), or costs nothing when the
   agent supplies its own (`summary` + `keyPoints` on `lnkdrp_share_pdf`).
-- `plan` comes from `GET /api/plan` when readable, else from whoami. `creditsRemaining` and `creditsResetAt`
-  come from `GET /api/credits/snapshot?fast=1` (`creditsResetAt` is the snapshot's reset date, falling back to
-  `cycleEnd`); both are `null` when the snapshot cannot be read. whoami never fails because of them.
+- `plan` comes from `GET /api/plan` when readable, else from whoami. `creditsRemaining`, `creditsResetAt` and
+  `onDemand` come from `GET /api/credits/snapshot?fast=1` (`creditsResetAt` is the snapshot's reset date, falling
+  back to `cycleEnd`; both are `null` when the snapshot cannot be read, and `onDemand` is `false`). whoami never
+  fails because of them. `onDemand: true` on `plan: "free"` means the workspace added a card for pay-as-you-go
+  (`$0.10`/credit past its one-time 50 starter credits) — it is still on Free's document/project limits, but it
+  will not simply run out of credits the way a plain Free workspace does once those 50 are spent.
 
 ### `lnkdrp_list_docs` (read)
 

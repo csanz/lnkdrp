@@ -218,7 +218,7 @@ type CreateShareLinkResult = { link: ShareLinkDTO; shareUrl: string; planWarning
 type ListShareLinksResult = { docId: string; links: ShareLinkDTO[] };
 
 /** Credit/AI fields added to whoami and share_pdf (agent-written summaries, warnings). */
-type WhoAmICredits = { costs?: { summary?: number[]; compare?: number[] }; creditsRemaining?: number | null; creditsResetAt?: string | null };
+type WhoAmICredits = { costs?: { summary?: number[]; compare?: number[] }; creditsRemaining?: number | null; creditsResetAt?: string | null; onDemand?: boolean };
 type SharePdfAiFields = { warnings?: unknown; creditsRemaining?: number };
 /** Documents this run created; deleted in `finally` so the Free active-link cap is not consumed. */
 const createdDocs: Array<{ docId: string; origin: string }> = [];
@@ -385,7 +385,8 @@ async function main(): Promise<void> {
       assert(JSON.stringify(me.costs?.summary) === JSON.stringify(summary), `whoami.costs.summary ${JSON.stringify(me.costs?.summary)} !== ${JSON.stringify(summary)}`);
       assert(JSON.stringify(me.costs?.compare) === JSON.stringify(compare), `whoami.costs.compare ${JSON.stringify(me.costs?.compare)} !== ${JSON.stringify(compare)}`);
       assert(me.creditsRemaining === null || typeof me.creditsRemaining === "number", "whoami.creditsRemaining is neither a number nor null");
-      info("credits", `costs=${JSON.stringify(me.costs)} remaining=${String(me.creditsRemaining)} resetAt=${String(me.creditsResetAt)}`);
+      assert(typeof me.onDemand === "boolean", "whoami.onDemand is not a boolean");
+      info("credits", `costs=${JSON.stringify(me.costs)} remaining=${String(me.creditsRemaining)} resetAt=${String(me.creditsResetAt)} onDemand=${String(me.onDemand)}`);
     });
 
     // 5c. Discovery, before anything is created: the list and the feed both answer with the
