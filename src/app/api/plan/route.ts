@@ -11,6 +11,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActorForStats } from "@/lib/gating/actor";
 import { getWorkspaceGrace, getWorkspacePlan, getWorkspaceUsage, limitsForPlan } from "@/lib/billing/planLimits";
+import { requireOrgRole, roleAtLeast } from "@/lib/orgs/requireOrgRole";
 import { errorJson } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
@@ -23,7 +24,16 @@ export async function GET(request: Request) {
     if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
     await connectMongo();
     const orgId = actor.orgId;
-    const [plan, usage, grace] = await Promise.all([getWorkspacePlan(orgId), getWorkspaceUsage(orgId), getWorkspaceGrace(orgId)]);
+    const [plan, usage, grace, roleCheck] = await Promise.all([
+      getWorkspacePlan(orgId),
+      getWorkspaceUsage(orgId),
+      getWorkspaceGrace(orgId),
+      // `viewer` is the lowest rank, so this reads the caller's actual role rather than gating on
+      // it. The UI needs the role itself: without it every surface defaults to "can manage" and
+      // shows viewers controls the server will refuse (mt_j7nN3wG65Q).
+      requireOrgRole({ orgId, userId: actor.userId, minRole: "viewer" }),
+    ]);
+    const role = roleCheck.ok ? roleCheck.role : null;
     const limits = limitsForPlan(plan);
     const pct = (used: number, max: number | null) => (max === null || max <= 0 ? 0 : Math.min(1, used / max));
     // Mirror `checkLimit`: a Free workspace inside its unblocked launch grace window is not blocked,
@@ -34,6 +44,11 @@ export async function GET(request: Request) {
         plan,
         orgId,
         isPersonalOrg: actor.orgId === actor.personalOrgId,
+        role,
+        // Derived here, not in the client, so these stay in step with the routes that enforce them:
+        // editing a link takes `member`, revealing its password takes `admin`.
+        canManageLinks: role !== null && roleAtLeast(role, "member"),
+        canRevealPassword: role !== null && roleAtLeast(role, "admin"),
         limits,
         usage,
         grace,

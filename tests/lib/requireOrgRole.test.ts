@@ -31,6 +31,32 @@ describe("orgs/requireOrgRole.roleAtLeast", () => {
   });
 });
 
+describe("link permissions derived from a role (mt_j7nN3wG65Q)", () => {
+  // What GET /api/plan puts in the snapshot, and what DocLinksManager gates its controls on.
+  // Editing a link takes `member`; reading its password back takes `admin`. Both call sites used
+  // to pass nothing and the component defaulted to "can manage", so every viewer saw New link,
+  // Edit and the Password pill and found out otherwise from a 403.
+  const canManageLinks = (role: Parameters<typeof roleAtLeast>[0]) => roleAtLeast(role, "member");
+  const canRevealPassword = (role: Parameters<typeof roleAtLeast>[0]) => roleAtLeast(role, "admin");
+
+  test("a viewer may do neither", () => {
+    expect(canManageLinks("viewer")).toBe(false);
+    expect(canRevealPassword("viewer")).toBe(false);
+  });
+
+  test("a member may edit a link but not read its password", () => {
+    expect(canManageLinks("member")).toBe(true);
+    expect(canRevealPassword("member")).toBe(false);
+  });
+
+  test("admins and owners may do both", () => {
+    for (const role of ["admin", "owner"] as const) {
+      expect(canManageLinks(role)).toBe(true);
+      expect(canRevealPassword(role)).toBe(true);
+    }
+  });
+});
+
 describe("orgs/requireOrgRole.requireOrgRole", () => {
   beforeEach(() => {
     membershipFindOne.mockReset();

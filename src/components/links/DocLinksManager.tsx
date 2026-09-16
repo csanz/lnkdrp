@@ -52,7 +52,11 @@ type Props = {
   docId: string;
   /** `panel` = compact summary for the doc side rail; `page` = the full list. */
   variant: "panel" | "page";
-  /** False hides every mutation (create, edit, enable/disable, delete); copy stays. */
+  /**
+   * Override for "may edit links". Normally left unset: the role comes from the workspace plan
+   * snapshot, so no call site can forget it and hand a viewer controls the server will refuse
+   * (mt_j7nN3wG65Q — both call sites used to omit it, and the default was `true`).
+   */
   canManage?: boolean;
 };
 
@@ -276,12 +280,16 @@ const LINK_STATS_DAYS = 30;
 const LINKS_PAGE_SIZE = 25;
 
 const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLinksManager(
-  { docId, variant, canManage = true },
+  { docId, variant, canManage: canManageProp },
   ref,
 ) {
   const { openUpgrade } = useUpgradeModal();
   const { plan } = usePlan();
   const isFreePlan = plan?.plan === "free";
+  // Fail closed while the snapshot loads: a viewer must never see a manage control, and the plan
+  // is memoised across components, so a warm cache means no flash for the owner.
+  const canManage = canManageProp ?? plan?.canManageLinks ?? false;
+  const canRevealPassword = plan?.canRevealPassword ?? false;
 
   /**
    * The metrics page, already scoped to one link. `?shareId=` is the metrics page's own filter, so
@@ -581,6 +589,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
 
   const modal = (
     <ShareLinkModal
+      canRevealPassword={canRevealPassword}
       open={Boolean(linkModal)}
       mode={linkModal?.mode ?? "create"}
       link={linkModal?.mode === "edit" ? linkModal.link : null}
@@ -689,9 +698,11 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                       "View only"
                     )}
                   </LinkStatePart>,
-                  defaultLink.passwordEnabled && canManage ? (
+                  defaultLink.passwordEnabled && canRevealPassword ? (
                     // Knowing a password exists is half the answer: the link's settings can show
-                    // it (Show in the edit modal), so the pill opens them.
+                    // it (Show in the edit modal), so the pill opens them. Gated on the reveal
+                    // permission, not on `canManage` — a member may edit the link but not read its
+                    // password back, and a pill that opens a refusal is worse than a plain label.
                     <button
                       key="password"
                       type="button"

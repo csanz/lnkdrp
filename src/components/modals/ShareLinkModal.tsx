@@ -41,6 +41,11 @@ type Props = {
   links?: ShareLinkDTO[];
   saving?: boolean;
   error?: string | null;
+  /**
+   * Whether this viewer may read a password back. Owner/admin only, one step above the `member`
+   * who may edit the link, so Show is hidden rather than offered and refused.
+   */
+  canRevealPassword?: boolean;
   /** Free workspaces: show the `Pro` pill on the revision-history switch. */
   showProPill?: boolean;
   onProPillClick?: () => void;
@@ -136,6 +141,7 @@ export default function ShareLinkModal({
   mode,
   link = null,
   links = [],
+  canRevealPassword = false,
   saving = false,
   error = null,
   showProPill = false,
@@ -412,7 +418,7 @@ export default function ShareLinkModal({
                 <span className="text-[12px] text-[var(--fg)]">Password protected</span>
               )}
               <span className="flex-1" />
-              {revealed ? (
+              {!canRevealPassword ? null : revealed ? (
                 <button type="button" onClick={() => void copyRevealed()} className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50">
                   {copied ? "Copied" : "Copy"}
                 </button>
