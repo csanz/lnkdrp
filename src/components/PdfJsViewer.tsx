@@ -13,6 +13,7 @@ import { signIn } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
+import OverflowMenu from "@/components/ui/OverflowMenu";
 import { useAuthEnabled } from "@/app/providers";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { getOrCreateBotId } from "@/lib/botId";
@@ -2058,7 +2059,7 @@ export function PdfJsViewer({
                     type="button"
                     aria-label="Version history"
                     onClick={() => setHistoryOpen(true)}
-                    className="inline-flex h-8 items-center rounded-xl px-3 text-xs font-medium text-white/90 hover:bg-white/10"
+                    className="hidden h-8 items-center rounded-xl px-3 text-xs font-medium text-white/90 hover:bg-white/10 lg:inline-flex"
                   >
                     <span className="inline-flex items-center gap-1.5">
                       <HistoryIcon />
@@ -2086,146 +2087,270 @@ export function PdfJsViewer({
                   )}
                 </div>
 
-                {shareIdSafe && !useNativePdf ? (
-                  <>
+                {/* View mode, zoom and fullscreen: below `lg` these move into the overflow menu
+                    below instead of squeezing into this row — at a narrow enough width the row
+                    had nowhere left to shrink and started overlapping the pill on the left
+                    (reported live: "Summary" and "Single" overlapping at a resized window). `sm`
+                    (640px) and `md` (768px) were both tried and measured too low: live screenshots
+                    at every width from 640 to 950px kept finding the row still overlapping right
+                    up to ~850px on a plain two-digit page count with no viewer name set — and
+                    "Viewing as <name>" can run longer than that. `lg` (1024px) has real margin
+                    above the worst case actually measured, not just the best case. */}
+                <div className="hidden items-center gap-1 lg:flex">
+                  {shareIdSafe && !useNativePdf ? (
+                    <>
+                      <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+                      <div
+                        className="inline-flex h-8 items-center rounded-xl border border-white/10 bg-white/5 p-0.5"
+                        role="group"
+                        aria-label="View mode"
+                      >
+                        <button
+                          type="button"
+                          aria-label="Single page view"
+                          aria-pressed={viewMode === "single"}
+                          onClick={() => setViewMode("single")}
+                          className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
+                            viewMode === "single"
+                              ? "bg-white/15 text-white"
+                              : "text-white/75 hover:bg-white/10 hover:text-white/90"
+                          }`}
+                          title="Single page"
+                        >
+                          Single
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="All pages view"
+                          aria-pressed={viewMode === "all"}
+                          onClick={() => setViewMode("all")}
+                          className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
+                            viewMode === "all"
+                              ? "bg-white/15 text-white"
+                              : "text-white/75 hover:bg-white/10 hover:text-white/90"
+                          }`}
+                          title="All pages"
+                        >
+                          All
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Grid overview"
+                          aria-pressed={viewMode === "grid"}
+                          onClick={() => setViewMode("grid")}
+                          className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
+                            viewMode === "grid"
+                              ? "bg-white/15 text-white"
+                              : "text-white/75 hover:bg-white/10 hover:text-white/90"
+                          }`}
+                          title="Grid overview"
+                        >
+                          Grid
+                        </button>
+                      </div>
+                      <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+                    </>
+                  ) : (
                     <div className="h-8 w-px bg-white/10" aria-hidden="true" />
-                    <div
-                      className="inline-flex h-8 items-center rounded-xl border border-white/10 bg-white/5 p-0.5"
-                      role="group"
-                      aria-label="View mode"
-                    >
-                      <button
-                        type="button"
-                        aria-label="Single page view"
-                        aria-pressed={viewMode === "single"}
-                        onClick={() => setViewMode("single")}
-                        className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
-                          viewMode === "single"
-                            ? "bg-white/15 text-white"
-                            : "text-white/75 hover:bg-white/10 hover:text-white/90"
-                        }`}
-                        title="Single page"
-                      >
-                        Single
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="All pages view"
-                        aria-pressed={viewMode === "all"}
-                        onClick={() => setViewMode("all")}
-                        className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
-                          viewMode === "all"
-                            ? "bg-white/15 text-white"
-                            : "text-white/75 hover:bg-white/10 hover:text-white/90"
-                        }`}
-                        title="All pages"
-                      >
-                        All
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Grid overview"
-                        aria-pressed={viewMode === "grid"}
-                        onClick={() => setViewMode("grid")}
-                        className={`inline-flex h-7 items-center rounded-lg px-2.5 text-[11px] font-semibold ${
-                          viewMode === "grid"
-                            ? "bg-white/15 text-white"
-                            : "text-white/75 hover:bg-white/10 hover:text-white/90"
-                        }`}
-                        title="Grid overview"
-                      >
-                        Grid
-                      </button>
-                    </div>
-                    <div className="h-8 w-px bg-white/10" aria-hidden="true" />
-                  </>
-                ) : (
-                  <div className="h-8 w-px bg-white/10" aria-hidden="true" />
-                )}
+                  )}
 
-                <button
-                  type="button"
-                  aria-label="Zoom out"
-                  onClick={zoomOut}
-                  disabled={!canZoomOut}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-white/90 hover:bg-white/10 disabled:opacity-40"
-                >
-                  <MinusIcon />
-                </button>
-
-                {zoom === 1 ? (
-                  <div className="inline-flex h-8 min-w-[58px] items-center justify-center text-center text-xs text-white/85 tabular-nums">
-                    {Math.round(zoom * 100)}%
-                  </div>
-                ) : (
                   <button
                     type="button"
-                    aria-label="Reset zoom"
-                    onClick={resetZoom}
-                    className="inline-flex h-8 min-w-[86px] items-center justify-center rounded-xl px-2 text-center text-xs text-white/90 tabular-nums hover:bg-white/10"
-                    title="Reset zoom (0)"
+                    aria-label="Zoom out"
+                    onClick={zoomOut}
+                    disabled={!canZoomOut}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-white/90 hover:bg-white/10 disabled:opacity-40"
                   >
-                    {Math.round(zoom * 100)}%{" "}
-                    <span className="text-white/55">reset</span>
+                    <MinusIcon />
                   </button>
-                )}
 
-                <button
-                  type="button"
-                  aria-label="Zoom in"
-                  onClick={zoomIn}
-                  disabled={!canZoomIn}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-white/90 hover:bg-white/10 disabled:opacity-40"
-                >
-                  <PlusIcon />
-                </button>
+                  {zoom === 1 ? (
+                    <div className="inline-flex h-8 min-w-[58px] items-center justify-center text-center text-xs text-white/85 tabular-nums">
+                      {Math.round(zoom * 100)}%
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label="Reset zoom"
+                      onClick={resetZoom}
+                      className="inline-flex h-8 min-w-[86px] items-center justify-center rounded-xl px-2 text-center text-xs text-white/90 tabular-nums hover:bg-white/10"
+                      title="Reset zoom (0)"
+                    >
+                      {Math.round(zoom * 100)}%{" "}
+                      <span className="text-white/55">reset</span>
+                    </button>
+                  )}
 
-                <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+                  <button
+                    type="button"
+                    aria-label="Zoom in"
+                    onClick={zoomIn}
+                    disabled={!canZoomIn}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-white/90 hover:bg-white/10 disabled:opacity-40"
+                  >
+                    <PlusIcon />
+                  </button>
 
-                <button
-                  type="button"
-                  aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-                  onClick={toggleFullscreen}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-white/90 hover:bg-white/10"
-                >
-                  <FullscreenIcon isFullscreen={isFullscreen} />
-                </button>
+                  <div className="h-8 w-px bg-white/10" aria-hidden="true" />
+
+                  <button
+                    type="button"
+                    aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                    onClick={toggleFullscreen}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-white/90 hover:bg-white/10"
+                  >
+                    <FullscreenIcon isFullscreen={isFullscreen} />
+                  </button>
+                </div>
               </div>
 
               {shareIdSafe && !shareContext?.isOwner ? (
-                viewerProfile?.name || viewerProfile?.email ? (
-                  <button
-                    type="button"
-                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
-                    onClick={() => {
-                      setIntroError(null);
-                      setIntroName(viewerProfile?.name ?? "");
-                      setIntroEmail(viewerProfile?.email ?? "");
-                      setIntroOpen(true);
-                    }}
-                    title="Edit how you appear to the document owner"
-                  >
-                    Viewing as{" "}
-                    <span className="ml-1 max-w-[14ch] truncate text-white">
-                      {(viewerProfile?.name ?? viewerProfile?.email ?? "Viewer").trim()}
-                    </span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
-                    onClick={() => {
-                      setIntroError(null);
-                      setIntroName("");
-                      setIntroEmail("");
-                      setIntroOpen(true);
-                    }}
-                    title="Tell the owner who you are"
-                  >
-                    Introduce yourself
-                  </button>
-                )
+                <div className="hidden lg:block">
+                  {viewerProfile?.name || viewerProfile?.email ? (
+                    <button
+                      type="button"
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                      onClick={() => {
+                        setIntroError(null);
+                        setIntroName(viewerProfile?.name ?? "");
+                        setIntroEmail(viewerProfile?.email ?? "");
+                        setIntroOpen(true);
+                      }}
+                      title="Edit how you appear to the document owner"
+                    >
+                      Viewing as{" "}
+                      <span className="ml-1 max-w-[14ch] truncate text-white">
+                        {(viewerProfile?.name ?? viewerProfile?.email ?? "Viewer").trim()}
+                      </span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                      onClick={() => {
+                        setIntroError(null);
+                        setIntroName("");
+                        setIntroEmail("");
+                        setIntroOpen(true);
+                      }}
+                      title="Tell the owner who you are"
+                    >
+                      Introduce yourself
+                    </button>
+                  )}
+                </div>
               ) : null}
+
+              {/* Mobile-only trigger for everything `hidden sm:*` above: the same controls, same
+                  handlers, laid out for a touch target instead of a toolbar pill. Summary and
+                  Download PDF stay outside this menu — they are the two things a recipient came
+                  here to do, everything folded in here is secondary on a phone. */}
+              <div className="lg:hidden">
+                <OverflowMenu
+                  label="More viewer controls"
+                  align="end"
+                  panelClassName="fixed z-[1000] w-[252px] rounded-2xl border border-white/10 bg-[#0b0b0c] p-3 text-white shadow-xl"
+                >
+                  <div className="flex flex-col gap-1">
+                    {revisionHistoryEnabled ? (
+                      <button
+                        type="button"
+                        onClick={() => setHistoryOpen(true)}
+                        className="flex items-center gap-2 rounded-xl px-2.5 py-2.5 text-left text-sm font-medium text-white/90 hover:bg-white/10"
+                      >
+                        <HistoryIcon />
+                        Version history
+                      </button>
+                    ) : null}
+
+                    {shareIdSafe && !useNativePdf ? (
+                      <div className="py-1">
+                        <div className="mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-white/45">
+                          View
+                        </div>
+                        <div className="inline-flex w-full items-center rounded-xl border border-white/10 bg-white/5 p-0.5" role="group" aria-label="View mode">
+                          {(["single", "all", "grid"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              aria-pressed={viewMode === mode}
+                              onClick={() => setViewMode(mode)}
+                              className={`flex-1 rounded-lg px-2 py-1.5 text-xs font-semibold capitalize ${
+                                viewMode === mode
+                                  ? "bg-white/15 text-white"
+                                  : "text-white/75 hover:bg-white/10 hover:text-white/90"
+                              }`}
+                            >
+                              {mode}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="py-1">
+                      <div className="mb-1.5 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-white/45">
+                        Zoom
+                      </div>
+                      <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 px-1 py-1">
+                        <button
+                          type="button"
+                          aria-label="Zoom out"
+                          onClick={zoomOut}
+                          disabled={!canZoomOut}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white/90 hover:bg-white/10 disabled:opacity-40"
+                        >
+                          <MinusIcon />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Reset zoom"
+                          onClick={resetZoom}
+                          className="inline-flex h-8 items-center justify-center rounded-lg px-2 text-xs text-white/90 tabular-nums hover:bg-white/10"
+                          title="Reset zoom"
+                        >
+                          {Math.round(zoom * 100)}%
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Zoom in"
+                          onClick={zoomIn}
+                          disabled={!canZoomIn}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-white/90 hover:bg-white/10 disabled:opacity-40"
+                        >
+                          <PlusIcon />
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={toggleFullscreen}
+                      className="flex items-center gap-2 rounded-xl px-2.5 py-2.5 text-left text-sm font-medium text-white/90 hover:bg-white/10"
+                    >
+                      <FullscreenIcon isFullscreen={isFullscreen} />
+                      {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+                    </button>
+
+                    {shareIdSafe && !shareContext?.isOwner ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIntroError(null);
+                          setIntroName(viewerProfile?.name ?? "");
+                          setIntroEmail(viewerProfile?.email ?? "");
+                          setIntroOpen(true);
+                        }}
+                        className="rounded-xl px-2.5 py-2.5 text-left text-sm font-medium text-white/90 hover:bg-white/10"
+                      >
+                        {viewerProfile?.name || viewerProfile?.email
+                          ? `Viewing as ${(viewerProfile?.name ?? viewerProfile?.email ?? "").trim()}`
+                          : "Introduce yourself"}
+                      </button>
+                    ) : null}
+                  </div>
+                </OverflowMenu>
+              </div>
 
               {shareIdSafe ? (
                 canDownload ? (
