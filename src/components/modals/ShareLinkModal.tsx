@@ -213,6 +213,11 @@ export default function ShareLinkModal({
     try {
       const res = await fetch(`/api/docs/${encodeURIComponent(link.docId)}/links/${encodeURIComponent(link.id)}/password`, { cache: "no-store" });
       const body = (await res.json().catch(() => ({}))) as { password?: unknown; error?: unknown };
+      // The reveal is admin/owner only, one step above the `member` who can edit a link — so a
+      // member reaches this button and gets a bare "Forbidden" from the role gate. Say what the
+      // rule is instead, or they read it as a bug.
+      if (res.status === 403) throw new Error("Only an owner or admin can see a link's password.");
+      if (res.status === 429) throw new Error("Too many attempts. Try again in a few minutes.");
       if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : "Could not show the password.");
       if (typeof body.password === "string" && body.password) setRevealed(body.password);
       else setRevealError("This password cannot be shown. Use Change to set a new one.");
