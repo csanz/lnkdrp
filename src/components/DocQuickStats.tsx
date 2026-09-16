@@ -428,13 +428,19 @@ export default function DocQuickStats({
   const clamped = analyticsDaysLimit !== null && analyticsDaysLimit < DAYS;
   const shownDays = clamped ? Math.min(analyticsDaysLimit, num(live?.days) || analyticsDaysLimit) : DAYS;
 
+  // `truncate` on every line, not just the value: a label is one word ("Downloads", "Viewers")
+  // that CSS never wraps, so without it a narrow column (five tiles in three columns on mobile —
+  // see the grid below) doesn't push the overflow onto a second line, it paints straight past the
+  // column edge into the next tile's label with no gap, and "Downloads" + "Pages" read as one word,
+  // "DownloadsPages". `min-w-0` on the wrapper lets the grid actually shrink the column that far;
+  // `truncate` (which is itself `overflow-hidden`) is what stops the bleed once it does.
   const tile = (label: string, value: number | null | string, sub?: React.ReactNode) => (
     <div className="min-w-0">
-      <div className="text-[11px] font-medium text-[var(--muted)]">{label}</div>
+      <div className="truncate text-[11px] font-medium text-[var(--muted)]">{label}</div>
       <div className="mt-0.5 truncate text-lg font-semibold tabular-nums text-[var(--fg)]">
         {value === null ? "–" : typeof value === "number" ? value.toLocaleString() : value}
       </div>
-      {sub ? <div className="mt-0.5 min-h-[14px] text-[10px] leading-[14px]">{sub}</div> : null}
+      {sub ? <div className="mt-0.5 min-h-[14px] truncate text-[10px] leading-[14px]">{sub}</div> : null}
     </div>
   );
 
