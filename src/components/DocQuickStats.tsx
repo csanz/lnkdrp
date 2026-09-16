@@ -518,7 +518,7 @@ export default function DocQuickStats({
     <section aria-label="Analytics" className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
       {/* Header rule: same on all three panel cards (links, analytics, summary), so each card's
           title reads as a title and not as the first row of its content. */}
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-[var(--border)] pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-[var(--divider)] pb-3">
         <div className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
           <ChartBarIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
           <span className="truncate">Analytics</span>
@@ -570,7 +570,7 @@ export default function DocQuickStats({
       {/* Only once there is more than one link: on a single-link document both lists would be the
           same one row, restating the tiles above. */}
       {coveredLinkCount > 1 && (topLinks.length || recentLinks.length) ? (
-        <div className="mt-3 grid gap-x-6 gap-y-3 border-t border-[var(--border)] pt-3 sm:grid-cols-2">
+        <div className="mt-3 grid gap-x-6 gap-y-3 border-t border-[var(--divider)] pt-3 sm:grid-cols-2">
           <LinkMiniList
             // Name what the number is. "Top links" over a bare column invites the reader to guess
             // views, and views and viewers are the same figure on all-anonymous traffic, so the
@@ -593,7 +593,7 @@ export default function DocQuickStats({
 
       {/* Its own section, divided like the link lists above, with the caption on top naming what the
           bars count (it used to sit under the chart, beside the metrics link). */}
-      <div className="mt-3 border-t border-[var(--border)] pt-3">
+      <div className="mt-3 border-t border-[var(--divider)] pt-3">
         <div className="mb-1 text-[11px] font-medium text-[var(--muted)]">{chartOpens ? "Opens by day" : "Viewers by day"}</div>
         {series.length ? (
           hasAnyViews ? (
