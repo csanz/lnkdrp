@@ -33,7 +33,7 @@ export function valueLabels(opts: {
   // and a gap check against "the last label drawn" then compared a point with itself and dropped it.
   const accepted = new Map<number, number>();
 
-  return (raw: object) => {
+  return function ValueLabel(raw: object) {
     const props = raw as LabelProps;
     const i = props.index ?? -1;
     const v = values[i] ?? 0;
