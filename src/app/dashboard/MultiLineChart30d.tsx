@@ -6,7 +6,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CartesianGrid, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, LabelList, Line, LineChart, Tooltip, XAxis, YAxis } from "recharts";
+import { valueLabels } from "@/components/charts/ChartValueLabel";
 
 export default function MultiLineChart30d({
   series,
@@ -69,7 +70,7 @@ export default function MultiLineChart30d({
 
       <div ref={wrapRef} className="h-56 w-full">
         {!size ? null : (
-          <LineChart width={size.w} height={size.h} data={data} margin={{ top: 6, right: 10, bottom: 6, left: 6 }}>
+          <LineChart width={size.w} height={size.h} data={data} margin={{ top: 18, right: 10, bottom: 6, left: 6 }}>
             <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
             <XAxis
               dataKey="day"
@@ -97,10 +98,16 @@ export default function MultiLineChart30d({
                 String(name ?? ""),
               ]}
             />
-            <Line type="monotone" dataKey="uploads" stroke="rgb(59 130 246)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="docs" stroke="rgb(16 185 129)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="views" stroke="rgb(168 85 247)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
-            <Line type="monotone" dataKey="downloads" stroke="rgb(34 197 94)" strokeWidth={1.1} dot={false} isAnimationActive={false} />
+            {/* Four series over 30 days: label only each line's highest day, in the line's colour,
+                or the numbers from four lines pile into each other. */}
+            {lines.map((l) => (
+              <Line key={l.key} type="monotone" dataKey={l.key} stroke={l.stroke} strokeWidth={1.1} dot={false} isAnimationActive={false}>
+                <LabelList
+                  dataKey={l.key}
+                  content={valueLabels({ values: data.map((d) => Number((d as Record<string, unknown>)[l.key]) || 0), mode: "max", fill: l.stroke })}
+                />
+              </Line>
+            ))}
           </LineChart>
         )}
       </div>

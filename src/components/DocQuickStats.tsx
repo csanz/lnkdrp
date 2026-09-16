@@ -10,6 +10,7 @@ import { subscribeRealtime } from "@/lib/client/realtime";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
 import { formatDayKey } from "@/lib/format/date";
+import { valueLabels } from "@/components/charts/ChartValueLabel";
 
 /**
  * Quick engagement stats for the owner's document page side panel.
@@ -255,22 +256,7 @@ function DailyArea({ data, unit }: { data: Array<{ date: string; value: number }
             activeDot={{ r: 3, strokeWidth: 1.5 }}
             isAnimationActive={false}
           >
-            <LabelList
-              dataKey="value"
-              // Same edge rule as the axis: a count on the first or last day anchors inward, or
-              // today's number is cut off by the card edge.
-              content={(props: { x?: number | string; y?: number | string; value?: unknown; index?: number }) => {
-                const v = typeof props.value === "number" ? props.value : 0;
-                if (v <= 0) return null;
-                const i = props.index ?? -1;
-                const anchor = i === 0 ? "start" : i === data.length - 1 ? "end" : "middle";
-                return (
-                  <text x={Number(props.x)} y={Number(props.y) - 6} textAnchor={anchor} fontSize={10} fontWeight={600} fill="var(--muted)">
-                    {v.toLocaleString()}
-                  </text>
-                );
-              }}
-            />
+            <LabelList dataKey="value" content={valueLabels({ values: data.map((d) => d.value) })} />
           </Area>
         </AreaChart>
       ) : null}

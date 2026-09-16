@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
+import { valueLabels } from "@/components/charts/ChartValueLabel";
 import { formatUsdFromCents } from "@/lib/format/money";
 
 export type DailyUsageChartRow = Record<string, any> & { day: string };
@@ -34,6 +35,12 @@ export default function DailyUsageChartRenderer({
   const left = xLabels[0] ?? "";
   const mid = xLabels[Math.floor(xLabels.length / 2)] ?? "";
   const right = xLabels[xLabels.length - 1] ?? "";
+
+  // Day totals for the labels on top of each bar (the whole stack in "by model" mode).
+  const totals = chartData.map((d) =>
+    group === "total" ? niceNumber(d.total) : keys.reduce((sum, k) => sum + niceNumber(d[k.key]), 0),
+  );
+  const totalLabels = valueLabels({ values: totals, format: (n) => fmtAxis(n) });
 
   function fmtAxis(v: any): string {
     const n = niceNumber(v);
@@ -70,7 +77,7 @@ export default function DailyUsageChartRenderer({
   return (
     <div ref={wrapRef} className="h-56 w-full">
       {!size ? null : (
-        <BarChart width={size.w} height={size.h} data={chartData} margin={{ top: 6, right: 10, bottom: 6, left: 6 }}>
+        <BarChart width={size.w} height={size.h} data={chartData} margin={{ top: 18, right: 10, bottom: 6, left: 6 }}>
           <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
           <XAxis
             dataKey="day"
@@ -109,7 +116,9 @@ export default function DailyUsageChartRenderer({
               fill="rgb(56 189 248)"
               radius={[4, 4, 0, 0]}
               isAnimationActive={false}
-            />
+            >
+              <LabelList dataKey="total" content={totalLabels} />
+            </Bar>
           ) : (
             keys.map((k, i) => (
               <Bar
@@ -120,7 +129,10 @@ export default function DailyUsageChartRenderer({
                 fill={colors[i % colors.length]}
                 radius={i === keys.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
                 isAnimationActive={false}
-              />
+              >
+                {/* The top segment carries the day's total, positioned at the top of the stack. */}
+                {i === keys.length - 1 ? <LabelList dataKey={k.key} content={totalLabels} /> : null}
+              </Bar>
             ))
           )}
         </BarChart>

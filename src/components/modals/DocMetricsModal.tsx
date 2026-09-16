@@ -4,8 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, LabelList, ResponsiveContainer, Tooltip, YAxis } from "recharts";
 import { formatDayKey } from "@/lib/format/date";
+import { valueLabels } from "@/components/charts/ChartValueLabel";
 
 type MetricsResponse = {
   ok: true;
@@ -70,7 +71,7 @@ function MiniLineChartSingle({
     <div className="w-full">
       <div className="h-56 w-full">
         <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={1}>
-          <AreaChart data={data} margin={{ top: 6, right: 6, bottom: 4, left: 6 }}>
+          <AreaChart data={data} margin={{ top: 18, right: 8, bottom: 4, left: 8 }}>
             <defs>
               <linearGradient id={fillId} x1="0" x2="0" y1="0" y2="1">
                 <stop offset="0%" stopColor={stroke} stopOpacity={fillStops.topOpacity} />
@@ -104,20 +105,34 @@ function MiniLineChartSingle({
               dot={false}
               activeDot={{ r: 2.25, strokeWidth: 1.15 }}
               isAnimationActive={false}
-            />
+            >
+              <LabelList dataKey="value" content={valueLabels({ values: safeValues })} />
+            </Area>
           </AreaChart>
         </ResponsiveContainer>
       </div>
 
       <div
-        className="mt-3 grid gap-0 text-[10px] text-[var(--muted)]"
-        style={{ gridTemplateColumns: `repeat(${Math.max(1, series.length)}, minmax(0, 1fr))` }}
+        // Under the chart's own points (the plot is inset 8px each side, like `mx-2`), not in equal
+        // grid cells: cell centres drifted off the points toward the edges, which the value labels
+        // made plain. At most seven dates, evenly picked, so a 30- or 90-day range stays readable.
+        className="relative mx-2 mt-3 h-4 text-[10px] tabular-nums text-[var(--muted)]"
       >
-        {series.map((s) => (
-          <div key={`tick:${s.date}`} className="px-1 text-center tabular-nums">
-            {formatDayKey(s.date)}
-          </div>
-        ))}
+        {(() => {
+          const n = series.length;
+          const step = Math.max(1, Math.ceil((n - 1) / 6));
+          return series.map((s, i) => {
+            if (n > 1 && i % step !== 0 && i !== n - 1) return null;
+            if (n > 1 && i !== n - 1 && n - 1 - i < step / 2) return null;
+            const pct = n > 1 ? (i / (n - 1)) * 100 : 50;
+            const shift = n > 1 && i === 0 ? "0%" : n > 1 && i === n - 1 ? "-100%" : "-50%";
+            return (
+              <span key={`tick:${s.date}`} className="absolute top-0 whitespace-nowrap" style={{ left: `${pct}%`, transform: `translateX(${shift})` }}>
+                {formatDayKey(s.date)}
+              </span>
+            );
+          });
+        })()}
       </div>
     </div>
   );
