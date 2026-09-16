@@ -340,7 +340,7 @@ Views, downloads and viewers for a link over a window of days.
 - Out: `{ docId, shareId, perLink, days, analyticsTier: "basic"|"deep", viewerCount, totals: { views,
   ownerPreviews, opens, opensPartial, downloads, pagesViewed, timeSpentMs, authenticatedViewers,
   anonymousViewers }, series: [{ date,
-  views, downloads? }], viewers?: [...], anonymousViewers?: [...] }`, where each viewer row is
+  views, opens, downloads }], viewers?: [...], anonymousViewers?: [...] }`, where each viewer row is
   `{ name: untrusted, email: untrusted, views, timeSpentMs, pagesViewed, pagesSeen,
   pageTimeMsByPage, firstSeen, lastSeen }`.
 - **Owner opens are excluded from every figure and counted separately.** The workspace owner and

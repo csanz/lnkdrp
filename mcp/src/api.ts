@@ -25,7 +25,7 @@
  * - `GET  /api/uploads/:id`                    -> `{ upload: { id, docId, status, version, ai: UploadAi | null }, doc: { id, status } }`
  * - `GET  /api/credits/snapshot?fast=1`        -> `{ creditsRemaining, blocked, includedThisCycle, cycleEnd, … }` (session or key actor)
  * - `GET  /api/plan`                           -> `{ plan: "free"|"pro", limits, usage, … }`
- * - `GET  /api/docs/:id/shareviews?days&viewers=1&shareId=` -> `{ ok, days, analyticsDaysLimit, analyticsTier, viewerCount, totals, series, viewers, anonymousViewers }` (`shareId` scopes every number to one link)
+ * - `GET  /api/docs/:id/shareviews?days&viewers=1&shareId=` -> `{ ok, days, analyticsDaysLimit, analyticsTier, viewerCount, totals, series (per day: views, opens, downloads), viewers, anonymousViewers }` (`shareId` scopes every number to one link)
  * - `GET  /api/docs/:id/links`                 -> `{ links: ShareLinkDTO[] }` (default link first)
  * - `POST /api/docs/:id/links` `{ label, … }`  -> 201 `{ link, planWarning? }` (always enabled — links are never plan-capped; `planWarning` only flags nearness to the shared-document cap)
  * - `PATCH /api/docs/:id/links/:linkId`        -> `{ link, planWarning? }`
@@ -222,7 +222,7 @@ export type ShareViews = {
   analyticsTier: "basic" | "deep" | string;
   viewerCount: number;
   totals: ShareViewsTotals;
-  series: Array<{ date: string; views: number; downloads: number }>;
+  series: Array<{ date: string; views: number; opens: number; downloads: number }>;
   viewers: ShareViewsViewer[];
   anonymousViewers: ShareViewsViewer[];
 };
@@ -750,7 +750,9 @@ export class ApiClient {
       },
       series: series.map((raw) => {
         const s = rec(raw);
-        return { date: strOrNull(s.date) ?? "", views: num(s.views), downloads: num(s.downloads) };
+        // `opens` joined the route's series on 2026-09-16 and this mapper whitelists fields, so
+        // without it agents saw a daily `views` line and a total `opens` they could not break down.
+        return { date: strOrNull(s.date) ?? "", views: num(s.views), opens: num(s.opens), downloads: num(s.downloads) };
       }),
       viewers: Array.isArray(body.viewers) ? body.viewers.map(asViewer) : [],
       anonymousViewers: Array.isArray(body.anonymousViewers) ? body.anonymousViewers.map(asViewer) : [],

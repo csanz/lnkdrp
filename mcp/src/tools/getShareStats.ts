@@ -26,7 +26,9 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
       title: "Get share stats",
       description:
         "Analytics for a share link by docId, shareId, or both (at least one): totals (views, ownerPreviews, opens, " +
-        "downloads, pagesViewed, timeSpentMs, authenticated/anonymous viewers), a per-day series and the unique viewerCount " +
+        "downloads, pagesViewed, timeSpentMs, authenticated/anonymous viewers), a per-day series (date, views, opens, " +
+        "downloads - the same split as totals, so a quiet week and a returning reader are distinguishable day by day) " +
+        "and the unique viewerCount " +
         "for the window. views counts recipients and opens counts tab sessions, so a reader who came back three times is " +
         "one view and three opens - the gap between them is what a returning reader looks like. " +
         "Every figure excludes the workspace owner's and teammates' own opens; those are counted separately as " +
