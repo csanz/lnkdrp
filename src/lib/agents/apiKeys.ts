@@ -30,8 +30,19 @@ export const API_KEY_NAME_MAX_LENGTH = 60;
 export const API_KEY_MAX_ACTIVE_PER_ORG = 10;
 /** Maximum rows returned by `listApiKeys()`. */
 export const API_KEY_LIST_LIMIT = 50;
-/** `touchApiKeyUse()` writes at most once per key per this interval (per process). */
-export const API_KEY_TOUCH_THROTTLE_MS = 10_000;
+/**
+ * `touchApiKeyUse()` writes at most once per (key, client) per this interval (per process).
+ *
+ * Was 10s; a live check found that too long for its actual job: a real MCP tool call always
+ * fires 1+ REST requests from the SAME client, so a chatty tool (e.g. `lnkdrp_whoami`'s parallel
+ * credits/plan reads) needs *some* window to collapse into one write and one realtime broadcast
+ * — but a full agent session makes distinct tool calls seconds apart, each of which a person
+ * watching the dashboard reasonably expects to register as "the agent just did something." A
+ * 10s window swallowed most of those. 1s still collapses one call's own internal fan-out but
+ * lets every separate tool invocation through — this is the window covering "one logical action,"
+ * not "one call in the last little while."
+ */
+export const API_KEY_TOUCH_THROTTLE_MS = 1_000;
 
 const API_KEY_RE = new RegExp(`^${API_KEY_PREFIX}[0-9A-Za-z]{${API_KEY_SECRET_LENGTH}}$`);
 
@@ -227,7 +238,7 @@ const TOUCH_MAP_MAX = 1000;
 /**
  * Record a use of `keyId`: `lastUsedAt = now`, `lastUsedClient = client`, `useCount += 1`.
  *
- * Best-effort and throttled to one write per key per 60s per process. Never throws.
+ * Best-effort and throttled per (key, client) — see `API_KEY_TOUCH_THROTTLE_MS`. Never throws.
  */
 export async function touchApiKeyUse(input: { keyId: string; client: string | null }): Promise<void> {
   try {
