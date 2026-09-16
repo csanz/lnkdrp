@@ -357,8 +357,8 @@ to the owner on a download request, the approval link to the requester, doc-upda
 build. Promoting an older deployment brings back the values it was built with. Any other Vercel
 env change also reaches functions only on the next deployment.
 `NEXTAUTH_SECRET` also signs the short-lived server-to-server token the app uses to re-run
-processing (writing a skipped summary, the Free monthly re-queue), so rotate it on a deploy, not
-mid-traffic.
+processing (writing a skipped summary, and the batch rerun when a Free workspace's pay-as-you-go
+subscription becomes billable), so rotate it on a deploy, not mid-traffic.
 
 Never set `API_TEST_BYPASS_AUTH`, `API_TEST_USER_ID` or `ADMIN_LOCALHOST_BYPASS` in production.
 The auth bypass is refused whenever `NODE_ENV=production` (Vercel production, previews and
@@ -514,7 +514,7 @@ const want = {
   docs: ["shareId_1"],
   projects: ["shareId_1"],
   docChanges: ["docId_1_toVersion_1", "docId_1_toUploadId_1"],
-  sharelinks: ["shareId_1"],
+  sharelinks: ["shareId_1", "sharelinks_label_audience_text"],
   shareviews: ["shareId_1_botIdHash_1"],
   sharevisits: ["shareId_1_botIdHash_1_visitIdHash_1"],
   usageaggdailies: ["workspaceId_1_day_1"],
@@ -536,6 +536,10 @@ for (const n of ["slug_1", "personalForUserId_1"]) {
 ```
 
 No output means every index is there. `NO COLLECTION` is fine before that feature has been used.
+`sharelinks_label_audience_text` is built by `autoIndex`, not a migration; while it is missing,
+searching links by label or audience (the `/links` search box and the MCP link lookup) fails with
+"text index required for $text query" instead of returning nothing. A collection holds only one
+text index, so if `createIndex` reports a conflicting one, drop the old text index first.
 For each `MISSING`, run the same `createIndex` by hand in mongosh to see the error. An E11000 names
 the duplicate key: fix or merge those rows (snapshot first), then re-run. The `projects`
 `{userId, name}` and `{userId, slug}` indexes and the model's `orginvites` partial index never
@@ -660,6 +664,8 @@ Atlas, so it needs no egress IP for the allowlist (12 covers the rate-limit case
 ```
 fly launch --no-deploy --copy-config --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile --name lnkdrp-mcp
 fly secrets set REALTIME_SECRET='…' -a lnkdrp-mcp
+# NEXT_PUBLIC_FEATURE_REQUESTS stays unset at launch; lnkdrp_whoami reports requests as off.
+# If you turn Requests on in Vercel, set the same value here too, or agents are told they don't exist.
 fly deploy --ha=false --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile
 fly scale show -a lnkdrp-mcp                            # must be exactly one machine
 fly certs add mcp.lnkdrp.com -a lnkdrp-mcp              # then CNAME mcp → lnkdrp-mcp.fly.dev
