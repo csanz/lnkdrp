@@ -516,7 +516,9 @@ export default function DocQuickStats({
     // uppercase section name with an icon, the window as secondary text, freshness on the right.
     // Before this it opened with "Last 7 days" and no title, so it read as an unlabelled block.
     <section aria-label="Analytics" className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+      {/* Header rule: same on all three panel cards (links, analytics, summary), so each card's
+          title reads as a title and not as the first row of its content. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-[var(--border)] pb-3">
         <div className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
           <ChartBarIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
           <span className="truncate">Analytics</span>

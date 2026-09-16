@@ -170,7 +170,7 @@ export default function DocSharePanel({
       {hasSnapshot ? (
         <div className="mt-4">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
-            <div className="flex items-center justify-between gap-3 pb-3">
+            <div className="mb-3 flex items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
               <div
                 className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]"
                 title="Summary and key points"
@@ -224,7 +224,7 @@ export default function DocSharePanel({
         <div className="mt-4">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
             <div
-              className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]"
+              className="flex min-w-0 items-center gap-2 border-b border-[var(--border)] pb-3 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]"
               title="Summary and key points"
             >
               <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
@@ -233,7 +233,7 @@ export default function DocSharePanel({
                   "Written by LinkDrop" beside "not available yet" or "Skipped: …" would claim
                   authorship of something that was never written. */}
             </div>
-            <div className="mt-2 text-[13px] leading-relaxed text-[var(--muted)]">
+            <div className="mt-3 text-[13px] leading-relaxed text-[var(--muted)]">
               {summaryMissing ?? aiMissingMessage}
             </div>
           </div>

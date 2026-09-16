@@ -620,7 +620,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       // `@container`: the side panel is ~300px wide on a laptop and much wider on a big screen, so
       // the header sizes itself to this card, not to the window.
       <div className="@container rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
-        <div className="flex items-center justify-between gap-3 pb-3">
+        <div className="mb-3 flex items-center justify-between gap-3 border-b border-[var(--border)] pb-3">
           <div className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
             <LinkIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
             <span className="truncate">Default link</span>
