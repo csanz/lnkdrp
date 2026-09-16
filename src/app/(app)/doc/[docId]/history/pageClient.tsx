@@ -617,7 +617,17 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                         : null;
                       return (
                         <div key={it.id} id={anchorId} className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-                          <div className="flex items-start justify-between gap-3 px-4 py-3">
+                          {/* The whole summary row toggles, like the Expand button. The button stays the
+                              keyboard/screen-reader control, so the row itself takes no role or focus;
+                              clicks on its own links and buttons, and drag-selecting text, don't toggle. */}
+                          <div
+                            className="flex cursor-pointer items-start justify-between gap-3 rounded-lg px-4 py-3 transition-colors hover:bg-[var(--panel-hover)]"
+                            onClick={(e) => {
+                              if ((e.target as HTMLElement).closest("a,button,input,select,textarea")) return;
+                              if (window.getSelection()?.toString()) return;
+                              setExpandedById((m) => ({ ...m, [it.id]: !Boolean(m[it.id]) }));
+                            }}
+                          >
                             <div className="min-w-0 flex-1">
                               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                 <span className="text-xs font-semibold text-[var(--fg)]">{toV ? `v${toV}` : "Version"}</span>

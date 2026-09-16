@@ -556,7 +556,10 @@ export default function DocQuickStats({
         </div>
       ) : null}
 
-      <div className="mt-3">
+      <div className="mt-4">
+        {/* The chart's own caption, above it. It used to sit under the chart, next to the metrics
+            link, where it read as a footer label rather than naming the line. */}
+        <div className="mb-1.5 text-[11px] font-medium text-[var(--muted)]">Views by day</div>
         {series.length ? (
           hasAnyViews ? (
             <ViewsSparkline series={series} />
@@ -570,29 +573,17 @@ export default function DocQuickStats({
         )}
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-[11px]">
-        <span className="text-[var(--muted-2)]">Views by day</span>
+      {/* One footer row. Free used to get a second upsell line here on top of "see who · Pro" under
+          Viewers; the tile is where the missing identities are felt, so the upsell lives there only.
+          The limited window is already in the header ("last 7 days"). */}
+      <div className="mt-3 flex justify-end text-[11px]">
         <Link
           href={`/doc/${encodeURIComponent(docId)}/metrics`}
           className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
         >
-          Open full metrics
+          Open full metrics →
         </Link>
       </div>
-
-      {clamped || basicTier ? (
-        <div className="mt-2 text-[11px] text-[var(--muted-2)]">
-          {/* The window is already in the card header; repeating it here just doubled up. */}
-          Basic analytics ·{" "}
-          <button
-            type="button"
-            className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
-            onClick={() => openUpgrade("analytics_history")}
-          >
-            Upgrade for who and how long
-          </button>
-        </div>
-      ) : null}
     </section>
   );
 }

@@ -136,7 +136,10 @@ export default function DocSharePanel({
   const summaryBadge = `Written by ${summaryAuthorLabel || (typeof summaryByStored === "string" && summaryByStored.trim()) || "LinkDrop"}`;
 
   const hasSnapshot = Boolean(oneLiner || why || scope.length || context || value || maturity || ask || metrics.length);
-  const hasSummary = Boolean(summary);
+  // Short summaries often come back identical to the one-liner (an agent passing one sentence for
+  // both); showing it twice read as a rendering bug.
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+  const hasSummary = Boolean(summary) && norm(summary) !== norm(oneLiner);
 
   const uploadErrObj =
     uploadError && typeof uploadError === "object" ? (uploadError as Record<string, unknown>) : null;
@@ -163,9 +166,9 @@ export default function DocSharePanel({
       {/* 1b) Quick stats (owner engagement glimpse) */}
       {quickStats ? <div className="mt-4">{quickStats}</div> : null}
 
-      {/* 2) Snapshot */}
+      {/* 2) Snapshot — same spacing as the cards above it; it used to sit under a rule and a bigger gap. */}
       {hasSnapshot ? (
-        <div className="mt-6 border-t border-[var(--border)] pt-5">
+        <div className="mt-4">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
             <div className="flex items-center justify-between gap-3 pb-3">
               <div
@@ -174,9 +177,6 @@ export default function DocSharePanel({
               >
                 <SparklesIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
                 <span className="truncate">Summary</span>
-                <span className="hidden rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)] sm:inline-flex">
-                  {summaryBadge}
-                </span>
               </div>
               <div className="shrink-0">
                 <button
@@ -186,12 +186,12 @@ export default function DocSharePanel({
                   className="inline-flex items-center gap-1 text-xs font-medium text-[var(--muted)] underline decoration-transparent underline-offset-4 transition-colors hover:text-[var(--fg)] hover:decoration-[var(--border)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                   onClick={() => setAiExtractOpen(true)}
                 >
-                  Full snapshot
+                  Full snapshot →
                 </button>
               </div>
             </div>
             {oneLiner ? (
-              <div className="mt-3 text-[13px] font-semibold leading-snug text-[var(--fg)]">
+              <div className="text-[13px] font-semibold leading-snug text-[var(--fg)]">
                 {oneLiner}
               </div>
             ) : null}
@@ -210,19 +210,18 @@ export default function DocSharePanel({
             ) : null}
 
             {hasSummary ? (
-              <div className="mt-5 border-t border-[var(--border)] pt-4 text-[13px] leading-relaxed text-[var(--fg)]">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                  Summary
-                </div>
-                <div className="mt-3">
-                  <Markdown>{summary}</Markdown>
-                </div>
+              <div className="mt-4 border-t border-[var(--border)] pt-4 text-[13px] leading-relaxed text-[var(--fg)]">
+                <Markdown>{summary}</Markdown>
               </div>
             ) : null}
+
+            {/* Credit as a footnote: as an uppercase badge in the header it shouted, and an agent's
+                long name squeezed "Summary" down to "SU…" in the side panel. */}
+            <div className="mt-4 text-[11px] text-[var(--muted-2)]">{summaryBadge}</div>
           </div>
         </div>
       ) : (
-        <div className="mt-6 border-t border-[var(--border)] pt-5">
+        <div className="mt-4">
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
             <div
               className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]"
