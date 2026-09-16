@@ -15,7 +15,7 @@ import { actorRateLimitResponse } from "@/lib/gating/actorRateLimit";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { safeFetchUrl, SafeFetchError } from "@/lib/http/safeFetchUrl";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
-import { PDF_ONLY_ERROR_MESSAGE, UNSUPPORTED_FILE_TYPE_CODE } from "@/lib/blob/serverClientUploadRoute";
+import { PDF_ONLY_ERROR_MESSAGE, UNSUPPORTED_FILE_TYPE_CODE, looksLikePdfBytes, sanitizeFileName } from "@/lib/blob/serverClientUploadRoute";
 import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
@@ -71,15 +71,6 @@ function fileNameFromContentDisposition(v: string | null): string | null {
   return null;
 }
 
-function sanitizeFileName(name: string): string {
-  const cleaned = (name ?? "")
-    .trim()
-    .replace(/[\\/:*?"<>|\u0000-\u001F]+/g, "_")
-    .replace(/\s+/g, " ");
-  const base = cleaned || "document.pdf";
-  return base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
-}
-
 /**
  * Return whether the upstream `Content-Type` is acceptable for a PDF import.
  *
@@ -98,29 +89,6 @@ function isAcceptablePdfContentType(params: {
   if (params.trustedPdfFlow) return true;
   if ((base === "application/octet-stream" || base === "") && params.nameLooksPdf) return true;
   return false;
-}
-
-function looksLikePdfBytes(buf: Buffer): boolean {
-  // PDFs should contain a "%PDF-" header near the start. Some producers can prepend
-  // a few whitespace/BOM bytes, so scan a small prefix and allow leading whitespace.
-  if (!buf || buf.length < 5) return false;
-  const scanLen = Math.min(buf.length, 2048);
-  const sig = Buffer.from("%PDF-", "ascii");
-
-  // Find first non-whitespace byte (ASCII whitespace + UTF-8 BOM).
-  let start = 0;
-  if (scanLen >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) start = 3;
-  while (
-    start < scanLen &&
-    (buf[start] === 0x09 || buf[start] === 0x0a || buf[start] === 0x0d || buf[start] === 0x20)
-  ) {
-    start++;
-  }
-  if (start + sig.length <= scanLen && buf.subarray(start, start + sig.length).equals(sig)) return true;
-
-  // Fallback: search for the signature within the first couple KB.
-  const idx = buf.subarray(0, scanLen).indexOf(sig);
-  return idx >= 0 && idx <= 64; // keep it conservative; if it's far in, it's likely not a PDF body
 }
 
 function isGoogleDriveHost(hostname: string): boolean {

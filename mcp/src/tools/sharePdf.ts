@@ -28,6 +28,52 @@ import { SAFETY_TAIL } from "./shared";
 const PROCESS_NOT_READY_RETRIES = 5;
 const PROCESS_NOT_READY_DELAY_MS = 1000;
 
+/**
+ * Decoded-size ceiling for `fileBase64` — mt_bJwX4CtmhU. Small next to the 250MB Blob limit on
+ * purpose: this travels as a JSON tool-call argument to the MCP server, then as a JSON request
+ * body to the Next app, which is a Vercel Function and hard-caps a request body at 4.5MB
+ * regardless of content type. Base64 alone costs ~4/3 of that before the JSON envelope is
+ * counted, so 3MB decoded is comfortable margin, not a product choice to keep files small. A
+ * file over this still needs sourceUrl.
+ */
+export const MAX_INLINE_PDF_BYTES = 3 * 1024 * 1024;
+/** `MAX_INLINE_PDF_BYTES` as base64 text length, for a fast local reject before any network call. */
+export const MAX_INLINE_PDF_BASE64_CHARS = Math.ceil(MAX_INLINE_PDF_BYTES / 3) * 4 + 4;
+/**
+ * Zod's own `fileBase64` bound — deliberately looser than `MAX_INLINE_PDF_BASE64_CHARS`, and only a
+ * backstop against a wildly oversized string, not the real size gate. A schema violation surfaces
+ * as a raw MCP protocol error ("-32602: Input validation error"), not a `ToolError`, so a value near
+ * the real ceiling (the case a caller will actually hit) must reach `resolvePdfSource` and get the
+ * friendly `too_large` message instead of tripping this first. Measured live: setting this equal to
+ * `MAX_INLINE_PDF_BASE64_CHARS` made every over-the-real-limit call fail with the terse protocol
+ * error instead.
+ */
+export const FILE_BASE64_SCHEMA_MAX_CHARS = MAX_INLINE_PDF_BASE64_CHARS * 3;
+
+/**
+ * Exactly one of `sourceUrl` / `fileBase64` must be given. Validates and normalizes whichever one
+ * is present; throws `ToolError("validation", ...)` otherwise, before any upload row is created.
+ */
+export function resolvePdfSource(
+  args: { sourceUrl?: string | undefined; fileBase64?: string | undefined; fileName?: string | undefined },
+  apiUrl: string,
+): { kind: "url"; url: string } | { kind: "bytes"; base64: string; fileName: string } {
+  const hasUrl = typeof args.sourceUrl === "string" && args.sourceUrl.length > 0;
+  const hasBytes = typeof args.fileBase64 === "string" && args.fileBase64.length > 0;
+  if (hasUrl === hasBytes) {
+    throw new ToolError("validation", "Pass exactly one of sourceUrl or fileBase64.");
+  }
+  if (hasUrl) return { kind: "url", url: validateSourceUrl(args.sourceUrl as string, apiUrl) };
+  const base64 = (args.fileBase64 as string).trim();
+  if (base64.length > MAX_INLINE_PDF_BASE64_CHARS) {
+    throw new ToolError(
+      "too_large",
+      `fileBase64 decodes to more than ${Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024))}MB. Use sourceUrl for a file this size.`,
+    );
+  }
+  return { kind: "bytes", base64, fileName: (args.fileName ?? "").trim() || "document.pdf" };
+}
+
 export const sharePdfInputShape = {
   idempotencyKey: z
     .string()
@@ -39,7 +85,19 @@ export const sharePdfInputShape = {
     .string()
     .min(1)
     .max(2048)
-    .describe("Public https URL of the PDF. Google Drive share links and lnkdrp /s/ links are accepted."),
+    .optional()
+    .describe("Public https URL of the PDF. Google Drive share links and lnkdrp /s/ links are accepted. Exactly one of sourceUrl / fileBase64 is required."),
+  fileBase64: z
+    .string()
+    .min(1)
+    .max(FILE_BASE64_SCHEMA_MAX_CHARS)
+    .optional()
+    .describe(
+      `The PDF's bytes, base64-encoded, for a file with no public URL (locally generated, a private attachment). ` +
+        `Decoded size up to ${Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024))}MB; use sourceUrl instead for anything larger. ` +
+        "Exactly one of sourceUrl / fileBase64 is required.",
+    ),
+  fileName: z.string().max(200).optional().describe("File name to record, only used with fileBase64 (default: document.pdf)."),
   allowDownload: z.boolean().default(false).describe("Let viewers download the PDF (default false)."),
   password: z.string().min(8).max(128).optional().describe("Protect the share link with a password (8-128 chars)."),
   waitForReady: z.boolean().default(true).describe("Wait until processing finishes (status ready or failed) before returning."),
@@ -116,7 +174,10 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
     {
       title: "Share a PDF",
       description:
-        "Create a lnkdrp share link for a PDF fetched from a public URL. Creates the document, imports the file, starts " +
+        "Create a lnkdrp share link for a PDF. Pass exactly one of sourceUrl (an https URL the server fetches) or " +
+        "fileBase64 (the PDF's bytes, for a file with no public URL yet - locally generated, a private attachment; " +
+        "decoded size up to " + Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024)) + "MB, use sourceUrl for anything larger). " +
+        "Creates the document, imports the file, starts " +
         "processing (preview, text, summary) and returns { docId, shareId, shareUrl, status, uploadId, warnings, creditsRemaining }. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. Optional: allowDownload, password. " +
         "Each upload's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them from the document). " +
@@ -130,7 +191,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
     },
     handleTool(async (args, extra) => {
       const { api } = ctx;
-      const sourceUrl = validateSourceUrl(args.sourceUrl, ctx.config.apiUrl);
+      const source = resolvePdfSource(args, ctx.config.apiUrl);
       const title = (args.title ?? "").trim() || "Untitled document";
       if ((args.summary === undefined) !== (args.keyPoints === undefined)) {
         throw new ToolError("validation", "Pass summary and keyPoints together (both or neither).");
@@ -151,13 +212,14 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         try {
           const upload = await api.createUpload({
             docId,
-            originalFileName: fileNameFromUrl(sourceUrl),
+            originalFileName: source.kind === "url" ? fileNameFromUrl(source.url) : source.fileName,
             summary: args.summary,
             keyPoints: args.keyPoints,
           });
           uploadId = upload.id;
           version = upload.version ?? 1;
-          await api.importUrl(uploadId, sourceUrl);
+          if (source.kind === "url") await api.importUrl(uploadId, source.url);
+          else await api.importBytes(uploadId, source.base64, source.fileName);
         } catch (err) {
           await api.deleteDoc(docId).catch(() => undefined);
           throw err;

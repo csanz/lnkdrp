@@ -602,6 +602,45 @@ async function main(): Promise<void> {
       assert((thrown as ToolCallError).code === "not_found", `expected code not_found, got ${(thrown as ToolCallError).code}`);
     });
 
+    // 10e. fileBase64: mt_bJwX4CtmhU. Through replace_pdf, not share_pdf — it exercises the same
+    // shared resolvePdfSource() and costs no document slot on a workspace already at its cap.
+    await step("lnkdrp_replace_pdf accepts fileBase64 instead of sourceUrl", async () => {
+      const pdfBytes = Buffer.from(await (await fetch(PDF_URL)).arrayBuffer());
+      const res = await callTool<ReplacePdfResult>(live, "lnkdrp_replace_pdf", {
+        idempotencyKey: `e2e-replace-bytes-${randomUUID()}`,
+        docId: shared.docId,
+        fileBase64: pdfBytes.toString("base64"),
+        fileName: "e2e-inline.pdf",
+        waitForReady: true,
+        timeoutSeconds: TIMEOUT_SECONDS,
+      });
+      assert(res.docId === shared.docId, `fileBase64 replace targeted a different doc: ${res.docId} !== ${shared.docId}`);
+      assert(res.version > replaced.version, `fileBase64 replace version ${res.version} is not greater than the prior ${replaced.version}`);
+      info("doc", `${res.docId} upload ${res.uploadId} v${res.version} status ${res.status}`);
+    });
+
+    // 10f. sourceUrl and fileBase64 are mutually exclusive; neither given is equally invalid.
+    await step("lnkdrp_replace_pdf refuses both or neither of sourceUrl/fileBase64", async () => {
+      for (const args of [
+        { sourceUrl: PDF_URL, fileBase64: "AAAA" },
+        {},
+      ]) {
+        let thrown: unknown = null;
+        try {
+          await callTool<ReplacePdfResult>(live, "lnkdrp_replace_pdf", {
+            idempotencyKey: `e2e-replace-exclusivity-${randomUUID()}`,
+            docId: shared.docId,
+            waitForReady: false,
+            ...args,
+          });
+        } catch (err) {
+          thrown = err;
+        }
+        assert(thrown instanceof ToolCallError, `expected a ToolCallError for args ${JSON.stringify(args)}`);
+        assert((thrown as ToolCallError).code === "validation", `expected code validation, got ${(thrown as ToolCallError).code} for ${JSON.stringify(args)}`);
+      }
+    });
+
     // 11. A second link on the same document, labelled for one recipient, with downloads on.
     const extra = await step('lnkdrp_create_share_link { label: "Sequoia", allowDownload: true }', async () => {
       const res = await callTool<CreateShareLinkResult>(live, "lnkdrp_create_share_link", {

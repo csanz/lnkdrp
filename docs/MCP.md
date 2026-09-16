@@ -222,14 +222,24 @@ first).
 
 ### `lnkdrp_share_pdf` (write, idempotent by key)
 
-Create a share link from a PDF URL. Creates the document, allocates the upload, imports the URL
-server-side, starts processing, applies download/password settings, then (by default) waits for
-processing to finish.
+Create a share link from a PDF. Creates the document, allocates the upload, imports the file
+(from a URL or from inline bytes — see `sourceUrl`/`fileBase64` below), starts processing, applies
+download/password settings, then (by default) waits for processing to finish.
 
 - In:
   - `idempotencyKey` string, 1–128 chars, **required**. Reuse it on retries.
-  - `sourceUrl` https URL of a PDF. Google Drive share links are accepted (rewritten to a direct
-    download). Max 25 MB. Private-network and non-http(s) URLs are refused.
+  - **Exactly one of:**
+    - `sourceUrl` https URL of a PDF. Google Drive share links are accepted (rewritten to a direct
+      download). Max 25 MB fetched server-side. Private-network and non-http(s) URLs are refused.
+    - `fileBase64` the PDF's bytes, base64-encoded — for a file with no public URL (mt_bJwX4CtmhU:
+      locally generated, a private attachment). Decoded size up to 3 MB. Routed through
+      `POST /api/uploads/:id/import-bytes` instead of `import-url`; kept well under Vercel's 4.5MB
+      request-body ceiling (base64 alone costs ~4/3 of the decoded size). A file over 3MB needs
+      `sourceUrl` — there is no direct-to-Blob path for a JSON-only caller today, and reusing Vercel
+      Blob's own client-upload token would mean either reverse-engineering its undocumented wire
+      protocol for the calling agent, or handing the MCP server its own Blob credential and
+      duplicating this validation outside the app of record; a documented ceiling beats both.
+  - `fileName?` ≤ 200 chars, only used with `fileBase64` (default `document.pdf`).
   - `title?` ≤ 200 chars (default "Untitled document").
   - `allowDownload?` boolean, default `false`.
   - `password?` 8–128 chars; sets a share password.
@@ -270,7 +280,9 @@ blocked by the Free shared-document cap (mt_zKD3mlHp_K).
 - In:
   - `idempotencyKey` string, 1–128 chars, **required**.
   - `docId` the existing document to update, **required**.
-  - `sourceUrl` https URL of the new PDF, same rules as `share_pdf`.
+  - **Exactly one of** `sourceUrl` (https URL of the new PDF) or `fileBase64` (its bytes,
+    base64-encoded, decoded size up to 3 MB) — same rules and reasoning as `share_pdf` above.
+  - `fileName?` ≤ 200 chars, only used with `fileBase64`.
   - `title?` ≤ 200 chars; leaves the title unchanged if omitted.
   - `waitForReady?` boolean, default `true`. `timeoutSeconds?` 5–120, default 60.
   - `summary?` / `keyPoints?`, same shape and rule as `share_pdf` (both or neither; skips the
@@ -283,7 +295,7 @@ blocked by the Free shared-document cap (mt_zKD3mlHp_K).
   fetched, exactly like the web app's own "replace file" button. A recipient opening a link in that
   window sees "preparing", the same as during the very first upload. If import or processing then
   fails, the document is left in that state (not rolled back to the old file) — call `lnkdrp_get_share`
-  to check, or call `lnkdrp_replace_pdf` again with a working `sourceUrl` to finish it. Nothing is
+  to check, or call `lnkdrp_replace_pdf` again with a working `sourceUrl` or `fileBase64` to finish it. Nothing is
   ever deleted: unlike `share_pdf`, which removes its freshly-created empty draft on an early
   failure, this tool never deletes a document — it already has real recipients.
 - Errors: `not_found` (the `docId` does not exist in this workspace — checked with `GET /api/docs/:docId`

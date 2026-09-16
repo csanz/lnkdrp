@@ -26,7 +26,7 @@ import type { ToolContext } from "../context";
 import { handleTool, isToolError } from "../errors";
 import { IdempotencyStore } from "../idempotency";
 import { waitForDocStatus } from "../realtime";
-import { fileNameFromUrl, validateSourceUrl } from "./sharePdf";
+import { fileNameFromUrl, FILE_BASE64_SCHEMA_MAX_CHARS, MAX_INLINE_PDF_BYTES, resolvePdfSource } from "./sharePdf";
 import { readAiOutcome } from "./aiWarnings";
 import { docIdSchema, SAFETY_TAIL } from "./shared";
 
@@ -44,7 +44,18 @@ export const replacePdfInputShape = {
     .string()
     .min(1)
     .max(2048)
-    .describe("Public https URL of the new PDF. Google Drive share links and lnkdrp /s/ links are accepted."),
+    .optional()
+    .describe("Public https URL of the new PDF. Google Drive share links and lnkdrp /s/ links are accepted. Exactly one of sourceUrl / fileBase64 is required."),
+  fileBase64: z
+    .string()
+    .min(1)
+    .max(FILE_BASE64_SCHEMA_MAX_CHARS)
+    .optional()
+    .describe(
+      `The new PDF's bytes, base64-encoded, for a file with no public URL. Decoded size up to ${Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024))}MB; ` +
+        "use sourceUrl instead for anything larger. Exactly one of sourceUrl / fileBase64 is required.",
+    ),
+  fileName: z.string().max(200).optional().describe("File name to record, only used with fileBase64 (default: document.pdf)."),
   title: z.string().max(200).optional().describe("New title for the document (optional; leaves it unchanged if omitted)."),
   waitForReady: z.boolean().default(true).describe("Wait until processing finishes (status ready or failed) before returning."),
   timeoutSeconds: z.number().int().min(5).max(120).default(60).describe("Max seconds to wait for processing (5-120, default 60)."),
@@ -97,12 +108,14 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "Put a new PDF on an existing document. Every share link keeps its address, its settings and its analytics " +
         "history - recipients open the same URL and see the new file. This is how to update a document you have " +
         "already shared, including on a Free workspace at its document cap: replacing does not create a document, " +
-        "so it is never blocked by plan_limit the way lnkdrp_share_pdf is. Returns { docId, shareId, shareUrl, status, " +
+        "so it is never blocked by plan_limit the way lnkdrp_share_pdf is. Pass exactly one of sourceUrl (an https URL " +
+        "the server fetches) or fileBase64 (the new PDF's bytes, for a file with no public URL yet; decoded size up to " +
+        Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024)) + "MB, use sourceUrl for anything larger). Returns { docId, shareId, shareUrl, status, " +
         "version, uploadId, warnings, creditsRemaining }. " +
         "The document's status flips to preparing the moment this call starts, before the new file is even fetched - " +
         "recipients opening a link in that window see 'preparing', same as during the first upload. If import or " +
         "processing then fails, the document is left in that state rather than rolled back to the old file; call " +
-        "lnkdrp_get_share to check, or run lnkdrp_replace_pdf again with a working sourceUrl to finish the update. " +
+        "lnkdrp_get_share to check, or run lnkdrp_replace_pdf again with a working sourceUrl or fileBase64 to finish the update. " +
         "Nothing is ever deleted - the previous version's file and analytics are not affected by a failed attempt. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. " +
         "Each replacement's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them " +
@@ -114,7 +127,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
     },
     handleTool(async (args, extra) => {
       const { api } = ctx;
-      const sourceUrl = validateSourceUrl(args.sourceUrl, ctx.config.apiUrl);
+      const source = resolvePdfSource(args, ctx.config.apiUrl);
       const orgId = ctx.whoami().orgId;
       const progressToken = extra._meta?.progressToken;
 
@@ -134,7 +147,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         // recipients.
         const upload = await api.createUpload({
           docId,
-          originalFileName: fileNameFromUrl(sourceUrl),
+          originalFileName: source.kind === "url" ? fileNameFromUrl(source.url) : source.fileName,
           summary: args.summary,
           keyPoints: args.keyPoints,
         });
@@ -143,7 +156,8 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         const withIds = (err: unknown) => (isToolError(err) ? err.withDetails({ ...ids, uploadId, version }) : err);
 
         try {
-          await api.importUrl(uploadId, sourceUrl);
+          if (source.kind === "url") await api.importUrl(uploadId, source.url);
+          else await api.importBytes(uploadId, source.base64, source.fileName);
 
           for (let attempt = 0; ; attempt++) {
             try {

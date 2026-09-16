@@ -219,7 +219,14 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
 function createApp() {
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "4mb" }));
+  // "6mb": headroom above lnkdrp_share_pdf/replace_pdf's own 3MB-decoded fileBase64 ceiling
+  // (mt_bJwX4CtmhU). Base64 alone costs ~4/3 of 3MB (~4MB), and the tool-call JSON adds its own
+  // envelope on top of that — a request right at the tools' own documented limit must clear this
+  // layer too, or a legitimate call gets Express's raw "request entity too large" HTML instead of
+  // the tool's clean `too_large` error. Measured live: a 4MB-decoded payload (over the 3MB ceiling
+  // on purpose, to test the too-large path) tripped the previous "4mb" limit here before the
+  // tool's own validation ran at all.
+  app.use(express.json({ limit: "6mb" }));
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, sessions: sessions.size, version: MCP_SERVER_VERSION, apiUrl: config.apiUrl });

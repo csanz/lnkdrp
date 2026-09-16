@@ -58,6 +58,43 @@ export function allowedContentTypesForPathname(pathname: string): string[] {
   return [];
 }
 
+/**
+ * Whether `buf` actually looks like a PDF, by content rather than by name or declared type.
+ *
+ * PDFs carry a `%PDF-` header near the start; some producers prepend a BOM or a little
+ * whitespace first, so this scans a small prefix and allows for that. Shared by every route that
+ * accepts file bytes from outside the browser's own file picker (a URL fetch, inline base64 from
+ * an MCP tool call) — a filename or declared content-type is never trusted alone, only this is.
+ */
+export function looksLikePdfBytes(buf: Buffer): boolean {
+  if (!buf || buf.length < 5) return false;
+  const scanLen = Math.min(buf.length, 2048);
+  const sig = Buffer.from("%PDF-", "ascii");
+
+  let start = 0;
+  if (scanLen >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) start = 3;
+  while (
+    start < scanLen &&
+    (buf[start] === 0x09 || buf[start] === 0x0a || buf[start] === 0x0d || buf[start] === 0x20)
+  ) {
+    start++;
+  }
+  if (start + sig.length <= scanLen && buf.subarray(start, start + sig.length).equals(sig)) return true;
+
+  const idx = buf.subarray(0, scanLen).indexOf(sig);
+  return idx >= 0 && idx <= 64; // keep it conservative; if it's far in, it's likely not a PDF body
+}
+
+/** Strip characters unsafe for a stored filename and force a `.pdf` extension. */
+export function sanitizeFileName(name: string): string {
+  const cleaned = (name ?? "")
+    .trim()
+    .replace(/[\\/:*?"<>|\u0000-\u001F]+/g, "_")
+    .replace(/\s+/g, " ");
+  const base = cleaned || "document.pdf";
+  return base.toLowerCase().endsWith(".pdf") ? base : `${base}.pdf`;
+}
+
 /** User-facing message returned (with `UNSUPPORTED_FILE_TYPE_CODE`) when a non-PDF document is submitted. */
 export const PDF_ONLY_ERROR_MESSAGE = "Only PDF files are supported right now.";
 /** Machine-readable error code paired with `PDF_ONLY_ERROR_MESSAGE` (HTTP 415). */

@@ -602,6 +602,16 @@ export class ApiClient {
     await this.request("POST", `/api/uploads/${encodeURIComponent(uploadId)}/import-url`, { body: { url } });
   }
 
+  /**
+   * `POST /api/uploads/:id/import-bytes` — attach a PDF sent as inline base64 instead of fetched
+   * from a URL. mt_bJwX4CtmhU: what `lnkdrp_share_pdf`/`lnkdrp_replace_pdf` call when the caller
+   * passed `fileBase64` instead of `sourceUrl`. Capped well under Vercel's request-body limit; see
+   * the route for exactly why.
+   */
+  async importBytes(uploadId: string, contentBase64: string, fileName?: string | undefined): Promise<void> {
+    await this.request("POST", `/api/uploads/${encodeURIComponent(uploadId)}/import-bytes`, { body: { contentBase64, fileName } });
+  }
+
   async processUpload(uploadId: string): Promise<{ alreadyProcessing: boolean }> {
     const body = rec(await this.request("POST", `/api/uploads/${encodeURIComponent(uploadId)}/process`));
     return { alreadyProcessing: Boolean(body.alreadyProcessing) };

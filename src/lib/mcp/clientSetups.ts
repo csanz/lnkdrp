@@ -336,7 +336,9 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     detail: {
       inputs: [
         "idempotencyKey — required; reuse it on retries and you get the same document back",
-        "sourceUrl — an https URL to a PDF, up to 25 MB; Google Drive share links are accepted",
+        "sourceUrl — an https URL to a PDF, up to 25 MB; Google Drive share links are accepted. Exactly one of sourceUrl / fileBase64",
+        "fileBase64 — the PDF's bytes, base64-encoded, for a file with no public URL (decoded size up to 3 MB)",
+        "fileName — optional, only used with fileBase64",
         "title — optional, up to 200 characters",
         "allowDownload — optional, default off",
         "password — optional, 8–128 characters",
@@ -347,7 +349,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
       errors: [
         "plan_limit — the Free plan's shared-document cap; the error lists what you can still do without upgrading",
         "out_of_credits — the AI summary needs credits the workspace does not have; pass summary and keyPoints instead",
-        "fetch_blocked / unsupported_content_type / too_large — the URL could not be used",
+        "fetch_blocked / unsupported_content_type / too_large — the URL or file could not be used",
         "validation — including invalid_summary, whose message says how to fix it",
       ],
       note: "Every upload's automatic summary costs 1 credit unless the agent supplies its own.",
@@ -361,7 +363,9 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
       inputs: [
         "idempotencyKey — required; reuse it on retries and you get the same result back",
         "docId — the existing document to update",
-        "sourceUrl — an https URL to the new PDF; Google Drive share links are accepted",
+        "sourceUrl — an https URL to the new PDF; Google Drive share links are accepted. Exactly one of sourceUrl / fileBase64",
+        "fileBase64 — the new PDF's bytes, base64-encoded, for a file with no public URL (decoded size up to 3 MB)",
+        "fileName — optional, only used with fileBase64",
         "title — optional, up to 200 characters; leaves the title unchanged if omitted",
         "waitForReady / timeoutSeconds — optional; wait for processing (default 60s, max 120s)",
         "summary + keyPoints — optional, both or neither; when the agent writes them the AI summary is skipped and costs 0 credits",
@@ -370,7 +374,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
       errors: [
         "not_found — the docId does not exist in this workspace",
         "out_of_credits — the AI summary needs credits the workspace does not have; pass summary and keyPoints instead",
-        "fetch_blocked / unsupported_content_type / too_large — the URL could not be used",
+        "fetch_blocked / unsupported_content_type / too_large — the URL or file could not be used",
         "validation — including invalid_summary, whose message says how to fix it",
       ],
       note: "Never blocked by the document cap — replacing does not create a document. The status flips to preparing as soon as the call starts, before the new file is fetched.",

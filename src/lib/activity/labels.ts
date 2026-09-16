@@ -164,7 +164,9 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     case "doc.created":
       return { subject, verb: "created", object: docTitle, suffix: null };
     case "doc.imported_url":
-      return { subject, verb: "imported", object: docTitle, suffix: "from a URL" };
+      // `via: "bytes"` is `import-bytes` (an MCP tool call carrying the file inline, no public
+      // URL involved) rather than `import-url`'s actual URL fetch — same event, different suffix.
+      return { subject, verb: "imported", object: docTitle, suffix: metaString(item.meta, "via") === "bytes" ? "from a file" : "from a URL" };
     case "upload.completed":
       return { subject, verb: "uploaded", object: docTitle, suffix: null };
     case "doc.processed": {

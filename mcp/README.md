@@ -107,14 +107,17 @@ How an agent finds documents it was not handed, and reads what happened in the w
   wrapped as untrusted. Free strips viewer identity from `share.viewed`/`share.downloaded` rows, as the app does.
 
 ### `lnkdrp_share_pdf`
-In `{ idempotencyKey (1–128), title? (≤200), sourceUrl (https; Google Drive share links and lnkdrp /s/ links accepted),
-allowDownload? = false, password? (8–128), waitForReady? = true, timeoutSeconds? 5–120 = 60,
-summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }`. `summary` and `keyPoints` go together (both or
+In `{ idempotencyKey (1–128), title? (≤200), allowDownload? = false, password? (8–128), waitForReady? = true,
+timeoutSeconds? 5–120 = 60, summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus **exactly one of**
+`sourceUrl` (https; Google Drive share links and lnkdrp /s/ links accepted; max 25MB fetched server-side) or
+`fileBase64` + `fileName?` (the PDF's bytes, decoded size up to 3MB — mt_bJwX4CtmhU, for a file with no public URL;
+kept well under Vercel's 4.5MB request-body ceiling since base64 costs ~4/3 of the decoded size; bigger files need
+`sourceUrl`, there is no direct-to-Blob path for a JSON-only caller). `summary` and `keyPoints` go together (both or
 neither), plain text written from the document (URLs and markup are stripped). Each upload's AI summary costs 1 credit,
 or nothing when the agent passes them; the summary is then attributed to the agent. A 400 `invalid_summary` becomes a
 `validation` error that says what to fix.
-Flow: `POST /api/docs` → `POST /api/uploads` → `POST /api/uploads/:id/import-url` → `POST /api/uploads/:id/process`
-→ `PATCH /api/docs/:id` (download) → `POST /api/docs/:id/share-password` → wait for `ready|failed`.
+Flow: `POST /api/docs` → `POST /api/uploads` → `POST /api/uploads/:id/import-url` **or** `.../import-bytes`
+→ `POST /api/uploads/:id/process` → `PATCH /api/docs/:id` (download) → `POST /api/docs/:id/share-password` → wait for `ready|failed`.
 Out `{ docId, shareId, shareUrl, replaceUrl: null, status, version, uploadId, title, planWarning?, timedOut?, warnings, creditsRemaining? }`.
 `replaceUrl` is always `null` — updating a document already shared is `lnkdrp_replace_pdf` below.
 After processing finishes it reads `GET /api/uploads/:id` and turns `upload.ai` into `warnings` (e.g. "AI summary skipped:
@@ -130,8 +133,9 @@ without an upgrade (add a link to an existing document, replace a file, archive 
 
 ### `lnkdrp_replace_pdf`
 Put a new PDF on a document already shared — links, settings and analytics history all stay put. In
-`{ idempotencyKey, docId, sourceUrl, title? (≤200), waitForReady? = true, timeoutSeconds? 5–120 = 60,
-summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }`. Flow: `POST /api/uploads { docId }`
+`{ idempotencyKey, docId, title? (≤200), waitForReady? = true, timeoutSeconds? 5–120 = 60,
+summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus **exactly one of** `sourceUrl` or
+`fileBase64` + `fileName?`, same rules as `share_pdf` above. Flow: `POST /api/uploads { docId }`
 (allocates the next version and — before `sourceUrl` is even fetched — points the doc's
 `currentUploadId` at it and flips `status` to `preparing`, same as the web app's own replace button)
 → `import-url` → `process` → optional `PATCH { title }` → wait for `ready|failed`. Out `{ docId,
