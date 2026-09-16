@@ -19,7 +19,7 @@ export default async function BillingSuccessPage(props: { searchParams?: Promise
   const demoRaw = sp.demo;
   const demo = typeof demoRaw === "string" ? demoRaw : Array.isArray(demoRaw) ? demoRaw[0] : "";
   return (
-    <StandaloneBrandedShell kicker="Billing">
+    <StandaloneBrandedShell>
       <SuccessClient sessionId={sessionId} demo={demo} />
     </StandaloneBrandedShell>
   );

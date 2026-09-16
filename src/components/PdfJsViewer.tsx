@@ -14,6 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
 import OverflowMenu from "@/components/ui/OverflowMenu";
+import BrandHeader from "@/components/BrandHeader";
 import { useAuthEnabled } from "@/app/providers";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { getOrCreateBotId } from "@/lib/botId";
@@ -2026,18 +2027,9 @@ export function PdfJsViewer({
       className="group relative flex h-[100svh] w-screen flex-col overflow-hidden bg-black"
     >
       {/* Top bar (fixed layout; does not overlay PDF) */}
-      <header
+      <BrandHeader
         ref={headerRef}
-        className="sticky top-0 z-20 w-full border-b border-white/10 bg-black/85 text-white/90 backdrop-blur-sm"
-      >
-        <div className="px-4 py-3 sm:px-6">
-          <div className="flex items-center justify-between gap-4">
-            {/* Left */}
-            <div className="flex min-w-0 items-center gap-3">
-              <div aria-hidden="true" className="inline-flex items-center justify-center">
-                <Image src="/icon-white.svg?v=3" alt="" width={26} height={26} />
-              </div>
-
+        left={
               <div className="inline-flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-1.5">
                 <button
                   type="button"
@@ -2050,7 +2042,10 @@ export function PdfJsViewer({
                 >
                   <span className="inline-flex items-center gap-1.5">
                     <SparklesIcon />
-                    Summary
+                    {/* Icon-only on phones: with the label the header row runs ~60px wider than a
+                        360px screen and this button spills over the page counter next to it. The
+                        button's aria-label still names it. */}
+                    <span className="hidden sm:inline">Summary</span>
                   </span>
                 </button>
 
@@ -2070,10 +2065,10 @@ export function PdfJsViewer({
 
                 {/* Intentionally no share-context badge here; share links are self-evident. */}
               </div>
-            </div>
-
+        }
+      >
             {/* Right */}
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               <div className="inline-flex items-center gap-1 rounded-2xl border border-white/10 bg-white/5 p-1.5">
                 <div className="inline-flex h-8 items-center rounded-xl px-3 text-xs text-white/85">
                   {numPages ? (
@@ -2356,14 +2351,14 @@ export function PdfJsViewer({
                 canDownload ? (
                   <a
                     href={(downloadHref ?? (downloadUrl as string)) as string}
-                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
                   >
                     Download PDF
                   </a>
                 ) : (
                   <button
                     type="button"
-                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
                     onClick={() => {
                       setDownloadRequestOpen(true);
                       setDownloadRequestSent(false);
@@ -2376,10 +2371,7 @@ export function PdfJsViewer({
                 )
               ) : null}
             </div>
-          </div>
-
-        </div>
-      </header>
+      </BrandHeader>
 
       {/* Summary popover (overlays PDF, aligned with top bar) */}
       {aiOpen ? (

@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { signIn, useSession } from "next-auth/react";
 import { useAuthEnabled } from "@/app/providers";
+import Spinner from "@/components/ui/Spinner";
 
 // Tighter horizontal padding below `sm` keeps all three links on one row on phones.
 const NAV_LINK_CLASS =
@@ -27,7 +28,7 @@ function LoginButton({ enabled }: { enabled: boolean }) {
   return (
     <button
       type="button"
-      className={NAV_LINK_CLASS}
+      className={`relative ${NAV_LINK_CLASS}`}
       disabled={isSigningIn}
       aria-busy={isSigningIn}
       onClick={() => {
@@ -37,7 +38,14 @@ function LoginButton({ enabled }: { enabled: boolean }) {
         void signIn("google", { callbackUrl: "/" });
       }}
     >
-      {isSigningIn ? "Opening Google…" : "Log In"}
+      {/* Same as the home and login buttons: the label keeps the width, a spinner overlays it, and
+          no provider is named. */}
+      <span className={isSigningIn ? "invisible" : ""}>Log In</span>
+      {isSigningIn ? (
+        <span className="absolute inset-0 grid place-items-center">
+          <Spinner className="h-4 w-4" label="Signing in" />
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -64,9 +72,11 @@ function SessionLoginControl() {
 export default function PublicHeader({ containerClassName }: { containerClassName?: string } = {}) {
   const authEnabled = useAuthEnabled();
   return (
-    <header className="relative z-20 w-full bg-transparent text-white/90">
+    // Same geometry as `BrandHeader` (transparent border included, 46px row) so the logo sits at the
+    // exact same spot when someone moves from a marketing page to login or a share link.
+    <header className="relative z-20 w-full border-b border-transparent bg-transparent text-white/90">
       <div className={containerClassName ?? "px-4 py-3 sm:px-6"}>
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex min-h-[46px] items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
               <Image src="/icon-white.svg?v=3" alt="LinkDrop" width={26} height={26} priority className="block" />

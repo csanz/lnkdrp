@@ -6,7 +6,7 @@ import { StandaloneBrandedShell } from "@/components/StandaloneBrandedShell";
 
 export default function BillingCancelPage() {
   return (
-    <StandaloneBrandedShell kicker="Billing">
+    <StandaloneBrandedShell>
       <div className="rounded-2xl bg-[var(--panel)] p-8">
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Checkout canceled</div>
         <div className="mt-2 text-[13px] leading-6 text-[var(--muted-2)]">

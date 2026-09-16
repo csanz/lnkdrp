@@ -121,7 +121,7 @@ Models:
 
 UI:
 - `src/app/dashboard/SubscriptionCard.tsx` — Upgrade + Manage Subscription UI; shows monthly cost next to Pro, and “Cancels on …” / “Renews on …”.
-- `src/components/StandaloneBrandedHeader.tsx` — shared branding header for standalone flow pages.
+- `src/components/BrandHeader.tsx` — the shared top bar (logo left, page controls right) for share pages and standalone flow pages.
 
 
 

@@ -10,7 +10,7 @@ import { fetchJson } from "@/lib/http/fetchJson";
 import { BOT_ID_HEADER, getOrCreateBotId } from "@/lib/botId";
 import { useAuthEnabled } from "@/app/providers";
 import { useSession } from "next-auth/react";
-import { StandaloneBrandedHeader } from "@/components/StandaloneBrandedHeader";
+import BrandHeader from "@/components/BrandHeader";
 
 type LocalUploadPreviewStored = {
   token: string;
@@ -650,7 +650,7 @@ export default function RequestUploadPageClient(props: {
 
   return (
     <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
-      <StandaloneBrandedHeader kicker="Request upload" />
+      <BrandHeader logoHref="/" />
       {busy ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6 py-10">
           <div className="w-full max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-xl">

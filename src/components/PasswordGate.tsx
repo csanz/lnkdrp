@@ -1,9 +1,7 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
-import Image from "next/image";
-import Link from "next/link";
-import { useTheme } from "next-themes";
+import { useState } from "react";
+import BrandHeader from "@/components/BrandHeader";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 /**
@@ -20,20 +18,9 @@ export default function PasswordGate({
   title?: string | null;
   previewUrl?: string | null;
 }) {
-  const { resolvedTheme } = useTheme();
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Avoid hydration mismatches from client-only theme.
-  const mounted = useSyncExternalStore(
-    () => () => {
-      // no-op subscription
-    },
-    () => true,
-    () => false,
-  );
-  const logoSrc = mounted && resolvedTheme === "dark" ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
 
   const previewSrc =
     typeof previewUrl === "string" && (previewUrl.startsWith("/") || /^https?:\/\//i.test(previewUrl))
@@ -59,21 +46,29 @@ export default function PasswordGate({
   }
 
   return (
-    <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
-      <div className="mx-auto flex w-full max-w-md flex-col items-center px-6 py-16">
-        <header className="mb-8 w-full">
-          <div className="flex items-center justify-center">
-            <Link
-              href="/"
-              className="inline-flex items-center"
-              aria-label="Home"
-              title="LinkDrop"
-            >
-              <Image src={logoSrc} alt="LinkDrop" width={34} height={34} priority />
-            </Link>
-          </div>
-        </header>
-
+    // Always dark, like the viewer this gate stands in front of: unlocking swaps the card for the
+    // document under the same header, so the page shouldn't also flip from light to black.
+    <main
+      className="min-h-screen bg-[var(--bg)] text-[var(--fg)]"
+      style={
+        {
+          colorScheme: "dark",
+          "--bg": "#000",
+          "--fg": "#e7e7ea",
+          "--panel": "#111113",
+          "--panel-2": "#151518",
+          "--border": "#2a2a31",
+          "--muted": "#b3b3bb",
+          "--muted-2": "#8b8b96",
+          "--ring": "rgba(255,255,255,0.25)",
+          "--primary-bg": "#fff",
+          "--primary-fg": "#000",
+          "--primary-hover-bg": "rgba(255,255,255,0.9)",
+        } as React.CSSProperties
+      }
+    >
+      <BrandHeader />
+      <div className="mx-auto flex w-full max-w-md flex-col items-center px-6 py-12 sm:py-16">
         <div className="w-full rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-sm">
           <div className="text-base font-semibold text-[var(--fg)]">Password required</div>
           <div className="mt-2 text-sm text-[var(--muted)]">

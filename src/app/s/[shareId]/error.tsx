@@ -7,8 +7,7 @@
  * dark branded frame as the viewer / `not-found`, one "Try again" action, and no app links.
  */
 import { useEffect } from "react";
-import Image from "next/image";
-import Link from "next/link";
+import BrandHeader from "@/components/BrandHeader";
 import { debugError } from "@/lib/debug";
 
 export default function ShareError({
@@ -24,14 +23,7 @@ export default function ShareError({
 
   return (
     <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
-      <header className="sticky top-0 z-10 border-b border-white/10 bg-black/80 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-6 py-4">
-          <Link href="/" className="inline-flex items-center gap-2" aria-label="Home">
-            <Image src="/icon-white.svg?v=3" alt="LinkDrop" width={28} height={28} priority className="block" />
-          </Link>
-          <div className="text-sm font-semibold text-white/90">LinkDrop</div>
-        </div>
-      </header>
+      <BrandHeader />
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
         <div className="text-lg font-semibold tracking-tight text-white/90">This document couldn’t be displayed</div>
         <div className="mt-2 text-sm text-white/70">

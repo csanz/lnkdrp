@@ -5,8 +5,8 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-import Image from "next/image";
 import Link from "next/link";
+import BrandHeader from "@/components/BrandHeader";
 import { notFound } from "next/navigation";
 import { LockClosedIcon } from "@heroicons/react/24/solid";
 import { connectMongo } from "@/lib/mongodb";
@@ -130,26 +130,7 @@ export default async function PublicProjectSharePlaceholderPage(props: {
         } as React.CSSProperties
       }
     >
-      <header className="sticky top-0 z-20 w-full border-b border-white/10 bg-black/85 text-white/90 backdrop-blur-sm">
-        <div className="px-4 py-3 sm:px-6">
-          <div className="flex items-center justify-between gap-4">
-            {/* Left (match `/s/:shareId` header dimensions, but show only the logo) */}
-            <div className="flex min-w-0 items-center gap-3">
-              <div aria-hidden="true" className="inline-flex items-center justify-center">
-                <Image src="/icon-white.svg?v=3" alt="" width={26} height={26} priority />
-              </div>
-
-              {/* Height shim: match `/s/:shareId` header height (includes border + padding from the controls pill). */}
-              <div
-                aria-hidden="true"
-                className="invisible inline-flex items-center rounded-2xl border border-white/10 bg-white/5 p-1.5"
-              >
-                <div className="h-8 w-px" />
-              </div>
-            </div>
-          </div>
-        </div>
-      </header>
+      <BrandHeader />
       <div className="mx-auto w-full max-w-5xl px-6 pb-12 pt-6">
         <div className="text-2xl font-semibold tracking-tight text-[var(--fg)]">{(project as any).name}</div>
         {(project as any).description ? (

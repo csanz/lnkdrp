@@ -5,7 +5,6 @@
  */
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -14,6 +13,7 @@ import { CheckIcon } from "@heroicons/react/24/outline";
 import { useAuthEnabled } from "@/app/providers";
 import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import Spinner from "@/components/ui/Spinner";
+import BrandHeader from "@/components/BrandHeader";
 
 const AUTH_TRANSITION_STORAGE_KEY = "ld_auth_transition";
 const AUTH_TRANSITION_COOKIE_NAME = "ld_auth_transition";
@@ -89,65 +89,62 @@ function LoginPageInner() {
   ];
 
   return (
-    <main className="grid min-h-[100svh] place-items-center bg-[#050506] px-6 text-white">
-      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 px-8 py-7 sm:px-9 sm:py-8">
-        <div className="flex items-center gap-3.5">
-          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/5">
-            <Image src="/icon-white.svg?v=3" alt="" width={18} height={18} />
-          </div>
-          <div>
-            <h1 className="text-[19px] font-semibold leading-6 tracking-tight sm:text-xl">Log in or sign up</h1>
-            <p className="mt-1 text-[13px] leading-5 text-white/55">{helperText}</p>
-          </div>
-        </div>
+    <main className="flex min-h-[100svh] flex-col bg-[#050506] text-white">
+      <BrandHeader logoHref="/" />
+      <div className="grid flex-1 place-items-center px-6 py-10">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 px-8 py-7 sm:px-9 sm:py-8">
+          {/* No logo chip in the card: the page header right above already carries the logo. */}
+          <h1 className="text-[19px] font-semibold leading-6 tracking-tight sm:text-xl">Log in or sign up</h1>
+          <p className="mt-1 text-[13px] leading-5 text-white/55">{helperText}</p>
 
-        {/* What a new account gets, stated before sign-up: links are free; the starter credits exist to try the AI features. */}
-        <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/40">New accounts start free</p>
-        <ul className="mt-2.5 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
-          {perks.map((perk, i) => (
-            <li key={i} className="flex items-start gap-3 text-[13px] leading-5 text-white/65">
-              <span
-                aria-hidden="true"
-                className={[
-                  "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full",
-                  perk.lead ? "bg-white text-black" : "border border-white/15 text-white/50",
-                ].join(" ")}
-              >
-                <CheckIcon className="h-3 w-3" strokeWidth={3} />
-              </span>
-              <span className={perk.lead ? "font-medium text-white" : ""}>{perk.text}</span>
-            </li>
-          ))}
-        </ul>
+          {/* What a new account gets, stated before sign-up: links are free; the starter credits exist to try the AI features. */}
+          <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/40">New accounts start free</p>
+          <ul className="mt-2.5 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
+            {perks.map((perk, i) => (
+              <li key={i} className="flex items-start gap-3 text-[13px] leading-5 text-white/65">
+                <span
+                  aria-hidden="true"
+                  className={[
+                    "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full",
+                    perk.lead ? "bg-white text-black" : "border border-white/15 text-white/50",
+                  ].join(" ")}
+                >
+                  <CheckIcon className="h-3 w-3" strokeWidth={3} />
+                </span>
+                <span className={perk.lead ? "font-medium text-white" : ""}>{perk.text}</span>
+              </li>
+            ))}
+          </ul>
 
-        <div className="mt-6">
-          {/* The label stays in the box (just `invisible`) instead of being swapped out, so the
-              button's width is always exactly its own resting width in both states — no guessed
-              min-width. The spinner overlays it centered; busy shows no provider name on purpose,
-              for when more sign-in methods join Google. */}
-          <button
-            type="button"
-            className="relative inline-flex h-11 w-full items-center justify-center rounded-xl bg-white px-4 text-[15px] font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
-            disabled={!authEnabled || busy}
-            aria-busy={busy}
-            onClick={() => {
-              if (!authEnabled || busy) return;
-              setBusy(true);
-              void signIn("google", { callbackUrl: next });
-            }}
-          >
-            <span className={busy ? "invisible" : ""}>Continue with Google</span>
-            {busy ? (
-              <span className="absolute inset-0 grid place-items-center">
-                <Spinner className="h-4 w-4" label="Signing in" />
-              </span>
-            ) : null}
-          </button>
+          <div className="mt-6">
+            {/* The label stays in the box (just `invisible`) instead of being swapped out, so the
+                button's width is always exactly its own resting width in both states — no guessed
+                min-width. The spinner overlays it centered; busy shows no provider name on purpose,
+                for when more sign-in methods join Google. */}
+            <button
+              type="button"
+              className="relative inline-flex h-11 w-full items-center justify-center rounded-xl bg-white px-4 text-[15px] font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
+              disabled={!authEnabled || busy}
+              aria-busy={busy}
+              onClick={() => {
+                if (!authEnabled || busy) return;
+                setBusy(true);
+                void signIn("google", { callbackUrl: next });
+              }}
+            >
+              <span className={busy ? "invisible" : ""}>Continue with Google</span>
+              {busy ? (
+                <span className="absolute inset-0 grid place-items-center">
+                  <Spinner className="h-4 w-4" label="Signing in" />
+                </span>
+              ) : null}
+            </button>
 
-          <div className="mt-4 flex items-center justify-center">
-            <Link href="/" className="text-[13px] font-medium text-white/55 hover:text-white">
-              Back to home
-            </Link>
+            <div className="mt-4 flex items-center justify-center">
+              <Link href="/" className="text-[13px] font-medium text-white/55 hover:text-white">
+                Back to home
+              </Link>
+            </div>
           </div>
         </div>
       </div>

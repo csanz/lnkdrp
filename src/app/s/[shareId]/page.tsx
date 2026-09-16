@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import { resolveShareLink } from "@/lib/share/links";
 import type { AiOutput } from "@/components/PdfJsViewer";
 import ShareViewerClient from "./ShareViewerClient";
+import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "./PasswordGate";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { getMetadataBaseUrl } from "@/lib/urls";
@@ -277,6 +278,7 @@ export default async function SharePage(props: {
   // Fallback if we don't have a PDF URL yet (older docs / processing).
   return (
     <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
+      <BrandHeader />
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
         <div className="text-lg font-semibold tracking-tight text-white/90">Shared document</div>
         <div className="mt-2 text-sm text-white/70">

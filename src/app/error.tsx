@@ -23,7 +23,7 @@ export default function RootError({
   }, [error]);
 
   return (
-    <StandaloneBrandedShell kicker="Error">
+    <StandaloneBrandedShell>
       <div className="rounded-2xl bg-[var(--panel)] p-8">
         <div className="text-[20px] font-semibold tracking-tight text-[var(--fg)]">Something went wrong</div>
         <div className="mt-2 text-[13px] leading-6 text-[var(--muted-2)]">

@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { signIn, useSession } from "next-auth/react";
 import { fetchJson } from "@/lib/http/fetchJson";
+import BrandHeader from "@/components/BrandHeader";
 
 type Step = "auth" | "loading" | "ready" | "saving" | "error";
 
@@ -72,61 +73,64 @@ export default function DownloadClaimPage() {
   }, [status, token]);
 
   return (
-    <main className="grid min-h-[100svh] place-items-center bg-[#050506] px-6 text-white">
-      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 px-8 py-7">
-        <div className="text-lg font-semibold tracking-tight">
-          {docTitle ? docTitle : "Download"}
-        </div>
-        <div className="mt-2 text-sm text-white/60">
-          {step === "auth"
-            ? "Redirecting to Google…"
-            : step === "loading"
-              ? "Loading…"
-              : step === "saving"
-                ? "Saving…"
-                : step === "ready"
-                  ? "Choose an action."
-                  : "Couldn’t open this link."}
-        </div>
-
-        {error ? <div className="mt-4 text-sm font-medium text-red-300">{error}</div> : null}
-
-        {step === "ready" ? (
-          <div className="mt-6 flex flex-col gap-3">
-            <a
-              className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90"
-              href={`/api/download/${encodeURIComponent(token)}/pdf`}
-            >
-              Download PDF
-            </a>
-
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
-              onClick={() => {
-                if (step !== "ready") return;
-                setStep("saving");
-                setError(null);
-                void (async () => {
-                  try {
-                    const res = await fetchJson<{ ok?: boolean; docId?: string }>(
-                      `/api/download/${encodeURIComponent(token)}/save`,
-                      { method: "POST" },
-                    );
-                    const docId = typeof res?.docId === "string" ? res.docId : "";
-                    if (!docId) throw new Error("Save failed.");
-                    if (typeof window !== "undefined") window.location.assign(`/doc/${encodeURIComponent(docId)}`);
-                  } catch (e) {
-                    setStep("ready");
-                    setError(e instanceof Error ? e.message : "Failed to save.");
-                  }
-                })();
-              }}
-            >
-              Save to my account
-            </button>
+    <main className="flex min-h-[100svh] flex-col bg-[#050506] text-white">
+      <BrandHeader logoHref="/" />
+      <div className="grid flex-1 place-items-center px-6 py-10">
+        <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 px-8 py-7">
+          <div className="text-lg font-semibold tracking-tight">
+            {docTitle ? docTitle : "Download"}
           </div>
-        ) : null}
+          <div className="mt-2 text-sm text-white/60">
+            {step === "auth"
+              ? "Redirecting to Google…"
+              : step === "loading"
+                ? "Loading…"
+                : step === "saving"
+                  ? "Saving…"
+                  : step === "ready"
+                    ? "Choose an action."
+                    : "Couldn’t open this link."}
+          </div>
+
+          {error ? <div className="mt-4 text-sm font-medium text-red-300">{error}</div> : null}
+
+          {step === "ready" ? (
+            <div className="mt-6 flex flex-col gap-3">
+              <a
+                className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90"
+                href={`/api/download/${encodeURIComponent(token)}/pdf`}
+              >
+                Download PDF
+              </a>
+
+              <button
+                type="button"
+                className="inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
+                onClick={() => {
+                  if (step !== "ready") return;
+                  setStep("saving");
+                  setError(null);
+                  void (async () => {
+                    try {
+                      const res = await fetchJson<{ ok?: boolean; docId?: string }>(
+                        `/api/download/${encodeURIComponent(token)}/save`,
+                        { method: "POST" },
+                      );
+                      const docId = typeof res?.docId === "string" ? res.docId : "";
+                      if (!docId) throw new Error("Save failed.");
+                      if (typeof window !== "undefined") window.location.assign(`/doc/${encodeURIComponent(docId)}`);
+                    } catch (e) {
+                      setStep("ready");
+                      setError(e instanceof Error ? e.message : "Failed to save.");
+                    }
+                  })();
+                }}
+              >
+                Save to my account
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
     </main>
   );

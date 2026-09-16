@@ -8,7 +8,7 @@ import { ArrowUpTrayIcon, DocumentTextIcon } from "@heroicons/react/24/outline";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname, buildDocPreviewPngPathname } from "@/lib/blob/clientUpload";
 import { extractErrorMessage, fetchJson } from "@/lib/http/fetchJson";
-import { StandaloneBrandedHeader } from "@/components/StandaloneBrandedHeader";
+import BrandHeader from "@/components/BrandHeader";
 
 type DocMeta = {
   id: string;
@@ -304,7 +304,7 @@ export default function DocUpdatePageClient(props: { code: string }) {
 
   return (
     <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
-      <StandaloneBrandedHeader kicker="Document update" />
+      <BrandHeader logoHref="/" />
       <div className="mx-auto w-full max-w-[820px] px-4 py-10">
       <div className="rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-sm">
         <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Document update</div>
