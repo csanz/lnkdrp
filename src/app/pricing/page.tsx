@@ -12,6 +12,7 @@
  * enforce with, so the numbers here always match what users hit.
  */
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
@@ -224,8 +225,12 @@ export default async function PricingPage() {
                   uploads, replacements and stats never need credits.
                 </p>
                 <p className="mt-3 max-w-md text-[12px] leading-5 text-white/45">
-                  Need more? Turn on on-demand: $0.10 per credit, billed through Stripe, under a hard spend limit
-                  you set. Unused included credits do not roll over.
+                  Need more?{" "}
+                  <Link href="/credits" className="underline underline-offset-4 hover:text-white/70">
+                    Buy a credit pack
+                  </Link>{" "}
+                  from $5, on any plan. On Pro you can also turn on on-demand: $0.10 per credit, billed through
+                  Stripe, under a hard spend limit you set. Unused included credits do not roll over.
                 </p>
               </div>
               <div className="overflow-x-auto">

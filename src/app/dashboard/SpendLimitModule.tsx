@@ -16,6 +16,7 @@ import { formatInt } from "@/lib/format/number";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { dispatchCreditsSnapshotRefresh } from "@/lib/client/creditsSnapshotRefresh";
 import { FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
+import Link from "next/link";
 
 type SpendStatus = {
   ok: true;
@@ -24,6 +25,8 @@ type SpendStatus = {
   onDemandUsedCentsThisCycle: number;
   canEdit?: boolean;
   editDisabledReason?: string | null;
+  /** No billable subscription, so on-demand can't be turned on here: point at credit packs instead. */
+  needsCard?: boolean;
 };
 
 export const SPEND_LIMIT_UPDATED_EVENT = "lnkdrp:spend-limit-updated";
@@ -136,6 +139,7 @@ function SpendLimitModuleInner({
   const spendUsedCents = typeof data?.onDemandUsedCentsThisCycle === "number" ? data.onDemandUsedCentsThisCycle : 0;
   const serverCanEdit = typeof data?.canEdit === "boolean" ? data.canEdit : true;
   const editDisabledReason = typeof data?.editDisabledReason === "string" ? data.editDisabledReason : null;
+  const needsCard = data?.needsCard === true;
 
   const isUnlimited = spendLimitCents >= UNLIMITED_LIMIT_CENTS;
   const limitLabel = spendLimitCents === 0 ? "Disabled" : isUnlimited ? "Unlimited" : formatUsdFromCents(spendLimitCents);
@@ -283,6 +287,17 @@ function SpendLimitModuleInner({
       <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]" aria-hidden="true">
         <div className="h-2 rounded-full bg-[var(--fg)]" style={{ width: `${Math.round(progress * 100)}%`, opacity: 0.55 }} />
       </div>
+
+      {needsCard ? (
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Link
+            href="/credits"
+            className="inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)]"
+          >
+            Add more credits
+          </Link>
+        </div>
+      ) : null}
 
       {error ? (
         <Alert variant="error" className="mt-3 text-[12px]">

@@ -23,6 +23,7 @@ import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance
 import { grantCycleIncludedCredits, buildCycleKey } from "@/lib/credits/grants";
 import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
 import { requeueSkippedSummaries } from "@/lib/credits/summaryRequeue";
+import { grantCreditPack } from "@/lib/credits/purchases";
 import {
   PAYG_DEFAULT_SPEND_LIMIT_CENTS,
   isBillableStatus,
@@ -132,6 +133,37 @@ async function activatePayAsYouGo(params: { orgId: Types.ObjectId; eventId: stri
   }
 }
 
+/** Grant a paid credit pack to the workspace named in the Checkout metadata, then re-run skipped summaries. */
+async function handleCreditPackCheckout(session: Stripe.Checkout.Session, eventId: string): Promise<void> {
+  if (session.payment_status !== "paid") {
+    debugLog(1, "[stripe:webhook] credit pack checkout not paid yet", { id: eventId, session: session.id, status: session.payment_status });
+    return;
+  }
+  const orgId = orgIdFromSession(session);
+  if (!orgId || !Types.ObjectId.isValid(orgId)) throw new Error(`credit pack checkout ${session.id} has no orgId`);
+  const result = await grantCreditPack({
+    orgId,
+    userId: typeof session.metadata?.userId === "string" ? session.metadata.userId : null,
+    packId: String(session.metadata?.packId ?? ""),
+    checkoutSessionId: session.id,
+    paymentIntentId: asIdString(session.payment_intent) || null,
+    // Subtotal, not total: tax (if Stripe Tax is ever turned on) must not make a real payment
+    // look like a price mismatch and fail every retry.
+    amountCents: typeof session.amount_subtotal === "number" ? session.amount_subtotal : -1,
+    expectedCents: Number(session.metadata?.priceCents) || null,
+    currency: String(session.currency ?? ""),
+    purchasedAt: new Date((typeof session.created === "number" ? session.created : Math.floor(Date.now() / 1000)) * 1000),
+  });
+  debugLog(1, "[stripe:webhook] credit pack granted", { id: eventId, orgId, credits: result.credits, alreadyGranted: result.alreadyGranted });
+  if (result.alreadyGranted) return;
+  try {
+    const { queued } = await requeueSkippedSummaries({ orgId, origin: appUrl() });
+    debugLog(1, "[stripe:webhook] credit pack → skipped summaries re-queued", { id: eventId, orgId, queued });
+  } catch (e) {
+    debugLog(2, "[stripe:webhook] summary re-queue failed (non-fatal)", { message: e instanceof Error ? e.message : String(e) });
+  }
+}
+
 function parseUnixSecondsToDate(v: unknown): Date | null {
   // Stripe timestamps are usually unix seconds (number), but API versions/clients may serialize as strings.
   if (typeof v === "number" && Number.isFinite(v)) return new Date(v * 1000);
@@ -215,6 +247,19 @@ async function disableOnDemandForSubscription(params: {
  * `processedAt=null` and the retry re-runs this function.
  */
 async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<void> {
+  // Credit packs are one-time payments, not subscriptions. `completed` arrives with
+  // `payment_status: "paid"` for cards; a delayed method (a bank debit) completes unpaid and is
+  // granted when `async_payment_succeeded` follows. Either event may arrive twice; the grant is
+  // idempotent per Checkout session.
+  if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    if (session.mode === "payment" && session.metadata?.kind === "credit_pack") {
+      await handleCreditPackCheckout(session, event.id);
+      return;
+    }
+    if (event.type === "checkout.session.async_payment_succeeded") return;
+  }
+
   if (event.type === "checkout.session.completed") {
     const session = event.data.object as Stripe.Checkout.Session;
     const orgIdRaw = orgIdFromSession(session);

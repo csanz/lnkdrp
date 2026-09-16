@@ -5,7 +5,7 @@
  * then manage billing via Stripe's customer portal. Plan details link out to `/pricing` so the comparison
  * has a single source of truth. The Free panel shows live usage meters from `GET /api/plan` (links,
  * projects, analytics window, members) and notes that AI summaries, version history and AI compare run on credits;
- * credits exist on both plans (Free starts with a one-time starter grant, then pay-as-you-go or Pro) and live
+ * credits exist on both plans (Free starts with a one-time starter grant, then credit packs or Pro) and live
  * in the Credits card on the Usage tab, so this card never reads the credits snapshot.
  */
 "use client";
@@ -287,6 +287,14 @@ export default function SubscriptionCard() {
                 >
                   {upgradeBusy ? "Opening…" : "Upgrade to Pro"}
                 </button>
+                {FEATURE_CREDITS_ENABLED ? (
+                  <Link
+                    href="/credits"
+                    className="w-full whitespace-normal rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] md:w-auto"
+                  >
+                    Add more credits
+                  </Link>
+                ) : null}
                 <Link
                   href="/pricing"
                   className="w-full whitespace-normal rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] md:w-auto"

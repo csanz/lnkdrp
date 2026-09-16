@@ -7,6 +7,7 @@
  * session flag so the sidebar can nudge once a limit has been hit.
  */
 import { UPSELL_COPY, upsellKeyForLimit } from "@/lib/client/upsellCopy";
+import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 
 /**
  * Which Free-plan limit was hit. Mirrors `LimitKey` in `src/lib/billing/planLimits.ts`.
@@ -60,8 +61,11 @@ export const CREDITS_COPY = {
  * surrounding copy rather than a pasted disclaimer.
  */
 export function whatHappensAfterFreeCredits(): string {
-  return `add pay-as-you-go at ${CREDITS_COPY.perCreditUsd}/credit, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included`;
+  return `buy a credit pack from ${formatPackPrice(CHEAPEST_PACK.priceCents)}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included`;
 }
+
+/** The smallest pack, for "from $5" copy. */
+const CHEAPEST_PACK = CREDIT_PACKS.reduce((min, p) => (p.priceCents < min.priceCents ? p : min));
 
 /**
  * Launch flag: credit surfaces (dashboard credits pill, Usage/Limits cards, spend-limit editor) are on

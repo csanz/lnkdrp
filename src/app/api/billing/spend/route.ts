@@ -104,7 +104,7 @@ export async function GET(request: Request) {
       const roleAllowsEdit = role === "owner" || role === "admin";
       const canEdit = billable && roleAllowsEdit;
       const editDisabledReason = !billable
-        ? "On-demand credits need a card on file: add pay-as-you-go or upgrade to Pro."
+        ? "On-demand usage comes with Pro. On any plan, you can buy a credit pack instead."
         : !roleAllowsEdit
           ? "Only workspace owners/admins can edit limits."
           : null;
@@ -185,6 +185,8 @@ export async function GET(request: Request) {
         onDemandUsedCentsThisCycle: usedCents,
         canEdit,
         editDisabledReason,
+        /** No billable subscription: the UI links to credit packs instead of an inert editor. */
+        needsCard: !billable,
       };
 
       billingSpendCache.set(cacheKey, { at: Date.now(), payload });
@@ -237,7 +239,7 @@ export async function POST(request: Request) {
       const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1, kind: 1 }).lean();
       if (!isBillableSubscription(sub as { status?: unknown; kind?: unknown } | null)) {
         return NextResponse.json(
-          { error: "On-demand credits need a card on file: add pay-as-you-go or upgrade to Pro." },
+          { error: "On-demand usage comes with Pro. On any plan, you can buy a credit pack instead." },
           { status: 403 },
         );
       }

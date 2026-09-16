@@ -165,21 +165,22 @@ export default function TermsOfServicePage() {
               <strong>Pro:</strong> unlimited share links and projects, deep analytics with full history, a version list recipients can browse, and collaborators. One collaborator is included; additional collaborators are available on request. Collaborators are people; software agents acting under a collaborator's account never take a seat.
             </p>
             <p className="mb-4 leading-7">
-              <strong>AI features and credits:</strong> AI features are metered in credits. Links, uploads, replacements, and stats never need credits. The automatic summary written for every upload costs one credit. It costs nothing when your own AI agent writes the summary through our MCP server or API, and for files that recipients upload through a request or replace link. AI compare costs more, by level, and every cost is listed on the pricing page before it runs. Pro workspaces receive 300 credits each billing cycle, which do not roll over, and can buy more on demand at $0.10 per credit under a spend limit you set. Personal Free workspaces receive 50 starter credits, once, and can use at most 15 credits a day; team workspaces on Free receive no credit allowance. Once a personal Free workspace's starter credits are used, it may add a payment method to buy credits on demand at $0.10 per credit under a spend limit you set, or upgrade to Pro. When a workspace is out of credits, uploads still complete and links, tracking, and stats keep working; the AI summary is skipped and can be written later from the document page, and AI compare and other AI actions stop until credits are added or the workspace upgrades. We will not raise the credit cost of a feature without notice.
+              <strong>AI features and credits:</strong> AI features are metered in credits. Links, uploads, replacements, and stats never need credits. The automatic summary written for every upload costs one credit. It costs nothing when your own AI agent writes the summary through our MCP server or API, and for files that recipients upload through a request or replace link. AI compare costs more, by level, and every cost is listed on the pricing page before it runs. Pro workspaces receive 300 credits each billing cycle, which do not roll over, and can buy more on demand at $0.10 per credit under a spend limit you set. Personal Free workspaces receive 50 starter credits, once, and can use at most 15 credits a day; team workspaces on Free receive no credit allowance. Any workspace may buy prepaid credit packs (30 credits for $5, 60 for $9, or 300 for $39); purchased credits are used after any starter or included credits, expire 12 months after purchase, and lift the Free daily limit for that workspace. A personal Free workspace whose starter credits are used may buy a pack or upgrade to Pro. When a workspace is out of credits, uploads still complete and links, tracking, and stats keep working; the AI summary is skipped and can be written later from the document page, and AI compare and other AI actions stop until credits are added or the workspace upgrades. We will not raise the credit cost of a feature without notice.
             </p>
             <p className="mb-4 leading-7">
               <strong>Pricing change, effective September 13, 2026:</strong> the automatic AI summary costs one credit. It was previously included. Starter credits already granted before that date are kept in full.
             </p>
             <p className="mb-4 leading-7">
               <strong>Pricing change, effective September 16, 2026:</strong> personal Free workspaces no longer receive a
-              monthly top-up to 10 credits; the 50 starter credits are one time. On-demand credits, previously a Pro-only
-              option, are now available to any personal Free workspace that adds a payment method.
+              monthly top-up to 10 credits; the 50 starter credits are one time. Workspaces can buy prepaid credit packs,
+              whose credits expire 12 months after purchase.
             </p>
             <p className="mb-4 leading-7">
-              If you purchase a Pro subscription or on-demand credits:
+              If you purchase a Pro subscription, on-demand credits, or a credit pack:
             </p>
             <ul className="mb-4 ml-6 list-disc space-y-2 leading-7">
               <li>Subscription fees are billed monthly in advance; on-demand credits are billed at the end of each billing period based on usage</li>
+              <li>Credit packs are charged once, when you buy them; unused purchased credits expire 12 months after purchase</li>
               <li>All fees are non-refundable except as required by law</li>
               <li>We reserve the right to change prices and plan limits with 30 days' notice</li>
               <li>Your subscription will automatically renew unless cancelled before the renewal date</li>

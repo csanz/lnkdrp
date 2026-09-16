@@ -15,6 +15,7 @@ import { signIn, useSession } from "next-auth/react";
 import { useAuthEnabled } from "@/app/providers";
 import { openBillingPortal, startCheckout } from "@/lib/billing/clientActions";
 import { cn } from "@/lib/cn";
+import Spinner from "@/components/ui/Spinner";
 
 type Plan = "free" | "pro";
 
@@ -63,7 +64,7 @@ function SignedOutCta({ plan, variant, helper }: Required<Props>) {
     <>
       <button
         type="button"
-        className={cn(BASE, VARIANT[variant])}
+        className={cn("relative", BASE, VARIANT[variant])}
         disabled={busy}
         aria-busy={busy}
         onClick={() => {
@@ -72,7 +73,13 @@ function SignedOutCta({ plan, variant, helper }: Required<Props>) {
           void signIn("google", { callbackUrl: plan === "pro" ? "/pricing" : "/" });
         }}
       >
-        {busy ? "Opening Google…" : label}
+        {/* Label kept in place under the spinner so the button never resizes; no provider named. */}
+        <span className={busy ? "invisible" : ""}>{label}</span>
+        {busy ? (
+          <span className="absolute inset-0 grid place-items-center">
+            <Spinner className="h-4 w-4" label="Signing in" />
+          </span>
+        ) : null}
       </button>
       <p className={cn("mt-3 min-h-[2.75rem] text-center text-[11px] leading-[1.4]", HELPER[variant])}>{helper}</p>
     </>

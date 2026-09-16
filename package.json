@@ -42,7 +42,8 @@
     "tests:benchmark": "tsx scripts/tests-benchmark.ts",
     "verify:analytics": "tsx --env-file=.env.local scripts/verify-share-analytics.ts",
     "sharelinks:analytics-backfill": "tsx --env-file=.env.local scripts/sharelinks-analytics-backfill.ts",
-    "cron:analytics-reconcile": "tsx --env-file=.env.local scripts/cron/cron.analytics-reconcile.ts"
+    "cron:analytics-reconcile": "tsx --env-file=.env.local scripts/cron/cron.analytics-reconcile.ts",
+    "cron:credits-purchase-expiry": "tsx --env-file=.env.local scripts/cron/cron.credits-purchase-expiry.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.0",

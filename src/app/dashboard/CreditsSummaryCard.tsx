@@ -11,16 +11,14 @@ import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Alert from "@/components/ui/Alert";
-import Button from "@/components/ui/Button";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
-import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
 import { CREDITS_COPY, FEATURE_CREDITS_ENABLED, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
-import { startCheckout } from "@/lib/billing/clientActions";
+import { CREDIT_PACKS, PURCHASED_CREDITS_EXPIRY_MONTHS, formatPackPrice } from "@/lib/credits/packs";
 
 type CreditsSnapshot = {
   ok: true;
@@ -47,6 +45,12 @@ export default function CreditsSummaryCard(props: { headerRightSlot?: ReactNode 
   return <CreditsSummaryCardInner {...props} />;
 }
 
+const PRIMARY_LINK =
+  "inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)]";
+const SECONDARY =
+  "inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]";
+const CHEAPEST_PACK_PRICE = formatPackPrice(Math.min(...CREDIT_PACKS.map((p) => p.priceCents)));
+
 /** Credits summary body: remaining / included / extra / used tiles plus the out-of-credits prompt. */
 function CreditsSummaryCardInner({
   headerRightSlot,
@@ -57,21 +61,7 @@ function CreditsSummaryCardInner({
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<CreditsSnapshot | null>(null);
   const [plan, setPlan] = useState<PlanState>(null);
-  const [paygBusy, setPaygBusy] = useState(false);
-  const [paygError, setPaygError] = useState<string | null>(null);
   const { openUpgrade } = useUpgradeModal();
-
-  async function addPayAsYouGo() {
-    setPaygError(null);
-    setPaygBusy(true);
-    try {
-      await startCheckout("payg");
-      // startCheckout navigates away on success; if it returns, nothing to clean up.
-    } catch (e) {
-      setPaygError(e instanceof Error ? e.message : "Could not start checkout");
-      setPaygBusy(false);
-    }
-  }
 
   // The plan picks the labels (starter grant vs monthly allowance). A failed read falls back to the
   // Pro labels ("unknown") rather than hiding a workspace's balance.
@@ -231,59 +221,41 @@ function CreditsSummaryCardInner({
         </div>
       ) : null}
 
+      {/* A way to get more credits at any balance, not only once they are gone (the out-of-credits
+          box below takes over at zero). */}
+      {creditsRemaining !== 0 ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+          <div className="min-w-0 text-[12px] text-[var(--muted-2)]">
+            <span className="font-semibold text-[var(--fg)]">Need more credits?</span> Buy a pack from {CHEAPEST_PACK_PRICE},
+            used after your {isFree ? "starter" : "included"} credits and valid for {PURCHASED_CREDITS_EXPIRY_MONTHS} months.
+          </div>
+          <Link href="/credits" className={PRIMARY_LINK}>
+            Add more credits
+          </Link>
+        </div>
+      ) : null}
+
       {creditsRemaining === 0 ? (
         <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
           <div className="text-[12px] font-semibold text-[var(--fg)]">Out of credits</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             {isFree
-              ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Add pay-as-you-go at ${CREDITS_COPY.perCreditUsd}/credit, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included and AI compare on every replacement.`
-              : "You’ve used all available credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. AI compare is unavailable until credits reset or you enable on-demand."}
+              ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Buy a credit pack from ${CHEAPEST_PACK_PRICE}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included and AI compare on every replacement.`
+              : "You’ve used all available credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. AI compare is unavailable until credits reset, you buy a credit pack, or you enable on-demand."}
           </div>
-          {paygError ? (
-            <Alert variant="error" className="mt-2 text-[12px]">
-              {paygError}
-            </Alert>
-          ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Link href="/credits" className={PRIMARY_LINK}>
+              Add more credits
+            </Link>
             {isFree ? (
-              <>
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)] disabled:opacity-60"
-                  disabled={paygBusy}
-                  onClick={() => void addPayAsYouGo()}
-                >
-                  {paygBusy ? "Starting…" : `Add pay-as-you-go (${CREDITS_COPY.perCreditUsd}/credit)`}
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
-                  onClick={() => openUpgrade("credits")}
-                >
-                  Upgrade to Pro
-                </button>
-              </>
+              <button type="button" className={SECONDARY} onClick={() => openUpgrade("credits")}>
+                Upgrade to Pro
+              </button>
             ) : (
-              <Link
-                href="/dashboard/limits"
-                className="inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)]"
-              >
+              <Link href="/dashboard/limits" className={SECONDARY}>
                 {onDemandEnabled ? "Increase limit" : "Manage credits"}
               </Link>
             )}
-            <Button
-              variant="outline"
-              className="text-[12px]"
-              onClick={() => {
-                try {
-                  dispatchOutOfCredits();
-                } catch {
-                  // ignore
-                }
-              }}
-            >
-              Show modal
-            </Button>
           </div>
         </div>
       ) : null}

@@ -6,10 +6,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
+import { PAYG_DEFAULT_SPEND_LIMIT_CENTS } from "@/lib/billing/subscriptionState";
+import { CREDITS_COPY } from "@/lib/client/planLimit";
+import { formatUsdFromCents } from "@/lib/format/money";
 
 type BillingStatus = {
   org?: { id: string; name: string | null; avatarUrl?: string | null };
   plan?: string;
+  /** Free workspace whose pay-as-you-go subscription is billable; the plan stays "free". */
+  payg?: boolean;
   stripeSubscriptionStatus?: string | null;
   stripeCurrentPeriodEnd?: string | null;
   error?: string;
@@ -81,10 +86,12 @@ export default function SuccessClient(props: { sessionId?: string; demo?: string
         const json = (await res.json().catch(() => null)) as BillingStatus | null;
         if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
         const plan = typeof json?.plan === "string" ? json.plan.trim() : "free";
+        // Pay-as-you-go checkout never makes the plan "pro"; its own flag is what confirms it.
+        const done = plan === "pro" || json?.payg === true;
         if (!cancelled) {
-          setState({ phase: plan === "pro" ? "active" : "processing", status: json });
+          setState({ phase: done ? "active" : "processing", status: json });
         }
-        return plan === "pro";
+        return done;
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to load billing status";
         if (!cancelled) setState({ phase: "error", status: null, message: msg });
@@ -111,14 +118,20 @@ export default function SuccessClient(props: { sessionId?: string; demo?: string
     };
   }, [demo]);
 
+  const paygActive = state.phase === "active" && state.status?.plan !== "pro" && state.status?.payg === true;
+
   const headline = useMemo(() => {
+    if (paygActive) return "Pay-as-you-go active";
     if (state.phase === "active") return "Pro active";
     if (state.phase === "timeout") return "Still processing…";
     if (state.phase === "error") return "Something went wrong";
     return "Processing payment…";
-  }, [state.phase]);
+  }, [state.phase, paygActive]);
 
   const detail = useMemo(() => {
+    if (paygActive) {
+      return `Your card is on file. Once your credits run out, AI features keep working at ${CREDITS_COPY.perCreditUsd} per credit, billed monthly for what you use, up to ${formatUsdFromCents(PAYG_DEFAULT_SPEND_LIMIT_CENTS)} a month. Change that limit any time in Limits.`;
+    }
     if (state.phase === "active") {
       const end = state.status?.stripeCurrentPeriodEnd;
       const status = (state.status?.stripeSubscriptionStatus ?? "").trim();
@@ -135,7 +148,7 @@ export default function SuccessClient(props: { sessionId?: string; demo?: string
       return state.message || "Failed to confirm your subscription.";
     }
     return "Do not close this page — we’re waiting for Stripe to confirm your subscription.";
-  }, [state.phase, state.status, state.message]);
+  }, [state.phase, state.status, state.message, paygActive]);
 
   return (
     <div className="rounded-2xl bg-[var(--panel)] p-10">

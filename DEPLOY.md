@@ -26,7 +26,7 @@ you read after launch and what is deliberately not done.
 
 - [ ] Atlas: cluster in **us-east-1**, database user, network access, URI **with `/lnkdrp` in the
       path**, Cloud Backup + point-in-time ON, then run the migrations (4.1).
-- [ ] Stripe live: Pro $29 price · `ai_credits` meter · $0.10 metered price · webhook with the six
+- [ ] Stripe live: Pro $29 price · `ai_credits` meter · $0.10 metered price · webhook with the seven
       events and its signing secret · portal saved · revenue recovery on. Then verify both price
       ids with the live key (4.2 step 9) — nothing in the code checks them.
 - [ ] Google OAuth: client with the exact callback URI; consent screen External and **In
@@ -45,9 +45,9 @@ you read after launch and what is deliberately not done.
 - [ ] Deployment Protection **off** for the production domain, or summary reruns silently never
       start (5 step 5).
 - [ ] Deploy (5 step 6).
-- [ ] **Cron jobs.** Nothing to configure by hand: `vercel.json` registers all eight on deploy, and
+- [ ] **Cron jobs.** Nothing to configure by hand: `vercel.json` registers all nine on deploy, and
       Vercel sends `CRON_SECRET` from the env as the bearer. Confirm Vercel → Settings → Cron Jobs
-      lists exactly these eight (5.1 has flags and leases):
+      lists exactly these nine (5.1 has flags and leases):
 
       | Job | UTC schedule | What it does |
       |---|---|---|
@@ -59,9 +59,10 @@ you read after launch and what is deliberately not done.
       | `doc-metrics` | every 6 h | per-document metric snapshots |
       | `stripe-credits-reconcile` | every 6 h :15 | syncs Stripe periods onto subscriptions, backstops cycle grants |
       | `analytics-reconcile` | daily 03:50 | repairs link counter drift; reports page-time overruns as `error` |
+      | `credits-purchase-expiry` | daily 04:05 | takes back unspent credit-pack credits 12 months after purchase |
 
-      Vercel **Pro is mandatory** — seven of the eight run more than once a day and Hobby rejects
-      the file. Not on Vercel Cron? Schedule the same eight with the crontab in 5.1 from one
+      Vercel **Pro is mandatory** — seven of the nine run more than once a day and Hobby rejects
+      the file. Not on Vercel Cron? Schedule the same nine with the crontab in 5.1 from one
       always-on host; never two schedulers. The realtime and MCP services have no scheduled work.
 - [ ] Existing database only: snapshot, then the nine one-time data jobs in order (5.2). A fresh
       database needs nothing beyond the migrations.
@@ -103,7 +104,7 @@ you read after launch and what is deliberately not done.
 ```
                      ┌──────────────────────────────────────────────┐
   browser / agent ─▶ │  lnkdrp.com  · Next.js on Vercel             │ ─▶ MongoDB Atlas (replica set)
-                     │  web app + REST API + 8 cron routes          │ ─▶ Vercel Blob (PDF storage), Resend (email)
+                     │  web app + REST API + 9 cron routes          │ ─▶ Vercel Blob (PDF storage), Resend (email)
                      └───────────────┬──────────────────────────────┘ ─▶ OpenAI (summary, AI compare)
                                      │ REST with the caller's lnk_ key  ─▶ Stripe (Pro + on-demand credits)
                                      │                                  ─▶ Google OAuth (sign-in)
@@ -221,7 +222,10 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
 4. Webhook endpoint `https://lnkdrp.com/api/stripe/webhook` with these events:
    `checkout.session.completed`, `customer.subscription.created`,
    `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`,
-   `invoice.payment_failed`. Copy the signing secret to `STRIPE_WEBHOOK_SECRET`.
+   `invoice.payment_failed`, `checkout.session.async_payment_succeeded`. Copy the signing secret
+   to `STRIPE_WEBHOOK_SECRET`. The last one only matters for credit packs paid with a delayed
+   method (a bank debit): without it such a payment succeeds in Stripe and the credits never
+   arrive. Card payments are granted from `checkout.session.completed`.
 5. Customer portal (live mode): enable cancel, payment-method update and invoice history. Turn
    **off** subscription updates (switch plans, change quantity): the app sells one Pro seat at
    quantity 1 and ignores quantity, so a change only raises the bill. Click Save once; until the
@@ -249,8 +253,7 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
    old event does nothing, the webhook skips events it already processed. Pay-as-you-go has no
    fallback the way Pro does: without this price there is nothing to sell, and
    `POST /api/stripe/checkout { plan: "payg" }` refuses with 400 rather than silently doing
-   nothing — Free's "Add pay-as-you-go" button (dashboard Credits card, at zero credits) surfaces
-   that error to the owner directly.
+   nothing. No button in the app starts that checkout any more (credit packs replaced it; 12).
 9. Before the first production deploy, check both ids with the live key:
    ```
    curl -s https://api.stripe.com/v1/prices/$STRIPE_PRICE_ID -u "$STRIPE_SECRET_KEY:"
@@ -261,6 +264,15 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
    of the meter whose `event_name` is `ai_credits`. The code checks neither: a sandbox id fails
    only when a customer clicks Upgrade, and a price on another meter accepts usage that never
    reaches an invoice.
+
+**Credit packs** (`/credits`: 30 credits $5, 60 $9, 300 $39) need nothing in the Stripe catalog and
+no env var. Checkout is created with inline `price_data` from `src/lib/credits/packs.ts`, so the
+same code sells them in sandbox and live; changing a price is a code change and a deploy. The
+webhook grants the credits once per Checkout session (`creditpurchases`, unique on the session
+id) after checking the paid subtotal against the price recorded on that Checkout. Purchased
+credits are spent after starter and included credits, lift the Free daily cap for that workspace,
+and expire 12 months after purchase (`credits-purchase-expiry`, 5.1). Stripe's receipt email is the
+buyer's record: turn on "Successful payments" under Settings → Customer emails in live mode.
 
 Keep the sandbox for the preview environment (5.3); never point a preview at live keys.
 
@@ -349,7 +361,7 @@ to the owner on a download request, the approval link to the requester, doc-upda
 | `MONGODB_DB_NAME` | leave unset. The realtime server ignores it and takes the database from the URI path. A URI without `/lnkdrp` plus this variable makes realtime watch another database: sockets connect, `/healthz` is ok, and no live events arrive |
 | `BLOB_BASE_URL` | optional; the store host is derived from `BLOB_READ_WRITE_TOKEN`. Production refuses blob URLs from any other store when neither identifies it |
 | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | optional; leave unset. They apply only when both are set; one alone is ignored and both redirects come from `NEXT_PUBLIC_APP_URL` |
-| `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it — including the only button that starts a pay-as-you-go checkout, so a Free workspace with credits gone has no UI path to add more, only Upgrade |
+| `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it — including every "Add more credits" button, so the only way to `/credits` is typing the URL |
 | other `ERROR_LOGGING_*` | optional; see `docs/ERROR_LOGGING.md` |
 
 `NEXT_PUBLIC_*` values are inlined at build time into the browser bundle and the server routes
@@ -377,16 +389,17 @@ it through a tunnel that rewrites the host header (for example `ngrok --host-hea
 and never serve staging from `next dev`. `ADMIN_LOCALHOST_BYPASS=0` turns it off in development
 when you need the real gate.
 
-4. Crons come from `vercel.json`; see 5.1. **Vercel Pro is required** because seven of the eight
+4. Crons come from `vercel.json`; see 5.1. **Vercel Pro is required** because seven of the nine
    jobs run more than once a day (`notification-emails` every 5 minutes). PDF processing, URL
-   import, uploads, compare reruns and all eight cron routes declare `maxDuration = 300`.
+   import, uploads, compare reruns and all nine cron routes declare `maxDuration = 300`.
    Processing continues in `after()` inside that same 300 s budget, so a deck that cannot be
    processed in 5 minutes fails on any plan unless `maxDuration` is raised (Pro with Fluid compute
    allows up to 800 s).
 5. Deployment Protection: keep **Vercel Authentication off for the production domain**. The app
    calls its own `/api/uploads/:id/process` from the server: a summary-only rerun (the doc page's
-   "Write summary" action) and a batch of them when a Free workspace's pay-as-you-go subscription
-   becomes billable, re-running whatever was skipped for want of credits (from the Stripe webhook,
+   "Write summary" action) and a batch of them when a workspace buys a credit pack (or a Free
+   workspace's pay-as-you-go subscription becomes billable), re-running whatever was skipped for
+   want of credits (from the Stripe webhook,
    not a cron — nothing here is cron-triggered any more). A protected deployment answers both with
    a login page and the reruns silently never start. Protection on previews is fine; neither
    feature works there.
@@ -408,6 +421,7 @@ one `cron:<job>` npm script, and `tests/lib/cronMap.test.ts` fails when they dri
 | `notification-emails` | `*/5 * * * *` | yes | yes |
 | `plan-limits` | `40 * * * *` | yes | yes |
 | `analytics-reconcile` | `50 3 * * *` | yes | no |
+| `credits-purchase-expiry` | `5 4 * * *` | ignored | no |
 
 Never pass `--dry-run` to a job marked "ignored" expecting a preview: the runner still adds
 `?dryRun=1`, the route ignores it and does the real work, including Stripe meter events and credit
@@ -416,7 +430,7 @@ grants.
 - **Production:** Vercel Cron calls `GET /api/cron/<job>` with `Authorization: Bearer $CRON_SECRET`
   on the schedule. Every route records a `CronHealth` row and accepts `POST` as well. The four
   jobs marked "Lease" hold a Mongo lease (6 minutes) and answer `{ skipped: "locked" }` while
-  another run holds it. The other four have no lease but are idempotent, so a double run repeats
+  another run holds it. The other five have no lease but are idempotent, so a double run repeats
   work without double-granting or double-sending.
 - **By hand, any environment:** from a checkout,
   `CRON_SECRET='…' npx tsx scripts/cron/cron.<job>.ts --target=https://lnkdrp.com` (add
@@ -440,6 +454,7 @@ grants.
   */5 * * * *  curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/notification-emails
   40 * * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/plan-limits
   50 3 * * *   curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/analytics-reconcile
+  5 4 * * *    curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/cron/credits-purchase-expiry
   ```
   `scripts/cron/README.md` leaves `analytics-reconcile` out of its crontab, and its lines need
   `.env.local`; use this list. Keep the schedules identical to `vercel.json` and run one scheduler
@@ -508,6 +523,7 @@ const want = {
   subscriptions: ["orgId_1"],
   apikeys: ["keyHash_1"],
   cronhealths: ["jobKey_1"],
+  creditpurchases: ["stripeCheckoutSessionId_1"],
   orgs: ["personalForUserId_1", "slug_1"],
   orgmemberships: ["orgId_1_userId_1"],
   users: ["email_1"],
@@ -739,20 +755,18 @@ Run in this order; each step depends on the previous.
     delivery log shows `checkout.session.completed` handled. The subscription must show two items,
     Pro and On-demand AI credits; only Pro means `STRIPE_AI_CREDITS_PRICE_ID` was missing on that
     deployment (4.2 step 8). Cancel it from the portal and refund the charge in the Stripe
-    dashboard. Then, on a second Free account (checkout refuses a second subscription on a
-    workspace that already has one, whichever kind): from the dashboard Credits card, once at
-    zero credits, "Add pay-as-you-go" with a real card. The subscription shows one item only (no
-    Pro price), on-demand comes on with a default $10 limit without visiting Limits, and
-    `/api/billing/status` reads `plan: "free", payg: true`. Cancel from the portal; the
-    subscription itself is $0, so there is nothing to refund unless the test also spent a credit.
+    dashboard. Then, on a Free account, open "Add more credits" from the dashboard and buy the
+    30-credit pack with a real card: the page shows "30 credits added"
+    within a few seconds, the sidebar credits go up by 30, and `creditpurchases` holds one row for
+    that session. Refund it in the Stripe dashboard (the credits stay; see 12).
 11. Email: request a download on a link with downloads off, from a private window; the owner
     receives the notice from `NOTIFICATION_EMAIL_FROM` in the inbox, not spam.
 12. Recreate `prod.env`, run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts`
     against production (read-only), and delete the file again.
 13. Revoke the test key from `/connect`; the sidebar returns to Not connected.
-14. Vercel → Settings → Cron Jobs lists 8 jobs. An hour after the deploy, open `/a/cron-health` as
+14. Vercel → Settings → Cron Jobs lists 9 jobs. An hour after the deploy, open `/a/cron-health` as
     an admin (5.5): every hourly job has a `lastRunAt` within the hour and status `ok`. The next
-    morning all eight are `ok`, including `analytics-reconcile` after 03:50 UTC — and
+    morning all nine are `ok`, including `analytics-reconcile` after 03:50 UTC and `credits-purchase-expiry` after 04:05 — and
     `curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CRON_SECRET" https://lnkdrp.com/api/monitor/crons`
     answers 200. Point the uptime monitor at it then, not before (11, Crons).
 
@@ -962,12 +976,15 @@ signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `Pdf
   outbound IP (allocate one with `fly ips allocate-egress -a lnkdrp-mcp -r iad`), because every
   agent's REST call leaves from that one address. Nothing collects temp workspaces once created:
   watch the count of `users` with `isTemp: true` and write a reaper if it grows.
-- **Resolved 2026-09-16**, previously listed here as a gap: Free workspaces can now buy on-demand
-  credits directly (pay-as-you-go, 4.2 step 3); the monthly top-up this used to describe is gone.
-- The Limits page (`/dashboard/limits`, `SpendLimitModule`) is the one on-demand surface with no
-  path to *start* pay-as-you-go: a Free workspace with no subscription yet sees an accurate but
-  inert "add pay-as-you-go or upgrade to Pro" message with nothing to click. The only live
-  entry point today is the Credits card's "Add pay-as-you-go" button, and only once credits hit
-  zero. Product call, not a deploy blocker: add the same button to the Limits page, or leave
-  pay-as-you-go reachable only from the moment it becomes relevant.
+- **Resolved 2026-09-16**, previously listed here as a gap: Free workspaces can buy more credits
+  directly (credit packs at `/credits`, 4.2); the monthly top-up this used to describe is gone.
+- **Refunds and disputes don't take credit-pack credits back.** A refund issued in Stripe, or a
+  chargeback, leaves the purchased credits in the workspace; nothing handles `charge.refunded` or
+  `charge.dispute.created`. Remove them by hand from `/a/credits` when you refund. Decide before
+  selling packs at volume whether refunds should claw credits back automatically.
+- **Pay-as-you-go for Free has no UI entry point any more.** Credit packs replaced it
+  (2026-09-16); every "add more credits" button goes to `/credits`. The backend is still intact
+  (`POST /api/stripe/checkout { plan: "payg" }`, the webhook's payg handling, the Limits editor
+  for an existing payg subscription), so any workspace that already bought it keeps working. Remove
+  it once none are left, or bring back an entry point.
 - If production starts from an existing database, run the one-time data jobs in 5.2.
