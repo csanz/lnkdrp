@@ -52,7 +52,7 @@ you read after launch and what is deliberately not done.
       | Job | UTC schedule | What it does |
       |---|---|---|
       | `notification-emails` | every 5 min | doc-update emails and daily digests, download-request mail |
-      | `credits-cycle-reconcile` | hourly :10 | credit cycle grants, Free monthly floor top-up, re-queues skipped summaries |
+      | `credits-cycle-reconcile` | hourly :10 | Pro credit cycle grants (backstop; the webhook is primary) |
       | `usage-agg-reconcile` | hourly :20 | rebuilds usage aggregates from the credit ledger |
       | `stripe-credits-report` | hourly :30 | sends on-demand credit usage to the Stripe meter — **this is billing** |
       | `plan-limits` | hourly :40 | Free grace period: start, day-7/day-12 reminders, block, clear |
@@ -210,9 +210,14 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
 2. Billing Meter **AI credits (on-demand)**: event name `ai_credits`, aggregation sum, customer
    mapped by `stripe_customer_id`, value key `value`.
 3. Product **On-demand AI credits** with one metered monthly price at $0.10 per unit on that
-   meter, unit label `credit`. Metadata `type=ai_credits`. This price is attached to every Pro
-   subscription at checkout; the app reports one meter unit per credit only when a workspace has
-   turned on-demand on.
+   meter, unit label `credit`. Metadata `type=ai_credits`. This one price backs two things: it is
+   attached to every Pro subscription at checkout (on-demand overage, off by default), and it is
+   the *entire* subscription for a Free workspace's pay-as-you-go checkout (`POST
+   /api/stripe/checkout { plan: "payg" }`) — a $0 subscription whose only job is a card on file and
+   something for the meter to bill against. Nothing else in Stripe needs configuring for
+   pay-as-you-go; it is this same price, reused. The app reports one meter unit per credit only
+   when a workspace has turned on-demand on (automatic the moment a payg subscription becomes
+   billable; a Pro owner turns it on from Limits).
 4. Webhook endpoint `https://lnkdrp.com/api/stripe/webhook` with these events:
    `checkout.session.completed`, `customer.subscription.created`,
    `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`,
@@ -222,11 +227,16 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
    quantity 1 and ignores quantity, so a change only raises the bill. Click Save once; until the
    live configuration is saved, `/api/stripe/portal` returns 400 and Manage subscription fails.
    The app sets the return URL on every session (`NEXT_PUBLIC_APP_URL` + `/dashboard?tab=overview`).
+   The same portal serves a Free workspace's pay-as-you-go subscription too — it is looked up by
+   `stripeCustomerId` alone, with no branch on what the subscription is for.
 6. Revenue recovery (Billing settings, live mode): turn on Smart Retries and the failed-payment
-   email, and cancel the subscription after the last retry. The app treats only `active` and
-   `trialing` as Pro. A failed renewal moves the subscription to `past_due`, which drops the
-   workspace to Free limits and turns on-demand off at once. It returns to Pro on the next
-   successful payment (`invoice.paid`); on-demand stays off until an owner turns it on again.
+   email, and cancel the subscription after the last retry. `active`/`trialing` means *billable*,
+   not Pro — a Free workspace's pay-as-you-go subscription is active too, and the same failure
+   path applies to it: a failed renewal moves the subscription to `past_due`, which turns
+   on-demand off at once (`src/lib/billing/subscriptionState.ts` is what tells the two apart). For
+   a Pro subscription this also drops the workspace to Free limits; it returns to Pro on
+   the next successful payment (`invoice.paid`). For pay-as-you-go there are no limits to drop —
+   the workspace was already Free — only the card to fix and on-demand to turn back on.
 7. Env: `STRIPE_SECRET_KEY` (sk_live), `STRIPE_PRICE_ID` (the $29 price),
    `STRIPE_AI_CREDITS_PRICE_ID` (the $0.10 price). `STRIPE_CREDITS_METER_EVENT_NAME` defaults to
    `ai_credits`; set it only if the live meter uses another event name.
@@ -236,7 +246,11 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
    on-demand on and spend credits, and `stripe-credits-report` never sends that usage to Stripe.
    Setting the variable later does not fix existing subscriptions: add the $0.10 price to each
    one in Stripe; the `customer.subscription.updated` event that follows links it. Resending an
-   old event does nothing, the webhook skips events it already processed.
+   old event does nothing, the webhook skips events it already processed. Pay-as-you-go has no
+   fallback the way Pro does: without this price there is nothing to sell, and
+   `POST /api/stripe/checkout { plan: "payg" }` refuses with 400 rather than silently doing
+   nothing — Free's "Add pay-as-you-go" button (dashboard Credits card, at zero credits) surfaces
+   that error to the owner directly.
 9. Before the first production deploy, check both ids with the live key:
    ```
    curl -s https://api.stripe.com/v1/prices/$STRIPE_PRICE_ID -u "$STRIPE_SECRET_KEY:"
@@ -321,7 +335,7 @@ to the owner on a download request, the approval link to the requester, doc-upda
 | `MONGODB_URI` | from 4.1, with `/lnkdrp` in the path |
 | `BLOB_READ_WRITE_TOKEN` | from 4.4 |
 | `OPENAI_API_KEY` | from 4.5 |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, `STRIPE_AI_CREDITS_PRICE_ID` | from 4.2; a missing credits price fails silently (4.2 step 8) |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_ID`, `STRIPE_AI_CREDITS_PRICE_ID` | from 4.2; a missing credits price fails Pro Checkout silently (4.2 step 8) and pay-as-you-go loudly, with a 400 |
 | `CRON_SECRET` | generated; Vercel Cron sends it as `Authorization: Bearer` automatically |
 | `REALTIME_SECRET` | generated; same value on the services host |
 | `NEXT_PUBLIC_REALTIME_URL` | `wss://realtime.lnkdrp.com` (leave unset until section 6 is live; the app polls meanwhile) |
@@ -335,7 +349,7 @@ to the owner on a download request, the approval link to the requester, doc-upda
 | `MONGODB_DB_NAME` | leave unset. The realtime server ignores it and takes the database from the URI path. A URI without `/lnkdrp` plus this variable makes realtime watch another database: sockets connect, `/healthz` is ok, and no live events arrive |
 | `BLOB_BASE_URL` | optional; the store host is derived from `BLOB_READ_WRITE_TOKEN`. Production refuses blob URLs from any other store when neither identifies it |
 | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | optional; leave unset. They apply only when both are set; one alone is ignored and both redirects come from `NEXT_PUBLIC_APP_URL` |
-| `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it |
+| `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it — including the only button that starts a pay-as-you-go checkout, so a Free workspace with credits gone has no UI path to add more, only Upgrade |
 | other `ERROR_LOGGING_*` | optional; see `docs/ERROR_LOGGING.md` |
 
 `NEXT_PUBLIC_*` values are inlined at build time into the browser bundle and the server routes
@@ -370,10 +384,12 @@ when you need the real gate.
    processed in 5 minutes fails on any plan unless `maxDuration` is raised (Pro with Fluid compute
    allows up to 800 s).
 5. Deployment Protection: keep **Vercel Authentication off for the production domain**. The app
-   calls its own `/api/uploads/:id/process` from the server (summary rerun, Free monthly re-queue
-   from the `credits-cycle-reconcile` cron); a protected deployment answers those calls with a
-   login page and the reruns silently never start. Protection on previews is fine; those two
-   features simply do not work there.
+   calls its own `/api/uploads/:id/process` from the server: a summary-only rerun (the doc page's
+   "Write summary" action) and a batch of them when a Free workspace's pay-as-you-go subscription
+   becomes billable, re-running whatever was skipped for want of credits (from the Stripe webhook,
+   not a cron — nothing here is cron-triggered any more). A protected deployment answers both with
+   a login page and the reruns silently never start. Protection on previews is fine; neither
+   feature works there.
 6. Deploy. The first production build takes a few minutes because of the PDF and canvas native
    packages.
 
@@ -717,7 +733,12 @@ Run in this order; each step depends on the previous.
     delivery log shows `checkout.session.completed` handled. The subscription must show two items,
     Pro and On-demand AI credits; only Pro means `STRIPE_AI_CREDITS_PRICE_ID` was missing on that
     deployment (4.2 step 8). Cancel it from the portal and refund the charge in the Stripe
-    dashboard.
+    dashboard. Then, on a second Free account (checkout refuses a second subscription on a
+    workspace that already has one, whichever kind): from the dashboard Credits card, once at
+    zero credits, "Add pay-as-you-go" with a real card. The subscription shows one item only (no
+    Pro price), on-demand comes on with a default $10 limit without visiting Limits, and
+    `/api/billing/status` reads `plan: "free", payg: true`. Cancel from the portal; the
+    subscription itself is $0, so there is nothing to refund unless the test also spent a credit.
 11. Email: request a download on a link with downloads off, from a private window; the owner
     receives the notice from `NOTIFICATION_EMAIL_FROM` in the inbox, not spam.
 12. Recreate `prod.env`, run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts`
@@ -848,8 +869,8 @@ signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `Pdf
   of jobs has run, which is deliberate: the alternative is a monitor that stays green for a cron
   that never fired. `src/lib/cron/jobs.ts` holds the schedules it judges against, and
   `tests/lib/cronMap.test.ts` fails if they drift from `vercel.json`.
-  `credits-cycle-reconcile` counts failures in `errors` (and Free floor failures in `freeFloor`)
-  and still answers 200, and `analytics-reconcile` answers 200 while marking itself `error`. Check
+  `credits-cycle-reconcile` counts failures in `errors` and still answers 200, and
+  `analytics-reconcile` answers 200 while marking itself `error`. Check
   `/a/cron-health` (admin, 5.5) daily after launch, then weekly: every job `ok`, with `lastRunAt`
   inside its schedule. Treat `error`, or a `lastRunAt` older than two intervals, on
   `stripe-credits-report`, `credits-cycle-reconcile` or `notification-emails` as an incident. A row
@@ -935,6 +956,12 @@ signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `Pdf
   outbound IP (allocate one with `fly ips allocate-egress -a lnkdrp-mcp -r iad`), because every
   agent's REST call leaves from that one address. Nothing collects temp workspaces once created:
   watch the count of `users` with `isTemp: true` and write a reaper if it grows.
-- Free workspaces cannot buy extra credits; sign-up copy promises only the monthly top-up to 10
-  and Pro for more. Selling credit packs to Free would need a Checkout product and webhook grant.
+- **Resolved 2026-09-16**, previously listed here as a gap: Free workspaces can now buy on-demand
+  credits directly (pay-as-you-go, 4.2 step 3); the monthly top-up this used to describe is gone.
+- The Limits page (`/dashboard/limits`, `SpendLimitModule`) is the one on-demand surface with no
+  path to *start* pay-as-you-go: a Free workspace with no subscription yet sees an accurate but
+  inert "add pay-as-you-go or upgrade to Pro" message with nothing to click. The only live
+  entry point today is the Credits card's "Add pay-as-you-go" button, and only once credits hit
+  zero. Product call, not a deploy blocker: add the same button to the Limits page, or leave
+  pay-as-you-go reachable only from the moment it becomes relevant.
 - If production starts from an existing database, run the one-time data jobs in 5.2.
