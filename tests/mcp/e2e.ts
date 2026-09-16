@@ -75,6 +75,8 @@ const EXPECTED_TOOLS = [
   "lnkdrp_create_share_link",
   "lnkdrp_list_share_links",
   "lnkdrp_find_share_link",
+  "lnkdrp_get_share_link_password",
+  "lnkdrp_verify_share_password",
   "lnkdrp_update_share_link",
   "lnkdrp_delete_share_link",
   "lnkdrp_archive_doc",
@@ -723,6 +725,42 @@ async function main(): Promise<void> {
     await step("lnkdrp_find_share_link with no match returns an empty array, not an error", async () => {
       const res = await callTool<FindShareLinkResult>(live, "lnkdrp_find_share_link", { query: `nomatch${randomUUID().replace(/-/g, "")}` });
       assert(Array.isArray(res.links) && res.links.length === 0, `expected [], got ${JSON.stringify(res.links)}`);
+    });
+
+    // 13e. mt_GOKLLvF4-v: an agent that sets a password must be able to confirm it afterwards.
+    // The password is deliberately short — the 8-char minimum is gone, and a tool that refuses
+    // "jeff" is the bug that locked the owner out of their own link.
+    await step("lnkdrp_verify_share_password and lnkdrp_get_share_link_password confirm a password", async () => {
+      await callTool(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, password: "jeff" });
+
+      const read = await callTool<{ passwordEnabled: boolean; password: string | null }>(live, "lnkdrp_get_share_link_password", {
+        docId: shared.docId,
+        linkId: extra.link.id,
+      });
+      assert(read.passwordEnabled === true, "get_share_link_password.passwordEnabled is not true after setting one");
+      assert(read.password === "jeff", `get_share_link_password returned ${JSON.stringify(read.password)}, expected "jeff"`);
+
+      const ok = await callTool<{ matches: boolean }>(live, "lnkdrp_verify_share_password", {
+        docId: shared.docId,
+        linkId: extra.link.id,
+        password: "jeff",
+      });
+      assert(ok.matches === true, "verify_share_password said the correct password does not match");
+
+      const bad = await callTool<{ matches: boolean }>(live, "lnkdrp_verify_share_password", {
+        docId: shared.docId,
+        linkId: extra.link.id,
+        password: "jeff-usavx-2026",
+      });
+      assert(bad.matches === false, "verify_share_password said a wrong password matches");
+
+      // Leave the link open: later steps fetch it publicly and a password would 401 them.
+      await callTool(live, "lnkdrp_update_share_link", { docId: shared.docId, linkId: extra.link.id, password: null });
+      const cleared = await callTool<{ passwordEnabled: boolean; password: string | null }>(live, "lnkdrp_get_share_link_password", {
+        docId: shared.docId,
+        linkId: extra.link.id,
+      });
+      assert(cleared.passwordEnabled === false && cleared.password === null, "clearing the password did not take");
     });
 
     // 14. The new link resolves publicly, straight away.

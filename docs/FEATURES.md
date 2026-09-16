@@ -257,6 +257,19 @@ A document owns **any number of share links** — one per audience — instead o
   rate-limited to 30 per viewer per link per 5 minutes, `no-store`, and every successful reveal
   writes a `share_link.password_revealed` activity row. Deliberately not exposed over MCP: the
   web reveal is what closes the lockout, and an agent that just set a password already has it.
+- **MCP can confirm a password too** (decided 2026-09-16, mt_GOKLLvF4-v). The web reveal did not
+  help an agent, which still got only `passwordEnabled: true` and so could not answer "what is
+  Jeff's password?" in a later session. Two tools, because they are different asks with different
+  exposure. `lnkdrp_verify_share_password` answers whether a candidate opens the link and reveals
+  nothing, backed by `POST /api/docs/:docId/links/:linkId/password/verify`; it deliberately does
+  not use the recipient's unlock route, which would set a share cookie, record a view, and spend
+  the recipient's 10 attempts per 5 minutes on a check they never made, so it compares against the
+  stored hash, writes nothing, and carries its own 20-per-5-minute limit.
+  `lnkdrp_get_share_link_password` returns the plain text for the case nothing weaker covers, over
+  the same admin-gated route as the app's Show control, and every read writes a
+  `share_link.password_revealed` row. This reverses the "deliberately not exposed over MCP" call
+  above: the owner asked for it, and an agent that cannot tell a human their own password is the
+  lockout in a different costume.
 
 ## Recipient share view (`/s/:shareId`)
 

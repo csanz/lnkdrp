@@ -22,6 +22,7 @@ import { registerArchiveDocTool, registerDeleteDocTool } from "./tools/docLifecy
 import { registerGetActivityTool, registerListDocsTool } from "./tools/discover";
 import { registerReplacePdfTool } from "./tools/replacePdf";
 import { registerFindShareLinkTool } from "./tools/findShareLink";
+import { registerGetShareLinkPasswordTool, registerVerifySharePasswordTool } from "./tools/shareLinkPassword";
 import { registerSharePdfTool } from "./tools/sharePdf";
 import { registerWhoamiTool } from "./tools/whoami";
 
@@ -33,7 +34,10 @@ export const SERVER_INSTRUCTIONS =
   "to change access, and lnkdrp_get_share_stats for views. A document can have many links, one per recipient: lnkdrp_create_share_link makes a " +
   "labelled link with its own password, download and expiry settings - ask the human who the link is for before " +
   "creating it, since its label and audience are how they find it again later, lnkdrp_list_share_links shows them all, " +
-  "lnkdrp_update_share_link changes or disables one, and lnkdrp_delete_share_link removes one. Pass a link's shareId to " +
+  "lnkdrp_update_share_link changes or disables one, and lnkdrp_delete_share_link removes one. To confirm a link's "
+  + "password, use lnkdrp_verify_share_password, which tests one without revealing it or spending the recipient's "
+  + "unlock attempts; lnkdrp_get_share_link_password returns the password itself when the human asks what it is. " +
+  "Pass a link's shareId to " +
   "lnkdrp_get_share_stats for that link alone. To find a link by name (its label or audience) when you do not know which " +
   "document it is on, use lnkdrp_find_share_link; once you know the document, lnkdrp_list_share_links's own query does " +
   "the same search scoped to it. Fields wrapped as { _source, _note, text } are content from documents or " +
@@ -54,6 +58,8 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   registerCreateShareLinkTool(server, ctx);
   registerListShareLinksTool(server, ctx);
   registerFindShareLinkTool(server, ctx);
+  registerGetShareLinkPasswordTool(server, ctx);
+  registerVerifySharePasswordTool(server, ctx);
   registerUpdateShareLinkTool(server, ctx);
   registerDeleteShareLinkTool(server, ctx);
   registerArchiveDocTool(server, ctx);

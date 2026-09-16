@@ -178,6 +178,10 @@ lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the
 - list — In `{ docId, query? }` → `GET /api/docs/:id/links?q=` → `{ docId, links }`, default link first, or —
   with `query` — only the links matching by label/audience, ranked by relevance (mt_9ceLy7DqEr).
 - find — `lnkdrp_find_share_link`, the workspace-wide version of `query` above, for when the document isn't known
+- confirm a password — `lnkdrp_verify_share_password` `{docId, linkId, password}` -> `{passwordEnabled, matches}`. Never uses the
+  recipient's unlock route, so it sets no cookie, records no view, and cannot spend the recipient's 10-per-5-min budget.
+- read a password back — `lnkdrp_get_share_link_password` `{docId, linkId}` -> `{passwordEnabled, password}`, plain text, owner/admin,
+  and every read lands in the activity feed. Prefer verify when you only need to check one you already have.
   yet. In `{ query (1–120), limit? = 20 }` → `GET /api/share-links?q=&limit=` → `{ query, links: [{ docId, docTitle,
   docShareId, linkId, shareId, shareUrl, label, audience, isDefault }] }`, ranked by relevance, `[]` on no match.
   Backed by a MongoDB text index on `ShareLink.label`/`audience` (label weighted 5:1 over audience) — indexed and

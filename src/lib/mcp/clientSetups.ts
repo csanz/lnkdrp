@@ -445,6 +445,28 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     },
   },
   {
+    name: "lnkdrp_verify_share_password",
+    purpose: "Check whether a password opens a link, without revealing the real one.",
+    access: "read",
+    detail: {
+      inputs: ["docId and linkId", "password — the candidate to test"],
+      output: "{ passwordEnabled, matches }. matches is false whenever the link has no password.",
+      errors: ["validation", "not_found — unknown link, or a link on another document", "forbidden — owner or admin only", "rate_limited"],
+      note: "Safe to call: it never opens the link, records a view, or spends the recipient's 10-tries-per-5-minutes unlock budget. Its own limit is 20 checks per link per 5 minutes.",
+    },
+  },
+  {
+    name: "lnkdrp_get_share_link_password",
+    purpose: "Show the password set on a link, so an agent can tell the owner what it is later.",
+    access: "read",
+    detail: {
+      inputs: ["docId and linkId"],
+      output: "{ passwordEnabled, password }. password is null when the link has none, or when only its hash survives.",
+      errors: ["not_found — unknown link, or a link on another document", "forbidden — owner or admin only", "rate_limited"],
+      note: "Returns the secret in plain text, so every read writes a workspace activity row. Prefer lnkdrp_verify_share_password when you only need to confirm a password you already have.",
+    },
+  },
+  {
     name: "lnkdrp_update_share_link",
     purpose: "Change or disable one link without touching the document's other links.",
     access: "write",

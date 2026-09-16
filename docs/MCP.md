@@ -431,6 +431,37 @@ document it is on (mt_9ceLy7DqEr) — "give me the a16z link" without first find
   Archived and deleted documents' links are excluded.
 - `GET /api/share-links?q=&limit=`, workspace-scoped by the key's `orgId`. Readable by any member.
 
+### `lnkdrp_verify_share_password` (read)
+
+Does this password open this link? Confirms one without revealing the real one (mt_GOKLLvF4-v).
+
+- In: `{ docId, linkId, password (1–128) }`.
+- Out: `{ docId, linkId, passwordEnabled, matches }`. `matches` is false whenever the link has no
+  password at all, which `passwordEnabled` tells apart.
+- `POST /api/docs/:docId/links/:linkId/password/verify`. Owner or admin — one step above the
+  `member` that editing a link takes.
+- **Never goes through the recipient's unlock route**, and that is the point. `POST
+  /api/share/:shareId/unlock` sets a share auth cookie, records a view, and spends the recipient's
+  10 attempts per IP per share per 5 minutes, so an agent checking a password there would put fake
+  traffic on the link and could lock out the person it was made for. This route compares against
+  the stored scrypt hash, writes nothing at all — no cookie, no view, no activity row — and carries
+  its own limit of 20 checks per caller per link per 5 minutes.
+
+### `lnkdrp_get_share_link_password` (read)
+
+The password set on a link, in plain text, so an agent can answer "what is Jeff's password?" in a
+session that did not set it (mt_GOKLLvF4-v).
+
+- In: `{ docId, linkId }`. Out: `{ docId, linkId, passwordEnabled, password }`.
+- `password` is `null` when the link has none, and also when the link predates encryption at rest
+  and only its hash survives; `passwordEnabled` separates those two.
+- `GET /api/docs/:docId/links/:linkId/password`, the same route behind the app's Show control.
+  Owner or admin, rate-limited to 30 per caller per link per 5 minutes, `no-store`.
+- **Every successful read writes a `share_link.password_revealed` activity row.** Returning a
+  secret is the event worth recording; verifying one is not, which is why the sibling above logs
+  nothing. Prefer `lnkdrp_verify_share_password` when you only need to confirm a password you
+  already hold.
+
 ### `lnkdrp_update_share_link` (write)
 
 - In: `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?: string|null,
@@ -639,7 +670,7 @@ What it does, in order, printing each step with its timing:
    (`createApiKey`; override the workspace with `E2E_ORG_ID` / `E2E_USER_ID`).
 3. Asserts that a client with a well-formed but unknown key gets **HTTP 401** from `initialize`.
 4. Connects as client `lnkdrp-e2e/1.0` (this is the name the workspace shows under Agents).
-5. `listTools` contains the fifteen tools.
+5. `listTools` contains the seventeen tools.
 6. `lnkdrp_whoami` returns the expected `orgId`, `userId`, the key's prefix, and a `client` that
    identifies `lnkdrp-e2e`.
 7. `lnkdrp_share_pdf` with the W3C dummy PDF (`E2E_PDF_URL` to change), `title: "MCP e2e"`,

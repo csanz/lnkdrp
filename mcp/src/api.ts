@@ -16,6 +16,8 @@
  * - `PATCH /api/docs/:id`                      -> `{ doc: {…same…}, planWarning? }`; 402 `{ code: "plan_limit", … }`
  * - `DELETE /api/docs/:id`                     -> `{ ok: true }`
  * - `POST /api/docs/:id/share-password` `{ password }` (string sets, `null` removes) -> `{ sharePasswordEnabled }`
+ * - `GET  /api/docs/:id/links/:linkId/password` -> `{ passwordEnabled, password }` (owner read-back; writes an activity row)
+ * - `POST /api/docs/:id/links/:linkId/password/verify` `{ password }` -> `{ passwordEnabled, matches }` (no cookie, no view, own limiter)
  * - `POST /api/uploads`                        -> 201 `{ upload: { id, docId, version, status } }`
  * - `POST /api/uploads/:id/import-url` `{ url }` -> `{ ok: true }`; 400 `{ error }`; 415 `{ error, code }`
  * - `POST /api/uploads/:id/process`            -> `{ ok: true, alreadyProcessing? }`; 409 `UPLOAD_NOT_READY`; 402 credits
@@ -610,6 +612,35 @@ export class ApiClient {
       await this.request("PATCH", `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(linkId)}`, { body: patch }),
     );
     return { link: asShareLink(body.link), planWarning: asPlanWarning(body.planWarning) };
+  }
+
+  /**
+   * `GET /api/docs/:id/links/:linkId/password` — the password set on a link, in plain text.
+   *
+   * `password` is null when the link has none, and also when the link predates encryption at rest
+   * and only its hash survives — `passwordEnabled` separates those two cases. The route writes an
+   * activity row on every successful read.
+   */
+  async getShareLinkPassword(docId: string, linkId: string): Promise<{ passwordEnabled: boolean; password: string | null }> {
+    const body = rec(
+      await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(linkId)}/password`),
+    );
+    return { passwordEnabled: Boolean(body.passwordEnabled), password: strOrNull(body.password) };
+  }
+
+  /**
+   * `POST /api/docs/:id/links/:linkId/password/verify` — does this password open this link?
+   *
+   * Never the recipient's unlock route: that would set a share cookie, record a view, and spend
+   * the recipient's 10-attempts-per-5-minutes budget on a check they did not make.
+   */
+  async verifyShareLinkPassword(docId: string, linkId: string, password: string): Promise<{ passwordEnabled: boolean; matches: boolean }> {
+    const body = rec(
+      await this.request("POST", `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(linkId)}/password/verify`, {
+        body: { password },
+      }),
+    );
+    return { passwordEnabled: Boolean(body.passwordEnabled), matches: Boolean(body.matches) };
   }
 
   /** `DELETE /api/docs/:id/links/:linkId` — soft-archive a link (204; analytics are kept). */

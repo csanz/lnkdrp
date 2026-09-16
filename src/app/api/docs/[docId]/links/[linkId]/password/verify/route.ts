@@ -1,0 +1,68 @@
+/**
+ * `POST /api/docs/:docId/links/:linkId/password/verify` — does this password open this link?
+ *
+ * The owner-side counterpart to the recipient's unlock route, and deliberately not the same thing.
+ * `POST /api/share/:shareId/unlock` is the only other way to test a password, and using it to
+ * check one would do three things an owner never wants: set a share auth cookie, count toward the
+ * recipient-facing limit of 10 attempts per IP per share per 5 minutes — so an agent checking a
+ * password could lock out the person the link is for — and put traffic on a link nobody opened.
+ *
+ * This route does none of that. It compares against the stored scrypt hash and answers, with its
+ * own limiter keyed to the caller rather than the share. Nothing is written: no cookie, no view,
+ * no activity row. A reveal is the event worth recording, and that is the sibling GET.
+ */
+import { NextResponse } from "next/server";
+import { Types } from "mongoose";
+
+import { applyTempUserHeaders } from "@/lib/gating/actor";
+import { rateLimit } from "@/lib/http/rateLimit";
+import { verifySharePassword } from "@/lib/sharePassword";
+import { listShareLinks } from "@/lib/share/links";
+import { accessDocForLinks, linkErrorResponse } from "../../../shared";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+/** Own limiter, keyed to the caller and link — never the recipient's share-facing unlock bucket. */
+const VERIFY_LIMIT = 20;
+const VERIFY_WINDOW_MS = 5 * 60 * 1000;
+
+/** Returns `{ passwordEnabled, matches }`. `matches` is false whenever the link has no password. */
+export async function POST(request: Request, ctx: { params: Promise<{ docId: string; linkId: string }> }) {
+  const { docId, linkId } = await ctx.params;
+  const gate = await accessDocForLinks(request, docId, "admin");
+  if (!gate.ok) return gate.response;
+  const { actor, docId: docObjectId, orgId } = gate.access;
+  try {
+    if (!Types.ObjectId.isValid(linkId)) {
+      return applyTempUserHeaders(NextResponse.json({ error: "Invalid linkId" }, { status: 400 }), actor);
+    }
+    const body = (await request.json().catch(() => ({}))) as { password?: unknown };
+    if (typeof body.password !== "string" || body.password === "") {
+      return applyTempUserHeaders(NextResponse.json({ error: "password is required." }, { status: 400 }), actor);
+    }
+
+    const rl = await rateLimit({ key: `linkpwdverify:${actor.userId}:${linkId}`, limit: VERIFY_LIMIT, windowMs: VERIFY_WINDOW_MS });
+    if (!rl.ok) {
+      return applyTempUserHeaders(
+        NextResponse.json({ error: "Too many attempts. Try again shortly." }, { status: 429, headers: { "retry-after": String(rl.retryAfterSec) } }),
+        actor,
+      );
+    }
+
+    const link = (await listShareLinks({ orgId, docId: docObjectId, includeArchived: true })).find((l) => String(l._id) === linkId);
+    if (!link) {
+      return applyTempUserHeaders(NextResponse.json({ error: "Link not found." }, { status: 404 }), actor);
+    }
+
+    const passwordEnabled = Boolean(link.passwordHash);
+    const matches = passwordEnabled && verifySharePassword({ password: body.password, salt: link.passwordSalt, hash: link.passwordHash });
+
+    return applyTempUserHeaders(
+      NextResponse.json({ passwordEnabled, matches }, { headers: { "cache-control": "no-store" } }),
+      actor,
+    );
+  } catch (err) {
+    return linkErrorResponse(err, actor);
+  }
+}
