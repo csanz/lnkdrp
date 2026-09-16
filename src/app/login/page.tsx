@@ -5,10 +5,12 @@
  */
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
+import { CheckIcon } from "@heroicons/react/24/outline";
 import { useAuthEnabled } from "@/app/providers";
 import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import Spinner from "@/components/ui/Spinner";
@@ -68,45 +70,64 @@ function LoginPageInner() {
     return "Sign in or create your account with Google.";
   }, [authEnabled]);
 
+  // Perks list, styled after the checkmark treatment in UpgradeModal: the headline perk (the
+  // starter credits — the thing sign-up actually gets you, vs. the other lines which are just
+  // reassurance) gets the filled check and bold text, the rest get the plain outlined check.
+  const perks: Array<{ text: React.ReactNode; lead?: boolean }> = [
+    {
+      text: (
+        <>
+          {CREDITS_COPY.freeStarter} free credits to try the AI features: summaries on every link and AI compare
+          between versions.
+        </>
+      ),
+      lead: true,
+    },
+    { text: "3 share links with view and download tracking, free forever." },
+    { text: <>Once they run out, {whatHappensAfterFreeCredits()}.</> },
+    { text: CREDITS_COPY.noCardToStart },
+  ];
+
   return (
     <main className="grid min-h-[100svh] place-items-center bg-[#050506] px-6 text-white">
-      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 px-8 py-7">
-        <h1 className="text-xl font-semibold tracking-tight">Log in or sign up</h1>
-        <p className="mt-3 text-sm leading-6 text-white/60">{helperText}</p>
-
-        {/* What a new account gets, stated before sign-up: links are free; the starter credits exist to try the AI features. */}
-        <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5">
-          <div className="text-[13px] font-semibold text-white">New accounts start free</div>
-          <ul className="mt-2 space-y-1.5 text-[13px] leading-5 text-white/65">
-            <li className="flex gap-2">
-              <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
-              <span>3 share links with view and download tracking, free forever.</span>
-            </li>
-            <li className="flex gap-2">
-              <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
-              <span>
-                {CREDITS_COPY.freeStarter} free credits to try the AI features: summaries on every link and AI compare between versions.
-              </span>
-            </li>
-            <li className="flex gap-2">
-              <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
-              <span>Once they run out, {whatHappensAfterFreeCredits()}.</span>
-            </li>
-            <li className="flex gap-2">
-              <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
-              <span>{CREDITS_COPY.noCardToStart}</span>
-            </li>
-          </ul>
+      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-white/5 px-8 py-7 sm:px-9 sm:py-8">
+        <div className="flex items-center gap-3.5">
+          <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/5">
+            <Image src="/icon-white.svg?v=3" alt="" width={18} height={18} />
+          </div>
+          <div>
+            <h1 className="text-[19px] font-semibold leading-6 tracking-tight sm:text-xl">Log in or sign up</h1>
+            <p className="mt-1 text-[13px] leading-5 text-white/55">{helperText}</p>
+          </div>
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center gap-3">
+        {/* What a new account gets, stated before sign-up: links are free; the starter credits exist to try the AI features. */}
+        <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/40">New accounts start free</p>
+        <ul className="mt-2.5 space-y-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4">
+          {perks.map((perk, i) => (
+            <li key={i} className="flex items-start gap-3 text-[13px] leading-5 text-white/65">
+              <span
+                aria-hidden="true"
+                className={[
+                  "mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full",
+                  perk.lead ? "bg-white text-black" : "border border-white/15 text-white/50",
+                ].join(" ")}
+              >
+                <CheckIcon className="h-3 w-3" strokeWidth={3} />
+              </span>
+              <span className={perk.lead ? "font-medium text-white" : ""}>{perk.text}</span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-6">
           {/* The label stays in the box (just `invisible`) instead of being swapped out, so the
               button's width is always exactly its own resting width in both states — no guessed
               min-width. The spinner overlays it centered; busy shows no provider name on purpose,
               for when more sign-in methods join Google. */}
           <button
             type="button"
-            className="relative inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
+            className="relative inline-flex h-11 w-full items-center justify-center rounded-xl bg-white px-4 text-[15px] font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
             disabled={!authEnabled || busy}
             aria-busy={busy}
             onClick={() => {
@@ -123,12 +144,11 @@ function LoginPageInner() {
             ) : null}
           </button>
 
-          <Link
-            href="/"
-            className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10"
-          >
-            Back
-          </Link>
+          <div className="mt-4 flex items-center justify-center">
+            <Link href="/" className="text-[13px] font-medium text-white/55 hover:text-white">
+              Back to home
+            </Link>
+          </div>
         </div>
       </div>
     </main>
