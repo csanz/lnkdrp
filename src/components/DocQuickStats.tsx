@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { ChartBarIcon } from "@heroicons/react/24/outline";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Area, AreaChart, CartesianGrid, Tooltip, YAxis } from "recharts";
+import { Bar, BarChart, LabelList, Tooltip, XAxis, YAxis } from "recharts";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
+import { formatDayKey } from "@/lib/format/date";
 
 /**
  * Quick engagement stats for the owner's document page side panel.
@@ -61,7 +62,7 @@ type StatsResponse = {
     authenticatedViewers?: number;
     anonymousViewers?: number;
   };
-  series?: Array<{ date: string; views: number; downloads: number }>;
+  series?: Array<{ date: string; views: number; opens?: number; downloads: number }>;
   /** Whether downloads are allowed on any live link of the document (a label, not a filter). */
   downloadsEnabled?: boolean;
   /**
@@ -105,11 +106,6 @@ function formatDurationMs(ms: number): string {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
-function formatDayLabel(isoDay: string): string {
-  const d = new Date(`${isoDay}T00:00:00.000Z`);
-  if (!Number.isFinite(d.getTime())) return isoDay;
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(d);
-}
 
 function relativeAge(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -177,7 +173,13 @@ function LinkMiniList({
   );
 }
 
-function ViewsSparkline({ series }: { series: Array<{ date: string; views: number }> }) {
+/**
+ * One bar per day, the count printed on each day that has any. Bars rather than a smoothed line:
+ * seven daily counts are discrete, and a curve invented a ramp into the one busy day (it started
+ * climbing the day before anything happened). The date axis is drawn by the chart so the first,
+ * middle and last labels sit under their bars.
+ */
+function DailyBars({ data, unit }: { data: Array<{ date: string; value: number }>; unit: string }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -196,57 +198,47 @@ function ViewsSparkline({ series }: { series: Array<{ date: string; views: numbe
     return () => ro.disconnect();
   }, []);
 
-  const data = series.map((s) => ({ date: s.date, value: num(s.views) }));
-  const ticks = series.length
-    ? [series[0]?.date, series[Math.floor((series.length - 1) / 2)]?.date, series[series.length - 1]?.date].filter(Boolean)
-    : [];
+  const ticks = data.length ? [...new Set([data[0].date, data[Math.floor((data.length - 1) / 2)].date, data[data.length - 1].date])] : [];
 
   return (
-    <div className="w-full">
-      <div ref={wrapRef} className="h-24 w-full">
-        {size ? (
-          <AreaChart width={size.w} height={size.h} data={data} margin={{ top: 4, right: 4, bottom: 2, left: 4 }}>
-            <defs>
-              <linearGradient id="lnkdrpQuickStatsViews" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="var(--chart-views)" stopOpacity={0.28} />
-                <stop offset="100%" stopColor="var(--chart-views)" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <YAxis hide domain={[0, "dataMax"]} />
-            <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
-            <Tooltip
-              cursor={{ stroke: "var(--border)", strokeOpacity: 0.35 }}
-              contentStyle={{
-                background: "var(--panel)",
-                border: "1px solid var(--border)",
-                borderRadius: 10,
-                padding: "6px 8px",
-                fontSize: 12,
-                color: "var(--fg)",
-              }}
-              labelStyle={{ color: "var(--muted-2)" }}
-              formatter={(v: unknown) => [typeof v === "number" ? `${v.toLocaleString()} views` : String(v), ""]}
-              labelFormatter={(label: unknown) => formatDayLabel(String(label ?? ""))}
-            />
-            <Area
-              type="monotone"
+    <div ref={wrapRef} className="h-28 w-full">
+      {size ? (
+        <BarChart width={size.w} height={size.h} data={data} margin={{ top: 16, right: 0, bottom: 0, left: 0 }} barCategoryGap="22%">
+          <YAxis hide domain={[0, "dataMax"]} />
+          <XAxis
+            dataKey="date"
+            ticks={ticks}
+            interval={0}
+            tickFormatter={(v: unknown) => formatDayKey(String(v ?? ""))}
+            tickLine={false}
+            axisLine={{ stroke: "var(--border)" }}
+            tick={{ fontSize: 10, fill: "var(--muted-2)" }}
+            height={18}
+          />
+          <Tooltip
+            cursor={{ fill: "var(--panel-hover)", fillOpacity: 0.6 }}
+            contentStyle={{
+              background: "var(--panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              padding: "6px 8px",
+              fontSize: 12,
+              color: "var(--fg)",
+            }}
+            labelStyle={{ color: "var(--muted-2)" }}
+            formatter={(v: unknown) => [typeof v === "number" ? `${v.toLocaleString()} ${v === 1 ? unit : `${unit}s`}` : String(v), ""]}
+            labelFormatter={(label: unknown) => formatDayKey(String(label ?? ""))}
+          />
+          <Bar dataKey="value" fill="var(--chart-views)" radius={[3, 3, 0, 0]} minPointSize={0} isAnimationActive={false}>
+            <LabelList
               dataKey="value"
-              stroke="var(--chart-views)"
-              strokeWidth={1.5}
-              fill="url(#lnkdrpQuickStatsViews)"
-              fillOpacity={1}
-              dot={false}
-              activeDot={{ r: 3, strokeWidth: 1.5 }}
-              isAnimationActive={false}
+              position="top"
+              formatter={(v: unknown) => (typeof v === "number" && v > 0 ? v.toLocaleString() : "")}
+              style={{ fontSize: 10, fill: "var(--muted)" }}
             />
-          </AreaChart>
-        ) : null}
-      </div>
-      <div className="mt-1 flex justify-between text-[10px] tabular-nums text-[var(--muted-2)]">
-        {ticks.map((t, i) => (
-          <span key={`${t}:${i}`}>{formatDayLabel(String(t))}</span>
-        ))}
-      </div>
+          </Bar>
+        </BarChart>
+      ) : null}
     </div>
   );
 }
@@ -418,7 +410,13 @@ export default function DocQuickStats({
     () => (Array.isArray(live?.series) ? live!.series.map((s) => ({ date: s.date, views: num(s.views) })) : []),
     [live],
   );
-  const hasAnyViews = series.some((s) => s.views > 0);
+  // Chart opens per day, the same visits the Opens tile counts, so the bars add up to it. Traffic
+  // from before visit tracking has no opens; then the chart falls back to viewers and says so,
+  // matching the Viewers tile instead.
+  const chartOpens = !stats.opensPartial && series.length > 0 && (live?.series ?? []).every((s) => typeof s.opens === "number");
+  const chartData = (live?.series ?? []).map((s) => ({ date: s.date, value: num(chartOpens ? s.opens : s.views) }));
+  const chartUnit = chartOpens ? "open" : "viewer";
+  const hasAnyViews = chartData.some((d) => d.value > 0);
   const freshness = live ? "Live" : snapshot?.updatedAt ? `Updated ${relativeAge(snapshot.updatedAt) ?? ""}`.trim() : null;
   // Free workspaces get a clamped window; the server reports both the limit and the days it served.
   const analyticsDaysLimit =
@@ -556,13 +554,13 @@ export default function DocQuickStats({
         </div>
       ) : null}
 
-      <div className="mt-4">
-        {/* The chart's own caption, above it. It used to sit under the chart, next to the metrics
-            link, where it read as a footer label rather than naming the line. */}
-        <div className="mb-1.5 text-[11px] font-medium text-[var(--muted)]">Views by day</div>
+      {/* Its own section, divided like the link lists above, with the caption on top naming what the
+          bars count (it used to sit under the chart, beside the metrics link). */}
+      <div className="mt-3 border-t border-[var(--border)] pt-3">
+        <div className="mb-1 text-[11px] font-medium text-[var(--muted)]">{chartOpens ? "Opens by day" : "Viewers by day"}</div>
         {series.length ? (
           hasAnyViews ? (
-            <ViewsSparkline series={series} />
+            <DailyBars data={chartData} unit={chartUnit} />
           ) : (
             <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-center text-[12px] text-[var(--muted)]">
               No views yet in the last {shownDays} days. Share the link to start tracking.

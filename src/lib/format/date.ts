@@ -73,3 +73,17 @@ export function formatMonthLabel(yyyyMm: string): string {
 }
 
 
+
+/**
+ * "Sep 16" for a UTC day key ("2026-09-16"), as the analytics series use.
+ *
+ * Formatted in UTC on purpose: the key names a UTC day, and formatting its midnight in the
+ * viewer's zone showed every day as the day before anywhere west of UTC. Unparseable input comes
+ * back unchanged.
+ */
+export function formatDayKey(isoDay: string | null | undefined): string {
+  if (!isoDay) return "";
+  const d = new Date(`${isoDay}T00:00:00.000Z`);
+  if (!Number.isFinite(d.getTime())) return isoDay;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" }).format(d);
+}

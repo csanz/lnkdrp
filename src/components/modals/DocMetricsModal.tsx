@@ -5,6 +5,7 @@ import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, YAxis } from "recharts";
+import { formatDayKey } from "@/lib/format/date";
 
 type MetricsResponse = {
   ok: true;
@@ -44,12 +45,6 @@ function formatShortId(id: string | null | undefined, { head = 4, tail = 4 }: { 
 }
 
 
-function formatDayLabel(isoDay: string | null): string {
-  if (!isoDay) return "";
-  const d = new Date(`${isoDay}T00:00:00.000Z`);
-  if (!Number.isFinite(d.getTime())) return isoDay;
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(d);
-}
 /**
  * Render the MiniLineChartSingle UI.
  */
@@ -120,7 +115,7 @@ function MiniLineChartSingle({
       >
         {series.map((s) => (
           <div key={`tick:${s.date}`} className="px-1 text-center tabular-nums">
-            {formatDayLabel(s.date)}
+            {formatDayKey(s.date)}
           </div>
         ))}
       </div>

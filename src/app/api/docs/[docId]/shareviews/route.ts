@@ -327,11 +327,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // beside a first response that said 3, so the same field of the same endpoint contradicted
       // itself depending on a query param. Fields this branch did not compute are now absent from
       // the response, which a reader can detect; a zero is indistinguishable from the truth.
-      const series: Array<{ date: string; views: number; downloads: number }> = [];
+      const series: Array<{ date: string; views: number; opens: number; downloads: number }> = [];
       let totalDownloads = 0;
       let allTimeDownloads = 0;
       if (!viewersOnly) {
-        const [seriesAgg, downloadsSeriesAgg, downloadsAgg] = await Promise.all([
+        const [seriesAgg, downloadsSeriesAgg, downloadsAgg, opensSeriesAgg] = await Promise.all([
           ShareViewModel.aggregate([
             { $match: { ...scopeMatch, ...activityWindowMatch(start) } },
             {
@@ -359,15 +359,22 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             { $match: { ...scopeMatch } },
             { $group: { _id: null, downloads: { $sum: { $ifNull: ["$downloads", 0] } } } },
           ]) as Promise<Array<{ downloads?: number }>>,
+          // Opens per day: the same visits `totals.opens` counts (recipient tab sessions active in
+          // the window), bucketed by their last activity, so the bars add up to the Opens figure.
+          ShareVisitModel.aggregate([
+            { $match: { ...visitMatch, lastEventAt: { $gte: start } } },
+            { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$lastEventAt", timezone: "UTC" } }, opens: { $sum: 1 } } },
+          ]) as Promise<Array<{ _id: string; opens: number }>>,
         ]);
 
         const byDay = new Map<string, number>(seriesAgg.map((x) => [x._id, x.views]));
         const downloadsByDay = new Map<string, number>(downloadsSeriesAgg.map((x) => [x._id, x.downloads]));
+        const opensByDay = new Map<string, number>(opensSeriesAgg.map((x) => [x._id, x.opens]));
         for (let i = 0; i < days; i++) {
           const d = new Date(start);
           d.setUTCDate(start.getUTCDate() + i);
           const key = utcDayKey(d);
-          series.push({ date: key, views: byDay.get(key) ?? 0, downloads: downloadsByDay.get(key) ?? 0 });
+          series.push({ date: key, views: byDay.get(key) ?? 0, opens: opensByDay.get(key) ?? 0, downloads: downloadsByDay.get(key) ?? 0 });
         }
 
         // The windowed total is the area under the chart, by construction: same rows, same bound.

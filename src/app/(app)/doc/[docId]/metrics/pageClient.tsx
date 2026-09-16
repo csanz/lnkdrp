@@ -14,6 +14,7 @@ import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { usePlan } from "@/lib/client/usePlan";
 import { Area, AreaChart, CartesianGrid, Tooltip, YAxis } from "recharts";
+import { formatDayKey } from "@/lib/format/date";
 
 /** Free = basic (totals, chart, unique viewer count); Pro = deep (identities, per-page time, visits). */
 type AnalyticsTier = "basic" | "deep";
@@ -201,12 +202,6 @@ function formatPageRanges(pages: number[]): string {
   return parts.join(", ");
 }
 
-function formatDayLabel(isoDay: string | null): string {
-  if (!isoDay) return "";
-  const d = new Date(`${isoDay}T00:00:00.000Z`);
-  if (!Number.isFinite(d.getTime())) return isoDay;
-  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(d);
-}
 
 function parseIsoMs(iso: string | null | undefined): number | null {
   if (!iso) return null;
@@ -324,7 +319,7 @@ function MiniLineChartSingle({
       >
         {series.map((s) => (
           <div key={`tick:${s.date}`} className="px-1 text-center tabular-nums">
-            {formatDayLabel(s.date)}
+            {formatDayKey(s.date)}
           </div>
         ))}
       </div>
