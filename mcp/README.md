@@ -87,6 +87,12 @@ compare: [2,5,12] }` and `mcpVersion`. `costs` are computed from `creditsForRun`
 imported by the MCP server and copied into the Docker image), so they always match what the app charges.
 `onDemand: true` alongside `plan: "free"` is a Free workspace that added a card for pay-as-you-go credits — the
 document/project limits are still Free's, but it will not just run dry once its one-time starter credits are gone.
+Also carries `capabilities` (mt_1mVhlEPXGT): `{ links: {limited:false}, documents/projects: {limit,used,remaining}|null,
+collaborators: {limit,used}|null, analyticsDaysLimit, deepAnalytics, recipientsCanBrowseVersions, notMcpAccessible:
+[{feature,reason}] }` — one call to answer "what can I do here" instead of learning a gate by hitting it.
+`notMcpAccessible` names product features (`requestRepos`, `downloadAccessRequests`, `projectManagement`) that have
+no MCP tool at all, `requestRepos`'s reason also saying whether `NEXT_PUBLIC_FEATURE_REQUESTS` is on for this
+deployment.
 
 ### Discovery (`lnkdrp_list_docs`, `lnkdrp_get_activity`)
 How an agent finds documents it was not handed, and reads what happened in the workspace.

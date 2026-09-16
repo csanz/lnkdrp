@@ -158,8 +158,8 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
 
 - In: `{}`
 - Out: `{ ok, userId, email, orgId, orgName, isPersonalOrg, plan: "free"|"pro", keyPrefix, scopes,
-  client, creditsRemaining: number|null, creditsResetAt: string|null, onDemand: boolean, costTiers:
-  ["basic","standard","advanced"], costs: { summary: [1,2,5], compare: [2,5,12] }, mcpVersion }`. `client` is the label
+  client, creditsRemaining: number|null, creditsResetAt: string|null, onDemand: boolean, capabilities,
+  costTiers: ["basic","standard","advanced"], costs: { summary: [1,2,5], compare: [2,5,12] }, mcpVersion }`. `client` is the label
   derived from the `initialize` client name (`"claude-code"` → `"Claude Code"`; unknown names are
   title-cased). `costs` are credits per tier (basic, standard, advanced) for the AI actions, computed from
   `creditsForRun` in `src/lib/credits/schedule.ts` (the MCP server imports it, so the table cannot drift);
@@ -171,6 +171,18 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
   fails because of them. `onDemand: true` on `plan: "free"` means the workspace added a card for pay-as-you-go
   (`$0.10`/credit past its one-time 50 starter credits) — it is still on Free's document/project limits, but it
   will not simply run out of credits the way a plain Free workspace does once those 50 are spent.
+- `capabilities` (mt_1mVhlEPXGT) — "what can I do here", answerable from this one call instead of learning a
+  gate by triggering it: `{ links: { limited: false }, documents: { limit, used, remaining } | null,
+  projects: { limit, used, remaining } | null, collaborators: { limit, used } | null, analyticsDaysLimit:
+  number|null, deepAnalytics: boolean, recipientsCanBrowseVersions: boolean, notMcpAccessible: [{ feature,
+  reason }] }`. `limit: null` means unlimited (Pro); the three capped fields are `null` outright when the
+  plan snapshot itself could not be read (same failure `plan`/`onDemand` degrade to for). `deepAnalytics` and
+  `recipientsCanBrowseVersions` are Pro-only and independent of `onDemand` — a pay-as-you-go Free workspace
+  stays on the basic analytics tier. `notMcpAccessible` names real product surfaces with no MCP tool at all
+  (`requestRepos` — whose `reason` also says whether the feature is enabled on this deployment,
+  `NEXT_PUBLIC_FEATURE_REQUESTS`; `downloadAccessRequests`; `projectManagement`), so their absence from
+  `listTools` reads as "not built yet" rather than "this workspace lacks the feature" or a silently
+  unsupported request.
 
 ### `lnkdrp_list_docs` (read)
 

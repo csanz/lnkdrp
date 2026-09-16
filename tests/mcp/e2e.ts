@@ -219,7 +219,17 @@ type CreateShareLinkResult = { link: ShareLinkDTO; shareUrl: string; planWarning
 type ListShareLinksResult = { docId: string; links: ShareLinkDTO[] };
 
 /** Credit/AI fields added to whoami and share_pdf (agent-written summaries, warnings). */
-type WhoAmICredits = { costs?: { summary?: number[]; compare?: number[] }; creditsRemaining?: number | null; creditsResetAt?: string | null; onDemand?: boolean };
+type Capabilities = {
+  links?: { limited?: boolean };
+  documents?: { limit: number | null; used: number; remaining: number | null } | null;
+  projects?: { limit: number | null; used: number; remaining: number | null } | null;
+  collaborators?: { limit: number | null; used: number } | null;
+  analyticsDaysLimit?: number | null;
+  deepAnalytics?: boolean;
+  recipientsCanBrowseVersions?: boolean;
+  notMcpAccessible?: Array<{ feature?: string; reason?: string }>;
+};
+type WhoAmICredits = { costs?: { summary?: number[]; compare?: number[] }; creditsRemaining?: number | null; creditsResetAt?: string | null; onDemand?: boolean; capabilities?: Capabilities };
 type SharePdfAiFields = { warnings?: unknown; creditsRemaining?: number };
 type ReplacePdfResult = { docId: string; shareId: string; shareUrl: string; status: string; version: number; uploadId: string; title: string | null };
 /** Documents this run created; deleted in `finally` so the Free active-link cap is not consumed. */
@@ -389,6 +399,26 @@ async function main(): Promise<void> {
       assert(me.creditsRemaining === null || typeof me.creditsRemaining === "number", "whoami.creditsRemaining is neither a number nor null");
       assert(typeof me.onDemand === "boolean", "whoami.onDemand is not a boolean");
       info("credits", `costs=${JSON.stringify(me.costs)} remaining=${String(me.creditsRemaining)} resetAt=${String(me.creditsResetAt)} onDemand=${String(me.onDemand)}`);
+    });
+
+    // 5c. capabilities: "what can I do here", answerable without triggering a single plan_limit.
+    await step("lnkdrp_whoami.capabilities answers 'what can I do here' up front", async () => {
+      const me = await callTool<WhoAmICredits>(live, "lnkdrp_whoami", {});
+      const caps = me.capabilities;
+      assert(caps && typeof caps === "object", "whoami.capabilities missing");
+      assert(caps!.links?.limited === false, "capabilities.links.limited must be false — links are never capped");
+      for (const key of ["documents", "projects"] as const) {
+        const c = caps![key];
+        assert(c === null || (c && typeof c.used === "number" && (c.limit === null || typeof c.limit === "number")), `capabilities.${key} malformed: ${JSON.stringify(c)}`);
+        if (c && typeof c.limit === "number") assert(c.remaining === Math.max(0, c.limit - c.used), `capabilities.${key}.remaining does not match limit - used`);
+      }
+      assert(typeof caps!.deepAnalytics === "boolean", "capabilities.deepAnalytics is not a boolean");
+      assert(typeof caps!.recipientsCanBrowseVersions === "boolean", "capabilities.recipientsCanBrowseVersions is not a boolean");
+      assert(Array.isArray(caps!.notMcpAccessible) && caps!.notMcpAccessible!.length > 0, "capabilities.notMcpAccessible is empty or missing");
+      for (const f of caps!.notMcpAccessible!) assert(typeof f.feature === "string" && typeof f.reason === "string", `notMcpAccessible entry malformed: ${JSON.stringify(f)}`);
+      const named = new Set(caps!.notMcpAccessible!.map((f) => f.feature));
+      assert(named.has("requestRepos") && named.has("downloadAccessRequests") && named.has("projectManagement"), `notMcpAccessible missing an expected feature: ${JSON.stringify([...named])}`);
+      info("capabilities", caps);
     });
 
     // 5c. Discovery, before anything is created: the list and the feed both answer with the

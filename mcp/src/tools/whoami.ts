@@ -25,6 +25,56 @@ export function creditCosts(): { summary: number[]; compare: number[] } {
   return { summary: costsFor("summary"), compare: costsFor("history") };
 }
 
+/** One product surface no tool covers yet — named so an agent learns it exists at all. */
+type UncoveredFeature = { feature: string; reason: string };
+
+/**
+ * What this workspace can and cannot do, in one place — mt_1mVhlEPXGT. Before this, the only way
+ * to learn a gate existed was to call a write tool and read the `plan_limit` it happened to throw:
+ * true, but only after the fact, per tool, and only for the handful of gates that tool's own code
+ * path hits. This answers the question up front, and — the other half of the gap — names product
+ * surfaces (requests, download-access requests, project management) that have no MCP tool at all,
+ * so "no tool for X" reads as "not built yet" rather than being indistinguishable from "X doesn't
+ * exist" or a silently-failed attempt.
+ */
+function buildCapabilities(
+  plan: { plan: string | null; limits: { documents: number | null; projects: number | null; analyticsDays: number | null; collaborators: number | null }; usage: { documents: number; projects: number; members: number } } | null,
+  featureRequestsEnabled: boolean,
+): Record<string, unknown> {
+  const isPro = plan?.plan === "pro";
+  const limits = plan?.limits ?? { documents: null, projects: null, analyticsDays: null, collaborators: null };
+  const usage = plan?.usage ?? { documents: 0, projects: 0, members: 0 };
+  const remaining = (limit: number | null, used: number) => (limit === null ? null : Math.max(0, limit - used));
+  const notMcpAccessible: UncoveredFeature[] = [
+    {
+      feature: "requestRepos",
+      reason: featureRequestsEnabled
+        ? "exists on this deployment (upload requests, review) but no MCP tool covers it yet"
+        : "disabled on this deployment (NEXT_PUBLIC_FEATURE_REQUESTS) — the web app hides it too",
+    },
+    { feature: "downloadAccessRequests", reason: "no MCP tool, and the app itself has no read endpoint for these yet" },
+    { feature: "projectManagement", reason: "no MCP tool creates, lists or moves documents between projects (GET /api/projects exists in the app, unwrapped)" },
+  ];
+  return {
+    // Links are never capped on any plan — stated here, not just in tool descriptions, so a plan
+    // read alone answers "can I add another link" without needing to try one and see.
+    links: { limited: false },
+    documents: plan ? { limit: limits.documents, used: usage.documents, remaining: remaining(limits.documents, usage.documents) } : null,
+    projects: plan ? { limit: limits.projects, used: usage.projects, remaining: remaining(limits.projects, usage.projects) } : null,
+    collaborators: plan ? { limit: limits.collaborators, used: usage.members } : null,
+    // `null` = no cap (Pro); a number is how many days of history `lnkdrp_get_share_stats` serves.
+    analyticsDaysLimit: plan ? limits.analyticsDays : null,
+    // Viewer identities, per-page time and visit history in lnkdrp_get_share_stats — Pro only, and
+    // unrelated to on-demand credits (see whoami.onDemand): a payg workspace stays on the basic tier.
+    deepAnalytics: isPro,
+    // Whether `allowRevisionHistory: true` (settable on every plan via create/update_share_link)
+    // actually lets a recipient browse prior versions once they open the link. The setting itself
+    // has no plan gate; only the recipient-facing effect does.
+    recipientsCanBrowseVersions: isPro,
+    notMcpAccessible,
+  };
+}
+
 /** Register `lnkdrp_whoami`. */
 export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
@@ -34,10 +84,16 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
       description:
         "Verify the lnkdrp API key and return the workspace it acts on: userId, email, orgId, orgName, plan, key prefix, " +
         "scopes and the client name lnkdrp recorded for this connection, plus the credit cost table (credits per tier " +
-        "basic/standard/advanced), creditsRemaining and creditsResetAt when readable, onDemand, and the MCP server " +
-        "version. plan: 'free' with onDemand: true means the workspace has added a card for pay-as-you-go - it is not " +
-        "on Pro's limits, but it will not simply run out of credits once its one-time starter credits are spent; do not " +
-        "read 'free' alone as 'will hit a wall'. Call this first to confirm the connection works. " +
+        "basic/standard/advanced), creditsRemaining and creditsResetAt when readable, onDemand, capabilities, and the " +
+        "MCP server version. plan: 'free' with onDemand: true means the workspace has added a card for pay-as-you-go - " +
+        "it is not on Pro's limits, but it will not simply run out of credits once its one-time starter credits are " +
+        "spent; do not read 'free' alone as 'will hit a wall'. capabilities answers 'what can I do here' in one call, " +
+        "before attempting anything: documents/projects (limit, used, remaining; limit null = unlimited), links " +
+        "(never limited on any plan), collaborators, analyticsDaysLimit (the window lnkdrp_get_share_stats serves), " +
+        "deepAnalytics and recipientsCanBrowseVersions (both Pro-only), and notMcpAccessible - real product features " +
+        "(request repos, download-access requests, project management) that have no MCP tool at all, so their absence " +
+        "from the tool list reads as 'not built yet', not 'this workspace lacks it' or a silently unsupported request. " +
+        "Call this first to confirm the connection works. " +
         SAFETY_TAIL,
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -58,6 +114,7 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
         // `false` when the snapshot could not be read, same as every other credits field here —
         // a Pro workspace with this false just means the read failed, not that on-demand is off.
         onDemand: credits?.onDemandEnabled ?? false,
+        capabilities: buildCapabilities(plan, ctx.config.featureRequestsEnabled),
         costTiers: [...COST_TIERS],
         costs: creditCosts(),
         mcpVersion: MCP_SERVER_VERSION,

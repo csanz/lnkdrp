@@ -5,7 +5,10 @@
  * and `https://lnkdrp.com` in production), `MCP_PORT` (default 8787), `MCP_PUBLIC_URL` (advertised
  * URL, default `http://localhost:${MCP_PORT}`), `NEXT_PUBLIC_REALTIME_URL` + `REALTIME_SECRET` /
  * `NEXTAUTH_SECRET` (optional; only used by `lnkdrp_share_pdf` to wait for "ready" over the
- * realtime channel instead of polling), `LNKDRP_API_KEY` (stdio mode only).
+ * realtime channel instead of polling), `NEXT_PUBLIC_FEATURE_REQUESTS` (same build-time flag the
+ * web app reads; surfaced read-only in `lnkdrp_whoami`'s `capabilities` so an agent can tell
+ * "request repos don't exist on this deployment" from "no MCP tool happens to cover them yet"),
+ * `LNKDRP_API_KEY` (stdio mode only).
  */
 
 export const MCP_SERVER_NAME = "lnkdrp";
@@ -35,6 +38,8 @@ export type Config = {
   realtimeUrl: string | null;
   /** Whether a ticket-signing secret is present (`REALTIME_SECRET` or `NEXTAUTH_SECRET`). */
   realtimeSecretConfigured: boolean;
+  /** Whether request repos are enabled on this deployment at all (`NEXT_PUBLIC_FEATURE_REQUESTS=1`). */
+  featureRequestsEnabled: boolean;
   isProduction: boolean;
 };
 
@@ -52,7 +57,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const publicUrl = trimSlashes(env.MCP_PUBLIC_URL || `http://localhost:${port}`);
   const realtimeUrl = trimSlashes(env.NEXT_PUBLIC_REALTIME_URL || "") || null;
   const realtimeSecretConfigured = Boolean((env.REALTIME_SECRET || env.NEXTAUTH_SECRET || "").trim());
-  return { apiUrl, port, publicUrl, realtimeUrl, realtimeSecretConfigured, isProduction };
+  const featureRequestsEnabled = env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
+  return { apiUrl, port, publicUrl, realtimeUrl, realtimeSecretConfigured, featureRequestsEnabled, isProduction };
 }
 
 /**

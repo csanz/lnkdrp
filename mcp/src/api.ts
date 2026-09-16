@@ -155,6 +155,13 @@ export type CreditsSnapshotLite = {
   onDemandEnabled: boolean;
 };
 
+/** `GET /api/plan`'s caps and current usage. A `limit` of `null` means unlimited (Pro). */
+export type PlanSnapshotLite = {
+  plan: string | null;
+  limits: { documents: number | null; projects: number | null; analyticsDays: number | null; collaborators: number | null };
+  usage: { documents: number; projects: number; members: number };
+};
+
 export type DocPatch = Partial<{
   title: string;
   shareEnabled: boolean;
@@ -621,10 +628,20 @@ export class ApiClient {
     };
   }
 
-  /** `GET /api/plan` — the workspace plan ("free" | "pro"). */
-  async planSnapshot(): Promise<{ plan: string | null }> {
+  /**
+   * `GET /api/plan` — the workspace plan plus its caps and current usage. `limit: null` means
+   * unlimited (Pro). Powers `lnkdrp_whoami`'s `capabilities`, not just its bare `plan` string.
+   */
+  async planSnapshot(): Promise<PlanSnapshotLite> {
     const p = rec(await this.request("GET", "/api/plan"));
-    return { plan: strOrNull(p.plan) };
+    const limits = rec(p.limits);
+    const usage = rec(p.usage);
+    const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    return {
+      plan: strOrNull(p.plan),
+      limits: { documents: n(limits.documents), projects: n(limits.projects), analyticsDays: n(limits.analyticsDays), collaborators: n(limits.collaborators) },
+      usage: { documents: n(usage.documents) ?? 0, projects: n(usage.projects) ?? 0, members: n(usage.members) ?? 0 },
+    };
   }
 
   /** Analytics for a document, or for one of its links when `shareId` is given. */
