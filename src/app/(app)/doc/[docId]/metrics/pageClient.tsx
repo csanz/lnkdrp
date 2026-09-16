@@ -705,6 +705,8 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     () => [...(data?.byLink ?? [])].sort((a, b) => b.viewers - a.viewers || b.views - a.views).slice(0, 3),
     [data],
   );
+  /** Longest bar = 100%, so the bars read relative to each other, not to some absolute scale. */
+  const maxTopLinkViewers = useMemo(() => Math.max(1, ...topLinksByViewers.map((r) => r.viewers)), [topLinksByViewers]);
   const recentlyOpenedLinks = useMemo(
     () =>
       [...(data?.byLink ?? [])]
@@ -1240,22 +1242,36 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                       <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
                         Top links · by viewers
                       </div>
-                      <ul className="mt-1.5 space-y-1.5">
+                      {/* Bars, not just a number column: length is the one thing that says "5 is a
+                          lot more than 2" at a glance, which a right-aligned digit does not. Scaled
+                          to the longest bar in this list, not to the document's own total — the
+                          question these three rows answer is how the links compare to each other. */}
+                      <ul className="mt-2 space-y-2">
                         {topLinksByViewers.map((r) => (
-                          <li key={r.shareId} className="flex items-baseline justify-between gap-3 text-[13px]">
-                            {r.label ? (
-                              <Link
-                                href={`/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(r.shareId)}`}
-                                className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
-                              >
-                                {r.label}
-                              </Link>
-                            ) : (
-                              <span className="min-w-0 truncate text-[var(--muted)]" title="This link was deleted; its traffic is still counted above">
-                                Deleted link
+                          <li key={r.shareId} className="text-[13px]">
+                            <div className="flex items-baseline justify-between gap-3">
+                              {r.label ? (
+                                <Link
+                                  href={`/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(r.shareId)}`}
+                                  className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                                >
+                                  {r.label}
+                                </Link>
+                              ) : (
+                                <span className="min-w-0 truncate text-[var(--muted)]" title="This link was deleted; its traffic is still counted above">
+                                  Deleted link
+                                </span>
+                              )}
+                              <span className="shrink-0 tabular-nums text-[var(--muted)]">
+                                {r.viewers.toLocaleString()} viewer{r.viewers === 1 ? "" : "s"}
                               </span>
-                            )}
-                            <span className="shrink-0 tabular-nums text-[var(--muted)]">{r.viewers.toLocaleString()}</span>
+                            </div>
+                            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
+                              <div
+                                className="h-full rounded-full bg-[rgb(16_185_129)]"
+                                style={{ width: `${Math.max(4, (r.viewers / maxTopLinkViewers) * 100)}%` }}
+                              />
+                            </div>
                           </li>
                         ))}
                       </ul>
