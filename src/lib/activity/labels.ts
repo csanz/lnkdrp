@@ -21,6 +21,7 @@ export const ACTIVITY_FILTERS = [
       "share_link.created",
       "share_link.updated",
       "share_link.revoked",
+      "share_link.password_revealed",
       "share.password_set",
       "share.password_cleared",
       "download_request.created",
@@ -219,6 +220,10 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     case "share_link.revoked": {
       const label = metaString(item.meta, "linkLabel") || "a link";
       return { subject, verb: "removed link", object: `“${label}”`, suffix: `from ${docTitle}` };
+    }
+    case "share_link.password_revealed": {
+      const label = metaString(item.meta, "linkLabel") || "a link";
+      return { subject, verb: "viewed the password for", object: `“${label}”`, suffix: `on ${docTitle}` };
     }
     case "share.password_set":
       return { subject, verb: "set a password on", object: docTitle, suffix: null };

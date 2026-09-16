@@ -237,6 +237,27 @@ A document owns **any number of share links** — one per audience — instead o
   documents' links excluded from both. `lnkdrp_list_share_links`'s `query` and the new
   `lnkdrp_find_share_link` tool wrap the scoped and workspace-wide searches respectively.
 
+- **Share passwords: any length, and the owner can read them back** (decided 2026-09-16,
+  mt_eqYXr8Z5Pn). The 8-character minimum is gone; `SHARE_PASSWORD_MIN` is 1 and lives in one
+  place, `src/lib/share/passwordPolicy.ts`, which the link service, the doc-level share-password
+  route, `ShareLinkModal` and the MCP zod schemas all read. It had been hardcoded in four copies,
+  which is how the surfaces drifted. A share password is how much friction the sender wants in
+  front of someone they already trust, not an account credential, and brute force stays bounded by
+  the unlock route's 10 attempts per IP per share per 5 minutes. Whitespace-only is rejected as a
+  typo; `""`/`null` still means "no password". The agent-facing consequence matters as much as the
+  rule: the MCP schemas used to reject a human's short password, so the agent picked a longer one
+  of its own and the human was locked out of their own link by a password they never chose.
+- **Reveal a link's password**: `GET /api/docs/:docId/links/:linkId/password` returns
+  `{ passwordEnabled, password }` and backs the Show control in `ShareLinkModal`. Passwords were
+  already encrypted at rest (`passwordEnc`) so they could be read back, but the only caller of
+  `decryptSharePassword` was the document-level route, which covers the default link alone and
+  which no UI ever called — so after an agent set a password the only copy the human could see was
+  whatever the agent wrote in chat. Admin or owner, one step above the `member` the other link
+  routes take, because reading a secret out is not the same permission as setting one:
+  rate-limited to 30 per viewer per link per 5 minutes, `no-store`, and every successful reveal
+  writes a `share_link.password_revealed` activity row. Deliberately not exposed over MCP: the
+  web reveal is what closes the lockout, and an agent that just set a password already has it.
+
 ## Recipient share view (`/s/:shareId`)
 
 - **Public share page**:

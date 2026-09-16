@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import Modal from "@/components/modals/Modal";
 import ProPill from "@/components/ProPill";
 import type { ShareLinkDTO } from "@/lib/share/links";
+import { SHARE_PASSWORD_MIN } from "@/lib/share/passwordPolicy";
 
 /** Values the caller sends to the links API. `password`: `undefined` = leave, `null` = clear. */
 export type ShareLinkFormValues = {
@@ -47,7 +48,7 @@ type Props = {
   onSubmit: (values: ShareLinkFormValues) => void;
 };
 
-const PASSWORD_MIN = 8;
+
 
 /** `2026-09-13` for a `<input type="date">`, in the viewer's timezone. */
 function toDateInputValue(iso: string | null | undefined): string {
@@ -153,6 +154,12 @@ export default function ShareLinkModal({
   const [passwordMode, setPasswordMode] = useState<"keep" | "set" | "clear">("keep");
   const [copyFromId, setCopyFromId] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  // The stored password, once the owner has asked to see it. Never pre-fetched: a reveal is
+  // rate-limited and written to the activity feed, so it happens on a click, not on open.
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Re-seed the form every time the modal opens (or switches to another link).
   useEffect(() => {
@@ -160,6 +167,10 @@ export default function ShareLinkModal({
     setLocalError(null);
     setCopyFromId("");
     setPassword("");
+    setRevealed(null);
+    setRevealing(false);
+    setRevealError(null);
+    setCopied(false);
     if (mode === "edit" && link) {
       setLabel(link.label ?? "");
       setAudience(link.audience ?? "");
@@ -194,6 +205,36 @@ export default function ShareLinkModal({
     setExpires(iso && Date.parse(iso) > Date.now() ? toDateInputValue(iso) : "");
   }
 
+  /** Fetch and show the stored password for the link being edited. */
+  async function revealPassword() {
+    if (!link || revealing) return;
+    setRevealing(true);
+    setRevealError(null);
+    try {
+      const res = await fetch(`/api/docs/${encodeURIComponent(link.docId)}/links/${encodeURIComponent(link.id)}/password`, { cache: "no-store" });
+      const body = (await res.json().catch(() => ({}))) as { password?: unknown; error?: unknown };
+      if (!res.ok) throw new Error(typeof body.error === "string" ? body.error : "Could not show the password.");
+      if (typeof body.password === "string" && body.password) setRevealed(body.password);
+      else setRevealError("This password cannot be shown. Use Change to set a new one.");
+    } catch (err) {
+      setRevealError(err instanceof Error ? err.message : "Could not show the password.");
+    } finally {
+      setRevealing(false);
+    }
+  }
+
+  /** Copy the revealed password, with a brief confirmation on the button. */
+  async function copyRevealed() {
+    if (!revealed) return;
+    try {
+      await navigator.clipboard.writeText(revealed);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setRevealError("Could not copy. Select the password and copy it manually.");
+    }
+  }
+
   /** Validate the form and hand the values to the caller. */
   function submit() {
     if (saving) return;
@@ -203,8 +244,8 @@ export default function ShareLinkModal({
       return;
     }
     const pwd = password.trim();
-    if (passwordMode === "set" && pwd && pwd.length < PASSWORD_MIN) {
-      setLocalError(`The password must be at least ${PASSWORD_MIN} characters.`);
+    if (passwordMode === "set" && pwd && pwd.length < SHARE_PASSWORD_MIN) {
+      setLocalError("The password cannot be blank.");
       return;
     }
     setLocalError(null);
@@ -356,9 +397,25 @@ export default function ShareLinkModal({
         <div>
           <div className={LABEL_CLASS}>Password (optional)</div>
           {passwordAlreadySet && passwordMode === "keep" ? (
-            <div className="mt-1 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
-              <span className="text-[12px] text-[var(--fg)]">Password protected</span>
+            <div className="mt-1 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2">
+              {revealed ? (
+                <span className="break-all font-mono text-[12px] text-[var(--fg)]" aria-label="Share link password">
+                  {revealed}
+                </span>
+              ) : (
+                <span className="text-[12px] text-[var(--fg)]">Password protected</span>
+              )}
               <span className="flex-1" />
+              {revealed ? (
+                <button type="button" onClick={() => void copyRevealed()} className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50">
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              ) : (
+                <button type="button" onClick={() => void revealPassword()} disabled={saving || revealing} className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50">
+                  {revealing ? "Showing…" : "Show"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setPasswordMode("set")}
@@ -375,6 +432,8 @@ export default function ShareLinkModal({
               >
                 Remove
               </button>
+              </div>
+              {revealError ? <div className="mt-1 text-[11px] text-red-600 dark:text-red-300">{revealError}</div> : null}
             </div>
           ) : passwordMode === "clear" ? (
             <div className="mt-1 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
@@ -396,7 +455,7 @@ export default function ShareLinkModal({
                 value={password}
                 onChange={(e) => setPassword(e.currentTarget.value)}
                 disabled={saving}
-                placeholder={`At least ${PASSWORD_MIN} characters`}
+                placeholder="Any password you like"
                 autoComplete="new-password"
                 className={FIELD_CLASS}
                 aria-label="Share link password"

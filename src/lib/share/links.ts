@@ -20,12 +20,12 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 import { checkLimit, type LimitCheck } from "@/lib/billing/planLimits";
+import { SHARE_PASSWORD_MIN, SHARE_PASSWORD_MAX } from "./passwordPolicy";
 
 export const SHARE_LINK_LABEL_MAX = 80;
 export const SHARE_LINK_AUDIENCE_MAX = 120;
 export const SHARE_LINKS_PER_DOC_MAX = 50;
-export const SHARE_PASSWORD_MIN = 8;
-export const SHARE_PASSWORD_MAX = 128;
+export { SHARE_PASSWORD_MIN, SHARE_PASSWORD_MAX } from "./passwordPolicy";
 export const DEFAULT_LINK_LABEL = "Default link";
 
 export type ShareLinkDTO = {
@@ -461,7 +461,8 @@ function passwordFields(password: string | null | undefined): Record<string, unk
     return { passwordSalt: null, passwordHash: null, passwordEnc: null, passwordEncIv: null, passwordEncTag: null };
   }
   const trimmed = password.trim();
-  if (trimmed.length < SHARE_PASSWORD_MIN) throw new ShareLinkError("validation", `Password must be at least ${SHARE_PASSWORD_MIN} characters.`);
+  // Whitespace-only is a typo, not a request to clear: pass "" or null for that.
+  if (trimmed.length < SHARE_PASSWORD_MIN) throw new ShareLinkError("validation", "Password cannot be blank.");
   if (trimmed.length > SHARE_PASSWORD_MAX) throw new ShareLinkError("validation", "Password is too long.");
   const { salt, hash } = hashSharePassword(trimmed);
   const enc = encryptSharePassword(trimmed);

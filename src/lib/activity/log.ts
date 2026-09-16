@@ -28,6 +28,7 @@ export type ActivityType =
   | "share_link.created"
   | "share_link.updated"
   | "share_link.revoked"
+  | "share_link.password_revealed"
   | "share.password_set"
   | "share.password_cleared"
   | "request_repo.created"

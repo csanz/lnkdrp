@@ -5,6 +5,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 import { ensureDefaultLink, updateShareLink } from "@/lib/share/links";
+import { SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN } from "@/lib/share/passwordPolicy";
 import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
 import { debugError } from "@/lib/debug";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
@@ -13,8 +14,7 @@ import { recordActivity } from "@/lib/activity/log";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Minimum share password length (share links are public; short passwords are guessable). */
-const MIN_SHARE_PASSWORD_LENGTH = 8;
+
 /**
  * Return whether object id.
  */
@@ -159,13 +159,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     }
 
     const trimmed = password.trim();
-    if (trimmed.length < MIN_SHARE_PASSWORD_LENGTH) {
-      return applyTempUserHeaders(
-        NextResponse.json({ error: `Password must be at least ${MIN_SHARE_PASSWORD_LENGTH} characters.` }, { status: 400 }),
-        actor,
-      );
+    if (trimmed.length < SHARE_PASSWORD_MIN) {
+      return applyTempUserHeaders(NextResponse.json({ error: "Password cannot be blank." }, { status: 400 }), actor);
     }
-    if (trimmed.length > 128) {
+    if (trimmed.length > SHARE_PASSWORD_MAX) {
       return applyTempUserHeaders(
         NextResponse.json({ error: "Password is too long." }, { status: 400 }),
         actor,
@@ -227,10 +224,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
   }
 }
 /**
- * Handle GET requests.
+ * Reveal the DOCUMENT-level share password — the default link's, mirrored onto the Doc by
+ * `syncDocShareState`. No UI calls this; `scripts/tests-benchmark.ts` does, which is why it is
+ * still here. For any other link, and for the owner-facing Show control in the edit modal, use
+ * `GET /api/docs/:docId/links/:linkId/password`, which covers every link and is admin-gated.
  */
-
-
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
   const url = new URL(request.url);
   const lite = url.searchParams.get("lite") === "1";

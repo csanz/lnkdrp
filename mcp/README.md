@@ -107,7 +107,7 @@ How an agent finds documents it was not handed, and reads what happened in the w
   wrapped as untrusted. Free strips viewer identity from `share.viewed`/`share.downloaded` rows, as the app does.
 
 ### `lnkdrp_share_pdf`
-In `{ idempotencyKey (1–128), title? (≤200), allowDownload? = false, password? (8–128), waitForReady? = true,
+In `{ idempotencyKey (1–128), title? (≤200), allowDownload? = false, password? (1–128), waitForReady? = true,
 timeoutSeconds? 5–120 = 60, summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus **exactly one of**
 `sourceUrl` (https; Google Drive share links and lnkdrp /s/ links accepted; max 25MB fetched server-side) or
 `fileBase64` + `fileName?` (the PDF's bytes, decoded size up to 3MB — mt_bJwX4CtmhU, for a file with no public URL;
@@ -171,7 +171,7 @@ audience, password, download/revision switches, expiry and counts. Link DTO: `{ 
 isDefault, enabled, allowDownload, allowRevisionHistory, passwordEnabled, expiresAt, active, status, createdVia, createdAt,
 lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the sender and never shown to a viewer.
 
-- create — In `{ docId, label (1–80), audience?, allowDownload? = false, password? (8–128) | null, expiresAt? ISO | null,
+- create — In `{ docId, label (1–80), audience?, allowDownload? = false, password? (1–128) | null, expiresAt? ISO | null,
   allowRevisionHistory? = false, enabled? = true }` → `POST /api/docs/:id/links` → `{ link, shareUrl, planWarning?, planNote? }`.
   Links are never plan-capped, so the link always comes back enabled; `planWarning` only flags that the
   workspace is near its separate cap on shared documents.

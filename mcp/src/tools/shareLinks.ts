@@ -39,7 +39,16 @@ const audienceSchema = z
       "human told you; leave it out rather than guessing.",
   );
 const expiresAtSchema = z.string().nullable().optional().describe("ISO date when the link stops working (must be in the future), or null to never expire.");
-const passwordSchema = z.string().min(8).max(128).nullable().optional().describe("Password viewers must enter (8-128 chars), or null to remove it.");
+const passwordSchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .nullable()
+  .optional()
+  .describe(
+    "Password viewers must enter (1-128 chars), or null to remove it. " +
+      "Use exactly the password the human gave you, whatever its length - a one-character password is allowed. Never substitute a longer one of your own: they will type theirs at the gate and be locked out. Tell them the password you set; the owner can also reveal it later in the link's settings.",
+  );
 
 /** One link plus its public URL; `planWarning` is folded in by the callers that can hit the cap. */
 type ShareLinkResult = ApiShareLink & { shareUrl: string };

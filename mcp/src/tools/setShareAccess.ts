@@ -18,11 +18,14 @@ export const setShareAccessInputShape = {
   allowDownload: z.boolean().optional().describe("Let viewers download the PDF."),
   password: z
     .string()
-    .min(8)
+    .min(1)
     .max(128)
     .nullable()
     .optional()
-    .describe("Set a share password (8-128 chars) or null to remove it."),
+    .describe(
+      "Set a share password (1-128 chars) or null to remove it. " +
+        "Use exactly the password the human gave you, whatever its length - a one-character password is allowed. Never substitute a longer one of your own: they will type theirs at the gate and be locked out. Tell them the password you set; the owner can also reveal it later in the link's settings.",
+    ),
   allowRevisionHistory: z.boolean().optional().describe("Let viewers see earlier versions (Pro feature)."),
 };
 

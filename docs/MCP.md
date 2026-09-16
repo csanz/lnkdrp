@@ -242,7 +242,8 @@ download/password settings, then (by default) waits for processing to finish.
   - `fileName?` ≤ 200 chars, only used with `fileBase64` (default `document.pdf`).
   - `title?` ≤ 200 chars (default "Untitled document").
   - `allowDownload?` boolean, default `false`.
-  - `password?` 8–128 chars; sets a share password.
+  - `password?` 1–128 chars; sets a share password. Use the human's password verbatim — the
+    minimum is 1 on purpose, so an agent never has to substitute a longer one of its own.
   - `waitForReady?` boolean, default `true`.
   - `timeoutSeconds?` 5–120, default 60. Only used with `waitForReady`.
   - `summary?` 40–600 characters and `keyPoints?` 2–7 strings of at most 160 characters each, plain
@@ -387,7 +388,7 @@ allowRevisionHistory, passwordEnabled, expiresAt, active, status: "active"|"disa
 Create an extra link for a document.
 
 - In: `{ docId, label (1–80), audience?: string|null (≤120), allowDownload? = false,
-  password?: string|null (8–128), expiresAt?: ISO date|null (must be future),
+  password?: string|null (1–128), expiresAt?: ISO date|null (must be future),
   allowRevisionHistory? = false, enabled? = true }`.
 - Out: `{ link, shareUrl, planWarning?, planNote? }`. `shareUrl` works immediately.
 - **The label is the human's word, not the agent's.** The label and audience are how the sender

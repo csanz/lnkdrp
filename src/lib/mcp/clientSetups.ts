@@ -341,7 +341,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
         "fileName — optional, only used with fileBase64",
         "title — optional, up to 200 characters",
         "allowDownload — optional, default off",
-        "password — optional, 8–128 characters",
+        "password — optional, 1–128 characters",
         "waitForReady / timeoutSeconds — optional; wait for processing (default 60s, max 120s)",
         "summary + keyPoints — optional, both or neither; when the agent writes them the AI summary is skipped and costs 0 credits",
       ],
@@ -416,7 +416,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     purpose: "Add another link to a document, one per recipient, with its own label, password and expiry.",
     access: "write",
     detail: {
-      inputs: ["docId", "label — private name, 1–80 characters, never shown to viewers", "audience — optional private note, up to 120 characters", "allowDownload / allowRevisionHistory — optional", "password — optional, 8–128 characters", "expiresAt — optional ISO date in the future", "enabled — optional, default on"],
+      inputs: ["docId", "label — private name, 1–80 characters, never shown to viewers", "audience — optional private note, up to 120 characters", "allowDownload / allowRevisionHistory — optional", "password — optional, 1–128 characters", "expiresAt — optional ISO date in the future", "enabled — optional, default on"],
       output: "The new link with its own shareUrl, working immediately.",
       errors: ["validation — missing label, past expiry, short password", "not_found — the document"],
       note: "Links are never plan-capped. A document may carry one per investor or counterparty on any plan.",

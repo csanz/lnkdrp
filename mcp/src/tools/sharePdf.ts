@@ -99,7 +99,15 @@ export const sharePdfInputShape = {
     ),
   fileName: z.string().max(200).optional().describe("File name to record, only used with fileBase64 (default: document.pdf)."),
   allowDownload: z.boolean().default(false).describe("Let viewers download the PDF (default false)."),
-  password: z.string().min(8).max(128).optional().describe("Protect the share link with a password (8-128 chars)."),
+  password: z
+    .string()
+    .min(1)
+    .max(128)
+    .optional()
+    .describe(
+      "Protect the share link with a password (1-128 chars). " +
+        "Use exactly the password the human gave you, whatever its length - a one-character password is allowed. Never substitute a longer one of your own: they will type theirs at the gate and be locked out. Tell them the password you set; the owner can also reveal it later in the link's settings.",
+    ),
   waitForReady: z.boolean().default(true).describe("Wait until processing finishes (status ready or failed) before returning."),
   timeoutSeconds: z.number().int().min(5).max(120).default(60).describe("Max seconds to wait for processing (5-120, default 60)."),
   summary: z
