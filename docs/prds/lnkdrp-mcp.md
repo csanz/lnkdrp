@@ -108,6 +108,10 @@ Conventions: prefix `lnkdrp_`; zod v4 `inputSchema`; `title`, `description`, `an
 
 **`lnkdrp_list_request_uploads`** — In `{projectId?, slug? (one required), since?, limit? 1–100=25, cursor?}`. Out `{items:[{docId, shareId, title:untrusted, status, version, receivedAt, shareUrl, reviewScore?, latestReviewSummary?:untrusted}], nextCursor?}`. Read. Errors `not_found`. Uses `requests.listReceivedDocs`.
 
+**`lnkdrp_list_docs`** (shipped 2026-09-15) — In `{query?, ids?, page?=1, limit?=25}`. `query` matches a title or any share-link slug; `ids` is a direct lookup. Out `{total, page, limit, hasMore, docs:[{docId, shareId, shareUrl, title:untrusted, oneLiner:untrusted, status, version, previewImageUrl, createdDate, updatedDate}]}`. Read; `readOnlyHint`. See `docs/MCP.md` for the full reference.
+
+**`lnkdrp_get_activity`** (shipped 2026-09-15) — In `{limit?=40, cursor?, types? (enum), docId?, who?: me|team|agents}`. `who: "agents"` is every event with agent attribution, whoever owns the key — the audit trail an agent uses to check its own earlier actions. Out `{nextCursor, items:[{id, type, at, actor:untrusted, agent, doc:untrusted, project:untrusted, meta:untrusted}]}`. Follows the same Free/Pro viewer-identity gate as `get_share_stats` on `share.viewed`/`share.downloaded` rows. Read; `readOnlyHint`. See `docs/MCP.md` for the full reference.
+
 **`lnkdrp_get_share_stats`** — In `{docId?, shareId?, days? 1–60=15 (the shareviews route clamps to 60), includeViewers?=false}`. Out `{docId, shareId, days, totals:{views, downloads, pagesViewed, authenticatedViewers, anonymousViewers}, series:[{date, views, downloads}], viewers?:[{name:untrusted, email:untrusted, views, lastSeen, pagesSeen, timeSpentMs}], snapshot:{lastDaysViews, lastDaysDownloads, downloadsTotal}}`. Read. Errors `not_found`. Uses `stats.getShareStats`. Follows the web analytics tiers: on Free the window is clamped to 7 days and `viewers` is always `[]` (`analyticsTier: "basic"`, plus `viewerCount`), on Pro `includeViewers` returns the full rows (`analyticsTier: "deep"`).
 
 ### Resources and prompts
@@ -214,4 +218,4 @@ None in v1: a `lnkdrp://doc/{id}` resource would duplicate `get_share`, and prom
 - OAuth 2.1 (NextAuth-backed authorization server, DCR, PKCE) for Claude.ai connectors, behind the `verifyBearer` seam.
 - Per-user identity keys; multi-org keys with per-call `orgId`.
 - Webhooks (`upload.ready`, `request.received`, `share.viewed`) for agent loops.
-- `lnkdrp_replace_pdf`, `lnkdrp_rerun_review`, `lnkdrp_list_docs`; byte upload; resources and prompts; download-request tools; share expiry; per-key spend caps.
+- `lnkdrp_replace_pdf`, `lnkdrp_rerun_review`; byte upload; resources and prompts; download-request tools; share expiry; per-key spend caps. (`lnkdrp_list_docs` and `lnkdrp_get_activity` shipped 2026-09-15 — see `docs/MCP.md`.)

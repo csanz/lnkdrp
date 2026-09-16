@@ -61,7 +61,7 @@ function planLimitAlternatives(limit: string): string[] {
       return [
         "add another share link to a document this workspace already has (lnkdrp_create_share_link — links are unlimited on every plan, one per investor or counterparty)",
         "replace the file on an existing document so recipients see the new version on the links they already have",
-        "archive a document that is finished, which frees a slot and keeps its analytics",
+        "find one to archive with lnkdrp_list_docs, then archive it with lnkdrp_archive_doc — it frees a slot and keeps its analytics",
       ];
     case "projects":
       return ["put the document in an existing project", "archive a finished project to free the slot"];

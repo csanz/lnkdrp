@@ -1,6 +1,8 @@
 /**
- * Build one `McpServer` for a session: the nine tools, the `lnkdrp://workspace` resource and the
- * `share-and-report` prompt, all bound to the session's `ToolContext`.
+ * Build one `McpServer` for a session: every tool (discovery, share, links, stats, lifecycle — the
+ * list is `registerX` calls below and `TOOL_CATALOG` in `src/lib/mcp/clientSetups.ts` is its public
+ * mirror), the `lnkdrp://workspace` resource and the `share-and-report` prompt, all bound to the
+ * session's `ToolContext`.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
