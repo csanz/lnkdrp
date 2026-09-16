@@ -21,8 +21,23 @@ import { requireHumanConfirmation, severityFromTraffic } from "../confirm";
 import { docIdSchema, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
 
 const linkIdSchema = z.string().regex(OBJECT_ID_RE, "linkId must be a 24-character hex id").describe("Share link id (24 hex chars), from lnkdrp_list_share_links");
-const labelSchema = z.string().min(1).max(80).describe("Private name for this link, e.g. \"Sequoia\". Never shown to viewers.");
-const audienceSchema = z.string().max(120).nullable().optional().describe("Private note about who this link is for, e.g. \"Sequoia · Roelof\". Never shown to viewers.");
+const labelSchema = z
+  .string()
+  .min(1)
+  .max(80)
+  .describe(
+    'Private name for this link, e.g. "Sequoia". Never shown to viewers. This is the human\'s word for the recipient, not ' +
+      "yours: if they have not said who the link is for, ask them before calling instead of inventing a label.",
+  );
+const audienceSchema = z
+  .string()
+  .max(120)
+  .nullable()
+  .optional()
+  .describe(
+    'Private note about who this link is for, e.g. "Sequoia · Roelof". Never shown to viewers. Fill it from what the ' +
+      "human told you; leave it out rather than guessing.",
+  );
 const expiresAtSchema = z.string().nullable().optional().describe("ISO date when the link stops working (must be in the future), or null to never expire.");
 const passwordSchema = z.string().min(8).max(128).nullable().optional().describe("Password viewers must enter (8-128 chars), or null to remove it.");
 
@@ -103,6 +118,9 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
         "Create an extra share link for a document, with its own label, audience, password, download and expiry settings. " +
         "One link per recipient is the point: each link has separate view/download stats (lnkdrp_get_share_stats accepts its " +
         "shareId) and can be disabled on its own. The label and audience are private to the sender and never shown to viewers. " +
+        "They are also how the human finds this link again months later, so they have to be the human's own words. If the " +
+        "request did not say who the link is for, ask them that one question before calling - a made-up label is worse than " +
+        "a moment's pause. " +
         "Links are never plan-capped: a document may carry one per investor or counterparty on any plan, and this call " +
         "always creates the link enabled. planWarning only appears when the workspace is near its separate cap on shared " +
         "documents. " +

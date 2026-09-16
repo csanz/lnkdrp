@@ -31,7 +31,8 @@ export const SERVER_INSTRUCTIONS =
   "public PDF URL into a share link, lnkdrp_replace_pdf to put a new PDF on a document you already shared without losing its " +
   "links or their analytics (never blocked by the document cap), lnkdrp_get_share to read its state, lnkdrp_set_share_access " +
   "to change access, and lnkdrp_get_share_stats for views. A document can have many links, one per recipient: lnkdrp_create_share_link makes a " +
-  "labelled link with its own password, download and expiry settings, lnkdrp_list_share_links shows them all, " +
+  "labelled link with its own password, download and expiry settings - ask the human who the link is for before " +
+  "creating it, since its label and audience are how they find it again later, lnkdrp_list_share_links shows them all, " +
   "lnkdrp_update_share_link changes or disables one, and lnkdrp_delete_share_link removes one. Pass a link's shareId to " +
   "lnkdrp_get_share_stats for that link alone. To find a link by name (its label or audience) when you do not know which " +
   "document it is on, use lnkdrp_find_share_link; once you know the document, lnkdrp_list_share_links's own query does " +

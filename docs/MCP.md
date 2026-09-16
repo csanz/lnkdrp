@@ -390,6 +390,12 @@ Create an extra link for a document.
   password?: string|null (8–128), expiresAt?: ISO date|null (must be future),
   allowRevisionHistory? = false, enabled? = true }`.
 - Out: `{ link, shareUrl, planWarning?, planNote? }`. `shareUrl` works immediately.
+- **The label is the human's word, not the agent's.** The label and audience are how the sender
+  finds a link again months later, so the tool description and both field descriptions tell the
+  agent to ask who the link is for when the request did not say, rather than inventing one. This is
+  a request, not a gate: the server still accepts any label. A hard refusal was considered and
+  rejected because it costs a round trip on every scripted call, and elicitation is not an option
+  here (Claude Code declares the capability and then times out — see `mcp/src/confirm.ts`).
 - **Links are never plan-capped.** A document may carry one link per investor or counterparty on
   any plan, and this call always creates the link enabled. The Free cap counts shared *documents*;
   `planWarning` (`{ limit, used, max, grace, message, upgradeUrl }`) and a one-sentence `planNote`
