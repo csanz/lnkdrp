@@ -179,7 +179,6 @@ export async function createApiKey(input: CreateApiKeyInput): Promise<{ plaintex
   return { plaintext, key: toAgentKeyRow(doc) };
 }
 
-/** Keys for a workspace, newest first, revoked included (`revoked: true`), capped at 50. */
 /** Resolve `createdByUserId`s to display info in one query (missing users map to null). */
 async function resolveOwners(ids: Array<Types.ObjectId | string | null>): Promise<Map<string, KeyOwner>> {
   const unique = Array.from(new Set(ids.filter(Boolean).map((v) => String(v)))).filter((v) => Types.ObjectId.isValid(v));
@@ -194,10 +193,38 @@ async function resolveOwners(ids: Array<Types.ObjectId | string | null>): Promis
   return out;
 }
 
+/** Keys for a workspace, newest first, revoked included (`revoked: true`), capped at `API_KEY_LIST_LIMIT`. */
 export async function listApiKeys(orgId: string | Types.ObjectId): Promise<AgentKeyRow[]> {
   await connectMongo();
   const docs = await ApiKeyModel.find({ orgId: toObjectId(orgId), isDeleted: { $ne: true } })
     .sort({ createdDate: -1 })
+    .limit(API_KEY_LIST_LIMIT)
+    .select({ name: 1, prefix: 1, scopes: 1, createdDate: 1, lastUsedAt: 1, lastUsedClient: 1, revokedAt: 1, createdByUserId: 1 })
+    .lean();
+  const owners = await resolveOwners(docs.map((d) => (d as ApiKeyRowSource).createdByUserId ?? null));
+  return docs.map((d) => {
+    const src = d as ApiKeyRowSource;
+    return toAgentKeyRow(src, src.createdByUserId ? (owners.get(String(src.createdByUserId)) ?? null) : null);
+  });
+}
+
+/**
+ * Active keys that have been used at least once, most-recently-used first.
+ *
+ * Separate from `listApiKeys` because that one is the management list: newest-created first, capped
+ * at `API_KEY_LIST_LIMIT`. A workspace that has churned through more than that many keys pushes a
+ * long-lived, still-in-use key off the end, which would leave agent status reading "Not connected"
+ * while an agent is actively working.
+ */
+export async function listUsedActiveApiKeys(orgId: string | Types.ObjectId): Promise<AgentKeyRow[]> {
+  await connectMongo();
+  const docs = await ApiKeyModel.find({
+    orgId: toObjectId(orgId),
+    isDeleted: { $ne: true },
+    revokedAt: null,
+    lastUsedAt: { $ne: null },
+  })
+    .sort({ lastUsedAt: -1 })
     .limit(API_KEY_LIST_LIMIT)
     .select({ name: 1, prefix: 1, scopes: 1, createdDate: 1, lastUsedAt: 1, lastUsedClient: 1, revokedAt: 1, createdByUserId: 1 })
     .lean();
@@ -281,12 +308,18 @@ export function resetApiKeyTouchThrottle(): void {
  * green dot forever; their history stays visible in the key list.
  */
 export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Omit<AgentStatus, "canManage" | "isPersonalOrg">> {
-  const keys = await listApiKeys(orgId);
+  // `keys` is the management list (newest-created, capped); connectivity reads `used` instead so a
+  // long-lived key that has fallen off the end of that list still reports as connected.
+  const [keys, used, activeKeys] = await Promise.all([
+    listApiKeys(orgId),
+    listUsedActiveApiKeys(orgId),
+    countActiveApiKeys(orgId),
+  ]);
   // `latest` = most recent use by an agent client; `latestTool` = most recent use by curl & co.
   let latest: AgentKeyRow | null = null;
   let latestTool: AgentKeyRow | null = null;
-  for (const k of keys) {
-    if (!k.lastUsedAt || k.revoked) continue;
+  for (const k of used) {
+    if (!k.lastUsedAt) continue;
     if (isToolClient(k.lastUsedClient)) {
       if (!latestTool || (latestTool.lastUsedAt ?? "") < k.lastUsedAt) latestTool = k;
       continue;
@@ -296,8 +329,8 @@ export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Om
   // Distinct connected clients across active, used keys (a client may hold several keys, and in a
   // shared workspace several members may each connect the same client).
   const byClient = new Map<string, AgentClient>();
-  for (const k of keys) {
-    if (!k.lastUsedAt || k.revoked || isToolClient(k.lastUsedClient)) continue;
+  for (const k of used) {
+    if (!k.lastUsedAt || isToolClient(k.lastUsedClient)) continue;
     const name = k.lastUsedClient ?? "API key";
     const who = ownerLabel(k.createdBy);
     const cur = byClient.get(name);
@@ -315,7 +348,7 @@ export async function getAgentStatus(orgId: string | Types.ObjectId): Promise<Om
     lastVerified: latestTool?.lastUsedAt ? { at: latestTool.lastUsedAt, client: latestTool.lastUsedClient ?? "API key" } : null,
     lastUsedAt: latest?.lastUsedAt ?? null,
     lastUsedClient: latest?.lastUsedClient ?? null,
-    activeKeys: keys.filter((k) => !k.revoked).length,
+    activeKeys,
     keys,
     clients,
     connectedCount: clients.length,
