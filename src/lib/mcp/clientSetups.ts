@@ -354,6 +354,29 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     },
   },
   {
+    name: "lnkdrp_replace_pdf",
+    purpose: "Put a new PDF on a document you already shared — every link keeps working.",
+    access: "write",
+    detail: {
+      inputs: [
+        "idempotencyKey — required; reuse it on retries and you get the same result back",
+        "docId — the existing document to update",
+        "sourceUrl — an https URL to the new PDF; Google Drive share links are accepted",
+        "title — optional, up to 200 characters; leaves the title unchanged if omitted",
+        "waitForReady / timeoutSeconds — optional; wait for processing (default 60s, max 120s)",
+        "summary + keyPoints — optional, both or neither; when the agent writes them the AI summary is skipped and costs 0 credits",
+      ],
+      output: "docId, shareId, shareUrl, status, the new version number, uploadId, and any AI steps that were skipped as warnings.",
+      errors: [
+        "not_found — the docId does not exist in this workspace",
+        "out_of_credits — the AI summary needs credits the workspace does not have; pass summary and keyPoints instead",
+        "fetch_blocked / unsupported_content_type / too_large — the URL could not be used",
+        "validation — including invalid_summary, whose message says how to fix it",
+      ],
+      note: "Never blocked by the document cap — replacing does not create a document. The status flips to preparing as soon as the call starts, before the new file is fetched.",
+    },
+  },
+  {
     name: "lnkdrp_get_share",
     purpose: "Status, settings and summary of a link. Poll it after share_pdf.",
     access: "read",

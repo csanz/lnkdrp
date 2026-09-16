@@ -151,7 +151,7 @@ None in v1: a `lnkdrp://doc/{id}` resource would duplicate `get_share`, and prom
 
 - **Raw byte upload** (base64/multipart) — URL import only.
 - **Catalogue tools** (`list_docs`, projects) — agents hold ids from their own writes.
-- **Replace/new-version and review-rerun tools** — `replaceUrl` is returned once at creation for humans.
+- **Review-rerun tool.** (`lnkdrp_replace_pdf` shipped 2026-09-16, mt_zKD3mlHp_K — see `docs/MCP.md`; `replaceUrl` stays `null` on `share_pdf`, replacement is its own tool.)
 - **Dashboard-wide stats, ledger, billing, org switching, key management via MCP.**
 - **OAuth 2.1 issuance** — seam and RFC 9728 placeholder only.
 - **Share expiry, archive/delete, download-request approval, recipient-side tools, per-visit viewer timings.**

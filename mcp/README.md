@@ -110,6 +110,7 @@ or nothing when the agent passes them; the summary is then attributed to the age
 Flow: `POST /api/docs` → `POST /api/uploads` → `POST /api/uploads/:id/import-url` → `POST /api/uploads/:id/process`
 → `PATCH /api/docs/:id` (download) → `POST /api/docs/:id/share-password` → wait for `ready|failed`.
 Out `{ docId, shareId, shareUrl, replaceUrl: null, status, version, uploadId, title, planWarning?, timedOut?, warnings, creditsRemaining? }`.
+`replaceUrl` is always `null` — updating a document already shared is `lnkdrp_replace_pdf` below.
 After processing finishes it reads `GET /api/uploads/:id` and turns `upload.ai` into `warnings` (e.g. "AI summary skipped:
 out of AI credits (needs 1). Pass summary and keyPoints to share without credits.", "AI compare skipped: version history
 is a Pro feature."); a skipped step never fails the call. `lnkdrp_get_share` returns the same `warnings`.
@@ -120,6 +121,21 @@ fails the empty draft is deleted again; failures after the file is stored keep t
 report `docId/shareId/shareUrl` in `details`. When a Free workspace is at its shared-document cap
 the call fails with `plan_limit` and creates nothing; the error names what the agent can still do
 without an upgrade (add a link to an existing document, replace a file, archive one).
+
+### `lnkdrp_replace_pdf`
+Put a new PDF on a document already shared — links, settings and analytics history all stay put. In
+`{ idempotencyKey, docId, sourceUrl, title? (≤200), waitForReady? = true, timeoutSeconds? 5–120 = 60,
+summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }`. Flow: `POST /api/uploads { docId }`
+(allocates the next version and — before `sourceUrl` is even fetched — points the doc's
+`currentUploadId` at it and flips `status` to `preparing`, same as the web app's own replace button)
+→ `import-url` → `process` → optional `PATCH { title }` → wait for `ready|failed`. Out `{ docId,
+shareId, shareUrl, status, version, uploadId, title, timedOut?, warnings, creditsRemaining? }` — no
+`replaceUrl`, this tool is the replacement path. Never `plan_limit` (replacing creates no document),
+so it works on a Free workspace at its shared-document cap — the gap `share_pdf`'s own `plan_limit`
+error points at. If import or processing fails, the document is left in `preparing` rather than
+rolled back; nothing is ever deleted, and calling it again with a working `sourceUrl` finishes the
+update. Idempotent by key, same 24h in-memory store as `share_pdf`, its own namespace. Errors
+`not_found` (checked before anything is created) plus `share_pdf`'s upload-side errors.
 
 ### `lnkdrp_get_share`
 In `{ docId? | shareId? }` (exactly one). Out `{ docId, shareId, title*, status, shareEnabled, shareAllowPdfDownload,

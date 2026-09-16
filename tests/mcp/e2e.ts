@@ -2,7 +2,7 @@
  * End-to-end harness for the lnkdrp MCP server (`mcp/`, see docs/MCP.md).
  *
  * Drives the real stack over the wire: mints a temporary API key straight in Mongo, connects an
- * MCP client to the running server, exercises the thirteen tools in the order an agent would use
+ * MCP client to the running server, exercises the fourteen tools in the order an agent would use
  * them (including the share-link lifecycle: create a second link, fetch it, disable it, delete
  * it), checks that a bad key is rejected at `initialize`, and revokes the key again.
  *
@@ -68,6 +68,7 @@ const EXPECTED_TOOLS = [
   "lnkdrp_list_docs",
   "lnkdrp_get_activity",
   "lnkdrp_share_pdf",
+  "lnkdrp_replace_pdf",
   "lnkdrp_get_share",
   "lnkdrp_set_share_access",
   "lnkdrp_get_share_stats",
@@ -220,6 +221,7 @@ type ListShareLinksResult = { docId: string; links: ShareLinkDTO[] };
 /** Credit/AI fields added to whoami and share_pdf (agent-written summaries, warnings). */
 type WhoAmICredits = { costs?: { summary?: number[]; compare?: number[] }; creditsRemaining?: number | null; creditsResetAt?: string | null; onDemand?: boolean };
 type SharePdfAiFields = { warnings?: unknown; creditsRemaining?: number };
+type ReplacePdfResult = { docId: string; shareId: string; shareUrl: string; status: string; version: number; uploadId: string; title: string | null };
 /** Documents this run created; deleted in `finally` so the Free active-link cap is not consumed. */
 const createdDocs: Array<{ docId: string; origin: string }> = [];
 /** Set E2E_KEEP_DOCS=1 to keep the created documents (e.g. to inspect attribution on /activity). */
@@ -352,7 +354,7 @@ async function main(): Promise<void> {
     });
 
     // 4. Tool catalogue.
-    await step("listTools exposes the thirteen lnkdrp tools", async () => {
+    await step("listTools exposes the fourteen lnkdrp tools", async () => {
       const { tools } = await live.listTools();
       const names = tools.map((t) => t.name);
       for (const expected of EXPECTED_TOOLS) assert(names.includes(expected), `missing tool ${expected}; got ${names.join(", ")}`);
@@ -518,6 +520,56 @@ async function main(): Promise<void> {
       assert(again.docId === shared.docId, `replay created a different doc: ${again.docId} !== ${shared.docId}`);
       assert(again.shareId === shared.shareId, `replay returned a different shareId: ${again.shareId} !== ${shared.shareId}`);
       info("docId", again.docId);
+    });
+
+    // 10b. replace_pdf: a new version on the same document, same shareId, same link.
+    const replaceKey = `e2e-replace-${randomUUID()}`;
+    const replaced = await step(`lnkdrp_replace_pdf (waitForReady, timeout ${TIMEOUT_SECONDS}s)`, async () => {
+      const t = performance.now();
+      const res = await callTool<ReplacePdfResult>(live, "lnkdrp_replace_pdf", {
+        idempotencyKey: replaceKey,
+        docId: shared.docId,
+        sourceUrl: PDF_URL,
+        waitForReady: true,
+        timeoutSeconds: TIMEOUT_SECONDS,
+      });
+      assert(res.docId === shared.docId, `replace_pdf created or targeted a different doc: ${res.docId} !== ${shared.docId}`);
+      assert(res.shareId === shared.shareId, `replace_pdf changed the shareId: ${res.shareId} !== ${shared.shareId}`);
+      assert(res.shareUrl === shared.shareUrl, `replace_pdf changed the shareUrl: ${res.shareUrl} !== ${shared.shareUrl}`);
+      assert(res.version > shared.version, `replace_pdf.version ${res.version} is not greater than the original ${shared.version}`);
+      assert(typeof res.status === "string", "replace_pdf returned no status");
+      info("doc", `${res.docId} share ${res.shareId} upload ${res.uploadId} v${res.version} (was v${shared.version})`);
+      info("status", `${res.status} after ${ms(t)}`);
+      return res;
+    });
+
+    // 10c. Idempotent replay: same key => same result, no second replacement.
+    await step("lnkdrp_replace_pdf replay with the same idempotencyKey returns the same result", async () => {
+      const again = await callTool<ReplacePdfResult>(live, "lnkdrp_replace_pdf", {
+        idempotencyKey: replaceKey,
+        docId: shared.docId,
+        sourceUrl: PDF_URL,
+        waitForReady: false,
+      });
+      assert(again.version === replaced.version, `replay produced a different version: ${again.version} !== ${replaced.version}`);
+      assert(again.uploadId === replaced.uploadId, `replay produced a different upload: ${again.uploadId} !== ${replaced.uploadId}`);
+    });
+
+    // 10d. An unknown docId refuses with not_found, and creates nothing.
+    await step("lnkdrp_replace_pdf with an unknown docId refuses with not_found", async () => {
+      let thrown: unknown = null;
+      try {
+        await callTool<ReplacePdfResult>(live, "lnkdrp_replace_pdf", {
+          idempotencyKey: `e2e-replace-404-${randomUUID()}`,
+          docId: "c".repeat(24),
+          sourceUrl: PDF_URL,
+          waitForReady: false,
+        });
+      } catch (err) {
+        thrown = err;
+      }
+      assert(thrown instanceof ToolCallError, "expected a ToolCallError for an unknown docId");
+      assert((thrown as ToolCallError).code === "not_found", `expected code not_found, got ${(thrown as ToolCallError).code}`);
     });
 
     // 11. A second link on the same document, labelled for one recipient, with downloads on.
