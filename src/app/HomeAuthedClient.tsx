@@ -201,7 +201,7 @@ export default function HomeAuthedClient() {
 
   const atDocumentLimit = plan?.plan === "free" && plan.atLimit.documents;
   const pickerDisabled = urlBusy || Boolean(atDocumentLimit);
-  const openLinkUpgrade = () => {
+  const openDocumentUpgrade = () => {
     if (!plan) return;
     openUpgrade("documents", { used: plan.usage.documents, max: plan.limits.documents ?? undefined });
   };
@@ -213,7 +213,7 @@ export default function HomeAuthedClient() {
       return;
     }
     if (atDocumentLimit) {
-      openLinkUpgrade();
+      openDocumentUpgrade();
       return;
     }
     setPendingFile(file);
@@ -222,7 +222,7 @@ export default function HomeAuthedClient() {
     pushUploadRouteSoon();
   }
 
-  const freeLinks =
+  const freeDocuments =
     plan?.plan === "free" && typeof plan.limits.documents === "number"
       ? { used: plan.usage.documents, max: plan.limits.documents }
       : null;
@@ -261,10 +261,10 @@ export default function HomeAuthedClient() {
           title="Upload"
           description="Turn a PDF into a share link, and see how it is read from the first open."
           actions={
-            freeLinks ? (
+            freeDocuments ? (
               <button
                 type="button"
-                onClick={openLinkUpgrade}
+                onClick={openDocumentUpgrade}
                 className={[
                   "inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[12px] transition-colors",
                   atDocumentLimit
@@ -274,7 +274,7 @@ export default function HomeAuthedClient() {
                 title="Free workspaces can share this many documents"
               >
                 <span className="tabular-nums">
-                  {freeLinks.used} of {freeLinks.max} links
+                  {freeDocuments.used} of {freeDocuments.max} docs
                 </span>
                 <span aria-hidden="true" className="h-3 w-px bg-current opacity-30" />
                 <span className="font-medium">Free</span>
@@ -299,24 +299,24 @@ export default function HomeAuthedClient() {
                     <LockClosedIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
                   </div>
                   <div className="mt-5 text-[17px] font-semibold tracking-tight text-[var(--fg)]">
-                    All {freeLinks?.max ?? 3} Free links are in use
+                    All {freeDocuments?.max ?? 3} Free documents are shared
                   </div>
                   <p className="mt-2 max-w-md text-[13px] leading-6 text-[var(--muted-2)]">
-                    Turn off sharing on a document you no longer need, or upgrade to Pro for unlimited links.
+                    Archive a document you no longer need to free a slot, or upgrade to Pro for unlimited documents. Links are never limited: every shared document can carry as many as you need.
                   </p>
                   <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
                     <button
                       type="button"
-                      onClick={openLinkUpgrade}
+                      onClick={openDocumentUpgrade}
                       className="inline-flex min-w-[132px] items-center justify-center rounded-lg bg-[var(--primary-bg)] px-5 py-2 text-[13px] font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
                     >
                       Upgrade to Pro
                     </button>
                     <Link
-                      href="/search?scope=docs"
+                      href="/search?scope=documents"
                       className="inline-flex items-center rounded-lg px-3 py-2 text-[13px] font-medium text-[var(--fg)] hover:bg-[var(--panel-hover)]"
                     >
-                      Manage links
+                      Manage documents
                     </Link>
                   </div>
                 </>
@@ -387,7 +387,7 @@ export default function HomeAuthedClient() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   if (atDocumentLimit) {
-                    openLinkUpgrade();
+                    openDocumentUpgrade();
                     return;
                   }
                   void handleUrlSubmit();

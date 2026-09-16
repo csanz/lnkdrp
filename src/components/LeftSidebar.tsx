@@ -2431,7 +2431,7 @@ export default function LeftSidebar({
             <PlanLimitNotice
               limit={planLimitHit}
               compact
-              secondaryLabel={planLimitHit === "projects" ? "Manage projects" : "Manage links"}
+              secondaryLabel={planLimitHit === "projects" ? "Manage projects" : "Manage documents"}
               secondaryHref={planLimitHit === "projects" ? "/search?scope=projects" : "/search?scope=documents"}
               onDismiss={() => setPlanLimitNudgeDismissed(true)}
             />

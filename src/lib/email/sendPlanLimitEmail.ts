@@ -4,7 +4,7 @@
  * Three kinds:
  * - `started`  — the workspace just went over a Free limit; explains the 14-day grace window.
  * - `reminder` — a nudge partway through the window ("7 days left…", "2 days left…").
- * - `blocked`  — the window has ended; new links/projects are paused until they are back under
+ * - `blocked`  — the window has ended; sharing new documents / new projects is paused until they are back under
  *   the limits or upgrade. Existing links keep working.
  *
  * Delivery goes through `sendTextEmail` (Resend), which honours `EMAIL_TRANSPORT=console`
@@ -53,7 +53,7 @@ function overLimitLines(usage: SendPlanLimitEmailParams["usage"]): string[] {
   const lines: string[] = [];
   if (usage.documents > FREE_DOCUMENTS) {
     lines.push(
-      `- Active share links: ${usage.documents} (Free includes ${plural(FREE_DOCUMENTS, "link", "links")})`,
+      `- Shared documents: ${usage.documents} (Free includes ${plural(FREE_DOCUMENTS, "shared document", "shared documents")}; links per document are not limited)`,
     );
   }
   if (usage.projects > FREE_PROJECTS) {
@@ -78,8 +78,8 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): { subject
   const overBlock = over.length ? ["Right now it has:", ...over] : [];
 
   const howToFix = [
-    "To stay on Free, bring the workspace back under the limits (disable a share link, archive a project, or remove a collaborator).",
-    `Or upgrade to Pro for unlimited links and projects: ${pricingUrl}`,
+    "To stay on Free, bring the workspace back under the limits (archive a document, archive a project, or remove a collaborator).",
+    `Or upgrade to Pro for unlimited documents and projects: ${pricingUrl}`,
   ];
 
   if (kind === "started") {
@@ -92,7 +92,7 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): { subject
         "",
         ...overBlock,
         ...(overBlock.length ? [""] : []),
-        `Nothing changes today. You have until ${endsOn} to sort it out. After that, creating new share links and projects on this workspace will be paused until it is back under the limits or on Pro.`,
+        `Nothing changes today. You have until ${endsOn} to sort it out. After that, sharing new documents and creating projects on this workspace will be paused until it is back under the limits or on Pro.`,
         "",
         "Existing links keep working the whole time. Nothing is deleted.",
         "",
@@ -115,7 +115,7 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): { subject
         "",
         ...overBlock,
         ...(overBlock.length ? [""] : []),
-        "When it ends, new share links and projects on this workspace will be paused. Existing links keep working.",
+        "When it ends, new shared documents and projects on this workspace will be paused. Existing links keep working, and you can still add links to the documents you already share.",
         "",
         ...howToFix,
         "",
@@ -125,18 +125,18 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): { subject
   }
 
   return {
-    subject: "New links are paused on this workspace",
+    subject: "New documents are paused on this workspace",
     text: [
       `Hi,`,
       "",
-      `The grace period for "${name}" ended on ${endsOn}, and it is still over the Free plan limits. New share links and projects are paused on this workspace for now.`,
+      `The grace period for "${name}" ended on ${endsOn}, and it is still over the Free plan limits. Sharing new documents and creating projects are paused on this workspace for now.`,
       "",
       ...overBlock,
       ...(overBlock.length ? [""] : []),
       "Your existing links keep working and nothing has been deleted.",
       "",
-      "To pick up where you left off, bring the workspace back under the limits (disable a share link, archive a project, or remove a collaborator) and creating resumes immediately.",
-      `Or upgrade to Pro for unlimited links and projects: ${pricingUrl}`,
+      "To pick up where you left off, bring the workspace back under the limits (archive a document, archive a project, or remove a collaborator) and creating resumes immediately.",
+      `Or upgrade to Pro for unlimited documents and projects: ${pricingUrl}`,
       "",
       "- LinkDrop",
     ].join("\n"),
