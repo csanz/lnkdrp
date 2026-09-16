@@ -28,7 +28,9 @@ you read after launch and what is deliberately not done.
       path**, Cloud Backup + point-in-time ON, then run the migrations (4.1).
 - [ ] Stripe live: Pro $29 price · `ai_credits` meter · $0.10 metered price · webhook with the seven
       events and its signing secret · portal saved · revenue recovery on. Then verify both price
-      ids with the live key (4.2 step 9) — nothing in the code checks them.
+      ids with the live key (4.2 step 9) — nothing in the code checks them. Credit packs
+      (30/$5, 60/$9, 300/$39) need **no** catalog entry: their only live requirement is
+      `checkout.session.async_payment_succeeded` among those seven events (4.2, Credit packs).
 - [ ] Google OAuth: client with the exact callback URI; consent screen External and **In
       production**, or only test users can sign in (4.3).
 - [ ] Blob: **public** store, connected to Production only (4.4).
@@ -198,7 +200,9 @@ Secrets rotation).
 ### 4.2 Stripe (live mode)
 
 Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
-`docs/SUBSCRIPTION.md`; the live ones will differ.
+`docs/SUBSCRIPTION.md`; the live ones will differ. The catalog is steps 1–3 and nothing else: the
+credit packs on `/credits` have no products or prices in Stripe on purpose (see Credit packs after
+step 9), so don't go looking for them.
 
 1. Product **Pro** with one recurring licensed price: $29 / month. Description:
    "Unlimited share links and projects, deep viewer analytics, a version list recipients can
@@ -266,7 +270,8 @@ Mirror the sandbox catalog, which is already correct. Ids for the sandbox are in
    reaches an invoice.
 
 **Credit packs** (`/credits`: 30 credits $5, 60 $9, 300 $39) need nothing in the Stripe catalog and
-no env var. Checkout is created with inline `price_data` from `src/lib/credits/packs.ts`, so the
+no env var; their one live-mode requirement is the `checkout.session.async_payment_succeeded`
+webhook event (step 4). Checkout is created with inline `price_data` from `src/lib/credits/packs.ts`, so the
 same code sells them in sandbox and live; changing a price is a code change and a deploy. The
 webhook grants the credits once per Checkout session (`creditpurchases`, unique on the session
 id) after checking the paid subtotal against the price recorded on that Checkout. Purchased
