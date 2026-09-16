@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ChartBarIcon } from "@heroicons/react/24/outline";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bar, BarChart, LabelList, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
@@ -174,12 +174,11 @@ function LinkMiniList({
 }
 
 /**
- * One bar per day, the count printed on each day that has any. Bars rather than a smoothed line:
- * seven daily counts are discrete, and a curve invented a ramp into the one busy day (it started
- * climbing the day before anything happened). The date axis is drawn by the chart so the first,
- * middle and last labels sit under their bars.
+ * A smooth area over the daily counts, with each day that has any labelled by its number, so the
+ * shape reads at a glance and the values don't need a hover. The date axis is drawn by the chart
+ * so the first, middle and last labels sit under their points.
  */
-function DailyBars({ data, unit }: { data: Array<{ date: string; value: number }>; unit: string }) {
+function DailyArea({ data, unit }: { data: Array<{ date: string; value: number }>; unit: string }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -203,20 +202,36 @@ function DailyBars({ data, unit }: { data: Array<{ date: string; value: number }
   return (
     <div ref={wrapRef} className="h-28 w-full">
       {size ? (
-        <BarChart width={size.w} height={size.h} data={data} margin={{ top: 16, right: 0, bottom: 0, left: 0 }} barCategoryGap="22%">
+        <AreaChart width={size.w} height={size.h} data={data} margin={{ top: 18, right: 4, bottom: 3, left: 4 }}>
+          <defs>
+            <linearGradient id="lnkdrpQuickStatsViews" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="var(--chart-views)" stopOpacity={0.28} />
+              <stop offset="100%" stopColor="var(--chart-views)" stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
           <YAxis hide domain={[0, "dataMax"]} />
+          <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
           <XAxis
             dataKey="date"
             ticks={ticks}
             interval={0}
-            tickFormatter={(v: unknown) => formatDayKey(String(v ?? ""))}
             tickLine={false}
-            axisLine={{ stroke: "var(--border)" }}
-            tick={{ fontSize: 10, fill: "var(--muted-2)" }}
-            height={18}
+            axisLine={false}
+            height={22}
+            // First and last labels anchor to their outer edge; centred on the edge points they
+            // were clipped by the card ("ep 10", "Sep 1").
+            tick={(props: { x: number; y: number; payload: { value: string } }) => {
+              const i = ticks.indexOf(props.payload.value);
+              const anchor = i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle";
+              return (
+                <text x={props.x} y={props.y + 12} textAnchor={anchor} fontSize={10} fill="var(--muted-2)">
+                  {formatDayKey(props.payload.value)}
+                </text>
+              );
+            }}
           />
           <Tooltip
-            cursor={{ fill: "var(--panel-hover)", fillOpacity: 0.6 }}
+            cursor={{ stroke: "var(--border)", strokeOpacity: 0.35 }}
             contentStyle={{
               background: "var(--panel)",
               border: "1px solid var(--border)",
@@ -229,15 +244,35 @@ function DailyBars({ data, unit }: { data: Array<{ date: string; value: number }
             formatter={(v: unknown) => [typeof v === "number" ? `${v.toLocaleString()} ${v === 1 ? unit : `${unit}s`}` : String(v), ""]}
             labelFormatter={(label: unknown) => formatDayKey(String(label ?? ""))}
           />
-          <Bar dataKey="value" fill="var(--chart-views)" radius={[3, 3, 0, 0]} minPointSize={0} isAnimationActive={false}>
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke="var(--chart-views)"
+            strokeWidth={1.5}
+            fill="url(#lnkdrpQuickStatsViews)"
+            fillOpacity={1}
+            dot={false}
+            activeDot={{ r: 3, strokeWidth: 1.5 }}
+            isAnimationActive={false}
+          >
             <LabelList
               dataKey="value"
-              position="top"
-              formatter={(v: unknown) => (typeof v === "number" && v > 0 ? v.toLocaleString() : "")}
-              style={{ fontSize: 10, fill: "var(--muted)" }}
+              // Same edge rule as the axis: a count on the first or last day anchors inward, or
+              // today's number is cut off by the card edge.
+              content={(props: { x?: number | string; y?: number | string; value?: unknown; index?: number }) => {
+                const v = typeof props.value === "number" ? props.value : 0;
+                if (v <= 0) return null;
+                const i = props.index ?? -1;
+                const anchor = i === 0 ? "start" : i === data.length - 1 ? "end" : "middle";
+                return (
+                  <text x={Number(props.x)} y={Number(props.y) - 6} textAnchor={anchor} fontSize={10} fontWeight={600} fill="var(--muted)">
+                    {v.toLocaleString()}
+                  </text>
+                );
+              }}
             />
-          </Bar>
-        </BarChart>
+          </Area>
+        </AreaChart>
       ) : null}
     </div>
   );
@@ -560,7 +595,7 @@ export default function DocQuickStats({
         <div className="mb-1 text-[11px] font-medium text-[var(--muted)]">{chartOpens ? "Opens by day" : "Viewers by day"}</div>
         {series.length ? (
           hasAnyViews ? (
-            <DailyBars data={chartData} unit={chartUnit} />
+            <DailyArea data={chartData} unit={chartUnit} />
           ) : (
             <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-center text-[12px] text-[var(--muted)]">
               No views yet in the last {shownDays} days. Share the link to start tracking.
