@@ -163,6 +163,23 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const requestedDays = Math.min(60, asPositiveInt(url.searchParams.get("days")) ?? 15);
       /** `?byLink=1` adds the same window broken down per link, in the same response. */
       const wantsByLink = url.searchParams.get("byLink") === "1";
+      /**
+       * Bounds how many rows `byLink` can return, so a document with hundreds of links cannot make
+       * this response (or a card slicing it down to three) proportional to the link count. Exactly
+       * one of the two is meant to be set by a caller:
+       * - `topLinks=<n>`: rank, don't list — the top `n` by views and the top `n` by recency,
+       *   deduped (at most `2n` rows). For a card that only ever shows a handful of names.
+       * - `shareIds=<a,b,c>`: exactly those links, nothing else. For a paginated table that already
+       *   knows which links are on the visible page and wants their numbers, not everyone else's.
+       * Neither set falls back to every link that ever had traffic on the document — kept only for
+       * a caller that has already paged or ranked upstream; every current caller sets one of these.
+       */
+      const topLinksParam = Math.min(20, asPositiveInt(url.searchParams.get("topLinks")) ?? 0);
+      const shareIdsParam = (url.searchParams.get("shareIds") ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 200);
       /** Optional per-link filter: the slug of one of the document's share links. */
       const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();
       const wantsViewers = url.searchParams.get("viewers") === "1";
@@ -378,69 +395,155 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         downloads: number;
         pagesViewed: number;
         lastViewedAt: string | null;
+        /** Only present for a `topLinks` request — resolved from `ShareLink`, private-to-sender text. */
+        label?: string | null;
+        isDefault?: boolean;
       };
+      /** The per-shareId grouping stage shared by every mode below; only the `$match` narrows. */
+      const perLinkGroupStages = [
+        {
+          // One bucket per (link, viewer identity): the inner group is what makes `viewers`
+          // a count of people rather than of rows. The document-scope `windowAgg` below
+          // groups on the same key, which is what makes `sum(byLink[].viewers)` equal the
+          // document's `viewerCount` instead of undercounting it by the shared browsers.
+          $group: {
+            _id: LINK_VIEWER_KEY_EXPR,
+            // Same bound as the header figures: last activity, not first sighting.
+            views: { $sum: { $cond: [activityInWindowExpr(start), 1, 0] } },
+            lastSeen: { $max: LAST_ACTIVITY_EXPR },
+            pagesSeenArrays: {
+              $push: { $cond: [activityInWindowExpr(start), { $ifNull: ["$pagesSeen", []] }, []] },
+            },
+          },
+        },
+        {
+          $group: {
+            _id: "$_id.shareId",
+            views: { $sum: "$views" },
+            viewers: { $sum: { $cond: [{ $gt: ["$views", 0] }, 1, 0] } },
+            lastSeen: { $max: "$lastSeen" },
+            pagesSeenArrays: {
+              $push: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
+            },
+          },
+        },
+        {
+          $project: {
+            _id: 0,
+            shareId: "$_id",
+            views: 1,
+            viewers: 1,
+            lastSeen: 1,
+            pagesViewed: {
+              $size: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
+            },
+          },
+        },
+      ];
+      type PerLinkRow = { shareId: string; views: number; viewers: number; pagesViewed: number; lastSeen?: Date | null };
       let byLink: ByLinkRow[] | null = null;
+      let linksTotal: number | null = null;
+      let deletedLinkResidual: { count: number; viewers: number; downloads: number } | null = null;
       if (wantsByLink) {
-        const [perLinkAgg, perLinkDownloadsAgg] = await Promise.all([
-          ShareViewModel.aggregate([
-            // Matched all-time so every slug that ever had traffic gets a row (and a real
-            // `lastViewedAt`); the window is applied inside the accumulators, so the counts still
-            // cover `days`.
+        let perLinkAgg: PerLinkRow[];
+        if (topLinksParam > 0) {
+          // Rank first, over every link that ever had traffic, but bring back only the row itself
+          // — Mongo does the ranking, so what reaches Node (and then the browser) is at most `2n`
+          // rows regardless of whether the document has 3 links or 3,000.
+          const [facet] = (await ShareViewModel.aggregate([
             { $match: docScopeMatch },
+            ...perLinkGroupStages,
             {
-              $group: {
-                // One bucket per (link, viewer identity): the inner group is what makes `viewers`
-                // a count of people rather than of rows. The document-scope `windowAgg` below
-                // groups on the same key, which is what makes `sum(byLink[].viewers)` equal the
-                // document's `viewerCount` instead of undercounting it by the shared browsers.
-                _id: LINK_VIEWER_KEY_EXPR,
-                // Same bound as the header figures: last activity, not first sighting.
-                views: { $sum: { $cond: [activityInWindowExpr(start), 1, 0] } },
-                lastSeen: { $max: LAST_ACTIVITY_EXPR },
-                pagesSeenArrays: {
-                  $push: { $cond: [activityInWindowExpr(start), { $ifNull: ["$pagesSeen", []] }, []] },
-                },
+              $facet: {
+                byViews: [{ $sort: { views: -1 } }, { $limit: topLinksParam }],
+                byRecent: [{ $sort: { lastSeen: -1 } }, { $limit: topLinksParam }],
               },
             },
-            {
-              $group: {
-                _id: "$_id.shareId",
-                views: { $sum: "$views" },
-                viewers: { $sum: { $cond: [{ $gt: ["$views", 0] }, 1, 0] } },
-                lastSeen: { $max: "$lastSeen" },
-                pagesSeenArrays: {
-                  $push: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
-                },
-              },
-            },
-            {
-              $project: {
-                _id: 0,
-                shareId: "$_id",
-                views: 1,
-                viewers: 1,
-                lastSeen: 1,
-                pagesViewed: {
-                  $size: { $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } } },
-                },
-              },
-            },
-          ]) as Promise<Array<{ shareId: string; views: number; viewers: number; pagesViewed: number; lastSeen?: Date | null }>>,
-          ShareViewModel.aggregate([
-            { $match: docScopeMatch },
-            { $project: { shareId: 1, items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } } } },
-            { $unwind: "$items" },
-            { $match: { "items.k": { $gte: startKey } } },
-            { $group: { _id: "$shareId", downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
-          ]) as Promise<Array<{ _id: string; downloads: number }>>,
+          ])) as Array<{ byViews: PerLinkRow[]; byRecent: PerLinkRow[] }>;
+          const dedup = new Map<string, PerLinkRow>();
+          for (const r of [...(facet?.byViews ?? []), ...(facet?.byRecent ?? [])]) dedup.set(r.shareId, r);
+          perLinkAgg = [...dedup.values()];
+        } else {
+          // Matched all-time so every slug that ever had traffic gets a row (and a real
+          // `lastViewedAt`); the window is applied inside the accumulators, so the counts still
+          // cover `days`. Narrowed to `shareIdsParam` when the caller already knows which links it
+          // wants (a paginated table asking only about the links on its current page).
+          const linkMatch = shareIdsParam.length ? { ...docScopeMatch, shareId: { $in: shareIdsParam } } : docScopeMatch;
+          perLinkAgg = (await ShareViewModel.aggregate([{ $match: linkMatch }, ...perLinkGroupStages])) as PerLinkRow[];
+        }
+
+        // Downloads and opens only for the shareIds the ranking (or the caller) actually kept —
+        // the same bound, carried through the two joins that used to run over every link. `null`
+        // (legacy, neither `topLinks` nor `shareIds` given) means "every link", exactly as before.
+        const keptShareIds = perLinkAgg.map((r) => r.shareId).filter(Boolean);
+        const bounded = topLinksParam > 0 || shareIdsParam.length > 0;
+        const boundedShareIdMatch: Record<string, unknown> = bounded ? { shareId: { $in: keptShareIds } } : {};
+        const skipJoins = bounded && keptShareIds.length === 0;
+        const [perLinkDownloadsAgg, perLinkOpensAgg, linkMeta] = await Promise.all([
+          skipJoins
+            ? Promise.resolve([])
+            : (ShareViewModel.aggregate([
+                { $match: { ...docScopeMatch, ...boundedShareIdMatch } },
+                { $project: { shareId: 1, items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } } } },
+                { $unwind: "$items" },
+                { $match: { "items.k": { $gte: startKey } } },
+                { $group: { _id: "$shareId", downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
+              ]) as Promise<Array<{ _id: string; downloads: number }>>),
+          skipJoins
+            ? Promise.resolve([])
+            : (ShareVisitModel.aggregate([
+                { $match: { docId: docObjectId, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start }, ...boundedShareIdMatch } },
+                { $group: { _id: "$shareId", opens: { $sum: 1 } } },
+              ]) as Promise<Array<{ _id: string; opens: number }>>),
+          // Labels are private-to-sender text the client can't otherwise resolve from an aggregate;
+          // `topLinks` mode attaches them here so a caller ranking by traffic never has to fetch
+          // every link just to name the handful it is about to show. Bounded to the same rows.
+          topLinksParam > 0 && keptShareIds.length
+            ? ShareLinkModel.find({ docId: docObjectId, shareId: { $in: keptShareIds } })
+                .select({ shareId: 1, label: 1, isDefault: 1 })
+                .lean<Array<{ shareId: string; label?: string; isDefault?: boolean }>>()
+            : Promise.resolve([]),
         ]);
-        // Opens per link, over the same window, so the column adds up to `totals.opens` above it.
-        const perLinkOpensAgg = (await ShareVisitModel.aggregate([
-          { $match: { docId: docObjectId, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start } } },
-          { $group: { _id: "$shareId", opens: { $sum: 1 } } },
-        ])) as Array<{ _id: string; opens: number }>;
         const opensBySlug = new Map<string, number>(perLinkOpensAgg.map((r) => [r._id, r.opens]));
         const downloadsBySlug = new Map<string, number>(perLinkDownloadsAgg.map((r) => [r._id, r.downloads]));
+        const metaBySlug = new Map(linkMeta.map((l) => [l.shareId, l]));
+        // Live links only, so "all N links" in a card names what a person could actually go look
+        // at — an archived link's traffic still counts in `byLink`/`totals` above, it just does not
+        // add to this number, the same split `GET /api/docs/:docId/links` already draws.
+        linksTotal = await ShareLinkModel.countDocuments({ docId: docObjectId, archivedAt: null });
+
+        // Traffic this response's `byLink` cannot otherwise explain: a slug that has views but no
+        // live link owns it (its link was archived after the fact). `DocLinksManager`'s page table
+        // used to detect this by diffing the *whole* unbounded `byLink` against its links list —
+        // exactly the unbounded shape this endpoint now refuses to hand back. So the server does
+        // the diff instead and returns only the sum: one row, whatever the real orphan count is.
+        // Skipped in `topLinks` mode (the quick-stats card, which never rendered this row) to keep
+        // that request to the two aggregates it actually needs.
+        if (topLinksParam === 0) {
+          const liveShareIds = await ShareLinkModel.find({ docId: docObjectId, archivedAt: null }).distinct("shareId");
+          const [orphanViewersAgg, orphanDownloadsAgg] = await Promise.all([
+            ShareViewModel.aggregate([
+              { $match: { ...docScopeMatch, shareId: { $nin: liveShareIds } } },
+              { $group: { _id: LINK_VIEWER_KEY_EXPR, views: { $sum: { $cond: [activityInWindowExpr(start), 1, 0] } } } },
+              { $group: { _id: null, viewers: { $sum: { $cond: [{ $gt: ["$views", 0] }, 1, 0] } }, shareIds: { $addToSet: "$_id.shareId" } } },
+              { $project: { _id: 0, viewers: 1, count: { $size: "$shareIds" } } },
+            ]) as Promise<Array<{ viewers: number; count: number }>>,
+            ShareViewModel.aggregate([
+              { $match: { ...docScopeMatch, shareId: { $nin: liveShareIds } } },
+              { $project: { items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } } } },
+              { $unwind: "$items" },
+              { $match: { "items.k": { $gte: startKey } } },
+              { $group: { _id: null, downloads: { $sum: { $ifNull: ["$items.v", 0] } } } },
+            ]) as Promise<Array<{ downloads: number }>>,
+          ]);
+          const orphanCount = orphanViewersAgg[0]?.count ?? 0;
+          const orphanViewers = orphanViewersAgg[0]?.viewers ?? 0;
+          const orphanDownloads = orphanDownloadsAgg[0]?.downloads ?? 0;
+          deletedLinkResidual =
+            orphanCount > 0 && (orphanViewers > 0 || orphanDownloads > 0)
+              ? { count: orphanCount, viewers: orphanViewers, downloads: orphanDownloads }
+              : null;
+        }
         byLink = perLinkAgg
           .map((r) => ({
             shareId: typeof r.shareId === "string" ? r.shareId : "",
@@ -448,6 +551,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             viewers: typeof r.viewers === "number" ? r.viewers : 0,
             opens: opensBySlug.get(r.shareId) ?? 0,
             downloads: downloadsBySlug.get(r.shareId) ?? 0,
+            ...(topLinksParam > 0
+              ? { label: metaBySlug.get(r.shareId)?.label ?? null, isDefault: Boolean(metaBySlug.get(r.shareId)?.isDefault) }
+              : {}),
             pagesViewed: typeof r.pagesViewed === "number" ? r.pagesViewed : 0,
             lastViewedAt: r.lastSeen ? new Date(r.lastSeen).toISOString() : null,
           }))
@@ -762,6 +868,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
          * link has since been archived, which `GET /api/docs/:docId/links` does not return.
          */
         ...(byLink ? { byLink } : {}),
+        /**
+         * Count of live (unarchived) links, alongside a `byLink` that may only cover a handful of
+         * them (`topLinks`) or a specific page (`shareIds`). A card that only fetched the top few
+         * still needs to say "all 40 links" without ever listing them.
+         */
+        ...(linksTotal !== null ? { linksTotal } : {}),
+        ...(topLinksParam === 0 && wantsByLink ? { deletedLinkResidual } : {}),
         /**
          * Whether downloads are *allowed* (this link, or any live link of the document) — a label,
          * not a filter: the download numbers above are counted either way.

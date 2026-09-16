@@ -23,12 +23,11 @@ import { usePlan } from "@/lib/client/usePlan";
  */
 
 /**
- * The few `ShareLinkDTO` fields the summary line needs (`GET /api/docs/:docId/links`).
- *
- * `viewCount` is deliberately absent: that counter only started counting when links shipped, so on
- * a document with older traffic it ranked the wrong link "most viewed" and printed a number that
- * contradicted the Views tile three lines above it. The ranking comes from `byLink` below — the
- * same aggregate the tiles come from.
+ * The one field this component still needs straight from `GET /api/docs/:docId/links`: the label
+ * of a document's *sole* link, for the one-link header line. Everything else — the ranking, the
+ * labels of the links in that ranking — comes bounded from the analytics response's `byLink` now,
+ * so this is fetched with `?limit=1`: enough to read `total` and (when there is exactly one link)
+ * that link's label, never enough to render a list.
  */
 type LinkSummary = { id: string; label: string; shareId: string };
 
@@ -65,11 +64,31 @@ type StatsResponse = {
   series?: Array<{ date: string; views: number; downloads: number }>;
   /** Whether downloads are allowed on any live link of the document (a label, not a filter). */
   downloadsEnabled?: boolean;
-  /** `?byLink=1`: the same window per link slug; the rows sum to `totals`. */
-  byLink?: Array<{ shareId: string; views: number; viewers: number; opens?: number; downloads: number; lastViewedAt?: string | null }>;
+  /**
+   * `?byLink=1&topLinks=N`: a bounded ranking, not the whole per-link table — at most the top `N`
+   * by views and the top `N` by recency, deduped, with `label`/`isDefault` attached so this card
+   * never has to fetch every link of the document just to name the handful it shows. Capped at a
+   * fixed size regardless of how many links the document actually has.
+   */
+  byLink?: Array<{
+    shareId: string;
+    views: number;
+    viewers: number;
+    opens?: number;
+    downloads: number;
+    lastViewedAt?: string | null;
+    label?: string | null;
+    isDefault?: boolean;
+  }>;
+  /** Count of live links, alongside a `byLink` that may only cover a few of them. */
+  linksTotal?: number;
 };
 
 const DAYS = 15;
+/** How many links `topLinks` asks the server to rank by each of the two criteria (views, recency);
+ * the card only ever shows 3 of each, but a link that is #2 by views and #1 by recency needs room
+ * in the merged set to appear in both lists. */
+const TOP_LINKS_LIMIT = 5;
 
 function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
@@ -266,16 +285,18 @@ export default function DocQuickStats({
     });
   }, []);
 
-  // Link summary: how many links this document has, and which one is pulling the views.
-  const [links, setLinks] = useState<LinkSummary[] | null>(null);
+  // The sole-link label and (as a fast fallback) the total link count. `?limit=1`: this is never
+  // the source of the ranked lists below, only of the one-link header line, so it stays a one-row
+  // fetch no matter how many links the document has.
+  const [links, setLinks] = useState<{ total: number; links: LinkSummary[] } | null>(null);
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/links`, { cache: "no-store" });
+        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/links?limit=1`, { cache: "no-store" });
         if (!res.ok) return;
-        const json = (await res.json()) as { links?: LinkSummary[] };
-        if (!cancelled && Array.isArray(json?.links)) setLinks(json.links);
+        const json = (await res.json()) as { total?: number; links?: LinkSummary[] };
+        if (!cancelled) setLinks({ total: typeof json.total === "number" ? json.total : 0, links: Array.isArray(json.links) ? json.links : [] });
       } catch {
         // the summary line is a bonus; the tiles do not depend on it
       }
@@ -288,39 +309,41 @@ export default function DocQuickStats({
   /**
    * How many links these tiles actually cover.
    *
-   * `GET /api/docs/:docId/links` omits archived links, but the tiles are `{ docId }`-scoped
-   * aggregates and include a deleted link's rows by design — so a document whose second link was
-   * deleted printed "all 1 links" over totals that counted two. The union with the slugs `byLink`
-   * reports (the same aggregate the tiles come from) names the real set.
+   * `linksTotal` (from the same analytics response as the tiles) counts live links; `byLink` can
+   * additionally carry a deleted link's traffic — the tiles are `{ docId }`-scoped and include a
+   * deleted link's rows by design, so a document whose second link was deleted printed "all 1
+   * links" over totals that counted two. Taking the larger of the two keeps that case honest, at
+   * the cost of only seeing a deleted link's slug when it made the bounded top-N ranking.
    */
   const coveredLinkCount = useMemo(() => {
-    const slugs = new Set<string>((links ?? []).map((l) => l.shareId));
-    for (const row of live?.byLink ?? []) if (row?.shareId) slugs.add(row.shareId);
-    return slugs.size;
+    const total = typeof live?.linksTotal === "number" ? live.linksTotal : (links?.total ?? 0);
+    const rankedSlugs = new Set<string>((live?.byLink ?? []).map((r) => r.shareId).filter(Boolean));
+    return Math.max(total, rankedSlugs.size);
   }, [links, live]);
 
   // Ranked by the windowed per-link viewers from the same response as the tiles, so the number on
-  // this line and the Viewers tile are the same kind of thing and can be compared. Ranked over
-  // `byLink`, not over `links`: iterating the live links skipped a deleted link that out-performed
-  // every surviving one, and the traffic it is being compared against is in the tiles regardless.
+  // this line and the Viewers tile are the same kind of thing and can be compared.
   /**
-   * The per-link rows behind the two lists below, labelled from the links list.
+   * The per-link rows behind the two lists below. The server already ranked and labelled them
+   * (`topLinks=N` on the analytics request) — this only reshapes the response, it does not sort or
+   * resolve labels itself any more.
    *
-   * A slug with traffic but no label is a deleted link: its numbers are still in the tiles above,
-   * so hiding it would make the lists fail to explain the totals they sit under — but it gets no
-   * link out, because the metrics page has nothing to filter to.
+   * A row with no label is a deleted link: its numbers are still in the tiles above, so hiding it
+   * would make the lists fail to explain the totals they sit under — but it gets no link out,
+   * because the metrics page has nothing to filter to.
    */
-  const linkRows = useMemo(() => {
-    const labelByShareId = new Map((links ?? []).map((l) => [l.shareId, l.label]));
-    return (live?.byLink ?? []).map((r) => ({
-      shareId: r.shareId,
-      label: labelByShareId.get(r.shareId) ?? null,
-      viewers: num(r.viewers),
-      views: num(r.views),
-      downloads: num(r.downloads),
-      lastViewedAt: typeof r.lastViewedAt === "string" ? r.lastViewedAt : null,
-    }));
-  }, [links, live]);
+  const linkRows = useMemo(
+    () =>
+      (live?.byLink ?? []).map((r) => ({
+        shareId: r.shareId,
+        label: r.label ?? null,
+        viewers: num(r.viewers),
+        views: num(r.views),
+        downloads: num(r.downloads),
+        lastViewedAt: typeof r.lastViewedAt === "string" ? r.lastViewedAt : null,
+      })),
+    [live],
+  );
 
   /**
    * Which links are working, and which are live right now — the two questions a sender actually
@@ -354,9 +377,10 @@ export default function DocQuickStats({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/shareviews?days=${DAYS}&lite=1&byLink=1`, {
-          cache: "no-store",
-        });
+        const res = await fetchWithTempUser(
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${DAYS}&lite=1&byLink=1&topLinks=${TOP_LINKS_LIMIT}`,
+          { cache: "no-store" },
+        );
         if (!res.ok) throw new Error(String(res.status));
         const json = (await res.json()) as StatsResponse;
         if (!cancelled) setLive(json);
@@ -415,7 +439,7 @@ export default function DocQuickStats({
   );
 
   /** The one link's label, when a document has exactly one, so the header can name what it counts. */
-  const soleLinkLabel = coveredLinkCount === 1 && links?.length === 1 ? links[0]!.label : null;
+  const soleLinkLabel = coveredLinkCount === 1 && links?.links.length === 1 ? links.links[0]!.label : null;
 
   /**
    * How many of those opens were somebody coming back. Only shown when it is a real fact: equal

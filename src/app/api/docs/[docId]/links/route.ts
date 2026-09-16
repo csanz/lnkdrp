@@ -15,7 +15,7 @@ import { NextResponse } from "next/server";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
-import { createShareLink, listShareLinks, shareLinkStatsByShareId, toShareLinkDTO } from "@/lib/share/links";
+import { createShareLink, listShareLinksPage, shareLinkStatsByShareId, toShareLinkDTO } from "@/lib/share/links";
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "./shared";
 import { planLimitResponse } from "@/lib/billing/planLimits";
 
@@ -37,9 +37,12 @@ function createdViaFor(request: Request): "web" | "api" | "mcp" {
 /**
  * `GET /api/docs/:docId/links`
  *
- * Every link of the document, default first then newest first. Archived links are omitted unless
- * `?includeArchived=1`. Readable by any member of the workspace (viewers included).
- * Out: `{ links: ShareLinkDTO[] }`.
+ * Page-based, default link first then newest first, same as `GET /api/docs` (`?page=&limit=`,
+ * default 25, max 100). Archived links are omitted unless `?includeArchived=1`. Readable by any
+ * member of the workspace (viewers included). A document can carry hundreds of links, and this is
+ * the one route a client cannot ask for "all of them" and get away with rendering the answer — the
+ * sort/skip/limit happens in Mongo, so `total` can be in the thousands while `links` never is.
+ * Out: `{ total, page, limit, links: ShareLinkDTO[] }`.
  */
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
   const { docId } = await ctx.params;
@@ -47,15 +50,25 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
   if (!gate.ok) return gate.response;
   const { actor, docId: docObjectId, orgId } = gate.access;
   try {
-    const includeArchived = new URL(request.url).searchParams.get("includeArchived") === "1";
-    const links = await listShareLinks({ orgId, docId: docObjectId, includeArchived });
-    // One aggregation for the whole document, so every row's traffic comes from the same rows the
+    const params = new URL(request.url).searchParams;
+    const includeArchived = params.get("includeArchived") === "1";
+    const pageParam = Number(params.get("page"));
+    const limitParam = Number(params.get("limit"));
+    const { total, page, limit, links } = await listShareLinksPage({
+      orgId,
+      docId: docObjectId,
+      includeArchived,
+      page: Number.isFinite(pageParam) ? pageParam : undefined,
+      limit: Number.isFinite(limitParam) ? limitParam : undefined,
+    });
+    // One aggregation for this page's links, so every row's traffic comes from the same rows the
     // metrics page reads. Without it this list served `ShareLink.viewCount`, which drifts from the
-    // analytics the moment anything reclassifies a row.
-    const stats = await shareLinkStatsByShareId(docObjectId);
+    // analytics the moment anything reclassifies a row. Scoped to this page's shareIds, not the
+    // whole document — the whole point of paginating is that this stays small as links grow.
+    const stats = await shareLinkStatsByShareId(docObjectId, links.map((l) => l.shareId));
     return applyTempUserHeaders(
       NextResponse.json(
-        { links: links.map((l) => toShareLinkDTO(l, stats.get(l.shareId) ?? null)) },
+        { total, page, limit, links: links.map((l) => toShareLinkDTO(l, stats.get(l.shareId) ?? null)) },
         { headers: { "cache-control": "no-store" } },
       ),
       actor,

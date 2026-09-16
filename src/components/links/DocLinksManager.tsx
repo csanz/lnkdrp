@@ -248,6 +248,15 @@ function SettingItem({ label, value }: { label: string; value: string }) {
  */
 const LINK_STATS_DAYS = 30;
 
+/**
+ * Rows per page of the full links table. A document can carry hundreds of links (the runaway
+ * guard is 50 today and is meant to move, not stay); this is the number that keeps the table a
+ * table instead of a scroll of a thousand rows. The panel variant uses the same size for its one
+ * fetch, purely to give `ShareLinkModal`'s "copy settings from" list something to draw from — the
+ * panel itself never renders more than the default link.
+ */
+const LINKS_PAGE_SIZE = 25;
+
 const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLinksManager(
   { docId, variant, canManage = true },
   ref,
@@ -268,6 +277,10 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   const [links, setLinks] = useState<ShareLinkDTO[] | null>(null);
   const [linksError, setLinksError] = useState<string | null>(null);
   const [linksRev, setLinksRev] = useState(0);
+  /** 1-based; only the page table ever moves this off 1. */
+  const [linksPage, setLinksPage] = useState(1);
+  /** From the paginated response — the true count, never `links.length` once there is more than one page. */
+  const [linksTotal, setLinksTotal] = useState<number | null>(null);
   const [linkStats, setLinkStats] = useState<
     Record<string, { viewers: number; downloads: number; lastViewedAt: string | null }>
   >({});
@@ -297,16 +310,27 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
 
   useImperativeHandle(ref, () => ({ openCreate }), [openCreate]);
 
+  // The doc changed out from under this instance (a different document's manager reusing the
+  // component): start back at page 1 rather than asking for a page that may not exist there.
+  useEffect(() => setLinksPage(1), [docId]);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetchJson<{ links: ShareLinkDTO[] }>(`/api/docs/${encodeURIComponent(docId)}/links`, {
-          cache: "no-store",
-        });
+        const res = await fetchJson<{ total: number; page: number; limit: number; links: ShareLinkDTO[] }>(
+          `/api/docs/${encodeURIComponent(docId)}/links?page=${linksPage}&limit=${LINKS_PAGE_SIZE}`,
+          { cache: "no-store" },
+        );
         if (cancelled) return;
         setLinks(Array.isArray(res.links) ? res.links : []);
+        setLinksTotal(typeof res.total === "number" ? res.total : null);
         setLinksError(null);
+        // A mutation (delete, archive) can leave `linksPage` past the new last page — most visibly
+        // when someone deletes the only link on the last page. Clamp back rather than showing an
+        // table that looks like the link count went to zero.
+        const lastPage = Math.max(1, Math.ceil((res.total ?? 0) / (res.limit || LINKS_PAGE_SIZE)));
+        if (linksPage > lastPage) setLinksPage(lastPage);
       } catch (e) {
         if (!cancelled) setLinksError(e instanceof Error ? e.message : "Failed to load links");
       }
@@ -314,7 +338,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     return () => {
       cancelled = true;
     };
-  }, [docId, linksRev]);
+  }, [docId, linksRev, linksPage]);
 
   // Agents and other sessions create links too: `share_link.*` activity frames refetch the list.
   useEffect(
@@ -343,22 +367,25 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     let cancelled = false;
     void (async () => {
       try {
+        // `shareIds` scopes the byLink rows to exactly this page's links, so the request stays
+        // cheap and its size stays flat no matter how many links the document has in total; the
+        // orphan summary (`deletedLinkResidual`) is document-wide regardless — the server computes
+        // it as one row, never as a list, so asking for it costs nothing proportional to link count.
+        const shareIds = links.map((l) => l.shareId).filter(Boolean).join(",");
         const res = await fetchJson<{
           days?: number;
           byLink?: Array<{ shareId?: string; views?: number; viewers?: number; downloads?: number; lastViewedAt?: string | null }>;
-        }>(`/api/docs/${encodeURIComponent(docId)}/shareviews?days=${LINK_STATS_DAYS}&lite=1&byLink=1`, { cache: "no-store" });
+          deletedLinkResidual?: { count: number; viewers: number; downloads: number } | null;
+        }>(
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${LINK_STATS_DAYS}&lite=1&byLink=1&shareIds=${encodeURIComponent(shareIds)}`,
+          { cache: "no-store" },
+        );
         if (cancelled) return;
         const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
         const bySlug = new Map((res.byLink ?? []).map((r) => [String(r.shareId ?? ""), r]));
         // The window the server actually served, not the one we asked for.
         setStatsDays(n(res.days) || null);
-        // Slugs with traffic that no live link claims. Compared against `links` as loaded, so a
-        // link archived between two fetches shows up here on the next one rather than vanishing.
-        const known = new Set(links.map((l) => l.shareId));
-        const orphan = (res.byLink ?? []).filter((r) => r.shareId && !known.has(String(r.shareId)));
-        const orphanViewers = orphan.reduce((a, r) => a + n(r.viewers), 0);
-        const orphanDownloads = orphan.reduce((a, r) => a + n(r.downloads), 0);
-        setDeletedLinkResidual(orphan.length && (orphanViewers || orphanDownloads) ? { count: orphan.length, viewers: orphanViewers, downloads: orphanDownloads } : null);
+        setDeletedLinkResidual(res.deletedLinkResidual ?? null);
         setLinkStats(() => {
           const next: Record<string, { viewers: number; downloads: number; lastViewedAt: string | null }> = {};
           for (const l of links) {
@@ -393,6 +420,10 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     () => (links ? (links.find((l) => l.isDefault) ?? links[0] ?? null) : null),
     [links],
   );
+
+  /** Back to page 1 after an action that reorders the table (a new link, or a new default) — the
+   * result is at the top, so a person is looking at the right page without hunting for it. */
+  const jumpToFirstPage = useCallback(() => setLinksPage(1), []);
 
   /** At (or inside the grace window of) the Free cap: show the standard upgrade prompt. */
   function handlePlanWarning(warning: LinkPlanWarning | undefined) {
@@ -445,6 +476,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ isDefault: true }),
       });
+      jumpToFirstPage();
       refreshLinks();
     } catch (e) {
       setLinksError(e instanceof Error ? e.message : "Failed to set the default link");
@@ -490,6 +522,9 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       );
       setLinkModal(null);
       handlePlanWarning(res?.planWarning);
+      // A new link lands right after the default on page 1 (default-first, then newest); an edit
+      // does not move anything, so only creating jumps the page.
+      if (!editing) jumpToFirstPage();
       refreshLinks();
       refreshPlan();
     } catch (e) {
@@ -520,7 +555,9 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   // --- Panel: the default link, the count, and a way out to the page -------------------------
   if (variant === "panel") {
     const defaultUrl = defaultLink ? buildPublicShareUrl(defaultLink.shareId) : "";
-    const count = links?.length ?? 0;
+    // The true count, not `links.length`: this fetch is capped at `LINKS_PAGE_SIZE` like every
+    // other, so `links.length` alone under-counts a document with more links than that.
+    const count = linksTotal ?? links?.length ?? 0;
 
     return (
       // Same card as the quick-stats and snapshot sections below it: bordered, rounded, on
@@ -908,9 +945,44 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
         </table>
       </div>
 
+      {/* Prev/Next, not "show all": at 25 rows a page this never grows past a screen's worth
+          regardless of whether the document has 30 links or 3,000. Hidden entirely at one page,
+          so a document that fits already reads exactly as it did before pagination existed. */}
+      {linksTotal !== null && linksTotal > LINKS_PAGE_SIZE ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-[12px] text-[var(--muted)]">
+          <span className="tabular-nums">
+            {(linksPage - 1) * LINKS_PAGE_SIZE + 1}–{Math.min(linksPage * LINKS_PAGE_SIZE, linksTotal)} of{" "}
+            {linksTotal.toLocaleString()} links
+          </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              disabled={linksPage <= 1}
+              onClick={() => setLinksPage((p) => Math.max(1, p - 1))}
+              className={LINK_ACTION_CLASS}
+            >
+              Previous
+            </button>
+            <span className="px-1 tabular-nums">
+              Page {linksPage} of {Math.max(1, Math.ceil(linksTotal / LINKS_PAGE_SIZE))}
+            </span>
+            <button
+              type="button"
+              disabled={linksPage >= Math.ceil(linksTotal / LINKS_PAGE_SIZE)}
+              onClick={() => setLinksPage((p) => p + 1)}
+              className={LINK_ACTION_CLASS}
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* With only the default link there is nothing to compare yet, so say what a second link is
-          for. A slim strip under the table, not a card competing with it. */}
-      {canManage && ordered !== null && ordered.length === 1 ? (
+          for. A slim strip under the table, not a card competing with it. Gated on the true total,
+          not the current page's row count, so it does not reappear on the last page of a document
+          that has plenty of links. */}
+      {canManage && linksTotal === 1 ? (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-xl border border-dashed border-[var(--border)] px-4 py-3">
           <div className="min-w-0 text-[13px] leading-6 text-[var(--muted)]">
             <span className="font-semibold text-[var(--fg)]">Add a link per audience.</span> The same document, a separate

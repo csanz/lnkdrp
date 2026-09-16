@@ -116,10 +116,12 @@ export type ShareLinkStats = { viewCount: number; downloadCount: number; lastVie
  * are the same two rules the metrics route runs — so the links table and the metrics page cannot
  * report different numbers for the same link.
  */
-export async function shareLinkStatsByShareId(docId: string | Types.ObjectId): Promise<Map<string, ShareLinkStats>> {
+export async function shareLinkStatsByShareId(docId: string | Types.ObjectId, shareIds?: string[]): Promise<Map<string, ShareLinkStats>> {
   await connectMongo();
   const rows = (await ShareViewModel.aggregate([
-    { $match: { docId: oid(docId), isOwnerPreview: { $ne: true } } },
+    // `shareIds`, when given, narrows the aggregate to one page of links instead of every link the
+    // document has ever had traffic on — the same reasoning as `listShareLinksPage` above it.
+    { $match: { docId: oid(docId), isOwnerPreview: { $ne: true }, ...(shareIds?.length ? { shareId: { $in: shareIds } } : {}) } },
     {
       $group: {
         _id: "$shareId",
@@ -266,6 +268,46 @@ export async function listShareLinks(input: { orgId: string | Types.ObjectId; do
   if (!input.includeArchived) filter.archivedAt = null;
   const rows = await ShareLinkModel.find(filter).lean<ShareLink[]>();
   return rows.sort((a, b) => (a.isDefault === b.isDefault ? (b.createdDate?.getTime() ?? 0) - (a.createdDate?.getTime() ?? 0) : a.isDefault ? -1 : 1));
+}
+
+/**
+ * The page-based counterpart of `listShareLinks`, for the one caller that must never hand back
+ * "every link" as a matter of course: the links table a person actually scrolls through.
+ *
+ * `SHARE_LINKS_PER_DOC_MAX` (50) is a runaway guard, not a UI promise — nothing stops it moving to
+ * the hundreds or thousands the product intends to support, and a table or a card that renders
+ * "every link" today is a table that renders a thousand rows the day it does. This does the
+ * sort/skip/limit in Mongo, so the row count reaching Node is `limit`, never the document's total
+ * link count — unlike `listShareLinks`, which every other (server-internal, not user-facing) caller
+ * keeps using because it needs the whole set to find one row in it.
+ */
+export async function listShareLinksPage(input: {
+  orgId: string | Types.ObjectId;
+  docId: string | Types.ObjectId;
+  includeArchived?: boolean;
+  page?: number;
+  limit?: number;
+}): Promise<{ total: number; page: number; limit: number; links: ShareLink[] }> {
+  await connectMongo();
+  const docId = oid(input.docId);
+  const page = Number.isFinite(input.page) && (input.page ?? 0) >= 1 ? Math.floor(input.page!) : 1;
+  const limit = Number.isFinite(input.limit) && (input.limit ?? 0) >= 1 ? Math.min(100, Math.floor(input.limit!)) : 25;
+  const doc = (await DocModel.findOne({ _id: docId, orgId: oid(input.orgId), isDeleted: { $ne: true } }).select(DOC_SHARE_FIELDS).lean()) as DocLike | null;
+  if (!doc) return { total: 0, page, limit, links: [] };
+  await ensureDefaultLink(doc);
+  const filter: Record<string, unknown> = { docId };
+  if (!input.includeArchived) filter.archivedAt = null;
+  const [total, rows] = await Promise.all([
+    ShareLinkModel.countDocuments(filter),
+    // Default first, then newest — the same order `listShareLinks` sorts to in JS, done here in
+    // Mongo so `skip`/`limit` land on the right rows instead of an arbitrary find() order.
+    ShareLinkModel.find(filter)
+      .sort({ isDefault: -1, createdDate: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean<ShareLink[]>(),
+  ]);
+  return { total, page, limit, links: rows };
 }
 export type ShareLinkSettingsInput = {
   label?: string;
