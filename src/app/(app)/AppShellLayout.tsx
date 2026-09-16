@@ -16,25 +16,43 @@ import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import LeftSidebar from "@/components/LeftSidebar";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
+import Spinner from "@/components/ui/Spinner";
 import { useAuthEnabled } from "@/app/providers";
 import { usePendingUpload } from "@/lib/pendingUpload";
 
 /**
- * Redirects unauthenticated users back to home when auth is enabled.
+ * Gate for the authenticated app shell: reveals `children` only once a session is confirmed.
  *
- * Exists to prevent protected UI shells from rendering in a logged-out state.
- * Side effects: performs a client-side `router.replace("/")` when session becomes unauthenticated.
+ * The previous version (`AuthRedirector`) rendered the protected shell immediately and redirected
+ * from a `useEffect` after the fact — on a direct visit while signed out, the sidebar and page
+ * content were visible for one paint before the redirect fired. Gating the render itself, not
+ * just the redirect, is what removes that: nothing here renders until `status` resolves, and
+ * nothing protected renders unless it resolves to `"authenticated"`.
+ *
+ * Redirects to `/login?next=<path>`, not `/`: landing on the marketing home page after being
+ * bounced from a gated route reads as "nothing happened", not as an explanation, and `/login`
+ * already says plainly that signing in is what's needed. Carrying `next` returns the user to the
+ * page they wanted once they do.
  */
-function AuthRedirector() {
+function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname() ?? "/";
   const { status } = useSession();
 
   useEffect(() => {
     if (status !== "unauthenticated") return;
-    router.replace("/");
-  }, [router, status]);
+    const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
+    router.replace(`/login${next}`);
+  }, [router, pathname, status]);
 
-  return null;
+  if (status !== "authenticated") {
+    return (
+      <div className="grid h-[100svh] w-full place-items-center bg-[var(--bg)]">
+        <Spinner className="h-6 w-6 text-[var(--muted)]" />
+      </div>
+    );
+  }
+  return <>{children}</>;
 }
 
 /**
@@ -104,18 +122,11 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
   }, [mobileSidebarOpen]);
 
   if (hideSidebar) {
-    return (
-      <>
-        {authEnabled ? <AuthRedirector /> : null}
-        {children}
-      </>
-    );
+    return authEnabled ? <AuthGate>{children}</AuthGate> : <>{children}</>;
   }
 
-  return (
+  const shell = (
     <div className="flex h-[100svh] w-full flex-col bg-[var(--bg)] text-[var(--fg)] md:flex-row">
-      {authEnabled ? <AuthRedirector /> : null}
-
       {/* Mobile top bar */}
       <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:hidden">
         <div className="flex min-w-0 items-center gap-2">
@@ -171,6 +182,8 @@ export default function AppShellLayout({ children }: { children: React.ReactNode
       <main className="min-h-0 min-w-0 flex-1">{children}</main>
     </div>
   );
+
+  return authEnabled ? <AuthGate>{shell}</AuthGate> : shell;
 }
 
 

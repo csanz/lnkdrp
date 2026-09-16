@@ -14,6 +14,7 @@ import PublicFooter from "@/components/PublicFooter";
 import { CREDITS_COPY } from "@/lib/client/planLimit";
 import PublicHeader from "@/components/PublicHeader";
 import McpInstallExample from "@/components/McpInstallExample";
+import Spinner from "@/components/ui/Spinner";
 import { useAuthEnabled } from "@/app/providers";
 
 const AUTH_TRANSITION_STORAGE_KEY = "ld_auth_transition";
@@ -211,14 +212,24 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
 
             <div className="mt-7 flex flex-wrap items-center gap-x-4 gap-y-2">
               {authEnabled ? (
+                // The label stays in the box (just `invisible`) instead of being swapped out, so
+                // the button's width is always exactly its own resting width in both states — no
+                // guessed min-width, and nothing to get wrong if the label ever changes. The
+                // spinner overlays it centered; busy shows no provider name on purpose, for when
+                // more sign-in methods join Google.
                 <button
                   type="button"
-                  className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
+                  className="relative inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
                   onClick={startAuthFlow}
                   disabled={isSigningIn}
                   aria-busy={isSigningIn}
                 >
-                  {isSigningIn ? "Opening Google…" : "Get Started"}
+                  <span className={isSigningIn ? "invisible" : ""}>Get Started</span>
+                  {isSigningIn ? (
+                    <span className="absolute inset-0 grid place-items-center">
+                      <Spinner className="h-4 w-4" label="Signing in" />
+                    </span>
+                  ) : null}
                 </button>
               ) : null}
               {authEnabled ? (
@@ -234,10 +245,11 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
               )}
             </div>
 
-            {/* Design-intent line under the CTA. Candidate for a live count from the metrics cron once
-                agent-created links carry a flag. */}
+            {/* Was "Built for thousands of links a minute…" — an unverified throughput number.
+                Kept the distinctive half of the claim (agents, not people) and swapped the number
+                for a property that's true regardless of scale. */}
             <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
-              Built for thousands of links a minute, created by agents, not people
+              High-volume, high-performance link creation — by agents, not people
             </p>
 
             <McpInstallExample />

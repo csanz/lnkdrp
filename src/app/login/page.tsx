@@ -6,20 +6,48 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { useAuthEnabled } from "@/app/providers";
 import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
+import Spinner from "@/components/ui/Spinner";
 
 const AUTH_TRANSITION_STORAGE_KEY = "ld_auth_transition";
 const AUTH_TRANSITION_COOKIE_NAME = "ld_auth_transition";
 
 /**
- * Render the login page (single "Continue with Google" entrypoint).
+ * `?next=` is where a gated route sent the user from (`AuthGate` in `AppShellLayout.tsx`); accept
+ * it as the post-sign-in destination only when it is unambiguously a same-site path, since it also
+ * arrives on anyone's clicked link. `//host/...` parses as protocol-relative and `https://...` as
+ * absolute; both are rejected, along with anything not starting with a single `/`.
+ */
+function safeNextPath(raw: string | null): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+  if (raw.includes("://")) return null;
+  return raw;
+}
+
+/**
+ * `/login` reads `?next=` via `useSearchParams`, which requires a Suspense boundary around it at
+ * the page level or `next build` fails to prerender the route.
  */
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginPageInner />
+    </Suspense>
+  );
+}
+
+/**
+ * Render the login page (single "Continue with Google" entrypoint).
+ */
+function LoginPageInner() {
   const authEnabled = useAuthEnabled();
   const [busy, setBusy] = useState(false);
+  const next = safeNextPath(useSearchParams().get("next")) ?? "/";
 
   useEffect(() => {
     // Ensure the "auth transition" interstitial can't trap the user if they navigated here.
@@ -72,18 +100,27 @@ export default function LoginPage() {
         </div>
 
         <div className="mt-6 flex flex-wrap items-center gap-3">
+          {/* The label stays in the box (just `invisible`) instead of being swapped out, so the
+              button's width is always exactly its own resting width in both states — no guessed
+              min-width. The spinner overlays it centered; busy shows no provider name on purpose,
+              for when more sign-in methods join Google. */}
           <button
             type="button"
-            className="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
+            className="relative inline-flex h-10 items-center justify-center rounded-xl bg-white px-4 text-sm font-semibold text-black shadow-sm transition hover:bg-white/90 disabled:opacity-70"
             disabled={!authEnabled || busy}
             aria-busy={busy}
             onClick={() => {
               if (!authEnabled || busy) return;
               setBusy(true);
-              void signIn("google", { callbackUrl: "/" });
+              void signIn("google", { callbackUrl: next });
             }}
           >
-            {busy ? "Opening Google…" : "Continue with Google"}
+            <span className={busy ? "invisible" : ""}>Continue with Google</span>
+            {busy ? (
+              <span className="absolute inset-0 grid place-items-center">
+                <Spinner className="h-4 w-4" label="Signing in" />
+              </span>
+            ) : null}
           </button>
 
           <Link
