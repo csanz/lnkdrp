@@ -9,7 +9,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { signIn } from "next-auth/react";
 import { useAuthEnabled } from "@/app/providers";
-import { CREDITS_COPY } from "@/lib/client/planLimit";
+import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 
 const AUTH_TRANSITION_STORAGE_KEY = "ld_auth_transition";
 const AUTH_TRANSITION_COOKIE_NAME = "ld_auth_transition";
@@ -62,14 +62,11 @@ export default function LoginPage() {
             </li>
             <li className="flex gap-2">
               <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
-              <span>
-                Credits top back up to {CREDITS_COPY.freeMonthlyTopUp} on the 1st of every month. Need more anytime? Pro includes{" "}
-                {CREDITS_COPY.proPerMonth} a month.
-              </span>
+              <span>Once they run out, {whatHappensAfterFreeCredits()}.</span>
             </li>
             <li className="flex gap-2">
               <span aria-hidden="true" className="mt-[0.55rem] h-1 w-1 shrink-0 rounded-full bg-white/40" />
-              <span>No card needed.</span>
+              <span>{CREDITS_COPY.noCardToStart}</span>
             </li>
           </ul>
         </div>

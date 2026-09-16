@@ -11,14 +11,8 @@
  *
  * Webhooks remain the primary mechanism. This cron is the backstop.
  *
- * Free monthly floor pass (`grantFreeMonthlyFloor`): scans balance rows not yet evaluated for the
- * current UTC month (`freeFloorMonth`), tops personal Free workspaces up to the floor, marks
- * Pro/team rows as evaluated, and re-queues skipped summaries for workspaces that received credits.
- * The reserve path and the dashboard snapshot apply the same floor on read; this covers workspaces
- * that are idle on the first of the month.
- *
- * Query params: `limit` (per pass, default 200, max 1000), `staleHours`, `dryRun=1` (count only:
- * no grants, no marks, no subscription updates, no re-queues).
+ * The Free monthly floor pass that ran here until 2026-09-15 is gone with the floor itself:
+ * Free is 50 starter credits once, then pay-as-you-go or Pro (`src/lib/billing/subscriptionState.ts`).
  */
 import { NextResponse } from "next/server";
 import Stripe from "stripe";
@@ -28,16 +22,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
-import { OrgModel } from "@/lib/models/Org";
-import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
-import {
-  FREE_MONTHLY_FLOOR_CREDITS,
-  buildCycleKey,
-  freeFloorMonth,
-  grantCycleIncludedCredits,
-  grantFreeMonthlyFloor,
-} from "@/lib/credits/grants";
-import { requeueSkippedSummaries } from "@/lib/credits/summaryRequeue";
+import { buildCycleKey, grantCycleIncludedCredits } from "@/lib/credits/grants";
+import { PRO_KIND_FILTER, isBillableStatus, isProSubscription } from "@/lib/billing/subscriptionState";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 import { getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
 import { requireCronAuth } from "@/lib/cron/auth";
@@ -52,116 +38,6 @@ function asPositiveInt(v: unknown): number | null {
   return i >= 1 ? i : null;
 }
 
-function isProStatus(statusRaw: unknown): boolean {
-  const s = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
-}
-
-type FreeFloorPassResult = {
-  month: string;
-  /** Balance rows not yet evaluated for `month` (bounded by `limit`). */
-  scanned: number;
-  /** Personal workspaces without an active/trialing subscription. */
-  eligible: number;
-  /** Eligible workspaces whose month this pass claimed. */
-  applied: number;
-  /** Workspaces that actually received credits (balance was below the floor). */
-  toppedUp: number;
-  creditsAdded: number;
-  /** dryRun only: eligible workspaces currently below the floor. */
-  wouldTopUp: number;
-  /** Pro/team rows marked as evaluated for `month` (no credits). */
-  markedIneligible: number;
-  requeuedSummaries: number;
-  errors: number;
-};
-
-/**
- * Free monthly floor pass. Bounded by `limit`; ineligible rows are marked so the scan advances.
- */
-async function runFreeFloorPass(params: { now: Date; limit: number; dryRun: boolean; origin: string }): Promise<FreeFloorPassResult> {
-  const month = freeFloorMonth(params.now);
-  const out: FreeFloorPassResult = {
-    month,
-    scanned: 0,
-    eligible: 0,
-    applied: 0,
-    toppedUp: 0,
-    creditsAdded: 0,
-    wouldTopUp: 0,
-    markedIneligible: 0,
-    requeuedSummaries: 0,
-    errors: 0,
-  };
-
-  const rows = (await WorkspaceCreditBalanceModel.find({ freeFloorMonth: { $ne: month } })
-    .select({ _id: 0, workspaceId: 1, trialCreditsRemaining: 1 })
-    .limit(params.limit)
-    .lean()) as Array<{ workspaceId?: unknown; trialCreditsRemaining?: unknown }>;
-  const candidates = rows.filter((r): r is { workspaceId: Types.ObjectId; trialCreditsRemaining?: unknown } => r.workspaceId instanceof Types.ObjectId);
-  out.scanned = candidates.length;
-  if (!candidates.length) return out;
-
-  const ids = candidates.map((r) => r.workspaceId);
-  const [personalOrgs, proSubs] = await Promise.all([
-    OrgModel.find({ _id: { $in: ids }, type: "personal", isDeleted: { $ne: true } }).select({ _id: 1 }).lean(),
-    SubscriptionModel.find({ orgId: { $in: ids }, isDeleted: { $ne: true }, status: { $in: ["active", "trialing"] } })
-      .select({ orgId: 1 })
-      .lean(),
-  ]);
-  const personal = new Set(personalOrgs.map((o) => String((o as { _id: unknown })._id)));
-  const pro = new Set(proSubs.map((sub) => String((sub as { orgId: unknown }).orgId)));
-
-  const eligible = candidates.filter((r) => personal.has(String(r.workspaceId)) && !pro.has(String(r.workspaceId)));
-  const ineligibleIds = candidates.filter((r) => !eligible.includes(r)).map((r) => r.workspaceId);
-  out.eligible = eligible.length;
-
-  if (params.dryRun) {
-    out.wouldTopUp = eligible.filter((r) => {
-      const n = Number(r.trialCreditsRemaining ?? 0);
-      return !Number.isFinite(n) || n < FREE_MONTHLY_FLOOR_CREDITS;
-    }).length;
-    return out;
-  }
-
-  if (ineligibleIds.length) {
-    try {
-      const res = await WorkspaceCreditBalanceModel.updateMany(
-        { workspaceId: { $in: ineligibleIds }, freeFloorMonth: { $ne: month } },
-        { $set: { freeFloorMonth: month } },
-      );
-      out.markedIneligible = res.modifiedCount ?? 0;
-    } catch {
-      out.errors += 1;
-    }
-  }
-
-  for (const r of eligible) {
-    const orgId = String(r.workspaceId);
-    try {
-      // Re-checks plan facts itself, so a workspace that upgraded since the scan is only marked.
-      const res = await grantFreeMonthlyFloor({ workspaceId: orgId, now: params.now });
-      if (res.applied) out.applied += 1;
-      if (res.creditsAdded > 0) {
-        out.toppedUp += 1;
-        out.creditsAdded += res.creditsAdded;
-        try {
-          const { queued } = await requeueSkippedSummaries({ orgId, origin: params.origin, limit: 10 });
-          out.requeuedSummaries += queued;
-        } catch {
-          out.errors += 1;
-        }
-      }
-    } catch {
-      out.errors += 1;
-    }
-  }
-  return out;
-}
-
-/**
- * Shared handler for GET (Vercel Cron) and POST (manual) invocations.
- */
 async function handle(request: Request) {
   const unauthorized = requireCronAuth(request);
   if (unauthorized) return unauthorized;
@@ -196,12 +72,14 @@ async function handle(request: Request) {
   try {
     await connectMongo();
 
+    // Pro only: a pay-as-you-go subscription is active in Stripe but has no included credits to grant.
     const candidates = await SubscriptionModel.find({
       isDeleted: { $ne: true },
       status: { $in: ["active", "trialing"] },
+      ...PRO_KIND_FILTER,
       stripeSubscriptionId: { $ne: null },
     })
-      .select({ _id: 1, orgId: 1, stripeSubscriptionId: 1, status: 1, currentPeriodStart: 1, currentPeriodEnd: 1, updatedDate: 1 })
+      .select({ _id: 1, orgId: 1, stripeSubscriptionId: 1, status: 1, kind: 1, currentPeriodStart: 1, currentPeriodEnd: 1, updatedDate: 1 })
       .limit(limit)
       .lean();
 
@@ -227,8 +105,7 @@ async function handle(request: Request) {
       const orgId = (s as any)?.orgId instanceof Types.ObjectId ? (s as any).orgId : null;
       if (!subId || !orgId) continue;
 
-      const status = (s as any)?.status;
-      if (!isProStatus(status)) continue;
+      if (!isProSubscription(s as { status?: unknown; kind?: unknown })) continue;
 
       const start = (s as any)?.currentPeriodStart instanceof Date ? (s as any).currentPeriodStart : null;
       const end = (s as any)?.currentPeriodEnd instanceof Date ? (s as any).currentPeriodEnd : null;
@@ -292,7 +169,7 @@ async function handle(request: Request) {
         const { start, end } = getSubscriptionPeriod(fresh);
         const status = typeof fresh.status === "string" ? fresh.status : "";
         if (!start || !end) continue;
-        if (!isProStatus(status)) continue;
+        if (!isBillableStatus(status)) continue;
 
         const cycleKey = buildCycleKey({ stripeSubscriptionId: row.subId, currentPeriodStart: start });
         const exists = await CreditLedgerModel.exists({
@@ -329,16 +206,9 @@ async function handle(request: Request) {
       }
     }
 
-    let freeFloor: FreeFloorPassResult | { error: string };
-    try {
-      freeFloor = await runFreeFloorPass({ now: new Date(), limit, dryRun, origin: url.origin });
-    } catch (e) {
-      freeFloor = { error: e instanceof Error ? e.message : String(e) };
-    }
-
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
-    const result = { checked, fetchedFromStripe, updatedSubscription, grantsApplied, grantsSkipped, errors, limit, dryRun, freeFloor };
+    const result = { checked, fetchedFromStripe, updatedSubscription, grantsApplied, grantsSkipped, errors, limit, dryRun };
 
     try {
       await connectMongo();

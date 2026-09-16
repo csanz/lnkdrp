@@ -22,6 +22,7 @@ import Stripe from "stripe";
 import { connectMongo } from "@/lib/mongodb";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { grantCycleIncludedCredits } from "@/lib/credits/grants";
 import { logErrorEvent, ERROR_CODE_CRON_JOB_FAILED } from "@/lib/errors/logger";
 import { getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
@@ -44,10 +45,6 @@ function asPositiveInt(v: unknown): number | null {
   return i >= 1 ? i : null;
 }
 
-function isProStatus(statusRaw: unknown): boolean {
-  const s = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
-}
 
 /**
  * Shared handler for GET (Vercel Cron) and POST (manual) invocations.
@@ -100,7 +97,7 @@ async function handle(request: Request) {
     })
       .sort({ currentPeriodEnd: 1, _id: 1 })
       .limit(limit)
-      .select({ orgId: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1, status: 1 })
+      .select({ orgId: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1, status: 1, kind: 1 })
       .lean();
 
     let processed = 0;
@@ -119,7 +116,9 @@ async function handle(request: Request) {
         const fresh: Stripe.Subscription = await stripe.subscriptions.retrieve(subId);
 
         const status = typeof fresh.status === "string" ? fresh.status : "";
-        const pro = isProStatus(status);
+        // Pay-as-you-go rows sync their period like any other (the meter bills by it) but never
+        // receive the 300 included credits.
+        const pro = isProSubscription({ status, kind: (s as { kind?: unknown }).kind });
         // stripe@20 (API 2025-12-15) reports the period on subscription items, not the top level.
         const { start: currentPeriodStart, end: currentPeriodEnd } = getSubscriptionPeriod(fresh);
         if (!currentPeriodStart || !currentPeriodEnd) continue;

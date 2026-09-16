@@ -8,7 +8,7 @@
  * (1 credit, never the compare), records a `summary.generated` activity row and clears the flag.
  *
  * Used by `POST /api/uploads/:id/summary` (the doc page's "Write summary" action) and by
- * `requeueSkippedSummaries` after the Free monthly floor lands.
+ * `requeueSkippedSummaries` when a workspace's pay-as-you-go subscription becomes billable.
  */
 import { Types } from "mongoose";
 

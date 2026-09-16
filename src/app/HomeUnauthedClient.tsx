@@ -6,6 +6,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { signIn } from "next-auth/react";
@@ -222,7 +223,11 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
               ) : null}
               {authEnabled ? (
                 <span className="text-[13px] leading-5 text-white/55">
-                  Free, with {CREDITS_COPY.freeStarter} credits to try the AI features, topped up every month. No card needed.
+                  Free to start — {CREDITS_COPY.freeStarter} AI credits included, no card needed.{" "}
+                  <Link href="/pricing" className="underline underline-offset-4 hover:text-white/75">
+                    See pricing
+                  </Link>
+                  .
                 </span>
               ) : (
                 <div className="text-sm text-white/60">Login isn’t available (auth is disabled).</div>

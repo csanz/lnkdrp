@@ -23,6 +23,7 @@ import {
 } from "@/lib/billing/planLimits";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
+import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { cn } from "@/lib/cn";
 import PricingCta from "./PricingCta";
 
@@ -31,7 +32,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "Free to send a few. Pro to send every day. Three links free, forever; unlimited links, deep analytics and 300 AI credits a month on Pro.",
+  description: "Free to send a few. Pro to send every day. Three shared documents free, forever, each with unlimited links; deep analytics and 300 AI credits a month on Pro.",
 };
 
 /** Read the Pro price label without letting a database hiccup take the page down. */
@@ -127,16 +128,16 @@ export default async function PricingPage() {
                   "Version history, with AI compare from 2 credits",
                   "Password protection and download control",
                   "Built for Claude Code, Cursor, Codex, and any MCP client",
-                  `${FREE_STARTER_CREDITS} credits to start, then topped up to 10 a month`,
+                  `${FREE_STARTER_CREDITS} credits to start, one time`,
                   "Single user",
                 ]}
               />
               <p className="mt-4 text-[12px] leading-5 text-white/45">
-                Archive a document any time to free up a slot. Credits top up to 10 on the 1st of each month
-                if you have fewer, and Free uses at most 15 credits a day.
+                Archive a document any time to free up a slot. Once your starter credits run out,{" "}
+                {whatHappensAfterFreeCredits()}; Free uses at most {CREDITS_COPY.freeDailyCap} credits a day.
               </p>
               <div className="mt-8 flex-1" />
-              <PricingCta plan="free" variant="dark" helper={`Sign in with Google. ${FREE_STARTER_CREDITS} free credits to try the AI features, topped up every month. No card needed.`} />
+              <PricingCta plan="free" variant="dark" helper={`Sign in with Google. ${FREE_STARTER_CREDITS} free credits to try the AI features. No card needed.`} />
             </div>
 
             {/* Pro */}
@@ -349,11 +350,11 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What do credits pay for?",
-                  a: "AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Personal Free workspaces start with 50 credits, get topped back up to 10 on the 1st of each month if they have fewer, and use at most 15 credits a day. Pro includes 300 credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.",
+                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Personal Free workspaces start with ${FREE_STARTER_CREDITS} credits, one time, and use at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes 300 credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.`,
                 },
                 {
                   q: "What happens when I run out of credits?",
-                  a: "Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until credits return.",
+                  a: `Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until you add credits — ${whatHappensAfterFreeCredits()} — or, on Pro, until the next billing cycle.`,
                 },
                 {
                   q: "Can I replace a file on Free?",

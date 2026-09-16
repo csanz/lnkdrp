@@ -1,16 +1,13 @@
 import { Types } from "mongoose";
 import {
-  FREE_MONTHLY_FLOOR_CREDITS,
   FREE_STARTER_CREDITS,
   INCLUDED_CREDITS_PER_CYCLE,
-  freeFloorMonth,
-  grantFreeMonthlyFloor,
 } from "@/lib/credits/grants";
 import { defaultBalanceForWorkspace } from "@/lib/credits/creditService";
 
 import { connectMongo } from "@/lib/mongodb";
-import { OrgModel } from "@/lib/models/Org";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
@@ -35,7 +32,6 @@ type WorkspaceCreditBalanceDoc = {
   onDemandMonthlyLimitCents?: number;
   currentPeriodStart?: Date;
   currentPeriodEnd?: Date;
-  freeFloorMonth?: string | null;
 } | null;
 
 /** Lean document shape from UsageAggCycleModel query */
@@ -61,10 +57,9 @@ export type CreditsSnapshot = {
   cycleEnd: string | null;
   includedThisCycle: number | null;
   /**
-   * When the included credits next change without a purchase, ISO string. Set only for a personal
-   * Free workspace whose trial bucket is at or below the monthly floor: the first of next UTC month,
-   * when it tops up to `FREE_MONTHLY_FLOOR_CREDITS` (then `includedThisCycle` is that floor). `null`
-   * otherwise (Pro uses `cycleEnd`).
+   * Always `null` since 2026-09-15. It carried the date a Free workspace's monthly floor top-up
+   * would land; Free credits no longer come back on a date (50 to start, then pay-as-you-go or
+   * Pro). Kept so clients written against the field keep parsing. Pro uses `cycleEnd`.
    */
   resetsAt: string | null;
   onDemandEnabled: boolean;
@@ -83,16 +78,6 @@ function clampNonNegInt(n: unknown): number {
   const v = typeof n === "number" ? n : typeof n === "string" ? Number(n) : NaN;
   if (!Number.isFinite(v)) return 0;
   return Math.max(0, Math.floor(v));
-}
-
-/**
- * Returns true when a Stripe subscription status should be treated as "pro".
- *
- * Exists to map Stripe status strings into a simple boolean used throughout credit logic.
- */
-function isProStatus(status: unknown): boolean {
-  const s = typeof status === "string" ? status.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
 }
 
 /**
@@ -138,7 +123,7 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   const t0 = Date.now();
   const [sub, balRaw] = await Promise.all([
     SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-      .select({ status: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
+      .select({ status: 1, kind: 1, stripeSubscriptionId: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
       .lean() as Promise<SubscriptionDoc>,
     WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
       .select({
@@ -149,43 +134,26 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
         onDemandMonthlyLimitCents: 1,
         currentPeriodStart: 1,
         currentPeriodEnd: 1,
-        freeFloorMonth: 1,
       })
       .lean() as Promise<WorkspaceCreditBalanceDoc>,
   ]);
   debugLog(2, "[credits:snapshot] base queries", { ms: Date.now() - t0, ops: 2 });
 
-  const pro = isProStatus(sub?.status);
+  // Pro means the Pro price, not merely an active subscription: a pay-as-you-go workspace is
+  // active in Stripe and still spends from its starter bucket and the meter.
+  const pro = isProSubscription(sub);
 
   // Ensure a balance record exists so the dashboard can show Personal one-time credits
   // even before the first AI run triggers reservation initialization. The seed comes from the
   // same helper the reserve path uses (`defaultBalanceForWorkspace`), so a team workspace never
   // gets the personal starter grant here and the Free daily cap lands on whichever path runs first.
   let bal: WorkspaceCreditBalanceDoc = balRaw;
-  const month = freeFloorMonth(now);
-  if (bal && bal.freeFloorMonth !== month) {
-    // Free monthly floor (once per UTC month; Pro/team are only marked). Best-effort: the dashboard
-    // must still load if the top-up fails; the reserve path and the cron re-evaluate it.
-    try {
-      const floor = await grantFreeMonthlyFloor({ workspaceId, now });
-      if (floor.creditsAdded > 0) {
-        bal = {
-          ...bal,
-          trialCreditsRemaining: Math.max(clampNonNegInt(bal.trialCreditsRemaining), FREE_MONTHLY_FLOOR_CREDITS),
-          freeFloorMonth: month,
-        };
-      }
-    } catch (err) {
-      debugLog(1, "[credits:snapshot] free floor failed", { err: err instanceof Error ? err.message : String(err) });
-    }
-  }
   if (!bal) {
     const initSeed = await defaultBalanceForWorkspace(orgId);
     try {
       await WorkspaceCreditBalanceModel.updateOne(
         { workspaceId: orgId },
-        // A new row already covers this month's Free floor (the starter grant is larger).
-        { $setOnInsert: { workspaceId: orgId, ...initSeed, freeFloorMonth: month } },
+        { $setOnInsert: { workspaceId: orgId, ...initSeed } },
         { upsert: true },
       );
       bal = initSeed as WorkspaceCreditBalanceDoc;
@@ -212,15 +180,6 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
 
   const includedRemaining = pro ? subscriptionRemaining : trialRemaining;
 
-  // Personal Free at or below the monthly floor: report the floor as this month's allowance and when
-  // it next tops up. (At exactly the floor, e.g. right after a top-up, the 50 starter no longer applies.)
-  let freeFloorResetsAt: Date | null = null;
-  if (!pro && trialRemaining <= FREE_MONTHLY_FLOOR_CREDITS) {
-    const org = (await OrgModel.findOne({ _id: orgId, isDeleted: { $ne: true } })
-      .select({ type: 1 })
-      .lean()) as { type?: unknown } | null;
-    if (org?.type === "personal") freeFloorResetsAt = startOfNextUtcMonth(now);
-  }
   const paidRemaining = purchasedRemaining;
 
   const onDemandEnabled = Boolean(bal?.onDemandEnabled);
@@ -311,14 +270,10 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
     usedThisCycle,
     cycleStart: cycleStart ? cycleStart.toISOString() : null,
     cycleEnd: cycleEnd ? cycleEnd.toISOString() : null,
-    includedThisCycle: pro
-      ? INCLUDED_CREDITS_PER_CYCLE
-      : freeFloorResetsAt
-        ? FREE_MONTHLY_FLOOR_CREDITS
-        : trialRemaining
-          ? FREE_STARTER_CREDITS
-          : null,
-    resetsAt: freeFloorResetsAt ? freeFloorResetsAt.toISOString() : null,
+    includedThisCycle: pro ? INCLUDED_CREDITS_PER_CYCLE : trialRemaining ? FREE_STARTER_CREDITS : null,
+    // Free credits never come back on a date any more (the monthly floor ended 2026-09-15); kept
+    // as `null` so clients written against the field keep parsing.
+    resetsAt: null,
     onDemandEnabled,
     onDemandMonthlyLimitCents,
     onDemandUsedCreditsThisCycle,

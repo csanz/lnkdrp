@@ -1,7 +1,6 @@
 import mongoose, { Types } from "mongoose";
 
 import type { CreditStore, CreditsUsageSums, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
-import { FREE_MONTHLY_FLOOR_CREDITS, freeFloorMonth, grantFreeMonthlyFloor } from "@/lib/credits/grants";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { UsageAggDailyModel } from "@/lib/models/UsageAggDaily";
@@ -119,19 +118,7 @@ export function createMongooseCreditStore(params: { workspaceId: string }): Cred
       const s = mustSession();
       const now = new Date();
       const found = await WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId }).session(s);
-      if (found) {
-        const snap = snapshotBalance(found, now);
-        // Free monthly floor: only when this month is not yet marked on the row we already loaded
-        // (one marker compare on the hot path). Runs in this transaction, so the reservation below
-        // sees the topped-up trial bucket and a failed reservation rolls the top-up back.
-        if ((found as { freeFloorMonth?: unknown }).freeFloorMonth !== freeFloorMonth(now)) {
-          const floor = await grantFreeMonthlyFloor({ workspaceId, now, session: s });
-          if (floor.creditsAdded > 0) {
-            snap.trialCreditsRemaining = Math.max(snap.trialCreditsRemaining, FREE_MONTHLY_FLOOR_CREDITS);
-          }
-        }
-        return snap;
-      }
+      if (found) return snapshotBalance(found, now);
       const init = await initIfMissing();
       const created = await WorkspaceCreditBalanceModel.create(
         [
@@ -149,8 +136,6 @@ export function createMongooseCreditStore(params: { workspaceId: string }): Cred
             perRunCreditCapAdvanced: init.perRunCreditCapAdvanced,
             currentPeriodStart: init.currentPeriodStart ?? null,
             currentPeriodEnd: init.currentPeriodEnd ?? null,
-            // A new row already covers this month's Free floor (the starter grant is larger).
-            freeFloorMonth: freeFloorMonth(now),
           },
         ],
         { session: s },

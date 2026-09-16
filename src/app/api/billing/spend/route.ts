@@ -13,6 +13,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { resolveActor, resolveActorForStats, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { isBillableSubscription } from "@/lib/billing/subscriptionState";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
@@ -43,10 +44,6 @@ function normalizeLimitCents(v: unknown): number | null {
   return Math.min(n, UNLIMITED_LIMIT_CENTS);
 }
 
-function isProStatus(status: unknown): boolean {
-  const s = typeof status === "string" ? status.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
-}
 
 function startOfUtcMonth(d: Date): Date {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1, 0, 0, 0, 0));
@@ -93,7 +90,7 @@ export async function GET(request: Request) {
       const [membership, sub, bal] = await Promise.all([
         OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
         SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-          .select({ status: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
+          .select({ status: 1, kind: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
           .lean(),
         WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId })
           .select({ onDemandEnabled: 1, onDemandMonthlyLimitCents: 1, currentPeriodStart: 1, currentPeriodEnd: 1 })
@@ -101,11 +98,16 @@ export async function GET(request: Request) {
       ]);
       if (!membership) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-      const isPro = isProStatus((sub as any)?.status);
+      // Billable, not Pro: a Free workspace that added a card (pay-as-you-go) sets its limit here too.
+      const billable = isBillableSubscription(sub as { status?: unknown; kind?: unknown } | null);
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       const roleAllowsEdit = role === "owner" || role === "admin";
-      const canEdit = isPro && roleAllowsEdit;
-      const editDisabledReason = !isPro ? "On-demand limits require an active Pro subscription." : !roleAllowsEdit ? "Only workspace owners/admins can edit limits." : null;
+      const canEdit = billable && roleAllowsEdit;
+      const editDisabledReason = !billable
+        ? "On-demand credits need a card on file: add pay-as-you-go or upgrade to Pro."
+        : !roleAllowsEdit
+          ? "Only workspace owners/admins can edit limits."
+          : null;
 
       const limitCents =
         typeof (bal as any)?.onDemandMonthlyLimitCents === "number" && Number.isFinite((bal as any).onDemandMonthlyLimitCents)
@@ -230,10 +232,14 @@ export async function POST(request: Request) {
       const orgId = new Types.ObjectId(String(actor.orgId));
       const userId = new Types.ObjectId(String(actor.userId));
 
-      // On-demand limits require an active subscription (Pro).
-      const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean();
-      if (!isProStatus((sub as any)?.status)) {
-        return NextResponse.json({ error: "On-demand limits require an active Pro subscription." }, { status: 403 });
+      // On-demand needs something to bill: a billable subscription of either kind (Pro, or the
+      // metered-only pay-as-you-go one a Free workspace gets when it adds a card).
+      const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1, kind: 1 }).lean();
+      if (!isBillableSubscription(sub as { status?: unknown; kind?: unknown } | null)) {
+        return NextResponse.json(
+          { error: "On-demand credits need a card on file: add pay-as-you-go or upgrade to Pro." },
+          { status: 403 },
+        );
       }
 
       const membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } })

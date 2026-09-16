@@ -17,9 +17,10 @@ import { formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
 import { dispatchOutOfCredits } from "@/lib/client/outOfCredits";
-import { CREDITS_COPY, FEATURE_CREDITS_ENABLED } from "@/lib/client/planLimit";
+import { CREDITS_COPY, FEATURE_CREDITS_ENABLED, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { startCheckout } from "@/lib/billing/clientActions";
 
 type CreditsSnapshot = {
   ok: true;
@@ -29,7 +30,7 @@ type CreditsSnapshot = {
   usedThisCycle: number;
   cycleEnd: string | null;
   includedThisCycle?: number | null;
-  /** Free: when the balance next tops up to the monthly floor (first of next UTC month); null otherwise. */
+  /** Always `null` since the Free monthly floor was removed (2026-09-15); kept so old clients still parse. */
   resetsAt?: string | null;
   onDemandMonthlyLimitCents?: number;
   onDemandUsedCreditsThisCycle?: number;
@@ -56,7 +57,21 @@ function CreditsSummaryCardInner({
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<CreditsSnapshot | null>(null);
   const [plan, setPlan] = useState<PlanState>(null);
+  const [paygBusy, setPaygBusy] = useState(false);
+  const [paygError, setPaygError] = useState<string | null>(null);
   const { openUpgrade } = useUpgradeModal();
+
+  async function addPayAsYouGo() {
+    setPaygError(null);
+    setPaygBusy(true);
+    try {
+      await startCheckout("payg");
+      // startCheckout navigates away on success; if it returns, nothing to clean up.
+    } catch (e) {
+      setPaygError(e instanceof Error ? e.message : "Could not start checkout");
+      setPaygBusy(false);
+    }
+  }
 
   // The plan picks the labels (starter grant vs monthly allowance). A failed read falls back to the
   // Pro labels ("unknown") rather than hiding a workspace's balance.
@@ -150,7 +165,7 @@ function CreditsSummaryCardInner({
             {busy
               ? "Loading…"
               : isFree
-                ? `Starter credits, topped up to 10 on the 1st of each month. Pro includes ${CREDITS_COPY.proPerMonth} a month.`
+                ? `${CREDITS_COPY.freeStarter} starter credits, one time. Once they run out, ${whatHappensAfterFreeCredits()}.`
                 : reset
                   ? `Credits reset on ${formatShortDate(reset, { invalid: "raw" })}.`
                   : "Reset date unavailable."}
@@ -185,11 +200,7 @@ function CreditsSummaryCardInner({
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">{isFree ? "Starter" : "Included"}</div>
           <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{includedRemaining !== null ? includedRemaining.toLocaleString() : "—"}</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-            {isFree
-              ? typeof data?.resetsAt === "string"
-                ? `Tops up to 10 on ${new Date(data.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}`
-                : `${starterGrant.toLocaleString()} to start, then 10 a month`
-              : `Per month: ${includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}`}
+            {isFree ? `${starterGrant.toLocaleString()} to start, one time` : `Per month: ${includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}`}
           </div>
         </div>
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
@@ -225,18 +236,33 @@ function CreditsSummaryCardInner({
           <div className="text-[12px] font-semibold text-[var(--fg)]">Out of credits</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             {isFree
-              ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Credits top up to 10 on the 1st of each month. Pro includes ${CREDITS_COPY.proPerMonth} a month, and AI compare on every replacement.`
+              ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Add pay-as-you-go at ${CREDITS_COPY.perCreditUsd}/credit, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included and AI compare on every replacement.`
               : "You’ve used all available credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. AI compare is unavailable until credits reset or you enable on-demand."}
           </div>
+          {paygError ? (
+            <Alert variant="error" className="mt-2 text-[12px]">
+              {paygError}
+            </Alert>
+          ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {isFree ? (
-              <button
-                type="button"
-                className="inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)]"
-                onClick={() => openUpgrade("credits")}
-              >
-                Upgrade to Pro
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-lg bg-[var(--fg)] px-3 py-2 text-[12px] font-semibold text-[var(--bg)] disabled:opacity-60"
+                  disabled={paygBusy}
+                  onClick={() => void addPayAsYouGo()}
+                >
+                  {paygBusy ? "Starting…" : `Add pay-as-you-go (${CREDITS_COPY.perCreditUsd}/credit)`}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                  onClick={() => openUpgrade("credits")}
+                >
+                  Upgrade to Pro
+                </button>
+              </>
             ) : (
               <Link
                 href="/dashboard/limits"

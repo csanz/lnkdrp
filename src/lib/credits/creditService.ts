@@ -7,6 +7,7 @@ import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
 import { createCreditService } from "@/lib/credits/serviceCore";
 import { createMongooseCreditStore } from "@/lib/credits/mongooseStore";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 import type { ActionType, LedgerStatus, QualityTier } from "@/lib/credits/types";
 import type { WorkspaceBalanceSnapshot } from "@/lib/credits/store";
 
@@ -16,16 +17,6 @@ export const FREE_DAILY_CREDIT_CAP = 15;
 /** The two facts every seed decision depends on: is this a personal org, and is it paid. */
 type WorkspacePlanFacts = { isPersonal: boolean; isPro: boolean };
 
-/**
- * Returns true when a Stripe subscription status should be treated as "pro".
- *
- * Exists to decide whether a workspace gets trial credits as a starter balance.
- */
-function isProSubscriptionStatus(statusRaw: unknown): boolean {
-  const s = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
-}
-
 /** Coerce a string/ObjectId workspace id; throws on malformed input. */
 function toOrgObjectId(orgId: string | Types.ObjectId): Types.ObjectId {
   if (orgId instanceof Types.ObjectId) return orgId;
@@ -34,15 +25,22 @@ function toOrgObjectId(orgId: string | Types.ObjectId): Types.ObjectId {
   return new Types.ObjectId(s);
 }
 
-/** Read org type + subscription status in one round trip (the only DB reads a seed needs). */
+/**
+ * Read org type + subscription status/kind in one round trip (the only DB reads a seed needs).
+ *
+ * `isPro` uses `isProSubscription`, not merely "is there a billable subscription": a personal Free
+ * workspace that added a card for pay-as-you-go is billable but still Free, and if its balance row
+ * had not been seeded yet it must still receive the 50-credit starter grant and the daily brake —
+ * pay-as-you-go is what a Free workspace does *after* the starter grant, not a Pro substitute.
+ */
 async function workspacePlanFacts(orgId: Types.ObjectId): Promise<WorkspacePlanFacts> {
   const [org, sub] = await Promise.all([
     OrgModel.findOne({ _id: orgId, isDeleted: { $ne: true } }).select({ type: 1 }).lean(),
-    SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1 }).lean(),
+    SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1, kind: 1 }).lean(),
   ]);
   return {
     isPersonal: (org as { type?: unknown } | null)?.type === "personal",
-    isPro: isProSubscriptionStatus((sub as { status?: unknown } | null)?.status),
+    isPro: isProSubscription(sub as { status?: unknown; kind?: unknown } | null),
   };
 }
 

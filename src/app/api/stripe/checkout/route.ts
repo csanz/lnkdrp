@@ -4,12 +4,21 @@
  * Security:
  * - Requires an authenticated user.
  * - Returns only a Stripe-hosted URL; does not grant access (webhook-only).
- * - Refuses (409) when the workspace already has an active/trialing subscription; the client
- *   should send the user to the billing portal (`POST /api/stripe/portal`) instead.
+ * - Refuses (409) when the workspace already has a billable subscription of either kind; the
+ *   client should send the user to the billing portal (`POST /api/stripe/portal`) instead.
+ *
+ * Body: `{ plan?: "pro" | "payg" }`, default `"pro"`.
  *
  * Line items:
- * - `STRIPE_PRICE_ID` (recurring Pro plan, quantity 1)
- * - `STRIPE_AI_CREDITS_PRICE_ID` (metered AI credits; no quantity — metered prices reject it) when configured
+ * - `pro`: `STRIPE_PRICE_ID` (recurring Pro plan, quantity 1), plus `STRIPE_AI_CREDITS_PRICE_ID`
+ *   (metered AI credits; no quantity — metered prices reject it) when configured.
+ * - `payg`: `STRIPE_AI_CREDITS_PRICE_ID` alone — a $0 subscription whose only job is to give a
+ *   Free workspace a card on file and a place to bill metered usage. Refused (400) when the
+ *   metered price is not configured; there is nothing to sell without it.
+ *
+ * The session carries `metadata.kind` so the webhook knows which one this was even before it can
+ * inspect the subscription's own items (`subscriptionKindFromPriceIds` in
+ * `src/lib/billing/subscriptionState.ts` prefers the items; this is the fallback).
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -21,6 +30,7 @@ import { UserModel } from "@/lib/models/User";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
+import { isBillableSubscription } from "@/lib/billing/subscriptionState";
 
 export const runtime = "nodejs";
 
@@ -36,12 +46,6 @@ function appUrlFromRequest(request: Request): string {
   if (configured) return configured.replace(/\/+$/, "");
   // Fallback: derive from request origin (dev-friendly).
   return new URL(request.url).origin;
-}
-
-/** Subscription statuses that already entitle the workspace to Pro (no second Checkout allowed). */
-function isActiveSubscriptionStatus(statusRaw: unknown): boolean {
-  const s = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
 }
 
 function checkoutRedirects(request: Request): { successUrl: string; cancelUrl: string } {
@@ -73,9 +77,18 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Invalid org" }, { status: 400 });
       }
 
+      const body = (await request.json().catch(() => null)) as { plan?: unknown } | null;
+      const plan = body?.plan === "payg" ? "payg" : "pro";
+
       const stripeKey = mustGetEnv("STRIPE_SECRET_KEY");
-      const priceId = mustGetEnv("STRIPE_PRICE_ID");
       const aiCreditsPriceId = getAiCreditsPriceId();
+      if (plan === "payg" && !aiCreditsPriceId) {
+        return NextResponse.json(
+          { error: "Pay-as-you-go is not configured for this deployment yet." },
+          { status: 400 },
+        );
+      }
+      const priceId = plan === "pro" ? mustGetEnv("STRIPE_PRICE_ID") : null;
       const stripe = new Stripe(stripeKey);
 
       await connectMongo();
@@ -88,17 +101,20 @@ export async function POST(request: Request) {
 
       // Workspace-bound billing: one Stripe customer per org/workspace (SubscriptionModel is per-org).
       const existingSub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-        .select({ _id: 1, stripeCustomerId: 1, stripeSubscriptionId: 1, status: 1 })
+        .select({ _id: 1, stripeCustomerId: 1, stripeSubscriptionId: 1, status: 1, kind: 1 })
         .lean();
 
-      // Guard: never create a second subscription for a workspace that already has one.
-      if (isActiveSubscriptionStatus((existingSub as any)?.status)) {
+      // Guard: never create a second subscription for a workspace that already has one, of
+      // either kind — Stripe subscriptions are not stacked here, and switching what an existing
+      // one is for is a portal / support action, not a second Checkout.
+      if (isBillableSubscription(existingSub as { status?: unknown; kind?: unknown } | null)) {
         const appUrl = appUrlFromRequest(request);
         return NextResponse.json(
           {
             error: "This workspace already has an active subscription. Manage it from the billing portal.",
             code: "SUBSCRIPTION_ALREADY_ACTIVE",
             status: String((existingSub as any).status),
+            kind: (existingSub as any)?.kind === "payg" ? "payg" : "pro",
             // Hint for clients: POST here to obtain a Stripe billing portal URL.
             portalUrl: `${appUrl}/api/stripe/portal`,
           },
@@ -130,23 +146,28 @@ export async function POST(request: Request) {
       }
 
       const { successUrl, cancelUrl } = checkoutRedirects(request);
+      const lineItems =
+        plan === "pro"
+          ? [
+              { price: priceId as string, quantity: 1 },
+              // Metered prices must be added WITHOUT a quantity (Stripe rejects it).
+              ...(aiCreditsPriceId ? [{ price: aiCreditsPriceId }] : []),
+            ]
+          : [{ price: aiCreditsPriceId as string }];
       const session = await stripe.checkout.sessions.create({
         mode: "subscription",
         customer: customerId,
-        line_items: [
-          { price: priceId, quantity: 1 },
-          // Metered prices must be added WITHOUT a quantity (Stripe rejects it).
-          ...(aiCreditsPriceId ? [{ price: aiCreditsPriceId }] : []),
-        ],
+        line_items: lineItems,
         success_url: successUrl,
         cancel_url: cancelUrl,
         // Use orgId here so Checkout completion can be mapped even if metadata is missing.
         client_reference_id: String(orgId),
-        allow_promotion_codes: true,
-        // Include BOTH userId and orgId so webhooks can update the correct workspace.
-        metadata: { userId: String(userId), orgId: String(orgId) },
+        allow_promotion_codes: plan === "pro",
+        // Include userId, orgId AND kind so webhooks can update the correct workspace as the
+        // right kind even before the subscription's own items are inspected.
+        metadata: { userId: String(userId), orgId: String(orgId), kind: plan },
         // Helpful for correlating subscription webhooks back to this user.
-        subscription_data: { metadata: { userId: String(userId), orgId: String(orgId) } },
+        subscription_data: { metadata: { userId: String(userId), orgId: String(orgId), kind: plan } },
       });
 
       const url = typeof session?.url === "string" ? session.url : "";

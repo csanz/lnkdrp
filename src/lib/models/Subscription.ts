@@ -36,6 +36,16 @@ const subscriptionSchema = new Schema(
     planName: { type: String, trim: true, default: "Free" },
 
     /**
+     * What the Stripe subscription is for, derived from its items by the webhook:
+     * - `pro`: carries the Pro licensed price (and usually the metered credits price beside it)
+     * - `payg`: the metered credits price alone — a Free workspace that added a card so it can be
+     *   billed for on-demand credits; it is `active` in Stripe without being Pro
+     * `null` on rows written before the field existed; those were all Pro. Read it through
+     * `src/lib/billing/subscriptionState.ts`, never by comparing `status` alone.
+     */
+    kind: { type: String, enum: ["pro", "payg"], default: null },
+
+    /**
      * Stripe billing period boundaries (source of truth for the billing cycle).
      *
      * NOTE: Credits reset should be keyed off (stripeSubscriptionId + currentPeriodStart).

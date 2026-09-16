@@ -5,8 +5,8 @@
  * then manage billing via Stripe's customer portal. Plan details link out to `/pricing` so the comparison
  * has a single source of truth. The Free panel shows live usage meters from `GET /api/plan` (links,
  * projects, analytics window, members) and notes that AI summaries, version history and AI compare run on credits;
- * credits exist on both plans (Free starts with a starter grant, topped up to 10 monthly) and live in the Credits
- * card on the Usage tab, so this card never reads the credits snapshot.
+ * credits exist on both plans (Free starts with a one-time starter grant, then pay-as-you-go or Pro) and live
+ * in the Credits card on the Usage tab, so this card never reads the credits snapshot.
  */
 "use client";
 
@@ -19,7 +19,7 @@ import { formatShortDate } from "@/lib/format/date";
 import PlanUsageMeter from "@/components/PlanUsageMeter";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { openBillingPortal, startCheckout as startCheckoutAction } from "@/lib/billing/clientActions";
-import { CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY } from "@/lib/client/planLimit";
+import { CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { usePlan } from "@/lib/client/usePlan";
 
 type BillingStatusResponse = {
@@ -196,8 +196,8 @@ export default function SubscriptionCard() {
       </div>
       <div className="mt-5 flex flex-col gap-2 border-t border-[var(--border)] pt-4 leading-5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
         <span>
-          Analytics cover the last {freeAnalyticsDays} days. AI summaries use credits: {CREDITS_COPY.freeStarter} to start, then
-          topped up to 10 on the 1st of each month. Version history and AI compare run on credits too.
+          Analytics cover the last {freeAnalyticsDays} days. AI summaries use credits: {CREDITS_COPY.freeStarter} to start,
+          one time. Once they run out, {whatHappensAfterFreeCredits()}. Version history and AI compare run on credits too.
         </span>
         <button
           type="button"
@@ -248,7 +248,7 @@ export default function SubscriptionCard() {
             price={proPriceLabel || undefined}
             subtitle={
               <span>
-                {periodHint ? periodHint : "Your subscription is active."} Unlimited links · Unlimited projects · Deep
+                {periodHint ? periodHint : "Your subscription is active."} Unlimited documents · Unlimited projects · Deep
                 analytics · full history · 1 collaborator included.
               </span>
             }

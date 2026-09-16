@@ -1,7 +1,10 @@
 /**
  * Cron route: `GET|POST /api/cron/stripe-credits-report`
  *
- * Reports metered AI credit usage (on-demand/overage only) to Stripe Billing Meters for Pro workspaces.
+ * Reports metered AI credit usage (on-demand/overage only) to Stripe Billing Meters, for any
+ * billable subscription with a metered item — Pro's on-demand add-on and a Free workspace's
+ * pay-as-you-go subscription report through the exact same path; the query below has no reason
+ * to tell them apart, since both hold a `stripeSubscriptionItemId` for the same metered price.
  *
  * Vercel Cron invokes this with `GET` + `Authorization: Bearer $CRON_SECRET`;
  * `POST` is kept for manual/dev invocation. Auth: `requireCronAuth`.
@@ -113,7 +116,7 @@ async function handle(request: Request) {
 
     await connectMongo();
 
-    // Map workspace → Stripe customer (only report for active Pro subscriptions with a known metered item).
+    // Map workspace → Stripe customer (any billable subscription — Pro or pay-as-you-go — with a known metered item).
     const subs = await SubscriptionModel.find({
       isDeleted: { $ne: true },
       status: { $in: ["active", "trialing"] },

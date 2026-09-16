@@ -1,5 +1,6 @@
 /**
- * Re-run skipped AI summaries after a workspace receives credits (the Free monthly floor).
+ * Re-run skipped AI summaries after a workspace gains a way to pay for them — today, when a Free
+ * workspace's pay-as-you-go subscription becomes billable (the Stripe webhook calls this).
  *
  * Finds the current version of each live document in the workspace whose summary was skipped for
  * want of credits (`Upload.ai.code` `out_of_credits` or `daily_cap`) and queues a summary-only rerun
@@ -17,7 +18,7 @@ export async function requeueSkippedSummaries(params: {
   orgId: string;
   /** Absolute origin of the app (e.g. `https://lnkdrp.com`) used to trigger processing. */
   origin: string;
-  /** Max uploads to re-queue in one call (default 10, the size of the monthly floor). */
+  /** Max uploads to re-queue in one call (default 10). */
   limit?: number;
 }): Promise<{ queued: number }> {
   if (!Types.ObjectId.isValid(params.orgId)) return { queued: 0 };

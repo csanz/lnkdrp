@@ -22,6 +22,13 @@ import { SubscriptionModel } from "@/lib/models/Subscription";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { grantCycleIncludedCredits, buildCycleKey } from "@/lib/credits/grants";
 import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
+import { requeueSkippedSummaries } from "@/lib/credits/summaryRequeue";
+import {
+  PAYG_DEFAULT_SPEND_LIMIT_CENTS,
+  isBillableStatus,
+  subscriptionKindFromPriceIds,
+  type SubscriptionKind,
+} from "@/lib/billing/subscriptionState";
 import { getInvoiceSubscriptionId, getSubscriptionPeriod } from "@/lib/billing/stripePeriods";
 import {
   logErrorEvent,
@@ -61,9 +68,68 @@ function orgIdFromSubscription(sub: Stripe.Subscription): string {
   return metaId;
 }
 
-function isProStatus(status: string): boolean {
-  const s = (status ?? "").trim().toLowerCase();
-  return s === "active" || s === "trialing";
+/**
+ * What the subscription is for, read from its items: the Pro price → `pro`; the metered credits
+ * price alone → `payg` (a Free workspace that added a card). Falls back to the `kind` the
+ * Checkout route stamped in metadata, then to `null` (keep whatever is stored).
+ */
+function kindFromStripeSubscription(sub: unknown): SubscriptionKind | null {
+  const items = (sub as any)?.items?.data;
+  const priceIds: string[] = Array.isArray(items) ? items.map((it: any) => priceIdFromSubscriptionItem(it)).filter(Boolean) : [];
+  const fromItems = subscriptionKindFromPriceIds({
+    priceIds,
+    proPriceId: (process.env.STRIPE_PRICE_ID ?? "").trim() || null,
+    creditsPriceId: getAiCreditsPriceId(),
+  });
+  if (fromItems) return fromItems;
+  const meta = (sub as any)?.metadata?.kind;
+  return meta === "payg" || meta === "pro" ? meta : null;
+}
+
+/**
+ * Pro is billable *and* on the Pro price. A row whose kind is unknown (no price id matched, no
+ * metadata) is treated as Pro when billable, which is what every row from before `kind` existed
+ * was — refusing them would silently downgrade paying customers on a config mismatch.
+ */
+function isProFor(status: string, kind: SubscriptionKind | null): boolean {
+  return isBillableStatus(status) && kind !== "payg";
+}
+
+/** Plan label stored on the row and shown in the UI. */
+function planNameFor(status: string, kind: SubscriptionKind | null): string {
+  if (!isBillableStatus(status)) return "Free";
+  return kind === "payg" ? "Pay as you go" : "Pro";
+}
+
+/**
+ * A pay-as-you-go subscription just became billable: the workspace added a card to buy credits,
+ * so on-demand must work at once. Turns it on with the default limit when none was ever set (an
+ * explicit limit, including one the owner lowered, is left alone), then re-runs the summaries
+ * that were skipped for want of credits — those are what they came to pay for.
+ */
+/** `NEXT_PUBLIC_APP_URL`, falling back to a value that still lets processing trigger locally. */
+function appUrl(): string {
+  const configured = (process.env.NEXT_PUBLIC_APP_URL ?? "").trim();
+  return (configured || "http://localhost:3001").replace(/\/+$/, "");
+}
+
+async function activatePayAsYouGo(params: { orgId: Types.ObjectId; eventId: string }): Promise<void> {
+  const res = await WorkspaceCreditBalanceModel.updateOne(
+    { workspaceId: params.orgId, $or: [{ onDemandMonthlyLimitCents: { $exists: false } }, { onDemandMonthlyLimitCents: { $lte: 0 } }] },
+    { $set: { onDemandEnabled: true, onDemandMonthlyLimitCents: PAYG_DEFAULT_SPEND_LIMIT_CENTS } },
+  );
+  if ((res as any)?.matchedCount === 0) {
+    // A limit exists: only make sure the switch is on (it was turned off when the card failed or
+    // the previous subscription ended).
+    await WorkspaceCreditBalanceModel.updateOne({ workspaceId: params.orgId, onDemandEnabled: false }, { $set: { onDemandEnabled: true } });
+  }
+  debugLog(1, "[stripe:webhook] pay-as-you-go active → on-demand on", { id: params.eventId, orgId: String(params.orgId) });
+  try {
+    const { queued } = await requeueSkippedSummaries({ orgId: String(params.orgId), origin: appUrl() });
+    debugLog(1, "[stripe:webhook] pay-as-you-go → skipped summaries re-queued", { id: params.eventId, orgId: String(params.orgId), queued });
+  } catch (e) {
+    debugLog(2, "[stripe:webhook] summary re-queue failed (non-fatal)", { message: e instanceof Error ? e.message : String(e) });
+  }
 }
 
 function parseUnixSecondsToDate(v: unknown): Date | null {
@@ -223,6 +289,7 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
     let cancelAt = parseUnixSecondsToDate((sub as any)?.cancel_at);
     let cancelAtPeriodEnd = parseStripeBool((sub as any)?.cancel_at_period_end) ?? false;
     let stripeSubscriptionItemId = creditsSubscriptionItemId(sub);
+    let kind = kindFromStripeSubscription(sub);
     let usedStripeFetch = false;
 
     // Robustness: if the webhook payload is missing key fields (API version differences),
@@ -253,6 +320,7 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
         cancelAt = parseUnixSecondsToDate((fresh as any)?.cancel_at) ?? cancelAt;
         cancelAtPeriodEnd = parseStripeBool((fresh as any)?.cancel_at_period_end) ?? cancelAtPeriodEnd;
         stripeSubscriptionItemId = creditsSubscriptionItemId(fresh) ?? stripeSubscriptionItemId;
+        kind = kindFromStripeSubscription(fresh) ?? kind;
       } catch {
         // ignore; fall back to webhook payload best-effort
       }
@@ -287,11 +355,13 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       return;
     }
 
-    const pro = isProStatus(status);
+    const billable = isBillableStatus(status);
+    const pro = isProFor(status, kind);
     const setFields: Record<string, unknown> = {
       status: status || "free",
-      planName: pro ? "Pro" : "Free",
+      planName: planNameFor(status, kind),
       cancelAtPeriodEnd: effectiveCancels,
+      ...(kind ? { kind } : {}),
       ...(subscriptionId ? { stripeSubscriptionId: subscriptionId } : {}),
       ...(customerId ? { stripeCustomerId: customerId } : {}),
       ...(stripeSubscriptionItemId ? { stripeSubscriptionItemId } : {}),
@@ -318,6 +388,7 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       subscriptionId: subscriptionId || null,
       customerId: customerId || null,
       status: status || null,
+      kind,
       cancelAtPeriodEnd: effectiveCancels,
       effectivePeriodEnd: effectivePeriodEnd ? effectivePeriodEnd.toISOString() : null,
       rawCancelAtPeriodEnd: cancelAtPeriodEnd,
@@ -331,9 +402,13 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       upsertedId: (res as any)?.upsertedId ?? null,
     });
 
-    // Subscription no longer pro (e.g. canceled/unpaid/past_due) → on-demand overage must stop.
-    if (!pro) {
+    // Subscription no longer billable (canceled/unpaid/past_due) → on-demand overage must stop,
+    // whichever kind it was. A billable pay-as-you-go subscription is the opposite case: the
+    // workspace just added a card to buy credits, so on-demand comes on.
+    if (!billable) {
       await disableOnDemandForSubscription({ query, reason: `subscription.${status || "unknown"}`, eventId: event.id });
+    } else if (kind === "payg" && orgId) {
+      await activatePayAsYouGo({ orgId, eventId: event.id });
     }
 
     // Idempotent cycle grant: reset included credits to 300 on new billing cycle.
@@ -367,7 +442,8 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
       const orgIdRaw = orgIdFromSubscription(fresh);
       const orgId = orgIdRaw && Types.ObjectId.isValid(orgIdRaw) ? new Types.ObjectId(orgIdRaw) : null;
       const status = typeof fresh.status === "string" ? fresh.status : "";
-      const pro = isProStatus(status);
+      const kind = kindFromStripeSubscription(fresh);
+      const pro = isProFor(status, kind);
       const { start: currentPeriodStart, end: currentPeriodEnd } = getSubscriptionPeriod(fresh);
       const stripeSubscriptionItemId = creditsSubscriptionItemId(fresh);
 
@@ -378,7 +454,8 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
             $setOnInsert: { orgId, isDeleted: false },
             $set: {
               status: status || "free",
-              planName: pro ? "Pro" : "Free",
+              planName: planNameFor(status, kind),
+              ...(kind ? { kind } : {}),
               stripeSubscriptionId: subscriptionId,
               ...(currentPeriodStart ? { currentPeriodStart } : {}),
               ...(currentPeriodEnd ? { currentPeriodEnd } : {}),
@@ -396,6 +473,11 @@ async function processStripeEvent(event: Stripe.Event, stripe: Stripe): Promise<
             currentPeriodEnd: currentPeriodEnd ?? null,
           });
           debugLog(1, "[stripe:webhook] invoice.paid → cycle grant ensured", { orgId: String(orgId), cycleKey });
+        }
+        // A paid invoice on a pay-as-you-go subscription (the first $0 one, or a month's usage)
+        // re-arms on-demand if a failed payment had switched it off.
+        if (kind === "payg" && isBillableStatus(status)) {
+          await activatePayAsYouGo({ orgId, eventId: event.id });
         }
       }
     } catch (e) {

@@ -46,9 +46,22 @@ export const CREDITS_COPY = {
   proPerMonth: 300,
   /** Free daily brake (`FREE_DAILY_CREDIT_CAP` in `src/lib/credits/creditService.ts`). */
   freeDailyCap: 15,
-  /** Free monthly floor (`FREE_MONTHLY_FLOOR_CREDITS` in `src/lib/credits/grants.ts`): balance tops back up to this on the 1st. */
-  freeMonthlyTopUp: 10,
+  /** Pay-as-you-go price per credit (`USD_CENTS_PER_CREDIT`), for a Free workspace with a card on file or Pro on-demand. */
+  perCreditUsd: "$0.10",
+  /** "No card needed" family, since Free asks for one only once the starter grant runs out. */
+  noCardToStart: "No card needed to start.",
 } as const;
+
+/**
+ * The clause that used to be six copies of "topped up every month" scattered across the hero,
+ * login, pricing, ToS and two dashboard cards — one of them went stale for a full day after the
+ * monthly floor was removed, because nothing pointed the others back at it. A lowercase clause,
+ * not a sentence: callers compose it into their own sentence so it reads as part of the
+ * surrounding copy rather than a pasted disclaimer.
+ */
+export function whatHappensAfterFreeCredits(): string {
+  return `add pay-as-you-go at ${CREDITS_COPY.perCreditUsd}/credit, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included`;
+}
 
 /**
  * Launch flag: credit surfaces (dashboard credits pill, Usage/Limits cards, spend-limit editor) are on

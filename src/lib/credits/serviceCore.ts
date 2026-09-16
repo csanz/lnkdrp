@@ -3,15 +3,12 @@ import { creditsForRun } from "@/lib/credits/schedule";
 import type { CreditStore, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-
-/** Subscription statuses under which on-demand (metered overage) spending is permitted. */
-function isOnDemandEligibleStatus(statusRaw: unknown): boolean {
-  const s = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
-}
+import { isBillableSubscription } from "@/lib/billing/subscriptionState";
 
 /**
- * Default on-demand eligibility check: the workspace subscription must be `active` or `trialing`.
+ * Default on-demand eligibility check: the workspace subscription must be billable — `active` or
+ * `trialing`, of either kind. A pay-as-you-go subscription (a Free workspace with a card on file)
+ * is as eligible as Pro; only the plan it grants differs, and that is decided elsewhere.
  *
  * Only invoked when the balance has on-demand enabled AND the run would actually spill into
  * on-demand credits, so the extra query is paid rarely. Callers (tests) may inject their own
@@ -19,9 +16,9 @@ function isOnDemandEligibleStatus(statusRaw: unknown): boolean {
  */
 async function defaultIsOnDemandEligible(workspaceId: string): Promise<boolean> {
   const sub = await SubscriptionModel.findOne({ orgId: workspaceId, isDeleted: { $ne: true } })
-    .select({ status: 1 })
+    .select({ status: 1, kind: 1 })
     .lean();
-  return isOnDemandEligibleStatus((sub as any)?.status);
+  return isBillableSubscription(sub as { status?: unknown; kind?: unknown } | null);
 }
 
 function startOfUtcDay(d: Date): Date {

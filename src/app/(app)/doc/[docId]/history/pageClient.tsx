@@ -5,7 +5,7 @@
  * The owner's version history is open on every plan; AI compare runs on credits (2/5/12 by tier).
  * A version whose compare was skipped (plan, credits) shows "Not compared yet" and can be
  * regenerated from its row; the button states the cost and the credits left, and is disabled when
- * the workspace cannot afford it (with the Free top-up date). Only the recipient-facing version list
+ * the workspace cannot afford it, with a link to add more. Only the recipient-facing version list
  * on share pages stays a Pro feature (per-link setting).
  */
 "use client";

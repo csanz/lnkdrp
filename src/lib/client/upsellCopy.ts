@@ -33,7 +33,7 @@ export const PRO_PRICE_FALLBACK = "$29/mo";
 export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   pro: {
     title: "Pro is for sending every day",
-    reason: "Free covers a few links. Pro removes the caps and shows you who actually read what you sent.",
+    reason: "Free covers a few documents. Pro removes the caps and shows you who actually read what you sent.",
     bullets: [
       "Unlimited documents, share links and projects",
       "Deep analytics: who opened it, time per page, full history",
@@ -47,7 +47,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     bullets: [
       "A version list on the share page, with what changed in each",
       "300 AI credits a month for summaries and compares",
-      "Unlimited links, projects and deep analytics",
+      "Unlimited documents, projects and deep analytics",
     ],
     secondaryLabel: "Compare plans",
   },
@@ -59,7 +59,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
       "Unlimited shared documents and projects across the workspace",
       "Full analytics history on every link",
     ],
-    secondaryLabel: "Manage links",
+    secondaryLabel: "Manage documents",
   },
   projects: {
     title: "Projects are limited to 1 on Free",
@@ -77,7 +77,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     bullets: [
       "1 collaborator included, more on request",
       "Agents never take a seat",
-      "Unlimited links and projects for the whole workspace",
+      "Unlimited documents and projects for the whole workspace",
     ],
     secondaryLabel: "Compare plans",
   },

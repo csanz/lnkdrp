@@ -39,8 +39,9 @@ const creditLedgerSchema = new Schema(
      *
      * - `ai_run`: normal per-run credits
      * - `cycle_grant_included`: billing cycle reset/grant (idempotent by `cycleKey`)
-     * - `free_floor_grant`: Free monthly floor top-up (idempotencyKey `free:{orgId}:{YYYY-MM}`,
-     *   `creditsEstimated` = credits added, `creditsReserved`/`creditsCharged` = 0)
+     * - `free_floor_grant`: historical only — the Free monthly floor top-up that ran until
+     *   2026-09-15 (idempotencyKey `free:{orgId}:{YYYY-MM}`, `creditsEstimated` = credits added).
+     *   Rows exist; nothing writes new ones.
      */
     eventType: { type: String, trim: true, default: "ai_run", index: true },
 

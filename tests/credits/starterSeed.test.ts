@@ -54,13 +54,6 @@ vi.mock("@/lib/models/UsageAggCycle", () => ({
   UsageAggCycleModel: { findOne: findOneChain(() => null) },
 }));
 
-// The Free monthly floor has its own suite (freeMonthlyFloor.test.ts). Stub it here so these tests
-// exercise seeding only, instead of passing because the grant throws without a Mongo session.
-vi.mock("@/lib/credits/grants", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/credits/grants")>()),
-  grantFreeMonthlyFloor: vi.fn(async () => ({ applied: false, creditsAdded: 0, monthKey: "", reason: "already_applied" })),
-}));
-
 vi.mock("@/lib/models/CreditLedger", () => ({
   CreditLedgerModel: { aggregate: vi.fn(async () => []) },
 }));

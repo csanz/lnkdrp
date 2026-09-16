@@ -22,6 +22,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { PRO_KIND_FILTER } from "@/lib/billing/subscriptionState";
 import { UserModel } from "@/lib/models/User";
 import { getMetadataBaseUrl } from "@/lib/urls";
 import { recordActivity, type ActivityType } from "@/lib/activity/log";
@@ -34,7 +35,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** Days after `startedAt` at which a reminder is due (each sent at most once). */
 const REMINDER_DAYS: readonly number[] = [7, 12];
 
-/** Subscription statuses that count as Pro (mirrors `getWorkspacePlan`). */
+/** Subscription statuses that can be Pro (with `PRO_KIND_FILTER`, mirrors `getWorkspacePlan`). */
 const PRO_STATUSES = ["active", "trialing"] as const;
 
 /** Activity types emitted by this sweep (members of `ActivityType`). */
@@ -119,7 +120,7 @@ function pricingUrl(): string {
 
 /** Set of orgIds that currently have a Pro subscription (active/trialing). */
 async function loadProOrgIds(): Promise<Set<string>> {
-  const rows = await SubscriptionModel.find({ status: { $in: [...PRO_STATUSES] }, isDeleted: { $ne: true } })
+  const rows = await SubscriptionModel.find({ status: { $in: [...PRO_STATUSES] }, ...PRO_KIND_FILTER, isDeleted: { $ne: true } })
     .select({ orgId: 1 })
     .lean();
   return new Set(rows.map((r) => String(r.orgId)));

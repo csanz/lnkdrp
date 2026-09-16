@@ -7,6 +7,12 @@
 **Sibling docs:** [lnkdrp-mcp](./lnkdrp-mcp.md) · [SUBSCRIPTION](../SUBSCRIPTION.md) · [METRICS](../METRICS.md) · [REQUEST](../REQUEST.md)
 
 > **Decision (2026-09-12, revised 2026-09-13).** Links, uploads, replacements and stats never need credits. Credits pay for AI runs. The automatic AI summary costs 1 credit per upload (basic; standard 2, advanced 5). It costs 0 when the uploader's own agent writes the summary (MCP `share_pdf` with summary and key points, or the API) and for files recipients upload through a request or replace link. AI compare on replacement costs 2/5/12 by tier and runs at Basic on Free, Standard on Pro by default. Gate split (PR 3, 2026-09-13): the owner's version history page, the change list, compare rerun and the automatic compare on replacement are credit-gated on every plan; only the recipient-facing version list (`shareAllowRevisionHistory`, `GET /api/share/:shareId/changes`) stays Pro. Personal Free workspaces get 50 credits to start, then a top-up to 10 on the 1st of each month (a floor, never additive), at most 15 credits a day, and no on-demand; team workspaces on Free get no allowance. Pro gets 300 credits per billing cycle plus optional on-demand at $0.10 under a spend limit. Out of credits: the upload completes and the link works, the summary is skipped and can be written later from the document page (1 credit), and compare and manual AI actions stop until credits return. Pricing change dated 2026-09-13: the automatic summary now costs 1 credit (previously included); starter credits already granted are kept in full, noted in Terms section 8 and on `/pricing`. The credit table is shown on `/pricing` (AI review listed as not released). Earlier text below that says "no AI feature costs credits", "summary is included" or "the table is empty" is superseded.
+>
+> **Superseded (2026-09-16).** The monthly top-up to 10 credits is gone; the 50 starter credits are
+> one time. On-demand credits, described above as Pro-only, are now available to any personal Free
+> workspace that adds a payment method (pay-as-you-go: `Subscription.kind = "payg"`, see
+> `src/lib/billing/subscriptionState.ts` and `SUBSCRIPTION.md`). This record is kept as-is for
+> history; the sentences above about the monthly top-up and "no on-demand" on Free no longer hold.
 
 ---
 

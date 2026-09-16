@@ -5,15 +5,12 @@ import { connectMongo } from "@/lib/mongodb";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { grantCycleIncludedCredits } from "@/lib/credits/grants";
 import { getCreditsSnapshot, type CreditsSnapshot } from "@/lib/credits/snapshot";
 
 export type AdminCreditMutationAction = "grant_included" | "grant_on_demand" | "burn";
 
-function isProStatus(status: unknown): boolean {
-  const s = typeof status === "string" ? status.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
-}
 
 function asPositiveInt(v: unknown, opts?: { max?: number }): number | null {
   const max = opts?.max ?? Number.POSITIVE_INFINITY;
@@ -57,10 +54,10 @@ export async function adminMutateCredits(params: {
       const orgId = new Types.ObjectId(workspaceId);
 
       const subDoc = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
-        .select({ status: 1 })
+        .select({ status: 1, kind: 1 })
         .session(session)
         .lean();
-      const pro = isProStatus((subDoc as any)?.status);
+      const pro = isProSubscription(subDoc as { status?: unknown; kind?: unknown } | null);
 
       // Ensure balance exists.
       await WorkspaceCreditBalanceModel.updateOne(

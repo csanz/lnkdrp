@@ -33,6 +33,7 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 // The cap counts shared documents directly through `DocModel` below. It used to import the
 // share-links service to count links instead — the drift that made two documents read "11 of 3"
 // — and this comment described that import as the thing keeping the cap honest. It was the thing
@@ -143,23 +144,20 @@ function toOrgObjectId(orgId: string | Types.ObjectId): Types.ObjectId {
 }
 
 /** True for Stripe statuses the app treats as paid. */
-function isProStatus(statusRaw: unknown): boolean {
-  const s = typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
-  return s === "active" || s === "trialing";
-}
 
 /**
  * Resolve a workspace's plan from its `Subscription` row.
  *
- * `active`/`trialing` → `"pro"`; anything else (including no row) → `"free"`.
+ * Pro means a billable subscription carrying the Pro price. A pay-as-you-go subscription is
+ * `active` too but is still `"free"` here: the card buys credits, not limits.
  */
 export async function getWorkspacePlan(orgId: string | Types.ObjectId): Promise<PlanId> {
   const id = toOrgObjectId(orgId);
   await connectMongo();
   const sub = await SubscriptionModel.findOne({ orgId: id, isDeleted: { $ne: true } })
-    .select({ status: 1 })
+    .select({ status: 1, kind: 1 })
     .lean();
-  return isProStatus((sub as { status?: unknown } | null)?.status) ? "pro" : "free";
+  return isProSubscription(sub as { status?: unknown; kind?: unknown } | null) ? "pro" : "free";
 }
 
 /**

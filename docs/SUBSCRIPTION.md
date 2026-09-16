@@ -57,10 +57,11 @@ Public (optional, pricing-table embed component only):
 - On a new cycle, the system resets included credits to **300** (no rollover) and records a ledger entry keyed by `cycleKey`.
 - Links, uploads, replacements and stats never need credits. Credits pay for AI runs: the automatic AI summary costs **1 credit** per upload (basic; standard 2, advanced 5), and AI compare on replacement costs **2 / 5 / 12** by tier (Basic on Free, Standard on Pro by default). The owner's version history and AI compare work on every plan and are limited only by credits; letting recipients browse versions on the share page is Pro.
 - The summary costs **0 credits** when the uploader's own agent writes it (MCP `share_pdf` with summary and key points, or the API) and for files recipients upload through a request or replace link.
-- Personal Free workspaces get **50 credits to start**, then a top-up to **10 on the 1st of each month** (a floor: a balance above 10 gets nothing; never additive), with at most **15 credits per day**. Team workspaces on Free get no allowance. No on-demand credits on Free.
-- Pro can turn on optional **on-demand credits at $0.10 each** under a spend limit the owner sets.
-- Out of credits: the upload still completes and the link works; the AI summary is skipped and the owner can write it later from the document page (1 credit). Compare and manual AI actions stop until credits return.
+- Personal Free workspaces get **50 credits to start, once** (no monthly top-up since 2026-09-16), with at most **15 credits per day**. Team workspaces on Free get no allowance.
+- Both Pro and personal Free can turn on optional **on-demand credits at $0.10 each** under a spend limit the owner sets — on Free this comes from a pay-as-you-go Stripe subscription (`Subscription.kind = "payg"`, metered credits price only, no Pro price) created via `POST /api/stripe/checkout { plan: "payg" }`; see `src/lib/billing/subscriptionState.ts` for how a `payg` subscription is billable without being Pro.
+- Out of credits: the upload still completes and the link works; the AI summary is skipped and the owner can write it later from the document page (1 credit). Compare and manual AI actions stop until the workspace adds credits (pay-as-you-go or Pro) or, on Pro, the cycle resets.
 - Pricing change, effective **2026-09-13**: the automatic AI summary costs 1 credit (previously included). Starter credits already granted are kept in full. Noted in Terms section 8 and on `/pricing`.
+- Pricing change, effective **2026-09-16**: the Free monthly floor (`FREE_MONTHLY_FLOOR_CREDITS`) is removed; the 50 starter credits are one-time. On-demand credits, previously Pro-only, are available to any personal Free workspace that adds a card.
 
 ## Stripe usage reporting (metered credits)
 
