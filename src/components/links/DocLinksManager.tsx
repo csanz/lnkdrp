@@ -229,11 +229,29 @@ function RowMenu({ label, items, disabled }: { label: string; items: RowMenuItem
 }
 
 /** One "Label · value" cell of the settings summary row. */
-function SettingItem({ label, value }: { label: string; value: string }) {
+/**
+ * One part of the panel's "what does this link do" line. A setting still at its default reads as
+ * plain words ("View only"); one that was changed from it is a pill, so a password or an expiry
+ * stands out at a glance instead of sitting in a row of identical label/value pairs.
+ */
+function LinkStatePart({ children, changed, tone, title }: { children: React.ReactNode; changed: boolean; tone?: "warn"; title?: string }) {
+  if (!changed) {
+    return (
+      <span className="whitespace-nowrap" title={title}>
+        {children}
+      </span>
+    );
+  }
   return (
-    <span className="inline-flex items-baseline gap-1">
-      <span className="text-[var(--muted-2)]">{label}</span>
-      <span className="font-medium text-[var(--fg)]">{value}</span>
+    <span
+      title={title}
+      className={
+        tone === "warn"
+          ? "inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300"
+          : "inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 font-medium text-[var(--fg)]"
+      }
+    >
+      {children}
     </span>
   );
 }
@@ -286,6 +304,8 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   >({});
   /** The window the server served (plan-clamped), used verbatim in the column headings. */
   const [statsDays, setStatsDays] = useState<number | null>(null);
+  /** Panel only: the default link's viewers over the served analytics window. */
+  const [panelViewers, setPanelViewers] = useState<{ viewers: number; days: number | null } | null>(null);
   /**
    * Traffic on links this table cannot show: slugs the analytics still carry but no live link row
    * owns — deleted links, whose rows stay in the document's totals by design. Without this row the
@@ -406,6 +426,31 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       cancelled = true;
     };
   }, [docId, links, variant]);
+
+  // Panel: the same analytics source as the table, for the default link alone, so the number next
+  // to "Analytics" agrees with the Links page and the metrics page it opens.
+  const panelShareId = variant === "panel" ? (links?.find((l) => l.isDefault) ?? links?.[0])?.shareId ?? null : null;
+  useEffect(() => {
+    if (!panelShareId) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetchJson<{ days?: number; byLink?: Array<{ shareId?: string; viewers?: number }> }>(
+          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${LINK_STATS_DAYS}&lite=1&byLink=1&shareIds=${encodeURIComponent(panelShareId)}`,
+          { cache: "no-store" },
+        );
+        if (cancelled) return;
+        const row = (res.byLink ?? []).find((r) => r.shareId === panelShareId);
+        const viewers = typeof row?.viewers === "number" && Number.isFinite(row.viewers) ? Math.max(0, Math.floor(row.viewers)) : 0;
+        setPanelViewers({ viewers, days: typeof res.days === "number" && res.days > 0 ? Math.floor(res.days) : null });
+      } catch {
+        if (!cancelled) setPanelViewers(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [docId, panelShareId]);
 
   /** `" (7d)"` once the server has told us its window; blank until then, never a guess. */
   const statsWindowLabel = statsDays ? ` (${statsDays}d)` : "";
@@ -563,18 +608,33 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       // Same card as the quick-stats and snapshot sections below it: bordered, rounded, on
       // --panel-2. Before this the links block was bare text at the top of the panel and read as
       // floating above two properly framed sections.
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
+      // `@container`: the side panel is ~300px wide on a laptop and much wider on a big screen, so
+      // the header sizes itself to this card, not to the window.
+      <div className="@container rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
         <div className="flex items-center justify-between gap-3 pb-3">
           <div className="inline-flex min-w-0 items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
             <LinkIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-            <span className="truncate">Default link{count > 1 ? ` · ${count} total` : ""}</span>
+            <span className="truncate">Default link</span>
           </div>
-          {canManage ? (
-            <button type="button" onClick={openCreate} className={NEW_LINK_CLASS}>
-              <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
-              New link
-            </button>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-1">
+            {/* The one way to the Links page. It used to be said three times ("· 2 total",
+                "1 other link", "View all links"); the count is the link. */}
+            {count > 1 ? (
+              <Link
+                href={`/doc/${encodeURIComponent(docId)}/links`}
+                className="inline-flex h-8 items-center rounded-lg px-2 text-[12px] font-semibold text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+              >
+                {count} links →
+              </Link>
+            ) : null}
+            {canManage ? (
+              <button type="button" onClick={openCreate} className={NEW_LINK_CLASS} aria-label="New link" title="New link">
+                <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                {/* Icon-only in a narrow card, so "Default link" isn't cut off. */}
+                <span className="hidden @sm:inline">New link</span>
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex items-stretch gap-2">
@@ -602,58 +662,115 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
           />
         </div>
 
-        {/* The default link's own settings, so the panel answers "what does this link do?" without
-            a trip to the links page. */}
+        {/* One line that answers "what does this link do?": the recipient's experience on the left
+            (changed settings as pills), its numbers and the edit action on the right. */}
         {defaultLink ? (
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-[var(--muted)]">
-            <SettingItem label="Download" value={defaultLink.allowDownload ? "on" : "off"} />
-            <SettingItem label="Password" value={defaultLink.passwordEnabled ? "set" : "none"} />
-            <SettingItem label="Version history" value={defaultLink.allowRevisionHistory ? "on" : "off"} />
-            <SettingItem label="Expires" value={formatDate(defaultLink.expiresAt) || "Never"} />
-          </div>
-        ) : null}
-
-        <div className="mt-2 flex flex-wrap items-center gap-x-1.5 text-[12px] text-[var(--muted)]">
-          <span>
-            {count <= 1 ? "No other links yet" : `${count - 1} other ${count - 1 === 1 ? "link" : "links"}`}
-          </span>
-          <span aria-hidden="true">·</span>
-          {/* Say where it goes: "Manage" was ambiguous next to "Edit settings", which edits the
-              default link here rather than opening the page. */}
-          <Link
-            href={`/doc/${encodeURIComponent(docId)}/links`}
-            className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
-          >
-            View all links
-          </Link>
-          {/* The default link's own numbers. On a document with one link this is the only per-link
-              route on the page: the analytics card's link lists appear only from two links up, and
-              its "Open metrics" goes to the document, which for one link happens to be the same
-              figures but does not tell the reader that. */}
-          {defaultLink ? (
-            <>
-              <span aria-hidden="true">·</span>
+          <div className="mt-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 text-[12px] text-[var(--muted)]">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+              {(() => {
+                const expiresLabel = formatDate(defaultLink.expiresAt);
+                const expired = Boolean(defaultLink.expiresAt && Date.parse(defaultLink.expiresAt) <= Date.now());
+                const parts = [
+                  <LinkStatePart
+                    key="download"
+                    changed={defaultLink.allowDownload}
+                    title={
+                      defaultLink.allowDownload
+                        ? "Recipients can download the PDF."
+                        : "Downloads are off: recipients can view the PDF but not download it."
+                    }
+                  >
+                    {defaultLink.allowDownload ? (
+                      <>
+                        <ArrowDownTrayIcon className="h-3 w-3" aria-hidden="true" />
+                        Downloads on
+                      </>
+                    ) : (
+                      "View only"
+                    )}
+                  </LinkStatePart>,
+                  defaultLink.passwordEnabled && canManage ? (
+                    // Knowing a password exists is half the answer: the link's settings can show
+                    // it (Show in the edit modal), so the pill opens them.
+                    <button
+                      key="password"
+                      type="button"
+                      onClick={() => setLinkModal({ mode: "edit", link: defaultLink })}
+                      className="rounded-full focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                    >
+                      <LinkStatePart changed title="Recipients need a password to open it. Click to see or change it.">
+                        <LockClosedIcon className="h-3 w-3" aria-hidden="true" />
+                        Password
+                      </LinkStatePart>
+                    </button>
+                  ) : (
+                    <LinkStatePart key="password" changed={defaultLink.passwordEnabled} title={defaultLink.passwordEnabled ? "Recipients need a password to open it." : undefined}>
+                      {defaultLink.passwordEnabled ? (
+                        <>
+                          <LockClosedIcon className="h-3 w-3" aria-hidden="true" />
+                          Password
+                        </>
+                      ) : (
+                        "No password"
+                      )}
+                    </LinkStatePart>
+                  ),
+                  <LinkStatePart key="expires" changed={Boolean(expiresLabel)} tone={expired ? "warn" : undefined}>
+                    {expiresLabel ? (
+                      <>
+                        <CalendarDaysIcon className="h-3 w-3" aria-hidden="true" />
+                        {expired ? `Expired ${expiresLabel}` : `Expires ${expiresLabel}`}
+                      </>
+                    ) : (
+                      "Never expires"
+                    )}
+                  </LinkStatePart>,
+                ];
+                // Version history is only worth a word when it is on; off is the default and
+                // restricts nothing a recipient would notice.
+                if (defaultLink.allowRevisionHistory) {
+                  parts.push(
+                    <LinkStatePart key="history" changed title="Recipients can browse earlier versions.">
+                      <ClockIcon className="h-3 w-3" aria-hidden="true" />
+                      Version history
+                    </LinkStatePart>,
+                  );
+                }
+                return parts.flatMap((part, i) =>
+                  i === 0
+                    ? [part]
+                    : [
+                        <span key={`dot-${i}`} aria-hidden="true" className="text-[var(--muted-2)]">
+                          ·
+                        </span>,
+                        part,
+                      ],
+                );
+              })()}
+            </div>
+            <div className="flex shrink-0 items-center gap-x-3">
+              {/* The default link's own numbers: on a one-link document this is the only per-link
+                  route on the page. */}
               <Link
                 href={metricsHref(defaultLink.shareId)}
-                className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
+                className="inline-flex items-center gap-1 font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
+                title={panelViewers?.days ? `Viewers of this link in the last ${panelViewers.days} days` : "Analytics for this link"}
               >
-                Link analytics
+                <ChartBarIcon className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden="true" />
+                {panelViewers ? `${panelViewers.viewers} ${panelViewers.viewers === 1 ? "viewer" : "viewers"}` : "Analytics"}
               </Link>
-            </>
-          ) : null}
-          {canManage && defaultLink ? (
-            <>
-              <span aria-hidden="true">·</span>
-              <button
-                type="button"
-                onClick={() => setLinkModal({ mode: "edit", link: defaultLink })}
-                className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
-              >
-                Edit settings
-              </button>
-            </>
-          ) : null}
-        </div>
+              {canManage ? (
+                <button
+                  type="button"
+                  onClick={() => setLinkModal({ mode: "edit", link: defaultLink })}
+                  className="font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
+                >
+                  Edit
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
 
         {linksError ? <div className="mt-2 text-[12px] font-medium text-red-700">{linksError}</div> : null}
 
