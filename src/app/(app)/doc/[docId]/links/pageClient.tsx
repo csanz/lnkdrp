@@ -10,7 +10,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeftIcon, PlusIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, ChartBarIcon, PlusIcon } from "@heroicons/react/24/outline";
 
 import DocLinksManager, { type DocLinksManagerHandle } from "@/components/links/DocLinksManager";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -63,6 +63,18 @@ export default function LinksPageClient({ docId }: { docId: string }) {
             <span className="font-medium text-[var(--fg)]">Links</span>
           </div>
         </div>
+
+        {/* Every row's own "Analytics" button scopes to that one link; this is the way out of the
+            table to the master metrics page that sums across all of them — without it, a reader
+            comparing links here had to know that page existed and edit `?shareId=` out of the URL
+            themselves to see the combined picture. */}
+        <Link
+          href={`/doc/${encodeURIComponent(docId)}/metrics`}
+          className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+        >
+          <ChartBarIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+          Metrics
+        </Link>
 
         <button
           type="button"
