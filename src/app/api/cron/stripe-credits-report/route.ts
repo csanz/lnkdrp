@@ -57,7 +57,14 @@ const LEASE_TTL_MS = 6 * 60 * 1000;
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 500;
 
-type RunResult = { processed: number; reported: number; batches: number; replayed: number; replayedBatches: number };
+type RunResult = {
+  processed: number;
+  reported: number;
+  batches: number;
+  replayed: number;
+  replayedBatches: number;
+  replayFailedBatches: number;
+};
 
 /**
  * Return whether a Stripe error says the meter event `identifier` was already used
@@ -136,10 +143,10 @@ async function handle(request: Request) {
       workspaceObjectIds.push(new Types.ObjectId(orgId));
     }
 
-    const result: RunResult = { processed: 0, reported: 0, batches: 0, replayed: 0, replayedBatches: 0 };
+    const result: RunResult = { processed: 0, reported: 0, batches: 0, replayed: 0, replayedBatches: 0, replayFailedBatches: 0 };
 
     if (!workspaceObjectIds.length) {
-      await markCronOk({ jobKey, startedAt, result });
+      await markCronFinished({ jobKey, startedAt, result });
       return NextResponse.json({ ok: true, ...result });
     }
 
@@ -239,6 +246,7 @@ async function handle(request: Request) {
           });
         } catch (err) {
           // Leave the claim in place: the rows stay tied to this batch id and are replayed next run.
+          result.replayFailedBatches += 1;
           debugError(1, "[cron:stripe-credits-report] stale batch replay failed", {
             reportBatchId,
             message: err instanceof Error ? err.message : String(err),
@@ -256,7 +264,7 @@ async function handle(request: Request) {
     result.processed = ledgers.length;
 
     if (!ledgers.length) {
-      await markCronOk({ jobKey, startedAt, result });
+      await markCronFinished({ jobKey, startedAt, result });
       return NextResponse.json({ ok: true, ...result });
     }
 
@@ -314,7 +322,7 @@ async function handle(request: Request) {
       });
     }
 
-    await markCronOk({ jobKey, startedAt, result });
+    await markCronFinished({ jobKey, startedAt, result });
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
     const finishedAt = new Date();
@@ -355,21 +363,27 @@ async function handle(request: Request) {
   }
 }
 
-/** Persist a successful run to `CronHealth` (best-effort). */
-async function markCronOk(params: { jobKey: string; startedAt: Date; result: Record<string, unknown> }): Promise<void> {
+/**
+ * Persist a finished run to `CronHealth` (best-effort). A failed stale-batch replay records `error`
+ * so /api/monitor/crons alerts (those rows go unbilled until it succeeds); the response stays 200.
+ */
+async function markCronFinished(params: { jobKey: string; startedAt: Date; result: RunResult }): Promise<void> {
   const finishedAt = new Date();
   const durationMs = Math.max(0, finishedAt.getTime() - params.startedAt.getTime());
+  const failed = params.result.replayFailedBatches;
+  const failure = failed > 0 ? `${failed} stale usage batch replay(s) failed` : null;
   try {
     await connectMongo();
     await CronHealthModel.updateOne(
       { jobKey: params.jobKey },
       {
         $set: {
-          status: "ok",
+          status: failure ? "error" : "ok",
           lastFinishedAt: finishedAt,
           lastRunAt: finishedAt,
           lastDurationMs: durationMs,
           lastResult: params.result,
+          ...(failure ? { lastErrorAt: finishedAt, lastError: failure } : {}),
         },
       },
       { upsert: true },

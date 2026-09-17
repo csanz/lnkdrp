@@ -162,17 +162,20 @@ async function handle(request: Request) {
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
     const result = { processed, updated, granted, errors, limit };
+    // Item-level failures record `error` so /api/monitor/crons alerts; the response stays 200.
+    const failure = errors > 0 ? `${errors} of ${processed} subscriptions failed` : null;
     try {
       await connectMongo();
       await CronHealthModel.updateOne(
         { jobKey },
         {
           $set: {
-            status: "ok",
+            status: failure ? "error" : "ok",
             lastFinishedAt: finishedAt,
             lastRunAt: finishedAt,
             lastDurationMs: durationMs,
             lastResult: result,
+            ...(failure ? { lastErrorAt: finishedAt, lastError: failure } : {}),
           },
         },
         { upsert: true },

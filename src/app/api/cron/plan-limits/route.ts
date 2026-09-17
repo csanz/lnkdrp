@@ -81,17 +81,20 @@ async function handle(request: Request) {
 
     const finishedAt = new Date();
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
+    // Failed emails/activity writes record `error` so /api/monitor/crons alerts; the response stays 200.
+    const failure = result.errors > 0 ? `${result.errors} grace email or activity writes failed` : null;
     try {
       await connectMongo();
       await CronHealthModel.updateOne(
         { jobKey },
         {
           $set: {
-            status: "ok",
+            status: failure ? "error" : "ok",
             lastFinishedAt: finishedAt,
             lastRunAt: finishedAt,
             lastDurationMs: durationMs,
             lastResult: result,
+            ...(failure ? { lastErrorAt: finishedAt, lastError: failure } : {}),
           },
         },
         { upsert: true },

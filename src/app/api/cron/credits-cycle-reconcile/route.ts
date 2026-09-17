@@ -80,6 +80,8 @@ async function handle(request: Request) {
       stripeSubscriptionId: { $ne: null },
     })
       .select({ _id: 1, orgId: 1, stripeSubscriptionId: 1, status: 1, kind: 1, currentPeriodStart: 1, currentPeriodEnd: 1, updatedDate: 1 })
+      // Stalest stored period end first (nulls first), so a missed renewal is reached even past `limit`.
+      .sort({ currentPeriodEnd: 1, _id: 1 })
       .limit(limit)
       .lean();
 
@@ -210,17 +212,20 @@ async function handle(request: Request) {
     const durationMs = Math.max(0, finishedAt.getTime() - startedAt.getTime());
     const result = { checked, fetchedFromStripe, updatedSubscription, grantsApplied, grantsSkipped, errors, limit, dryRun };
 
+    // Item-level failures record `error` so /api/monitor/crons alerts; the response stays 200.
+    const failure = errors > 0 ? `${errors} of ${checked} subscriptions failed` : null;
     try {
       await connectMongo();
       await CronHealthModel.updateOne(
         { jobKey },
         {
           $set: {
-            status: "ok",
+            status: failure ? "error" : "ok",
             lastFinishedAt: finishedAt,
             lastRunAt: finishedAt,
             lastDurationMs: durationMs,
             lastResult: result,
+            ...(failure ? { lastErrorAt: finishedAt, lastError: failure } : {}),
           },
         },
         { upsert: true },
