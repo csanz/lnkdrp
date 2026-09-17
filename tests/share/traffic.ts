@@ -267,13 +267,13 @@ async function main(): Promise<void> {
   const docIdArg = arg("docId");
   const titleArg = arg("doc");
   const doc = docIdArg
-    ? await DocModel.findById(new Types.ObjectId(docIdArg)).select({ _id: 1, title: 1, numberOfPages: 1, orgId: 1 }).lean()
+    ? await DocModel.findById(new Types.ObjectId(docIdArg)).select({ _id: 1, title: 1, slideNodes: 1, orgId: 1 }).lean()
     : await DocModel.findOne({ title: titleArg ?? /./, isDeleted: { $ne: true } })
         .sort({ createdDate: -1 })
-        .select({ _id: 1, title: 1, numberOfPages: 1, orgId: 1 })
+        .select({ _id: 1, title: 1, slideNodes: 1, orgId: 1 })
         .lean();
   if (!doc) throw new Error("no document matched; pass --docId or --doc <title>");
-  const d = doc as unknown as { _id: Types.ObjectId; title?: string; numberOfPages?: number };
+  const d = doc as unknown as { _id: Types.ObjectId; title?: string; slideNodes?: unknown[] };
 
   const links = await ShareLinkModel.find({ docId: d._id, archivedAt: null, enabled: true })
     .select({ shareId: 1, label: 1, allowDownload: 1, passwordHash: 1 })
@@ -281,7 +281,9 @@ async function main(): Promise<void> {
   const open = links.filter((l) => !l.passwordHash);
   if (!open.length) throw new Error("no open (alive, unpassworded) links on this document");
 
-  const maxPage = Math.max(2, Math.min(12, d.numberOfPages ?? 5));
+  // Page count is the number of rendered slides; the 5-page guess is only for an unprocessed doc.
+  const slideCount = Array.isArray(d.slideNodes) ? d.slideNodes.length : 0;
+  const maxPage = slideCount > 0 ? slideCount : 5;
   const readers = buildReaders(readerCount, maxPage);
 
   log(`document: ${d.title} (${String(d._id)}) · ${maxPage} pages`);
