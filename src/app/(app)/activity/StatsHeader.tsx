@@ -24,7 +24,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
-import { donutArcs, formatShare } from "@/lib/charts/donut";
+import { Cell, Pie, PieChart, Tooltip } from "recharts";
+
+import { formatShare } from "@/lib/charts/donut";
 import {
   ACTIVITY_SUMMARY_BUCKETS,
   emptyCounts,
@@ -40,8 +42,6 @@ const REFRESH_MIN_MS = 15_000;
 /** Donut size in px (its own square viewBox), and the ring's thickness. */
 const DONUT_SIZE = 88;
 const DONUT_THICKNESS = 15;
-/** Surface gap between neighbouring slices, in the same units. */
-const DONUT_GAP = 2;
 
 /**
  * Slice colours, in the order the API returns slices (people first, then agent clients by volume).
@@ -177,39 +177,59 @@ export default function ActivityStatsHeader() {
 /**
  * The donut plus its legend.
  *
- * The legend is not decoration: it carries every slice's name and count, so identity never rests on
- * colour alone and the one hue that sits under 3:1 on the light surface is relieved by a visible
- * label. Hovering a slice shows the same sentence natively via `<title>`.
+ * Recharts, like every other chart in the app (`/metrics`'s hero and the document charts) - the
+ * first cut drew its own arcs and read as a different product beside them. The legend is not
+ * decoration: it carries every slice's name and count, so identity never rests on colour alone.
  */
 function ActorDonut({ slices, total, days }: { slices: ActorSlice[]; total: number; days: number }) {
-  const arcs = donutArcs(
-    slices.map((s) => ({ key: s.key, value: s.count })),
-    { size: DONUT_SIZE, thickness: DONUT_THICKNESS, gap: DONUT_GAP },
-  );
-  if (!arcs.length) return null;
-  const byKey = new Map(slices.map((s, i) => [s.key, { slice: s, color: sliceColor(s, i) }]));
+  const data = slices.map((s, i) => ({ key: s.key, label: s.label, value: s.count, fill: sliceColor(s, i) }));
+  if (!data.length) return null;
   const summary = slices.map((s) => `${s.label} ${formatShare(s.count / total)}`).join(", ");
 
   return (
     <div className="flex shrink-0 items-center gap-4">
-      <svg
-        viewBox={`0 0 ${DONUT_SIZE} ${DONUT_SIZE}`}
-        width={DONUT_SIZE}
-        height={DONUT_SIZE}
+      <div
+        className="shrink-0"
+        style={{ width: DONUT_SIZE, height: DONUT_SIZE }}
         role="img"
         aria-label={`Who did the work in the last ${days} days: ${summary}`}
-        className="shrink-0"
       >
-        {arcs.map((arc) => {
-          const entry = byKey.get(arc.key);
-          if (!entry) return null;
-          return (
-            <path key={arc.key} d={arc.path} fill={entry.color} stroke="none">
-              <title>{`${entry.slice.label}: ${entry.slice.count.toLocaleString()} (${formatShare(arc.share)})`}</title>
-            </path>
-          );
-        })}
-      </svg>
+        <PieChart width={DONUT_SIZE} height={DONUT_SIZE}>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="label"
+            cx="50%"
+            cy="50%"
+            innerRadius={DONUT_SIZE / 2 - DONUT_THICKNESS}
+            outerRadius={DONUT_SIZE / 2}
+            paddingAngle={data.length > 1 ? 2 : 0}
+            stroke="none"
+            isAnimationActive={false}
+          >
+            {data.map((d) => (
+              <Cell key={d.key} fill={d.fill} />
+            ))}
+          </Pie>
+          <Tooltip
+            contentStyle={{
+              background: "var(--panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              padding: "6px 8px",
+              fontSize: 12,
+              color: "var(--fg)",
+            }}
+            itemStyle={{ color: "var(--fg)" }}
+            formatter={(value: unknown, name: unknown) => [
+              `${typeof value === "number" ? value.toLocaleString() : String(value)} (${formatShare(
+                (typeof value === "number" ? value : 0) / total,
+              )})`,
+              String(name ?? ""),
+            ]}
+          />
+        </PieChart>
+      </div>
       <ul className="min-w-0 space-y-1.5">
         {slices.map((s, i) => (
           <li key={s.key} className="flex items-center gap-2 text-[12px] leading-4">
