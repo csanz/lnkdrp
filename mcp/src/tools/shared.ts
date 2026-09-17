@@ -70,6 +70,12 @@ export type ShareView = {
   previewImageUrl: string | null;
   oneLiner: Untrusted | null;
   summary: Untrusted | null;
+  /** Key points stored with the current summary (untrusted document content). */
+  keyPoints: Array<Untrusted | null>;
+  /** Current version number (1 = first upload). */
+  version: number | null;
+  /** Pages in the current version, so an agent can tell which file is live after a replace. */
+  pageCount: number | null;
   isArchived: boolean;
 };
 
@@ -88,6 +94,9 @@ export function shareView(api: ApiClient, doc: ApiDoc): ShareView {
     previewImageUrl: doc.previewImageUrl,
     oneLiner: untrustedOrNull(doc.oneLiner, "document", UNTRUSTED_LIMITS.short),
     summary: untrustedOrNull(doc.summary, "document", UNTRUSTED_LIMITS.summary),
+    keyPoints: doc.keyPoints.map((p) => untrustedOrNull(p, "document", UNTRUSTED_LIMITS.short)),
+    version: doc.version,
+    pageCount: doc.pageCount,
     isArchived: doc.isArchived,
   };
 }

@@ -335,10 +335,11 @@ export async function GET(
             firstPagePngUrl: 1,
             createdDate: 1,
             userId: 1,
+            "metadata.pages": 1,
           })
           .lean()
       : lite && currentUploadId
-        ? await UploadModel.findById(currentUploadId).select({ _id: 1, version: 1, createdDate: 1, userId: 1 }).lean()
+        ? await UploadModel.findById(currentUploadId).select({ _id: 1, version: 1, createdDate: 1, userId: 1, "metadata.pages": 1 }).lean()
         : null;
 
     // In `lite=1` mode we avoid hydrating the full Upload, but the doc page still needs the
@@ -609,6 +610,12 @@ export async function GET(
         isArchived: Boolean(docLean.isArchived),
         currentUploadId: currentUploadId ? String(currentUploadId) : null,
         currentUploadVersion,
+        // Pages in the current version (null for versions processed before it was recorded).
+        currentUploadPages: (function () {
+          const u = (upload ?? uploadLite) as { metadata?: { pages?: unknown } } | null;
+          const n = u?.metadata?.pages;
+          return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null;
+        })(),
         blobUrl: docLean.blobUrl ?? null,
         previewImageUrl:
           docLean.previewImageUrl ?? docLean.firstPagePngUrl ?? null,

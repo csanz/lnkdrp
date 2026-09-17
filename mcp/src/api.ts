@@ -81,6 +81,12 @@ export type ApiDoc = {
   sharePasswordEnabled: boolean;
   /** Projects the document belongs to (only ones that exist in this workspace). */
   projectIds: string[];
+  /** Version number of the current upload (1 = first upload). */
+  version: number | null;
+  /** Pages in the current version; null when it was processed before page counts were recorded. */
+  pageCount: number | null;
+  /** The key points stored with the current summary (the caller's own, or the AI's). */
+  keyPoints: string[];
 };
 
 export type ApiDocListItem = { id: string; shareId: string | null; title: string | null; status: string };
@@ -324,6 +330,11 @@ function asDoc(raw: unknown): ApiDoc {
     shareAllowRevisionHistory: Boolean(d.shareAllowRevisionHistory),
     sharePasswordEnabled: Boolean(d.sharePasswordEnabled ?? d.sharePasswordHash),
     projectIds: Array.isArray(d.projectIds) ? d.projectIds.filter((x): x is string => typeof x === "string") : [],
+    version: typeof d.currentUploadVersion === "number" ? d.currentUploadVersion : null,
+    pageCount: typeof d.currentUploadPages === "number" ? d.currentUploadPages : null,
+    keyPoints: Array.isArray(ai.primary_capabilities_or_scope)
+      ? ai.primary_capabilities_or_scope.filter((x): x is string => typeof x === "string")
+      : [],
   };
 }
 

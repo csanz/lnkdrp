@@ -2363,6 +2363,8 @@ export async function POST(
         docName: docName ?? null,
         pageSlugs: pageSlugs ?? [],
         slideNodes: Array.isArray(slideNodes) ? slideNodes : [],
+        // Page count as a plain number, so readers (the MCP's get_share) need not pull slideNodes.
+        ...(Array.isArray(slideNodes) && slideNodes.length ? { "metadata.pages": slideNodes.length } : {}),
         summaryRerun: false,
         ai: {
           ...aiState,
