@@ -563,6 +563,8 @@ export default function LeftSidebar({
   const [deleteDocFolders, setDeleteDocFolders] = useState<DocFolder[] | null>(null);
   // Bumped when docs change elsewhere (archive, delete, move) so an open Docs modal refetches its page.
   const [docsModalRefreshTick, setDocsModalRefreshTick] = useState(0);
+  // Docs modal tab: live documents, or archived ones (GET /api/docs?archived=1) to bring back.
+  const [docsModalView, setDocsModalView] = useState<"docs" | "archived">("docs");
   const [docsModal, setDocsModal] = useState<Paged<DocListItem>>({
     items: [],
     total: 0,
@@ -1125,7 +1127,8 @@ export default function LeftSidebar({
     async function load() {
       try {
         // Prefill from cached sidebar snapshot for instant UI, then refresh in the background.
-        if (!docsQuery.trim() && docsModal.page === 1 && docs.items.length) {
+        // (Live docs only: the sidebar snapshot holds no archived documents.)
+        if (docsModalView === "docs" && !docsQuery.trim() && docsModal.page === 1 && docs.items.length) {
           setDocsModal((prev) => ({
             ...prev,
             items: prev.items.length ? prev.items : docs.items.slice(0, prev.limit),
@@ -1133,7 +1136,8 @@ export default function LeftSidebar({
           }));
         }
         const q = docsQuery.trim() ? `&q=${encodeURIComponent(docsQuery.trim())}` : "";
-        const res = await fetchWithTempUser(`/api/docs?limit=${docsModal.limit}&page=${docsModal.page}${q}&sidebar=1`, {
+        const archived = docsModalView === "archived" ? "&archived=1" : "";
+        const res = await fetchWithTempUser(`/api/docs?limit=${docsModal.limit}&page=${docsModal.page}${q}${archived}&sidebar=1`, {
           cache: "no-store",
         });
         if (!res.ok) return;
@@ -1158,7 +1162,7 @@ export default function LeftSidebar({
     return () => {
       cancelled = true;
     };
-  }, [showDocsModal, docsModal.page, docsModal.limit, docsQuery, docsModalRefreshTick]);
+  }, [showDocsModal, docsModal.page, docsModal.limit, docsQuery, docsModalRefreshTick, docsModalView]);
 
   useEffect(() => {
     if (!showProjectsModal) return;
@@ -2712,6 +2716,12 @@ export default function LeftSidebar({
           setShowDocsModal(false);
           setDocsQuery("");
           setDocsModal((s) => ({ ...s, page: 1 }));
+          setDocsModalView("docs");
+        }}
+        view={docsModalView}
+        onViewChange={(next) => {
+          setDocsModalView(next);
+          setDocsModal((s) => ({ ...s, items: [], total: 0, page: 1 }));
         }}
         onDismiss={() => setShowDocsModal(false)}
         routerPush={(href) => router.push(href)}

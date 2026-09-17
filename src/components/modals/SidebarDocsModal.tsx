@@ -1,10 +1,23 @@
 "use client";
 
 import { ClipboardDocumentCheckIcon, InboxArrowDownIcon, Square2StackIcon } from "@heroicons/react/24/outline";
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import Modal from "@/components/modals/Modal";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
+import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
+import { upsellKeyForLimit } from "@/lib/client/upsellCopy";
+import { refreshPlan } from "@/lib/client/usePlan";
+import { notifyDocsChanged, notifyProjectsChanged } from "@/lib/sidebarCache";
 import { buildPublicShareUrl } from "@/lib/urls";
+
+export type SidebarDocsView = "docs" | "archived";
+
+const DOCS_VIEWS: Array<{ id: SidebarDocsView; label: string }> = [
+  { id: "docs", label: "Docs" },
+  { id: "archived", label: "Archived" },
+];
 
 type DocListItem = {
   id: string;
@@ -23,10 +36,14 @@ type DocListItem = {
 type Paged<T> = { items: T[]; total: number; page: number; limit: number };
 
 /**
- * Render the SidebarDocsModal UI.
+ * Render the SidebarDocsModal UI: every document, with a Docs / Archived switch. Archived rows carry
+ * an Unarchive button (the same PATCH the MCP's lnkdrp_archive_doc archived: false uses); a Free
+ * workspace at its document cap gets the upgrade modal instead, as from the "..." menu.
  */
 export default function SidebarDocsModal({
   open,
+  view,
+  onViewChange,
   onModalClose,
   onDismiss,
   routerPush,
@@ -43,6 +60,8 @@ export default function SidebarDocsModal({
   formatRelative,
 }: {
   open: boolean;
+  view: SidebarDocsView;
+  onViewChange: (next: SidebarDocsView) => void;
   onModalClose: () => void;
   onDismiss: () => void;
   routerPush: (href: string) => void;
@@ -58,6 +77,41 @@ export default function SidebarDocsModal({
   copyDocLink: (shareId: string) => void | Promise<void>;
   formatRelative: (iso: string | null) => string;
 }) {
+  const archivedView = view === "archived";
+  const { openUpgrade } = useUpgradeModal();
+  const [unarchivingId, setUnarchivingId] = useState<string | null>(null);
+  const [unarchiveError, setUnarchiveError] = useState<{ id: string; message: string } | null>(null);
+
+  async function unarchive(id: string) {
+    if (unarchivingId) return;
+    setUnarchivingId(id);
+    setUnarchiveError(null);
+    try {
+      const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ isArchived: false }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
+        if (limitErr) {
+          openUpgrade(upsellKeyForLimit(limitErr.limit), { used: limitErr.used, max: limitErr.max, graceHint: planLimitGraceHint(limitErr) });
+          return;
+        }
+        throw new Error(typeof json?.error === "string" && json.error ? json.error : `Request failed (${res.status})`);
+      }
+      setDocsModal((s) => ({ ...s, items: s.items.filter((x) => x.id !== id), total: Math.max(0, s.total - 1) }));
+      notifyDocsChanged();
+      notifyProjectsChanged();
+      refreshPlan();
+    } catch (e) {
+      setUnarchiveError({ id, message: e instanceof Error ? e.message : "Failed to unarchive" });
+    } finally {
+      setUnarchivingId(null);
+    }
+  }
+
   return (
     <Modal
       open={open}
@@ -69,7 +123,36 @@ export default function SidebarDocsModal({
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex items-center justify-between gap-3 pr-10">
           <div className="text-base font-semibold text-[var(--fg)]">Docs</div>
-          <div className="text-xs text-[var(--muted-2)]">{docsModal.total ? `${docsModal.total} total` : ""}</div>
+          <div className="text-xs text-[var(--muted-2)]">
+            {docsModal.total ? `${docsModal.total} ${archivedView ? "archived" : "total"}` : ""}
+          </div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2" role="tablist" aria-label="Documents">
+          {DOCS_VIEWS.map((v) => {
+            const active = v.id === view;
+            return (
+              <button
+                key={v.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => {
+                  if (active) return;
+                  setUnarchiveError(null);
+                  onViewChange(v.id);
+                }}
+                className={[
+                  "h-8 rounded-full px-3 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                  active
+                    ? "bg-[var(--fg)] text-[var(--bg)]"
+                    : "border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                ].join(" ")}
+              >
+                {v.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="mt-3">
@@ -80,12 +163,19 @@ export default function SidebarDocsModal({
               setDocsQuery(e.target.value);
               setDocsModal((s) => ({ ...s, page: 1 }));
             }}
-            placeholder="Search"
+            placeholder={archivedView ? "Search archived docs" : "Search"}
             className="w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/10"
           />
         </div>
 
         <ul className="mt-3 min-h-0 flex-1 space-y-1 overflow-auto pr-1">
+          {archivedView && !docsModal.items.length ? (
+            <li className="px-3 py-6 text-[13px] text-[var(--muted-2)]">
+              {docsQuery.trim()
+                ? "No archived docs match that search."
+                : "No archived docs. Archiving keeps a document's links and analytics; it comes back here to unarchive."}
+            </li>
+          ) : null}
           {docsModal.items.map((d) => {
             const href = `/doc/${d.id}`;
             const when = formatRelative(d.updatedDate ?? d.createdDate);
@@ -182,11 +272,30 @@ export default function SidebarDocsModal({
                           ) : null}
                         </div>
                         {oneLiner ? <div className="mt-1 line-clamp-2 text-[12px] text-[var(--muted-2)]">{oneLiner}</div> : null}
+                        {unarchiveError?.id === d.id ? (
+                          <div className="mt-1 text-[12px] text-red-500" role="alert">
+                            {unarchiveError.message}
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
                     <div className="flex shrink-0 items-center gap-1">
-                      {d.shareId ? (
+                      {archivedView ? (
+                        <button
+                          type="button"
+                          className="shrink-0 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                          disabled={unarchivingId !== null}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            void unarchive(d.id);
+                          }}
+                        >
+                          {unarchivingId === d.id ? "Unarchiving…" : "Unarchive"}
+                        </button>
+                      ) : null}
+                      {d.shareId && !archivedView ? (
                         <button
                           type="button"
                           className={[
@@ -218,10 +327,11 @@ export default function SidebarDocsModal({
                         className="flex"
                         projectsLabel="Move to project"
                         showArchive
+                        isArchived={archivedView}
                         showDelete={false}
                         onDocPatched={(patch) => {
-                          if (patch.isArchived !== true) return;
-                          // Archived docs leave this list; the docs-changed refetch reconciles the page.
+                          // Archived or unarchived: the row moves to the other tab; the docs-changed refetch reconciles the page.
+                          if (typeof patch.isArchived !== "boolean" || patch.isArchived === archivedView) return;
                           setDocsModal((s) => ({
                             ...s,
                             items: s.items.filter((x) => x.id !== d.id),
