@@ -18,6 +18,7 @@ import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { ensureDefaultLink } from "@/lib/share/links";
 import { ShareLinkModel } from "@/lib/models/ShareLink";
+import { createdViaFor } from "@/lib/share/createdVia";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -450,7 +451,7 @@ export async function POST(request: Request) {
         userId: new Types.ObjectId(actor.userId),
         shareId: doc.shareId ?? null,
         shareEnabled: doc.shareEnabled !== false,
-      });
+      }, { createdVia: createdViaFor(request) });
     } catch (e) {
       debugError(1, "[api/docs] POST ensureDefaultLink failed", {
         docId: String(doc._id),

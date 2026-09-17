@@ -18,21 +18,10 @@ import { recordActivity } from "@/lib/activity/log";
 import { createShareLink, listShareLinksPage, shareLinkStatsByShareId, toShareLinkDTO } from "@/lib/share/links";
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "./shared";
 import { planLimitResponse } from "@/lib/billing/planLimits";
+import { createdViaFor } from "@/lib/share/createdVia";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/**
- * Where a link was created from, for the link row's `createdVia`.
- *
- * A bearer API key means an agent (`mcp` when it also identified itself with `x-lnkdrp-agent`,
- * which every MCP session sends); a cookie session is the web app.
- */
-function createdViaFor(request: Request): "web" | "api" | "mcp" {
-  const bearer = (request.headers.get("authorization") ?? "").toLowerCase().startsWith("bearer ");
-  if (!bearer) return "web";
-  return request.headers.get("x-lnkdrp-agent") ? "mcp" : "api";
-}
 
 /**
  * `GET /api/docs/:docId/links`

@@ -178,7 +178,7 @@ export function toShareLinkDTO(link: ShareLink, stats?: ShareLinkStats | null): 
  * Materialise the default link for a document that predates the model, copying its share
  * settings. Idempotent: the unique `shareId` index makes a concurrent double-create a no-op.
  */
-export async function ensureDefaultLink(doc: DocLike): Promise<ShareLink> {
+export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web" | "api" | "mcp" } = {}): Promise<ShareLink> {
   await connectMongo();
   const existing = await ShareLinkModel.findOne({ docId: doc._id, isDefault: true }).lean<ShareLink>();
   if (existing) return existing;
@@ -203,7 +203,8 @@ export async function ensureDefaultLink(doc: DocLike): Promise<ShareLink> {
       passwordEncIv: doc.sharePasswordEncIv ?? null,
       passwordEncTag: doc.sharePasswordEncTag ?? null,
       createdByUserId: doc.userId ?? null,
-      createdVia: "migration",
+      // Only the document create route knows who made it; every lazy backfill is a migration.
+      createdVia: opts.createdVia ?? "migration",
     });
     if (!doc.shareId) await DocModel.updateOne({ _id: doc._id }, { $set: { shareId } });
     return created.toObject() as ShareLink;
@@ -449,8 +450,18 @@ function validateAudience(v: unknown): string | null {
 
 function validateExpiry(v: unknown): Date | null {
   if (v === null || v === undefined || v === "") return null;
-  const d = new Date(String(v));
-  if (Number.isNaN(d.getTime())) throw new ShareLinkError("validation", "expiresAt must be an ISO date.");
+  const raw = String(v).trim();
+  // `new Date` rolls impossible days forward ("2030-02-30" became March 2) and accepts expanded
+  // years ("+275760-09-13"), so the link would expire on a date nobody gave. Require a 4-digit
+  // year and a day that exists in that month.
+  const ymd = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(raw);
+  const d = new Date(raw);
+  if (!ymd || Number.isNaN(d.getTime())) throw new ShareLinkError("validation", "expiresAt must be an ISO date.");
+  const [year, month, day] = [Number(ymd[1]), Number(ymd[2]), Number(ymd[3])];
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  if (month < 1 || month > 12 || day < 1 || day > daysInMonth) {
+    throw new ShareLinkError("validation", `expiresAt is not a real date: ${raw.slice(0, 10)}.`);
+  }
   if (d.getTime() <= Date.now()) throw new ShareLinkError("validation", "expiresAt must be in the future.");
   return d;
 }
