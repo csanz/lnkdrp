@@ -77,6 +77,32 @@ function header(request: Request, name: string) {
  */
 
 
+/**
+ * Write to the document only while this upload has not been superseded.
+ *
+ * A slow upload (a large file fetched from a URL) can still be processing when the owner replaces
+ * it. Its late finish used to overwrite the document unconditionally, so a doc replaced with v2
+ * went back to v1's preview, text and summary ten seconds later. The filter skips the write when
+ * any newer upload of the document is already the current one; the upload row itself still
+ * completes and stays in the version history.
+ */
+async function updateDocUnlessSuperseded(
+  docId: unknown,
+  upload: { _id: unknown; version?: unknown },
+  update: Record<string, unknown>,
+): Promise<boolean> {
+  const version = Number.isFinite(Number(upload.version)) ? Number(upload.version) : 0;
+  const newer = await UploadModel.find({ docId, version: { $gt: version }, isDeleted: { $ne: true } })
+    .select({ _id: 1 })
+    .lean();
+  const res = await DocModel.updateOne({ _id: docId, currentUploadId: { $nin: newer.map((u) => u._id) } }, update);
+  if (res.matchedCount === 0) {
+    debugLog(1, "[process] doc write skipped: a newer upload is current", { docId: String(docId), uploadId: String(upload._id), version });
+    return false;
+  }
+  return true;
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
@@ -1110,7 +1136,7 @@ export async function POST(
         // IMPORTANT: for replacement uploads, do not mark the existing doc as failed.
         // A failed replacement must not overwrite the last good version.
         if (!isReplacement) {
-          await DocModel.findByIdAndUpdate(docId, { status: "failed" });
+          await updateDocUnlessSuperseded(docId, upload, { status: "failed" });
         }
         return;
       }
@@ -1135,7 +1161,7 @@ export async function POST(
         const priorSlideNodes =
           existingDocObj && Array.isArray((existingDocObj as any).slideNodes) ? ((existingDocObj as any).slideNodes as unknown[]) : null;
 
-        await DocModel.findByIdAndUpdate(docId, {
+        await updateDocUnlessSuperseded(docId, upload, {
           status: "ready",
           blobUrl: blobUrl,
           currentUploadId: upload._id,
@@ -1519,7 +1545,7 @@ export async function POST(
       // IMPORTANT: for replacement uploads, keep the Doc pointing at the last good version
       // until processing succeeds. The client tracks replacement progress via the Upload.
       if (!isReplacement) {
-        await DocModel.findByIdAndUpdate(docId, {
+        await updateDocUnlessSuperseded(docId, upload, {
           status: "preparing",
           currentUploadId: upload._id,
           uploadId: upload._id,
@@ -1539,7 +1565,7 @@ export async function POST(
           error: { message },
         });
         if (!isReplacement) {
-          await DocModel.findByIdAndUpdate(docId, { status: "failed" });
+          await updateDocUnlessSuperseded(docId, upload, { status: "failed" });
         }
         return;
       }
@@ -2396,7 +2422,7 @@ export async function POST(
       // IMPORTANT: for replacement uploads, never overwrite the existing doc on failures.
       // Only flip the doc over once we have enough artifacts to consider the replacement successful.
       if (!isReplacement || !failed) {
-        await DocModel.findByIdAndUpdate(docId, docUpdate);
+        await updateDocUnlessSuperseded(docId, upload, docUpdate);
       }
 
       // Activity: the pipeline finished and the doc flipped to `ready` (best-effort, after the write).
