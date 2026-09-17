@@ -35,6 +35,21 @@ export function errorMessage(err: unknown): string {
 }
 
 /**
+ * The response for a failure that is the caller's authentication or rate limit, or null.
+ *
+ * For routes that keep their own catch-all message: without this, a revoked key or a key over its
+ * ceiling came back as a 400 carrying the raw message, which clients cannot tell from bad input.
+ */
+export function authOrRateLimitResponse(err: unknown): NextResponse | null {
+  const limited = actorRateLimitResponse(err);
+  if (limited) return limited;
+  if (err instanceof ApiKeyAuthError) {
+    return NextResponse.json({ error: err.code, message: err.message }, { status: err.status, headers: { "cache-control": "no-store" } });
+  }
+  return null;
+}
+
+/**
  * Log `err` and return a `NextResponse.json({ error: publicMessage })`.
  *
  * In non-production environments the response also carries `detail` with the raw message.

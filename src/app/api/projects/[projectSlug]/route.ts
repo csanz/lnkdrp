@@ -13,6 +13,7 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
+import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 
@@ -270,6 +271,8 @@ export async function PATCH(
       actor,
     );
   } catch (err) {
+    const authOrLimited = authOrRateLimitResponse(err);
+    if (authOrLimited) return authOrLimited;
     const message = err instanceof Error ? err.message : "Unknown error";
     // Surface a clean message for duplicate-name per user.
     if (
@@ -517,6 +520,8 @@ export async function DELETE(
 
     return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
   } catch (err) {
+    const authOrLimited = authOrRateLimitResponse(err);
+    if (authOrLimited) return authOrLimited;
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/projects/:slug] DELETE failed", { message });
     return NextResponse.json({ error: message }, { status: 400 });

@@ -13,6 +13,7 @@ import { newShareId } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
+import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
 
 const MAX_PROJECT_NAME_LENGTH = 80;
 
@@ -236,6 +237,8 @@ export async function GET(request: Request) {
       actor,
     );
   } catch (err) {
+    const authOrLimited = authOrRateLimitResponse(err);
+    if (authOrLimited) return authOrLimited;
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/projects] GET failed", { message });
     return NextResponse.json({ error: message }, { status: 400 });
@@ -341,6 +344,8 @@ export async function POST(request: Request) {
       actor,
     );
   } catch (err) {
+    const authOrLimited = authOrRateLimitResponse(err);
+    if (authOrLimited) return authOrLimited;
     const message = err instanceof Error ? err.message : "Unknown error";
     // Surface a clean message for duplicate-name per user.
     if (

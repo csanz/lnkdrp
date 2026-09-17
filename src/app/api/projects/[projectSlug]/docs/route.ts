@@ -14,6 +14,7 @@ import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
 import crypto from "node:crypto";
 import { randomBase62 } from "@/lib/crypto/randomBase62";
+import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
 
 export const runtime = "nodejs";
 /**
@@ -439,6 +440,8 @@ export async function GET(
     res.headers.set("cache-control", cacheControl);
     return applyTempUserHeaders(res, actor);
   } catch (err) {
+    const authOrLimited = authOrRateLimitResponse(err);
+    if (authOrLimited) return authOrLimited;
     const message = err instanceof Error ? err.message : "Unknown error";
     debugError(1, "[api/projects/:slug/docs] GET failed", { message });
     return NextResponse.json({ error: message }, { status: 400 });
