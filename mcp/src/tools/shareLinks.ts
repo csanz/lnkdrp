@@ -18,7 +18,7 @@ import type { ApiClient, ApiShareLink, PlanWarning, ShareLinkPatch } from "../ap
 import type { ToolContext } from "../context";
 import { handleTool, ToolError } from "../errors";
 import { requireHumanConfirmation, severityFromTraffic } from "../confirm";
-import { docIdSchema, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
+import { DISMISSED_PROMPT_NOTE, docIdSchema, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
 
 const linkIdSchema = z.string().regex(OBJECT_ID_RE, "linkId must be a 24-character hex id").describe("Share link id (24 hex chars), from lnkdrp_list_share_links");
 const labelSchema = z
@@ -246,7 +246,9 @@ export function registerDeleteShareLinkTool(server: McpServer, ctx: ToolContext)
         "A document's default link cannot be deleted (validation error) - disable it with lnkdrp_update_share_link instead. " +
         "DESTRUCTIVE: this tool confirms with the human before acting. If the client supports it, the user is shown the link, " +
         "its traffic and a yes/no prompt directly. If not, the call fails with requiresConfirmation and a preview in details - " +
-        "show that preview to the user, ask them, and call again with confirm: true only if they say yes. A preview with " +
+        "show that preview to the user, ask them, and call again with confirm: true only if they say yes. " +
+        DISMISSED_PROMPT_NOTE +
+        "A preview with " +
         "severity 'high' means recipients have opened this link; do not confirm that on your own judgement. " +
         SAFETY_TAIL,
       inputSchema: deleteShareLinkInputShape,

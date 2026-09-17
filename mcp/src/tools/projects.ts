@@ -26,7 +26,7 @@ import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { UNTRUSTED_LIMITS, untrustedOrNull } from "../untrusted";
-import { docIdSchema, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
+import { DISMISSED_PROMPT_NOTE, docIdSchema, OBJECT_ID_RE, SAFETY_TAIL } from "./shared";
 
 /** Mirrors `MAX_PROJECT_NAME_LENGTH` in `src/app/api/projects/[projectSlug]/route.ts`. */
 const MAX_PROJECT_NAME = 80;
@@ -458,7 +458,9 @@ export function registerDeleteProjectTool(server: McpServer, ctx: ToolContext): 
         "DESTRUCTIVE: this tool confirms with the human before acting. If the client supports it, the user is shown the " +
         "project, how many documents it holds and whether its public page is live, and a yes/no prompt. If not, the call " +
         "fails with requiresConfirmation and a preview in details - show that preview to the user, ask them, and call again " +
-        "with confirm: true only if they say yes. A preview with severity 'high' means the project has a live public page " +
+        "with confirm: true only if they say yes. " +
+        DISMISSED_PROMPT_NOTE +
+        "A preview with severity 'high' means the project has a live public page " +
         "listing documents; do not confirm that on your own judgement. " +
         SAFETY_TAIL,
       inputSchema: { projectId: projectIdSchema, projectSlug: projectSlugSchema, confirm: confirmSchema },

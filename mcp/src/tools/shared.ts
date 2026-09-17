@@ -98,6 +98,15 @@ export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: Sh
   };
 }
 
+/**
+ * Appended to every destructive tool's description. A client can declare prompts and then dismiss
+ * them unseen (Claude Code in -p mode); the description used to promise confirm: true would get
+ * through, while the tool refuses it after a dismissed prompt.
+ */
+export const DISMISSED_PROMPT_NOTE =
+  "If the prompt comes back dismissed (userAction 'cancel' - headless clients dismiss it automatically), confirm: true " +
+  "will not override it: tell the human to do this in the lnkdrp app or from a client that can show the prompt. ";
+
 /** The `lnkdrp_get_share` result for a doc. */
 export function shareView(api: ApiClient, doc: ApiDoc): ShareView {
   return {

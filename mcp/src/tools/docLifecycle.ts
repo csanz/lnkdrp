@@ -21,7 +21,7 @@ import { z } from "zod";
 import { requireHumanConfirmation, severityFromTraffic } from "../confirm";
 import type { ToolContext } from "../context";
 import { handleTool, ToolError } from "../errors";
-import { docIdSchema, SAFETY_TAIL } from "./shared";
+import { DISMISSED_PROMPT_NOTE, docIdSchema, SAFETY_TAIL } from "./shared";
 
 const confirmSchema = z
   .boolean()
@@ -53,7 +53,9 @@ export function registerArchiveDocTool(server: McpServer, ctx: ToolContext): voi
         "DESTRUCTIVE when archiving: it takes every link down at once, so this tool confirms with the human first. If the " +
         "client supports it, the user is shown the document, its links and traffic, and a yes/no prompt. If not, the call fails " +
         "with requiresConfirmation and a preview in details - show it to the user, ask, and call again with confirm: true only " +
-        "if they say yes. Unarchiving needs no confirmation. " +
+        "if they say yes. " +
+        DISMISSED_PROMPT_NOTE +
+        "Unarchiving needs no confirmation. " +
         SAFETY_TAIL,
       inputSchema: { docId: docIdSchema, archived: z.boolean().describe("true to archive, false to bring the document back."), confirm: confirmSchema },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -108,6 +110,7 @@ export function registerDeleteDocTool(server: McpServer, ctx: ToolContext): void
         "DESTRUCTIVE: this tool confirms with the human before acting. If the client supports it, the user is shown the " +
         "document, its links and traffic, and a yes/no prompt directly. If not, the call fails with requiresConfirmation and a " +
         "preview in details - show that preview to the user, ask them, and call again with confirm: true only if they say yes. " +
+        DISMISSED_PROMPT_NOTE +
         "A preview with severity 'high' means recipients have opened this document or more than one of its links is live " +
         "(several people may lose access at once); do not confirm that on your own judgement. " +
         SAFETY_TAIL,
