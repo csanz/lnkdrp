@@ -327,7 +327,11 @@ export function createMongooseCreditStore(params: { workspaceId: string }): Cred
         await UsageAggCycleModel.updateOne(
           { workspaceId: orgId, cycleKey },
           {
-            $setOnInsert: { workspaceId: orgId, cycleKey, cycleStart: cycleStart ?? null, cycleEnd: cycleEnd ?? null },
+            // cycleEnd goes in exactly one operator: naming it in both $setOnInsert and $set is a
+            // Mongo path conflict, which failed every charge in a workspace with a billing cycle
+            // (Pro) - the AI step then refunded and reported "Updating the path 'cycleEnd' would
+            // create a conflict".
+            $setOnInsert: { workspaceId: orgId, cycleKey, cycleStart: cycleStart ?? null, ...(cycleEnd ? {} : { cycleEnd: null }) },
             $set: { ...(cycleEnd ? { cycleEnd } : {}) },
             $inc: {
               includedUsedCredits: included,
