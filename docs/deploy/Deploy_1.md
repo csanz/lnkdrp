@@ -20,7 +20,8 @@ If/when you do a future “big” deployment (architecture change, billing revam
 #### Generate strong secrets locally (recommended)
 - For these env vars, you should generate **new random secrets** for production:
   - `NEXTAUTH_SECRET`
-  - `CRON_SECRET` (preferred; `LNKDRP_CRON_SECRET` is the legacy fallback)
+  - `CRON_SECRET` (the only name Vercel Cron sends as a bearer; do not use the legacy `LNKDRP_CRON_SECRET`)
+  - `REALTIME_SECRET` (same value on Vercel, the realtime host and the MCP host; must differ from `NEXTAUTH_SECRET`)
   - `LNKDRP_SHARE_PASSWORD_SECRET`
   - `LNKDRP_ORG_INVITE_TOKEN_SECRET`
 
@@ -96,9 +97,12 @@ Alternatively, one-off commands:
 - [ ] Optional: `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` (override redirect URLs)
 
 #### Cron auth (required in production)
-- [ ] `CRON_SECRET` (preferred — Vercel Cron sends it automatically as `Authorization: Bearer $CRON_SECRET`)
-- [ ] or `LNKDRP_CRON_SECRET` (legacy fallback; used only when `CRON_SECRET` is unset)
-- Note: with **neither** set, all `/api/cron/*` routes return `401` in production (fail closed).
+- [ ] `CRON_SECRET` (Vercel Cron sends it automatically as `Authorization: Bearer $CRON_SECRET`)
+- Note: do not set only the legacy `LNKDRP_CRON_SECRET`. The routes still accept it, but Vercel Cron sends no bearer without a variable named `CRON_SECRET`, so every scheduled call returns `401`.
+- Note: with no secret set, all `/api/cron/*` routes return `401` in production (fail closed).
+
+#### Realtime tickets
+- [ ] `REALTIME_SECRET` (same value on Vercel, the realtime host and the MCP host; different from `NEXTAUTH_SECRET`). Treat it as required: if unset, the app falls back to signing tickets with `NEXTAUTH_SECRET`, which would force the realtime and MCP hosts to hold `NEXTAUTH_SECRET` to verify them. Do not ship that setup.
 
 #### App-specific secrets (recommended)
 - [ ] `LNKDRP_SHARE_PASSWORD_SECRET` (falls back to `NEXTAUTH_SECRET` if unset)
@@ -122,8 +126,8 @@ Alternatively, one-off commands:
 - [ ] Confirm cron schedules in `vercel.json` match desired production behavior (source of truth).
 - [ ] Set `CRON_SECRET` in Vercel (Production). Vercel Cron invokes each route with **`GET`** and `Authorization: Bearer $CRON_SECRET`; nothing else to configure.
   - Routes accept both `GET` and `POST` (same handler; `POST` is for manual runs).
-  - Manual invocations may also use `x-cron-secret: <secret>` or `?secret=<secret>`.
-  - `LNKDRP_CRON_SECRET` is still honored as a legacy fallback when `CRON_SECRET` is unset.
+  - Manual invocations may also use `x-cron-secret: <secret>`. `?secret=<secret>` works outside production only; production ignores it (a secret in a URL ends up in logs), so it returns `401` there.
+  - `LNKDRP_CRON_SECRET` is still honored for manual calls when `CRON_SECRET` is unset, but Vercel Cron will not send it; set `CRON_SECRET`.
   - Without any secret configured, production cron routes **fail closed** (401).
 - [ ] Overlap lease: `notification-emails` and `stripe-credits-reconcile` take a `CronHealth.leaseUntil` lease; a `200 { skipped: "locked" }` response means a previous run is still in progress (auto-expires after ~6 min).
 - [ ] Enable the `plan-limits` cron (`/api/cron/plan-limits`, hourly at `:40` in `vercel.json`) — Free plan-limit grace sweep + owner emails; no new env vars (uses `CRON_SECRET`, `RESEND_API_KEY`, `INVITE_EMAIL_FROM`/`NOTIFICATION_EMAIL_FROM`).

@@ -18,7 +18,10 @@ function b64url(bytes = 32) {
 const vars = [
   // Required secrets
   ["NEXTAUTH_SECRET", b64url(32)],
-  ["LNKDRP_CRON_SECRET", b64url(32)],
+  // Vercel Cron only sends `Authorization: Bearer` when a var with exactly this name exists.
+  ["CRON_SECRET", b64url(32)],
+  // Same value on Vercel, the realtime host and the MCP host; keep it distinct from NEXTAUTH_SECRET.
+  ["REALTIME_SECRET", b64url(32)],
 
   // Recommended app-specific secrets (used for token/password flows)
   ["LNKDRP_SHARE_PASSWORD_SECRET", b64url(32)],
