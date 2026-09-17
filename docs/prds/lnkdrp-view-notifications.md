@@ -1,8 +1,8 @@
 # PRD — View notifications
 
-**Status:** Draft 2026-09-15; decisions 3, 8 and 9 locked by the owner the same day
+**Status:** Implemented M1–M3 on 2026-09-16. Drafted 2026-09-15; decisions 3, 8 and 9 locked by the owner the same day; the three open questions resolved with the v1 defaults recorded under Open questions.
 **Owner:** chrissanz
-**Last updated:** 2026-09-15
+**Last updated:** 2026-09-17
 **Project:** lnkdrp
 **Sibling docs:** [lnkdrp-multi-links](./lnkdrp-multi-links.md) · [lnkdrp-plan-limits](./lnkdrp-plan-limits.md) · [lnkdrp-mcp](./lnkdrp-mcp.md) · [METRICS](../METRICS.md)
 
@@ -71,7 +71,8 @@ to decide whether to act, and never so often that they turn it off.
    pages reached and time on page. On Free the email says *that* a recipient opened *which
    link* and nothing about who — the same line the metrics page draws, so the email is never
    a side channel around the Pro gate. This is also the upsell surface: the Free email carries
-   "See who opened it · Pro".
+   one muted line, "Pro shows who opened it and how long they stayed." (the same line as in
+   Email design).
 
 5. **Notify the whole workspace on that document's links, not only the uploader.** A
    teammate who set up the Sequoia link should hear about Sequoia. Membership is the recipient
@@ -93,7 +94,8 @@ to decide whether to act, and never so often that they turn it off.
    as easy to find as the email was to receive. Concretely:
    - Every view email carries two footer links: **Turn off these emails** (one click, no sign-in
      round trip beyond what the link already carries, sets this member's mode to `off` and
-     confirms on a plain page) and **Change how often** (to Preferences → Notifications).
+     confirms on a plain page) and **Change how often** (to the Email preferences block,
+     `/dashboard?tab=account#email-preferences`).
    - `off` is a real state that suppresses immediate *and* digest emails for views; it does not
      touch the two existing preferences.
    - The Preferences row shows the current mode with `Off` as a visible option, not buried
@@ -136,6 +138,12 @@ No new collection. Two additions:
   `lastViewedAt` history in `ShareView.ts`). For returns in the digest, the cursor also has
   to cover `ShareVisit.startedAt`; both are read against the same `lastNotifiedAt`.
 
+  *As built (2026-09-17):* returns have their own horizon on the same cursor document,
+  `returnsNotifiedAt`, compared with `ShareVisit.createdDate` (server-stamped, not the browser's
+  `startedAt`). A single shared horizon lost returns: an immediate-mode member's cursor moves every
+  tick, past returns that only the digest reports, so those returns were never sent, not even after
+  a switch to daily. Cursors written before the field existed fall back to `lastNotifiedAt`.
+
 ### Event selection
 
 For a member with mode ≠ `off`, the events since their cursor are:
@@ -163,21 +171,41 @@ Immediate mode: every tick, one email per member per document with the new viewe
 cursor. Daily mode: at the UTC end-of-day tick, one digest email per member across all their
 documents, with new viewers *and* returns, grouped by document then by link.
 
+*As built (2026-09-17):* returns go only in the digest (decision 1), for **both** modes. An
+immediate member also gets a returns-only digest at the end-of-day tick ("N people came back to
+your documents today") when anyone came back that day; with no returns, no digest. Their new viewers
+are never repeated in it. This is what verification 2 describes for a member who was on immediate
+in verification 1. The owner can reverse it (immediate members never hear about returns) by
+skipping the returns digest for immediate members. The `returnsNotifiedAt` horizon must still stay
+separate, or a switch to daily loses the returns from the immediate period.
+
 ### Email design
 
 The email is the product for this feature; most of the work is here.
 
 **Subject.** Immediate: `Sequoia opened "USAVX MEMO"` when the link has a label, else
-`Someone opened "USAVX MEMO"`. Digest: `3 people opened your documents yesterday`. Never
-"New view" — the subject has to be scannable in a notification banner.
+`Someone opened "USAVX MEMO"`. Batched immediate (several new viewers of one document in one
+tick, decision 7): `N people opened "TITLE"`, e.g. `3 people opened "USAVX MEMO"`, whatever the
+links. Digest: `3 people opened your documents today` (or `since Sep 12` for a longer window).
+Never "New view" — the subject has to be scannable in a notification banner.
+
+**Preheader.** A hidden first line sets the inbox preview: link and how far on Pro (with the
+viewer's name when known), link and when on Free, counts for the digest. It follows the same
+identity rule as the body, so a Free preheader never names anyone or says how far they read.
 
 **Body, immediate (Pro):** who (name, or "Someone on the Sequoia link"), which link and
-audience, when, how far they got (`4 of 12 pages · 3m 20s`), and whether this is their first
-open or a return. One primary action: **See what they read →** deep-linked to
-`/doc/:id/metrics?shareId=<slug>`, which already scopes the whole page to that link.
+audience, when, and how far they got (`4 of 12 pages · 3m 20s`). A "Who" row appears only
+when a real name or email is known, never "Who: Someone". Immediate emails only ever report
+first opens, so they do not say so. The default link reads "Default link", as in the links UI.
+When several viewers in one email all came through the same link, the link is shown once under
+the heading and each viewer is one line, `08:02 UTC · 1 of 1 page · 15s` (prefixed with the
+name when known); across several links each line names its link instead. One primary action:
+**See what they read →** deep-linked to `/doc/:id/metrics?shareId=<slug>`, which already scopes
+the whole page to that link.
 
-**Body, immediate (Free):** which link was opened and when; no name, no pages, no time. The
-same button, and one muted line: *Pro shows who opened it and how long they stayed.*
+**Body, immediate (Free):** which link was opened and when; no name, no pages, no time (a
+batch on one link lists times only). The same button, and one muted line: *Pro shows who
+opened it and how long they stayed.*
 
 **First-view honesty.** When the viewer is anonymous and the open is within ten minutes of
 the link being created, add one line: *If this was you checking the link, sign in first next
@@ -187,10 +215,23 @@ now states; the email must not claim certainty the data does not have.
 **Digest:** one section per document, one line per link, viewers and returns as counts with
 the top viewer named on Pro. Footer link to the document's metrics.
 
-**Footer, every view email:** *You get this because someone opened a document in your
-workspace. **Turn off these emails** · **Change how often**.* The off link is the signed
-one-click token (decision 8). The line names the reason the email exists, because an email
-that arrives by default owes the reader that much.
+**Footer, every view email:** *You get this because someone opened a link to a document in
+your workspace. **Turn off these emails** · **Change how often**.* The off link is the signed
+one-click token (decision 8); "Change how often" lands on the Email preferences block
+(`/dashboard?tab=account#email-preferences`). The line names the reason the email exists,
+because an email that arrives by default owes the reader that much.
+
+**One-click unsubscribe headers.** Every view email sends `List-Unsubscribe: <off URL>` and
+`List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058), so Gmail and Yahoo show their
+own Unsubscribe button instead of leaving "Report spam" as the easy way out. The off route
+accepts that POST (form body `List-Unsubscribe=One-Click`, token in the query string), sets the
+mode to `off` idempotently and answers 200 with no page.
+
+**Mail-client rendering.** Inline styles and tables only; a small "LinkDrop" wordmark at the
+top of the card; the card held at 560px in Outlook desktop by an `mso` conditional table; the
+button's background and padding on its table cell (bulletproof in Outlook); long titles and
+labels wrap (`word-break:break-word; overflow-wrap:anywhere`) instead of widening the card on a
+phone; `color-scheme` meta set to light only; footer links 13px with padded tap targets.
 
 **Plain text and HTML both**, through `sendTextEmail`'s existing transport. `EMAIL_TRANSPORT=
 console` in dev prints the payload, which is how the copy gets reviewed before anything is
@@ -234,12 +275,23 @@ so the first digest goes out the day after deploy. The cursor is created lazily 
 with the existing "default lookback when a cursor is missing" rule so nobody receives a digest
 of the last six months on day one.
 
+*Implementation note (2026-09-16):* the build does not use a lookback for a missing cursor. The
+first tick that sees a member with no `share_views` cursor creates it at that moment and sends
+nothing (no backfill), so views before that tick are never emailed. The 7-day
+`defaultLookbackDays` only caps the window of an existing cursor that is older than 7 days. A
+member on `off` has the cursor moved to now every tick, so views while off are dropped. Because
+of that, the cron scans every live membership, not only those with some email kind on.
+
 ## Verification
 
 1. Open a link as a signed-out recipient → within one cron tick, the owner (mode `immediate`)
    receives exactly one email naming the link; a second page turn sends nothing.
 2. Open the same link again in a new tab → no immediate email; it appears as a return in that
-   day's digest.
+   day's digest (for an immediate member, the returns-only digest; a member who switches from
+   immediate to daily before the digest also sees it).
+   *As built:* a return counts only when the reader's first `ShareView` is at or before the
+   member's window start; a first open and a return inside the same digest window show as one
+   new viewer.
 3. Open your own link while signed in → no email, and `ownerPreviews` on the metrics API
    increments instead.
 4. Three recipients open three links within five minutes → one immediate email listing all
@@ -249,6 +301,10 @@ of the last six months on day one.
 6. Kill the transport (bad `RESEND_API_KEY`) → the send fails, the cursor does not advance,
    and the next tick retries the same event once the key is fixed. No duplicate when it
    succeeds.
+   *As built:* an immediate round stops at the first failed document and the cursor moves to
+   just before that document's earliest event, so a document sent earlier in the same round can
+   repeat. A failed digest keeps its cursor and retries only in the 23:00–23:59 UTC ticks, then
+   the next day.
 7. Two cron ticks overlap → the lease makes the second skip; the digest goes once per UTC day.
 8. `tests/share/traffic.ts --readers 6` with a member on `immediate` → the printed console
    emails match the readers the script created, minus none (no owner previews in that run).
@@ -281,6 +337,23 @@ of the last six months on day one.
 - Proves: verification 5, 8.
 
 ## Open questions
+
+All three are **resolved for v1 (2026-09-16)**; the original question stays below each resolution.
+
+- **Resolved 1 — default mode is `daily`.** `OrgMembership.viewEmailMode` defaults to `"daily"`
+  and readers treat a missing value as `"daily"`. The "first three views are immediate" middle
+  path is not built; the onboarding line on the document page tells the member the emails exist
+  and that they can switch to instant.
+- **Resolved 2 — `immediate` is available on every plan.** Identity is what is Pro-gated
+  (decision 4): a Free email says that a recipient opened which link, a Pro email says who.
+- **Resolved 3 — digests run on UTC days for v1.** The digest goes on the end-of-day UTC tick
+  like the other two kinds; `docUpdateDigestTimezone` stays unused. Quiet hours are a follow-up.
+
+Implementation notes (where the draft left the location open): the preference is read and
+written through the existing `GET/PATCH /api/orgs/active/notification-preferences` route; the
+one-click token lives in `src/lib/notifications/viewEmailToken.ts`, signed with
+`LNKDRP_NOTIFICATION_TOKEN_SECRET` (falls back to `NEXTAUTH_SECRET`); the pipeline block is
+`src/lib/notifications/viewNotifications.ts`, called from `sendNotificationEmails`.
 
 1. **Which mode is the default — `daily` or `immediate`?** On-by-default is decided; this is
    the remaining half. `daily` protects the inbox; `immediate` is the moment the product feels

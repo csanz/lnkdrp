@@ -59,15 +59,22 @@ Frequencies below are from `vercel.json` `"crons"` (production source of truth).
   - **Reads**: `CreditLedger(status="charged", eventType="ai_run")`
   - **Writes**: `UsageAggDaily`, `UsageAggCycle`, `CronHealth(jobKey="usage-agg-reconcile")`
   - **Idempotency**: deterministic recompute via upserts; safe to re-run for the same date range.
-- **Notification emails (doc updates + request repos)**
+- **Notification emails (views + doc updates + request repos)**
   - **Route**: `GET|POST /api/cron/notification-emails`
   - **Schedule**: `*/5 * * * *` (every 5 minutes)
   - **Purpose**:
+    - Send **view** emails when a recipient opens a share link, based on `OrgMembership.viewEmailMode` (off/daily/immediate; **default `daily`**, a missing value reads as `daily`). Logic lives in `src/lib/notifications/viewNotifications.ts`, called as the third block of `sendNotificationEmails`.
+      - **Events**: new viewers are `ShareView` rows with `createdDate` after the member's `share_views` cursor, filtered by `RECIPIENT_ONLY_MATCH` (owner/teammate previews never notify); returns are `ShareVisit` rows with `startedAt` after the cursor whose (`shareId`, `botIdHash`) already had a `ShareView` at or before the member's window start. A reader who first opens and comes back inside the same window counts once, as a new viewer, not as a return. Archived/deleted documents are skipped; link state is not filtered.
+      - **Immediate**: every tick, at most one email per member per document, listing the new viewers since the cursor. Returns are never sent immediately; they go in a returns-only digest on the end-of-day tick (see Daily), sent only when someone came back. At most `limitEventsPerMember` (20) events per member per tick; the rest go on the next tick. A member who switches from `daily` to `immediate` has a cursor at their last digest (or cursor creation), so the first immediate tick sends every new viewer since then, capped at 7 days, one email per document.
+      - **Daily**: one digest per member per UTC day on the end-of-day tick (23:00 UTC onwards, `lastDigestDay` guard), with new viewers and returns grouped by document then link. Returns use their own horizon, `returnsNotifiedAt` on the same cursor (compared with `ShareVisit.createdDate`), which immediate ticks never move, so a return during an immediate period is reported in that member's returns-only digest, or in the full digest after a switch to daily. UTC for every workspace (`docUpdateDigestTimezone` unused). The digest window runs from the cursor (the latest event in the previous digest) to the tick, so it mostly covers the same UTC day, not "yesterday". At most 20 events per digest; the rest go in the next day's digest.
+      - **Cursor** (`share_views`): a member with no cursor gets one created at the tick's `now` and is sent nothing (no backfill), so the first tick after deploy (any tick, not only 23:00) starts every member's cursor and views before it are never emailed. A member on `off` has the cursor moved to `now` every tick, so views while off are dropped and turning emails back on cannot flood. An existing cursor older than `defaultLookbackDays` (7) is read as 7 days ago: events older than that past a stuck cursor are lost.
+      - **Identity**: Pro immediate emails name each viewer with pages and time; Pro digests give per-link counts and name the top viewer per link; Free gets which link was opened and when, with a Pro line. Every email carries a signed one-click **Turn off these emails** link (`/api/notifications/views/off`, 30-day token).
     - Send **doc update** emails based on `OrgMembership.docUpdateEmailMode` (off/daily/immediate).
     - Send **repo link request** emails when request-repo uploads complete, based on `OrgMembership.repoLinkRequestEmailMode`.
-  - **Reads**: `OrgMembership`, `DocChange` (doc replacements), `Upload` (completed v1 request uploads), `Doc`, `Project`, `User`
-  - **Writes**: `NotificationEmailCursor` (per-user cursor), `CronHealth(jobKey="notification-emails")`
-  - **Failure handling**: each recipient send is isolated; a failed send is logged, counted (`sendFailures`, per-category `failed`) and that user's cursor is **not** advanced, so the events are retried next run.
+  - **Reads**: `OrgMembership` (every live membership, whatever its modes, since `off` view-email members still need a cursor write; unsorted and capped by `limitMembers`, default 500, so above 500 memberships some members are skipped on every tick for all three email kinds), `ShareView` + `ShareVisit` + `ShareLink` (view emails), `DocChange` (doc replacements), `Upload` (completed v1 request uploads), `Doc`, `Project`, `User`, and the workspace plan (view email identity)
+  - **Writes**: `NotificationEmailCursor` (per-user cursor per key: `doc_updates`, `repo_link_requests`, `share_views`; for `share_views` this includes a write to `now` for every `off` member and every member without a cursor, each tick), `CronHealth(jobKey="notification-emails")`
+  - **Volume**: view emails are on by default for every member, so this job now emails every member of every workspace whose links were opened (a daily digest at minimum). See DEPLOY.md 4.6 for Resend plan sizing.
+  - **Failure handling**: each recipient send is isolated; a failed send is logged, counted (`sendFailures`, per-category `failed`) and that user's cursor is **not** advanced past the failed events, so they are retried. View emails: an immediate round stops at the first failed document and the cursor moves to 1 ms before that document's earliest event (documents sent before it may repeat); a failed daily digest leaves the cursor as it was and retries only on the remaining 23:00–23:59 UTC ticks, then on the next day's 23:00 run. A thrown error in one workspace's view block (for example no token secret in production) is counted in `views.errors` and logged, and no view emails go out for that workspace; nothing else surfaces it.
   - **Overlap**: holds a `CronHealth` lease (see "Overlap lease" below); returns `200 { skipped: "locked" }` if a run is already in progress.
   - **Idempotency**: safe under retries; per-user cursors prevent duplicates.
 - **Plan limits grace sweep (Free workspaces)**
@@ -174,7 +181,7 @@ Jobs that must not run concurrently (`notification-emails`, `stripe-credits-reco
 - `/api/cron/stripe-credits-reconcile` — **every 6 hours** (heavier Stripe sync + grant backstop)
 - `/api/cron/stripe-credits-report` — **hourly** (reports metered credits usage to Stripe)
 - `/api/cron/usage-agg-reconcile` — **hourly** (recomputes usage aggregates from ledger)
-- `/api/cron/notification-emails` — **every 5 minutes** (doc update + request repo notification emails)
+- `/api/cron/notification-emails` — **every 5 minutes** (view, doc update + request repo notification emails)
 - `/api/cron/plan-limits` — **hourly** (Free plan-limit grace period: start / remind / block + owner emails)
 
 If you deploy on Vercel, these are configured in `vercel.json` under `"crons"` so schedules are committed in-repo (recommended).

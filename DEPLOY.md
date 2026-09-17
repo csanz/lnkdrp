@@ -107,7 +107,7 @@ and do not link to or announce the site until the Announce step in G.
 
       | Job | UTC schedule | What it does |
       |---|---|---|
-      | `notification-emails` | every 5 min | doc-update emails and daily digests, download-request mail |
+      | `notification-emails` | every 5 min | view emails (on by default), doc-update emails and daily digests, download-request mail |
       | `credits-cycle-reconcile` | hourly :10 | Pro credit cycle grants (backstop; the webhook is primary). Checks up to 200 Pro subscriptions per run, stalest stored period end first, so a missed renewal is reached even with more than 200 |
       | `usage-agg-reconcile` | hourly :20 | rebuilds usage aggregates from the credit ledger |
       | `stripe-credits-report` | hourly :30 | sends on-demand credit usage to the Stripe meter — **this is billing** |
@@ -145,7 +145,9 @@ and do not link to or announce the site until the Announce step in G.
 **G. Before you announce (11, 12)**
 
 - [ ] Budgets and alerts: OpenAI, Vercel Spend Management, Atlas (including connections), Fly;
-      Resend on a paid plan — the free tier is 100 emails a day (11, Costs).
+      Resend on a paid plan — the free tier is 100 emails a day, and view emails are on by default
+      for every workspace member, so once links are opened after the deploy one day's 23:00 UTC
+      digests alone can pass it (4.6, 11 Costs).
 - [ ] One test restore of an Atlas snapshot, and read the restore procedure in 10 (11, Backups).
 - [ ] MCP egress IP, which the Firewall rule for MCP traffic in 12 targets:
       `fly ips allocate-egress -a lnkdrp-mcp -r iad`, then `fly apps restart lnkdrp-mcp` so the
@@ -250,6 +252,15 @@ Set `LNKDRP_SHARE_PASSWORD_SECRET` and `LNKDRP_ORG_INVITE_TOKEN_SECRET` before f
 invite tokens are saved encrypted with them, so an owner can read a link's password back and a
 workspace owner can copy a pending invite URL. Adding one later works like a rotation (11,
 Secrets rotation).
+
+`LNKDRP_NOTIFICATION_TOKEN_SECRET` is optional (`openssl rand -hex 32` if you set it). It signs the
+one-click **Turn off these emails** link in view emails (a 30-day HMAC token, no stored data) and
+falls back to `NEXTAUTH_SECRET` when unset. In production one of the two must be set or view
+emails cannot be built, and that failure is silent: the off page returns a 500, and the cron's
+view block throws for every workspace with something to send, which shows only as
+`views.errors` in the `notification-emails` result and in the logs. Setting it keeps the off links working through a `NEXTAUTH_SECRET`
+rotation; changing it (or adding it later) makes the off links in already-delivered emails show
+"This link is not valid" until the next email arrives with a new one.
 
 ## 4. Managed services, in order
 
@@ -457,8 +468,40 @@ checks it. Still keep the OpenAI project's membership to the people who may read
 ### 4.6 Email (Resend)
 
 Every outbound email goes through Resend's HTTP API: a confirmation to the requester and a notice
-to the owner on a download request, the approval link to the requester, doc-update emails
-(immediate, or a daily digest after 23:00 UTC), plan-limit grace emails and workspace invites.
+to the owner on a download request, the approval link to the requester, view emails and
+doc-update emails (each immediate, or a daily digest after 23:00 UTC), plan-limit grace emails and
+workspace invites.
+
+**View emails are on by default.** Every workspace member, existing and new, reads
+`viewEmailMode` = `daily` unless they turn it off, and no migration or opt-in step stands in
+front of the first send. The first `notification-emails` tick after the deploy (any tick, not
+the 23:00 one) creates every member's `share_views` cursor at that moment and sends nothing, so
+views from before that tick are never emailed. From the next 23:00 UTC tick on, every member of a
+workspace whose links were opened by a recipient since then gets a daily digest. Size Resend for
+it before deploying, not after:
+
+- **Daily digests**: up to one per member per workspace per UTC day. Count members across all
+  workspaces with share traffic; that number alone is the daily floor once links are being opened.
+- **Immediate**: members who switch to `immediate` get up to one email per document per 5-minute
+  tick while new recipients keep opening links, on every plan. The switch itself can send a burst:
+  the first immediate tick emails every recipient open since the member's last digest (up to 7
+  days), one email per document. Members on `off` have their cursor moved forward every tick, so
+  turning emails back on never sends what happened while they were off.
+- The Resend free tier (100 emails a day) is not enough for launch: put the account on a paid plan
+  whose daily and monthly quota covers the member count above plus the other email kinds, with
+  headroom. Over quota, sends fail and are retried, within limits. A failed immediate email
+  retries every 5 minutes from the first document that failed. A failed daily digest retries only
+  on the remaining 23:00–23:59 UTC ticks, then on the next day's 23:00 run. Once a stuck cursor is
+  more than 7 days old (`defaultLookbackDays`), the events older than that fall out of the window
+  and are never sent.
+- The cron reads every live membership, unsorted, capped at `limitMembers` (default 500). Above
+  500 memberships across all workspaces, some members get no view, doc-update or request emails
+  on a tick, and nothing reports it; raise the limit or fix the query before that point.
+- Every view email carries a signed one-click **Turn off these emails** link
+  (`/api/notifications/views/off`, no sign-in, 30 days; `LNKDRP_NOTIFICATION_TOKEN_SECRET` or
+  `NEXTAUTH_SECRET`, 3) and a **Change how often** link. The Terms and Privacy pages state that
+  these emails are on by default; they ship in the same release, so never deploy the pipeline
+  without them.
 
 1. Add the sending domain `lnkdrp.com` in Resend and create the DNS records it asks for (SPF and
    DKIM, plus a DMARC record if the domain has none). Wait for "Verified"; unverified domains
@@ -510,6 +553,7 @@ to the owner on a download request, the approval link to the requester, doc-upda
 | `NEXT_PUBLIC_APP_URL` | `https://lnkdrp.com`. Required: Checkout and portal return URLs fall back to the request origin (wrong behind a preview or proxy), but the Stripe webhook's rerun of skipped summaries after a credit pack or a pay-as-you-go activation falls back to `http://localhost:3001`, so without it purchased credits arrive and the reruns silently never start |
 | `RESEND_API_KEY`, `NOTIFICATION_EMAIL_FROM`, `INVITE_EMAIL_FROM` | from 4.6; leave `EMAIL_TRANSPORT` unset |
 | `LNKDRP_SHARE_PASSWORD_SECRET`, `LNKDRP_ORG_INVITE_TOKEN_SECRET` | generated (3); rotate only after a leak |
+| `LNKDRP_NOTIFICATION_TOKEN_SECRET` | optional; generated (3). Signs the one-click off link in view emails; unset, it falls back to `NEXTAUTH_SECRET` |
 | `ERROR_LOGGING_ENABLED` | `true`. The default is off outside development, so production records nothing in `errorevents` without it (Vercel Logs still get the one-line error summaries, 11 Logs) |
 | `STRIPE_CREDITS_METER_EVENT_NAME` | optional; defaults to `ai_credits` |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | optional; no current page reads it (Checkout is created on the server) |
@@ -1039,7 +1083,15 @@ Run in this order; each step depends on the previous.
     check in 5.4: `stripeevents`, `creditpurchases` and `subscriptions` must now exist with no
     `MISSING`.
 11. Email: request a download on a link with downloads off, from a private window; the owner
-    receives the notice from `NOTIFICATION_EMAIL_FROM` in the inbox, not spam.
+    receives the notice from `NOTIFICATION_EMAIL_FROM` in the inbox, not spam. Then set your
+    member's view emails to "Immediately" in Preferences, open a share link of the test document
+    from a private window, and within 5 minutes receive a view email for that document naming the
+    link (the subject names a labelled link only when that email has one viewer). Switching from
+    daily catches up: the first immediate tick also sends every other recipient open on the
+    workspace since your last digest (up to 7 days), one email per document, so expect those too
+    unless nobody else opened its links. Click
+    **Turn off these emails** in it on a phone or a signed-out browser: the page says view emails
+    are off, and Preferences now reads Off.
 12. Recreate `prod.env`, run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts`
     against production (read-only), and delete the file again.
 13. Revoke the test key from `/connect`; the sidebar returns to Not connected.
@@ -1333,7 +1385,8 @@ monitor is in 12.
   storage adds to the cluster cost) and the Fly organization. In Atlas → Alerts also add
   "Connections above 80% of the tier limit" (M10 allows 1,500) and "Replication oplog window below
   1 h". Put Resend on a plan above the free
-  tier (100 emails a day); over quota, sends fail. Blob storage only grows: the app never deletes a
+  tier (100 emails a day); over quota, sends fail. View emails are on by default for every
+  workspace member (4.6), so size the plan by member count, not by signups. Blob storage only grows: the app never deletes a
   blob, including old versions and deleted documents.
 - **Scaling:** the web app scales with Vercel, but each function instance can hold up to 10
   connections per replica-set member (`maxPoolSize` 10, released only after 30 s idle; the code
@@ -1348,7 +1401,9 @@ monitor is in 12.
   `fly logs -a lnkdrp-mcp` must not show `realtime: socket error, polling continues`; nothing else
   shows that MCP was missed. `NEXTAUTH_SECRET` rotation signs everyone
   out and voids summary reruns started in the last 5 minutes; if `REALTIME_SECRET` or the two
-  secrets in 3 are unset, they fall back to it, so rotating it also breaks what those protect.
+  secrets in 3 are unset, they fall back to it, so rotating it also breaks what those protect
+  (and, while `LNKDRP_NOTIFICATION_TOKEN_SECRET` is unset, the one-click off links in view emails
+  already delivered).
   Changing `LNKDRP_SHARE_PASSWORD_SECRET` (or adding it later) makes every recipient re-enter link
   passwords, and owners see existing link passwords as empty until they set them again; password
   checks keep working. Changing `LNKDRP_ORG_INVITE_TOKEN_SECRET` hides the links of pending invites
