@@ -186,10 +186,8 @@ export type CreditsSnapshotLite = {
   cycleEnd: string | null;
   resetAt: string | null;
   /**
-   * True when the workspace can be billed for on-demand credits — a Pro workspace, or a Free one
-   * that has added a card for pay-as-you-go. Free's one-time 50 starter credits carry no recurring
-   * reset any more, so this is what tells an agent a "free" `plan` can still keep working past
-   * them, rather than needing an actual plan upgrade.
+   * True when the workspace can be billed for on-demand credits, which is Pro only (9556490). A Free
+   * workspace never has on-demand: past its one-time starter credits it buys credit packs instead.
    */
   onDemandEnabled: boolean;
 };
