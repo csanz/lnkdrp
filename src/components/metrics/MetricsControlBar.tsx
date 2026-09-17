@@ -26,6 +26,8 @@ export type MetricsControlBarProps = {
   onShareId: (shareId: string | null) => void;
   onDays: (days: MetricsDays) => void;
   onMoreHistory: () => void;
+  /** Shown right-aligned after the selects from 1024px (the section jump chips). */
+  children?: React.ReactNode;
 };
 
 function linkOptionLabel(l: LinkRow): string {
@@ -34,7 +36,7 @@ function linkOptionLabel(l: LinkRow): string {
 }
 
 /** Link and range selects. */
-export default function MetricsControlBar({ links, shareId, days, tier, onShareId, onDays, onMoreHistory }: MetricsControlBarProps) {
+export default function MetricsControlBar({ links, shareId, days, tier, onShareId, onDays, onMoreHistory, children }: MetricsControlBarProps) {
   const options = (links ?? []).filter((l) => l.status !== "deleted");
   const selectedKnown = !shareId || options.some((l) => l.shareId === shareId);
 
@@ -44,7 +46,7 @@ export default function MetricsControlBar({ links, shareId, days, tier, onShareI
         <Select
           aria-label="Link"
           variant="panel"
-          className="h-10 min-w-0 flex-1 truncate sm:max-w-[320px] sm:flex-none"
+          className="h-11 min-w-0 flex-1 truncate sm:h-10 sm:max-w-[320px] sm:flex-none"
           value={shareId ?? ""}
           onChange={(e) => onShareId(e.target.value || null)}
         >
@@ -60,7 +62,7 @@ export default function MetricsControlBar({ links, shareId, days, tier, onShareI
           <Select
             aria-label="Range"
             variant="panel"
-            className="h-10 min-w-0 flex-1 sm:flex-none"
+            className="h-11 min-w-0 flex-1 sm:h-10 sm:flex-none"
             value="7"
             onChange={(e) => {
               if (e.target.value === MORE_HISTORY) onMoreHistory();
@@ -73,7 +75,7 @@ export default function MetricsControlBar({ links, shareId, days, tier, onShareI
           <Select
             aria-label="Range"
             variant="panel"
-            className="h-10 min-w-0 flex-1 sm:flex-none"
+            className="h-11 min-w-0 flex-1 sm:h-10 sm:flex-none"
             value={String(days)}
             onChange={(e) => onDays(Number(e.target.value) as MetricsDays)}
           >
@@ -84,6 +86,7 @@ export default function MetricsControlBar({ links, shareId, days, tier, onShareI
             ))}
           </Select>
         )}
+        {children ? <div className="ml-auto hidden lg:block">{children}</div> : null}
       </div>
     </div>
   );

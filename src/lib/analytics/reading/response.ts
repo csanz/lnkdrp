@@ -1,5 +1,8 @@
-import { ACTIVE_WINDOW_MS, MAX_VISITS_LOADED, PERSON_VISITS_LIMIT, READ_MIN_MS } from "./constants";
+import { windowStartUtc } from "../shareViewAggregates";
+import { ACTIVE_WINDOW_MS, CALLOUT_MIN_PEOPLE, MAX_VISITS_LOADED, PERSON_VISITS_LIMIT, READ_MIN_MS, TYPICAL_MIN_READERS } from "./constants";
 import { buildAttention, computeHot, linkStatus } from "./attention";
+import { dayKeyInZone, dayKeysBetween } from "./days";
+import { dwellRatio } from "./format";
 import { toMs } from "./normalize";
 import { calloutGateText, computeCallouts, computePageTable, median } from "./pageTable";
 import { pageMetaFromDoc, type DocPagesInput } from "./pageLabels";
@@ -8,15 +11,18 @@ import { buildVerdict } from "./verdict";
 import {
   BASIC_LINK_KEYS,
   BASIC_READING_KEYS,
+  type AllTimePerson,
   type HotReason,
   type LinkInput,
   type LinkRow,
   type MatrixRow,
   type Person,
+  type PersonPageRow,
   type PersonResponse,
   type ReadingCore,
   type ReadingResponse,
   type ReadingTier,
+  type Stop,
   type ViewRowInput,
   type VisitInput,
 } from "./types";
@@ -51,6 +57,8 @@ export function buildReadingCore(input: {
   visits: VisitInput[];
   links: LinkInput[];
   lastOpenedRows: Array<{ shareId: string; lastMs: number }>;
+  /** Every person key the doc has ever had; numbers anonymous people doc-wide when present. */
+  allTimePeople?: AllTimePerson[];
   doc: DocPagesInput;
   completedUploads: number;
   now: number;
@@ -58,7 +66,14 @@ export function buildReadingCore(input: {
   const slideCount = Array.isArray(input.doc.slideNodes) ? input.doc.slideNodes.length : 0;
   const P = slideCount > 0 ? slideCount : inferPageCount(input.visits);
   const meta = pageMetaFromDoc(input.doc, P);
-  const { people, unmatchedVisits, droppedEvents } = buildPeople(input.rows, input.visits, input.links, P, input.now);
+  const { people, unmatchedVisits, droppedEvents, anonNumberByKey } = buildPeople(
+    input.rows,
+    input.visits,
+    input.links,
+    P,
+    input.now,
+    input.allTimePeople ?? null,
+  );
   const lastOpenedByShareId = new Map<string, number>();
   for (const r of input.lastOpenedRows) {
     if (!r || typeof r.lastMs !== "number" || !Number.isFinite(r.lastMs)) continue;
@@ -71,6 +86,8 @@ export function buildReadingCore(input: {
     links: input.links,
     people,
     lastOpenedByShareId,
+    allTimeByKey: new Map((input.allTimePeople ?? []).map((a) => [a.key, a])),
+    anonNumberByKey,
     hotByKey: computeHot(people, P),
     docPages: computePageTable(
       people.filter((p) => p.hasDetail),
@@ -139,10 +156,35 @@ function buildLinkRows(core: ReadingCore, tier: ReadingTier, now: number): LinkR
   return rows.sort(compareLinkRows);
 }
 
+/**
+ * Scoped people by the calendar day (in `timeZone`) of their last activity, from the window's first
+ * day through today, zero-filled. Activity outside those days is clamped in so the bars sum to people.
+ */
+export function buildPeopleSeries(people: Person[], days: number, now: number, timeZone: string): ReadingResponse["series"] {
+  const first = dayKeyInZone(windowStartUtc(days, new Date(now)).getTime(), timeZone);
+  const last = dayKeyInZone(now, timeZone);
+  const counts = new Map(dayKeysBetween(first, last).map((day) => [day, 0]));
+  for (const p of people) {
+    const raw = dayKeyInZone(p.lastSeenMs, timeZone);
+    const day = raw < first ? first : raw > last ? last : raw;
+    counts.set(day, (counts.get(day) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1)).map(([day, n]) => ({ day, people: n }));
+}
+
 /** Response for `/pages`: scope counts and links for both tiers, page and person detail for deep only. */
 export function buildReadingResponse(
   core: ReadingCore,
-  a: { tier: ReadingTier; days: number; daysLimit: number | null; shareId: string | null; matrixLimit: number; now: number },
+  a: {
+    tier: ReadingTier;
+    days: number;
+    daysLimit: number | null;
+    shareId: string | null;
+    matrixLimit: number;
+    now: number;
+    /** IANA zone for `series` day keys; UTC when omitted. */
+    tz?: string;
+  },
 ): ReadingResponse {
   const scoped = a.shareId ? core.people.filter((p) => p.shareId === a.shareId) : core.people;
   const allTime = a.shareId
@@ -168,6 +210,7 @@ export function buildReadingResponse(
     lastOpenedAtAllTime: iso(allTime),
     links: buildLinkRows(core, a.tier, a.now),
     attention: buildAttention({ people: scoped, links: scopeLinks, openedShareIds: opened, hotByKey: core.hotByKey, now: a.now, tier: a.tier }),
+    series: buildPeopleSeries(scoped, a.days, a.now, a.tz ?? "UTC"),
   };
 
   if (a.tier === "basic") return toBasicReading(base);
@@ -216,6 +259,7 @@ export function buildMatrixRow(p: Person, P: number, now: number, hotByKey: Map<
   return {
     personId: p.personId,
     name: p.name,
+    anonNumber: p.anonNumber,
     source: p.source,
     email: p.email,
     shareId: p.shareId,
@@ -232,21 +276,41 @@ export function buildMatrixRow(p: Person, P: number, now: number, hotByKey: Map<
   };
 }
 
-/** Response for `/pages/person`: verdict, facts, page bars and visits for one person. */
-export function buildPersonResponse(core: ReadingCore, person: Person, a: { days: number; now: number }): PersonResponse {
-  const labelByPage = new Map(core.meta.map((m) => [m.page, m.label]));
-  const verdict = buildVerdict(person, core.P, (page) => labelByPage.get(page) ?? null);
+/**
+ * Response for `/pages/person`: verdict, facts, page bars and visits for one person. `tz` (IANA) sets
+ * the calendar the verdict's "came back" wording counts days in.
+ */
+export function buildPersonResponse(core: ReadingCore, person: Person, a: { days: number; now: number; tz?: string }): PersonResponse {
+  // One typical time per page everywhere: the doc page table's (everyone included), so the sheet,
+  // the verdict, the hot chip and the page table never show two different figures for a page.
+  const typicalFor = (page: number) => {
+    const row = core.docPages[page - 1];
+    return row ? { typicalMs: row.typicalMs, readCount: row.readCount } : null;
+  };
 
-  const pages = core.meta.map((m) => {
+  const shortLabelByPage = new Map(core.meta.map((m) => [m.page, m.shortLabel ?? m.label]));
+  const verdict = buildVerdict(person, core.P, (page) => shortLabelByPage.get(page) ?? null, { tz: a.tz, typicalFor });
+
+  const totals = core.people.filter((o) => o.hasDetail && o.totalMs > 0).map((o) => o.totalMs);
+  const typicalTotalMs = totals.length >= TYPICAL_MIN_READERS ? median(totals) : null;
+
+  const pages: PersonPageRow[] = core.meta.map((m) => {
     const cell = person.cells[m.page - 1];
+    const ms = cell?.ms ?? 0;
+    const state = cell?.state ?? ("unreached" as const);
+    const typicalMs = core.docPages[m.page - 1]?.typicalMs ?? null;
+    const readCount = core.docPages[m.page - 1]?.readCount ?? 0;
     return {
       page: m.page,
       label: m.label,
+      shortLabel: m.shortLabel ?? m.label,
       thumbUrl: m.thumbUrl,
-      ms: cell?.ms ?? 0,
-      state: cell?.state ?? ("unreached" as const),
+      ms,
+      state,
       revisits: person.revisitsByPage[m.page - 1] ?? 0,
-      typicalMs: core.docPages[m.page - 1]?.typicalMs ?? null,
+      typicalMs,
+      readCount,
+      ratio: state === "read" && typicalMs !== null && typicalMs > 0 && readCount >= CALLOUT_MIN_PEOPLE ? dwellRatio(ms, typicalMs) : null,
       leftHere: person.exitPage === m.page,
     };
   });
@@ -264,6 +328,7 @@ export function buildPersonResponse(core: ReadingCore, person: Person, a: { days
     person: {
       personId: person.personId,
       name: person.name,
+      anonNumber: person.anonNumber,
       source: person.source,
       email: person.email,
       shareId: person.shareId,
@@ -282,6 +347,7 @@ export function buildPersonResponse(core: ReadingCore, person: Person, a: { days
       reachedCount: person.reachedCount,
       maxPage: person.maxPage,
       exitPage: person.exitPage,
+      typicalTotalMs,
     },
     pages,
     visits: shown.map((v) => ({
@@ -292,10 +358,29 @@ export function buildPersonResponse(core: ReadingCore, person: Person, a: { days
       timed: v.timed,
       exitPage: v.exitPage,
       exitInferred: v.exitInferred,
-      stops: v.stops.map((s) => ({ page: s.page, ms: s.ms, revisit: s.revisit })),
+      stops: visitSteps(v.stops, v.untimedTail),
       seen: v.seen,
-      passedPages: v.timed ? v.seen.filter((page) => (v.dwellByPage[page - 1] ?? 0) < READ_MIN_MS) : [],
+      passedPages: v.timed ? v.seen.filter((page) => (v.dwellByPage[page - 1] ?? 0) < READ_MIN_MS && !v.untimedTail.includes(page)) : [],
     })),
     more: { visits: ordered.length - shown.length },
   };
+}
+
+/**
+ * Timed stops plus a passed step (ms 0) wherever a turn landed on a page with no timed stop after it.
+ * A visit whose final turn lost its flush ends with untimed steps instead: the turn's target, then
+ * each later page of `untimedTail` in ascending order.
+ */
+export function visitSteps(stops: Stop[], untimedTail: number[] = []): PersonResponse["visits"][number]["stops"] {
+  const out: PersonResponse["visits"][number]["stops"] = [];
+  stops.forEach((s, i) => {
+    out.push({ page: s.page, ms: s.ms, revisit: s.revisit, passed: false, untimed: false });
+    const next = stops[i + 1];
+    if (!next && untimedTail.length > 0) {
+      for (const page of untimedTail) out.push({ page, ms: 0, revisit: false, passed: false, untimed: true });
+    } else if (s.toPage !== null && (!next || next.page !== s.toPage)) {
+      out.push({ page: s.toPage, ms: 0, revisit: false, passed: true, untimed: false });
+    }
+  });
+  return out;
 }

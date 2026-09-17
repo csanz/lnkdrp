@@ -6,7 +6,31 @@ import { describe, expect, test } from "vitest";
 
 import { STOP_CAP_MS, buildPeople, normalizeVisit, toMs } from "@/lib/analytics/reading";
 
-import { F1, F10, F2, F3, F4, F5, F6, F7, F9, SK1, T0, hex64, makeRow, makeVisit, personOf } from "./fixtures/readingFixtures";
+import {
+  F1,
+  F10,
+  F2,
+  F3,
+  F4,
+  F5,
+  F6,
+  F7,
+  F9,
+  FLIPPER,
+  ISAAC,
+  LEGACY_TURN,
+  LF1,
+  LF2,
+  MAYA,
+  NADIA,
+  SK1,
+  T0,
+  fixture,
+  hex64,
+  makeRow,
+  makeVisit,
+  personOf,
+} from "./fixtures/readingFixtures";
 
 describe("normalizeVisit", () => {
   test("F1 legacy events merge by adjacency only", () => {
@@ -40,7 +64,72 @@ describe("normalizeVisit", () => {
 
   test("F4 adjacent legacy events on one page make one stop", () => {
     const v = normalizeVisit(F4.visits[0], 3);
-    expect(v.stops).toEqual([{ page: 2, ms: 7000, revisit: false, reason: null }]);
+    expect(v.stops).toEqual([{ page: 2, ms: 7000, revisit: false, reason: null, toPage: null }]);
+  });
+
+  test("a visit ending on a turn exits on the turn's target (lost final flush)", () => {
+    const nadia = normalizeVisit(NADIA.visits[0], 12);
+    expect(nadia.exitPage).toBe(12);
+    expect(nadia.exitInferred).toBe(true);
+    expect(nadia.timed).toBe(true);
+    expect(nadia.stops[10]).toMatchObject({ page: 11, reason: "turn", toPage: 12 });
+    expect(nadia.untimedTail).toEqual([12]);
+
+    const maya = normalizeVisit(MAYA.visits[0], 12);
+    expect(maya.exitPage).toBe(2);
+    expect(maya.exitInferred).toBe(true);
+    expect(maya.untimedTail).toEqual([2]);
+  });
+
+  test("LF1: later untimed pages after a lost turn form the tail; activity after the flush exits on the last of them", () => {
+    const v = normalizeVisit(LF1.visits[0], 12);
+    expect(v.untimedTail).toEqual([6, 7, 8]);
+    expect(v.exitPage).toBe(8);
+    expect(v.exitInferred).toBe(true);
+    expect(v.lastEventAtMs - v.startedAtMs).toBe(6730 + 3479 + 2150);
+  });
+
+  test("LF2: no activity after the lost turn's flush exits on the turn's target", () => {
+    const v = normalizeVisit(LF2.visits[0], 12);
+    expect(v.untimedTail).toEqual([6, 7, 8]);
+    expect(v.exitPage).toBe(6);
+    expect(v.exitInferred).toBe(true);
+  });
+
+  test("the tail always holds the target, even one timed earlier, but no later page that was timed or turned to earlier", () => {
+    const v = normalizeVisit(
+      makeVisit({ shareId: "shareT9", botIdHash: hex64("t9"), events: [[3, 4000, "turn", 4], [4, 5000, "turn", 5], [7, 3000, "turn", 3]], seen: [1, 3, 4, 5, 6, 7] }),
+      8,
+    );
+    expect(v.untimedTail).toEqual([3, 6]);
+    expect(v.exitPage).toBe(3);
+  });
+
+  test("a turn without toPage, or with a target outside seen or 1..P, keeps the latest event's page", () => {
+    const legacy = normalizeVisit(LEGACY_TURN.visits[0], 12);
+    expect(legacy.exitPage).toBe(1);
+    expect(legacy.exitInferred).toBe(false);
+    expect(legacy.stops[0].toPage).toBeNull();
+    expect(legacy.untimedTail).toEqual([]);
+
+    const outside = makeVisit({ shareId: "shareT1", botIdHash: hex64("t1"), events: [[1, 5000, "turn", 3]], seen: [1] });
+    expect(normalizeVisit(outside, 12)).toMatchObject({ exitPage: 1, exitInferred: false });
+    const pastP = makeVisit({ shareId: "shareT1", botIdHash: hex64("t2"), events: [[1, 5000, "turn", 13]], seen: [1] });
+    expect(normalizeVisit(pastP, 12).stops[0].toPage).toBeNull();
+    const notTurn = makeVisit({ shareId: "shareT1", botIdHash: hex64("t3"), events: [[1, 5000, "pagehide", 2]], seen: [1, 2] });
+    expect(normalizeVisit(notTurn, 12)).toMatchObject({ exitPage: 1, exitInferred: false });
+  });
+
+  test("a turn only sets toPage on the stop it ends", () => {
+    const v = normalizeVisit(FLIPPER.visits[0], 12);
+    expect(v.stops.map((s) => [s.page, s.toPage, s.revisit])).toEqual([
+      [1, 11, false],
+      [11, 12, false],
+      [11, 10, true],
+      [10, null, false],
+    ]);
+    expect(v.exitPage).toBe(10);
+    expect(v.exitInferred).toBe(false);
   });
 
   test("F9 stop dwell is capped", () => {
@@ -144,9 +233,63 @@ describe("buildPeople", () => {
     expect(p.cells.slice(1).every((c) => c.state === "unreached")).toBe(true);
   });
 
+  test("an exit reached by a lost turn is unknown, not passed", () => {
+    const nadia = personOf(NADIA);
+    expect(nadia.exitPage).toBe(12);
+    expect(nadia.cells[11]).toEqual({ ms: 0, state: "unknown", revisit: false });
+    expect(nadia.cells.slice(0, 11).every((c) => c.state === "read")).toBe(true);
+    expect(nadia.readPages).toBe(11);
+
+    const maya = personOf(MAYA);
+    expect(maya.exitPage).toBe(2);
+    expect(maya.cells.map((c) => c.state)).toEqual(["read", "unknown", ...new Array(10).fill("unreached")]);
+
+    const legacy = personOf(LEGACY_TURN);
+    expect(legacy.exitPage).toBe(1);
+    expect(legacy.cells[1].state).toBe("passed");
+  });
+
+  test("LF1 and LF2: every untimed tail page is unknown, never passed", () => {
+    for (const fx of [LF1, LF2]) {
+      const p = personOf(fx);
+      expect(p.cells.map((c) => c.state)).toEqual(["passed", "read", "passed", "passed", "read", "unknown", "unknown", "unknown", ...new Array(4).fill("unreached")]);
+      expect(p.readPages).toBe(2);
+    }
+    expect(personOf(LF1).exitPage).toBe(8);
+    expect(personOf(LF2).exitPage).toBe(6);
+  });
+
+  test("a tail page timed in another visit keeps its timed state", () => {
+    const fx = fixture(12, [
+      {
+        name: "LFother",
+        visits: [
+          { visitId: "lfo-1", start: T0, events: [[7, 5000, "pagehide"]], seen: [7] },
+          { visitId: "lfo-2", start: T0 + 3_600_000, events: [[2, 6730, "turn", 3], [5, 3479, "turn", 6]], seen: [1, 2, 3, 4, 5, 6, 7, 8], tailMs: 2150 },
+        ],
+      },
+    ]);
+    const p = personOf(fx);
+    expect(p.cells.slice(5, 8).map((c) => c.state)).toEqual(["unknown", "read", "unknown"]);
+  });
+
+  test("a flip on a timed person's page that is not the untimed exit stays passed", () => {
+    const p = personOf(FLIPPER);
+    expect(p.exitPage).toBe(10);
+    expect(p.cells[11].state).toBe("passed");
+  });
+
+  test("pages before the furthest page that were never on screen are jumped", () => {
+    const p = personOf(ISAAC);
+    expect(p.cells.map((c) => c.state)).toEqual(["read", ...new Array(8).fill("jumped"), "read", "unreached", "unreached", "unreached"]);
+    expect(p.maxPage).toBe(10);
+    expect(p.reachedCount).toBe(2);
+  });
+
   test("F6 returner: union of seen pages, exit from the latest visit, totalMs over visits", () => {
     const p = personOf(F6);
     expect(p.seen).toEqual([1, 2, 5, 6]);
+    expect(p.cells.map((c) => c.state)).toEqual(["read", "read", "jumped", "jumped", "read", "read"]);
     expect(p.maxPage).toBe(6);
     expect(p.exitPage).toBe(6);
     expect(p.latestVisit?.visitId).toBe("f6-v2");

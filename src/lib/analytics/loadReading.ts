@@ -10,6 +10,7 @@ import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { UploadModel } from "@/lib/models/Upload";
 import {
   LAST_ACTIVITY_EXPR,
+  LINK_VIEWER_KEY_EXPR,
   RECIPIENT_ONLY_MATCH,
   activityWindowMatch,
   windowStartUtc,
@@ -17,7 +18,9 @@ import {
 import {
   MAX_VISITS_LOADED,
   buildReadingCore,
+  type AllTimePerson,
   type DocPagesInput,
+  type PersonIdParts,
   type LinkInput,
   type RawPageEvent,
   type ReadingCore,
@@ -47,7 +50,14 @@ function dateOrNull(v: unknown): Date | null {
   return v instanceof Date && Number.isFinite(v.getTime()) ? v : null;
 }
 
-/** Read links, in-range rows and visits, all-time last-opened per link and completed uploads, then build the core. */
+/** Aggregation expression: 1 when a string field holds more than whitespace, else 0. */
+function hasTextExpr(field: string): Record<string, unknown> {
+  return {
+    $gt: [{ $strLenCP: { $trim: { input: { $cond: [{ $eq: [{ $type: field }, "string"] }, field, ""] } } } }, 0],
+  };
+}
+
+/** Read links, in-range rows and visits, all-time activity per person key and completed uploads, then build the core. */
 export async function loadReadingCore(a: {
   docId: string | Types.ObjectId;
   doc: DocPagesInput;
@@ -89,10 +99,23 @@ export async function loadReadingCore(a: {
       .sort({ lastEventAt: -1 })
       .limit(MAX_VISITS_LOADED)
       .lean<Array<Record<string, unknown>>>(),
+    // One all-time pass per person key: link last-opened is the max over its keys, and anonymous
+    // numbering ranks keys by first seen so it never depends on the range or link filter.
     ShareViewModel.aggregate([
       { $match: { docId, ...RECIPIENT_ONLY_MATCH } },
-      { $group: { _id: "$shareId", last: { $max: LAST_ACTIVITY_EXPR } } },
-    ]) as Promise<Array<{ _id: unknown; last?: unknown }>>,
+      {
+        $group: {
+          _id: LINK_VIEWER_KEY_EXPR,
+          last: { $max: LAST_ACTIVITY_EXPR },
+          first: { $min: "$createdDate" },
+          named: {
+            $max: {
+              $cond: [{ $or: [hasTextExpr("$viewerName"), hasTextExpr("$viewerEmail"), hasTextExpr("$viewerEmailSnapshot")] }, 1, 0],
+            },
+          },
+        },
+      },
+    ]) as Promise<Array<{ _id?: { shareId?: unknown; viewer?: unknown }; last?: unknown; first?: unknown; named?: unknown }>>,
     UploadModel.countDocuments({ docId, status: "completed" }),
   ]);
 
@@ -143,24 +166,70 @@ export async function loadReadingCore(a: {
             leftAt: dateOrNull(ev.leftAt),
             durationMs: ev.durationMs,
             reason: str(ev.reason),
+            toPage: ev.toPage,
           } satisfies RawPageEvent;
         }),
         timingVersion: typeof v.timingVersion === "number" ? v.timingVersion : null,
       };
     });
 
-  const lastOpenedRows = lastOpenedAgg
-    .map((r) => ({ shareId: str(r._id), last: dateOrNull(r.last) }))
-    .filter((r): r is { shareId: string; last: Date } => r.shareId !== null && r.last !== null)
-    .map((r) => ({ shareId: r.shareId, lastMs: r.last.getTime() }));
+  const allTimePeople: AllTimePerson[] = [];
+  const lastByShareId = new Map<string, number>();
+  for (const r of lastOpenedAgg) {
+    const shareId = str(r._id?.shareId);
+    const viewer = str(r._id?.viewer);
+    const last = dateOrNull(r.last);
+    if (!shareId || !viewer || !last) continue;
+    const lastMs = last.getTime();
+    lastByShareId.set(shareId, Math.max(lastByShareId.get(shareId) ?? lastMs, lastMs));
+    allTimePeople.push({
+      key: `${shareId}|${viewer}`,
+      shareId,
+      firstMs: dateOrNull(r.first)?.getTime() ?? lastMs,
+      lastMs,
+      anonymousKey: viewer.startsWith("a:"),
+      introduced: r.named === 1,
+    });
+  }
+  const lastOpenedRows = [...lastByShareId].map(([shareId, lastMs]) => ({ shareId, lastMs }));
 
   return buildReadingCore({
     rows,
     visits,
     links,
     lastOpenedRows,
+    allTimePeople,
     doc: a.doc,
     completedUploads,
     now: a.now,
   });
+}
+
+/**
+ * Who a person id belongs to when they have no activity in the range: the name from their latest
+ * ShareView row (else their anonymous number) and their all-time last activity. Null when the doc
+ * has never had that person.
+ */
+export async function loadPersonStub(a: {
+  docId: string | Types.ObjectId;
+  parts: PersonIdParts;
+  core: ReadingCore;
+}): Promise<{ name: string; lastSeen: string | null } | null> {
+  const key = `${a.parts.shareId}|${a.parts.kind}:${a.parts.id}`;
+  const allTime = a.core.allTimeByKey.get(key);
+  if (!allTime) return null;
+  const docId = typeof a.docId === "string" ? new Types.ObjectId(a.docId) : a.docId;
+  const viewerMatch = a.parts.kind === "u" ? { viewerUserId: new Types.ObjectId(a.parts.id) } : { botIdHash: a.parts.id, viewerUserId: null };
+  const row = await ShareViewModel.findOne({ docId, shareId: a.parts.shareId, ...RECIPIENT_ONLY_MATCH, ...viewerMatch })
+    .sort({ lastViewedAt: -1, updatedDate: -1 })
+    .select({ viewerName: 1, viewerEmail: 1, viewerEmailSnapshot: 1 })
+    .lean<Record<string, unknown>>();
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const email =
+    a.parts.kind === "u"
+      ? (text(row?.viewerEmailSnapshot) ?? text(row?.viewerEmail))
+      : (text(row?.viewerEmail) ?? text(row?.viewerEmailSnapshot));
+  const n = a.core.anonNumberByKey.get(key);
+  const name = text(row?.viewerName) ?? email ?? (n !== undefined ? `Anonymous reader ${n}` : "Anonymous reader");
+  return { name, lastSeen: new Date(allTime.lastMs).toISOString() };
 }

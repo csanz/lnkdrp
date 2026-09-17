@@ -21,8 +21,8 @@ export const T0 = Date.parse("2026-09-10T12:00:00.000Z");
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
 
-/** (page, durationMs, reason) or a gap of wall time between two events. */
-export type EventSpec = [page: number, durationMs: number, reason?: string | null] | { gap: number };
+/** (page, durationMs, reason, toPage) or a gap of wall time between two events. */
+export type EventSpec = [page: number, durationMs: number, reason?: string | null, toPage?: number] | { gap: number };
 
 /** Deterministic, distinct 64-hex botIdHash for a label. */
 export function hex64(label: string): string {
@@ -52,6 +52,8 @@ export type VisitSpec = {
   seen?: number[];
   timeSpentMs?: number;
   tv?: number | null;
+  /** Wall time between the last event's leftAt and the visit's lastEventAt (default 0). */
+  tailMs?: number;
 };
 
 let visitCounter = 0;
@@ -68,13 +70,14 @@ export function makeVisit(spec: VisitSpec): VisitInput {
       cursor += ev.gap;
       continue;
     }
-    const [pageNumber, durationMs, reason] = ev;
+    const [pageNumber, durationMs, reason, toPage] = ev;
     pageEvents.push({
       pageNumber,
       enteredAt: new Date(cursor),
       leftAt: new Date(cursor + durationMs),
       durationMs,
       ...(reason !== undefined ? { reason } : {}),
+      ...(toPage !== undefined ? { toPage } : {}),
     });
     pages.push(pageNumber);
     cursor += durationMs;
@@ -87,7 +90,7 @@ export function makeVisit(spec: VisitSpec): VisitInput {
     shareId: spec.shareId,
     botIdHash: spec.botIdHash,
     startedAt: new Date(pageEvents.length ? (pageEvents[0].enteredAt as Date) : start),
-    lastEventAt: new Date(pageEvents.length ? (pageEvents[pageEvents.length - 1].leftAt as Date) : start),
+    lastEventAt: new Date((pageEvents.length ? (pageEvents[pageEvents.length - 1].leftAt as Date).getTime() : start) + (spec.tailMs ?? 0)),
     timeSpentMs: spec.timeSpentMs ?? sum,
     pagesSeen: spec.seen ?? [...new Set(pages)],
     pageEvents,
@@ -193,7 +196,10 @@ export function docOf(P: number, labels: Record<number, string> = {}) {
 }
 
 /** A ReadingCore for a fixture. */
-export function coreOf(fx: Fixture, extra: { lastOpenedRows?: Array<{ shareId: string; lastMs: number }>; completedUploads?: number } = {}): ReadingCore {
+export function coreOf(
+  fx: Fixture,
+  extra: { lastOpenedRows?: Array<{ shareId: string; lastMs: number }>; completedUploads?: number; doc?: ReturnType<typeof docOf> } = {},
+): ReadingCore {
   const lastOpenedRows =
     extra.lastOpenedRows ??
     [...new Set(fx.rows.map((r) => r.shareId))].map((shareId) => ({
@@ -205,7 +211,7 @@ export function coreOf(fx: Fixture, extra: { lastOpenedRows?: Array<{ shareId: s
     visits: fx.visits,
     links: fx.links,
     lastOpenedRows,
-    doc: docOf(fx.P),
+    doc: extra.doc ?? docOf(fx.P),
     completedUploads: extra.completedUploads ?? 1,
     now: fx.now,
   });
@@ -259,6 +265,150 @@ export const F11 = fixture(1, [{ name: "F11", visits: [{ events: [[1, 15000, "pa
 export const F12 = fixture(3, [{ name: "F12", visits: [{ events: [[1, 12000, "turn"], [2, 1800, "turn"], [3, 15000, "pagehide"]] }] }]);
 
 export const SK1 = fixture(10, [{ name: "SK1", visits: [{ events: [[10, 3000, "pagehide"]], seen: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] }] }]);
+
+// ---------------------------------------------------------------------------------------------
+// Live-found shapes: lost final flush, jumpers, short intense readers, flipped-through stops
+// ---------------------------------------------------------------------------------------------
+
+/** Turned page by page through 1..11; the last event is the turn to 12 (its flush was lost). */
+export const NADIA = fixture(12, [
+  {
+    name: "Nadia",
+    visits: [{ events: Array.from({ length: 11 }, (_, i): EventSpec => [i + 1, 5000, "turn", i + 2]), seen: Array.from({ length: 12 }, (_, i) => i + 1) }],
+  },
+]);
+
+/** Stayed on page 1, turned to 2, then the tab died. */
+export const MAYA = fixture(12, [{ name: "Maya", visits: [{ events: [[1, 5336, "turn", 2]], seen: [1, 2] }] }]);
+
+/** A legacy turn without toPage keeps the page-of-the-latest-event rule. */
+export const LEGACY_TURN = fixture(12, [{ name: "Legacy", visits: [{ events: [[1, 5336, "turn"]], seen: [1, 2] }] }]);
+
+/**
+ * Anonymous reader 16's shape: timed only on page 2 (turn → 3) and page 5 (turn → 6), pages 1–8 seen,
+ * and activity 2.15s after the last flush, so pages 7–8 were flipped to after the lost turn.
+ */
+export const LF1 = fixture(12, [
+  { name: "LF1", visits: [{ events: [[2, 6730, "turn", 3], [5, 3479, "turn", 6]], seen: [1, 2, 3, 4, 5, 6, 7, 8], tailMs: 2150 }] },
+]);
+
+/** LF1 with no activity after the last flush. */
+export const LF2 = fixture(12, [{ name: "LF2", visits: [{ events: [[2, 6730, "turn", 3], [5, 3479, "turn", 6]], seen: [1, 2, 3, 4, 5, 6, 7, 8] }] }]);
+
+/** Opened page 1, jumped straight to page 10 of 13 and left there. */
+export const ISAAC = fixture(13, [{ name: "Isaac", visits: [{ events: [[1, 7700, "turn", 10], [10, 57900, "pagehide"]], seen: [1, 10] }] }]);
+
+/** A short, intense reader: 4.7s on page 1, 70s on page 2, then left. */
+export const INTENSE = fixture(12, [{ name: "Intense", visits: [{ events: [[1, 4700, "turn", 2], [2, 70000, "pagehide"]], seen: [1, 2] }] }]);
+
+/** Flipped 1 → 11 → 12 (no timed stop) → 11 → 10. */
+export const FLIPPER = fixture(12, [
+  {
+    name: "Flipper",
+    visits: [{ events: [[1, 4000, "turn", 11], [11, 6000, "turn", 12], [11, 3000, "turn", 10], [10, 9000, "pagehide"]], seen: [1, 10, 11, 12] }],
+  },
+]);
+
+/**
+ * Nadia's standout shape: 34s on page 7 where three others take 10s, 42s on page 10 where they take
+ * 30s. Page 7 is the one that held her.
+ */
+export const NADIA_STANDOUT = fixture(12, [
+  {
+    name: "NadiaStandout",
+    visits: [
+      {
+        events: Array.from({ length: 12 }, (_, i): EventSpec => {
+          const page = i + 1;
+          const ms = page === 7 ? 34000 : page === 10 ? 42000 : 5000;
+          return page < 12 ? [page, ms, "turn", page + 1] : [page, ms, "pagehide"];
+        }),
+      },
+    ],
+  },
+  ...[1, 2, 3].map((i) => ({ name: `nsPeer${i}`, visits: [{ events: [[1, 4000, "turn", 7], [7, 10000, "turn", 10], [10, 30000, "pagehide"]] as EventSpec[], seen: [1, 7, 10] }] })),
+]);
+
+/** Brightwater Anonymous reader 1: jumped around, 1m 44s on page 9. */
+export const JUMPER_LONG = fixture(13, [
+  { name: "JumperLong", visits: [{ events: [[1, 4000, "turn", 6], [6, 65000, "turn", 9], [9, 104000, "turn", 8], [8, 62000, "pagehide"]], seen: [1, 6, 8, 9] }] },
+]);
+
+/** Priya: stayed on all 13 pages, with pages 10–12 in a near tie for longest. */
+export const PRIYA = fixture(13, [
+  {
+    name: "Priya",
+    visits: [
+      {
+        events: Array.from({ length: 13 }, (_, i): EventSpec => {
+          const page = i + 1;
+          const ms = page === 10 ? 60000 : page === 11 ? 58663 : page === 12 ? 59050 : 20000;
+          return page < 13 ? [page, ms, "turn", page + 1] : [page, ms, "pagehide"];
+        }),
+      },
+    ],
+  },
+]);
+
+/**
+ * Samuel's shape: 2m 50s on page 9 where five others take 8s, then back 4 days later for pages 1 and
+ * 12. Page 1 is timed in both visits.
+ */
+export const SAMUEL = fixture(13, [
+  {
+    name: "Samuel",
+    visits: [
+      { visitId: "samuel-v1", start: T0, events: [[1, 6000, "turn", 9], [9, 170541, "pagehide"]], seen: [1, 9] },
+      { visitId: "samuel-v2", start: T0 + 4 * DAY, events: [[1, 4000, "turn", 12], [12, 5000, "pagehide"]], seen: [1, 12] },
+    ],
+  },
+  ...[1, 2, 3, 4, 5].map((i) => ({ name: `samPeer${i}`, visits: [{ start: T0, events: [[1, 4000, "turn", 9], [9, 8000, "pagehide"]] as EventSpec[], seen: [1, 9] }] })),
+], { now: T0 + 4 * DAY + HOUR });
+
+/**
+ * Anonymous reader 21's shape: pages 1–6, jumped to 10, 11, flicked past 12 in a second, then came
+ * back later the same day to page 1 and page 10, where they left.
+ */
+export const LAST_PAGE_PASSED = fixture(12, [
+  {
+    name: "LastPassed",
+    visits: [
+      {
+        visitId: "lp-v1",
+        start: T0,
+        events: [
+          ...Array.from({ length: 6 }, (_, i): EventSpec => [i + 1, 5000, "turn", i === 5 ? 10 : i + 2]),
+          [10, 9000, "turn", 11],
+          [11, 7000, "turn", 12],
+          [12, 1000, "pagehide"],
+        ],
+      },
+      { visitId: "lp-v2", start: T0 + 2 * HOUR, events: [[1, 4000, "turn", 10], [10, 12000, "pagehide"]], seen: [1, 10] },
+    ],
+  },
+], { now: T0 + 3 * HOUR });
+
+/** Reader 6's shape: 1 → 10 → 9 → 4, left on 4. */
+export const BACKWARDS = fixture(12, [
+  { name: "Backwards", visits: [{ events: [[1, 5000, "turn", 10], [10, 8000, "turn", 9], [9, 6000, "turn", 4], [4, 7000, "pagehide"]] }] },
+]);
+
+/** F8's reading with one download. */
+export const DOWNLOADER = fixture(3, [
+  { name: "Downloader", visits: [{ events: [[1, 12000, "turn"], [2, 15000, "turn"], [3, 11000, "pagehide"]] }], row: { downloads: 1 } },
+]);
+
+/**
+ * Six people stayed on page 2 (an even count): 60s, 30s, 20s, 12s, 10s, 10s. The inclusive median is
+ * 16s, so 60s is 3.7×; leaving the 60s out would have made it 12s and 5.0×.
+ */
+export const EVEN_TYPICAL = fixture(4, [
+  { name: "evenTarget", visits: [{ events: [[1, 4000, "turn", 2], [2, 60000, "turn", 3], [3, 4000, "pagehide"]] }] },
+  ...[30000, 20000, 12000, 10000, 10000].map((ms, i) => ({
+    name: `evenPeer${i}`,
+    visits: [{ events: [[1, 4000, "turn", 2], [2, ms, "turn", 3], [3, 4000, "pagehide"]] as EventSpec[] }],
+  })),
+]);
 
 // ---------------------------------------------------------------------------------------------
 // SR1–SR3: single reader vs peers

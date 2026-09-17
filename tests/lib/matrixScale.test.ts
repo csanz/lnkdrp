@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cellOpacity } from "@/components/metrics/matrixScale";
+import { cellOpacity, formatCellDwell } from "@/components/metrics/matrixScale";
 
 describe("cellOpacity", () => {
   it("is 0 for no time", () => {
@@ -36,5 +36,14 @@ describe("cellOpacity", () => {
   it("rounds to two decimals", () => {
     const v = cellOpacity(12_345, 99_999);
     expect(Math.round(v * 100) / 100).toBe(v);
+  });
+});
+
+describe("formatCellDwell", () => {
+  it("never prints a longer stay as a smaller number", () => {
+    expect(formatCellDwell(99_999)).toBe("99s");
+    expect(formatCellDwell(118_000)).toBe("118s");
+    expect(formatCellDwell(999_999)).toBe("999s");
+    expect(formatCellDwell(1_040_000)).toBe("17.3m");
   });
 });

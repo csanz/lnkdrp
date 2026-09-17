@@ -21,16 +21,17 @@ export function InfoTip({ text }: { text: string }) {
         aria-label={text}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-4 w-4 items-center justify-center rounded-full align-middle text-[11px] leading-none text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+        className="relative inline-flex h-4 w-4 items-center justify-center rounded-full align-middle before:absolute before:-inset-3 before:content-[''] text-[11px] leading-none text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
       >
         ⓘ
       </button>
-      {open ? <span className="mt-1 block text-[11px] font-normal normal-case tracking-normal text-[var(--muted)]">{text}</span> : null}
+      {open ? <span className="mt-1 block basis-full text-[11px] font-normal normal-case tracking-normal text-[var(--muted)]">{text}</span> : null}
     </>
   );
 }
 
-type Tile = { key: string; label: string; info?: string; value: string; sub?: string | null };
+/** `shortLabel`: used under 640px, where the full label would wrap. */
+type Tile = { key: string; label: string; shortLabel?: string; info?: string; value: string; sub?: string | null };
 
 export type KpiStripProps = {
   reading: ReadingResponse | null;
@@ -78,6 +79,7 @@ export default function KpiStrip({ reading, loading, error, downloads, now }: Kp
     tiles.push({
       key: "end",
       label: "Reached the last page",
+      shortLabel: "Reached last page",
       value: (r.peopleWithDetail ?? 0) > 0 ? formatCountOf(r.totals?.reachedEnd ?? 0, r.peopleWithDetail ?? 0) : "—",
     });
   }
@@ -85,8 +87,10 @@ export default function KpiStrip({ reading, loading, error, downloads, now }: Kp
   if (downloads !== null) tiles.push({ key: "downloads", label: "Downloads", value: String(downloads) });
 
   const cols = tiles.length >= 5 ? "grid-cols-2 sm:grid-cols-4 lg:grid-cols-5" : "grid-cols-2 sm:grid-cols-4";
-  // With three tiles the last one spans two columns, so neither the 2- nor the 4-column grid leaves a hole.
-  const spanLast = tiles.length === 3;
+  // An odd last tile spans the 2-column phone grid; with three it spans at 4 columns too, so no grid leaves a hole.
+  const spanLast = tiles.length === 3 ? " col-span-2" : tiles.length === 5 ? " col-span-2 sm:col-span-1" : "";
+  // Values sit on a shared line in each row: every tile reserves the sub-line when any tile has one.
+  const anySub = tiles.some((t) => t.sub);
 
   return (
     <div data-kpis className={`grid gap-3 ${cols}`}>
@@ -94,15 +98,27 @@ export default function KpiStrip({ reading, loading, error, downloads, now }: Kp
         <div
           key={t.key}
           data-kpi={t.key}
-          className={`min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4${spanLast && i === tiles.length - 1 ? " col-span-2" : ""}`}
+          className={`flex min-w-0 flex-col rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3 sm:p-4${i === tiles.length - 1 ? spanLast : ""}`}
         >
           <div className={tileLabelClass}>
-            {t.label} {t.info ? <InfoTip text={t.info} /> : null}
+            {t.shortLabel ? (
+              <>
+                <span className="sm:hidden">{t.shortLabel}</span>
+                <span className="hidden sm:inline">{t.label}</span>
+              </>
+            ) : (
+              t.label
+            )}{" "}
+            {t.info ? <InfoTip text={t.info} /> : null}
           </div>
-          <div data-kpi-value className="mt-1 truncate text-2xl font-semibold tabular-nums text-[var(--fg)]">
+          <div data-kpi-value className="mt-auto truncate pt-1 text-xl font-semibold sm:text-2xl tabular-nums text-[var(--fg)]">
             {t.value}
           </div>
-          {t.sub ? <div className="mt-0.5 truncate text-[12px] text-[var(--muted)]">{t.sub}</div> : null}
+          {t.sub ? (
+            <div className="mt-0.5 min-h-4 text-[12px] leading-4 text-[var(--muted)]">{t.sub}</div>
+          ) : anySub ? (
+            <div aria-hidden="true" className="mt-0.5 min-h-4" />
+          ) : null}
         </div>
       ))}
     </div>

@@ -11,33 +11,39 @@ export function median(xs: number[]): number | null {
   return s.length % 2 === 1 ? s[mid] : Math.floor((s[mid - 1] + s[mid]) / 2);
 }
 
-/** Per-page reach, stayed count, typical time, passed and left-here over people with page detail. */
+/** Per-page reach, stayed count, typical time, passed, jumped and left-here over people with page detail. */
 export function computePageTable(peopleWithDetail: Person[], P: number, meta: PageMeta[]): PageRow[] {
   const metaByPage = new Map(meta.map((m) => [m.page, m]));
   const rows: PageRow[] = [];
   for (let page = 1; page <= P; page++) {
     let reached = 0;
     let passed = 0;
+    let jumped = 0;
     let leftHere = 0;
     let stillReading = 0;
     const readDwell: number[] = [];
     for (const person of peopleWithDetail) {
       const cell = person.cells[page - 1];
-      if (cell && cell.state !== "unreached") reached += 1;
+      if (cell && cell.state !== "unreached" && cell.state !== "jumped") reached += 1;
       if (cell?.state === "read") readDwell.push(cell.ms);
       if (cell?.state === "passed") passed += 1;
+      if (cell?.state === "jumped") jumped += 1;
       if (person.exitPage === page) leftHere += 1;
       if (person.maxPage >= page) stillReading += 1;
     }
     const m = metaByPage.get(page);
+    const readCount = readDwell.length;
     rows.push({
       page,
       label: m?.label ?? null,
+      shortLabel: m?.shortLabel ?? m?.label ?? null,
       thumbUrl: m?.thumbUrl ?? null,
       reached,
-      readCount: readDwell.length,
-      typicalMs: readDwell.length >= TYPICAL_MIN_READERS ? median(readDwell) : null,
+      readCount,
+      typicalMs: readCount >= TYPICAL_MIN_READERS ? median(readDwell) : null,
+      fewMs: readCount >= 1 && readCount < TYPICAL_MIN_READERS ? [...readDwell].sort((a, b) => b - a) : null,
       passed,
+      jumped,
       leftHere,
       stillReading,
     });
@@ -45,13 +51,21 @@ export function computePageTable(peopleWithDetail: Person[], P: number, meta: Pa
   return rows;
 }
 
+/** More than this many pages tied on a highlight means none of them stands out. */
+const CALLOUT_MAX_TIED = 3;
+/** Pages whose typical time is within this share of the longest are shown as tied with it. */
+const HELD_TIE_SHARE = 0.95;
+/** The longest-held page must be this many times the median typical time of the eligible pages. */
+const HELD_MIN_LIFT = 1.25;
+
 /** Highlights for the page table; null below CALLOUT_MIN_PEOPLE people with page detail. */
 export function computeCallouts(rows: PageRow[], peopleWithDetail: number, P: number): Callouts | null {
   if (peopleWithDetail < CALLOUT_MIN_PEOPLE) return null;
 
+  // A typical time from fewer people than the gate can be one person's own time.
   let held: PageRow | null = null;
   for (const r of rows) {
-    if (r.typicalMs === null) continue;
+    if (r.typicalMs === null || r.readCount < CALLOUT_MIN_PEOPLE) continue;
     if (
       !held ||
       r.typicalMs > (held.typicalMs as number) ||
@@ -61,30 +75,51 @@ export function computeCallouts(rows: PageRow[], peopleWithDetail: number, P: nu
     }
   }
 
-  let passed: PageRow | null = null;
-  for (const r of rows) {
-    if (r.passed < CALLOUT_MIN_COUNT) continue;
-    if (
-      !passed ||
-      r.passed > passed.passed ||
-      (r.passed === passed.passed && (r.reached > passed.reached || (r.reached === passed.reached && r.page < passed.page)))
-    ) {
-      passed = r;
-    }
+  // The cover is where everyone starts, so a few quick flips past it say nothing about the page.
+  const skipCandidates = rows
+    .map((r) => ({ page: r.page, skipped: r.passed + r.jumped, of: r.stillReading }))
+    .filter((c) => c.skipped >= CALLOUT_MIN_COUNT && c.of > 0 && !(P > 2 && c.page === 1))
+    .sort((a, b) => b.skipped * a.of - a.skipped * b.of || b.skipped - a.skipped || a.page - b.page);
+  let mostSkipped: Callouts["mostSkipped"] = null;
+  if (skipCandidates.length > 0) {
+    const top = skipCandidates[0];
+    const tiedPages = skipCandidates.filter((c) => c.skipped === top.skipped && c.of === top.of).map((c) => c.page).sort((a, b) => a - b);
+    if (tiedPages.length <= CALLOUT_MAX_TIED) mostSkipped = { page: top.page, skipped: top.skipped, of: top.of, tiedPages };
   }
 
-  let left: PageRow | null = null;
+  let mostLeft: Callouts["mostLeft"] = null;
   if (P > 1) {
-    for (const r of rows) {
-      if (r.page < 1 || r.page > P - 1 || r.leftHere < CALLOUT_MIN_COUNT) continue;
-      if (!left || r.leftHere > left.leftHere || (r.leftHere === left.leftHere && r.page < left.page)) left = r;
+    const leftCandidates = rows
+      .filter((r) => r.page >= 1 && r.page <= P - 1 && r.leftHere >= CALLOUT_MIN_COUNT)
+      .sort((a, b) => b.leftHere - a.leftHere || a.page - b.page);
+    if (leftCandidates.length > 0) {
+      const top = leftCandidates[0];
+      const tiedPages = leftCandidates.filter((r) => r.leftHere === top.leftHere).map((r) => r.page).sort((a, b) => a - b);
+      if (tiedPages.length <= CALLOUT_MAX_TIED) mostLeft = { page: top.page, leftHere: top.leftHere, people: peopleWithDetail, tiedPages };
     }
   }
 
+  return { heldLongest: held ? heldLongestFor(rows, held, P) : null, mostSkipped, mostLeft };
+}
+
+/**
+ * The held-longest highlight, or null when it would not single anything out: more tied pages than
+ * min(CALLOUT_MAX_TIED, a third of the document), or a leader under HELD_MIN_LIFT× the median typical
+ * time of the pages enough people stayed on.
+ */
+function heldLongestFor(rows: PageRow[], held: PageRow, P: number): Callouts["heldLongest"] {
+  const leaderMs = held.typicalMs as number;
+  const eligible = rows.filter((r) => r.typicalMs !== null && r.readCount >= CALLOUT_MIN_PEOPLE);
+  const tiedRows = eligible.filter((r) => r.page === held.page || (r.typicalMs as number) >= HELD_TIE_SHARE * leaderMs).sort((a, b) => a.page - b.page);
+  if (tiedRows.length > Math.min(CALLOUT_MAX_TIED, Math.max(1, Math.floor(P / 3)))) return null;
+  const typicalMedian = median(eligible.map((r) => r.typicalMs as number)) ?? 0;
+  if (leaderMs < HELD_MIN_LIFT * typicalMedian) return null;
   return {
-    heldLongest: held ? { page: held.page, typicalMs: held.typicalMs as number, readCount: held.readCount } : null,
-    mostPassed: passed ? { page: passed.page, passed: passed.passed, reached: passed.reached } : null,
-    mostLeft: left ? { page: left.page, leftHere: left.leftHere, people: peopleWithDetail } : null,
+    page: held.page,
+    typicalMs: leaderMs,
+    readCount: held.readCount,
+    tiedPages: tiedRows.map((r) => r.page),
+    tied: tiedRows.map((r) => ({ page: r.page, typicalMs: r.typicalMs as number, readCount: r.readCount })),
   };
 }
 

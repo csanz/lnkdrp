@@ -1,7 +1,10 @@
 /**
  * Owner reading analytics for one document: people, total time, links and needs-attention rows on
  * every plan; on Pro also the page table, callouts and the per-person reading matrix.
- * Route: `/api/docs/:docId/pages?days=&shareId=&matrix=all`
+ * Route: `/api/docs/:docId/pages?days=&shareId=&matrix=all&tz=`
+ *
+ * `tz` (an IANA zone, default UTC) sets the calendar days of the people-by-day `series`, so its bars
+ * fall on the same local dates as every other date on the page.
  *
  * People are counted on the same basis as `/shareviews` (`viewerCount`), so the two endpoints agree
  * for the same `days` and `shareId`. Free responses are whitelisted by `toBasicReading`.
@@ -12,7 +15,7 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { resolveDocAnalyticsAccess } from "@/lib/analytics/docAnalyticsAccess";
 import { loadReadingCore } from "@/lib/analytics/loadReading";
-import { MATRIX_ALL_LIMIT, MATRIX_ROW_LIMIT, buildReadingResponse, parseDaysParam } from "@/lib/analytics/reading";
+import { MATRIX_ALL_LIMIT, MATRIX_ROW_LIMIT, buildReadingResponse, parseDaysParam, parseTimeZoneParam } from "@/lib/analytics/reading";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,6 +33,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const url = new URL(request.url);
       const days = parseDaysParam(url.searchParams.get("days"), { plan, daysLimit });
       const shareId = (url.searchParams.get("shareId") ?? "").trim() || null;
+      const tz = parseTimeZoneParam(url.searchParams.get("tz"));
       const matrixLimit = tier === "deep" && url.searchParams.get("matrix") === "all" ? MATRIX_ALL_LIMIT : MATRIX_ROW_LIMIT;
       const now = Date.now();
 
@@ -39,7 +43,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404, headers: NO_STORE }), actor);
       }
 
-      const body = buildReadingResponse(core, { tier, days, daysLimit, shareId, matrixLimit, now });
+      const body = buildReadingResponse(core, { tier, days, daysLimit, shareId, matrixLimit, now, tz });
       return applyTempUserHeaders(NextResponse.json(body, { headers: NO_STORE }), actor);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";

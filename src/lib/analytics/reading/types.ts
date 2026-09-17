@@ -16,6 +16,8 @@ export type RawPageEvent = {
   leftAt: Date | string | null;
   durationMs: unknown;
   reason?: string | null;
+  /** Page a "turn" moved to. */
+  toPage?: unknown;
 };
 
 export type VisitInput = {
@@ -53,13 +55,18 @@ export type LinkInput = {
   createdDate: Date | string;
 };
 
-export type PageMeta = { page: number; label: string | null; thumbUrl: string | null };
+/** `shortLabel`: the section role alone ("Team") for a recognised "{role}-{heading}" slug, else `label`. */
+export type PageMeta = { page: number; label: string | null; shortLabel: string | null; thumbUrl: string | null };
+
+/** One person key's all-time ShareView aggregate. `introduced`: some row carries a name or email. */
+export type AllTimePerson = { key: string; shareId: string; firstMs: number; lastMs: number; anonymousKey: boolean; introduced: boolean };
 
 // ---------------------------------------------------------------------------------------------
 // Normalised visits and people
 // ---------------------------------------------------------------------------------------------
 
-export type Stop = { page: number; ms: number; revisit: boolean; reason: string | null };
+/** `toPage` is the last event's turn target (1..P) when that event was a turn, else null. */
+export type Stop = { page: number; ms: number; revisit: boolean; reason: string | null; toPage: number | null };
 
 export type NormalizedVisit = {
   visitId: string;
@@ -75,12 +82,18 @@ export type NormalizedVisit = {
   stops: Stop[];
   exitPage: number | null;
   exitInferred: boolean;
+  /**
+   * When the final timed event is a turn whose flush was lost: the turn's target plus every later
+   * seen page with no timed event in this visit, ascending. Their time is unknown. Empty otherwise.
+   */
+  untimedTail: number[];
   droppedEvents: number;
   tv2: boolean;
 };
 
 export type IdentitySource = "signed_in" | "introduced" | "anonymous";
-export type CellState = "read" | "passed" | "unknown" | "unreached";
+/** "jumped": not seen but before the person's furthest page; "unreached": after it. */
+export type CellState = "read" | "passed" | "unknown" | "jumped" | "unreached";
 export type Cell = { ms: number; state: CellState; revisit: boolean };
 
 export type Person = {
@@ -90,6 +103,8 @@ export type Person = {
   linkLabel: string;
   isDefaultLink: boolean;
   name: string;
+  /** Doc-wide, all-time rank of an anonymous person ("Anonymous reader {n}"); null otherwise. */
+  anonNumber: number | null;
   source: IdentitySource;
   email: string | null;
   firstSeenMs: number;
@@ -118,32 +133,56 @@ export type Person = {
 export type PageRow = {
   page: number;
   label: string | null;
+  shortLabel: string | null;
   thumbUrl: string | null;
   reached: number;
   readCount: number;
   typicalMs: number | null;
+  /** Stayed dwells, longest first, when 1 ≤ readCount < TYPICAL_MIN_READERS; else null. */
+  fewMs: number[] | null;
   passed: number;
+  /** People who went past this page without it ever being on screen (= stillReading − reached). */
+  jumped: number;
   leftHere: number;
   stillReading: number;
 };
 
 export type Callouts = {
-  heldLongest: { page: number; typicalMs: number; readCount: number } | null;
-  mostPassed: { page: number; passed: number; reached: number } | null;
-  mostLeft: { page: number; leftHere: number; people: number } | null;
+  /**
+   * Only pages at least CALLOUT_MIN_PEOPLE stayed on; tiedPages (includes page) are within 5% of its
+   * typical time, and `tied` carries each of them (leader included, page ascending). Null when too many
+   * pages tie or the leader is under 1.25× the median typical time of those pages.
+   */
+  heldLongest: {
+    page: number;
+    typicalMs: number;
+    readCount: number;
+    tiedPages: number[];
+    tied: Array<{ page: number; typicalMs: number; readCount: number }>;
+  } | null;
+  /** skipped = passed + jumped, of = stillReading; tiedPages includes page. */
+  mostSkipped: { page: number; skipped: number; of: number; tiedPages: number[] } | null;
+  mostLeft: { page: number; leftHere: number; people: number; tiedPages: number[] } | null;
 };
 
 export type HotReason =
-  | { kind: "returned"; gapMs: number }
-  | { kind: "read_most"; read: number; pageCount: number }
-  | { kind: "dwell"; page: number; ratio: number };
+  /** fromAt: the earlier visit's last activity; toAt: the later visit's start (ISO), for the largest gap. */
+  | { kind: "returned"; gapMs: number; fromAt: string; toAt: string }
+  | { kind: "read_most"; read: number; pageCount: number; totalMs: number }
+  /**
+   * ms: the person's dwell on `page`. ratio: against docTypicalMs, the doc's median stayed-page time
+   * over other people. pageTypicalMs: the page table's typical time for this page, and pageRatio
+   * against it, both null unless CALLOUT_MIN_PEOPLE stayed on the page.
+   */
+  | { kind: "dwell"; page: number; ms: number; ratio: number; pageTypicalMs: number | null; pageRatio: number | null; docTypicalMs: number };
 
 export type AttentionRow =
-  | { kind: "active"; personId: string; name: string; linkLabel: string; page: number | null; at: string }
-  | { kind: "hot"; personId: string; name: string; linkLabel: string; reason: HotReason }
+  | { kind: "active"; personId: string; name: string; linkLabel: string; page: number | null; at: string; totalMs: number; exitPage: number | null }
+  | { kind: "hot"; personId: string; name: string; linkLabel: string; reason: HotReason; lastSeen: string; totalMs: number; exitPage: number | null }
   | { kind: "not_opened"; shareId: string; linkLabel: string; sentAt: string };
 
-export type Verdict = { coverage: string | null; behaviour: string | null; text: string };
+/** `page`: the page the behaviour clause names (standout page or went-back page), else null. */
+export type Verdict = { coverage: string | null; behaviour: string | null; text: string; page: number | null };
 
 // ---------------------------------------------------------------------------------------------
 // API shapes
@@ -173,6 +212,7 @@ export type LinkRow = {
 export type MatrixRow = {
   personId: string;
   name: string;
+  anonNumber: number | null;
   source: IdentitySource;
   email: string | null;
   shareId: string;
@@ -202,7 +242,10 @@ export type ReadingResponse = {
   everOpened: boolean;
   lastOpenedAtAllTime: string | null;
   links: LinkRow[];
+  /** Active then hot people (up to ATTENTION_LIST_MAX; `more` counts hidden ones), then every unopened link. */
   attention: { rows: AttentionRow[]; more: number };
+  /** Scoped people by the day (YYYY-MM-DD in the request's time zone) of their last activity; zero-filled, ascending. */
+  series: Array<{ day: string; people: number }>;
   pageCount?: number;
   peopleWithDetail?: number;
   multipleVersions?: boolean;
@@ -217,11 +260,17 @@ export type ReadingResponse = {
 export type PersonPageRow = {
   page: number;
   label: string | null;
+  shortLabel: string | null;
   thumbUrl: string | null;
   ms: number;
   state: CellState;
   revisits: number;
+  /** The page table's typical time for this page (null below TYPICAL_MIN_READERS). */
   typicalMs: number | null;
+  /** People who stayed on this page (the page table's readCount). */
+  readCount: number;
+  /** ms / typicalMs floored to one decimal; only for a stayed page with readCount ≥ CALLOUT_MIN_PEOPLE. */
+  ratio: number | null;
   leftHere: boolean;
 };
 
@@ -233,8 +282,13 @@ export type PersonVisitRow = {
   timed: boolean;
   exitPage: number | null;
   exitInferred: boolean;
-  stops: Array<{ page: number; ms: number; revisit: boolean }>;
+  /**
+   * `passed` steps are pages a turn landed on with no timed stop there (ms 0). `untimed` steps (ms 0)
+   * are the target of a final turn whose flush was lost, then the later pages seen after it.
+   */
+  stops: Array<{ page: number; ms: number; revisit: boolean; passed: boolean; untimed: boolean }>;
   seen: number[];
+  /** Seen pages under READ_MIN_MS, excluding the untimed tail. */
   passedPages: number[];
 };
 
@@ -246,6 +300,7 @@ export type PersonResponse = {
   person: {
     personId: string;
     name: string;
+    anonNumber: number | null;
     source: IdentitySource;
     email: string | null;
     shareId: string;
@@ -258,7 +313,8 @@ export type PersonResponse = {
     activeNow: boolean;
   };
   verdict: Verdict;
-  facts: { visits: number; totalMs: number; reachedCount: number; maxPage: number; exitPage: number | null };
+  /** typicalTotalMs: median total time of everyone with page detail and time, as the KPI (null below 3 of them). */
+  facts: { visits: number; totalMs: number; reachedCount: number; maxPage: number; exitPage: number | null; typicalTotalMs: number | null };
   pages: PersonPageRow[];
   visits: PersonVisitRow[];
   more: { visits: number };
@@ -270,6 +326,10 @@ export type ReadingCore = {
   links: LinkInput[];
   people: Person[];
   lastOpenedByShareId: Map<string, number>;
+  /** All-time activity per person key (not range-limited), from the loader's aggregate. */
+  allTimeByKey: Map<string, AllTimePerson>;
+  /** Doc-wide anonymous ranks by person key, all time when the loader supplied them. */
+  anonNumberByKey: Map<string, number>;
   hotByKey: Map<string, HotReason | null>;
   docPages: PageRow[];
   multipleVersions: boolean;
@@ -293,6 +353,7 @@ export const BASIC_READING_KEYS = [
   "lastOpenedAtAllTime",
   "links",
   "attention",
+  "series",
 ] as const;
 
 /** Link row keys a Free (basic) response may carry. */

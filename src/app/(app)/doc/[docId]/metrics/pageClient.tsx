@@ -10,12 +10,13 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import ActivityChart, { type ActivityPoint } from "@/components/metrics/ActivityChart";
 import EmptyReading from "@/components/metrics/EmptyReading";
+import JumpLinks from "@/components/metrics/JumpLinks";
 import KpiStrip from "@/components/metrics/KpiStrip";
 import LinksTable from "@/components/metrics/LinksTable";
 import MetricsControlBar from "@/components/metrics/MetricsControlBar";
@@ -23,7 +24,7 @@ import MetricsFootnote from "@/components/metrics/MetricsFootnote";
 import NeedsAttentionCard from "@/components/metrics/NeedsAttentionCard";
 import PageCallouts from "@/components/metrics/PageCallouts";
 import PagePerformanceTable from "@/components/metrics/PagePerformanceTable";
-import ReadingMatrix from "@/components/metrics/ReadingMatrix";
+import ReadingMatrix, { MatrixLegend } from "@/components/metrics/ReadingMatrix";
 import ReaderSheet from "@/components/metrics/reader/ReaderSheet";
 import { parseMetricsUrl, serializeMetricsUrl, type MetricsUrlState } from "@/components/metrics/metricsUrlState";
 import { useJsonFetch } from "@/components/metrics/useJsonFetch";
@@ -39,7 +40,7 @@ type ActivityResponse = {
   downloadsEnabled?: boolean;
   totals: { downloads?: number; ownerPreviews?: number };
   totalsAllTime?: { ownerPreviews?: number };
-  series?: ActivityPoint[];
+  series?: Array<{ date: string; views: number }>;
 };
 
 const REFRESH_DEBOUNCE_MS = 3000;
@@ -47,6 +48,14 @@ const cardClass = "rounded-2xl border border-[var(--border)] bg-[var(--panel-2)]
 const sectionTitleClass = "text-sm font-semibold text-[var(--fg)]";
 
 const noopSubscribe = () => () => {};
+
+function viewerTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
 
 /** False while hydrating (matches the server render), true on every client render after that. */
 function useHydrated(): boolean {
@@ -104,12 +113,19 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const tier: ReadingTier | null = serverTier ?? planTier;
   const { shareId, days, personId } = parseMetricsUrl(searchParams, tier);
   const [matrixAll, setMatrixAll] = useState(false);
+  const [focusPage, setFocusPage] = useState<number | null>(null);
+  // Bumped with every realtime or tab-focus refresh so an open reader sheet refetches too.
+  const [sheetRefresh, setSheetRefresh] = useState(0);
+  // True while the open sheet was reached by a history push, so closing it can go back instead.
+  const pushedPerson = useRef(false);
 
   const enc = encodeURIComponent(docId);
   const scopeQs = shareId ? `&shareId=${encodeURIComponent(shareId)}` : "";
   const scopeKey = `${days}|${shareId ?? ""}`;
   const a = useJsonFetch<ReadingResponse>(
-    hydrated ? `/api/docs/${enc}/pages?days=${days}${scopeQs}${matrixAll ? "&matrix=all" : ""}` : null,
+    hydrated
+      ? `/api/docs/${enc}/pages?days=${days}${scopeQs}${matrixAll ? "&matrix=all" : ""}&tz=${encodeURIComponent(viewerTimeZone())}`
+      : null,
   );
   const b = useJsonFetch<ActivityResponse>(hydrated ? `/api/docs/${enc}/shareviews?days=${days}&lite=1${scopeQs}` : null);
   const reading = useScopedData(a.data, scopeKey);
@@ -143,6 +159,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     const refresh = () => {
       retryA();
       retryB();
+      setSheetRefresh((n) => n + 1);
     };
     const unsubscribe = subscribeRealtime("activity", (frame) => {
       if (frame.type !== "activity") return;
@@ -165,12 +182,43 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     };
   }, [retryA, retryB]);
 
-  const closePerson = useCallback(() => writeUrl({ personId: null }), [writeUrl]);
-  const openPerson = useCallback((id: string) => writeUrl({ personId: id }), [writeUrl]);
+  useEffect(() => {
+    if (!personId) pushedPerson.current = false;
+  }, [personId]);
+
+  const closePerson = useCallback(() => {
+    setFocusPage(null);
+    if (pushedPerson.current) {
+      pushedPerson.current = false;
+      router.back();
+    } else {
+      writeUrl({ personId: null });
+    }
+  }, [router, writeUrl]);
+  // A push, so phone back or swipe closes the full-screen sheet instead of leaving the page.
+  const openPerson = useCallback(
+    (id: string, page: number | null = null) => {
+      setFocusPage(page);
+      if (personId) {
+        writeUrl({ personId: id });
+        return;
+      }
+      router.push(`${pathname}${serializeMetricsUrl({ shareId, days, personId: id }, tier)}`, { scroll: false });
+      pushedPerson.current = true;
+    },
+    [router, pathname, shareId, days, personId, tier, writeUrl],
+  );
   const filterLink = useCallback(
     (id: string | null) => {
       setMatrixAll(false);
       writeUrl({ shareId: id, personId: null });
+    },
+    [writeUrl],
+  );
+  const changeDays = useCallback(
+    (d: MetricsUrlState["days"]) => {
+      setMatrixAll(false);
+      writeUrl({ days: d });
     },
     [writeUrl],
   );
@@ -183,7 +231,29 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     activity && (activity.downloadsEnabled || (activity.totals.downloads ?? 0) > 0) ? (activity.totals.downloads ?? 0) : null;
   const seed = personId ? (reading?.matrix?.rows.find((r) => r.personId === personId) ?? null) : null;
 
+  const legacySeries: ActivityPoint[] | null = activity?.series ? activity.series.map((p) => ({ day: p.date, people: p.views })) : null;
+  let chartSeries: ActivityPoint[] | null = null;
+  let chartError = false;
+  let retryChart = retryA;
+  if (reading?.series) {
+    chartSeries = reading.series;
+  } else if (reading || readingError) {
+    chartSeries = legacySeries;
+    chartError = activityError;
+    retryChart = retryB;
+  }
+  // With nobody in range the empty card already lists the links, and a strip of zeros says nothing.
+  const nobodyInRange = Boolean(reading && reading.people === 0);
+  const hideKpis = nobodyInRange;
+  const hideLinks = Boolean(reading && !readingError && (nobodyInRange || !reading.links.some((l) => l.everOpened)));
+  // Nobody has ever opened it: a "People by day" card of zeros under the empty state says nothing new.
+  const neverOpened = Boolean(nobodyInRange && reading && !reading.everOpened);
+  const jumpLinks =
+    deep && reading && reading.people > 0 ? <JumpLinks pages={(reading.peopleWithDetail ?? 0) > 0} links={!hideLinks} /> : null;
+  const linksSelectable = Boolean(reading && reading.links.length > 1 && reading.links.some((l) => l.status !== "deleted"));
+
   let readingBody: React.ReactNode;
+  let pagesCard: React.ReactNode = null;
   if (readingError) {
     readingBody = (
       <div className={cardClass}>
@@ -213,6 +283,8 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
             shareId={shareId}
             ownerPreviewsAllTime={activity?.totalsAllTime?.ownerPreviews ?? null}
             now={now}
+            tier={reading.tier}
+            onDays={changeDays}
           />
         ) : null}
         {reading.tier === "basic" ? <PlanLimitNotice limit="analytics_history" /> : null}
@@ -224,7 +296,8 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 {"Page detail wasn't recorded for these people. They opened it before page tracking."}
               </p>
             ) : (
-              <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-5">
+              <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-3">
+                <MatrixLegend />
                 <ReadingMatrix
                   rows={reading.matrix?.rows ?? []}
                   total={reading.matrix?.total ?? 0}
@@ -232,19 +305,31 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                   pages={pages}
                   pageCount={pageCount}
                   peopleWithDetail={withDetail}
+                  callouts={reading.callouts ?? null}
+                  shareId={shareId}
                   now={now}
-                  onOpenPerson={(row) => openPerson(row.personId)}
+                  onOpenPerson={(row, page) => openPerson(row.personId, page ?? null)}
                   onShowAll={() => setMatrixAll(true)}
                   loadingAll={matrixAll && a.loading}
                 />
-                <PageCallouts callouts={reading.callouts ?? null} calloutGate={reading.calloutGate ?? null} pages={pages} />
-                <PagePerformanceTable pages={pages} pageCount={pageCount} peopleWithDetail={withDetail} />
               </div>
             )}
           </div>
         ) : null}
       </>
     );
+    if (deep && reading.people > 0 && withDetail > 0) {
+      pagesCard = (
+        <section id="pages" data-pages-card className={`${cardClass} scroll-mt-16`}>
+          <h2 className={sectionTitleClass}>Pages</h2>
+          <p className="mt-0.5 text-[12px] text-[var(--muted)]">Which pages held attention, were skipped, and where people left</p>
+          <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-4">
+            <PageCallouts callouts={reading.callouts ?? null} calloutGate={reading.calloutGate ?? null} pages={pages} />
+            <PagePerformanceTable pages={pages} pageCount={pageCount} peopleWithDetail={withDetail} callouts={reading.callouts ?? null} />
+          </div>
+        </section>
+      );
+    }
   }
 
   return (
@@ -288,25 +373,41 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
             days={days}
             tier={reading?.tier ?? tier}
             onShareId={filterLink}
-            onDays={(d) => {
-              setMatrixAll(false);
-              writeUrl({ days: d });
-            }}
+            onDays={changeDays}
             onMoreHistory={() => openUpgrade("analytics_history")}
-          />
+          >
+            {jumpLinks}
+          </MetricsControlBar>
 
           {reading && reading.people > 0 ? (
-            <NeedsAttentionCard rows={reading.attention.rows} more={reading.attention.more} now={now} onOpenPerson={openPerson} />
+            <NeedsAttentionCard
+              rows={reading.attention.rows}
+              more={reading.attention.more}
+              now={now}
+              shareId={shareId}
+              onOpenPerson={(id) => openPerson(id)}
+            />
           ) : null}
 
-          <KpiStrip reading={reading} loading={!reading && !readingError} error={readingError} downloads={downloads} now={now} />
+          {hideKpis ? null : (
+            <KpiStrip reading={reading} loading={!reading && !readingError} error={readingError} downloads={downloads} now={now} />
+          )}
+
+          {jumpLinks ? <div className="-mt-1 lg:hidden">{jumpLinks}</div> : null}
 
           <section id="reading" className="grid scroll-mt-16 grid-cols-[minmax(0,1fr)] gap-4">
             {readingBody}
           </section>
 
-          <section id="links" className={cardClass}>
+          {pagesCard}
+
+          <section id="links" className={`${cardClass} scroll-mt-16`} hidden={hideLinks}>
             <h2 className={sectionTitleClass}>Links</h2>
+            {linksSelectable ? (
+              <p className="mt-0.5 text-[12px] text-[var(--muted)]">
+                {reading?.tier === "basic" ? "Click a link to see only its numbers." : "Click a link to see only its people."}
+              </p>
+            ) : null}
             <div className="mt-3">
               {readingError ? (
                 <LoadError onRetry={retryA} />
@@ -325,12 +426,9 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
             </div>
           </section>
 
-          <ActivityChart
-            series={activity?.series ?? null}
-            loading={!activity && !activityError}
-            error={activityError}
-            onRetry={retryB}
-          />
+          {neverOpened ? null : (
+            <ActivityChart series={chartSeries} loading={!chartSeries && !chartError} error={chartError} onRetry={retryChart} />
+          )}
 
           <MetricsFootnote
             deep={deep}
@@ -339,6 +437,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
             multipleVersions={Boolean(reading?.multipleVersions)}
             truncated={Boolean(reading?.coverage?.truncated)}
             ownerPreviews={activity ? (activity.totals.ownerPreviews ?? 0) : null}
+            onlyExtra={nobodyInRange}
           />
         </div>
       </div>
@@ -349,8 +448,11 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
         days={days}
         seed={seed}
         filteredShareId={shareId}
+        focusPage={focusPage}
+        refreshKey={sheetRefresh}
         onClose={closePerson}
         onFilterLink={filterLink}
+        onChangeDays={changeDays}
       />
     </div>
   );

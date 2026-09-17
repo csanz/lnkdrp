@@ -1,7 +1,7 @@
 import { READ_MIN_MS } from "./constants";
 import { encodePersonId } from "./identity";
 import { normalizeVisit, toMs } from "./normalize";
-import type { Cell, IdentitySource, LinkInput, NormalizedVisit, Person, ViewRowInput, VisitInput } from "./types";
+import type { AllTimePerson, Cell, CellState, IdentitySource, LinkInput, NormalizedVisit, Person, ViewRowInput, VisitInput } from "./types";
 
 export type { Cell, CellState, IdentitySource, Person } from "./types";
 
@@ -36,6 +36,9 @@ type Group = {
  * Group ShareView rows into people (one per link + viewer key, the same basis as `/shareviews`
  * viewerCount), attach each visit through its (shareId, botIdHash) row, and derive per-page cells.
  * Visits with no matching row are counted in `unmatchedVisits` and left out of every figure.
+ *
+ * `allTime` (every person key the doc has ever had) numbers anonymous people doc-wide so a range or
+ * link filter never renames anyone; without it the in-range people are ranked instead.
  */
 export function buildPeople(
   rows: ViewRowInput[],
@@ -43,7 +46,8 @@ export function buildPeople(
   links: LinkInput[],
   P: number,
   now: number,
-): { people: Person[]; unmatchedVisits: number; droppedEvents: number } {
+  allTime?: AllTimePerson[] | null,
+): { people: Person[]; unmatchedVisits: number; droppedEvents: number; anonNumberByKey: Map<string, number> } {
   void now;
   const linkById = new Map(links.map((l) => [l.shareId, l]));
   const groups = new Map<string, Group>();
@@ -77,9 +81,9 @@ export function buildPeople(
   const people: Person[] = [];
   for (const g of groups.values()) people.push(personFromGroup(g, linkById.get(g.shareId) ?? null, P));
 
-  assignAnonymousLabels(people);
-  people.sort((a, b) => b.lastSeenMs - a.lastSeenMs || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  return { people, unmatchedVisits, droppedEvents };
+  const anonNumberByKey = assignAnonymousLabels(people, allTime ?? null);
+  people.sort((a, b) => b.lastSeenMs - a.lastSeenMs || byKey(a, b));
+  return { people, unmatchedVisits, droppedEvents, anonNumberByKey };
 }
 
 function personFromGroup(g: Group, link: LinkInput | null, P: number): Person {
@@ -116,7 +120,9 @@ function personFromGroup(g: Group, link: LinkInput | null, P: number): Person {
   let totalMs = 0;
   let lastEventAtMs: number | null = null;
   let latestVisit: NormalizedVisit | null = null;
+  const untimedTail = new Set<number>();
   for (const v of g.visits) {
+    for (const p of v.untimedTail) untimedTail.add(p);
     totalMs += v.timeSpentMs;
     timed = timed || v.timed;
     lastEventAtMs = lastEventAtMs === null ? v.lastEventAtMs : Math.max(lastEventAtMs, v.lastEventAtMs);
@@ -128,13 +134,19 @@ function personFromGroup(g: Group, link: LinkInput | null, P: number): Person {
     if (v.seen.length > 0 && (latestVisit === null || isLater(v, latestVisit))) latestVisit = v;
   }
   const seen = [...seenSet].sort((a, b) => a - b);
+  const maxPage = seen.length > 0 ? seen[seen.length - 1] : 0;
 
   const cells: Cell[] = [];
   let readPages = 0;
   for (let i = 0; i < size; i++) {
     const page = i + 1;
     const ms = dwellByPage[i];
-    const state = !seenSet.has(page) ? "unreached" : !timed ? "unknown" : ms >= READ_MIN_MS ? "read" : "passed";
+    let state: CellState;
+    if (!seenSet.has(page)) state = page < maxPage ? "jumped" : "unreached";
+    else if (!timed) state = "unknown";
+    else if (ms >= READ_MIN_MS) state = "read";
+    // Pages after a lost final turn were on screen but never timed: their time is unknown, not a flip.
+    else state = ms === 0 && untimedTail.has(page) ? "unknown" : "passed";
     if (state === "read") readPages += 1;
     cells.push({ ms, state, revisit: revisitsByPage[i] > 0 });
   }
@@ -148,6 +160,7 @@ function personFromGroup(g: Group, link: LinkInput | null, P: number): Person {
     isDefaultLink: link ? Boolean(link.isDefault) : false,
     // Anonymous fallbacks are filled in by assignAnonymousLabels once every person on the link is known.
     name: name ?? email ?? "",
+    anonNumber: null,
     source,
     email,
     firstSeenMs: Number.isFinite(firstSeenMs) ? firstSeenMs : 0,
@@ -157,7 +170,7 @@ function personFromGroup(g: Group, link: LinkInput | null, P: number): Person {
     hasDetail: seen.length > 0,
     timed,
     seen,
-    maxPage: seen.length > 0 ? seen[seen.length - 1] : 0,
+    maxPage,
     reachedCount: seen.length,
     readPages,
     dwellByPage,
@@ -176,22 +189,35 @@ function isLater(a: NormalizedVisit, b: NormalizedVisit): boolean {
   return a.visitId > b.visitId;
 }
 
-function assignAnonymousLabels(people: Person[]): void {
-  const byLink = new Map<string, Person[]>();
-  for (const p of people) {
-    if (p.name) continue;
-    const list = byLink.get(p.shareId) ?? [];
-    list.push(p);
-    byLink.set(p.shareId, list);
-  }
-  for (const list of byLink.values()) {
-    if (list.length === 1) {
-      list[0].name = `Anonymous reader · ${list[0].linkLabel}`;
-      continue;
+/** Ascending by person key. */
+function byKey(a: { key: string }, b: { key: string }): number {
+  return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+/** Doc-wide ranks for anonymous person keys: by first seen, then key. */
+export function rankAnonymousKeys(allTime: AllTimePerson[]): Map<string, number> {
+  const ranked = allTime.filter((a) => a.anonymousKey && !a.introduced).sort((a, b) => a.firstMs - b.firstMs || byKey(a, b));
+  return new Map(ranked.map((a, i) => [a.key, i + 1]));
+}
+
+/** Name every unnamed person "Anonymous reader {n}" and return the key → number map used. */
+function assignAnonymousLabels(people: Person[], allTime: AllTimePerson[] | null): Map<string, number> {
+  const unnamed = people.filter((p) => !p.name).sort((a, b) => a.firstSeenMs - b.firstSeenMs || byKey(a, b));
+  const ranks = allTime
+    ? rankAnonymousKeys(allTime)
+    : rankAnonymousKeys(unnamed.map((p) => ({ key: p.key, shareId: p.shareId, firstMs: p.firstSeenMs, lastMs: p.lastSeenMs, anonymousKey: true, introduced: false })));
+  // Someone unnamed in range but named in an older row (or signed in without a name) is not in the
+  // all-time rank; number them after everyone who is.
+  let next = ranks.size;
+  for (const p of unnamed) {
+    let n = ranks.get(p.key);
+    if (n === undefined) {
+      next += 1;
+      n = next;
+      ranks.set(p.key, n);
     }
-    list.sort((a, b) => a.firstSeenMs - b.firstSeenMs || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-    list.forEach((p, i) => {
-      p.name = `Anonymous reader ${i + 1} · ${p.linkLabel}`;
-    });
+    p.anonNumber = n;
+    p.name = `Anonymous reader ${n}`;
   }
+  return ranks;
 }

@@ -1,13 +1,14 @@
 /**
- * "People by day" bar chart over the range, from the share views series.
+ * "People by day" bar chart over the range. Day keys are calendar days in the viewer's time zone
+ * (the reading API buckets them with `tz`), so they are formatted as plain dates, never shifted.
  */
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Bar, BarChart, LabelList, Tooltip, XAxis } from "recharts";
-import { formatDayKey } from "@/lib/format/date";
 
-export type ActivityPoint = { date: string; views: number };
+/** One bar: `day` is "YYYY-MM-DD" in the viewer's time zone. */
+export type ActivityPoint = { day: string; people: number };
 
 export type ActivityChartProps = {
   series: ActivityPoint[] | null;
@@ -25,6 +26,15 @@ function subscribeNarrow(cb: () => void) {
   return () => mq.removeEventListener("change", cb);
 }
 
+const dayFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/** "Aug 30" for "2026-08-30"; unparseable keys come back unchanged. */
+export function formatLocalDayKey(day: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!m) return day;
+  return dayFormatter.format(new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))));
+}
+
 function peopleText(n: number): string {
   return `${n} ${n === 1 ? "person" : "people"}`;
 }
@@ -34,7 +44,7 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: Array<{
   if (!point) return null;
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1.5 text-[12px] text-[var(--fg)] shadow-sm">
-      {`${formatDayKey(point.date)} · ${peopleText(point.views)}`}
+      {`${formatLocalDayKey(point.day)} · ${peopleText(point.people)}`}
     </div>
   );
 }
@@ -75,10 +85,10 @@ export default function ActivityChart({ series, loading, error, onRetry }: Activ
     );
   } else if (!series) {
     body = <div className="h-[160px] animate-pulse rounded-xl bg-[var(--panel-hover)]" aria-busy={loading} />;
-  } else if (!series.some((p) => p.views > 0)) {
+  } else if (!series.some((p) => p.people > 0)) {
     body = <div className="flex h-[160px] items-center justify-center text-[13px] text-[var(--muted)]">No activity in this range.</div>;
   } else {
-    const data = series.map((p) => ({ date: p.date, views: Number.isFinite(p.views) ? Math.max(0, p.views) : 0 }));
+    const data = series.map((p) => ({ day: p.day, people: Number.isFinite(p.people) ? Math.max(0, p.people) : 0 }));
     const maxTicks = narrow ? 4 : 8;
     const interval = Math.max(0, Math.ceil(data.length / maxTicks) - 1);
     body = (
@@ -86,19 +96,20 @@ export default function ActivityChart({ series, loading, error, onRetry }: Activ
         {width > 0 ? (
           <BarChart width={width} height={160} data={data} margin={{ top: 16, right: 4, bottom: 0, left: 4 }}>
             <XAxis
-              dataKey="date"
-              tickFormatter={(d: string) => formatDayKey(d)}
+              dataKey="day"
+              tickFormatter={(d: string) => formatLocalDayKey(d)}
               interval={interval}
+              padding={{ left: 12, right: 12 }}
               tickLine={false}
               axisLine={false}
               tick={{ fontSize: 10, fill: "var(--muted)" }}
               height={18}
             />
             <Tooltip cursor={{ fill: "var(--panel-hover)" }} content={<ChartTooltip />} />
-            <Bar dataKey="views" fill={EMERALD} radius={[3, 3, 0, 0]} maxBarSize={40} isAnimationActive={false}>
+            <Bar dataKey="people" fill={EMERALD} radius={[3, 3, 0, 0]} maxBarSize={40} isAnimationActive={false}>
               {data.length <= 31 ? (
                 <LabelList
-                  dataKey="views"
+                  dataKey="people"
                   position="top"
                   fontSize={10}
                   fill="var(--muted)"

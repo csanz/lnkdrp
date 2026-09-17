@@ -50,6 +50,11 @@ function focusableIn(root: HTMLElement): HTMLElement[] {
 
 const noopSubscribe = () => () => {};
 
+// light-dark() follows the root's color-scheme, which the theme CSS sets for both the explicit
+// data-theme="dark" and the system-dark case. Browsers without it drop this declaration and keep
+// the bg-black/20 class (a var() indirection would resolve to transparent instead).
+const BACKDROP_STYLE: React.CSSProperties = { backgroundColor: "light-dark(rgb(0 0 0 / 0.2), rgb(0 0 0 / 0.5))" };
+
 /** Right-hand sheet dialog (full screen under 640px) with focus trap, Escape and scroll lock. */
 export default function Sheet({ open, onClose, labelledBy, header, children, dataAttributes, busy }: SheetProps) {
   const mounted = useSyncExternalStore(
@@ -125,8 +130,8 @@ export default function Sheet({ open, onClose, labelledBy, header, children, dat
   return createPortal(
     <div className="fixed inset-0 z-[150]">
       <div
-        className="absolute inset-0 hidden sm:block"
-        style={{ backgroundColor: "rgba(0,0,0,0.2)" }}
+        className="absolute inset-0 hidden bg-black/20 sm:block"
+        style={BACKDROP_STYLE}
         aria-hidden="true"
         onClick={onClose}
       />
@@ -137,7 +142,7 @@ export default function Sheet({ open, onClose, labelledBy, header, children, dat
         aria-labelledby={labelledBy}
         aria-busy={busy ? true : undefined}
         tabIndex={-1}
-        className="absolute inset-0 overflow-y-auto overscroll-contain bg-[var(--panel)] text-[var(--fg)] shadow-2xl outline-none sm:left-auto sm:w-[640px] sm:border-l sm:border-[var(--border)]"
+        className="absolute inset-0 overflow-y-auto overscroll-contain bg-[var(--panel)] text-[var(--fg)] outline-none sm:left-auto sm:w-[640px] sm:border-l sm:border-[var(--border)] sm:shadow-[-16px_0_40px_-8px_rgba(0,0,0,0.35)]"
         {...dataAttributes}
       >
         <div className="sticky top-0 z-10 flex h-14 items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-4 sm:px-5">
