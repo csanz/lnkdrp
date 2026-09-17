@@ -273,7 +273,7 @@ download/password settings, then (by default) waits for processing to finish.
   everything ran, when `waitForReady` is false, or on a timeout. `creditsRemaining` is included when
   `GET /api/credits/snapshot` is readable.
 - Errors: `validation` (also a 400 `invalid_summary`: the message says how to fix `summary`/`keyPoints`),
-  `forbidden` (read-only key), `fetch_blocked`, `unsupported_content_type`, `too_large`, `out_of_credits`
+  `forbidden` (read-only key), `fetch_blocked`, `source_not_found`, `unsupported_content_type`, `too_large`, `out_of_credits`
   (message and `details` carry `creditsNeeded`, `creditsRemaining`, `resetAt` when the API sends them;
   `details.reason` is `daily_cap` for `DAILY_CREDIT_CAP`, else `exhausted`), `plan_limit`, `rate_limited`, `upstream`.
 
@@ -306,7 +306,7 @@ blocked by the Free shared-document cap (mt_zKD3mlHp_K).
   ever deleted: unlike `share_pdf`, which removes its freshly-created empty draft on an early
   failure, this tool never deletes a document — it already has real recipients.
 - Errors: `not_found` (the `docId` does not exist in this workspace — checked with `GET /api/docs/:docId`
-  before anything is created), plus the same `validation`, `fetch_blocked`, `unsupported_content_type`,
+  before anything is created), plus the same `validation`, `fetch_blocked`, `source_not_found`, `unsupported_content_type`,
   `too_large`, `out_of_credits`, `rate_limited`, `upstream` as `share_pdf`. Never `plan_limit`.
 - Idempotent by `idempotencyKey` (per workspace, 24h, same in-memory store as `share_pdf`, separate
   namespace): a retry returns the same result rather than replacing again.
@@ -665,6 +665,7 @@ A failed call returns `isError: true` with a single text block:
 | `plan_limit` | 402 with `code: "plan_limit"` | Free-plan cap (shared documents, projects). `details` has the cap and `upgradeUrl: "/pricing"`. |
 | `rate_limited` | 429 | Back off; retry later. |
 | `fetch_blocked` | 400 | The URL could not be fetched (private network, non-http(s), remote error, empty file). |
+| `source_not_found` | 400 | The source URL answered 404 or 410: there is no file at that address. |
 | `unsupported_content_type` | 415 | The URL is not a PDF. |
 | `too_large` | 400 | PDF over 25 MB. |
 | `upstream` | anything else | The API returned an unexpected status; `details.status` carries it. |

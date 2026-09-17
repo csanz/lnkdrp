@@ -19,6 +19,7 @@ export type ToolErrorCode =
   | "out_of_credits"
   | "rate_limited"
   | "fetch_blocked"
+  | "source_not_found"
   | "unsupported_content_type"
   | "too_large"
   | "plan_limit"
@@ -188,6 +189,15 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
       // Older routes (the project routes among them) catch the API-key limiter's error and answer 400.
       if (RATE_LIMITED_RE.test(message)) {
         return new ToolError("rate_limited", message, { status });
+      }
+      // A URL that answered 404/410 is a missing file, not a blocked fetch: "blocked" sent agents
+      // looking for a network policy problem instead of checking the link.
+      const missingSource = /failed to fetch url \((404|410)\)/i.exec(errorText);
+      if (missingSource) {
+        return new ToolError("source_not_found", `The source URL returned ${missingSource[1]}: there is no file at that address. Check the link and try again.`, {
+          status,
+          details: { error: errorText, httpStatus: Number(missingSource[1]) },
+        });
       }
       if (FETCH_BLOCKED_RE.test(errorText)) {
         return new ToolError("fetch_blocked", `lnkdrp could not fetch the source URL: ${errorText}`, { status, details: { error: errorText } });
