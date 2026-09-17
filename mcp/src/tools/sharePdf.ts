@@ -20,7 +20,7 @@ import { z } from "zod";
 import type { PlanWarning } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
-import { IdempotencyStore } from "../idempotency";
+import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { waitForDocStatus } from "../realtime";
 import { readAiOutcome } from "./aiWarnings";
 import { SAFETY_TAIL } from "./shared";
@@ -340,7 +340,9 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         }
       };
 
-      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "share_pdf", args.idempotencyKey), run);
+      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "share_pdf", args.idempotencyKey), run, {
+        fingerprint: fingerprintArgs(args),
+      });
       if (!replayed) return value;
       // A replay returns the same document; refresh the status so a retry after a timeout is useful.
       const fresh = await api.getDoc(value.docId).catch(() => null);

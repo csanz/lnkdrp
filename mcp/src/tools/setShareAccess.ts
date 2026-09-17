@@ -8,7 +8,7 @@ import { z } from "zod";
 import type { DocPatch } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, ToolError } from "../errors";
-import { IdempotencyStore } from "../idempotency";
+import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { docIdSchema, SAFETY_TAIL, shareView } from "./shared";
 
 export const setShareAccessInputShape = {
@@ -67,7 +67,7 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
         if (Object.keys(patch).length > 0) await ctx.api.patchDoc(args.docId, patch);
         if (wantsPassword) await ctx.api.setSharePassword(args.docId, args.password ?? null);
         return shareView(ctx.api, await ctx.api.getDoc(args.docId));
-      });
+      }, { fingerprint: fingerprintArgs(args) });
       return value;
     }),
   );

@@ -24,7 +24,7 @@ import { z } from "zod";
 import type { PlanWarning } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, isToolError } from "../errors";
-import { IdempotencyStore } from "../idempotency";
+import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { waitForDocStatus } from "../realtime";
 import { fileNameFromUrl, FILE_BASE64_SCHEMA_MAX_CHARS, MAX_INLINE_PDF_BYTES, resolvePdfSource } from "./sharePdf";
 import { readAiOutcome } from "./aiWarnings";
@@ -221,7 +221,9 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         }
       };
 
-      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "replace_pdf", args.idempotencyKey), run);
+      const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "replace_pdf", args.idempotencyKey), run, {
+        fingerprint: fingerprintArgs(args),
+      });
       if (!replayed) return value;
       // A replay returns the same result; refresh the status so a retry after a timeout is useful.
       const fresh = await api.getDoc(value.docId).catch(() => null);
