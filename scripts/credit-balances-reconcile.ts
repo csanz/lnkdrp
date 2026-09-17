@@ -2,9 +2,10 @@
  * One-off reconcile for workspace credit balances after the starter-credit seeding fix.
  *
  * Two historical inconsistencies are corrected:
- * 1. Team (non-personal) workspaces whose balance row was seeded by the dashboard snapshot got the
- *    50 Free starter credits meant only for personal workspaces. Rows with no charged ledger
- *    activity are reset to 0 trial credits (a workspace that already spent some keeps them).
+ * 1. Free team workspaces seeded while starter credits were personal-only (until 2026-09-17) got 0.
+ *    Every Free workspace now starts with FREE_STARTER_CREDITS, so a Free team workspace with 0
+ *    trial credits and no AI run ever charged or pending is given the grant it would get today.
+ *    A workspace that has already spent anything is left alone.
  * 2. Free workspaces seeded before the daily brake existed have `dailyCreditCap: null`; they get
  *    the same 15/day cap new Free workspaces get. Pro workspaces are never touched.
  *
@@ -25,6 +26,7 @@ import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { FREE_DAILY_CREDIT_CAP } from "@/lib/credits/creditService";
+import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
 
 async function main() {
   const apply = process.argv.includes("--apply");
@@ -40,7 +42,7 @@ async function main() {
     defaultHistoryQualityTier?: string | null;
   }>;
 
-  let zeroed = 0;
+  let granted = 0;
   let capped = 0;
   let tiersReset = 0;
   for (const row of rows) {
@@ -49,17 +51,20 @@ async function main() {
     const isPersonal = org?.type === "personal";
     const trial = Math.max(0, Math.floor(Number(row.trialCreditsRemaining ?? 0)));
 
-    if (!isPersonal && trial > 0) {
+    if (!isPersonal && plan !== "pro" && trial === 0 && FREE_STARTER_CREDITS > 0) {
       const spent = await CreditLedgerModel.exists({
         workspaceId: row.workspaceId,
         eventType: "ai_run",
         status: { $in: ["charged", "pending"] },
       });
       if (!spent) {
-        zeroed += 1;
-        console.log(`[reconcile] ${String(row.workspaceId)} team workspace with ${trial} unspent starter credits -> 0`);
+        granted += 1;
+        console.log(`[reconcile] ${String(row.workspaceId)} Free team workspace with 0 starter credits and no AI runs -> ${FREE_STARTER_CREDITS}`);
         if (apply) {
-          await WorkspaceCreditBalanceModel.updateOne({ workspaceId: row.workspaceId }, { $set: { trialCreditsRemaining: 0 } });
+          await WorkspaceCreditBalanceModel.updateOne(
+            { workspaceId: row.workspaceId, trialCreditsRemaining: 0 },
+            { $set: { trialCreditsRemaining: FREE_STARTER_CREDITS } },
+          );
         }
       }
     }
@@ -81,7 +86,7 @@ async function main() {
     }
   }
 
-  console.log(`[reconcile] scanned ${rows.length} balance rows; starter credits zeroed: ${zeroed}; daily caps set: ${capped}; compare tiers reset: ${tiersReset}; ${apply ? "applied" : "dry run (pass --apply)"}`);
+  console.log(`[reconcile] scanned ${rows.length} balance rows; starter credits granted: ${granted}; daily caps set: ${capped}; compare tiers reset: ${tiersReset}; ${apply ? "applied" : "dry run (pass --apply)"}`);
 }
 
 main()

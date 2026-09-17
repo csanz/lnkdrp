@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 /**
- * The Free starter grant must land exactly once per personal Free workspace, and never on a team
- * or Pro workspace, no matter which path creates the balance row first: the dashboard snapshot
+ * The Free starter grant must land exactly once per Free workspace, personal or team (since
+ * 2026-09-17; it was personal-only before), and never on a Pro workspace, no matter which path
+ * creates the balance row first: the dashboard snapshot
  * (`getCreditsSnapshot`) or the reserve path (`reserveCreditsOrThrow` via
  * `defaultBalanceForWorkspace`). Both seed through `starterCreditsForWorkspace`.
  *
@@ -131,8 +132,14 @@ describe("credits starterCreditsForWorkspace", () => {
     expect(await starterCreditsForWorkspace(ORG_ID)).toBe(FREE_STARTER_CREDITS);
   });
 
-  test("team Free → 0 (no farming by creating orgs)", async () => {
+  test("team Free → FREE_STARTER_CREDITS too (each workspace is its own customer)", async () => {
     state.orgType = "team";
+    expect(await starterCreditsForWorkspace(ORG_ID)).toBe(FREE_STARTER_CREDITS);
+  });
+
+  test("team Pro → 0", async () => {
+    state.orgType = "team";
+    state.subscriptionStatus = "active";
     expect(await starterCreditsForWorkspace(ORG_ID)).toBe(0);
   });
 
@@ -156,10 +163,10 @@ describe("credits defaultBalanceForWorkspace (reserve-path seed)", () => {
     expect(seed.monthlyCreditCap).toBeNull();
   });
 
-  test("team Free: 0 starter credits, daily brake still applies", async () => {
+  test("team Free: 50 starter credits and the daily brake", async () => {
     state.orgType = "team";
     const seed = await defaultBalanceForWorkspace(ORG_ID);
-    expect(seed.trialCreditsRemaining).toBe(0);
+    expect(seed.trialCreditsRemaining).toBe(FREE_STARTER_CREDITS);
     expect(seed.dailyCreditCap).toBe(FREE_DAILY_CREDIT_CAP);
   });
 
@@ -183,12 +190,12 @@ describe("credits getCreditsSnapshot seeds through the shared helper", () => {
     expect(snap.blocked).toBe(false);
   });
 
-  test("team Free: upserts 0 (the old path handed teams 50 here)", async () => {
+  test("team Free: upserts 50 and is not blocked (a new team workspace opened on a blocked banner)", async () => {
     state.orgType = "team";
     const snap = await getCreditsSnapshot({ workspaceId: ORG_ID });
-    expect(lastSeedWritten().trialCreditsRemaining).toBe(0);
-    expect(snap.includedRemaining).toBe(0);
-    expect(snap.blocked).toBe(true);
+    expect(lastSeedWritten().trialCreditsRemaining).toBe(FREE_STARTER_CREDITS);
+    expect(snap.includedRemaining).toBe(FREE_STARTER_CREDITS);
+    expect(snap.blocked).toBe(false);
   });
 
   test("Pro: upserts 0 with no daily cap", async () => {
@@ -235,10 +242,11 @@ describe("credits starter grant lands exactly once across snapshot and reserve",
     expect(snap.includedRemaining).toBe(FREE_STARTER_CREDITS - 1);
   });
 
-  test("team workspace seeds 0 on the reserve path and the run is refused", async () => {
+  test("team workspace seeds 50 on the reserve path and the run is charged from it", async () => {
     state.orgType = "team";
-    const { store } = makeStore(null);
-    await expect(reserveSummary(store, () => defaultBalanceForWorkspace(ORG_ID))).rejects.toThrow(/Insufficient credits/);
+    const { store, getBalance } = makeStore(null);
+    await reserveSummary(store, () => defaultBalanceForWorkspace(ORG_ID));
+    expect(getBalance()?.trialCreditsRemaining).toBe(FREE_STARTER_CREDITS - 1);
   });
 
   test("Free daily brake: the 16th credit of the day is refused with the daily-cap error", async () => {

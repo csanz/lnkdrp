@@ -44,10 +44,10 @@ async function workspacePlanFacts(orgId: Types.ObjectId): Promise<WorkspacePlanF
   };
 }
 
-/** Pure form of the starter-grant rule: personal AND not Pro → `FREE_STARTER_CREDITS`, else 0. */
+/** Pure form of the starter-grant rule: any workspace not on Pro → `FREE_STARTER_CREDITS`, else 0. */
 function starterCreditsFromFacts(facts: WorkspacePlanFacts): number {
   if (FREE_STARTER_CREDITS <= 0) return 0;
-  return facts.isPersonal && !facts.isPro ? FREE_STARTER_CREDITS : 0;
+  return !facts.isPro ? FREE_STARTER_CREDITS : 0;
 }
 
 /** Pure form of the daily brake: Free → `FREE_DAILY_CREDIT_CAP`, Pro → no cap. */
@@ -58,8 +58,10 @@ function dailyCreditCapFromFacts(facts: WorkspacePlanFacts): number | null {
 /**
  * Decide whether a workspace qualifies for the one-time Free starter grant.
  *
- * Only a personal, non-Pro workspace ever qualifies (team workspaces start at 0 so a user cannot
- * farm credits by creating orgs). Returns the credits to seed, or 0.
+ * Every workspace that is not on Pro qualifies, personal or team (decided 2026-09-17: a new team
+ * workspace is a separate customer with its own plan, and starting it at 0 made it open on an
+ * "AI tools are unavailable" banner). The Free daily brake bounds how fast starter credits can be
+ * spent. Returns the credits to seed, or 0.
  *
  * This is the single source of truth for the grant: both the reserve path
  * (`defaultBalanceForWorkspace`) and the dashboard snapshot (`getCreditsSnapshot`) seed through it,
@@ -77,7 +79,7 @@ export async function starterCreditsForWorkspace(orgId: string | Types.ObjectId)
  *
  * Exists so the credit service can operate even before a workspace has ever run an AI action.
  * Every bucket starts at 0; the only exception is the Free starter grant (`FREE_STARTER_CREDITS`,
- * 50, granted once to personal Free workspaces, see `starterCreditsForWorkspace`). Free workspaces
+ * 50, granted once to every non-Pro workspace, see `starterCreditsForWorkspace`). Free workspaces
  * (personal or team) also get the daily brake (`FREE_DAILY_CREDIT_CAP`); Pro has none. Pro included
  * credits arrive via `grantCycleIncludedCredits` when Stripe opens a billing cycle. The seed is
  * idempotent because callers only write it when no balance row exists yet (`create` inside the

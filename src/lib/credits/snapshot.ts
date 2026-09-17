@@ -145,8 +145,8 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
 
   // Ensure a balance record exists so the dashboard can show Personal one-time credits
   // even before the first AI run triggers reservation initialization. The seed comes from the
-  // same helper the reserve path uses (`defaultBalanceForWorkspace`), so a team workspace never
-  // gets the personal starter grant here and the Free daily cap lands on whichever path runs first.
+  // same helper the reserve path uses (`defaultBalanceForWorkspace`), so the starter grant and the
+  // Free daily cap land exactly once, on whichever path runs first.
   let bal: WorkspaceCreditBalanceDoc = balRaw;
   if (!bal) {
     const initSeed = await defaultBalanceForWorkspace(orgId);
