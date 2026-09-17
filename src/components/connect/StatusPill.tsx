@@ -28,7 +28,7 @@ export default function StatusPill({ status, loading, href }: { status: AgentSta
   const parts = connected
     ? ["Connected", who, formatRelative(status?.lastUsedAt) || null].filter(Boolean)
     : verified
-      ? ["Key verified", status?.lastVerified?.client ?? null, "waiting for an agent client"].filter(Boolean)
+      ? ["Key verified", status?.lastVerified?.client ?? null, "waiting for an agent"].filter(Boolean)
       : ["No agent has connected yet"];
   const pillClass =
     "inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1 text-[12px] font-medium text-[var(--muted)]";

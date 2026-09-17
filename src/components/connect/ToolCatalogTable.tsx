@@ -42,23 +42,27 @@ export default function ToolCatalogTable({ layout = "table" }: { layout?: "table
   }
   return (
     <div className="divide-y divide-[var(--border)] text-[13px]">
-      <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_auto] gap-x-4 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_7.5rem] gap-x-4 pb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">
         <span>Tool</span>
-        <span>What it does</span>
+        <span className="hidden lg:block">What it does</span>
         <span className="text-right">Access</span>
       </div>
       {TOOL_CATALOG.map((t) => (
         <details key={t.name} className="group">
-          <summary className="grid cursor-pointer select-none list-none grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)_auto] items-start gap-x-4 py-2.5 [&::-webkit-details-marker]:hidden">
-            <span className="min-w-0 truncate font-mono text-[12px] leading-5 text-[var(--fg)]">{t.name}</span>
-            <span className="leading-5 text-[var(--muted)]">{t.purpose}</span>
-            <span className="flex items-center justify-end gap-1.5">
+          <summary className="grid cursor-pointer select-none list-none grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_7.5rem] items-start gap-x-4 py-2.5 [&::-webkit-details-marker]:hidden">
+            <span className="min-w-0 truncate font-mono text-[12px] leading-5 text-[var(--fg)]" title={t.name}>
+              {t.name}
+            </span>
+            <span className="order-last col-span-2 mt-0.5 leading-5 text-[var(--muted)] lg:order-none lg:col-span-1 lg:mt-0">
+              {t.purpose}
+            </span>
+            <span className="flex flex-wrap items-center justify-end gap-1.5">
               {t.confirms ? <ConfirmsPill /> : null}
               <AccessPill access={t.access} />
               <Chevron />
             </span>
           </summary>
-          <div className="pb-3 pl-0 sm:pl-[calc(100%/3.1*1.1+1rem)]">
+          <div className="pb-3 pl-0 lg:pl-[15rem]">
             <ToolDetail entry={t} />
           </div>
         </details>

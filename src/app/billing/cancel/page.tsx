@@ -17,7 +17,7 @@ export default function BillingCancelPage() {
             className="rounded-xl bg-[var(--fg)] px-4 py-2 text-[13px] font-semibold text-[var(--bg)]"
             href="/dashboard?tab=overview"
           >
-            Back to billing
+            Back to dashboard
           </Link>
         </div>
       </div>

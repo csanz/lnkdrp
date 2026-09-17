@@ -181,7 +181,7 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
   return (
     <div>
       <div className="max-w-2xl" aria-live="polite">
-        <h1 className="font-serif text-5xl leading-[1.04] tracking-tight text-white sm:text-6xl md:text-[56px]">{headline}</h1>
+        <h1 className="font-serif text-balance text-5xl leading-[1.04] tracking-tight text-white sm:text-6xl md:text-[56px]">{headline}</h1>
         <p className="mt-6 max-w-xl text-base leading-7 text-white/65">{lede}</p>
         {phase === "processing" ? (
           <div className="mt-6 flex items-center gap-3 text-sm text-white/55">

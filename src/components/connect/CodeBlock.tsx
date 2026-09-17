@@ -37,7 +37,7 @@ export default function CodeBlock({
         type="button"
         onClick={() => void copy()}
         aria-label={copied ? "Copied" : label}
-        className="absolute right-3 top-2.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-2)] transition-colors hover:text-[var(--fg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none"
+        className="absolute right-3 top-2.5 rounded-md bg-[var(--panel-2)] px-1.5 py-1 sm:bg-transparent sm:py-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--muted-2)] transition-colors hover:text-[var(--fg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] motion-reduce:transition-none"
       >
         <span aria-live="polite">{copied ? "Copied" : "Copy"}</span>
       </button>

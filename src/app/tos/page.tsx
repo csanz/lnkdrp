@@ -14,7 +14,7 @@ import Link from "next/link";
 import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
 
-const LAST_UPDATED = "September 13, 2026";
+const LAST_UPDATED = "September 16, 2026";
 
 /**
  * Render the TermsOfServicePage UI.
@@ -269,7 +269,7 @@ export default function TermsOfServicePage() {
               <strong>Assignment:</strong> You may not assign or transfer these Terms or your account without our prior written consent. We may assign these Terms without restriction.
             </p>
             <p className="leading-7">
-              <strong>Contact:</strong> If you have questions about these Terms, please contact us at hi@lnkdrp.com.
+              <strong>Contact:</strong> If you have questions about these Terms, please contact us at <a href="mailto:hi@lnkdrp.com" className="text-white/80 underline hover:text-white">hi@lnkdrp.com</a>.
             </p>
           </section>
         </div>

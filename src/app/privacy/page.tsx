@@ -333,7 +333,7 @@ export default function PrivacyPolicyPage() {
               If you have questions, concerns, or requests regarding this Privacy Policy or our privacy practices, please contact us at:
             </p>
             <p className="mb-4 leading-7">
-              <strong>Email:</strong> hi@lnkdrp.com
+              <strong>Email:</strong> <a href="mailto:hi@lnkdrp.com" className="text-white/80 underline hover:text-white">hi@lnkdrp.com</a>
             </p>
             <p className="leading-7">
               We will respond to your inquiry within a reasonable timeframe. Our <Link href="/tos" className="text-white/80 underline hover:text-white">Terms of Service</Link> describe the rules for using the Service.
