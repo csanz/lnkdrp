@@ -857,6 +857,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         const isReady = data.doc.status === "ready" && Boolean(data.doc.shareId);
         delayMs = isReady ? 5_000 : 1500;
 
+        // The updater runs during React's render pass, so it must stay pure: dispatching the docs
+        // event from inside it made the sidebar setState while this component was rendering
+        // ("Cannot update a component (LeftSidebar) while rendering a different component").
+        let docsChanged = false;
         setDoc((prev) => {
           const next = { ...prev, ...data.doc };
           // When processing finishes (or a new version lands), force-refresh the sidebar cache so the
@@ -865,10 +869,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
             prev.status !== "ready" && next.status === "ready" ||
             (prev.currentUploadId && next.currentUploadId && prev.currentUploadId !== next.currentUploadId)
           ) {
-            notifyDocsChanged();
+            docsChanged = true;
           }
           return next;
         });
+        if (docsChanged) notifyDocsChanged();
         setCurrentUpload(data.upload ?? null);
         setHasHydratedFromServer(true);
         if (isReady && !replaceUploadId) return false;
