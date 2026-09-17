@@ -32,7 +32,7 @@ export default function WorkspaceIcon({
         {/* Absolute percentages against the tile's fixed size: `h-full` inside a grid cell has no definite
             height, so a large image rendered at its natural height and only its empty middle showed. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={avatarUrl} alt="" className="absolute left-[12%] top-[12%] h-[76%] w-[76%] object-contain" onError={onError} />
+        <img src={avatarUrl} alt="" className="absolute left-[4%] top-[4%] h-[92%] w-[92%] object-contain" onError={onError} />
       </span>
     );
   }
