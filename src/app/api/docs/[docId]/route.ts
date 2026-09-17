@@ -107,14 +107,18 @@ function buildDocMatch(
   legacyUserId: Types.ObjectId,
   allowLegacyByUserId: boolean,
 ) {
+  // A soft-deleted document is gone: GET used to keep serving it and PATCH kept editing it, and a
+  // second DELETE logged a second doc.deleted row.
+  const notDeleted = { isDeleted: { $ne: true } };
   return allowLegacyByUserId
     ? {
+        ...notDeleted,
         $or: [
           { _id: docObjectId, orgId },
           { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
         ],
       }
-    : { _id: docObjectId, orgId };
+    : { _id: docObjectId, orgId, ...notDeleted };
 }
 
 /**
