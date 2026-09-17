@@ -48,6 +48,14 @@ export type SidebarProjectListItem = {
 
 export type SidebarCacheSnapshot = {
   updatedAt: number;
+  /**
+   * The `/api/sidebar` ETag this snapshot came with, so `If-None-Match` is only ever sent for data
+   * we actually hold. It used to live in its own localStorage key: when the snapshot write failed or
+   * was pruned (quota, private mode) while the key survived, every later refresh got a 304 against a
+   * snapshot that no longer matched, and the sidebar stayed wrong through hard reloads (localStorage
+   * survives those). Reproduced with a snapshot missing one project and the current ETag.
+   */
+  etag?: string;
   docs: Paged<SidebarDocListItem>;
   projects: Paged<SidebarProjectListItem>;
   requests: Paged<SidebarProjectListItem>;
@@ -58,6 +66,14 @@ const ETAG_KEY_BASE = "lnkdrp-sidebar-cache-etag-v1";
 export const ACTIVE_ORG_STORAGE_KEY = "lnkdrp-active-org-id";
 export const ACTIVE_ORG_CHANGED_EVENT = "lnkdrp-active-org-changed";
 const MIN_REFRESH_MS = 1500;
+/**
+ * Orgs whose snapshot this page load fetched in full. `If-None-Match` is only sent after that, and
+ * never for a forced refresh: a conditional request can only ever confirm what we already hold, so
+ * if the stored snapshot disagrees with the server (a partial write, a snapshot edited by an older
+ * build, quota trimming) a 304 would keep it wrong for the life of the browser profile — which is
+ * how a project created over MCP stayed missing from the sidebar through hard reloads.
+ */
+const fullyFetchedOrgs = new Set<string>();
 
 const memByKey = new Map<string, SidebarCacheSnapshot>();
 const inFlightByKey = new Map<string, Promise<void>>();
@@ -126,35 +142,6 @@ function storageKeyForOrg(orgId: string | null): string {
  */
 function etagStorageKeyForOrg(orgId: string | null): string {
   return `${ETAG_KEY_BASE}:${orgId ?? "anon"}`;
-}
-
-/**
- * Reads the stored ETag for the current org (best-effort).
- *
- * Returns an empty string when missing/unavailable.
- */
-function readEtag(orgId: string | null): string {
-  if (!isBrowser()) return "";
-  try {
-    return window.localStorage.getItem(etagStorageKeyForOrg(orgId)) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-/**
- * Persists the ETag for the current org (best-effort).
- *
- * Exists so `/api/sidebar` can use `If-None-Match` and return 304 when unchanged.
- */
-function writeEtag(orgId: string | null, etag: string): void {
-  if (!isBrowser()) return;
-  try {
-    if (etag) window.localStorage.setItem(etagStorageKeyForOrg(orgId), etag);
-    else window.localStorage.removeItem(etagStorageKeyForOrg(orgId));
-  } catch {
-    // ignore
-  }
 }
 
 /** Return whether a value looks like a valid SidebarCacheSnapshot (best-effort). */
@@ -357,6 +344,79 @@ export function optimisticallyAddProjectToSidebarCache(
  * - Debounced via `MIN_REFRESH_MS` unless `force: true`
  * - Coalesces concurrent refresh calls via an `inFlight` promise
  */
+/**
+ * Read a full `/api/sidebar` response into the cache, keeping its ETag with the snapshot.
+ *
+ * Verifies the write landed: when localStorage refused it (quota, private mode) the snapshot is kept
+ * in memory without an ETag, so the next refresh asks for the whole thing instead of getting a 304
+ * it cannot use.
+ */
+async function storeSnapshot(orgId: string, res: Response): Promise<void> {
+  const etag = res.headers.get("etag") ?? "";
+  fullyFetchedOrgs.add(orgId);
+  // The ETag used to live here on its own; it is part of the snapshot now.
+  if (isBrowser()) {
+    try {
+      window.localStorage.removeItem(etagStorageKeyForOrg(orgId));
+    } catch {
+      // ignore
+    }
+  }
+  const json = ((await res.json().catch(() => null)) as {
+    docs?: Paged<SidebarDocListItem>;
+    projects?: Paged<SidebarProjectListItem>;
+    requests?: Paged<SidebarProjectListItem>;
+  } | null) ?? {};
+
+  const next: SidebarCacheSnapshot = {
+    updatedAt: Date.now(),
+    etag,
+    docs: {
+      items: Array.isArray(json.docs?.items) ? json.docs!.items : [],
+      total: typeof json.docs?.total === "number" ? json.docs.total : 0,
+      page: typeof json.docs?.page === "number" ? json.docs.page : 1,
+      limit: typeof json.docs?.limit === "number" ? json.docs.limit : 20,
+    },
+    projects: {
+      items: Array.isArray(json.projects?.items) ? json.projects!.items : [],
+      total: typeof json.projects?.total === "number" ? json.projects.total : 0,
+      page: typeof json.projects?.page === "number" ? json.projects.page : 1,
+      limit: typeof json.projects?.limit === "number" ? json.projects.limit : 10,
+    },
+    requests: {
+      items: Array.isArray(json.requests?.items) ? json.requests!.items : [],
+      total: typeof json.requests?.total === "number" ? json.requests.total : 0,
+      page: typeof json.requests?.page === "number" ? json.requests.page : 1,
+      limit: typeof json.requests?.limit === "number" ? json.requests.limit : 10,
+    },
+  };
+
+  // Avoid noisy re-renders if nothing changed.
+  const prev = getSidebarCacheSnapshot({ orgId });
+  const same =
+    prev &&
+    prev.docs.total === next.docs.total &&
+    prev.projects.total === next.projects.total &&
+    prev.requests.total === next.requests.total &&
+    JSON.stringify(prev.docs.items) === JSON.stringify(next.docs.items) &&
+    JSON.stringify(prev.projects.items) === JSON.stringify(next.projects.items) &&
+    JSON.stringify(prev.requests.items) === JSON.stringify(next.requests.items);
+
+  if (!same) {
+    setSidebarCacheSnapshot(next, { orgId });
+  } else if (prev && (prev.updatedAt !== next.updatedAt || prev.etag !== etag)) {
+    // still bump timestamp so we don’t refetch too aggressively
+    setSidebarCacheSnapshot({ ...prev, updatedAt: next.updatedAt, etag }, { orgId });
+  }
+
+  // Did the ETag actually persist with the data? If localStorage refused the write, keep the
+  // snapshot in memory but without an ETag, so the next refresh asks for the whole snapshot.
+  if (etag) {
+    const stored = readFromStorage(orgId);
+    if (stored?.etag !== etag) setSidebarCacheSnapshot({ ...(stored ?? next), etag: "" }, { orgId });
+  }
+}
+
 export async function refreshSidebarCache(opts?: { force?: boolean; reason?: string }): Promise<void> {
   const force = Boolean(opts?.force);
   const reason = opts?.reason ?? "refresh";
@@ -378,7 +438,8 @@ export async function refreshSidebarCache(opts?: { force?: boolean; reason?: str
 
   const run = (async () => {
     try {
-      const etag = readEtag(orgId);
+      // Only the ETag stored with this snapshot, and only once this page load has read it in full.
+      const etag = !force && fullyFetchedOrgs.has(orgId) ? (snap?.etag ?? "") : "";
       const res = await fetchWithTempUser(`/api/sidebar?sidebar=1`, {
         cache: "no-store",
         headers: etag ? { "if-none-match": etag } : undefined,
@@ -387,60 +448,20 @@ export async function refreshSidebarCache(opts?: { force?: boolean; reason?: str
       // 304 means "no change"; still bump timestamp so we don't refetch too aggressively.
       if (res.status === 304) {
         const prev = getSidebarCacheSnapshot({ orgId });
-        if (prev) setSidebarCacheSnapshot({ ...prev, updatedAt: Date.now() }, { orgId });
+        if (prev) {
+          setSidebarCacheSnapshot({ ...prev, updatedAt: Date.now() }, { orgId });
+          return;
+        }
+        // Nothing to pair the ETag with: ask again for the whole snapshot.
+        const full = await fetchWithTempUser(`/api/sidebar?sidebar=1`, { cache: "no-store" });
+        if (!full.ok) return;
+        await storeSnapshot(orgId, full);
         return;
       }
 
-      const nextEtag = res.headers.get("etag") ?? "";
-      if (nextEtag) writeEtag(orgId, nextEtag);
-
-      const json = res.ok
-        ? ((await res.json()) as {
-            docs?: Paged<SidebarDocListItem>;
-            projects?: Paged<SidebarProjectListItem>;
-            requests?: Paged<SidebarProjectListItem>;
-          })
-        : {};
-
-      const next: SidebarCacheSnapshot = {
-        updatedAt: Date.now(),
-        docs: {
-          items: Array.isArray(json.docs?.items) ? json.docs!.items : [],
-          total: typeof json.docs?.total === "number" ? json.docs.total : 0,
-          page: typeof json.docs?.page === "number" ? json.docs.page : 1,
-          limit: typeof json.docs?.limit === "number" ? json.docs.limit : 20,
-        },
-        projects: {
-          items: Array.isArray(json.projects?.items) ? json.projects!.items : [],
-          total: typeof json.projects?.total === "number" ? json.projects.total : 0,
-          page: typeof json.projects?.page === "number" ? json.projects.page : 1,
-          limit: typeof json.projects?.limit === "number" ? json.projects.limit : 10,
-        },
-        requests: {
-          items: Array.isArray(json.requests?.items) ? json.requests!.items : [],
-          total: typeof json.requests?.total === "number" ? json.requests.total : 0,
-          page: typeof json.requests?.page === "number" ? json.requests.page : 1,
-          limit: typeof json.requests?.limit === "number" ? json.requests.limit : 10,
-        },
-      };
-
-      // Avoid noisy re-renders if nothing changed.
-      const prev = getSidebarCacheSnapshot({ orgId });
-      const same =
-        prev &&
-        prev.docs.total === next.docs.total &&
-        prev.projects.total === next.projects.total &&
-        prev.requests.total === next.requests.total &&
-        JSON.stringify(prev.docs.items) === JSON.stringify(next.docs.items) &&
-        JSON.stringify(prev.projects.items) === JSON.stringify(next.projects.items) &&
-        JSON.stringify(prev.requests.items) === JSON.stringify(next.requests.items);
-
-      if (!same) {
-        setSidebarCacheSnapshot(next, { orgId });
-      } else if (prev && prev.updatedAt !== next.updatedAt) {
-        // still bump timestamp so we don’t refetch too aggressively
-        setSidebarCacheSnapshot({ ...prev, updatedAt: next.updatedAt }, { orgId });
-      }
+      // A failed request must not overwrite a good snapshot with empty lists.
+      if (!res.ok) return;
+      await storeSnapshot(orgId, res);
     } catch {
       // ignore (best-effort)
     } finally {
