@@ -18,6 +18,12 @@ import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked } from "@/lib/billing/planLimits";
 import { ensureDefaultLink, setAllLinksEnabled, updateShareLink } from "@/lib/share/links";
 
+/**
+ * How long an upload may sit in `uploading` with nothing written before a read treats it as dead.
+ * Generous on purpose: the row is not touched while a browser streams a large file to blob storage.
+ */
+const STALE_UPLOAD_MS = 30 * 60 * 1000;
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -476,6 +482,61 @@ export async function GET(
             : (isReplacement ? (docLean as any).slideNodes ?? [] : []);
         }
       }
+    }
+
+    /**
+     * Repair stuck docs on read, the other direction: an upload that never started.
+     *
+     * `POST /api/uploads` moves the doc to `preparing` the moment the Upload row is created,
+     * before a single byte has arrived. If the client then goes away — tab closed, upload
+     * cancelled, browser-side transfer failed — the Upload sits in `uploading` forever and the
+     * doc sits in `preparing` forever. Nothing reaps either. The doc then reads as "processing"
+     * for good, and cannot be deleted: both the app and `lnkdrp_delete_doc` refuse to touch a
+     * document that is still being processed.
+     *
+     * An upload with no `blobUrl` that has not moved in `STALE_UPLOAD_MS` never began. Fail it
+     * and fall the doc back to its last completed upload, or to `draft` when it never had one.
+     * The window is deliberately generous: a large PDF on a slow connection does not touch this
+     * row while the browser streams it to blob storage, so a short timeout would kill live work.
+     */
+    const stuckUpload = (lite ? uploadLite : upload) as any;
+    if (
+      docLean.status === "preparing" &&
+      stuckUpload &&
+      stuckUpload.status === "uploading" &&
+      !stuckUpload.blobUrl &&
+      stuckUpload.createdDate instanceof Date &&
+      Date.now() - stuckUpload.createdDate.getTime() > STALE_UPLOAD_MS
+    ) {
+      const lastGood = (await UploadModel.findOne({ docId: docLean._id, status: "completed" })
+        .sort({ version: -1 })
+        .select({ _id: 1, blobUrl: 1, previewImageUrl: 1, firstPagePngUrl: 1 })
+        .lean()) as any;
+      const nextStatus = lastGood ? "ready" : "draft";
+      const nextPreview = lastGood?.previewImageUrl ?? lastGood?.firstPagePngUrl ?? docLean.previewImageUrl ?? docLean.firstPagePngUrl ?? null;
+
+      await UploadModel.updateOne({ _id: stuckUpload._id, status: "uploading" }, { $set: { status: "failed" } });
+      await DocModel.updateOne(
+        { ...docMatch },
+        {
+          $set: {
+            status: nextStatus,
+            ...(lastGood ? { currentUploadId: lastGood._id, uploadId: lastGood._id, blobUrl: lastGood.blobUrl ?? docLean.blobUrl ?? null } : {}),
+            previewImageUrl: nextPreview,
+            firstPagePngUrl: nextPreview,
+          },
+        },
+      );
+
+      // Same snapshot fix-up the completed-upload repair does, so this response is already correct.
+      docLean.status = nextStatus;
+      if (lastGood) {
+        (docLean as any).currentUploadId = lastGood._id;
+        (docLean as any).uploadId = lastGood._id;
+        docLean.blobUrl = lastGood.blobUrl ?? docLean.blobUrl ?? null;
+      }
+      docLean.previewImageUrl = nextPreview;
+      docLean.firstPagePngUrl = nextPreview;
     }
 
     // Best-effort: if this doc is a request guide doc, provide the request repo id even if
