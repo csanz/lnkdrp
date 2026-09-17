@@ -38,6 +38,24 @@ ten seconds whether things are going well and where to look next.
 - **The standard header.** `AppPageHeader` with `APP_PAGE_GUTTER`, like Search, Activity and
   Agents.
 
+## Definitions (locked — they must match the document pages)
+
+Taken from `src/app/api/docs/[docId]/shareviews/route.ts` and `src/lib/analytics/shareViewAggregates.ts`;
+verified live on 2026-09-17 by a tracked visit (two sessions, per-page dwell recorded).
+
+| Figure | Means | Source |
+| --- | --- | --- |
+| **Views** | Unique recipients active in the window (one person who came back three times is one view) | `shareviews`, recipient-only, activity inside the window |
+| **Opens** | Tab sessions in the window — the returning-reader signal is Opens minus Views | `sharevisits`, one per session, bounded by `lastEventAt` |
+| **Reading time** | Foreground time recorded while reading, best-effort | `sharevisits.timeSpentMs` summed over the window |
+| **Downloads** | Download intents in the window | `shareviews.downloadsByDay` |
+| **Pages viewed** | Distinct pages seen | `pagesSeen` / `pageTimeMsByPage` |
+
+Two traps to respect: `shareviews` totals are **lifetime**, so anything range-scoped comes from
+`sharevisits` or from day maps, never from the lifetime counters; and `opens` is missing rows for
+traffic recorded before visits existed (`opensPartial`), so where the document page hides or
+qualifies it, this page does the same.
+
 ## Proposed decisions (to lock)
 
 1. **Name and place.** "Metrics" in the left sidebar, directly under Search, at `/metrics` inside
@@ -50,29 +68,36 @@ ten seconds whether things are going well and where to look next.
 3. **Range.** A segmented control in the header's actions: 7 days, 30 days, 90 days, with 30 as the
    default and remembered per browser. Every number compares with the previous period of the
    same length (for example "+18% vs previous 30 days").
-4. **Headline numbers (four).** Views, Viewers, Reading time, Downloads, each with its change against the
-   previous period. Selecting one switches the chart to that series. A fifth figure,
-   "Documents opened: 12 of 31 shared", sits under the strip as a sentence, not a card.
-5. **One hero chart.** The selected headline number by day over the range: smooth area with count labels.
+4. **Headline numbers (four).** **Views** (people), **Opens** (sessions), **Reading time**,
+   **Downloads**, each with its change against the previous period, using the definitions above.
+   Selecting one switches the chart to that series. Under the strip, one sentence carries the two
+   facts a number can't: "12 of 31 shared documents were opened · 4 readers came back". Opens is
+   suppressed (and the returns clause dropped) when the window's data is `opensPartial`, exactly as
+   the document page does.
+5. **One hero chart.** The selected headline number by day over the range: smooth area with count
+   labels, UTC day keys, zero-filled so the line never skips a day.
 6. **Ranked sections, in this order:**
-   - **Top documents.** Views, viewers, average reading time, last opened; a row opens
+   - **Top documents.** Views, opens, average reading time per view, last opened; a row opens
      `/doc/:docId/metrics`.
    - **Top links.** Link label or audience, its document, views, last opened; a row opens that
      document's metrics filtered to the link.
    - **Most engaged people.** Named viewers ranked by reading time across all documents. Pro only;
      Free sees the count and the inline upsell notice (upsell pattern), never names
      ([[viewer identity gate]]).
-   - **Gone quiet.** Shared documents with no opens in the range, newest share first, so the
-     sender knows whom to nudge.
+   - **Gone quiet.** Documents with at least one enabled, unexpired link and no recipient activity
+     in the range, newest link first, so the sender knows whom to nudge. Archived documents are
+     excluded from this list; they still count in the totals if they were read in the range.
 7. **Workspace output, secondary.** A compact line under the ranked sections: documents shared,
    links created and uploads in the range.
 8. **Plan gating.** Free is limited to its analytics window (`FREE_ANALYTICS_DAYS`, 7 days): the 30- and
    90-day options show as locked and open the Upgrade modal. Identities are Pro-only as above.
    Everything else is on both plans.
 9. **One endpoint.** `GET /api/metrics/workspace?range=7d|30d|90d` returns the whole page. It
-   aggregates by `orgId` from `shareviews` and `sharevisits` (indexed; no global scan with a
-   later join), caches for 60 seconds per workspace and range, and refetches on the realtime
-   activity frame when a recipient opens something (debounced).
+   aggregates by `orgId` from `shareviews` and `sharevisits` (indexed; no global scan with a later
+   join, and no lifetime counters for range figures), caches for 60 seconds keyed by workspace,
+   range **and plan**, and refetches on the realtime activity frame when a recipient opens
+   something (debounced). A Free request for 30d or 90d returns the clamped 7-day window with
+   `clampedByPlan: true`, never older data.
 10. **Empty and early states.** A new workspace sees what the page will show and one action
     ("Share a document"). A workspace with shares but no opens yet sees zeros with "No opens
     yet in the last 30 days", not a blank page.
@@ -127,6 +152,26 @@ ten seconds whether things are going well and where to look next.
 - Verified on the seed corpus with screenshots; API p95 under 500 ms on that corpus
 - docs/METRICS.md section for workspace metrics
 
+## Risks
+
+- **Heavy workspaces.** Ranked lists and series must stay bounded (top 8) and indexed; the query
+  budget is one round of parallel aggregations, p95 under 500 ms on the seed corpus.
+- **Best-effort timing.** Reading time is foreground-only and depends on the reader's tab; treat it
+  as a comparison signal between documents, never as a billing-grade figure. Copy should say
+  "time reading", not "time on file".
+- **Partial opens on old traffic.** See the definitions table; showing a low Opens next to a higher
+  Views would read as a bug.
+- **Duplicate figures.** The dashboard Overview shows lifetime counters computed by a different
+  query. Until they share this endpoint, the two can disagree; the open question below decides when.
+
+## Success criteria
+
+- A sender can answer "is this week better than last, and which document is carrying it" without
+  opening a document.
+- Every figure on the page equals the same figure on the document pages for the same window.
+- The page is the entry point people open on purpose: it is one click from the sidebar and needs no
+  filters set before it says something useful.
+
 ## Verification
 
 - `tsc`, `eslint` (0 errors), the analytics vitest suites including the reconciliation test.
@@ -138,9 +183,11 @@ ten seconds whether things are going well and where to look next.
 
 ## Open questions
 
-- Label: "Metrics" or "Insights"? This draft uses Metrics, matching the document pages.
+- **Locked 2026-09-17:** the label is "Metrics", matching the document pages.
 - Should the dashboard Overview's view counters move to this endpoint (and its scan query be
-  retired) as part of this work, or later?
+  retired) as part of this work, or later? Proposal: later, as a follow-up once this page's numbers
+  have been trusted for a week; the risk of changing the dashboard's meaning mid-build is not worth
+  the saved query.
 
 ## Future
 
