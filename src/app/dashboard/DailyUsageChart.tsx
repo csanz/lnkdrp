@@ -170,8 +170,8 @@ export default function DailyUsageChart({
   const max = useMemo(() => {
     let m = 0;
     for (const r of chartData) {
-      for (const k of keys) m = Math.max(m, niceNumber(r[k.key]));
-      if (group === "total") m = Math.max(m, niceNumber(r.total));
+      const dayTotal = group === "total" ? niceNumber(r.total) : keys.reduce((s, k) => s + niceNumber(r[k.key]), 0);
+      m = Math.max(m, dayTotal);
     }
     return Math.max(1, m);
   }, [chartData, group, keys]);

@@ -249,7 +249,7 @@ export default function SubscriptionCard() {
             subtitle={
               <span>
                 {periodHint ? periodHint : "Your subscription is active."} Unlimited documents · Unlimited projects · Deep
-                analytics · full history · 1 collaborator included.
+                analytics · Full history · 1 collaborator included.
               </span>
             }
             cta={
@@ -260,7 +260,7 @@ export default function SubscriptionCard() {
                   disabled={busy || manageBusy}
                   onClick={() => void openManageSubscription()}
                 >
-                  {manageBusy ? "Opening…" : "Manage Subscription"}
+                  {manageBusy ? "Opening…" : "Manage subscription"}
                 </button>
                 <button
                   type="button"

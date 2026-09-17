@@ -193,8 +193,8 @@ export default function UsageTable({
                   const userLabel = (r.user?.name ?? "").trim() || (r.user?.email ?? "").trim() || "—";
                   return (
                     <tr key={r.id} className="border-t border-[var(--border)]">
-                      <td className="px-4 py-3 text-[var(--muted-2)]">{fmtDateTime(r.createdAt)}</td>
-                      <td className="px-4 py-3 text-[var(--muted-2)]">
+                      <td className="whitespace-nowrap px-4 py-3 text-[var(--muted-2)]">{fmtDateTime(r.createdAt)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-[var(--muted-2)]">
                         {r.action === "summary"
                           ? "Summary"
                           : r.action === "review"
@@ -218,7 +218,7 @@ export default function UsageTable({
                           <span className="text-[var(--muted-2)]">—</span>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-[var(--muted-2)]">{userLabel}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-[var(--muted-2)]">{userLabel}</td>
                       <td className="px-4 py-3 text-right text-[var(--muted-2)]">
                         {Number.isFinite(r.credits) ? r.credits.toLocaleString() : "—"}
                       </td>

@@ -138,8 +138,8 @@ export default function NotificationPreferences() {
       {error ? <div className="mt-3 text-[12px] font-medium text-red-700">{error}</div> : null}
       {!error ? (
         <div className="mt-3 text-[12px] text-[var(--muted-2)]">
-          Daily digests are sent at the end of the day (workspace timezone). Immediate sends as soon as processing
-          completes.
+          Daily digests are sent at the end of the day (workspace timezone). Immediate emails are sent as soon as
+          processing completes.
         </div>
       ) : null}
     </div>

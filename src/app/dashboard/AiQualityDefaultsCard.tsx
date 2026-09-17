@@ -93,7 +93,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
     <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="text-[13px] font-semibold text-[var(--fg)]">AI Quality Defaults</div>
+          <div className="text-[13px] font-semibold text-[var(--fg)]">AI quality defaults</div>
           <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
             Defaults for new credit-metered runs. You can still pick a quality each time you run one.
           </div>
@@ -134,7 +134,7 @@ export default function AiQualityDefaultsCard({ className }: { className?: strin
             />
           </div>
           <div className="mt-2 text-[13px] font-semibold text-[var(--fg)]">1 credit</div>
-          <div className="mt-1 text-[12px] text-[var(--muted-2)]">Written by lnkdrp after every upload, at the basic level. 0 credits when your agent writes it.</div>
+          <div className="mt-1 text-[12px] text-[var(--muted-2)]">Written by LinkDrop after every upload, at the basic level. 0 credits when your agent writes it.</div>
         </div>
 
         {FEATURE_REQUESTS_ENABLED ? (

@@ -420,10 +420,10 @@ export default function BillingInvoicesTab() {
   const invoicesLoaded = Boolean(invoices) && !invoicesBusy && !invoicesError;
 
   return (
-    <div className="grid gap-3">
+    <div className="grid grid-cols-1 gap-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <div className="text-[28px] font-semibold tracking-tight text-[var(--fg)]">Billing & Invoices</div>
+          <div className="text-[24px] font-semibold tracking-tight text-[var(--fg)]">Billing & Invoices</div>
         </div>
         <div className="shrink-0 flex items-center gap-2">
           {debugEnabled ? (
@@ -499,7 +499,7 @@ export default function BillingInvoicesTab() {
       <Panel padding="lg">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className="text-[13px] font-semibold text-[var(--fg)]">Included Usage</div>
+            <div className="text-[13px] font-semibold text-[var(--fg)]">Included usage</div>
             <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
               {summaryLoaded ? cycleRange : <SkeletonPill widthClassName="w-56" />}
             </div>
@@ -574,7 +574,7 @@ export default function BillingInvoicesTab() {
       <Panel padding="lg">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-[var(--fg)]">On-Demand Usage</div>
+            <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand usage</div>
             <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
               {summaryLoaded ? cycleRange : <SkeletonPill widthClassName="w-56" />}
             </div>
@@ -754,9 +754,9 @@ export default function BillingInvoicesTab() {
               <tbody>
                 {invoices.invoices.map((inv) => (
                   <tr key={`${inv.date}-${inv.description}`} className="border-t border-[var(--border)]">
-                    <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{formatShortDate(inv.date)}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-[13px] text-[var(--muted-2)]">{formatShortDate(inv.date)}</td>
                     <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{inv.description}</td>
-                    <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{inv.status}</td>
+                    <td className="px-4 py-3 text-[13px] text-[var(--muted-2)]">{inv.status ? inv.status.charAt(0).toUpperCase() + inv.status.slice(1) : "—"}</td>
                     <td className="px-4 py-3 text-right text-[13px] text-[var(--muted-2)]">
                       {inv.currency === "USD"
                         ? formatUsdFromCents(inv.amountCents)

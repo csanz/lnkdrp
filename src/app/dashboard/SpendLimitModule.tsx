@@ -238,7 +238,7 @@ function SpendLimitModuleInner({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <div className="text-[12px] font-semibold text-[var(--fg)]">
-              {compact ? "On-Demand Usage" : "On-demand usage this month"}
+              {compact ? "On-demand usage" : "On-demand usage this month"}
             </div>
             <HelpTooltip
               label="On-demand usage help"

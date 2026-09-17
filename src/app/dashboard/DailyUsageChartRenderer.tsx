@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bar, BarChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
+import { formatDayKey } from "@/lib/format/date";
 import { formatUsdFromCents } from "@/lib/format/money";
 
 export type DailyUsageChartRow = Record<string, any> & { day: string };
@@ -77,7 +78,7 @@ export default function DailyUsageChartRenderer({
   return (
     <div ref={wrapRef} className="h-56 w-full">
       {!size ? null : (
-        <BarChart width={size.w} height={size.h} data={chartData} margin={{ top: 18, right: 10, bottom: 6, left: 6 }}>
+        <BarChart width={size.w} height={size.h} data={chartData} margin={{ top: 18, right: 24, bottom: 6, left: 6 }}>
           <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
           <XAxis
             dataKey="day"
@@ -86,6 +87,7 @@ export default function DailyUsageChartRenderer({
             axisLine={false}
             tickLine={false}
             interval={0}
+            tickFormatter={(d) => formatDayKey(String(d))}
             height={24}
           />
           <YAxis
@@ -93,7 +95,7 @@ export default function DailyUsageChartRenderer({
             axisLine={false}
             tickLine={false}
             tickFormatter={(v) => fmtAxis(v)}
-            domain={[0, "dataMax"]}
+            domain={[0, "auto"]}
           />
           <Tooltip
             cursor={{ fill: "var(--panel-hover)", fillOpacity: 0.5 }}
@@ -106,6 +108,7 @@ export default function DailyUsageChartRenderer({
               color: "var(--fg)",
             }}
             labelStyle={{ color: "var(--muted-2)" }}
+            labelFormatter={(d) => formatDayKey(String(d))}
             formatter={(v: any, name: any) => [fmtTooltip(v), String(name ?? "")]}
           />
 

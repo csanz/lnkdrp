@@ -44,7 +44,7 @@ export function formatDateRange(start: string, end: string): string {
     return `${start.slice(0, 10)} to ${end.slice(0, 10)}`;
   }
   try {
-    return `${s.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} - ${e.toLocaleDateString(undefined, {
+    return `${s.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} – ${e.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
       year: "numeric",
@@ -66,7 +66,7 @@ export function formatMonthLabel(yyyyMm: string): string {
   if (!Number.isFinite(yy) || !Number.isFinite(mm)) return yyyyMm;
   const d = new Date(Date.UTC(yy, Math.max(0, mm - 1), 1));
   try {
-    return d.toLocaleDateString(undefined, { year: "numeric", month: "long" });
+    return d.toLocaleDateString(undefined, { year: "numeric", month: "long", timeZone: "UTC" });
   } catch {
     return yyyyMm;
   }
