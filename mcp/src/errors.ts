@@ -165,6 +165,16 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
 
   switch (status) {
     case 404:
+      // Link routes 404 when the link is not on that document, even though the document exists;
+      // "No such document" sent agents looking for a document problem that was not there.
+      if (/\/links\/[^/]+/.test(path) || /^link not found/i.test(errorText)) {
+        return new ToolError(
+          "not_found",
+          "No such link on this document. The link may belong to a different document or have been deleted; " +
+            "lnkdrp_find_share_link finds a link by name without knowing its document.",
+          { status },
+        );
+      }
       return new ToolError("not_found", "No such document in this workspace.", { status });
     case 400: {
       if (FETCH_BLOCKED_RE.test(errorText)) {

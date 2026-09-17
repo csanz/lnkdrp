@@ -38,8 +38,6 @@ import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import { fetchJson } from "@/lib/http/fetchJson";
-import { awaitingFirstOpen } from "@/lib/analytics/reading";
-import { formatRelative } from "@/lib/analytics/reading/format";
 import { buildPublicShareUrl } from "@/lib/urls";
 import type { ShareLinkDTO } from "@/lib/share/links";
 
@@ -62,20 +60,27 @@ type Props = {
   canManage?: boolean;
 };
 
+/** "3h ago" / "12 Sep" for a link's last view; empty when it has never been viewed. */
+function relativeWhen(iso: string | null): string {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  const mins = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  if (mins < 2) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 48) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(new Date(ms));
+}
+
 /** "12 Sep 2026" for an expiry date. */
 function formatDate(iso: string | null): string {
   if (!iso) return "";
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return "";
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(ms));
-}
-
-/** A link's state from its own fields, the same precedence as the reading analytics' `linkStatus`. */
-function linkStatusOf(l: Pick<ShareLinkDTO, "status" | "enabled" | "expiresAt">): ShareLinkDTO["status"] {
-  if (l.status === "archived") return "archived";
-  if (!l.enabled) return "disabled";
-  if (l.expiresAt && Date.parse(l.expiresAt) <= Date.now()) return "expired";
-  return "active";
 }
 
 const LINK_STATUS_PILL: Record<ShareLinkDTO["status"], { label: string; className: string }> = {
@@ -308,7 +313,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   /** The window the server served (plan-clamped), used verbatim in the column headings. */
   const [statsDays, setStatsDays] = useState<number | null>(null);
   /** Panel only: the default link's viewers over the served analytics window. */
-  const [panelViewers, setPanelViewers] = useState<{ viewers: number; days: number | null; lastViewedAt: string | null } | null>(null);
+  const [panelViewers, setPanelViewers] = useState<{ viewers: number; days: number | null } | null>(null);
   /**
    * Traffic on links this table cannot show: slugs the analytics still carry but no live link row
    * owns — deleted links, whose rows stay in the document's totals by design. Without this row the
@@ -438,18 +443,14 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetchJson<{ days?: number; byLink?: Array<{ shareId?: string; viewers?: number; lastViewedAt?: string | null }> }>(
+        const res = await fetchJson<{ days?: number; byLink?: Array<{ shareId?: string; viewers?: number }> }>(
           `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${LINK_STATS_DAYS}&lite=1&byLink=1&shareIds=${encodeURIComponent(panelShareId)}`,
           { cache: "no-store" },
         );
         if (cancelled) return;
         const row = (res.byLink ?? []).find((r) => r.shareId === panelShareId);
         const viewers = typeof row?.viewers === "number" && Number.isFinite(row.viewers) ? Math.max(0, Math.floor(row.viewers)) : 0;
-        setPanelViewers({
-          viewers,
-          days: typeof res.days === "number" && res.days > 0 ? Math.floor(res.days) : null,
-          lastViewedAt: typeof row?.lastViewedAt === "string" ? row.lastViewedAt : null,
-        });
+        setPanelViewers({ viewers, days: typeof res.days === "number" && res.days > 0 ? Math.floor(res.days) : null });
       } catch {
         if (!cancelled) setPanelViewers(null);
       }
@@ -459,6 +460,8 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     };
   }, [docId, panelShareId]);
 
+  /** `" (7d)"` once the server has told us its window; blank until then, never a guess. */
+  const statsWindowLabel = statsDays ? ` (${statsDays}d)` : "";
 
   /** Default link first, then the rest in the order the API returned them. */
   const ordered = useMemo(() => {
@@ -762,27 +765,10 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
               <Link
                 href={metricsHref(defaultLink.shareId)}
                 className="inline-flex items-center gap-1 font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
-                title={panelViewers?.days ? `People on this link in the last ${panelViewers.days} days` : "Analytics for this link"}
+                title={panelViewers?.days ? `Viewers of this link in the last ${panelViewers.days} days` : "Analytics for this link"}
               >
                 <ChartBarIcon className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden="true" />
-                {/* The window is in the badge: the Analytics card below counts a different scope, and a
-                    bare "1 person" read as contradicting it. */}
-                {/* "Not opened yet" follows the metrics page rule: an unused default link beside other
-                    links is not waiting on anyone, and the Analytics card's not-opened count leaves it out. */}
-                {panelViewers
-                  ? panelViewers.viewers === 0 &&
-                    awaitingFirstOpen(
-                      {
-                        shareId: defaultLink.shareId,
-                        isDefault: defaultLink.isDefault,
-                        status: linkStatusOf(defaultLink),
-                        everOpened: Boolean(panelViewers.lastViewedAt ?? defaultLink.lastViewedAt),
-                      },
-                      (links ?? []).map((l) => ({ shareId: l.shareId, status: linkStatusOf(l) })),
-                    )
-                    ? "Not opened yet"
-                    : `${panelViewers.viewers} ${panelViewers.viewers === 1 ? "person" : "people"} · ${panelViewers.days ?? LINK_STATS_DAYS} days`
-                  : "Analytics"}
+                {panelViewers ? `${panelViewers.viewers} ${panelViewers.viewers === 1 ? "viewer" : "viewers"}` : "Analytics"}
               </Link>
               {canManage ? (
                 <button
@@ -818,10 +804,6 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
         </div>
       ) : null}
 
-      {/* The window the SERVER served (Free is clamped to 7 days), named once for the whole table;
-          blank until the stats land, never a guess. */}
-      <div className="mb-2 min-h-[16px] text-[12px] leading-4 text-[var(--muted)]">{statsDays ? `Last ${statsDays} days` : null}</div>
-
       {/* A table, not cards: a document can carry dozens of links, and the useful comparison is
           across rows — who opened what, which are still open. Thin rows, full width, and the
           settings collapse to icons so a row stays on one line. */}
@@ -833,14 +815,16 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
               <th scope="col" className="px-3 py-2.5 font-semibold">Address</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Status</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Settings</th>
-              {/* Both cover the window named in the caption above the table.
+              {/* Both cover the same window, so the window is named once, on the columns it
+                  applies to — and it names the window the SERVER served (Free is clamped to 7
+                  days), not the one this component asked for.
                   There is no separate "Views" column: a `ShareView` row is unique per (link,
                   viewer) for life, so the per-link view count and the per-link viewer count are
                   the same number by construction, and printing both invited the reader to compare
                   them. */}
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">People</th>
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Downloads</th>
-              <th scope="col" className="px-3 py-2.5 font-semibold">Last opened</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Viewers{statsWindowLabel}</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Downloads{statsWindowLabel}</th>
+              <th scope="col" className="px-3 py-2.5 font-semibold">Last viewed</th>
               <th scope="col" className="px-4 py-2.5 text-right font-semibold">
                 <span className="sr-only">Actions</span>
               </th>
@@ -976,18 +960,9 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                         link row's own `lastViewedAt`, which only started moving when links shipped:
                         a link that adopted a document's older traffic printed "Never" next to a
                         non-zero Views cell, and readers took "Never" as the authoritative one. */}
-                    {(() => {
-                      const lastIso = stats?.lastViewedAt ?? link.lastViewedAt;
-                      const lastMs = lastIso ? Date.parse(lastIso) : NaN;
-                      return (
-                        <td
-                          className="whitespace-nowrap px-3 py-2.5 text-[var(--muted)]"
-                          title={Number.isFinite(lastMs) ? new Date(lastMs).toLocaleString() : undefined}
-                        >
-                          {Number.isFinite(lastMs) ? formatRelative(lastMs, Date.now()) : "Not opened yet"}
-                        </td>
-                      );
-                    })()}
+                    <td className="whitespace-nowrap px-3 py-2.5 text-[var(--muted)]">
+                      {relativeWhen(stats?.lastViewedAt ?? link.lastViewedAt) || "Never"}
+                    </td>
 
                     <td className="px-4 py-2.5">
                       <div className="flex items-center justify-end gap-1.5">

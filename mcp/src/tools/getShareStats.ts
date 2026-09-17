@@ -5,7 +5,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { ToolContext } from "../context";
-import { handleTool } from "../errors";
+import { handleTool, ToolError } from "../errors";
 import { untrustedOrNull, UNTRUSTED_LIMITS } from "../untrusted";
 import { docRefShape, resolveDoc, SAFETY_TAIL } from "./shared";
 
@@ -57,7 +57,18 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
       const doc = args.docId ? await ctx.api.getDoc(args.docId) : await resolveDoc(ctx.api, { shareId: args.shareId });
       // A shareId names one link of the document, so the numbers are scoped to that link; a docId
       // asks about the document, i.e. all of its links together.
-      const stats = await ctx.api.shareViews(doc.id, { days: args.days, viewers: args.includeViewers, shareId: args.shareId });
+      const stats = await ctx.api.shareViews(doc.id, { days: args.days, viewers: args.includeViewers, shareId: args.shareId }).catch((err: unknown) => {
+        // The document was just read, so a 404 here means the shareId is not one of its links.
+        if (args.shareId && err instanceof ToolError && err.code === "not_found") {
+          throw new ToolError(
+            "not_found",
+            `No link with shareId ${args.shareId} on this document. Pass the docId the link belongs to, or omit docId; ` +
+              "lnkdrp_find_share_link finds a link by name without knowing its document.",
+            { status: 404 },
+          );
+        }
+        throw err;
+      });
       // Deep tier only, and both lists. Returning `viewers` alone meant an agent saw only the
       // recipients who happened to be signed in — one row out of eight on a real deck — while the
       // owner's metrics page showed every reader. Most people who open a share link never sign in,
