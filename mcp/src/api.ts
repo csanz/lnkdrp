@@ -568,7 +568,14 @@ export class ApiClient {
    * matches a title or *any* of a document's share-link slugs (not only the default's, since
    * 4db0429). `ids` bypasses search and returns exactly those documents, in one call.
    */
-  async listDocsPage(input: { q?: string | undefined; ids?: string[] | undefined; page?: number | undefined; limit?: number | undefined }): Promise<ApiDocsPage> {
+  async listDocsPage(input: {
+    q?: string | undefined;
+    ids?: string[] | undefined;
+    page?: number | undefined;
+    limit?: number | undefined;
+    /** true lists archived documents instead of live ones. */
+    archived?: boolean | undefined;
+  }): Promise<ApiDocsPage> {
     const body = rec(
       await this.request("GET", "/api/docs", {
         query: {
@@ -576,6 +583,7 @@ export class ApiClient {
           ids: input.ids?.length ? input.ids.join(",") : undefined,
           page: input.page,
           limit: input.limit,
+          archived: input.archived ? 1 : undefined,
         },
       }),
     );
@@ -702,11 +710,11 @@ export class ApiClient {
   /** `GET /api/projects/:id/docs` — the project (404 when not in this workspace) and a page of its documents. */
   async getProjectDocs(
     projectId: string,
-    input: { q?: string | undefined; page?: number | undefined; limit: number },
+    input: { q?: string | undefined; page?: number | undefined; limit: number; archived?: boolean | undefined },
   ): Promise<ApiProjectDocsPage> {
     const body = rec(
       await this.request("GET", `/api/projects/${encodeURIComponent(projectId)}/docs`, {
-        query: { q: input.q || undefined, page: input.page, limit: input.limit },
+        query: { q: input.q || undefined, page: input.page, limit: input.limit, archived: input.archived ? 1 : undefined },
       }),
     );
     const rows = Array.isArray(body.docs) ? body.docs : [];

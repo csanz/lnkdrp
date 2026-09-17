@@ -142,7 +142,11 @@ async function projectIdForSlug(api: ApiClient, slug: string): Promise<string> {
  * Resolve a project reference to a verified, workspace-scoped, non-request project, and read one
  * page of its documents on the way (the same call is the existence check).
  */
-async function loadProject(api: ApiClient, ref: ProjectRef, docs: { page?: number | undefined; limit: number; q?: string | undefined } = { limit: 1 }) {
+async function loadProject(
+  api: ApiClient,
+  ref: ProjectRef,
+  docs: { page?: number | undefined; limit: number; q?: string | undefined; archived?: boolean | undefined } = { limit: 1 },
+) {
   requireOneProjectRef(ref);
   const projectId = ref.projectId ?? (await projectIdForSlug(api, ref.projectSlug as string));
   const res = await api.getProjectDocs(projectId, docs);
@@ -273,8 +277,9 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
       description:
         "One project and a page of its documents, most recently updated first. Project: projectId, slug, name, description, " +
         "docCount, appUrl, publicPageEnabled and publicUrl (null while the public page is off). Documents: docId, shareId, " +
-        "shareUrl, title, status, version and dates; archived documents are not listed. query narrows the documents by " +
-        "title or default link slug. " +
+        "shareUrl, title, status, version and dates. archived: true shows the project's Archive view (its archived documents) " +
+        "instead of the live ones; total then counts archived documents and docCount stays the live count. query narrows " +
+        "the documents by title or default link slug. " +
         SAFETY_TAIL,
       inputSchema: {
         projectId: projectIdSchema,
@@ -282,16 +287,18 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
         query: z.string().trim().max(200).optional().describe("Only documents whose title or default link slug matches."),
         page: z.number().int().min(1).default(1).describe("1-based page of documents."),
         limit: z.number().int().min(1).max(50).default(25).describe("Documents per page (1-50)."),
+        archived: z.boolean().default(false).describe("true lists the project's archived documents (its Archive view)."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const res = await loadProject(ctx.api, args, { q: args.query, page: args.page, limit: args.limit });
+      const res = await loadProject(ctx.api, args, { q: args.query, page: args.page, limit: args.limit, archived: args.archived });
       return {
         // Without a query the route's total is the project's cached document count.
         project: projectView(
           ctx.api,
-          await withListedMeta(ctx.api, args.query ? res.project : { ...res.project, docCount: res.total }),
+          // docCount is the live count; the route's total is only that without a query or the archive view.
+          await withListedMeta(ctx.api, args.query || args.archived ? { ...res.project, docCount: null } : { ...res.project, docCount: res.total }),
         ),
         total: res.total,
         page: res.page,

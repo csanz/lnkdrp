@@ -78,19 +78,21 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
         "Find documents in the workspace. Search by title or by the slug of any of a document's share links (query), or " +
         "look up specific documents by id (ids). Returns each document's id, default shareId, title, processing status, " +
         "current version, one-line AI summary and dates. Page-based: pass page to get the next set; total tells you how many " +
-        "match. Use a result's id with lnkdrp_get_share, lnkdrp_list_share_links or lnkdrp_get_share_stats. Archived and deleted " +
-        "documents are not listed; with ids, any that did not resolve come back in notFound. " +
+        "match. Use a result's id with lnkdrp_get_share, lnkdrp_list_share_links or lnkdrp_get_share_stats. Archived documents " +
+        "are listed only with archived: true (then only archived ones - bring one back with lnkdrp_archive_doc archived: false); " +
+        "deleted documents never are. With ids, any that did not resolve come back in notFound. " +
         SAFETY_TAIL,
       inputSchema: {
         query: z.string().trim().max(200).optional().describe("Match against document titles and share-link slugs, case-insensitively. Omit to list everything."),
         ids: z.array(docIdSchema).min(1).max(50).optional().describe("Return exactly these documents. When given, query and page are ignored."),
         page: z.number().int().min(1).default(1).describe("1-based page number."),
         limit: z.number().int().min(1).max(50).default(25).describe("Documents per page (1-50)."),
+        archived: z.boolean().default(false).describe("true lists archived documents (the Archive view) instead of live ones."),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const page = await ctx.api.listDocsPage({ q: args.query, ids: args.ids, page: args.page, limit: args.limit });
+      const page = await ctx.api.listDocsPage({ q: args.query, ids: args.ids, page: args.page, limit: args.limit, archived: args.archived });
       // Ids that did not resolve (unknown, deleted, archived, or not a document id at all) used to
       // vanish without a trace, so an agent could not tell "not found" from "not returned".
       const found = new Set(page.docs.map((d) => d.id));
