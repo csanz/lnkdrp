@@ -18,6 +18,14 @@ import BrandHeader from "@/components/BrandHeader";
 import { useAuthEnabled } from "@/app/providers";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { getOrCreateBotId } from "@/lib/botId";
+import {
+  buildSeenPayload,
+  buildTimingPayload,
+  HEARTBEAT_MS,
+  IDLE_CHECK_MS,
+  ReadingClock,
+  type Flush,
+} from "@/lib/share/readingClock";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { CATEGORY_LABELS } from "@/lib/ai/constants";
 /**
@@ -421,10 +429,9 @@ export function PdfJsViewer({
   const historyPrefetchDoneRef = useRef(false);
   const historyScrollRef = useRef<HTMLDivElement | null>(null);
   const historySentinelRef = useRef<HTMLDivElement | null>(null);
-  const shareTimingEnteredAtMsRef = useRef<number | null>(null);
-  const shareTimingLastFlushAtMsRef = useRef<number>(0);
-  const shareTimingPageRef = useRef<number>(initialPage);
-  const shareTimingPageEnteredAtMsRef = useRef<number | null>(null);
+  const clockRef = useRef<{ clock: ReadingClock; send: (flushes: Flush[]) => void } | null>(null);
+  const numPagesRef = useRef<number | null>(null);
+  const pageNumberRef = useRef<number>(initialPage);
   const shareVisitIdRef = useRef<string | null>(null);
   const [viewMode, setViewMode] = useState<"single" | "all" | "grid">("single");
   const [aiData] = useState<AiOutput | null>(ai ?? null);
@@ -1709,8 +1716,12 @@ export function PdfJsViewer({
   }, [hasFirstPaint, shareIdSafe]);
 
   useEffect(() => {
-    // Best-effort "time spent" tracking for share pages.
-    // We attribute time to the same per-browser botId used for views/pages.
+    numPagesRef.current = numPages;
+  }, [numPages]);
+
+  useEffect(() => {
+    // Reading time for share pages. The rules (idle cut-off, final flushes, what a segment is) live in
+    // `ReadingClock`; this effect only feeds it browser events and posts what it flushes.
     if (!shareIdSafe) return;
     if (!hasFirstPaint) return;
     const shareId = shareIdSafe;
@@ -1720,230 +1731,74 @@ export function PdfJsViewer({
     if (!visitId) return;
     shareVisitIdRef.current = visitId;
 
-    function start(now: number) {
-      shareTimingEnteredAtMsRef.current = now;
-      shareTimingLastFlushAtMsRef.current = 0;
-      // Only start page timer if not already started.
-      if (!shareTimingPageEnteredAtMsRef.current) shareTimingPageEnteredAtMsRef.current = now;
-    }
+    const clock = new ReadingClock({ now: Date.now(), page: pageNumberRef.current });
+    const send = (flushes: Flush[]) => {
+      for (const flush of flushes) {
+        const payload = buildTimingPayload(flush, { botId, visitId, numPages: numPagesRef.current });
+        applyViewerProfileToStatsPayload(payload);
+        void fetchWithTempUser(`/api/share/${shareId}/stats`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          keepalive: true,
+          body: JSON.stringify(payload),
+        }).catch(() => void 0);
+      }
+    };
+    clockRef.current = { clock, send };
+    // A tab that painted in the background: nothing has elapsed yet, so this only pauses the clock.
+    if (document.visibilityState === "hidden") send(clock.hidden(Date.now()));
 
-    function stop() {
-      shareTimingEnteredAtMsRef.current = null;
-      shareTimingLastFlushAtMsRef.current = 0;
-      shareTimingPageEnteredAtMsRef.current = null;
-    }
-
-    start(Date.now());
-
-    /**
-     * Flush elapsed time. Two clocks run here and each is reported by its own field, because each
-     * feeds a different counter on the server and they measure overlapping intervals:
-     *
-     * - the *visit* clock (`shareTimingEnteredAtMsRef`) feeds `timeSpentMs`
-     * - the *page* clock (`shareTimingPageEnteredAtMsRef`) feeds `pageTimeMsByPage`
-     *
-     * Sending one number for both double counted both totals. This flush used to send its visit
-     * chunk as `durationMs` *with* a `pageNumber`, and the server credited that same number to the
-     * page — without resetting the page clock, so when the reader finally turned the page the
-     * page-change flush sent the full segment again, time already counted included. A three-page
-     * read of 7.9s + 5.6s + 6.7s stored 20.3s against page 3, and the document total ran 26% high.
-     *
-     * Both clocks are reset by the flush that reports them, so every millisecond is reported once.
-     *
-     * `pageExit` says whether the reader is actually leaving the page. Only then does the payload
-     * carry the page interval, because the server turns an interval into a `pageEvents` segment and
-     * a `pageVisitCountByPage` increment — "they came back to page 2". The periodic heartbeat sent
-     * one too, so a single 25-second stay on page 2 arrived as two segments and the visit detail
-     * showed a revisit that never happened. A heartbeat is not a page exit; it reports the visit
-     * clock and leaves the page clock running, so the page's time is still reported exactly once,
-     * by the exit that ends it.
-     */
-    function flushTime({ pageExit }: { pageExit: boolean }) {
-      const enteredAtMs = shareTimingEnteredAtMsRef.current;
-      if (!enteredAtMs) return;
-      // Only accumulate while the tab is visible (foreground).
-      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+    let lastPointerMoveAt = 0;
+    const onInput = () => clock.input(Date.now());
+    const onPointerMove = () => {
       const now = Date.now();
-      // Avoid double-flush storms from multiple lifecycle events.
-      if (shareTimingLastFlushAtMsRef.current && now - shareTimingLastFlushAtMsRef.current < 1200) return;
-      shareTimingLastFlushAtMsRef.current = now;
+      if (now - lastPointerMoveAt < 1000) return;
+      lastPointerMoveAt = now;
+      clock.input(now);
+    };
+    const onVisChange = () => {
+      if (document.visibilityState === "hidden") send(clock.hidden(Date.now()));
+      else clock.visible(Date.now());
+    };
+    const onPageHide = () => send(clock.pagehide(Date.now()));
 
-      const durationMs = now - enteredAtMs;
-      // Ignore extremely short stays.
-      if (!Number.isFinite(durationMs) || durationMs < 1500) return;
-      // Reset start time so we increment in chunks.
-      shareTimingEnteredAtMsRef.current = now;
-
-      const payload: Record<string, unknown> = { botId, visitId, durationMs };
-      applyViewerProfileToStatsPayload(payload);
-      if (pageExit) {
-        const p = shareTimingPageRef.current;
-        const pageEnteredAtMs = shareTimingPageEnteredAtMsRef.current;
-        if (typeof p === "number" && Number.isFinite(p) && p >= 1 && pageEnteredAtMs) {
-          const pageDurationMs = now - pageEnteredAtMs;
-          if (Number.isFinite(pageDurationMs) && pageDurationMs > 0) {
-            payload.pageNumber = Math.floor(p);
-            payload.pageDurationMs = Math.floor(pageDurationMs);
-            // The interval, so the visit's page sequence gets a segment for the page the reader was
-            // on when they left. Without it the last page of every visit was missing from
-            // `pageEvents` and never counted in `pageVisitCountByPage`.
-            payload.enteredAtMs = Math.floor(pageEnteredAtMs);
-            payload.leftAtMs = Math.floor(now);
-            // Reported: the page clock restarts from this exit.
-            shareTimingPageEnteredAtMsRef.current = now;
-          }
-        }
-      }
-      void fetchWithTempUser(`/api/share/${shareId}/stats`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        keepalive: true,
-        body: JSON.stringify(payload),
-      }).catch(() => void 0);
-    }
-
-    function onVisChange() {
-      if (document.visibilityState === "hidden") {
-        // Flush any visible time up to this point, then stop timers while hidden.
-        // (We intentionally do NOT accumulate hidden time.)
-        const enteredAtMs = shareTimingEnteredAtMsRef.current;
-        if (enteredAtMs) {
-          const now = Date.now();
-          const durationMs = now - enteredAtMs;
-          if (Number.isFinite(durationMs) && durationMs >= 1500) {
-            const payload: Record<string, unknown> = { botId, visitId, durationMs };
-            applyViewerProfileToStatsPayload(payload);
-            const p = shareTimingPageRef.current;
-            const pageEnteredAtMs = shareTimingPageEnteredAtMsRef.current;
-            if (typeof p === "number" && Number.isFinite(p) && p >= 1) {
-              payload.pageNumber = Math.floor(p);
-              // The page's own interval, never the visit chunk: they start at different moments,
-              // and the bounds below are what the server turns into a `pageEvents` segment. Using
-              // `now - durationMs` claimed the reader entered this page when the visit chunk began.
-              const pageStart = pageEnteredAtMs ?? now - durationMs;
-              const pageDurationMs = now - pageStart;
-              if (Number.isFinite(pageDurationMs) && pageDurationMs > 0) {
-                payload.pageDurationMs = Math.floor(pageDurationMs);
-                payload.enteredAtMs = Math.max(0, Math.floor(pageStart));
-                payload.leftAtMs = Math.floor(now);
-              }
-            }
-            void fetchWithTempUser(`/api/share/${shareId}/stats`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              keepalive: true,
-              body: JSON.stringify(payload),
-            }).catch(() => void 0);
-          }
-        }
-        stop();
-        return;
-      }
-      // Visible again: restart timers from now.
-      start(Date.now());
-    }
-    function onPageHide() {
-      // A real page exit: the reader is leaving, so the current page's segment ends here.
-      flushTime({ pageExit: true });
-      stop();
-    }
-
-    window.addEventListener("pagehide", onPageHide);
+    const passive = { passive: true } as const;
+    const captureScroll = { capture: true, passive: true } as const;
+    window.addEventListener("pointerdown", onInput, passive);
+    window.addEventListener("pointermove", onPointerMove, passive);
+    window.addEventListener("wheel", onInput, passive);
+    window.addEventListener("keydown", onInput, passive);
+    window.addEventListener("touchstart", onInput, passive);
+    document.addEventListener("scroll", onInput, captureScroll);
     document.addEventListener("visibilitychange", onVisChange);
-    // The heartbeat keeps the visit total moving for a long read. It is not a page exit, so it
-    // never ends the current page's segment — see `flushTime`.
-    const interval = window.setInterval(() => flushTime({ pageExit: false }), 30000);
+    window.addEventListener("pagehide", onPageHide);
+    const tickInterval = window.setInterval(() => send(clock.tick(Date.now())), IDLE_CHECK_MS);
+    const heartbeatInterval = window.setInterval(() => send(clock.heartbeat(Date.now())), HEARTBEAT_MS);
     return () => {
-      // Unmount (a route transition) is a real exit, like `pagehide`.
-      flushTime({ pageExit: true });
-      stop();
-      window.clearInterval(interval);
-      window.removeEventListener("pagehide", onPageHide);
+      send(clock.unmount(Date.now()));
+      if (clockRef.current?.clock === clock) clockRef.current = null;
+      window.clearInterval(tickInterval);
+      window.clearInterval(heartbeatInterval);
+      window.removeEventListener("pointerdown", onInput);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("wheel", onInput);
+      window.removeEventListener("keydown", onInput);
+      window.removeEventListener("touchstart", onInput);
+      document.removeEventListener("scroll", onInput, true);
       document.removeEventListener("visibilitychange", onVisChange);
+      window.removeEventListener("pagehide", onPageHide);
     };
   }, [hasFirstPaint, shareIdSafe]);
 
   useEffect(() => {
+    // Set before the guards so the clock starts on the right page once the first paint lands.
+    pageNumberRef.current = pageNumber;
     if (!shareIdSafe) return;
     if (!hasFirstPaint) return;
-    // NOTE: this effect must NOT advance `shareTimingPageRef`. That ref names the page whose dwell
-    // segment is currently being timed, and the dwell effect below compares it against the new page
-    // to decide whether to flush. Setting it here ran first, so the comparison always said "same
-    // page" and the flush never fired: every page's time was credited to whichever page happened to
-    // be open when some other path flushed. The dwell effect owns the ref.
-    // If we're visible and the page timer isn't running yet, start it now.
-    try {
-      if (typeof document !== "undefined" && document.visibilityState === "visible" && !shareTimingPageEnteredAtMsRef.current) {
-        shareTimingPageEnteredAtMsRef.current = Date.now();
-      }
-    } catch {
-      // ignore
+    const current = clockRef.current;
+    if (current && pageNumber !== current.clock.snapshot().page) {
+      current.send(current.clock.turn(Date.now(), pageNumber));
     }
-  }, [hasFirstPaint, pageNumber, shareIdSafe]);
-
-  useEffect(() => {
-    // Track per-page dwell time (best-effort): when the page changes, flush time for the previous page.
-    if (!shareIdSafe) return;
-    if (!hasFirstPaint) return;
-    // Only count time while visible.
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-    const shareId = shareIdSafe;
-    const botId = getOrCreateBotId();
-    if (!botId) return;
-    const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareId);
-    if (!visitId) return;
-    shareVisitIdRef.current = visitId;
-
-    // The page still being timed; `pageNumber` is where the reader has just moved to.
-    const prevPage = shareTimingPageRef.current;
-    const enteredAt = shareTimingPageEnteredAtMsRef.current;
-    const now = Date.now();
-
-    // Initialize on first run.
-    if (!enteredAt) {
-      shareTimingPageRef.current = pageNumber;
-      shareTimingPageEnteredAtMsRef.current = now;
-      return;
-    }
-
-    if (pageNumber === prevPage) return;
-
-    const durationMs = now - enteredAt;
-    // A page turn is a flush point for *both* clocks. Reporting only the page segment kept the
-    // visit total from ever moving between the 30s heartbeats, so a visit that ended without a
-    // final flush — a tab killed, a headless script navigating away — stored its real per-page
-    // times beside a `timeSpentMs` of 0. Flushing the visit clock here keeps the two in lockstep
-    // and still cannot double count, because this resets the clock it reports.
-    const visitEnteredAt = shareTimingEnteredAtMsRef.current;
-    const visitChunkMs = visitEnteredAt ? now - visitEnteredAt : null;
-    if (visitEnteredAt) {
-      shareTimingEnteredAtMsRef.current = now;
-      shareTimingLastFlushAtMsRef.current = now;
-    }
-    if (Number.isFinite(durationMs) && durationMs >= 1500 && Number.isFinite(prevPage) && prevPage >= 1) {
-      const payload: Record<string, unknown> = {
-        botId,
-        visitId,
-        ...(visitChunkMs && Number.isFinite(visitChunkMs) && visitChunkMs > 0 ? { durationMs: Math.floor(visitChunkMs) } : {}),
-        pageNumber: Math.floor(prevPage),
-        // `pageDurationMs`, never `durationMs`: this segment's time is already inside the visit
-        // clock that the heartbeat reports, so sending it as `durationMs` added it to the document
-        // and visit totals a second time.
-        pageDurationMs: Math.floor(durationMs),
-        enteredAtMs: Math.floor(enteredAt),
-        leftAtMs: Math.floor(now),
-      };
-      applyViewerProfileToStatsPayload(payload);
-      void fetchWithTempUser(`/api/share/${shareId}/stats`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        keepalive: true,
-        body: JSON.stringify(payload),
-      }).catch(() => void 0);
-    }
-
-    shareTimingPageRef.current = pageNumber;
-    shareTimingPageEnteredAtMsRef.current = now;
   }, [hasFirstPaint, pageNumber, shareIdSafe]);
 
   useEffect(() => {
@@ -1964,7 +1819,7 @@ export function PdfJsViewer({
     const reported = readVisitReported(shareIdSafe);
     if (!reported.loaded || !reported.pages.has(pageNumber)) {
       scheduleAfterPaint(() => {
-        const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), pageNumber };
+        const payload = buildSeenPayload({ botId, visitId, pageNumber, numPages: numPagesRef.current });
         applyViewerProfileToStatsPayload(payload);
         void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
           method: "POST",
@@ -2001,7 +1856,7 @@ export function PdfJsViewer({
     if (reported.pages.has(pageNumber)) return;
 
     scheduleAfterPaint(() => {
-      const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), pageNumber };
+      const payload = buildSeenPayload({ botId, visitId, pageNumber, numPages: numPagesRef.current });
       applyViewerProfileToStatsPayload(payload);
       void fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
         method: "POST",

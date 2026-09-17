@@ -114,6 +114,11 @@ shareViewSchema.index({ docId: 1, createdDate: -1 });
 shareViewSchema.index({ shareId: 1, createdDate: -1 });
 shareViewSchema.index({ shareId: 1, updatedDate: -1 });
 
+// The metrics activity window (`activityWindowMatch`) filters on `lastViewedAt` first. Also created
+// by db/migration/20260916_0002 so they exist before traffic.
+shareViewSchema.index({ docId: 1, lastViewedAt: -1 });
+shareViewSchema.index({ shareId: 1, lastViewedAt: -1 });
+
 // Workspace-level reads (usage meter, org exports, retention sweeps).
 shareViewSchema.index({ orgId: 1, createdDate: -1 });
 

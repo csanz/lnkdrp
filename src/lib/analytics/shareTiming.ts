@@ -103,3 +103,36 @@ export function isPageExit(payload: TimingPayload): boolean {
     leftAtMs > enteredAtMs
   );
 }
+
+/** Why the viewer's reading clock flushed (`src/lib/share/readingClock.ts`), as sent on the wire. */
+export const FLUSH_REASONS = ["turn", "hidden", "pagehide", "unmount", "heartbeat", "idle"] as const;
+export type FlushReasonWire = (typeof FLUSH_REASONS)[number];
+
+function boundedInteger(v: unknown, min: number, max: number): number | null {
+  if (typeof v !== "number" || !Number.isInteger(v)) return null;
+  return v >= min && v <= max ? v : null;
+}
+
+/** `tv`: the timing protocol version. Absent on payloads from viewers built before it existed. */
+export function parseTimingVersion(v: unknown): number | null {
+  return boundedInteger(v, 1, 9);
+}
+
+export function parseFlushReason(v: unknown): FlushReasonWire | null {
+  return typeof v === "string" && (FLUSH_REASONS as readonly string[]).includes(v) ? (v as FlushReasonWire) : null;
+}
+
+/** A page number or page count from the client (`toPage`, `numPages`). */
+export function parsePageBound(v: unknown): number | null {
+  return boundedInteger(v, 1, 5000);
+}
+
+/**
+ * Does this segment mean the reader left the page (so coming back to it is a revisit)?
+ *
+ * A tab being hidden or an idle cut splits one stay into two segments without the reader going
+ * anywhere. Legacy payloads carry no reason and keep the old behaviour.
+ */
+export function countsAsPageRevisit(reason: FlushReasonWire | null): boolean {
+  return reason !== "hidden" && reason !== "idle";
+}

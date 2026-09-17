@@ -323,7 +323,12 @@ rotation; changing it (or adding it later) makes the off links in already-delive
    fails with E11000, reported to the user as "An org with that slug already exists".
    `20260916_0001` creates the billing unique indexes and the `sharelinks` text index (5.4) before
    traffic; on an existing database a duplicate `eventId`, Checkout session, ledger key, balance or
-   subscription row stops it with E11000, which is the point: fix the rows, then re-run. Applied ones are recorded in the `migrations` collection and
+   subscription row stops it with E11000, which is the point: fix the rows, then re-run.
+   `20260916_0002` adds two non-unique `shareviews` indexes, `docId_1_lastViewedAt_-1` and
+   `shareId_1_lastViewedAt_-1`, that back the metrics activity window; it cannot fail on data. The
+   same release adds nullable `sharevisits` fields (`pageCount`, `timingVersion`,
+   `pageEvents[].reason`, `pageEvents[].toPage`); older rows keep null and read as legacy, so there
+   is no backfill. Applied ones are recorded in the `migrations` collection and
    skipped on re-run. A failing migration (for example E11000 while building a unique index)
    stops the runner at that file; a re-run resumes there once the data is fixed.
 
@@ -764,7 +769,7 @@ const want = {
   projects: ["shareId_1"],
   docChanges: ["docId_1_toVersion_1", "docId_1_toUploadId_1"],
   sharelinks: ["shareId_1", "sharelinks_label_audience_text"],
-  shareviews: ["shareId_1_botIdHash_1"],
+  shareviews: ["shareId_1_botIdHash_1", "docId_1_lastViewedAt_-1", "shareId_1_lastViewedAt_-1"],
   sharevisits: ["shareId_1_botIdHash_1_visitIdHash_1"],
   usageaggdailies: ["workspaceId_1_day_1"],
   usageaggcycles: ["workspaceId_1_cycleKey_1"],

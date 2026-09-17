@@ -72,10 +72,23 @@ const shareVisitSchema = new Schema(
           enteredAt: { type: Date, required: true },
           leftAt: { type: Date, required: true },
           durationMs: { type: Number, required: true, min: 0 },
+          /** Why the viewer flushed this segment (`FLUSH_REASONS`); null on legacy rows. */
+          reason: { type: String, default: null },
+          /** The page the reader turned to, on `turn` segments. */
+          toPage: { type: Number, default: null },
         },
       ],
       default: [],
     },
+
+    /** Page count the viewer reported for the document it rendered (max seen); null on legacy rows. */
+    pageCount: { type: Number, default: null },
+
+    /**
+     * Timing protocol version of the viewer that wrote this visit (`tv`). Null on legacy rows, whose
+     * page events carry no reason and merge by adjacency only.
+     */
+    timingVersion: { type: Number, default: null },
 
     /**
      * Best-effort viewer IP address (from proxy headers like x-forwarded-for).

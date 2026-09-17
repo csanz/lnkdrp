@@ -20,7 +20,15 @@ import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
-import { isPageExit, pageTimeIncrement, visitTimeIncrement } from "@/lib/analytics/shareTiming";
+import {
+  countsAsPageRevisit,
+  isPageExit,
+  pageTimeIncrement,
+  parseFlushReason,
+  parsePageBound,
+  parseTimingVersion,
+  visitTimeIncrement,
+} from "@/lib/analytics/shareTiming";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
 import { UserModel } from "@/lib/models/User";
@@ -250,6 +258,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const visitId = asNonEmptyString((body as { visitId?: unknown })?.visitId, 256);
       const enteredAtMs = asEpochMs((body as { enteredAtMs?: unknown })?.enteredAtMs);
       const leftAtMs = asEpochMs((body as { leftAtMs?: unknown })?.leftAtMs);
+      // Reading-clock fields (`src/lib/share/readingClock.ts`); all absent from older viewers.
+      const timingVersion = parseTimingVersion((body as { tv?: unknown })?.tv);
+      const flushReason = parseFlushReason((body as { reason?: unknown })?.reason);
+      const toPage = parsePageBound((body as { toPage?: unknown })?.toPage);
+      const numPages = parsePageBound((body as { numPages?: unknown })?.numPages);
       const viewerEmailRaw = asNonEmptyString((body as { viewerEmail?: unknown })?.viewerEmail);
       const viewerEmail = viewerEmailRaw ? normalizeEmail(viewerEmailRaw) : null;
       const viewerNameRaw = asNonEmptyString((body as { viewerName?: unknown })?.viewerName, 160);
@@ -500,7 +513,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 // applying, so EVERY payload carrying a pageNumber — which is every real one — was
                 // rejected outright. The schema default covers the no-page insert and `$addToSet`
                 // creates the array when it is absent, so the field must not be named here.
-                $max: { lastEventAt: leftAt },
+                $max: { lastEventAt: leftAt, ...(numPages ? { pageCount: numPages } : {}) },
               };
 
               const set: Record<string, unknown> = {
@@ -513,6 +526,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 // `$set`, not `$setOnInsert`, for the same self-healing reason as `ShareView`.
                 shareLinkId,
                 ...(shareOrgId ? { orgId: shareOrgId } : {}),
+                ...(timingVersion ? { timingVersion } : {}),
               };
               if (Object.keys(set).length) update.$set = set;
 
@@ -530,11 +544,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               const canRecordPageEvent = Boolean(pageNumber) && shouldIncTime && isPageExit(timing);
 
               if (canRecordPageEvent) {
-                inc[`pageVisitCountByPage.${String(pageNumber!)}`] = 1;
+                // A hidden or idle split ends a segment without the reader leaving the page.
+                if (countsAsPageRevisit(flushReason)) inc[`pageVisitCountByPage.${String(pageNumber!)}`] = 1;
                 update.$addToSet = { pagesSeen: pageNumber };
                 update.$push = {
                   pageEvents: {
-                    $each: [{ pageNumber, enteredAt, leftAt, durationMs: Math.floor(derivedPageDurationMs!) }],
+                    $each: [
+                      {
+                        pageNumber,
+                        enteredAt,
+                        leftAt,
+                        durationMs: Math.floor(derivedPageDurationMs!),
+                        ...(flushReason ? { reason: flushReason } : {}),
+                        ...(toPage ? { toPage } : {}),
+                      },
+                    ],
                     $slice: -500,
                   },
                 };

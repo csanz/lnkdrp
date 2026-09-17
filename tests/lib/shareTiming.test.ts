@@ -9,7 +9,16 @@
  */
 import { describe, expect, test } from "vitest";
 
-import { isPageExit, pageTimeIncrement, visitTimeIncrement } from "@/lib/analytics/shareTiming";
+import {
+  countsAsPageRevisit,
+  FLUSH_REASONS,
+  isPageExit,
+  pageTimeIncrement,
+  parseFlushReason,
+  parsePageBound,
+  parseTimingVersion,
+  visitTimeIncrement,
+} from "@/lib/analytics/shareTiming";
 
 /** Accumulate a sequence of heartbeats the way the ingest route does. */
 function accumulate(payloads: Array<{ pageNumber?: number | null } & Parameters<typeof visitTimeIncrement>[0]>) {
@@ -134,5 +143,52 @@ describe("a long stay on one page, flushed by heartbeats", () => {
     // Page time comes only from the exit: the heartbeats carry no page clock, so nothing is
     // credited twice even though all three payloads name page 2.
     expect(payloads.reduce((a, p) => a + (pageTimeIncrement(p) ?? 0), 0)).toBe(70000);
+  });
+});
+
+describe("wire parsers for the reading clock", () => {
+  test("parseTimingVersion accepts integers 1..9 only", () => {
+    expect(parseTimingVersion(1)).toBe(1);
+    expect(parseTimingVersion(2)).toBe(2);
+    expect(parseTimingVersion(9)).toBe(9);
+    expect(parseTimingVersion(0)).toBeNull();
+    expect(parseTimingVersion(10)).toBeNull();
+    expect(parseTimingVersion(-2)).toBeNull();
+    expect(parseTimingVersion(2.5)).toBeNull();
+    expect(parseTimingVersion(Number.NaN)).toBeNull();
+    expect(parseTimingVersion("2")).toBeNull();
+    expect(parseTimingVersion(null)).toBeNull();
+    expect(parseTimingVersion(undefined)).toBeNull();
+  });
+
+  test("parsePageBound accepts integers 1..5000 only", () => {
+    expect(parsePageBound(1)).toBe(1);
+    expect(parsePageBound(5000)).toBe(5000);
+    expect(parsePageBound(0)).toBeNull();
+    expect(parsePageBound(5001)).toBeNull();
+    expect(parsePageBound(3.2)).toBeNull();
+    expect(parsePageBound(Number.POSITIVE_INFINITY)).toBeNull();
+    expect(parsePageBound("4")).toBeNull();
+    expect(parsePageBound({})).toBeNull();
+  });
+
+  test("parseFlushReason accepts the six reasons only", () => {
+    for (const r of FLUSH_REASONS) expect(parseFlushReason(r)).toBe(r);
+    expect(FLUSH_REASONS).toEqual(["turn", "hidden", "pagehide", "unmount", "heartbeat", "idle"]);
+    expect(parseFlushReason("TURN")).toBeNull();
+    expect(parseFlushReason(" turn")).toBeNull();
+    expect(parseFlushReason("close")).toBeNull();
+    expect(parseFlushReason(1)).toBeNull();
+    expect(parseFlushReason(null)).toBeNull();
+  });
+
+  test("countsAsPageRevisit: hidden and idle splits are not revisits", () => {
+    expect(countsAsPageRevisit("turn")).toBe(true);
+    expect(countsAsPageRevisit("pagehide")).toBe(true);
+    expect(countsAsPageRevisit("unmount")).toBe(true);
+    expect(countsAsPageRevisit("heartbeat")).toBe(true);
+    expect(countsAsPageRevisit("hidden")).toBe(false);
+    expect(countsAsPageRevisit("idle")).toBe(false);
+    expect(countsAsPageRevisit(null)).toBe(true);
   });
 });
