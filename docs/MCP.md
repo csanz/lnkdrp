@@ -84,6 +84,8 @@ Env (read from `.env.local`; the same file the app uses):
 | `NEXT_PUBLIC_REALTIME_URL` | unset | `ws://localhost:8788` locally. When set, `share_pdf` waits on the socket; unset = polling only. |
 | `REALTIME_SECRET` (falls back to `NEXTAUTH_SECRET`) | unset | Shared HMAC secret so the server can sign its own realtime ticket (`signRealtimeTicket`, `src/lib/realtime/ticket.ts`). Only needed with the line above. |
 | `LNKDRP_API_KEY` | unset | Only for `--stdio` (below): the key the process acts with, because there is no HTTP request to carry a bearer. |
+| `LNKDRP_ALLOW_LOCAL_FILES` | unset | `1` allows `share_pdf`/`replace_pdf`'s `filePath` even when `LNKDRP_API_URL` is not localhost. Only set this on a server that really does run on the caller's machine: `filePath` is read from *this process's* filesystem. |
+| `LNKDRP_GHOSTSCRIPT` | unset | Absolute path to `gs` when it is not on `PATH` (a GUI-launched server often inherits a bare one). Without a working Ghostscript, PDF optimization is skipped and the original bytes are uploaded. |
 
 Endpoints:
 
@@ -257,22 +259,44 @@ download/password settings, then (by default) waits for processing to finish.
   - `idempotencyKey` string, 1–128 chars, **required**. Reuse it on retries.
   - **Exactly one of:**
     - `sourceUrl` https URL of a PDF. Google Drive links to a PDF file are accepted (rewritten to a
-      direct download) when shared with anyone who has the link. Max 25 MB fetched server-side.
+      direct download) when shared with anyone who has the link. Max 50 MB fetched server-side.
       Private-network and non-http(s) URLs are refused. **Refused up front with a `validation` error
-      that says to download the PDF and send `fileBase64`:** Google Docs/Sheets/Slides editor links
+      that says to download the PDF and send it as `filePath`:** Google Docs/Sheets/Slides editor links
       (`docs.google.com/{document,spreadsheets,presentation,forms}/d/…`, except `/export` URLs) and
       OneDrive/SharePoint links (`onedrive.live.com`, `1drv.ms`, `*.sharepoint.com`). Those serve a web
       page or a sign-in wall, never the file, and used to fail deep in the import as a baffling "not a
       PDF" (hit live 2026-09-16 with a Slides `/edit` link).
-    - `fileBase64` the PDF's bytes, base64-encoded — for a file with no public URL (mt_bJwX4CtmhU:
-      locally generated, a private attachment). Decoded size up to 3 MB. Routed through
-      `POST /api/uploads/:id/import-bytes` instead of `import-url`; kept well under Vercel's 4.5MB
-      request-body ceiling (base64 alone costs ~4/3 of the decoded size). A file over 3MB needs
-      `sourceUrl` — there is no direct-to-Blob path for a JSON-only caller today, and reusing Vercel
-      Blob's own client-upload token would mean either reverse-engineering its undocumented wire
-      protocol for the calling agent, or handing the MCP server its own Blob credential and
-      duplicating this validation outside the app of record; a documented ceiling beats both.
-  - `fileName?` ≤ 200 chars, only used with `fileBase64` (default `document.pdf`).
+    - `filePath` an **absolute** path to a PDF, read from disk **by the MCP server process itself**.
+      This is the right input for a file the human already has locally, and the reason it exists:
+      `fileBase64` means the calling model has to emit the whole encoded file as a tool argument —
+      a 3.4 MB deck is ~4.6 M characters, which is slow and which testers have managed to garble.
+      A path is a few dozen characters. Gated, because "the file at this path" only means the same
+      thing to both sides when the server runs on the caller's machine: allowed when
+      `LNKDRP_API_URL` is localhost/127.x, or when `LNKDRP_ALLOW_LOCAL_FILES=1` is set on the
+      server; otherwise the call is refused with a `validation` error pointing at `sourceUrl`.
+      Refused too: a relative path (expand `~` yourself), anything that is not a readable regular
+      file, anything whose bytes do not start with `%PDF-`, and anything over 50 MB.
+    - `fileBase64` the PDF's bytes, base64-encoded — for a file with no public URL and no local path
+      (mt_bJwX4CtmhU). Decoded size up to 50 MB. Routed through
+      `POST /api/uploads/:id/import-bytes` instead of `import-url`.
+      **Caveat that the number does not capture:** this body crosses a serverless function, and a
+      hosted deployment caps request bodies far below 50 MB (Vercel Functions: 4.5 MB regardless of
+      content type, before base64's ~4/3 and the JSON envelope). On such a deployment a large
+      inline upload fails with the platform's own 413, not with anything lnkdrp wrote. `sourceUrl`
+      and the browser's direct-to-Blob upload have no such ceiling. This is also why optimization
+      below matters: it routinely takes a 3.5 MB deck to ~0.7 MB, which does fit.
+  - `optimize?` boolean, default `true`. On the `filePath` / `fileBase64` paths only, the MCP server
+    shrinks the PDF before uploading: Ghostscript (`-dPDFSETTINGS=/ebook`, colour and grey images
+    downsampled to 150 dpi) into a temp file. Skipped silently when the file is under 1 MB, when
+    Ghostscript is not installed, or when the run fails. **The original is kept** unless the result
+    is a valid PDF, at least 5% smaller, *and* has exactly the same page count (pdfjs counts both) —
+    Ghostscript can emit a truncated document and still exit 0, and a deck quietly missing its last
+    slides is far worse than a large one. Reported back as
+    `optimized: { from, to, ratio, tool: "ghostscript" }`, or `optimized: null` plus `optimizeNote`
+    saying why the original went as-is. Set `LNKDRP_GHOSTSCRIPT` to an absolute path if `gs` is not
+    on the server's `PATH`.
+  - `fileName?` ≤ 200 chars, used with `fileBase64` or to override `filePath`'s own basename
+    (default `document.pdf`).
   - `title?` ≤ 200 chars (default "Untitled document").
   - `allowDownload?` boolean, default `false`.
   - `password?` 1–128 chars; sets a share password. Use the human's password verbatim — the
@@ -285,7 +309,8 @@ download/password settings, then (by default) waits for processing to finish.
     (`upload.ai.summaryBy = { kind: "agent", client }`; ledger row `source: "agent"`, `creditsCharged: 0`).
     Without them each upload's AI summary costs 1 credit.
 - Out: `{ docId, shareId, shareUrl, replaceUrl: null, status: "draft"|"preparing"|"ready"|"failed",
-  version: 1, uploadId, title, planWarning?, timedOut?, warnings: string[], creditsRemaining? }`. `shareUrl` is `${LNKDRP_API_URL}/s/<shareId>` and
+  version: 1, uploadId, title, planWarning?, timedOut?, optimized?, optimizeNote?, warnings: string[],
+  creditsRemaining? }`. `shareUrl` is `${LNKDRP_API_URL}/s/<shareId>` and
   is valid as soon as the call returns, even while `status` is still `preparing`. `replaceUrl` is
   always `null`: the MCP server does not mint capability URLs, and updating a document already
   shared is `lnkdrp_replace_pdf` below, not a URL. At the Free shared-document cap the
@@ -314,15 +339,18 @@ blocked by the Free shared-document cap (mt_zKD3mlHp_K).
 - In:
   - `idempotencyKey` string, 1–128 chars, **required**.
   - `docId` the existing document to update, **required**.
-  - **Exactly one of** `sourceUrl` (https URL of the new PDF) or `fileBase64` (its bytes,
-    base64-encoded, decoded size up to 3 MB) — same rules and reasoning as `share_pdf` above.
-  - `fileName?` ≤ 200 chars, only used with `fileBase64`.
+  - **Exactly one of** `sourceUrl` (https URL of the new PDF), `filePath` (an absolute path read by
+    the MCP server itself, same gate as `share_pdf`) or `fileBase64` (its bytes, base64-encoded) —
+    up to 50 MB, same rules, same serverless-body caveat and same reasoning as `share_pdf` above.
+  - `optimize?` boolean, default `true` — identical to `share_pdf`: the new PDF is shrunk before
+    upload when that is safe, and `optimized` / `optimizeNote` in the result say what happened.
+  - `fileName?` ≤ 200 chars, used with `fileBase64` or to override `filePath`'s basename.
   - `title?` ≤ 200 chars; leaves the title unchanged if omitted.
   - `waitForReady?` boolean, default `true`. `timeoutSeconds?` 5–120, default 60.
   - `summary?` / `keyPoints?`, same shape and rule as `share_pdf` (both or neither; skips the
     automatic AI summary for this version and costs 0 credits).
-- Out: `{ docId, shareId, shareUrl, status, version, uploadId, title, timedOut?, warnings: string[],
-  creditsRemaining? }`. `version` is the new version number (`allocateDocUploadVersion`); there is no
+- Out: `{ docId, shareId, shareUrl, status, version, uploadId, title, timedOut?, optimized?,
+  optimizeNote?, warnings: string[], creditsRemaining? }`. `version` is the new version number (`allocateDocUploadVersion`); there is no
   `replaceUrl` here — the tool itself is the replacement path.
 - **The document's status flips to `preparing` the moment this call starts** — `POST /api/uploads`
   points `Doc.currentUploadId` at the new (not yet fetched) upload before `sourceUrl` is even
@@ -710,7 +738,7 @@ A failed call returns `isError: true` with a single text block:
 | `fetch_blocked` | 400 | The URL could not be fetched (private network, non-http(s), remote error, empty file). |
 | `source_not_found` | 400 | The source URL answered 404 or 410: there is no file at that address. |
 | `unsupported_content_type` | 415 | The URL is not a PDF. |
-| `too_large` | 400 | PDF over 25 MB. |
+| `too_large` | 400 | PDF over 50 MB (`UPLOAD_MAX_BYTES`, `src/lib/limits/uploads.ts` — the single ceiling for both the URL import and the inline path). |
 | `upstream` | anything else | The API returned an unexpected status; `details.status` carries it. |
 
 Transport-level failures (the MCP server itself down, or the key rejected at `initialize`) surface

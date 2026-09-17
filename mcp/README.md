@@ -108,13 +108,20 @@ How an agent finds documents it was not handed, and reads what happened in the w
 
 ### `lnkdrp_share_pdf`
 In `{ idempotencyKey (1–128), title? (≤200), allowDownload? = false, password? (1–128), waitForReady? = true,
-timeoutSeconds? 5–120 = 60, summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus **exactly one of**
-`sourceUrl` (https; Google Drive links to a PDF file and lnkdrp /s/ links accepted; max 25MB fetched server-side;
+timeoutSeconds? 5–120 = 60, optimize? = true, summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }`
+plus **exactly one of**
+`sourceUrl` (https; Google Drive links to a PDF file and lnkdrp /s/ links accepted; max 50MB fetched server-side;
 Google Docs/Sheets/Slides editor links and OneDrive/SharePoint links are refused with a pointer to download the PDF
-and send `fileBase64`) or
-`fileBase64` + `fileName?` (the PDF's bytes, decoded size up to 3MB — mt_bJwX4CtmhU, for a file with no public URL;
-kept well under Vercel's 4.5MB request-body ceiling since base64 costs ~4/3 of the decoded size; bigger files need
-`sourceUrl`, there is no direct-to-Blob path for a JSON-only caller). `summary` and `keyPoints` go together (both or
+and send `filePath`),
+`filePath` (an absolute path read from disk **by this server process** — so only for a server on the caller's own
+machine: allowed when `LNKDRP_API_URL` is localhost/127.x or `LNKDRP_ALLOW_LOCAL_FILES=1`, else refused with a
+`validation` error pointing at `sourceUrl`; must be a readable regular file, `%PDF-` by signature, ≤50MB), or
+`fileBase64` + `fileName?` (the PDF's bytes, decoded size up to 50MB — mt_bJwX4CtmhU, for a file with no public URL
+and no local path; note a serverless deployment caps request bodies far below that, Vercel at 4.5MB, so a big inline
+upload can still fail with the platform's own 413 — `sourceUrl` and the browser's direct upload do not).
+On the `filePath`/`fileBase64` paths the PDF is shrunk first (Ghostscript `/ebook`, images to 150dpi) unless it is
+under 1MB or `optimize: false`; the original is kept unless the result is a valid PDF, ≥5% smaller and has the same
+page count. Reported as `optimized: { from, to, ratio, tool }` or `optimized: null` + `optimizeNote`. `summary` and `keyPoints` go together (both or
 neither), plain text written from the document (URLs and markup are stripped). Each upload's AI summary costs 1 credit,
 or nothing when the agent passes them; the summary is then attributed to the agent. A 400 `invalid_summary` becomes a
 `validation` error that says what to fix.
@@ -135,13 +142,14 @@ without an upgrade (add a link to an existing document, replace a file, archive 
 
 ### `lnkdrp_replace_pdf`
 Put a new PDF on a document already shared — links, settings and analytics history all stay put. In
-`{ idempotencyKey, docId, title? (≤200), waitForReady? = true, timeoutSeconds? 5–120 = 60,
-summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus **exactly one of** `sourceUrl` or
-`fileBase64` + `fileName?`, same rules as `share_pdf` above. Flow: `POST /api/uploads { docId }`
+`{ idempotencyKey, docId, title? (≤200), waitForReady? = true, timeoutSeconds? 5–120 = 60, optimize? = true,
+summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus **exactly one of** `sourceUrl`,
+`filePath` or `fileBase64` + `fileName?`, same rules, same gate and same optimization as `share_pdf` above. Flow: `POST /api/uploads { docId }`
 (allocates the next version and — before `sourceUrl` is even fetched — points the doc's
 `currentUploadId` at it and flips `status` to `preparing`, same as the web app's own replace button)
 → `import-url` → `process` → optional `PATCH { title }` → wait for `ready|failed`. Out `{ docId,
-shareId, shareUrl, status, version, uploadId, title, timedOut?, warnings, creditsRemaining? }` — no
+shareId, shareUrl, status, version, uploadId, title, timedOut?, optimized?, optimizeNote?, warnings,
+creditsRemaining? }` — no
 `replaceUrl`, this tool is the replacement path. Never `plan_limit` (replacing creates no document),
 so it works on a Free workspace at its shared-document cap — the gap `share_pdf`'s own `plan_limit`
 error points at. If import or processing fails, the document is left in `preparing` rather than
