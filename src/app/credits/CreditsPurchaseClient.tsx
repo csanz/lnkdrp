@@ -48,7 +48,19 @@ function WithSession(props: Props) {
   );
 }
 
-type Workspace = { name: string | null; plan: "free" | "pro"; credits: number | null };
+type Workspace = {
+  name: string | null;
+  avatarUrl: string | null;
+  plan: "free" | "pro";
+  /** A pay-as-you-go subscription: still Free, but `purchased` includes on-demand headroom. */
+  payg: boolean;
+  credits: number | null;
+  included: number | null;
+  purchased: number | null;
+  /** Pro only: when the subscription renews, or ends if `cancelAtPeriodEnd`. */
+  periodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+};
 
 function Body({
   packs,
@@ -76,13 +88,30 @@ function Body({
         fetch("/api/billing/status", { cache: "no-store" }),
         fetch("/api/credits/snapshot?fast=1&bust=1", { cache: "no-store" }),
       ]);
-      const status = (await statusRes.json().catch(() => null)) as { plan?: string; org?: { name?: string | null } } | null;
-      const credits = (await creditsRes.json().catch(() => null)) as { creditsRemaining?: unknown } | null;
+      const status = (await statusRes.json().catch(() => null)) as {
+        plan?: string;
+        payg?: boolean;
+        org?: { name?: string | null; avatarUrl?: string | null };
+        stripeCurrentPeriodEnd?: string | null;
+        stripeCancelAtPeriodEnd?: boolean;
+      } | null;
+      const credits = (await creditsRes.json().catch(() => null)) as {
+        creditsRemaining?: unknown;
+        includedRemaining?: unknown;
+        paidRemaining?: unknown;
+      } | null;
       if (!statusRes.ok || !status) return;
+      const num = (v: unknown) => (creditsRes.ok && typeof v === "number" ? v : null);
       setWorkspace({
         name: status.org?.name ?? null,
+        avatarUrl: status.org?.avatarUrl ?? null,
         plan: status.plan === "pro" ? "pro" : "free",
-        credits: creditsRes.ok && typeof credits?.creditsRemaining === "number" ? credits.creditsRemaining : null,
+        payg: Boolean(status.payg),
+        credits: num(credits?.creditsRemaining),
+        included: num(credits?.includedRemaining),
+        purchased: num(credits?.paidRemaining),
+        periodEnd: status.stripeCurrentPeriodEnd ?? null,
+        cancelAtPeriodEnd: Boolean(status.stripeCancelAtPeriodEnd),
       });
     } catch {
       // The page still sells packs without the balance line.
@@ -178,26 +207,21 @@ function Body({
       ) : null}
 
       {/*
-        Say whose balance this is. It read `“Personal” has 9 credits.` — a bare quoted name with no
-        owner, which a reader takes for placeholder text rather than their own workspace. Naming the
-        account underneath also answers the question a purchase page actually raises: if I pay, where
-        do the credits land.
+        Whose account and workspace a purchase lands in. This was one muted sentence ("Your workspace
+        Personal has 9 credits"), easy to read past on a page whose whole job is to charge a card — and
+        with no way to change the workspace short of leaving to find the switcher. It is now a panel:
+        who is signed in, which workspace, its plan, where the balance comes from, and a way to switch
+        before buying. Credits cannot move between workspaces afterwards, so this is the moment to check.
       */}
-      <div className="mt-10 min-h-5 text-sm text-white/55">
-        {signedIn && workspace ? (
-          <>
-            <div>
-              Your workspace <span className="font-semibold text-white">{workspace.name ?? "Personal"}</span> has{" "}
-              <span className="font-semibold tabular-nums text-white">{workspace.credits ?? "—"}</span> credits.
-            </div>
-            <div className="mt-1 text-white/40">
-              {accountEmail ? <>Signed in as {accountEmail}. Credits</> : <>Credits</>} you buy are added to this workspace.
-            </div>
-          </>
-        ) : !signedIn && !sessionLoading && authEnabled ? (
-          "Sign in to buy credits for your workspace."
-        ) : null}
-      </div>
+      {signedIn && workspace ? (
+        <WorkspacePanel workspace={workspace} accountEmail={accountEmail} proCredits={proCredits} />
+      ) : !signedIn && !sessionLoading && authEnabled ? (
+        <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-5 text-sm text-white/65">
+          Sign in to see your workspace’s balance and buy credits for it.
+        </div>
+      ) : (
+        <div className="mt-10 h-[196px] rounded-2xl border border-white/10 bg-white/[0.02]" aria-hidden="true" />
+      )}
 
       <div className="mt-4 grid gap-4 md:grid-cols-3 md:gap-5">
         {packs.map((pack) => {
@@ -264,5 +288,95 @@ function Body({
         </div>
       ) : null}
     </>
+  );
+}
+
+const PANEL_LINK =
+  "inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-[13px] font-semibold text-white transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60";
+
+/** The signed-in account, the workspace a purchase lands in, and where its balance comes from. */
+function WorkspacePanel({
+  workspace,
+  accountEmail,
+  proCredits,
+}: {
+  workspace: Workspace;
+  accountEmail: string | null;
+  proCredits: number;
+}) {
+  const name = workspace.name ?? "Personal";
+  const initial = name.trim().charAt(0).toUpperCase() || "W";
+  const isPro = workspace.plan === "pro";
+  const planLabel = isPro ? "Pro" : workspace.payg ? "Free · pay-as-you-go" : "Free";
+  const planDetail = isPro
+    ? workspace.periodEnd
+      ? `${workspace.cancelAtPeriodEnd ? "Ends" : "Renews"} ${formatShortDate(workspace.periodEnd)}`
+      : `${proCredits} credits every month`
+    : "No monthly refill";
+
+  return (
+    <section
+      aria-label="Your workspace"
+      className="mt-10 overflow-hidden rounded-2xl border border-white/20 bg-white/[0.05] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.8)]"
+    >
+      <div className="flex flex-wrap items-center gap-4 px-6 py-5">
+        {workspace.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={workspace.avatarUrl} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover ring-1 ring-white/15" />
+        ) : (
+          <div
+            aria-hidden="true"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/10 text-base font-semibold text-white ring-1 ring-white/15"
+          >
+            {initial}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45">Buying credits for</div>
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate text-lg font-semibold text-white">{name}</span>
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.08em]",
+                isPro ? "bg-white text-black" : "bg-white/10 text-white/80 ring-1 ring-white/15",
+              )}
+            >
+              {planLabel}
+            </span>
+          </div>
+          {accountEmail ? <div className="mt-0.5 truncate text-[13px] text-white/50">Signed in as {accountEmail}</div> : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link href="/dashboard?tab=workspace" className={PANEL_LINK}>
+            Switch workspace
+          </Link>
+          <Link href="/dashboard?tab=billing" className={PANEL_LINK}>
+            {isPro ? "Manage plan" : "Billing"}
+          </Link>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-1 border-t border-white/10 sm:grid-cols-3">
+        <div className="px-6 py-4">
+          <dt className="text-[12px] text-white/50">Available now</dt>
+          <dd className="mt-1 font-serif text-4xl leading-none tabular-nums text-white">{workspace.credits ?? "—"}</dd>
+        </div>
+        <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
+          <dt className="text-[12px] text-white/50">Included with {isPro ? "Pro" : "Free"}</dt>
+          <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{workspace.included ?? "—"}</dd>
+          <div className="mt-1 text-[12px] text-white/45">{planDetail}</div>
+        </div>
+        <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
+          <dt className="text-[12px] text-white/50">{workspace.payg ? "Purchased and on-demand" : "Purchased"}</dt>
+          <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{workspace.purchased ?? "—"}</dd>
+          <div className="mt-1 text-[12px] text-white/45">Used after included credits</div>
+        </div>
+      </dl>
+
+      <div className="border-t border-white/10 bg-black/20 px-6 py-3 text-[13px] leading-5 text-white/60">
+        Packs you buy below go to <span className="font-semibold text-white">{name}</span> and can’t be moved to another
+        workspace later. Wrong workspace? Switch first.
+      </div>
+    </section>
   );
 }
