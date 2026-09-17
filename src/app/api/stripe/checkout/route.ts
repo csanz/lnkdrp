@@ -7,14 +7,13 @@
  * - Refuses (409) when the workspace already has a billable subscription of either kind; the
  *   client should send the user to the billing portal (`POST /api/stripe/portal`) instead.
  *
- * Body: `{ plan?: "pro" | "payg" }`, default `"pro"`.
+ * Body: `{ plan?: "pro" }`, default `"pro"`. `"payg"` is refused (400): pay-as-you-go for Free
+ * was retired on 2026-09-17. On-demand usage is Pro's overage, and Free workspaces buy credit packs
+ * (`/api/credits/purchase`) instead, so paying per credit is never cheaper off Pro. The webhook
+ * still understands existing `payg` subscriptions.
  *
- * Line items:
- * - `pro`: `STRIPE_PRICE_ID` (recurring Pro plan, quantity 1), plus `STRIPE_AI_CREDITS_PRICE_ID`
- *   (metered AI credits; no quantity — metered prices reject it) when configured.
- * - `payg`: `STRIPE_AI_CREDITS_PRICE_ID` alone — a $0 subscription whose only job is to give a
- *   Free workspace a card on file and a place to bill metered usage. Refused (400) when the
- *   metered price is not configured; there is nothing to sell without it.
+ * Line items: `STRIPE_PRICE_ID` (recurring Pro plan, quantity 1), plus `STRIPE_AI_CREDITS_PRICE_ID`
+ * (metered AI credits for on-demand; no quantity — metered prices reject it) when configured.
  *
  * The session carries `metadata.kind` so the webhook knows which one this was even before it can
  * inspect the subscription's own items (`subscriptionKindFromPriceIds` in
@@ -79,17 +78,20 @@ export async function POST(request: Request) {
       }
 
       const body = (await request.json().catch(() => null)) as { plan?: unknown } | null;
-      const plan = body?.plan === "payg" ? "payg" : "pro";
-
-      const stripeKey = mustGetEnv("STRIPE_SECRET_KEY");
-      const aiCreditsPriceId = getAiCreditsPriceId();
-      if (plan === "payg" && !aiCreditsPriceId) {
+      if (body?.plan === "payg") {
         return NextResponse.json(
-          { error: "Pay-as-you-go is not configured for this deployment yet." },
+          {
+            error: "Pay-as-you-go is no longer offered. Buy a credit pack at /credits, or upgrade to Pro for on-demand usage.",
+            code: "PAYG_RETIRED",
+          },
           { status: 400 },
         );
       }
-      const priceId = plan === "pro" ? mustGetEnv("STRIPE_PRICE_ID") : null;
+      const plan = "pro" as const;
+
+      const stripeKey = mustGetEnv("STRIPE_SECRET_KEY");
+      const aiCreditsPriceId = getAiCreditsPriceId();
+      const priceId = mustGetEnv("STRIPE_PRICE_ID");
       const stripe = new Stripe(stripeKey);
 
       await connectMongo();
@@ -131,14 +133,11 @@ export async function POST(request: Request) {
       });
 
       const { successUrl, cancelUrl } = checkoutRedirects(request);
-      const lineItems =
-        plan === "pro"
-          ? [
-              { price: priceId as string, quantity: 1 },
-              // Metered prices must be added WITHOUT a quantity (Stripe rejects it).
-              ...(aiCreditsPriceId ? [{ price: aiCreditsPriceId }] : []),
-            ]
-          : [{ price: aiCreditsPriceId as string }];
+      const lineItems = [
+        { price: priceId, quantity: 1 },
+        // Metered prices must be added WITHOUT a quantity (Stripe rejects it).
+        ...(aiCreditsPriceId ? [{ price: aiCreditsPriceId }] : []),
+      ];
       const session = await stripe.checkout.sessions.create({
         mode: "subscription",
         customer: customerId,
@@ -147,15 +146,12 @@ export async function POST(request: Request) {
         cancel_url: cancelUrl,
         // Use orgId here so Checkout completion can be mapped even if metadata is missing.
         client_reference_id: String(orgId),
-        allow_promotion_codes: plan === "pro",
+        allow_promotion_codes: true,
         // Checkout otherwise shows only the product, and a second workspace's upgrade looks the same
         // as the first's. Say which workspace this subscription is for.
         custom_text: {
           submit: {
-            message:
-              plan === "pro"
-                ? `This subscribes ${workspaceName} to Pro. Your other workspaces keep their own plans.`
-                : `This turns on pay-as-you-go credits for ${workspaceName} only.`,
+            message: `This subscribes ${workspaceName} to Pro. Your other workspaces keep their own plans.`,
           },
         },
         // Include userId, orgId AND kind so webhooks can update the correct workspace as the

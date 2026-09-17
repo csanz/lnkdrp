@@ -49,9 +49,24 @@ type CreditLedgerAggResult = {
 
 export type CreditsSnapshot = {
   ok: true;
+  /**
+   * Credits the workspace holds right now: included (Pro's monthly credits, Free's starter credits,
+   * and any of either left over) plus purchased packs. The number to show as "credits left".
+   * On-demand headroom is not in it — that is permission to keep going and be billed, not credits
+   * held; see `spendableRemaining`.
+   */
   creditsRemaining: number;
+  /** Included credits left: the subscription bucket plus the starter bucket. */
   includedRemaining: number;
+  /** Credits left from purchased packs. */
+  purchasedRemaining: number;
+  /** @deprecated Same as `purchasedRemaining`. Until 2026-09-17 it also counted on-demand headroom. */
   paidRemaining: number;
+  /**
+   * What an AI run can draw on: `creditsRemaining` plus this cycle's on-demand headroom. `null` when
+   * the on-demand limit is unlimited. Use it to decide whether a run can go ahead, never for display.
+   */
+  spendableRemaining: number | null;
   usedThisCycle: number;
   cycleStart: string | null;
   cycleEnd: string | null;
@@ -62,8 +77,11 @@ export type CreditsSnapshot = {
    * Pro). Kept so clients written against the field keep parsing. Pro uses `cycleEnd`.
    */
   resetsAt: string | null;
+  /** On-demand is on: Pro, with the toggle on and a positive limit. Always `false` off Pro. */
   onDemandEnabled: boolean;
+  /** The effective on-demand limit; `0` when on-demand is off or the workspace is not on Pro. */
   onDemandMonthlyLimitCents: number;
+  /** Credits billed on-demand this cycle, reported even after on-demand is turned off (still invoiced). */
   onDemandUsedCreditsThisCycle: number;
   onDemandRemainingCreditsThisCycle: number;
   blocked: boolean;
@@ -139,8 +157,8 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   ]);
   debugLog(2, "[credits:snapshot] base queries", { ms: Date.now() - t0, ops: 2 });
 
-  // Pro means the Pro price, not merely an active subscription: a pay-as-you-go workspace is
-  // active in Stripe and still spends from its starter bucket and the meter.
+  // Pro means the Pro price, not merely an active subscription: a legacy pay-as-you-go workspace is
+  // active in Stripe and is still Free.
   const pro = isProSubscription(sub);
 
   // Ensure a balance record exists so the dashboard can show Personal one-time credits
@@ -178,15 +196,19 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
   const trialRemaining = clampNonNegInt(bal?.trialCreditsRemaining ?? 0);
   const purchasedRemaining = clampNonNegInt(bal?.purchasedCreditsRemaining ?? 0);
 
-  const includedRemaining = pro ? subscriptionRemaining : trialRemaining;
+  // Both buckets, whatever the plan: a run spends the subscription bucket, then the starter bucket,
+  // then purchased credits (`allocateBuckets` in serviceCore), so starter credits left over after an
+  // upgrade (or Pro credits left after a downgrade) are still spendable and belong in the count.
+  const includedRemaining = subscriptionRemaining + trialRemaining;
 
-  const paidRemaining = purchasedRemaining;
-
-  const onDemandEnabled = Boolean(bal?.onDemandEnabled);
-  const onDemandMonthlyLimitCents = clampNonNegInt(bal?.onDemandMonthlyLimitCents ?? 0);
+  // On-demand is a Pro feature: once the monthly credits run out, keep going and pay per credit.
+  // Free workspaces buy credit packs instead, so a stored toggle on a non-Pro workspace (a legacy
+  // pay-as-you-go subscription, or a Pro that lapsed) counts as off.
+  const storedOnDemandLimitCents = clampNonNegInt(bal?.onDemandMonthlyLimitCents ?? 0);
+  const onDemandAllowed = pro && Boolean(bal?.onDemandEnabled) && storedOnDemandLimitCents > 0;
+  const onDemandEnabled = onDemandAllowed;
+  const onDemandMonthlyLimitCents = onDemandAllowed ? storedOnDemandLimitCents : 0;
   const centsPerCredit = USD_CENTS_PER_CREDIT;
-  // We treat on-demand as "off" unless explicitly enabled with a positive limit.
-  const onDemandAllowed = onDemandEnabled && onDemandMonthlyLimitCents > 0;
   const onDemandUnlimited = onDemandAllowed && onDemandMonthlyLimitCents >= UNLIMITED_LIMIT_CENTS;
 
   // Used this cycle: sum charged credits within the resolved billing cycle window.
@@ -247,12 +269,11 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
     : onDemandAllowed
       ? Math.max(0, Math.floor(onDemandMonthlyLimitCents / centsPerCredit) - onDemandUsedCreditsThisCycle)
       : 0;
-  const paidRemainingWithOnDemand = paidRemaining + onDemandRemainingCreditsThisCycle;
-  const creditsRemaining = includedRemaining + paidRemainingWithOnDemand;
+  const creditsRemaining = includedRemaining + purchasedRemaining;
+  const spendableRemaining = onDemandUnlimited ? null : creditsRemaining + onDemandRemainingCreditsThisCycle;
 
-  const baseRemaining = includedRemaining + paidRemaining;
   const blocked =
-    baseRemaining > 0
+    creditsRemaining > 0
       ? false
       : onDemandUnlimited
         ? false
@@ -266,7 +287,9 @@ export async function getCreditsSnapshot(params: { workspaceId: string; fast?: b
     ok: true,
     creditsRemaining,
     includedRemaining,
-    paidRemaining: paidRemainingWithOnDemand,
+    purchasedRemaining,
+    paidRemaining: purchasedRemaining,
+    spendableRemaining,
     usedThisCycle,
     cycleStart: cycleStart ? cycleStart.toISOString() : null,
     cycleEnd: cycleEnd ? cycleEnd.toISOString() : null,

@@ -29,7 +29,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ uploadId: 
   const creditsNeeded = creditsForRun({ actionType: "summary", qualityTier: "basic" });
   try {
     const snap = await getCreditsSnapshot({ workspaceId: actor.orgId });
-    if (snap.blocked || snap.creditsRemaining < creditsNeeded) {
+    // On Pro with on-demand, a run can go ahead past the credits held; `null` means no on-demand cap.
+    if (snap.blocked || (snap.spendableRemaining !== null && snap.spendableRemaining < creditsNeeded)) {
       return applyTempUserHeaders(
         NextResponse.json(
           { error: "Out of credits", code: OUT_OF_CREDITS_CODE, creditsNeeded, creditsRemaining: snap.creditsRemaining },

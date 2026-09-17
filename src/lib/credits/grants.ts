@@ -87,6 +87,8 @@ export async function grantCycleIncludedCredits(params: {
         {
           $set: {
             subscriptionCreditsRemaining: INCLUDED_CREDITS_PER_CYCLE,
+            // Pro has no daily brake; a row seeded while the workspace was Free still carries it.
+            dailyCreditCap: null,
             currentPeriodStart: params.currentPeriodStart,
             currentPeriodEnd: params.currentPeriodEnd ?? null,
           },

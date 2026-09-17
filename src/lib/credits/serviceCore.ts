@@ -3,22 +3,22 @@ import { creditsForRun } from "@/lib/credits/schedule";
 import type { CreditStore, WorkspaceBalanceSnapshot } from "@/lib/credits/store";
 import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-import { isBillableSubscription } from "@/lib/billing/subscriptionState";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 
 /**
- * Default on-demand eligibility check: the workspace subscription must be billable — `active` or
- * `trialing`, of either kind. A pay-as-you-go subscription (a Free workspace with a card on file)
- * is as eligible as Pro; only the plan it grants differs, and that is decided elsewhere.
+ * Default on-demand eligibility check: the workspace must be on Pro (`active` or `trialing`, Pro
+ * price). On-demand is Pro's overage; Free workspaces buy credit packs instead, so a legacy
+ * pay-as-you-go subscription (a Free workspace with a card on file) is not eligible.
  *
  * Only invoked when the balance has on-demand enabled AND the run would actually spill into
  * on-demand credits, so the extra query is paid rarely. Callers (tests) may inject their own
  * check via `isOnDemandEligible`.
  */
-async function defaultIsOnDemandEligible(workspaceId: string): Promise<boolean> {
+async function defaultIsProWorkspace(workspaceId: string): Promise<boolean> {
   const sub = await SubscriptionModel.findOne({ orgId: workspaceId, isDeleted: { $ne: true } })
     .select({ status: 1, kind: 1 })
     .lean();
-  return isBillableSubscription(sub as { status?: unknown; kind?: unknown } | null);
+  return isProSubscription(sub as { status?: unknown; kind?: unknown } | null);
 }
 
 function startOfUtcDay(d: Date): Date {
@@ -94,10 +94,12 @@ export function createCreditService(store: CreditStore) {
     requestId?: string | null;
     initBalanceIfMissing: () => Promise<WorkspaceBalanceSnapshot>;
     /**
-     * Optional override for the on-demand eligibility check (defaults to a workspace subscription
-     * status lookup requiring `active`/`trialing`). Injected by tests.
+     * Optional override for the on-demand eligibility check (defaults to requiring Pro, `active` or
+     * `trialing`). Injected by tests.
      */
     isOnDemandEligible?: (workspaceId: string) => Promise<boolean>;
+    /** Optional override for the Pro check that exempts a workspace from the Free daily brake. Injected by tests. */
+    isProWorkspace?: (workspaceId: string) => Promise<boolean>;
   }): Promise<{
     ledgerId: string;
     status: LedgerStatus;
@@ -150,7 +152,13 @@ export function createCreditService(store: CreditStore) {
       if (nextBalance.dailyCreditCap !== null) {
         const dayStart = startOfUtcDay(now);
         void dayStart; // used by store impl; present here for conceptual clarity
-        if (clampNonNegInt(sums.dailyReserved) + creditsReserved > clampNonNegInt(nextBalance.dailyCreditCap)) {
+        // The daily brake is Free-only, but it is stored on the balance row when the row is seeded
+        // and nothing cleared it on upgrade, so a workspace that started Free and moved to Pro kept
+        // hitting it. Ask about the plan only when the brake would actually stop this run.
+        if (
+          clampNonNegInt(sums.dailyReserved) + creditsReserved > clampNonNegInt(nextBalance.dailyCreditCap) &&
+          !(await (params.isProWorkspace ?? defaultIsProWorkspace)(params.workspaceId))
+        ) {
           throw new Error("Daily credit cap exceeded");
         }
       }
@@ -176,7 +184,7 @@ export function createCreditService(store: CreditStore) {
       const onDemandAllowed =
         onDemandConfigured &&
         needsOnDemand &&
-        (await (params.isOnDemandEligible ?? defaultIsOnDemandEligible)(params.workspaceId));
+        (await (params.isOnDemandEligible ?? defaultIsProWorkspace)(params.workspaceId));
       const alloc = allocateBuckets({
         credits: creditsReserved,
         balance: {

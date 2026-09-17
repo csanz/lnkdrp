@@ -24,17 +24,16 @@ function parseUrl(json: StripeRedirectResponse): string {
 /**
  * Starts Stripe Checkout by calling `/api/stripe/checkout` and redirecting the browser.
  *
- * `plan` defaults to `"pro"`. `"payg"` creates a $0 subscription that exists only to hold a card
- * and a place to bill metered usage — for a Free workspace that wants on-demand credits without
- * upgrading. Errors: throws when the API responds with an error (409 when the workspace already
- * has a billable subscription of either kind) or returns an invalid redirect URL.
+ * Always Pro: pay-as-you-go for Free was retired (Free buys credit packs at `/credits`).
+ * Errors: throws when the API responds with an error (409 when the workspace already has a
+ * billable subscription) or returns an invalid redirect URL.
  * Side effects: navigates via `window.location.assign`.
  */
-export async function startCheckout(plan: "pro" | "payg" = "pro"): Promise<void> {
+export async function startCheckout(): Promise<void> {
   const res = await fetch("/api/stripe/checkout", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ plan }),
+    body: JSON.stringify({ plan: "pro" }),
   });
   const json = (await res.json().catch(() => null)) as StripeRedirectResponse;
   if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);

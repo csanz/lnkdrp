@@ -22,8 +22,11 @@ import { CREDIT_PACKS, PURCHASED_CREDITS_EXPIRY_MONTHS, formatPackPrice } from "
 
 type CreditsSnapshot = {
   ok: true;
+  /** Credits held: included + starter + purchased. On-demand headroom is not credits. */
   creditsRemaining: number;
   includedRemaining: number;
+  purchasedRemaining?: number;
+  /** @deprecated Same as `purchasedRemaining` (older servers added on-demand headroom). */
   paidRemaining: number;
   usedThisCycle: number;
   cycleEnd: string | null;
@@ -112,14 +115,17 @@ function CreditsSummaryCardInner({
 
   const creditsRemaining = typeof data?.creditsRemaining === "number" ? Math.max(0, Math.floor(data.creditsRemaining)) : null;
   const includedRemaining = typeof data?.includedRemaining === "number" ? Math.max(0, Math.floor(data.includedRemaining)) : null;
-  const paidRemaining = typeof data?.paidRemaining === "number" ? Math.max(0, Math.floor(data.paidRemaining)) : null;
+  const purchasedRemaining =
+    typeof data?.purchasedRemaining === "number" ? Math.max(0, Math.floor(data.purchasedRemaining)) : null;
   const usedThisCycle = typeof data?.usedThisCycle === "number" ? Math.max(0, Math.floor(data.usedThisCycle)) : null;
   const reset = typeof data?.cycleEnd === "string" ? data.cycleEnd : null;
   const includedThisCycle =
     typeof data?.includedThisCycle === "number" && Number.isFinite(data.includedThisCycle)
       ? Math.max(0, Math.floor(data.includedThisCycle))
       : null;
+  // The snapshot reports on-demand off (limit 0) for any workspace not on Pro.
   const onDemandEnabled = typeof data?.onDemandMonthlyLimitCents === "number" && data.onDemandMonthlyLimitCents > 0;
+  const onDemandLimitCredits = onDemandEnabled ? Math.floor((data?.onDemandMonthlyLimitCents ?? 0) / USD_CENTS_PER_CREDIT) : 0;
   const onDemandUnlimited = typeof data?.onDemandMonthlyLimitCents === "number" && data.onDemandMonthlyLimitCents >= UNLIMITED_LIMIT_CENTS;
   const onDemandUsed = typeof data?.onDemandUsedCreditsThisCycle === "number" ? Math.max(0, Math.floor(data.onDemandUsedCreditsThisCycle)) : null;
 
@@ -174,17 +180,9 @@ function CreditsSummaryCardInner({
         <div className="rounded-xl bg-[var(--panel-2)] p-4 lg:col-span-2">
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">Credits remaining</div>
           <div className="mt-2 text-[26px] font-semibold tracking-tight text-[var(--fg)]">
-            {creditsRemaining === null ? (
-              "—"
-            ) : onDemandUnlimited ? (
-              <span className="inline-flex items-baseline gap-2">
-                <span className="text-emerald-700 dark:text-emerald-300">∞</span>
-                <span className="text-[12px] font-semibold text-[var(--muted-2)]">Unlimited</span>
-              </span>
-            ) : (
-              creditsRemaining.toLocaleString()
-            )}
+            {creditsRemaining === null ? "—" : creditsRemaining.toLocaleString()}
           </div>
+          <div className="mt-1 text-[12px] text-[var(--muted-2)]">{isFree ? "Starter and purchased" : "Included and purchased"}</div>
         </div>
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">{isFree ? "Starter" : "Included"}</div>
@@ -193,19 +191,39 @@ function CreditsSummaryCardInner({
             {isFree ? `${starterGrant.toLocaleString()} to start, one time` : `Per month: ${includedThisCycle !== null ? includedThisCycle.toLocaleString() : "—"}`}
           </div>
         </div>
-        <div className="rounded-xl bg-[var(--panel-2)] p-4">
-          <div className="text-[12px] font-semibold text-[var(--muted-2)]">Extra</div>
-          <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
-            {paidRemaining === null ? (
-              "—"
-            ) : onDemandUnlimited ? (
-              <span className="text-emerald-700 dark:text-emerald-300">∞</span>
-            ) : (
-              paidRemaining.toLocaleString()
-            )}
+        {isFree ? (
+          <div className="rounded-xl bg-[var(--panel-2)] p-4">
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Purchased</div>
+            <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
+              {purchasedRemaining === null ? "—" : purchasedRemaining.toLocaleString()}
+            </div>
+            <div className="mt-1 text-[12px] text-[var(--muted-2)]">Credit packs</div>
           </div>
-          <div className="mt-1 text-[12px] text-[var(--muted-2)]">{isFree ? "Purchased credits" : "Purchased + on-demand headroom"}</div>
-        </div>
+        ) : (
+          <Link
+            href="/dashboard?tab=limits"
+            className="rounded-xl bg-[var(--panel-2)] p-4 transition-colors hover:bg-[var(--panel-hover)]"
+          >
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">On-demand</div>
+            <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
+              {!onDemandEnabled ? (
+                "Off"
+              ) : onDemandUnlimited ? (
+                <>
+                  {(onDemandUsed ?? 0).toLocaleString()} <span className="text-[12px] font-semibold text-[var(--muted-2)]">used · no limit</span>
+                </>
+              ) : (
+                <>
+                  {(onDemandUsed ?? 0).toLocaleString()}
+                  <span className="text-[var(--muted-2)]"> / {onDemandLimitCredits.toLocaleString()}</span>
+                </>
+              )}
+            </div>
+            <div className="mt-1 text-[12px] text-[var(--muted-2)]">
+              {onDemandEnabled ? "Credits billed per use this cycle" : "Keep going past included credits"}
+            </div>
+          </Link>
+        )}
         <div className="rounded-xl bg-[var(--panel-2)] p-4">
           <div className="text-[12px] font-semibold text-[var(--muted-2)]">Used</div>
           <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">{usedThisCycle !== null ? usedThisCycle.toLocaleString() : "—"}</div>
@@ -215,22 +233,34 @@ function CreditsSummaryCardInner({
         </div>
       </div>
 
-      {onDemandEnabled && onDemandUsed !== null ? (
+      {!isFree && !onDemandEnabled && onDemandUsed ? (
         <div className="mt-3 text-[12px] text-[var(--muted-2)]">
-          On-demand used: <span className="font-semibold text-[var(--fg)]">{onDemandUsed.toLocaleString()}</span> credits
+          On-demand used this cycle: <span className="font-semibold text-[var(--fg)]">{onDemandUsed.toLocaleString()}</span>{" "}
+          credits, billed on your next invoice.
         </div>
       ) : null}
 
       {/* A way to get more credits at any balance, not only once they are gone (the out-of-credits
           box below takes over at zero). */}
-      {creditsRemaining !== 0 ? (
+      {creditsRemaining !== 0 && isFree ? (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
           <div className="min-w-0 text-[12px] text-[var(--muted-2)]">
             <span className="font-semibold text-[var(--fg)]">Need more credits?</span> Buy a pack from {CHEAPEST_PACK_PRICE},
-            used after your {isFree ? "starter" : "included"} credits and valid for {PURCHASED_CREDITS_EXPIRY_MONTHS} months.
+            used after your starter credits and valid for {PURCHASED_CREDITS_EXPIRY_MONTHS} months.
           </div>
           <Link href="/credits" className={PRIMARY_LINK}>
             Add more credits
+          </Link>
+        </div>
+      ) : null}
+      {creditsRemaining !== 0 && !isFree && !onDemandEnabled ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+          <div className="min-w-0 text-[12px] text-[var(--muted-2)]">
+            <span className="font-semibold text-[var(--fg)]">Need more than {CREDITS_COPY.proPerMonth} a month?</span> Turn on
+            on-demand usage: AI keeps working at {formatUsdFromCents(centsPerCredit)} a credit, up to a limit you set.
+          </div>
+          <Link href="/dashboard?tab=limits" className={PRIMARY_LINK}>
+            Set up on-demand
           </Link>
         </div>
       ) : null}
@@ -241,19 +271,23 @@ function CreditsSummaryCardInner({
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             {isFree
               ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Buy a credit pack from ${CHEAPEST_PACK_PRICE}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included and AI compare on every replacement.`
-              : "You’ve used all available credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. AI compare is unavailable until credits reset, you buy a credit pack, or you enable on-demand."}
+              : onDemandEnabled
+                ? "Your included credits are used up and on-demand usage is running, billed per credit up to your limit."
+                : "You’ve used this month’s included credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Turn on on-demand usage to keep AI running now, or wait for credits to reset."}
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Link href="/credits" className={PRIMARY_LINK}>
-              Add more credits
-            </Link>
             {isFree ? (
-              <button type="button" className={SECONDARY} onClick={() => openUpgrade("credits")}>
-                Upgrade to Pro
-              </button>
+              <>
+                <Link href="/credits" className={PRIMARY_LINK}>
+                  Add more credits
+                </Link>
+                <button type="button" className={SECONDARY} onClick={() => openUpgrade("credits")}>
+                  Upgrade to Pro
+                </button>
+              </>
             ) : (
-              <Link href="/dashboard/limits" className={SECONDARY}>
-                {onDemandEnabled ? "Increase limit" : "Manage credits"}
+              <Link href="/dashboard?tab=limits" className={PRIMARY_LINK}>
+                {onDemandEnabled ? "Change limit" : "Turn on on-demand"}
               </Link>
             )}
           </div>

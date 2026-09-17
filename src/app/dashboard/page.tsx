@@ -592,10 +592,10 @@ function DashboardPageInner() {
                   <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand limit</div>
                   <HelpTooltip
                     label="What is the on-demand limit?"
-                    body="This is your monthly cap for on-demand usage (extra credits). It resets each billing cycle and prevents unexpected overage."
+                    body="The most on-demand usage can add to one invoice. It resets each billing cycle. Turning it off stops new usage; what was already used is still billed."
                   />
                 </div>
-                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Enable on-demand usage and set a cap.</div>
+                <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Turn on-demand on or off, and cap it.</div>
                 <div className="mt-4">
                   <SpendLimitModule />
                 </div>

@@ -5,7 +5,7 @@
  * then manage billing via Stripe's customer portal. Plan details link out to `/pricing` so the comparison
  * has a single source of truth. The Free panel shows live usage meters from `GET /api/plan` (links,
  * projects, analytics window, members) and notes that AI summaries, version history and AI compare run on credits;
- * credits exist on both plans (Free starts with a one-time starter grant, then credit packs or Pro) and live
+ * credits exist on both plans (Free starts with a one-time starter grant, then credit packs or Pro; Pro adds on-demand) and live
  * in the Credits card on the Usage tab, so this card never reads the credits snapshot.
  */
 "use client";

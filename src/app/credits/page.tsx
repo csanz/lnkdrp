@@ -1,5 +1,6 @@
 /**
- * Page for `/credits` — buy prepaid AI credit packs.
+ * Page for `/credits` — buy prepaid AI credit packs (Free workspaces). A signed-in Pro workspace
+ * sees its credits and on-demand usage instead of the packs: Pro adds credits with on-demand.
  *
  * Built on the pricing page's frame (same header, lighting, serif headline and cards) so buying
  * credits feels like part of the same place as choosing a plan. The packs come from
@@ -55,8 +56,9 @@ export default async function CreditsPage() {
               <br className="hidden sm:block" /> when you need them.
             </h1>
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-              Credits pay for AI summaries and AI compare. Buy a pack once, on any plan: the credits land in your
-              workspace right away and last {PURCHASED_CREDITS_EXPIRY_MONTHS} months.
+              Credits pay for AI summaries and AI compare. On Free, buy a pack once: the credits land in your
+              workspace right away and last {PURCHASED_CREDITS_EXPIRY_MONTHS} months. On Pro, on-demand usage keeps
+              AI running past your monthly credits.
             </p>
           </div>
 

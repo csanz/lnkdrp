@@ -20,6 +20,7 @@ type SpendStatus = {
   onDemandEnabled: boolean;
   onDemandMonthlyLimitCents: number;
   onDemandUsedCentsThisCycle: number;
+  isPro?: boolean;
 };
 
 /**
@@ -75,7 +76,9 @@ function OnDemandUsageCardInner() {
   const unlimited = enabled && limitCents >= UNLIMITED_LIMIT_CENTS;
 
   const limitCredits = enabled ? Math.floor(limitCents / centsPerCredit) : 0;
-  const usedCredits = enabled ? Math.floor(usedCents / centsPerCredit) : 0;
+  // Counted even when on-demand is off: credits used before it was turned off are still billed.
+  const usedCredits = Math.floor(usedCents / centsPerCredit);
+  const notPro = data?.isPro === false;
 
   const progress = useMemo(() => {
     if (!enabled || limitCredits <= 0 || unlimited) return 0;
@@ -88,11 +91,11 @@ function OnDemandUsageCardInner() {
         <div className="text-[13px] font-semibold text-[var(--fg)]">On-demand usage</div>
         <HelpTooltip
           label="What is on-demand usage?"
-          body="On-demand usage is extra credit headroom you can enable beyond your included plan credits. Your on-demand limit resets each billing cycle."
+          body={`A Pro feature: when your monthly credits run out, AI keeps working at ${formatUsdFromCents(centsPerCredit)} a credit, billed on your next invoice, up to your limit. The limit resets each billing cycle.`}
         />
       </div>
       <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-        {busy && !data ? "Loading…" : !enabled ? "Disabled." : "This billing cycle."}
+        {busy && !data ? "Loading…" : notPro ? "Comes with Pro." : !enabled ? "Off." : "This billing cycle."}
       </div>
 
       {error ? (
@@ -112,14 +115,20 @@ function OnDemandUsageCardInner() {
             ) : (
               `${usedCredits.toLocaleString()} / ${limitCredits.toLocaleString()}`
             )
+          ) : usedCredits > 0 ? (
+            usedCredits.toLocaleString()
           ) : (
             "—"
           )}
         </div>
         <div className="mt-1 text-[12px] text-[var(--muted-2)]">
           {enabled
-            ? `${formatUsdFromCents(usedCents)} / ${unlimited ? "Unlimited" : formatUsdFromCents(limitCents)}`
-            : "Set a limit to enable on-demand usage."}
+            ? `${formatUsdFromCents(usedCents)} / ${unlimited ? "No limit" : formatUsdFromCents(limitCents)}`
+            : usedCredits > 0
+              ? `${formatUsdFromCents(usedCents)} used this cycle, billed on your next invoice.`
+              : notPro
+                ? "Free workspaces buy credit packs instead."
+                : "Turn it on to keep AI running after your monthly credits."}
         </div>
 
         <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]" aria-hidden="true">

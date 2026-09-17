@@ -476,12 +476,12 @@ export default function DashboardShell({ children }: { children: React.ReactNode
               </div>
             </div>
             <div className="rounded-xl bg-[var(--panel-2)] p-4">
-              <div className="text-[12px] font-semibold text-[var(--muted-2)]">Extra credits</div>
+              <div className="text-[12px] font-semibold text-[var(--muted-2)]">Purchased</div>
               <div className="mt-2 text-[18px] font-semibold text-[var(--fg)]">
                 {credits ? Math.max(0, Math.floor(credits.paidRemaining)).toLocaleString() : "—"}
               </div>
               <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-                Includes purchased credits + on-demand headroom (if enabled).
+                Credit packs, used after included credits.
               </div>
             </div>
           </div>

@@ -155,14 +155,23 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [rerunErrorById, setRerunErrorById] = useState<Record<string, string>>({});
   // Credits left and the Free top-up date, so each Regenerate button can say what it costs and
   // whether the workspace can afford it. Refreshed after every rerun.
-  const [credits, setCredits] = useState<{ remaining: number; resetsAt: string | null } | null>(null);
+  // `remaining` is credits held (the number shown); `spendable` adds Pro's on-demand headroom and
+  // decides whether a run can go ahead (`null`: on-demand has no limit).
+  const [credits, setCredits] = useState<{ remaining: number; spendable: number | null; resetsAt: string | null } | null>(null);
   const refreshCredits = useCallback(async () => {
     try {
       const res = await fetch("/api/credits/snapshot?fast=1&bust=1", { cache: "no-store" });
-      const json = (await res.json().catch(() => null)) as { creditsRemaining?: unknown; resetsAt?: unknown; cycleEnd?: unknown } | null;
+      const json = (await res.json().catch(() => null)) as {
+        creditsRemaining?: unknown;
+        spendableRemaining?: unknown;
+        resetsAt?: unknown;
+        cycleEnd?: unknown;
+      } | null;
       if (!res.ok || typeof json?.creditsRemaining !== "number") return;
       const resetsAt = typeof json.resetsAt === "string" ? json.resetsAt : null;
-      setCredits({ remaining: json.creditsRemaining, resetsAt });
+      const spendable =
+        typeof json.spendableRemaining === "number" ? json.spendableRemaining : json.spendableRemaining === null ? null : json.creditsRemaining;
+      setCredits({ remaining: json.creditsRemaining, spendable, resetsAt });
     } catch {
       // leave the buttons enabled; the API is the real gate
     }
@@ -741,7 +750,9 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                   className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
                                   disabled={
                                     Boolean(rerunBusyById[it.id]) ||
-                                    (credits !== null && credits.remaining < RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier])
+                                    (credits !== null &&
+                                      credits.spendable !== null &&
+                                      credits.spendable < RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier])
                                   }
                                   onClick={() => {
                                     void (async () => {
@@ -786,7 +797,10 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                 </button>
                                 {credits !== null ? (
                                   <span className="text-[11px] text-[var(--muted)]">
-                                    {credits.remaining < RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier]
+                                    {credits.remaining < RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier] &&
+                                    (credits.spendable === null || credits.spendable >= RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier])
+                                      ? `${credits.remaining} left · billed on-demand`
+                                      : credits.remaining < RERUN_COST[rerunTierById[it.id] ?? defaultHistoryTier]
                                       ? `Not enough credits (${credits.remaining} left)${
                                           credits.resetsAt
                                             ? `. Tops up to 10 on ${new Date(credits.resetsAt).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}`

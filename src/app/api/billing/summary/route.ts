@@ -10,6 +10,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActorForStats } from "@/lib/gating/actor";
 import { SubscriptionModel } from "@/lib/models/Subscription";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
@@ -116,6 +117,7 @@ export async function GET(request: Request) {
         SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } })
           .select({
             status: 1,
+            kind: 1,
             planName: 1,
             cancelAtPeriodEnd: 1,
             stripeCustomerId: 1,
@@ -156,7 +158,11 @@ export async function GET(request: Request) {
       const cancelAtPeriodEnd = Boolean((sub as any)?.cancelAtPeriodEnd);
 
       const onDemandMonthlyLimitCents = clampNonNegInt((bal as any)?.onDemandMonthlyLimitCents ?? 0);
-      const onDemandEnabled = Boolean((bal as any)?.onDemandEnabled) && onDemandMonthlyLimitCents > 0;
+      // On-demand is Pro-only: a stored toggle on a non-Pro workspace counts as off.
+      const onDemandEnabled =
+        isProSubscription(sub as { status?: unknown; kind?: unknown } | null) &&
+        Boolean((bal as any)?.onDemandEnabled) &&
+        onDemandMonthlyLimitCents > 0;
 
       // Derive on-demand dollars + credits used this cycle:
       // - Prefer UsageAggCycle (fast, bounded) for charged totals and on-demand credits
@@ -165,8 +171,9 @@ export async function GET(request: Request) {
       let usedCentsThisCycle = 0;
       let onDemandUsedCreditsThisCycle = 0;
       let ledgerPipelineForDebug: unknown = null;
-      // If on-demand is disabled, the UI doesn't use `usedCentsThisCycle` and we can avoid all ledger/agg reads.
-      if (onDemandEnabled && window.start && window.end) {
+      // Read even when on-demand is off: credits used before it was turned off this cycle are still
+      // reported to Stripe and invoiced, so the billing page must keep showing them.
+      if (window.start && window.end) {
         const useCycleStartMatch = window.source === "subscription" || window.source === "balance";
         const aggCycleKey = `${String(orgId)}:${cycleStartIso}`;
         const aggCycle = await UsageAggCycleModel.findOne({ workspaceId: orgId, cycleKey: aggCycleKey })
@@ -260,17 +267,23 @@ export async function GET(request: Request) {
       const trialRemaining = clampNonNegInt((bal as any)?.trialCreditsRemaining ?? 0);
 
       // On-demand credits headroom is credits-first; compute from on-demand credits used, not invoice dollars.
-      if (!onDemandEnabled) onDemandUsedCreditsThisCycle = 0;
-
       const onDemandRemainingCreditsThisCycle = onDemandEnabled
         ? Math.max(0, Math.floor(onDemandMonthlyLimitCents / USD_CENTS_PER_CREDIT) - onDemandUsedCreditsThisCycle)
         : 0;
-      const creditsRemaining = includedRemaining + purchasedRemaining + trialRemaining + onDemandRemainingCreditsThisCycle;
+      // Credits held. On-demand headroom is not credits (same meaning as the credits snapshot), so it
+      // is reported on its own under `onDemand`.
+      const creditsRemaining = includedRemaining + purchasedRemaining + trialRemaining;
 
       const payload = {
         cycle: { start: cycleStartIso, end: cycleEndIso, key: cycleKey },
         plan: { name: planName, status, cancelAtPeriodEnd },
-        onDemand: { enabled: onDemandEnabled, monthlyLimitCents: onDemandEnabled ? onDemandMonthlyLimitCents : 0, usedCentsThisCycle },
+        onDemand: {
+          enabled: onDemandEnabled,
+          monthlyLimitCents: onDemandEnabled ? onDemandMonthlyLimitCents : 0,
+          usedCentsThisCycle,
+          usedCreditsThisCycle: onDemandUsedCreditsThisCycle,
+          remainingCreditsThisCycle: onDemandRemainingCreditsThisCycle,
+        },
         balances: { includedRemaining, purchasedRemaining, trialRemaining, creditsRemaining },
         ...(debug
           ? {

@@ -1,8 +1,15 @@
 /**
  * API route for `/api/billing/spend` — read/update workspace on-demand spend limit + usage.
  *
- * - GET: returns `{ onDemandMonthlyLimitCents, onDemandUsedCentsThisCycle }`
- * - POST: updates `onDemandMonthlyLimitCents` (cents) for the active workspace (owner/admin only)
+ * - GET: returns `{ onDemandMonthlyLimitCents, onDemandUsedCentsThisCycle, cycleEnd, isPro, … }`
+ * - POST: updates `onDemandMonthlyLimitCents` (cents) for the active workspace (owner/admin only).
+ *   `0` turns on-demand off.
+ *
+ * On-demand is a Pro feature (Free workspaces buy credit packs). Setting a limit needs Pro; turning
+ * it off never does, so a workspace that lost Pro can still switch it off. Credits already used
+ * on-demand this cycle stay billed whatever the limit becomes: they are in the ledger, the hourly
+ * `stripe-credits-report` cron sends them to Stripe regardless of the toggle, and they land on the
+ * next invoice. That is why usage is read even when on-demand is off.
  *
  * Primary UI unit is credits; dollars are secondary and only shown in the limit editor.
  */
@@ -13,7 +20,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { resolveActor, resolveActorForStats, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { SubscriptionModel } from "@/lib/models/Subscription";
-import { isBillableSubscription } from "@/lib/billing/subscriptionState";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { UsageAggCycleModel } from "@/lib/models/UsageAggCycle";
@@ -98,13 +105,12 @@ export async function GET(request: Request) {
       ]);
       if (!membership) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
-      // Billable, not Pro: a Free workspace that added a card (pay-as-you-go) sets its limit here too.
-      const billable = isBillableSubscription(sub as { status?: unknown; kind?: unknown } | null);
+      const pro = isProSubscription(sub as { status?: unknown; kind?: unknown } | null);
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
       const roleAllowsEdit = role === "owner" || role === "admin";
-      const canEdit = billable && roleAllowsEdit;
-      const editDisabledReason = !billable
-        ? "On-demand usage comes with Pro. On any plan, you can buy a credit pack instead."
+      const canEdit = pro && roleAllowsEdit;
+      const editDisabledReason = !pro
+        ? "On-demand usage comes with Pro. On Free, you can buy a credit pack instead."
         : !roleAllowsEdit
           ? "Only workspace owners/admins can edit limits."
           : null;
@@ -113,12 +119,16 @@ export async function GET(request: Request) {
         typeof (bal as any)?.onDemandMonthlyLimitCents === "number" && Number.isFinite((bal as any).onDemandMonthlyLimitCents)
           ? Math.max(0, Math.floor((bal as any).onDemandMonthlyLimitCents))
           : 0;
-      const enabled = Boolean((bal as any)?.onDemandEnabled) && limitCents > 0;
+      // Stored toggle on, but not on Pro (a lapsed Pro, a legacy pay-as-you-go row): off.
+      const storedEnabled = Boolean((bal as any)?.onDemandEnabled) && limitCents > 0;
+      const enabled = pro && storedEnabled;
 
       // Usage is derived from pre-aggregated cycle usage when available (fast path), with a
       // narrow ledger aggregate fallback (avoid calling the full credits snapshot on this hot path).
+      // Read even when on-demand is off: credits used before it was turned off are still billed.
       let usedCreditsThisCycle = 0;
-      if (enabled) {
+      let cycleEndIso: string | null = null;
+      {
         const subStart = (sub as any)?.currentPeriodStart instanceof Date ? (sub as any).currentPeriodStart : null;
         const subEnd = (sub as any)?.currentPeriodEnd instanceof Date ? (sub as any).currentPeriodEnd : null;
         const balStart = (bal as any)?.currentPeriodStart instanceof Date ? (bal as any).currentPeriodStart : null;
@@ -127,6 +137,7 @@ export async function GET(request: Request) {
         const cycleStart = subStart && subEnd ? subStart : balStart && balEnd ? balStart : startOfUtcMonth(now);
         const cycleEnd = subStart && subEnd ? subEnd : balStart && balEnd ? balEnd : startOfNextUtcMonth(now);
         const cycleKey = `${orgIdStr}:${cycleStart.toISOString()}`;
+        cycleEndIso = cycleEnd.toISOString();
 
         const agg = await UsageAggCycleModel.findOne({ workspaceId: orgId, cycleKey })
           .select({ onDemandUsedCredits: 1 })
@@ -183,10 +194,15 @@ export async function GET(request: Request) {
         onDemandEnabled: enabled,
         onDemandMonthlyLimitCents: enabled ? limitCents : 0,
         onDemandUsedCentsThisCycle: usedCents,
+        /** When this cycle's on-demand usage is invoiced and the limit starts counting again. */
+        cycleEnd: pro ? cycleEndIso : null,
+        isPro: pro,
         canEdit,
+        /** Off Pro with the toggle still stored on: the owner may still turn it off. */
+        canTurnOff: roleAllowsEdit && storedEnabled,
         editDisabledReason,
-        /** No billable subscription: the UI links to credit packs instead of an inert editor. */
-        needsCard: !billable,
+        /** Not on Pro: the UI links to credit packs instead of an inert editor. */
+        needsCard: !pro,
       };
 
       billingSpendCache.set(cacheKey, { at: Date.now(), payload });
@@ -234,14 +250,16 @@ export async function POST(request: Request) {
       const orgId = new Types.ObjectId(String(actor.orgId));
       const userId = new Types.ObjectId(String(actor.userId));
 
-      // On-demand needs something to bill: a billable subscription of either kind (Pro, or the
-      // metered-only pay-as-you-go one a Free workspace gets when it adds a card).
-      const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1, kind: 1 }).lean();
-      if (!isBillableSubscription(sub as { status?: unknown; kind?: unknown } | null)) {
-        return NextResponse.json(
-          { error: "On-demand usage comes with Pro. On any plan, you can buy a credit pack instead." },
-          { status: 403 },
-        );
+      // On-demand is Pro's overage. Turning it off (limit 0) is always allowed; turning it on or
+      // raising it needs Pro.
+      if (limitCents > 0) {
+        const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1, kind: 1 }).lean();
+        if (!isProSubscription(sub as { status?: unknown; kind?: unknown } | null)) {
+          return NextResponse.json(
+            { error: "On-demand usage comes with Pro. On Free, you can buy a credit pack instead." },
+            { status: 403 },
+          );
+        }
       }
 
       const membership = await OrgMembershipModel.findOne({ orgId, userId, isDeleted: { $ne: true } })

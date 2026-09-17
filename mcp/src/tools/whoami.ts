@@ -64,7 +64,7 @@ function buildCapabilities(
     // `null` = no cap (Pro); a number is how many days of history `lnkdrp_get_share_stats` serves.
     analyticsDaysLimit: plan ? limits.analyticsDays : null,
     // Viewer identities, per-page time and visit history in lnkdrp_get_share_stats — Pro only, and
-    // unrelated to on-demand credits (see whoami.onDemand): a payg workspace stays on the basic tier.
+    // unrelated to on-demand credits (see whoami.onDemand), which are also Pro-only.
     deepAnalytics: isPro,
     // Whether `allowRevisionHistory: true` (settable on every plan via create/update_share_link)
     // actually lets a recipient browse prior versions once they open the link. The setting itself
@@ -84,9 +84,10 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
         "Verify the lnkdrp API key and return the workspace it acts on: userId, email, orgId, orgName, plan, key prefix, " +
         "scopes and the client name lnkdrp recorded for this connection, plus the credit cost table (credits per tier " +
         "basic/standard/advanced), creditsRemaining and creditsResetAt when readable, onDemand, capabilities, and the " +
-        "MCP server version. plan: 'free' with onDemand: true means the workspace has added a card for pay-as-you-go - " +
-        "it is not on Pro's limits, but it will not simply run out of credits once its one-time starter credits are " +
-        "spent; do not read 'free' alone as 'will hit a wall'. capabilities answers 'what can I do here' in one call, " +
+        "MCP server version. creditsRemaining is credits the workspace holds (included, starter and purchased). " +
+        "onDemand: true (Pro only) means AI runs keep going after creditsRemaining reaches 0, billed per credit up to " +
+        "the workspace's spend limit, so 0 credits on Pro with onDemand is not a wall. Free workspaces add credits by " +
+        "buying packs, which only a person can do. capabilities answers 'what can I do here' in one call, " +
         "before attempting anything: documents/projects (limit, used, remaining; limit null = unlimited - documents.used " +
         "counts shared documents, those with a link on, so it can be lower than lnkdrp_list_docs's total), links " +
         "(never limited on any plan), collaborators, analyticsDaysLimit (the window lnkdrp_get_share_stats serves), " +

@@ -339,7 +339,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     access: "read",
     detail: {
       inputs: ["none"],
-      output: "Your user id and email, the workspace id and name, plan (free or pro), the key's prefix and scopes, the client name lnkdrp recorded, credits remaining and when they reset, whether the workspace can be billed for on-demand credits (onDemand), the credit cost per AI action by tier, and a capabilities object answering \"what can I do here\" in one call: document/project/collaborator caps with what's used and left, whether links are ever limited (they're not), the analytics window, whether recipients can browse prior versions, and which product features (request repos, download-access requests) have no MCP tool at all yet.",
+      output: "Your user id and email, the workspace id and name, plan (free or pro), the key's prefix and scopes, the client name lnkdrp recorded, credits remaining (included, starter and purchased) and when they reset, whether on-demand usage keeps AI running past them (onDemand, Pro only), the credit cost per AI action by tier, and a capabilities object answering \"what can I do here\" in one call: document/project/collaborator caps with what's used and left, whether links are ever limited (they're not), the analytics window, whether recipients can browse prior versions, and which product features (request repos, download-access requests) have no MCP tool at all yet.",
       errors: ["unauthorized — the key is missing or invalid", "key_revoked — the key was revoked"],
       note: "Call it first to confirm the connection; it costs nothing.",
     },

@@ -273,6 +273,79 @@ describe("credits/serviceCore", () => {
     expect(checked).toBe(0);
     expect(getBalance().subscriptionCreditsRemaining).toBe(50 - res.creditsReserved);
   });
+
+  test("the Free daily brake stops a run once the day's credits would pass it", async () => {
+    const { store } = makeStore({
+      balance: { ...baseBalance(), trialCreditsRemaining: 40, dailyCreditCap: 15 },
+      usage: { daily: 12 },
+    });
+    const svc = createCreditService(store);
+
+    await expect(
+      svc.reserveCreditsOrThrow({
+        workspaceId: "w1",
+        userId: "u1",
+        docId: null,
+        idempotencyKey: "k1",
+        actionType: "review",
+        qualityTier: "standard", // 5 credits: 12 + 5 > 15
+        initBalanceIfMissing: async () => baseBalance(),
+        isProWorkspace: async () => false,
+      }),
+    ).rejects.toThrow(/Daily credit cap exceeded/i);
+  });
+
+  test("a Pro workspace whose row still carries the Free daily brake is not stopped by it", async () => {
+    // Seeded while Free (cap 15), then upgraded: the stored cap must not apply on Pro.
+    const { store, getBalance } = makeStore({
+      balance: { ...baseBalance(), subscriptionCreditsRemaining: 295, trialCreditsRemaining: 9, dailyCreditCap: 15 },
+      usage: { daily: 14 },
+    });
+    const svc = createCreditService(store);
+    let checked = 0;
+
+    const res = await svc.reserveCreditsOrThrow({
+      workspaceId: "w1",
+      userId: "u1",
+      docId: null,
+      idempotencyKey: "k1",
+      actionType: "review",
+      qualityTier: "standard",
+      initBalanceIfMissing: async () => baseBalance(),
+      isProWorkspace: async () => {
+        checked += 1;
+        return true;
+      },
+    });
+    expect(res.status).toBe("pending");
+    expect(checked).toBe(1);
+    expect(getBalance().subscriptionCreditsRemaining).toBe(295 - res.creditsReserved);
+  });
+
+  test("the plan is not queried while a run fits under the daily brake", async () => {
+    const { store } = makeStore({
+      balance: { ...baseBalance(), trialCreditsRemaining: 40, dailyCreditCap: 15 },
+      usage: { daily: 2 },
+    });
+    const svc = createCreditService(store);
+    let checked = 0;
+
+    const res = await svc.reserveCreditsOrThrow({
+      workspaceId: "w1",
+      userId: "u1",
+      docId: null,
+      idempotencyKey: "k1",
+      actionType: "review",
+      qualityTier: "standard",
+      initBalanceIfMissing: async () => baseBalance(),
+      isProWorkspace: async () => {
+        checked += 1;
+        return false;
+      },
+    });
+    expect(res.status).toBe("pending");
+    expect(checked).toBe(0);
+  });
 });
 
 

@@ -351,14 +351,12 @@ step 9), so don't go looking for them.
 2. Billing Meter **AI credits (on-demand)**: event name `ai_credits`, aggregation sum, customer
    mapped by `stripe_customer_id`, value key `value`.
 3. Product **On-demand AI credits** with one metered monthly price at $0.10 per unit on that
-   meter, unit label `credit`. Metadata `type=ai_credits`. This one price backs two things: it is
-   attached to every Pro subscription at checkout (on-demand overage, off by default), and it is
-   the *entire* subscription for a Free workspace's pay-as-you-go checkout (`POST
-   /api/stripe/checkout { plan: "payg" }`) — a $0 subscription whose only job is a card on file and
-   something for the meter to bill against. Nothing else in Stripe needs configuring for
-   pay-as-you-go; it is this same price, reused. The app reports one meter unit per credit only
-   when a workspace has turned on-demand on (automatic the moment a payg subscription becomes
-   billable; a Pro owner turns it on from Limits).
+   meter, unit label `credit`. Metadata `type=ai_credits`. It is attached to every Pro
+   subscription at checkout (on-demand overage, off by default; a Pro owner turns it on from
+   Limits). On-demand is Pro-only since 2026-09-17: Free workspaces buy credit packs, and
+   `POST /api/stripe/checkout { plan: "payg" }` refuses with 400 `PAYG_RETIRED`. The app reports
+   one meter unit per on-demand credit. Turning on-demand off does not cancel usage already
+   recorded: those ledger rows are still reported by `stripe-credits-report` and invoiced.
 4. Webhook endpoint `https://lnkdrp.com/api/stripe/webhook` with these events:
    `checkout.session.completed`, `customer.subscription.created`,
    `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.paid`,
@@ -1498,11 +1496,18 @@ monitor is in 12.
   chargeback, leaves the purchased credits in the workspace; nothing handles `charge.refunded` or
   `charge.dispute.created`. Remove them by hand from `/a/credits` when you refund. Decide before
   selling packs at volume whether refunds should claw credits back automatically.
-- **Pay-as-you-go for Free has no UI entry point any more.** Credit packs replaced it
-  (2026-09-16); every "add more credits" button goes to `/credits`. The backend is still intact
-  (`POST /api/stripe/checkout { plan: "payg" }`, the webhook's payg handling, the Limits editor
-  for an existing payg subscription), so any workspace that already bought it keeps working. Remove
-  it once none are left, or bring back an entry point.
+- **Pay-as-you-go for Free is retired (2026-09-17).** On-demand is Pro-only, and credit packs are
+  Free-only (`POST /api/credits/purchase` returns 409 `PACKS_FREE_ONLY` on Pro, where on-demand is
+  cheaper per credit). Checkout refuses `plan: "payg"`. The reserve path, snapshot, Limits editor
+  and billing summary all treat on-demand as off on any non-Pro workspace. An existing payg
+  subscription therefore bills nothing new, and its owner can still turn the stored toggle off
+  from Limits. The webhook still parses payg subscriptions; remove that code, and cancel any such
+  subscriptions in Stripe, once none are left.
+- **On-demand usage from the last hour can go unbilled when a Pro subscription is deleted
+  outright.** `stripe-credits-report` runs hourly and only reports for `active`/`trialing`
+  subscriptions, so usage recorded after its last run and before an immediate cancellation is
+  never sent. A cancel at period end is fine. If immediate cancels become common, flush the
+  workspace's unreported rows from the `customer.subscription.deleted` handler first.
 - If production starts from an existing database, run the one-time data jobs in 5.2.
 - **Resolved 2026-09-16** in code and config, previously listed below: the `deploy/fly/*.fly.toml`
   headers are pointers to 6.2 / 7; MCP concurrency is 1000/2000; the service Dockerfiles pin their

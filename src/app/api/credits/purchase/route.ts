@@ -1,7 +1,7 @@
 /**
  * API route for `/api/credits/purchase` — prepaid credit packs.
  *
- * - `POST { packId }` starts a one-time Stripe Checkout for one pack (`src/lib/credits/packs.ts`)
+ * - `POST { packId }` (Free workspaces only; 409 on Pro, which uses on-demand) starts a one-time Stripe Checkout for one pack (`src/lib/credits/packs.ts`)
  *   and returns `{ url }`. The price is sent inline from the pack list, so no Stripe catalog entry
  *   or env var backs it. Credits are granted by the Stripe webhook once payment is confirmed, never
  *   by the redirect back.
@@ -16,6 +16,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { resolveActor } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { UserModel } from "@/lib/models/User";
+import { SubscriptionModel } from "@/lib/models/Subscription";
+import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { CreditPurchaseModel } from "@/lib/models/CreditPurchase";
 import { ensureWorkspaceStripeCustomer } from "@/lib/billing/workspaceCustomer";
 import { CREDIT_PACK_CURRENCY, PURCHASED_CREDITS_EXPIRY_MONTHS, findCreditPack } from "@/lib/credits/packs";
@@ -47,6 +49,18 @@ export async function POST(request: Request) {
       await connectMongo();
       const userId = new Types.ObjectId(actor.userId);
       const orgId = new Types.ObjectId(actor.orgId);
+      // Packs are how Free adds credits. Pro keeps going past its monthly credits with on-demand
+      // usage at a lower per-credit price, so selling it a pricier pack would only cost it more.
+      const sub = await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ status: 1, kind: 1 }).lean();
+      if (isProSubscription(sub as { status?: unknown; kind?: unknown } | null)) {
+        return NextResponse.json(
+          {
+            error: "Credit packs are for Free workspaces. On Pro, turn on on-demand usage in Limits to keep going past your monthly credits.",
+            code: "PACKS_FREE_ONLY",
+          },
+          { status: 409 },
+        );
+      }
       const user = (await UserModel.findOne({ _id: userId }).select({ email: 1 }).lean()) as { email?: string } | null;
       if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
 

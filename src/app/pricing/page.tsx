@@ -229,8 +229,8 @@ export default async function PricingPage() {
                   <Link href="/credits" className="underline underline-offset-4 hover:text-white/70">
                     Buy a credit pack
                   </Link>{" "}
-                  from $5, on any plan. On Pro you can also turn on on-demand: $0.10 per credit, billed through
-                  Stripe, under a hard spend limit you set. Unused included credits do not roll over.
+                  from $5 on Free. On Pro, turn on on-demand instead: $0.10 per credit, billed through Stripe,
+                  under a hard spend limit you set. Unused included credits do not roll over.
                 </p>
               </div>
               <div className="overflow-x-auto">
@@ -359,7 +359,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What happens when I run out of credits?",
-                  a: `Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until you add credits — ${whatHappensAfterFreeCredits()} — or, on Pro, until the next billing cycle.`,
+                  a: `Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until you add credits — on Free, ${whatHappensAfterFreeCredits()}; on Pro, turn on on-demand usage or wait for the next billing cycle.`,
                 },
                 {
                   q: "Can I replace a file on Free?",

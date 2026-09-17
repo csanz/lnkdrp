@@ -6,6 +6,10 @@
  * Checkout (`POST /api/credits/purchase`). On return (`?purchase=success&session_id=…`) it polls
  * `GET /api/credits/purchase` until the webhook has granted the credits, since the redirect alone
  * proves nothing. The Pro card is hidden for workspaces already on Pro.
+ *
+ * Packs are how Free adds credits. A signed-in Pro workspace sees no packs (the API refuses them):
+ * it gets its credits and on-demand usage instead, with a way into Limits, since on-demand is how
+ * Pro keeps going past its monthly credits, at a lower per-credit price than any pack.
  */
 "use client";
 
@@ -18,6 +22,9 @@ import Spinner from "@/components/ui/Spinner";
 import PricingCta from "@/app/pricing/PricingCta";
 import { type CreditPack, formatPackPrice, formatPerCredit } from "@/lib/credits/packs";
 import { formatShortDate } from "@/lib/format/date";
+import { formatUsdFromCents } from "@/lib/format/money";
+import { USD_CENTS_PER_CREDIT } from "@/lib/billing/pricing";
+import { UNLIMITED_LIMIT_CENTS } from "@/lib/billing/limits";
 import { cn } from "@/lib/cn";
 import WorkspaceIcon from "@/components/WorkspaceIcon";
 
@@ -53,10 +60,11 @@ type Workspace = {
   name: string | null;
   avatarUrl: string | null;
   plan: "free" | "pro";
-  /** A pay-as-you-go subscription: still Free, but `purchased` includes on-demand headroom. */
-  payg: boolean;
+  /** Credits held: included + starter + purchased. Never on-demand headroom. */
   credits: number | null;
   purchased: number | null;
+  /** Pro only (the snapshot reports it off elsewhere). */
+  onDemand: { limitCents: number; usedCredits: number } | null;
   /** Pro only: when the subscription renews, or ends if `cancelAtPeriodEnd`. */
   periodEnd: string | null;
   cancelAtPeriodEnd: boolean;
@@ -77,6 +85,7 @@ function Body({
   const sessionId = params.get("session_id");
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [workspaceFailed, setWorkspaceFailed] = useState(false);
   const [busyPack, setBusyPack] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [grant, setGrant] = useState<{ state: "pending" | "granted" | "slow"; credits?: number; expiresAt?: string } | null>(
@@ -91,29 +100,38 @@ function Body({
       ]);
       const status = (await statusRes.json().catch(() => null)) as {
         plan?: string;
-        payg?: boolean;
         org?: { name?: string | null; avatarUrl?: string | null };
         stripeCurrentPeriodEnd?: string | null;
         stripeCancelAtPeriodEnd?: boolean;
       } | null;
       const credits = (await creditsRes.json().catch(() => null)) as {
         creditsRemaining?: unknown;
-        paidRemaining?: unknown;
+        purchasedRemaining?: unknown;
+        onDemandMonthlyLimitCents?: unknown;
+        onDemandUsedCreditsThisCycle?: unknown;
       } | null;
-      if (!statusRes.ok || !status) return;
+      if (!statusRes.ok || !status) {
+        setWorkspaceFailed(true);
+        return;
+      }
       const num = (v: unknown) => (creditsRes.ok && typeof v === "number" ? v : null);
+      const plan = status.plan === "pro" ? "pro" : "free";
       setWorkspace({
         name: status.org?.name ?? null,
         avatarUrl: status.org?.avatarUrl ?? null,
-        plan: status.plan === "pro" ? "pro" : "free",
-        payg: Boolean(status.payg),
+        plan,
         credits: num(credits?.creditsRemaining),
-        purchased: num(credits?.paidRemaining),
+        purchased: num(credits?.purchasedRemaining),
+        onDemand:
+          plan === "pro" && creditsRes.ok
+            ? { limitCents: num(credits?.onDemandMonthlyLimitCents) ?? 0, usedCredits: num(credits?.onDemandUsedCreditsThisCycle) ?? 0 }
+            : null,
         periodEnd: status.stripeCurrentPeriodEnd ?? null,
         cancelAtPeriodEnd: Boolean(status.stripeCancelAtPeriodEnd),
       });
     } catch {
       // The page still sells packs without the balance line.
+      setWorkspaceFailed(true);
     }
   }, []);
 
@@ -175,7 +193,11 @@ function Body({
   }
 
   const best = packs.reduce((a, b) => (b.priceCents / b.credits < a.priceCents / a.credits ? b : a));
-  const showPro = !(signedIn && workspace?.plan === "pro");
+  const isProWorkspace = signedIn && workspace?.plan === "pro";
+  const showPro = !isProWorkspace;
+  // Signed in: wait for the plan before showing packs, so a Pro workspace never flashes them.
+  const showPacks = !signedIn || workspaceFailed || workspace?.plan === "free";
+  const packsPending = signedIn && !workspace && !workspaceFailed;
 
   return (
     <>
@@ -228,7 +250,10 @@ function Body({
         <div className="mt-10 h-[196px] rounded-2xl border border-white/10 bg-white/[0.02]" aria-hidden="true" />
       )}
 
-      <div className="mt-4 grid gap-4 md:grid-cols-3 md:gap-5">
+      {isProWorkspace && workspace ? <OnDemandCard workspace={workspace} proCredits={proCredits} /> : null}
+      {packsPending ? <div className="mt-4 h-[260px] rounded-2xl border border-white/10 bg-white/[0.02]" aria-hidden="true" /> : null}
+
+      <div className={cn("mt-4 grid gap-4 md:grid-cols-3 md:gap-5", !showPacks && "hidden")}>
         {packs.map((pack) => {
           const busy = busyPack === pack.id;
           return (
@@ -314,7 +339,7 @@ function WorkspacePanel({
   const name = workspace.name ?? "Personal";
   const initial = name.trim().charAt(0).toUpperCase() || "W";
   const isPro = workspace.plan === "pro";
-  const planLabel = isPro ? "Pro" : workspace.payg ? "Free · pay-as-you-go" : "Free";
+  const planLabel = isPro ? "Pro" : "Free";
   // What the plan grants, not what is left of it: "Included with Free: 9" read as a live counter
   // and hid the 50 the account actually came with. What is left is the first column's job.
   const planCredits = isPro ? proCredits : freeCredits;
@@ -337,7 +362,9 @@ function WorkspacePanel({
           fallbackClassName="bg-white/10 text-base text-white"
         />
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45">Buying credits for</div>
+          <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45">
+            {isPro ? "Credits for" : "Buying credits for"}
+          </div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
             <span className="truncate text-lg font-semibold text-white">{name}</span>
             <span
@@ -365,23 +392,85 @@ function WorkspacePanel({
         <div className="px-6 py-4">
           <dt className="text-[12px] text-white/50">Credits left</dt>
           <dd className="mt-1 font-serif text-4xl leading-none tabular-nums text-white">{workspace.credits ?? "—"}</dd>
+          {isPro && workspace.purchased ? (
+            <div className="mt-2 text-[12px] text-white/45">Includes {workspace.purchased} purchased</div>
+          ) : null}
         </div>
         <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
           <dt className="text-[12px] text-white/50">Included with {isPro ? "Pro" : "Free"}</dt>
           <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{planCredits}</dd>
           <div className="mt-1 text-[12px] text-white/45">{planDetail}</div>
         </div>
-        <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
-          <dt className="text-[12px] text-white/50">{workspace.payg ? "Purchased and on-demand" : "Purchased"}</dt>
-          <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{workspace.purchased ?? "—"}</dd>
-          <div className="mt-1 text-[12px] text-white/45">Used after included credits</div>
-        </div>
+        {isPro ? (
+          <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
+            <dt className="text-[12px] text-white/50">On-demand this cycle</dt>
+            <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">
+              {!workspace.onDemand ? "—" : onDemandLabel(workspace.onDemand)}
+            </dd>
+            <div className="mt-1 text-[12px] text-white/45">
+              {workspace.onDemand && workspace.onDemand.limitCents > 0
+                ? `Billed per use at ${formatUsdFromCents(USD_CENTS_PER_CREDIT)} a credit`
+                : "Off. AI stops when included credits run out"}
+            </div>
+          </div>
+        ) : (
+          <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
+            <dt className="text-[12px] text-white/50">Purchased</dt>
+            <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{workspace.purchased ?? "—"}</dd>
+            <div className="mt-1 text-[12px] text-white/45">Used after starter credits</div>
+          </div>
+        )}
       </dl>
 
-      <div className="border-t border-white/10 bg-black/20 px-6 py-3 text-[13px] leading-5 text-white/60">
-        Packs you buy below go to <span className="font-semibold text-white">{name}</span> and can’t be moved to another
-        workspace later. Wrong workspace? Switch first.
-      </div>
+      {isPro ? null : (
+        <div className="border-t border-white/10 bg-black/20 px-6 py-3 text-[13px] leading-5 text-white/60">
+          Packs you buy below go to <span className="font-semibold text-white">{name}</span> and can’t be moved to another
+          workspace later. Wrong workspace? Switch first.
+        </div>
+      )}
     </section>
+  );
+}
+
+/** "Off", "12 / 500", "12 used" (no limit). Credits, not dollars: the same unit as the rest of the panel. */
+function onDemandLabel(onDemand: { limitCents: number; usedCredits: number }): string {
+  if (onDemand.limitCents <= 0) return onDemand.usedCredits > 0 ? `${onDemand.usedCredits} used` : "Off";
+  if (onDemand.limitCents >= UNLIMITED_LIMIT_CENTS) return `${onDemand.usedCredits} used`;
+  return `${onDemand.usedCredits} / ${Math.floor(onDemand.limitCents / USD_CENTS_PER_CREDIT)}`;
+}
+
+/**
+ * Pro's answer to "more credits": on-demand usage, set up in Limits. Shown in place of the packs,
+ * which Pro can't buy (it would pay more per credit than on-demand).
+ */
+function OnDemandCard({ workspace, proCredits }: { workspace: Workspace; proCredits: number }) {
+  const on = Boolean(workspace.onDemand && workspace.onDemand.limitCents > 0);
+  const unlimited = on && (workspace.onDemand?.limitCents ?? 0) >= UNLIMITED_LIMIT_CENTS;
+  const perCredit = formatUsdFromCents(USD_CENTS_PER_CREDIT);
+  return (
+    <div className="mt-4 grid gap-6 rounded-2xl bg-white p-7 text-black shadow-[0_30px_80px_-30px_rgba(255,255,255,0.25)] sm:p-8 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] md:items-center md:gap-12">
+      <div>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-black/55">On-demand usage</div>
+        <h2 className="mt-3 font-serif text-3xl leading-tight tracking-tight sm:text-4xl">
+          {on ? "On-demand is on." : `Keep going past ${proCredits} credits.`}
+        </h2>
+        <p className="mt-3 max-w-xl text-sm leading-6 text-black/60">
+          {on
+            ? `Once your monthly credits run out, AI keeps working at ${perCredit} a credit, billed on your next invoice${
+                unlimited ? " with no limit" : `, up to ${formatUsdFromCents(workspace.onDemand?.limitCents ?? 0)} a billing cycle`
+              }. Change the limit or turn it off any time.`
+            : `On Pro you don’t buy packs. Turn on on-demand and AI keeps working after your monthly credits, at ${perCredit} a credit, billed on your next invoice, up to a limit you set.`}
+        </p>
+      </div>
+      <div className="w-full">
+        <Link
+          href="/dashboard?tab=limits"
+          className="inline-flex w-full items-center justify-center rounded-xl bg-black px-4 py-3 text-sm font-semibold text-white transition hover:bg-black/85 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black/60"
+        >
+          {on ? "Change limit" : "Set up on-demand"}
+        </Link>
+        <div className="mt-2 text-center text-[12px] text-black/50">Owners and admins · in Limits</div>
+      </div>
+    </div>
   );
 }
