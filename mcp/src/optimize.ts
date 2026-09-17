@@ -199,25 +199,41 @@ export async function pdfPageCount(bytes: Uint8Array): Promise<number | null> {
   }
 }
 
+/** Image resolution the optimizer downsamples to, overridable with LNKDRP_PDF_OPTIMIZE_DPI. */
+export const OPTIMIZE_IMAGE_DPI = 220;
+
+/** Read the configured dpi, clamped to a sane range; anything unparseable falls back to the default. */
+export function optimizeImageDpi(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.LNKDRP_PDF_OPTIMIZE_DPI);
+  if (!Number.isFinite(raw)) return OPTIMIZE_IMAGE_DPI;
+  return Math.min(600, Math.max(72, Math.round(raw)));
+}
+
 /**
  * Ghostscript arguments for "same document, smaller images".
  *
- * `/ebook` is the middle preset (150dpi-ish, readable on screen and when printed casually); the
- * explicit `Downsample*` settings pin the resolutions rather than relying on the preset's
- * defaults, which vary between Ghostscript releases. `-dSAFER` because the input is a file the
+ * `/printer` at 220dpi, not `/ebook` at 150: the first pass shrank a deck to a fifth of its size
+ * and the owner found the images too soft (2026-09-17). This still roughly halves a photo-heavy
+ * deck while keeping slides crisp on a laptop screen and in a normal print. The explicit
+ * `Downsample*` settings pin the resolutions rather than relying on the preset's defaults, which
+ * vary between Ghostscript releases, and `ColorImageDownsampleThreshold=1.0` downsamples anything
+ * above the target instead of only images far above it. `-dSAFER` because the input is a file the
  * caller named, and `-dNOPAUSE -dBATCH -dQUIET` so it never waits for a console that is not there.
  */
-export function ghostscriptArgs(input: { inputPath: string; outputPath: string }): string[] {
+export function ghostscriptArgs(input: { inputPath: string; outputPath: string; dpi?: number }): string[] {
+  const dpi = input.dpi ?? optimizeImageDpi();
   return [
     "-sDEVICE=pdfwrite",
     "-dCompatibilityLevel=1.5",
-    "-dPDFSETTINGS=/ebook",
+    "-dPDFSETTINGS=/printer",
     "-dDownsampleColorImages=true",
-    "-dColorImageResolution=150",
+    `-dColorImageResolution=${dpi}`,
+    "-dColorImageDownsampleThreshold=1.0",
     "-dDownsampleGrayImages=true",
-    "-dGrayImageResolution=150",
+    `-dGrayImageResolution=${dpi}`,
+    "-dGrayImageDownsampleThreshold=1.0",
     "-dDownsampleMonoImages=true",
-    "-dMonoImageResolution=300",
+    "-dMonoImageResolution=600",
     "-dDetectDuplicateImages=true",
     "-dCompressFonts=true",
     "-dNOPAUSE",
