@@ -118,9 +118,22 @@ export async function requireHumanConfirmation(
       );
     }
     if (result.action === "accept" && result.content?.confirmed === true) return { via: "elicitation" };
-    // Declined, cancelled, or accepted with the box unticked: all of these mean no. A human answered,
-    // so `confirm: true` does not override it.
-    throw new ToolError("validation", "The user did not confirm. Nothing was changed.", {
+    // `cancel` means the form was dismissed without an answer. Some clients return it with nobody
+    // there at all (Claude Code in `-p` mode cancels instantly), but it is indistinguishable from a
+    // person pressing Escape, so it stays final like a decline. What differs is the guidance: the
+    // agent needs to know a retry cannot get through and where the human can act instead.
+    if (result.action === "cancel") {
+      throw new ToolError(
+        "validation",
+        "The confirmation prompt was dismissed without an answer (headless clients dismiss it automatically). " +
+          "Nothing was changed, and calling again with confirm: true will not override it. " +
+          "Ask the user to do this in the lnkdrp app, or from a client that can show them the prompt.",
+        { status: 400, details: { ...previewDetails, userAction: result.action } },
+      );
+    }
+    // Declined, or accepted with the box unticked: a human answered no, so `confirm: true` does not
+    // override it.
+    throw new ToolError("validation", "The user declined. Nothing was changed; calling again with confirm: true will not override it.", {
       status: 400,
       details: { ...previewDetails, userAction: result.action },
     });
