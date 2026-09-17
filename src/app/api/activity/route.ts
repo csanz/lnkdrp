@@ -65,7 +65,13 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const limitRaw = Number(url.searchParams.get("limit"));
     const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(MAX_LIMIT, Math.floor(limitRaw)) : DEFAULT_LIMIT;
-    const cursor = decodeCursor(url.searchParams.get("cursor"));
+    const cursorRaw = url.searchParams.get("cursor");
+    const cursor = decodeCursor(cursorRaw);
+    // A cursor that does not decode used to be read as "no cursor", so a client holding a corrupted
+    // one got page one back with a fresh nextCursor and looped over it forever.
+    if (cursorRaw && !cursor) {
+      return NextResponse.json({ error: "Invalid cursor. Pass nextCursor exactly as returned, or omit it for the first page." }, { status: 400 });
+    }
     const types = (url.searchParams.get("type") ?? "")
       .split(",")
       .map((s) => s.trim())

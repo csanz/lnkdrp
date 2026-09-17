@@ -19,6 +19,7 @@ import type { ToolContext } from "../context";
 import { handleTool } from "../errors";
 import { UNTRUSTED_LIMITS, untrustedOrNull } from "../untrusted";
 import { docIdSchema, SAFETY_TAIL } from "./shared";
+import type { ActivityType } from "../../../src/lib/activity/log";
 
 /** Every activity type the route records. Kept as a list so the schema rejects typos loudly. */
 const ACTIVITY_TYPES = [
@@ -34,6 +35,7 @@ const ACTIVITY_TYPES = [
   "share_link.created",
   "share_link.updated",
   "share_link.revoked",
+  "share_link.password_revealed",
   "share.password_set",
   "share.password_cleared",
   "request_repo.created",
@@ -56,6 +58,12 @@ const ACTIVITY_TYPES = [
   "agent.key_verified",
 ] as const;
 
+// Compile-time guard: an event type the app logs but this list lacks cannot be filtered on, which
+// is how share_link.password_revealed went missing. Fails the typecheck until it is added here.
+type UnlistedActivityType = Exclude<ActivityType, (typeof ACTIVITY_TYPES)[number]>;
+const activityTypesComplete: [UnlistedActivityType] extends [never] ? true : UnlistedActivityType = true;
+void activityTypesComplete;
+
 export function registerListDocsTool(server: McpServer, ctx: ToolContext): void {
   server.registerTool(
     "lnkdrp_list_docs",
@@ -66,7 +74,7 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
         "look up specific documents by id (ids). Returns each document's id, default shareId, title, processing status, " +
         "current version, one-line AI summary and dates. Page-based: pass page to get the next set; total tells you how many " +
         "match. Use a result's id with lnkdrp_get_share, lnkdrp_list_share_links or lnkdrp_get_share_stats. Archived and deleted " +
-        "documents are not listed. " +
+        "documents are not listed; with ids, any that did not resolve come back in notFound. " +
         SAFETY_TAIL,
       inputSchema: {
         query: z.string().trim().max(200).optional().describe("Match against document titles and share-link slugs, case-insensitively. Omit to list everything."),
@@ -78,11 +86,16 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
     },
     handleTool(async (args) => {
       const page = await ctx.api.listDocsPage({ q: args.query, ids: args.ids, page: args.page, limit: args.limit });
+      // Ids that did not resolve (unknown, deleted, archived, or not a document id at all) used to
+      // vanish without a trace, so an agent could not tell "not found" from "not returned".
+      const found = new Set(page.docs.map((d) => d.id));
+      const notFound = args.ids ? [...new Set(args.ids)].filter((id) => !found.has(id)) : [];
       return {
         total: page.total,
         page: page.page,
         limit: page.limit,
         hasMore: page.docs.length > 0 && page.page * page.limit < page.total,
+        ...(notFound.length ? { notFound } : {}),
         docs: page.docs.map((d) => ({
           docId: d.id,
           shareId: d.shareId,
