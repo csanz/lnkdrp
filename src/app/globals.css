@@ -266,9 +266,14 @@ body {
     grid-template-rows: 1fr;
     opacity: 1;
   }
-  45% {
+  /* ~0.85s holding the tint and label, then a ~1.55s fold that stays visible until near the end. */
+  35% {
     grid-template-rows: 1fr;
     opacity: 1;
+    animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
+  }
+  85% {
+    opacity: 0.85;
   }
   100% {
     grid-template-rows: 0fr;

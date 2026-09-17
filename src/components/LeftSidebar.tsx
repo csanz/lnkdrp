@@ -1199,7 +1199,7 @@ export default function LeftSidebar({
   // or an agent over MCP (the realtime `doc.archived` / `doc.deleted` frame triggers the refetch
   // and names the reason). Workspace switches reload the page, so they never diff.
   type LeavingDoc = { doc: DocListItem; index: number; reason: "archived" | "deleted" | null };
-  const DOC_LEAVE_MS = 1300;
+  const DOC_LEAVE_MS = 2400;
   const [leavingDocs, setLeavingDocs] = useState<LeavingDoc[]>([]);
   const prevSidebarDocsRef = useRef<DocListItem[] | null>(null);
   const leaveReasonByIdRef = useRef<Map<string, "archived" | "deleted">>(new Map());
@@ -2431,7 +2431,7 @@ export default function LeftSidebar({
                       <li
                         key={`leaving-${d.id}`}
                         aria-hidden="true"
-                        className="pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_1.3s_cubic-bezier(0.4,0,0.2,1)_forwards] motion-reduce:hidden"
+                        className="pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_2.4s_linear_forwards] motion-reduce:hidden"
                       >
                         <div className="min-h-0 [overflow-y:clip]">
                           <div
