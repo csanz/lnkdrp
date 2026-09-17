@@ -53,10 +53,9 @@ export async function GET(
     const limitRaw = url.searchParams.get("limit");
     const pageRaw = url.searchParams.get("page");
     const qRaw = url.searchParams.get("q") ?? "";
-    const limit = Math.max(
-      1,
-      Math.min(50, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 25),
-    );
+    // `Number(null)` is 0, which clamped to 1: a request without `limit` got one item, not 25.
+    const limitNum = limitRaw ? Number(limitRaw) : NaN;
+    const limit = Math.max(1, Math.min(50, Number.isFinite(limitNum) && limitNum > 0 ? Math.floor(limitNum) : 25));
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
     const q = qRaw.trim();
 

@@ -14,6 +14,8 @@ import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 
+const MAX_PROJECT_NAME_LENGTH = 80;
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -88,10 +90,9 @@ export async function GET(request: Request) {
     const qRaw = url.searchParams.get("q") ?? "";
     const lite = url.searchParams.get("lite") === "1";
     const sidebar = url.searchParams.get("sidebar") === "1";
-    const limit = Math.max(
-      1,
-      Math.min(50, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 25),
-    );
+    // `Number(null)` is 0, which clamped to 1: a request without `limit` got one item, not 25.
+    const limitNum = limitRaw ? Number(limitRaw) : NaN;
+    const limit = Math.max(1, Math.min(50, Number.isFinite(limitNum) && limitNum > 0 ? Math.floor(limitNum) : 25));
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
     const q = qRaw.trim();
 
@@ -267,6 +268,10 @@ export async function POST(request: Request) {
     const description = typeof body.description === "string" ? body.description.trim() : "";
     const autoAddFiles = typeof body.autoAddFiles === "boolean" ? body.autoAddFiles : false;
     if (!name) return NextResponse.json({ error: "Project name is required" }, { status: 400 });
+    // Same cap PATCH enforces; create had none, so a rename could fail on a name create accepted.
+    if (name.length > MAX_PROJECT_NAME_LENGTH) {
+      return NextResponse.json({ error: `Project name must be ${MAX_PROJECT_NAME_LENGTH} characters or less` }, { status: 400 });
+    }
 
     await connectMongo();
     const orgId = new Types.ObjectId(actor.orgId);

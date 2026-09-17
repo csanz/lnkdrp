@@ -170,8 +170,10 @@ export async function PATCH(
     }
     if (!shareOnly) {
       project.name = name;
-      project.description = description;
-      project.autoAddFiles = autoAddFiles;
+      // Only fields the caller sent: a rename alone used to reset description to "" and
+      // autoAddFiles to false.
+      if (typeof body.description === "string") project.description = description;
+      if (typeof body.autoAddFiles === "boolean") project.autoAddFiles = autoAddFiles;
     }
     const isRequest = Boolean((project as unknown as { isRequest?: unknown }).isRequest);
     if (isRequest && !shareOnly) {
