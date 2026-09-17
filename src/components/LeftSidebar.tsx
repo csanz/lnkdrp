@@ -73,6 +73,7 @@ import {
   getSidebarCacheSnapshot,
   optimisticallyAddProjectToSidebarCache,
   PROJECTS_CHANGED_EVENT,
+  notifyDocLeaving,
   notifyDocsChanged,
   notifyProjectsChanged,
   refreshSidebarCache,
@@ -266,6 +267,114 @@ function formatRelative(iso: string | null) {
   if (days === 1) return "Yesterday";
   return `${days} ${days === 1 ? "day" : "days"} ago`;
 }
+type LeaveReason = "archived" | "deleted";
+const ROW_LEAVE_MS = 1200;
+
+/**
+ * Why docs are about to leave the sidebar, by id, plus the latest realtime reason for removals the
+ * frame does not name. Entries expire instead of being consumed, so the Docs and Starred lists can
+ * both read the same archive.
+ */
+function useDocLeaveReasons(): { reasonFor: (id: string) => LeaveReason | null } {
+  const byIdRef = useRef<Map<string, { reason: LeaveReason; until: number }>>(new Map());
+  const pendingRef = useRef<{ reason: LeaveReason; until: number } | null>(null);
+  useEffect(() => {
+    function onLeaving(e: Event) {
+      const detail = (e as CustomEvent<DocLeavingDetail>).detail;
+      if (detail?.docId) byIdRef.current.set(detail.docId, { reason: detail.reason, until: Date.now() + 10_000 });
+    }
+    window.addEventListener(DOC_LEAVING_EVENT, onLeaving);
+    const unsubscribe = subscribeRealtime("activity", (f) => {
+      if (f.type !== "activity") return;
+      const reason = f.event.type === "doc.archived" ? "archived" : f.event.type === "doc.deleted" ? "deleted" : null;
+      if (reason) pendingRef.current = { reason, until: Date.now() + 5000 };
+    });
+    return () => {
+      window.removeEventListener(DOC_LEAVING_EVENT, onLeaving);
+      unsubscribe();
+    };
+  }, []);
+  const reasonFor = useCallback((id: string): LeaveReason | null => {
+    const now = Date.now();
+    const own = byIdRef.current.get(id);
+    if (own && own.until > now) return own.reason;
+    return pendingRef.current && pendingRef.current.until > now ? pendingRef.current.reason : null;
+  }, []);
+  return useMemo(() => ({ reasonFor }), [reasonFor]);
+}
+
+/**
+ * A sidebar list with rows that left it folded back in at the index they left from, each marked
+ * `leaving` for `ROW_LEAVE_MS`. Driven by diffing the rendered list, so the fold is the same
+ * whatever removed the doc: this sidebar's menu, the Docs modal, another tab, or an agent over MCP
+ * (the realtime `doc.archived` / `doc.deleted` frame triggers the refetch and names the reason).
+ * Workspace switches reload the page, so they never diff. A wholesale change (more than 3 rows at
+ * once, e.g. a cache reset) swaps without folding.
+ */
+function useLeavingRows<T extends { id: string; title: string }>(
+  items: T[],
+  reasons: { reasonFor: (id: string) => LeaveReason | null },
+  opts: { requireReason: boolean },
+): Array<{ item: T; leaving: { reason: LeaveReason | null } | null }> {
+  type Leaving = { item: T; index: number; reason: LeaveReason | null };
+  const [leaving, setLeaving] = useState<Leaving[]>([]);
+  const prevRef = useRef<T[] | null>(null);
+  const timersRef = useRef<number[]>([]);
+  useEffect(() => () => timersRef.current.forEach((t) => window.clearTimeout(t)), []);
+  const { requireReason } = opts;
+  useEffect(() => {
+    const prev = prevRef.current;
+    prevRef.current = items;
+    const nextIds = new Set(items.map((d) => d.id));
+    // A row that came back (unarchived, re-starred) drops its ghost.
+    setLeaving((cur) => (cur.some((l) => nextIds.has(l.item.id)) ? cur.filter((l) => !nextIds.has(l.item.id)) : cur));
+    if (!prev || !prev.length) return;
+    const removed = prev
+      .map((item, index) => ({ item, index, reason: reasons.reasonFor(item.id) }))
+      .filter(({ item, reason }) => !nextIds.has(item.id) && (!requireReason || reason !== null));
+    if (!removed.length || removed.length > 3) return;
+    setLeaving((cur) => [...cur.filter((l) => !removed.some((a) => a.item.id === l.item.id)), ...removed]);
+    const ids = new Set(removed.map((a) => a.item.id));
+    const t = window.setTimeout(() => setLeaving((cur) => cur.filter((l) => !ids.has(l.item.id))), ROW_LEAVE_MS + 50);
+    timersRef.current.push(t);
+  }, [items, reasons, requireReason]);
+  return useMemo(() => {
+    const rows: Array<{ item: T; leaving: { reason: LeaveReason | null } | null }> = items.map((item) => ({ item, leaving: null }));
+    for (const l of [...leaving].sort((a, b) => a.index - b.index)) {
+      rows.splice(Math.min(l.index, rows.length), 0, { item: l.item, leaving: { reason: l.reason } });
+    }
+    return rows;
+  }, [items, leaving]);
+}
+
+/**
+ * The folding ghost of a row that left: monochrome tint and an Archived/Deleted label, then it
+ * collapses (fold starts on the first frame). Reduced motion keeps the labelled row and fades it;
+ * hiding it outright there meant archiving showed nothing at all.
+ */
+function LeavingSidebarRow({ title, reason }: { title: string; reason: LeaveReason | null }) {
+  const tone = reason ? "bg-[var(--row-leaving-bg)] text-[var(--row-leaving-fg)]" : "bg-[var(--sidebar-hover)] text-[var(--muted)]";
+  return (
+    <li
+      aria-hidden="true"
+      className="pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_1.2s_cubic-bezier(0.33,0,0.2,1)_forwards] motion-reduce:animate-[ldSidebarRowFade_1.2s_linear_forwards]"
+    >
+      <div className="min-h-0 [overflow-y:clip]">
+        <div
+          className={[
+            "box-border flex w-[calc(100%+36px)] -mr-9 min-w-0 items-center gap-2 rounded-xl pl-3 pr-3 py-1.5 text-[14px] leading-normal",
+            tone,
+          ].join(" ")}
+        >
+          <DocumentIcon className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden="true" />
+          <span className="block min-w-0 max-w-[220px] flex-1 truncate">{truncateEnd(title, 36)}</span>
+          {reason ? <span className="shrink-0 text-[11px] font-semibold">{reason === "deleted" ? "Deleted" : "Archived"}</span> : null}
+        </div>
+      </div>
+    </li>
+  );
+}
+
 /**
  * Render the LeftSidebar UI (uses effects, memoized values, local state).
  */
@@ -1193,72 +1302,23 @@ export default function LeftSidebar({
     [newRowIds],
   );
 
-  // Docs that leave the list fold out instead of vanishing: the row stays where it was, takes a
-  // monochrome tint labelled Archived or Deleted, then collapses. Driven by diffing the rendered list,
-  // so it is the same whatever removed the doc: this sidebar's menu, the Docs modal, another tab,
-  // or an agent over MCP (the realtime `doc.archived` / `doc.deleted` frame triggers the refetch
-  // and names the reason). Workspace switches reload the page, so they never diff.
-  // Reduced motion keeps the signal (the labelled row, then a fade) and drops only the fold: hiding
-  // the row outright there meant archiving showed nothing at all.
-  type LeavingDoc = { doc: DocListItem; index: number; reason: "archived" | "deleted" | null };
-  const DOC_LEAVE_MS = 1800;
-  const [leavingDocs, setLeavingDocs] = useState<LeavingDoc[]>([]);
-  const prevSidebarDocsRef = useRef<DocListItem[] | null>(null);
-  const leaveReasonByIdRef = useRef<Map<string, "archived" | "deleted">>(new Map());
-  // The latest realtime reason, for removals whose doc id the frame does not carry.
-  const pendingLeaveReasonRef = useRef<{ reason: "archived" | "deleted"; until: number } | null>(null);
-  const leaveTimersRef = useRef<number[]>([]);
-  useEffect(() => () => leaveTimersRef.current.forEach((t) => window.clearTimeout(t)), []);
-  const markDocLeaving = useCallback((id: string, reason: "archived" | "deleted") => {
-    leaveReasonByIdRef.current.set(id, reason);
-  }, []);
+  // Docs (and starred docs) that leave the sidebar fold out instead of vanishing; see `useLeavingRows`.
+  const leaveReasons = useDocLeaveReasons();
+  const docRowsForSidebar = useLeavingRows(docsForSidebar, leaveReasons, { requireReason: false });
+  // Starred rows only fold for a known archive/delete: they also drop stale localStorage entries on
+  // load and on unstar, which should not read as "Archived".
+  const starredRowsForSidebar = useLeavingRows(starredForSidebar, leaveReasons, { requireReason: true });
+  // Hide an archived/deleted doc from Starred the moment it is announced, so its Starred copy folds
+  // together with its Docs row instead of ~0.7s later when the starred details refetch lands. That
+  // refetch recomputes the invalid set wholesale, so a failed archive brings the row back.
   useEffect(() => {
     function onLeaving(e: Event) {
-      const detail = (e as CustomEvent<DocLeavingDetail>).detail;
-      if (detail?.docId) markDocLeaving(detail.docId, detail.reason);
+      const id = (e as CustomEvent<DocLeavingDetail>).detail?.docId;
+      if (id) setStarredInvalidById((cur) => (cur[id] ? cur : { ...cur, [id]: true }));
     }
     window.addEventListener(DOC_LEAVING_EVENT, onLeaving);
     return () => window.removeEventListener(DOC_LEAVING_EVENT, onLeaving);
-  }, [markDocLeaving]);
-  useEffect(
-    () =>
-      subscribeRealtime("activity", (f) => {
-        if (f.type !== "activity") return;
-        const reason = f.event.type === "doc.archived" ? "archived" : f.event.type === "doc.deleted" ? "deleted" : null;
-        if (reason) pendingLeaveReasonRef.current = { reason, until: Date.now() + 5000 };
-      }),
-    [],
-  );
-  useEffect(() => {
-    const prev = prevSidebarDocsRef.current;
-    prevSidebarDocsRef.current = docsForSidebar;
-    const nextIds = new Set(docsForSidebar.map((d) => d.id));
-    // A doc that came back (unarchived) drops its ghost.
-    setLeavingDocs((cur) => (cur.some((l) => nextIds.has(l.doc.id)) ? cur.filter((l) => !nextIds.has(l.doc.id)) : cur));
-    if (!prev || !prev.length) return;
-    const removed = prev.map((doc, index) => ({ doc, index })).filter(({ doc }) => !nextIds.has(doc.id));
-    // A wholesale change (cache reset, first real load replacing a stale snapshot) is not someone
-    // archiving documents one at a time; let it swap without a cascade of folding rows.
-    if (!removed.length || removed.length > 3) return;
-    const pending = pendingLeaveReasonRef.current && pendingLeaveReasonRef.current.until > Date.now() ? pendingLeaveReasonRef.current.reason : null;
-    const added: LeavingDoc[] = removed.map(({ doc, index }) => {
-      const reason = leaveReasonByIdRef.current.get(doc.id) ?? pending;
-      leaveReasonByIdRef.current.delete(doc.id);
-      return { doc, index, reason };
-    });
-    setLeavingDocs((cur) => [...cur.filter((l) => !added.some((a) => a.doc.id === l.doc.id)), ...added]);
-    const ids = new Set(added.map((a) => a.doc.id));
-    const t = window.setTimeout(() => setLeavingDocs((cur) => cur.filter((l) => !ids.has(l.doc.id))), DOC_LEAVE_MS + 50);
-    leaveTimersRef.current.push(t);
-  }, [docsForSidebar]);
-  /** Sidebar doc rows with leaving docs slotted back in at the index they left from. */
-  const docRowsForSidebar = useMemo(() => {
-    const rows: Array<{ doc: DocListItem; leaving: LeavingDoc | null }> = docsForSidebar.map((doc) => ({ doc, leaving: null }));
-    for (const l of [...leavingDocs].sort((a, b) => a.index - b.index)) {
-      rows.splice(Math.min(l.index, rows.length), 0, { doc: l.doc, leaving: l });
-    }
-    return rows;
-  }, [docsForSidebar, leavingDocs]);
+  }, []);
 
   // Keep cached starred meta (version/status) up to date from the sidebar docs list snapshot.
   // This makes the Starred "v#" pills render instantly without waiting on `/api/docs?ids=...`.
@@ -1650,8 +1710,8 @@ export default function LeftSidebar({
       }
       setDeleteDocOpen(false);
       setDeleteDocTarget(null);
-      markDocLeaving(docId, "deleted");
-      // Drop the row right away (it folds out, see `leavingDocs`); the cache refresh below reconciles.
+      notifyDocLeaving({ docId, reason: "deleted" });
+      // Drop the row right away (it folds out, see `useLeavingRows`); the cache refresh below reconciles.
       setDocs((s) => ({
         ...s,
         items: s.items.filter((x) => x.id !== docId),
@@ -2059,7 +2119,9 @@ export default function LeftSidebar({
           className="mt-1 flex-1 overflow-y-scroll overflow-x-hidden border-t border-[var(--border)] pl-3 pr-12 pb-4 pt-4"
           style={{ scrollbarGutter: "stable" }}
         >
-          <div className="grid gap-4">
+          {/* Sections may not grow past the nav's padding box: a long doc title's min-content width
+              used to widen the Docs section, pushing rows and their "..." past the sidebar edge. */}
+          <div className="grid gap-4 [&>*]:min-w-0">
             <section>
               <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
                 <button
@@ -2121,7 +2183,8 @@ export default function LeftSidebar({
                 </div>
               ) : (
                 <ul className="mt-2 space-y-1">
-                  {starredForSidebar.map((d) => {
+                  {starredRowsForSidebar.map(({ item: d, leaving }) => {
+                    if (leaving) return <LeavingSidebarRow key={`leaving-${d.id}`} title={d.title} reason={leaving.reason} />;
                     const href = `/doc/${d.id}`;
                     const details = starredDetailsById[d.id] ?? null;
                     const sidebarMeta = sidebarDocMetaById.get(d.id) ?? null;
@@ -2421,33 +2484,8 @@ export default function LeftSidebar({
                 )
               ) : (
                 <ul className="mt-2 space-y-1">
-                  {docRowsForSidebar.map(({ doc: d, leaving }) => {
-                  if (leaving) {
-                    // Monochrome for both reasons; the label says which.
-                    const tone = leaving.reason ? "bg-[var(--row-leaving-bg)] text-[var(--row-leaving-fg)]" : "bg-[var(--sidebar-hover)] text-[var(--muted)]";
-                    return (
-                      <li
-                        key={`leaving-${d.id}`}
-                        aria-hidden="true"
-                        className="pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_1.8s_linear_forwards] motion-reduce:animate-[ldSidebarRowFade_1.8s_linear_forwards]"
-                      >
-                        <div className="min-h-0 [overflow-y:clip]">
-                          <div
-                            className={[
-                              "box-border flex w-[calc(100%+36px)] -mr-9 min-w-0 items-center gap-2 rounded-xl pl-3 pr-3 py-1.5 text-[14px] leading-normal",
-                              tone,
-                            ].join(" ")}
-                          >
-                            <DocumentIcon className="h-3.5 w-3.5 shrink-0 opacity-80" aria-hidden="true" />
-                            <span className="block min-w-0 max-w-[220px] flex-1 truncate">{truncateEnd(d.title, 36)}</span>
-                            {leaving.reason ? (
-                              <span className="shrink-0 text-[11px] font-semibold">{leaving.reason === "deleted" ? "Deleted" : "Archived"}</span>
-                            ) : null}
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  }
+                  {docRowsForSidebar.map(({ item: d, leaving }) => {
+                  if (leaving) return <LeavingSidebarRow key={`leaving-${d.id}`} title={d.title} reason={leaving.reason} />;
                   // App navigation should always go to the internal doc page.
                   // The public `/share/:shareId` page is for external recipients.
                   const href = `/doc/${d.id}`;

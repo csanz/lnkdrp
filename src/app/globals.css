@@ -256,27 +256,22 @@ body {
   }
 }
 
-/* Sidebar list row that appeared after first load: grow into place with a tint, then settle. */
-/* A sidebar row leaving (archived or deleted, here or by an agent): it holds its tint long enough to
-   read, then folds shut. The <li> is a one-row grid so 1fr -> 0fr collapses to its real height. */
+/* A sidebar row leaving (archived or deleted, here or by an agent): the fold starts on the first frame,
+   the tint and label show while it closes, and it fades only in the last stretch. The <li> is a
+   one-row grid so 1fr -> 0fr collapses to its real height. */
 @keyframes ldSidebarRowOut {
   0% {
     grid-template-rows: 1fr;
     opacity: 1;
   }
-  /* ~0.6s holding the tint and label, then a ~1.2s fold that stays visible until near the end. */
-  33% {
-    grid-template-rows: 1fr;
+  60% {
     opacity: 1;
-    animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);
-  }
-  85% {
-    opacity: 0.85;
   }
   100% {
     grid-template-rows: 0fr;
     opacity: 0;
-    margin-top: 0;
+    /* space-y-* puts the gap in margin-block-end (Tailwind v4); fold it too, or the list snaps 4px. */
+    margin-block: 0;
   }
 }
 
@@ -291,6 +286,7 @@ body {
   }
 }
 
+/* Sidebar list row that appeared after first load: grow into place with a tint, then settle. */
 @keyframes ldSidebarRowIn {
   0% {
     grid-template-rows: 0fr;

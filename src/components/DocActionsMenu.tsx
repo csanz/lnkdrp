@@ -431,6 +431,15 @@ export default function DocActionsMenu({
    */
   async function setArchived(next: boolean) {
     if (archiveBusy) return;
+    // Sidebar archive is optimistic: the menu closes and the row starts folding out on the click.
+    // Waiting for the PATCH first left a visible pause, and the open menu jumped when its row was
+    // replaced. If the request fails, the refetch below brings the row back.
+    const optimistic = next && variant === "sidebar";
+    if (optimistic) {
+      closeMenu({ focusTrigger: false });
+      notifyDocLeaving({ docId, reason: "archived" });
+      onDocPatched?.({ isArchived: true });
+    }
     setArchiveBusy(true);
     setArchiveError(null);
     try {
@@ -440,6 +449,7 @@ export default function DocActionsMenu({
         body: JSON.stringify({ isArchived: next }),
       });
       if (!res.ok) {
+        if (optimistic) notifyDocsChanged();
         const json = (await res.json().catch(() => null)) as { error?: unknown } | null;
         const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
         if (limitErr) {
@@ -454,8 +464,10 @@ export default function DocActionsMenu({
         }
         throw new Error(typeof json?.error === "string" && json.error ? json.error : `Request failed (${res.status})`);
       }
-      if (next) notifyDocLeaving({ docId, reason: "archived" });
-      onDocPatched?.({ isArchived: next });
+      if (!optimistic) {
+        if (next) notifyDocLeaving({ docId, reason: "archived" });
+        onDocPatched?.({ isArchived: next });
+      }
       notifyDocsChanged();
       // Archiving affects project doc counts (active docs only).
       notifyProjectsChanged();
