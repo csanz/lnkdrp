@@ -66,7 +66,7 @@ export default function AboutPage() {
         </section>
 
         {/* Mobile: the plane and globe live in a short frame at the end of the page instead of behind the hero. */}
-        <div aria-hidden="true" className="relative -mt-6 h-[64svh] min-h-[360px] w-full md:hidden">
+        <div aria-hidden="true" className="relative -mt-6 h-[64svh] min-h-[360px] w-full [mask-image:linear-gradient(to_bottom,transparent,#000_6rem)] md:hidden">
           <iframe
             title=""
             tabIndex={-1}
@@ -78,7 +78,7 @@ export default function AboutPage() {
           <div className="pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[#050506] to-transparent" />
         </div>
 
-        <PublicFooter className="relative pb-6" />
+        <PublicFooter className="relative bg-[#050506] pb-6 md:bg-transparent" />
       </div>
     </main>
   );

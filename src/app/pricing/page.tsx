@@ -94,7 +94,7 @@ export default async function PricingPage() {
           <div className="max-w-2xl">
             <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Pricing</p>
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[56px]">
-              Free to send a few.
+              Free to send a few.{" "}
               <br className="hidden sm:block" />
               Pro to send every day.
             </h1>
@@ -211,7 +211,7 @@ export default async function PricingPage() {
           </div>
 
           {/* How credits work: tier table. Costs mirror creditsForRun in src/lib/credits/schedule.ts. */}
-          <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] p-7 sm:p-8">
+          <div className="mt-16 rounded-2xl border border-white/10 bg-white/[0.03] p-7 sm:p-8">
             <div className="grid gap-6 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.6fr)] md:gap-14">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">How credits work</div>
@@ -234,7 +234,7 @@ export default async function PricingPage() {
                 </p>
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[26rem] text-sm">
                   <thead>
                     <tr className="text-left text-[11px] font-semibold uppercase tracking-[0.14em] text-white/50">
                       <th className="pb-3 pr-4 font-semibold">Per run</th>
@@ -255,7 +255,7 @@ export default async function PricingPage() {
                         <td className="py-3 pr-6 align-top">
                           <div className={row.soon ? "font-medium text-white/60" : "font-medium text-white/90"}>{row.label}</div>
                           <div className="text-[12px] text-white/45">
-                            {row.soon ? <span className="mr-1.5 rounded-full border border-white/15 px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.1em] text-white/45">Not released yet</span> : null}
+                            {row.soon ? <span className="mr-1.5 whitespace-nowrap rounded-full border border-white/15 px-1.5 py-px text-[10px] font-semibold uppercase tracking-[0.1em] text-white/45">Not released yet</span> : null}
                             {row.sub}
                           </div>
                         </td>
@@ -375,7 +375,7 @@ export default async function PricingPage() {
                 },
               ].map((item) => (
                 <div key={item.q} className="grid gap-2 py-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] sm:gap-8">
-                  <dt className="text-sm font-medium text-white">{item.q}</dt>
+                  <dt className="text-sm font-medium leading-6 text-white">{item.q}</dt>
                   <dd className="text-sm leading-6 text-white/60">{item.a}</dd>
                 </div>
               ))}

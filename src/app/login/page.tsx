@@ -11,7 +11,7 @@ import { useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { CheckIcon } from "@heroicons/react/24/outline";
 import { useAuthEnabled } from "@/app/providers";
-import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
+import { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import Spinner from "@/components/ui/Spinner";
 import BrandHeader from "@/components/BrandHeader";
 
@@ -83,7 +83,7 @@ function LoginPageInner() {
       ),
       lead: true,
     },
-    { text: "3 share links with view and download tracking, free forever." },
+    { text: `${FREE_PLAN_LIMITS_COPY.documents} shared documents with view and download tracking, free forever.` },
     { text: <>Once they run out, {whatHappensAfterFreeCredits()}.</> },
     { text: CREDITS_COPY.noCardToStart },
   ];

@@ -87,7 +87,7 @@ function SignedOutCta({ plan, variant, helper }: Required<Props>) {
 }
 
 /** Button + helper for a signed-in user, driven by the workspace's real billing status. */
-function SignedInCta({ plan, variant }: Required<Props>) {
+function SignedInCta({ plan, variant, helper }: Required<Props>) {
   const [status, setStatus] = useState<BillingStatus | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,10 +171,14 @@ function SignedInCta({ plan, variant }: Required<Props>) {
     );
   }
 
+  // The plan status belongs on the card for the current plan only; the other card shows its own helper (or nothing).
+  const onThisCard = status === undefined || status === null || current === plan;
+  const line = error ?? (onThisCard ? helperText : plan === "pro" ? helper : "");
+
   return (
     <>
       {control}
-      <p className={cn("mt-3 min-h-[2.75rem] text-center text-[11px] leading-[1.4]", HELPER[variant])}>{error ?? helperText}</p>
+      <p className={cn("mt-3 min-h-[2.75rem] text-center text-[11px] leading-[1.4]", HELPER[variant])}>{line}</p>
     </>
   );
 }

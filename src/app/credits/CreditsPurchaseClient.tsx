@@ -235,7 +235,7 @@ function Body({
               <div className="flex min-h-[24px] items-center justify-between">
                 <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">{pack.credits} credits</div>
                 {pack.id === best.id ? (
-                  <span className="rounded-full border border-white/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/70">
+                  <span className="rounded-full border border-white/15 px-2.5 py-[3px] text-[10px] font-semibold uppercase tracking-[0.14em] text-white/70">
                     Best value
                   </span>
                 ) : null}

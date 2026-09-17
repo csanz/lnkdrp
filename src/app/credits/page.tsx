@@ -88,7 +88,7 @@ export default async function CreditsPage() {
           </div>
         </section>
 
-        <PublicFooter />
+        <PublicFooter className="relative pb-6" />
       </div>
     </main>
   );

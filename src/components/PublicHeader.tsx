@@ -21,7 +21,7 @@ const NAV_LINK_CLASS =
   "rounded-xl px-2 py-2 text-sm font-medium text-white/70 transition hover:bg-white/5 hover:text-white sm:px-3";
 
 /**
- * "Log In" button that starts Google sign-in (uses signIn, local busy state).
+ * "Log in" button that starts Google sign-in (uses signIn, local busy state).
  */
 function LoginButton({ enabled }: { enabled: boolean }) {
   const [isSigningIn, setIsSigningIn] = useState(false);
@@ -40,7 +40,7 @@ function LoginButton({ enabled }: { enabled: boolean }) {
     >
       {/* Same as the home and login buttons: the label keeps the width, a spinner overlays it, and
           no provider is named. */}
-      <span className={isSigningIn ? "invisible" : ""}>Log In</span>
+      <span className={isSigningIn ? "invisible" : ""}>Log in</span>
       {isSigningIn ? (
         <span className="absolute inset-0 grid place-items-center">
           <Spinner className="h-4 w-4" label="Signing in" />
@@ -51,7 +51,7 @@ function LoginButton({ enabled }: { enabled: boolean }) {
 }
 
 /**
- * Session-aware login control: "Open app" link when authenticated, otherwise the Log In button.
+ * Session-aware login control: "Open app" link when authenticated, otherwise the Log in button.
  * Only rendered when auth is enabled (a `SessionProvider` is guaranteed to be mounted then).
  */
 function SessionLoginControl() {
@@ -67,7 +67,7 @@ function SessionLoginControl() {
 }
 
 /**
- * Render the PublicHeader UI (static, transparent, logo left + About/Connect your agent/Pricing/Log In right).
+ * Render the PublicHeader UI (static, transparent, logo left + About/Connect your agent/Pricing/Log in right).
  */
 export default function PublicHeader({ containerClassName }: { containerClassName?: string } = {}) {
   const authEnabled = useAuthEnabled();
@@ -90,8 +90,8 @@ export default function PublicHeader({ containerClassName }: { containerClassNam
                 links on one row on a phone. Same words as the home page's "Connect your agent" section,
                 which links to the same guide. */}
             {/* A quiet outlined pill: the one nav item that is about the product itself, so it shouldn't
-                read as part of a sentence with About / Pricing / Log In. Not filled, so it never competes
-                with the hero's white Get Started button. */}
+                read as part of a sentence with About / Pricing / Log in. Not filled, so it never competes
+                with the hero's white Get started button. */}
             <Link
               href="/mcp"
               aria-label="Connect your agent"

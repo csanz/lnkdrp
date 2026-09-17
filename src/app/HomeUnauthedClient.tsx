@@ -223,7 +223,7 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
                   disabled={isSigningIn}
                   aria-busy={isSigningIn}
                 >
-                  <span className={isSigningIn ? "invisible" : ""}>Get Started</span>
+                  <span className={isSigningIn ? "invisible" : ""}>Get started</span>
                   {isSigningIn ? (
                     <span className="absolute inset-0 grid place-items-center">
                       <Spinner className="h-4 w-4" label="Signing in" />
@@ -246,7 +246,7 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
         </section>
 
         {/* Mobile: the plane and globe live in a short frame at the end of the page instead of behind the hero. */}
-        <div aria-hidden="true" className="relative -mt-6 h-[64svh] min-h-[360px] w-full md:hidden">
+        <div aria-hidden="true" className="relative -mt-6 h-[64svh] min-h-[360px] w-full [mask-image:linear-gradient(to_bottom,transparent,#000_6rem)] md:hidden">
           <iframe
             title=""
             tabIndex={-1}
