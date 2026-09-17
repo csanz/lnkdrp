@@ -14,6 +14,10 @@ vi.mock("@/lib/http/rateLimit", async (importOriginal) => ({
   rateLimit,
 }));
 vi.mock("@/lib/models/ActivityEvent", () => ({ ActivityEventModel: { create: vi.fn() } }));
+/** The key owner's personal org; defaults to the key's own org (a personal workspace key). */
+let personalOrgOfOwner: Types.ObjectId | null = null;
+const orgFindOne = vi.fn(() => ({ select: () => ({ lean: async () => (personalOrgOfOwner ? { _id: personalOrgOfOwner } : null) }) }));
+vi.mock("@/lib/models/Org", () => ({ OrgModel: { findOne: orgFindOne } }));
 vi.mock("@/lib/models/ApiKey", () => ({
   API_KEY_SCOPES: ["read", "write"],
   ApiKeyModel: { findOne: apiKeyFindOne, updateOne: apiKeyUpdateOne },
@@ -36,6 +40,7 @@ const { verifyBearer, verifyBearerToken, bearerTokenFromRequest, clientLabelFrom
 );
 
 const ORG = new Types.ObjectId();
+personalOrgOfOwner = ORG;
 const USER = new Types.ObjectId();
 const KEY_ID = new Types.ObjectId();
 
@@ -168,6 +173,19 @@ describe("gating/apiKeyActor.verifyBearerToken", () => {
     expect(await verifyBearerToken(undefined)).toEqual({ ok: false, code: "unauthorized" });
     expect(apiKeyFindOne).not.toHaveBeenCalled();
     expect(connectMongo).not.toHaveBeenCalled();
+  });
+
+  test("a team workspace key does not claim to be the owner's personal workspace (mt_DTyjYlfTKp)", async () => {
+    const personal = new Types.ObjectId();
+    personalOrgOfOwner = personal;
+    try {
+      lookup(keyDoc());
+      const result = await verifyBearerToken(generateApiKeyPlaintext());
+      expect(result.ok && result.actor.personalOrgId).toBe(String(personal));
+      expect(result.ok && result.actor.orgId).toBe(String(ORG));
+    } finally {
+      personalOrgOfOwner = ORG;
+    }
   });
 
   test("looks the key up by sha256 hash and returns a user actor scoped to the key's org", async () => {

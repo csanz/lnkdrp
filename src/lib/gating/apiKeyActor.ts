@@ -14,6 +14,7 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { ApiKeyModel, type ApiKeyScope } from "@/lib/models/ApiKey";
+import { OrgModel } from "@/lib/models/Org";
 import { API_KEY_PREFIX, hashApiKey, looksLikeApiKey, touchApiKeyUse } from "@/lib/agents/apiKeys";
 import { agentFromRequest, agentLabel } from "@/lib/activity/log";
 import { guardApiKeyRequest } from "@/lib/gating/actorRateLimit";
@@ -71,6 +72,12 @@ export async function verifyBearerToken(token: string | null | undefined): Promi
   const orgId = String(doc.orgId);
   const userId = String(doc.createdByUserId);
   if (!Types.ObjectId.isValid(orgId) || !Types.ObjectId.isValid(userId)) return { ok: false, code: "unauthorized" };
+  // The key owner's real personal workspace. It used to be set to the key's own org, so every
+  // route that widens to legacy org-less data when `orgId === personalOrgId` did that for every
+  // key - including a team workspace's key, which then saw its creator's old personal projects
+  // and documents. "" when the owner has no personal org (never equal to a real orgId).
+  const personalOrg = await OrgModel.findOne({ personalForUserId: new Types.ObjectId(userId) }).select({ _id: 1 }).lean();
+  const personalOrgId = personalOrg ? String(personalOrg._id) : "";
 
   return {
     ok: true,
@@ -80,7 +87,7 @@ export async function verifyBearerToken(token: string | null | undefined): Promi
       kind: "user",
       userId,
       orgId,
-      personalOrgId: orgId,
+      personalOrgId,
       viaApiKey: { keyId: String(doc._id), scopes: (doc.scopes ?? []) as ApiKeyScope[] },
     },
     key: {
