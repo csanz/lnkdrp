@@ -24,7 +24,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
-import { Cell, Pie, PieChart, Tooltip } from "recharts";
+import { Cell, Label, Pie, PieChart, Tooltip } from "recharts";
 
 import { formatShare } from "@/lib/charts/donut";
 import {
@@ -40,8 +40,8 @@ const DAYS = 30;
 const REFRESH_MIN_MS = 15_000;
 
 /** Donut size in px (its own square viewBox), and the ring's thickness. */
-const DONUT_SIZE = 88;
-const DONUT_THICKNESS = 15;
+const DONUT_SIZE = 104;
+const DONUT_THICKNESS = 14;
 
 /**
  * Slice colours, in the order the API returns slices (people first, then agent clients by volume).
@@ -210,6 +210,37 @@ function ActorDonut({ slices, total, days }: { slices: ActorSlice[]; total: numb
             {data.map((d) => (
               <Cell key={d.key} fill={d.fill} />
             ))}
+            {/* The total belongs inside the ring: every slice is a share of it, and the legend's
+                counts otherwise have nothing to add up to. */}
+            <Label
+              position="center"
+              content={({ viewBox }) => {
+                const box = viewBox as { cx?: number; cy?: number } | undefined;
+                if (typeof box?.cx !== "number" || typeof box?.cy !== "number") return null;
+                return (
+                  <g>
+                    <text
+                      x={box.cx}
+                      y={box.cy - 2}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      className="fill-[var(--fg)] text-[15px] font-semibold tabular-nums"
+                    >
+                      {total.toLocaleString()}
+                    </text>
+                    <text
+                      x={box.cx}
+                      y={box.cy + 12}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      className="fill-[var(--muted-2)] text-[9px] uppercase tracking-[0.08em]"
+                    >
+                      actions
+                    </text>
+                  </g>
+                );
+              }}
+            />
           </Pie>
           <Tooltip
             contentStyle={{

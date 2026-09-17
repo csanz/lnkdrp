@@ -21,10 +21,12 @@
      volume order) plus a grey for the folded tail. Validated as a set against this surface — all
      pairs clear the CVD and normal-vision floors; the aqua slot sits under 3:1, which the legend's
      visible labels and counts relieve. */
-  --chart-actor-1: #2a78d6;
-  --chart-actor-2: #eb6834;
-  --chart-actor-3: #1baf7a;
-  --chart-actor-rest: #71717a;
+  /* Activity's actor donut. One family, not a categorical palette: people take the neutral the app
+     already uses for "not the subject", agents the chart emerald and a lighter step of it. */
+  --chart-actor-1: #9aa2ad;
+  --chart-actor-2: #059669;
+  --chart-actor-3: #34b98a;
+  --chart-actor-rest: #cbd0d6;
   /* Activity feed: tint + edge bar for a row that just arrived live (neutral, not a status colour). */
   --feed-new-bg: rgba(37, 99, 235, 0.06);
   --feed-new-bar: rgba(37, 99, 235, 0.5);
@@ -87,10 +89,10 @@
 
   --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
   /* Activity header donut, stepped for the dark surface (same hues, validated separately). */
-  --chart-actor-1: #3987e5;
-  --chart-actor-2: #d95926;
-  --chart-actor-3: #199e70;
-  --chart-actor-rest: #8b8b96;
+  --chart-actor-1: #7d8590;
+  --chart-actor-2: #0f9f6e;
+  --chart-actor-3: #45c79a;
+  --chart-actor-rest: #3f434b;
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
   --row-leaving-bg: rgba(255, 255, 255, 0.14);
@@ -147,10 +149,10 @@
 
     --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
     /* Activity header donut, stepped for the dark surface (same hues, validated separately). */
-    --chart-actor-1: #3987e5;
-    --chart-actor-2: #d95926;
-    --chart-actor-3: #199e70;
-    --chart-actor-rest: #8b8b96;
+    --chart-actor-1: #7d8590;
+    --chart-actor-2: #0f9f6e;
+    --chart-actor-3: #45c79a;
+    --chart-actor-rest: #3f434b;
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
   --row-leaving-bg: rgba(255, 255, 255, 0.14);
