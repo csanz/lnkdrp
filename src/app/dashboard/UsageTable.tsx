@@ -9,6 +9,8 @@
 
 import { useEffect, useState } from "react";
 import Alert from "@/components/ui/Alert";
+import CreditCostsModal from "@/components/modals/CreditCostsModal";
+import type { ActionType } from "@/lib/credits/types";
 import { cn } from "@/lib/cn";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
@@ -64,6 +66,9 @@ export default function UsageTable({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "What actions cost": opened from the header, or from a row's action (that row's entry is marked).
+  const [costsOpen, setCostsOpen] = useState(false);
+  const [costsAction, setCostsAction] = useState<ActionType | null>(null);
   const [rows, setRows] = useState<UsageRow[]>(() => {
     const key = `${days}|0|1`;
     const cached = usageTableCache?.get?.(key);
@@ -153,7 +158,19 @@ export default function UsageTable({
   return (
     <div className={cn("rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6", className)}>
       <div className="flex items-center justify-between gap-3">
-        <div className="text-[13px] font-semibold text-[var(--fg)]">Usage</div>
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <span className="text-[13px] font-semibold text-[var(--fg)]">Usage</span>
+          <button
+            type="button"
+            className="text-[12px] font-semibold text-[var(--muted-2)] underline-offset-2 hover:text-[var(--fg)] hover:underline"
+            onClick={() => {
+              setCostsAction(null);
+              setCostsOpen(true);
+            }}
+          >
+            What actions cost
+          </button>
+        </div>
         <div className="flex items-center gap-2">
           {canViewSpend ? (
             <label className="inline-flex items-center gap-2 text-[12px] font-semibold text-[var(--muted-2)]">
@@ -218,13 +235,22 @@ export default function UsageTable({
                     <tr key={r.id} className="border-t border-[var(--border)]">
                       <td className="whitespace-nowrap px-4 py-3 text-[var(--muted-2)]">{fmtDateTime(r.createdAt)}</td>
                       <td className="whitespace-nowrap px-4 py-3 text-[var(--muted-2)]">
-                        {r.action === "summary"
-                          ? "Summary"
-                          : r.action === "review"
-                            ? "AI review"
-                            : r.action === "history"
-                              ? "AI compare"
-                              : "Unknown"}
+                        {r.action === "unknown" ? (
+                          "Unknown"
+                        ) : (
+                          // The charge explains itself: the action opens the cost table on its own row.
+                          <button
+                            type="button"
+                            className="underline decoration-dotted underline-offset-2 hover:text-[var(--fg)]"
+                            title="What this action costs"
+                            onClick={() => {
+                              setCostsAction(r.action);
+                              setCostsOpen(true);
+                            }}
+                          >
+                            {r.action === "summary" ? "Summary" : r.action === "review" ? "AI review" : "AI compare"}
+                          </button>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-[var(--muted-2)]">
                         {r.quality === "basic" ? "Basic" : r.quality === "standard" ? "Standard" : "Advanced"}
@@ -286,6 +312,7 @@ export default function UsageTable({
           </div>
         </div>
       ) : null}
+    <CreditCostsModal open={costsOpen} onClose={() => setCostsOpen(false)} highlightAction={costsAction} />
     </div>
   );
 }
