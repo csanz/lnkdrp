@@ -19,6 +19,7 @@ export type RealtimeFrame =
   | { type: "agent"; orgId: string; at: string }
   | { type: "activity"; orgId: string; event: { id: string; type: string | null; createdDate: string | null } }
   | { type: "doc"; orgId: string; doc: { id: string; status: string | null; shareId: string | null } }
+  | { type: "project"; orgId: string; project: { id: string; name: string | null } }
   | { type: "ping" };
 
 type Handler = (frame: RealtimeFrame) => void;

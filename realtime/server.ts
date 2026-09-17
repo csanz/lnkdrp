@@ -95,7 +95,7 @@ async function main() {
   // cursor, which emits 'close'. So after either, wait out the resume and only then trust `closed`.
   // A dead stream turns /healthz 503 and exits the process: Fly http checks only pull the one
   // machine out of routing, and only an exit gets it restarted with fresh streams.
-  const streamHealth: Record<"activity" | "apikeys" | "docs", boolean> = { activity: true, apikeys: true, docs: true };
+  const streamHealth: Record<"activity" | "apikeys" | "docs" | "projects", boolean> = { activity: true, apikeys: true, docs: true, projects: true };
   let shuttingDown = false;
   let exiting = false;
   const watchHealth = (name: keyof typeof streamHealth, stream: mongoose.mongo.ChangeStream) => {
@@ -157,6 +157,23 @@ async function main() {
     });
   });
   watchHealth("docs", docs);
+
+  // Projects: created, renamed or deleted. Documents reach the sidebar through their status flips
+  // above, but a project has no status, so one created over MCP never showed up until a reload.
+  const projects = db
+    .collection("projects")
+    .watch([{ $match: { operationType: { $in: ["insert", "update", "replace", "delete"] } } }], { fullDocument: "updateLookup" });
+  projects.on("change", (change) => {
+    const doc = (change as { fullDocument?: { _id?: unknown; orgId?: unknown; name?: unknown } }).fullDocument;
+    // A delete carries no fullDocument; the client refetches its list either way, so the id is enough.
+    const orgId = doc?.orgId;
+    if (!orgId) return;
+    broadcast(String(orgId), {
+      type: "project",
+      project: { id: String(doc?._id ?? ""), name: typeof doc?.name === "string" ? doc.name : null },
+    });
+  });
+  watchHealth("projects", projects);
 
   // --- http + ws ---------------------------------------------------------------------------------
   const server = http.createServer((req, res) => {
