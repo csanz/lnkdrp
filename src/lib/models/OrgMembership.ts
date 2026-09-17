@@ -36,6 +36,20 @@ const orgMembershipSchema = new Schema(
       default: "daily",
       index: true,
     },
+    /**
+     * Notification preferences (workspace-scoped).
+     *
+     * Used for share-view notification emails: someone opened a document in this workspace
+     * (daily digest vs immediate vs off). `off` suppresses both immediate and digest view
+     * emails. Readers treat a missing value (pre-existing rows) as "daily".
+     */
+    viewEmailMode: {
+      type: String,
+      trim: true,
+      enum: ["off", "daily", "immediate"],
+      default: "daily",
+      index: true,
+    },
     // Optional: future expansion for per-user digest scheduling.
     docUpdateDigestTimezone: { type: String, trim: true, default: null },
     docUpdateDigestTimeLocal: { type: String, trim: true, default: null }, // e.g. "17:00"
@@ -53,10 +67,26 @@ orgMembershipSchema.index({ orgId: 1, userId: 1 }, { unique: true });
 
 export type OrgMembership = InferSchemaType<typeof orgMembershipSchema>;
 
+/** Values of `OrgMembership.viewEmailMode`. A missing value on a stored row means "daily". */
+export type ViewEmailMode = "off" | "daily" | "immediate";
+
+const ExistingOrgMembershipModel = mongoose.models.OrgMembership as Model<OrgMembership> | undefined;
+
 export const OrgMembershipModel: Model<OrgMembership> =
-  (mongoose.models.OrgMembership as Model<OrgMembership> | undefined) ??
-  mongoose.model<OrgMembership>("OrgMembership", orgMembershipSchema);
+  ExistingOrgMembershipModel ?? mongoose.model<OrgMembership>("OrgMembership", orgMembershipSchema);
 
-
-
-
+// Dev safety: Next.js hot reload can reuse an already-compiled Mongoose model, so schema
+// additions made during development would not take effect until a server restart. Patch
+// newer fields into the cached schema (same pattern as Upload.ts). With strict mode on, a
+// missing path would otherwise silently drop `viewEmailMode` on PATCH.
+if (ExistingOrgMembershipModel && !ExistingOrgMembershipModel.schema.path("viewEmailMode")) {
+  ExistingOrgMembershipModel.schema.add({
+    viewEmailMode: {
+      type: String,
+      trim: true,
+      enum: ["off", "daily", "immediate"],
+      default: "daily",
+      index: true,
+    },
+  } as any);
+}

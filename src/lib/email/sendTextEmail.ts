@@ -5,14 +5,39 @@ type SendTextEmailParams = {
   subject: string;
   text: string;
   /**
+   * Optional HTML body. When present it is sent alongside `text` (the text part stays the
+   * fallback for clients that do not render HTML). Callers are responsible for escaping any
+   * user content they put in it.
+   */
+  html?: string;
+  /**
    * Optional override for From.
    * If omitted, uses `NOTIFICATION_EMAIL_FROM` or falls back to `INVITE_EMAIL_FROM`.
    */
   from?: string | null;
+  /**
+   * Optional extra mail headers, passed to Resend as `headers` (omitted when absent or empty).
+   * Used for RFC 8058 one-click unsubscribe (`List-Unsubscribe`, `List-Unsubscribe-Post`).
+   * Entries whose name is not a plain header token, or whose value has a line break, are dropped.
+   */
+  headers?: Record<string, string>;
 };
 
+const HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,100}$/;
+
+/** Only well-formed headers survive; a line break in a value could inject another header. */
+function cleanHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers || typeof headers !== "object") return undefined;
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!HEADER_NAME_RE.test(name) || typeof value !== "string" || !value || /[\r\n]/.test(value)) continue;
+    out[name] = value;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /**
- * Email helper: send a plain text email.
+ * Email helper: send a plain text email, optionally with an HTML alternative.
  *
  * Supports a safe local/dev mode:
  * - `EMAIL_TRANSPORT=console` will log the payload instead of sending (no API keys needed).
@@ -21,11 +46,20 @@ type SendTextEmailParams = {
  */
 export async function sendTextEmail(params: SendTextEmailParams): Promise<void> {
   const { to, subject, text } = params;
+  const html = typeof params.html === "string" && params.html.length > 0 ? params.html : undefined;
+  const headers = cleanHeaders(params.headers);
 
   const transport = (process.env.EMAIL_TRANSPORT ?? "").trim().toLowerCase();
   if (transport === "console") {
+    // Dev review path: print both bodies in full, unescaped strings, so copy can be read as sent.
     // eslint-disable-next-line no-console
-    console.log("[email:console]", { to, subject, text });
+    console.log("[email:console]", { to, subject, ...(headers ? { headers } : {}) });
+    // eslint-disable-next-line no-console
+    console.log(`[email:console] text:\n${text}`);
+    if (html) {
+      // eslint-disable-next-line no-console
+      console.log(`[email:console] html:\n${html}`);
+    }
     return;
   }
 
@@ -56,6 +90,8 @@ export async function sendTextEmail(params: SendTextEmailParams): Promise<void> 
         to: [to],
         subject,
         text,
+        ...(html ? { html } : {}),
+        ...(headers ? { headers } : {}),
       }),
     });
   } catch (err) {
