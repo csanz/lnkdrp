@@ -166,15 +166,19 @@ export default function SubscriptionCard() {
     subtitle,
     cta,
     rightSlot,
+    banner,
   }: {
     planLabel: string;
     price?: string;
     subtitle: React.ReactNode;
     cta: React.ReactNode;
     rightSlot?: React.ReactNode;
+    /** Full-width notice above both columns (a cancelled plan), so it never shifts one column against the other. */
+    banner?: React.ReactNode;
   }) {
     return (
       <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5 sm:p-6">
+        {banner ? <div className="mb-5">{banner}</div> : null}
         <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-2">
@@ -272,19 +276,19 @@ export default function SubscriptionCard() {
           <PlanPanel
             planLabel={ending ? (endDate ? `Pro until ${endDate}` : "Pro, ending") : "Pro"}
             price={ending ? undefined : proPriceLabel || undefined}
-            subtitle={
+            banner={
               ending ? (
-                <div className="rounded-xl bg-[var(--plan-ending-bg)] px-3.5 py-2.5 text-[13px] leading-5 text-[var(--fg)]">
+                <div className="rounded-xl bg-[var(--plan-ending-bg)] px-4 py-3 text-[13px] leading-5 text-[var(--fg)]">
                   <span className="font-semibold text-[var(--plan-ending-fg)]">Pro is cancelled.</span> This workspace keeps Pro{" "}
-                  {endDate ? `until ${endDate}` : "until the end of this billing period"}, then moves to Free. It won&apos;t
-                  renew.
+                  {endDate ? `until ${endDate}` : "until the end of this billing period"}, then moves to Free. It won&apos;t renew.
                 </div>
-              ) : (
-                <span>
-                  {periodHint ? periodHint : "Your subscription is active."} Unlimited documents · Unlimited projects · Deep
-                  analytics · Full history · 1 collaborator included.
-                </span>
-              )
+              ) : undefined
+            }
+            subtitle={
+              <span>
+                {ending ? "" : periodHint ? `${periodHint} ` : "Your subscription is active. "}Unlimited documents · Unlimited projects ·
+                Deep analytics · Full history · 1 collaborator included.
+              </span>
             }
             cta={
               <div className="flex flex-col items-stretch gap-2 md:flex-row md:flex-wrap md:items-center">

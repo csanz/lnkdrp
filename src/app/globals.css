@@ -20,14 +20,12 @@
   /* Activity feed: tint + edge bar for a row that just arrived live (neutral, not a status colour). */
   --feed-new-bg: rgba(37, 99, 235, 0.06);
   --feed-new-bar: rgba(37, 99, 235, 0.5);
-  /* Sidebar row leaving the list: held in a clear status tint while it collapses (archived amber, deleted red). */
-  --row-archived-bg: rgba(217, 119, 6, 0.16);
-  --row-archived-fg: #b45309;
-  --row-deleted-bg: rgba(220, 38, 38, 0.12);
-  --row-deleted-fg: #b91c1c;
-  /* A paid plan that is cancelled and running out its period; same amber, by role not by row. */
-  --plan-ending-bg: var(--row-archived-bg);
-  --plan-ending-fg: var(--row-archived-fg);
+  /* Sidebar row leaving the list (archived or deleted): a monochrome tint, stronger than hover, while it folds out. */
+  --row-leaving-bg: rgba(10, 10, 10, 0.1);
+  --row-leaving-fg: #0a0a0a;
+  /* A paid plan that is cancelled and running out its period. */
+  --plan-ending-bg: rgba(217, 119, 6, 0.16);
+  --plan-ending-fg: #b45309;
   --panel-2: #fafafa;
   --panel-hover: #f4f4f5;
 
@@ -82,10 +80,10 @@
   --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
-  --row-archived-bg: rgba(245, 158, 11, 0.2);
-  --row-archived-fg: #fbbf24;
-  --row-deleted-bg: rgba(248, 113, 113, 0.18);
-  --row-deleted-fg: #fca5a5;
+  --row-leaving-bg: rgba(255, 255, 255, 0.14);
+  --row-leaving-fg: #fafafa;
+  --plan-ending-bg: rgba(245, 158, 11, 0.2);
+  --plan-ending-fg: #fbbf24;
   --panel-2: #151518;
   --panel-hover: #1b1b1f;
 
@@ -137,10 +135,10 @@
     --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
-  --row-archived-bg: rgba(245, 158, 11, 0.2);
-  --row-archived-fg: #fbbf24;
-  --row-deleted-bg: rgba(248, 113, 113, 0.18);
-  --row-deleted-fg: #fca5a5;
+  --row-leaving-bg: rgba(255, 255, 255, 0.14);
+  --row-leaving-fg: #fafafa;
+  --plan-ending-bg: rgba(245, 158, 11, 0.2);
+  --plan-ending-fg: #fbbf24;
     --panel-2: #151518;
     --panel-hover: #1b1b1f;
 
@@ -266,8 +264,8 @@ body {
     grid-template-rows: 1fr;
     opacity: 1;
   }
-  /* ~0.85s holding the tint and label, then a ~1.55s fold that stays visible until near the end. */
-  35% {
+  /* ~0.6s holding the tint and label, then a ~1.2s fold that stays visible until near the end. */
+  33% {
     grid-template-rows: 1fr;
     opacity: 1;
     animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1);

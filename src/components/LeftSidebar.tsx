@@ -1194,12 +1194,12 @@ export default function LeftSidebar({
   );
 
   // Docs that leave the list fold out instead of vanishing: the row stays where it was, takes a
-  // status tint (archived amber, deleted red), then collapses. Driven by diffing the rendered list,
+  // monochrome tint labelled Archived or Deleted, then collapses. Driven by diffing the rendered list,
   // so it is the same whatever removed the doc: this sidebar's menu, the Docs modal, another tab,
   // or an agent over MCP (the realtime `doc.archived` / `doc.deleted` frame triggers the refetch
   // and names the reason). Workspace switches reload the page, so they never diff.
   type LeavingDoc = { doc: DocListItem; index: number; reason: "archived" | "deleted" | null };
-  const DOC_LEAVE_MS = 2400;
+  const DOC_LEAVE_MS = 1800;
   const [leavingDocs, setLeavingDocs] = useState<LeavingDoc[]>([]);
   const prevSidebarDocsRef = useRef<DocListItem[] | null>(null);
   const leaveReasonByIdRef = useRef<Map<string, "archived" | "deleted">>(new Map());
@@ -2421,17 +2421,13 @@ export default function LeftSidebar({
                 <ul className="mt-2 space-y-1">
                   {docRowsForSidebar.map(({ doc: d, leaving }) => {
                   if (leaving) {
-                    const tone =
-                      leaving.reason === "deleted"
-                        ? "bg-[var(--row-deleted-bg)] text-[var(--row-deleted-fg)]"
-                        : leaving.reason === "archived"
-                          ? "bg-[var(--row-archived-bg)] text-[var(--row-archived-fg)]"
-                          : "bg-[var(--sidebar-hover)] text-[var(--muted)]";
+                    // Monochrome for both reasons; the label says which.
+                    const tone = leaving.reason ? "bg-[var(--row-leaving-bg)] text-[var(--row-leaving-fg)]" : "bg-[var(--sidebar-hover)] text-[var(--muted)]";
                     return (
                       <li
                         key={`leaving-${d.id}`}
                         aria-hidden="true"
-                        className="pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_2.4s_linear_forwards] motion-reduce:hidden"
+                        className="pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_1.8s_linear_forwards] motion-reduce:hidden"
                       >
                         <div className="min-h-0 [overflow-y:clip]">
                           <div
