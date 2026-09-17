@@ -32,11 +32,26 @@ function fileNameFromUrl(rawUrl: string): string {
   }
 }
 /**
- * Render the HomeAuthedClient UI (uses effects, memoized values, local state).
+ * The signed-in home: `/` wraps it in the app shell, and `/upload` renders it when no file is staged,
+ * so both addresses show the same upload screen.
  */
-
-
 export default function HomeAuthedClient() {
+  return (
+    <AppShellLayout>
+      <UploadHome />
+    </AppShellLayout>
+  );
+}
+
+/**
+ * The upload screen itself: drop zone, import from a link, and the agent card.
+ *
+ * `onUploadRoute` is set when it is rendered by `/upload`. Staging a file there must not show the
+ * "Preparing upload" overlay or push to `/upload`: the address would not change, and that overlay is
+ * only cleared on a route change (providers.tsx), so it would stay up forever. The page picks the
+ * staged file up from `usePendingUpload` and switches to its preview instead.
+ */
+export function UploadHome({ onUploadRoute = false }: { onUploadRoute?: boolean }) {
   const router = useRouter();
   const { openUpgrade } = useUpgradeModal();
   const { pendingFile, setPendingFile, setHasEnteredShell } = usePendingUpload();
@@ -52,6 +67,7 @@ export default function HomeAuthedClient() {
   const { status: agentStatus } = useAgentStatus();
 
   function startUploadNavNow() {
+    if (onUploadRoute) return;
     // Show an immediate full-screen overlay before routing to `/upload`
     // so the user never sees a "dead" period after file selection.
     showSwitchingOverlay({
@@ -62,6 +78,7 @@ export default function HomeAuthedClient() {
   }
 
   function pushUploadRouteSoon() {
+    if (onUploadRoute) return;
     // Let the overlay paint before the route transition begins.
     if (typeof window === "undefined") {
       router.push("/upload");
@@ -185,6 +202,7 @@ export default function HomeAuthedClient() {
 
   // If something else (e.g. sidebar "Add new file") set a pending file, route to `/upload`.
   useEffect(() => {
+    if (onUploadRoute) return;
     if (!pendingFile) return;
     if (lastAutoHandledRef.current === pendingFile) return;
     if (pushingUploadRef.current) return;
@@ -229,7 +247,6 @@ export default function HomeAuthedClient() {
   const connectedClient = agentStatus?.connected ? (agentStatus.clients[0]?.client ?? agentStatus.lastUsedClient) : null;
 
   return (
-    <AppShellLayout>
       <div
         className="relative flex h-full min-h-[100svh] flex-col overflow-y-auto bg-[var(--bg)] text-[var(--fg)]"
         // The whole page is a drop target; a depth counter keeps child enter/leave pairs from flickering.
@@ -282,7 +299,7 @@ export default function HomeAuthedClient() {
             ) : null
           }
         />
-        <div className={`w-full max-w-[920px] ${APP_PAGE_GUTTER} pb-16 pt-6`}>
+        <div className={`mx-auto my-auto w-full max-w-[920px] ${APP_PAGE_GUTTER} pb-16 pt-6`}>
           {/* Primary action: one large drop zone. */}
           <div
             className={[
@@ -455,7 +472,6 @@ export default function HomeAuthedClient() {
           </div>
         </div>
       </div>
-    </AppShellLayout>
   );
 }
 

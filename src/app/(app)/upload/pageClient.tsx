@@ -20,6 +20,7 @@ import { PlanLimitClientError,
 import { usePendingUpload } from "@/lib/pendingUpload";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
+import { UploadHome } from "@/app/HomeAuthedClient";
 
 const PdfJsViewer = dynamic(async () => (await import("@/components/PdfJsViewer")).PdfJsViewer, {
   ssr: false,
@@ -163,6 +164,10 @@ export default function UploadPageClient() {
       setBusy(false);
     }
   }
+
+  // Nothing staged yet: show the same upload screen as the signed-in home, so `/` and `/upload`
+  // are one experience. Once a file is picked (here or anywhere else) this page shows its preview.
+  if (!selectedFile && !previewLoading && !pendingFile) return <UploadHome onUploadRoute />;
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-[var(--bg)] text-[var(--fg)]">
