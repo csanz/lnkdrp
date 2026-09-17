@@ -40,6 +40,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# Deploy secrets the runbook has operators create in the repo root; `.env*` doesn't match them.
+prod.env
+realtime.env
+mcp.env
 
 # vercel
 .vercel

@@ -16,6 +16,8 @@ node_modules
 .env.*
 !.env.example
 prod.env
+realtime.env
+mcp.env
 
 # Next.js build output and caches — large, and irrelevant to both services.
 .next
