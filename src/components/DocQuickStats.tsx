@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ChartBarIcon } from "@heroicons/react/24/outline";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bar, BarChart, LabelList, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
@@ -189,9 +189,9 @@ function LinkMiniList({
   );
 }
 
-/** Recharts label renderer for the bars; `shown` (from `valueLabelIndexes`) decides which bars get a number. */
-function barValueLabels(values: number[], shown: Set<number>) {
-  return function BarValueLabel(raw: object) {
+/** Recharts label renderer for the chart points; `shown` (from `valueLabelIndexes`) decides which days get a number. */
+function pointValueLabels(values: number[], shown: Set<number>) {
+  return function PointValueLabel(raw: object) {
     const props = raw as { index?: number; viewBox?: { x?: number; y?: number; width?: number }; x?: number; y?: number; width?: number };
     const i = props.index ?? -1;
     if (!shown.has(i)) return null;
@@ -200,14 +200,15 @@ function barValueLabels(values: number[], shown: Set<number>) {
     const y = Number(box.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
     return (
-      <text x={x} y={y - 4} textAnchor="middle" fontSize={10} fontWeight={600} fill="var(--muted)">
+      // First and last points anchor inward so the card edge never clips the number.
+      <text x={x} y={y - 6} textAnchor={i === 0 ? "start" : i === values.length - 1 ? "end" : "middle"} fontSize={10} fontWeight={600} fill="var(--muted)">
         {values[i]!.toLocaleString()}
       </text>
     );
   };
 }
 
-/** Hover line for one bar: "Sep 10 · 3 people". */
+/** Hover line for one day: "Sep 10 · 3 people". */
 function DayTooltip({ active, payload }: { active?: boolean; payload?: Array<{ payload?: { date: string; value: number } }> }) {
   const point = active ? payload?.[0]?.payload : undefined;
   if (!point) return null;
@@ -227,8 +228,11 @@ function dayRangeText(fromKey: string, toKey: string): string {
   return `${from}–${sameMonth ? to.replace(/^\D+/, "") : to}`;
 }
 
-/** Compact people-by-day bars, one bar per day like the metrics page chart. */
-function DailyBars({ data }: { data: Array<{ date: string; value: number }> }) {
+/**
+ * Compact people-by-day chart: a smooth area with the count printed on the days that matter, the
+ * same look as the metrics page chart (chosen over bars, which read as sticks in this narrow rail).
+ */
+function DailyArea({ data }: { data: Array<{ date: string; value: number }> }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -265,8 +269,15 @@ function DailyBars({ data }: { data: Array<{ date: string; value: number }> }) {
       ) : null}
       <div ref={wrapRef} className="h-28 w-full">
         {size ? (
-          <BarChart width={size.w} height={size.h} data={data} margin={{ top: 16, right: 2, bottom: 0, left: 2 }} barCategoryGap="20%">
+          <AreaChart width={size.w} height={size.h} data={data} margin={{ top: 18, right: 4, bottom: 0, left: 4 }}>
+            <defs>
+              <linearGradient id="lnkdrpQuickStatsPeople" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor={EMERALD} stopOpacity={0.28} />
+                <stop offset="100%" stopColor={EMERALD} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
             <YAxis hide domain={[0, "dataMax"]} />
+            <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
             <XAxis
               dataKey="date"
               ticks={ticks}
@@ -284,11 +295,21 @@ function DailyBars({ data }: { data: Array<{ date: string; value: number }> }) {
                 );
               }}
             />
-            <Tooltip cursor={{ fill: "var(--panel-hover)" }} content={<DayTooltip />} />
-            <Bar dataKey="value" fill={EMERALD} radius={[2, 2, 0, 0]} maxBarSize={24} isAnimationActive={false}>
-              <LabelList dataKey="value" content={barValueLabels(values, shownLabels ?? new Set())} />
-            </Bar>
-          </BarChart>
+            <Tooltip cursor={{ stroke: "var(--border)", strokeOpacity: 0.35 }} content={<DayTooltip />} />
+            <Area
+              type="monotone"
+              dataKey="value"
+              stroke={EMERALD}
+              strokeWidth={1.5}
+              fill="url(#lnkdrpQuickStatsPeople)"
+              fillOpacity={1}
+              dot={false}
+              activeDot={{ r: 3, strokeWidth: 1.5 }}
+              isAnimationActive={false}
+            >
+              <LabelList dataKey="value" content={pointValueLabels(values, shownLabels ?? new Set())} />
+            </Area>
+          </AreaChart>
         ) : null}
       </div>
     </>
@@ -828,7 +849,7 @@ export default function DocQuickStats({
             <div className="mb-1 text-[10px] leading-[14px] text-[var(--muted-2)]">Each person counts on the day they last opened it.</div>
             {chartData.length ? (
               hasAnyViews ? (
-                <DailyBars data={chartData} />
+                <DailyArea data={chartData} />
               ) : (
                 <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-center text-[12px] text-[var(--muted)]">
                   No one opened it in the last {shownDays} days.

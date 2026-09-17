@@ -61,55 +61,7 @@ export async function runFixup(input: {
   const people: PlannedPerson[] = [...plan.people, ...plan.ownerPreviews];
 
   // 1 + 2: visits and views, per person.
-  const visitOps: mongoose.mongo.AnyBulkWriteOperation[] = [];
-  const viewOps: mongoose.mongo.AnyBulkWriteOperation[] = [];
-  const firstStartByViewer = new Map<string, number>();
-  for (const p of people) {
-    const botIdHash = sha256(p.botId);
-    const docOid = new Types.ObjectId(p.docId);
-    const pageCount = docById.get(p.docId)!.pageCount;
-    let firstStart = Number.POSITIVE_INFINITY;
-    let lastEnd = 0;
-    for (const v of p.visits) {
-      const visitIdHash = sha256(v.visitId);
-      const row = await db
-        .collection("sharevisits")
-        .findOne({ shareId: p.shareId, botIdHash, visitIdHash, docId: docOid }, { projection: { pageEvents: 1 } });
-      if (!row) continue;
-      const events = (Array.isArray(row.pageEvents) ? row.pageEvents : []) as Array<{ enteredAt?: Date | null; leftAt?: Date | null }>;
-      const entered = events.map((e) => (e.enteredAt ? new Date(e.enteredAt).getTime() : NaN)).filter(Number.isFinite);
-      const left = events.map((e) => (e.leftAt ? new Date(e.leftAt).getTime() : NaN)).filter(Number.isFinite);
-      const { lastRequestAt } = compileVisit(v, { botId: p.botId, shareId: p.shareId, numPages: pageCount, intro: p.intro });
-      // The browser's first POST (load) stamps startedAt; its last POST stamps lastEventAt.
-      const startedAt = Math.min(v.startAt, ...entered);
-      const lastEventAt = Math.max(lastRequestAt, ...left);
-      visitOps.push({
-        updateOne: {
-          filter: { _id: row._id },
-          update: { $set: { startedAt: new Date(startedAt), lastEventAt: new Date(lastEventAt), createdDate: new Date(startedAt), updatedDate: new Date(lastEventAt) } },
-        },
-      });
-      firstStart = Math.min(firstStart, startedAt);
-      lastEnd = Math.max(lastEnd, lastEventAt);
-    }
-    if (!Number.isFinite(firstStart)) continue;
-    firstStartByViewer.set(`${p.shareId}|${botIdHash}`, firstStart);
-    const view = await db
-      .collection("shareviews")
-      .findOne({ shareId: p.shareId, botIdHash, docId: docOid }, { projection: { downloadsByDay: 1 } });
-    if (!view) continue;
-    const set: Record<string, unknown> = {
-      createdDate: new Date(firstStart),
-      lastViewedAt: new Date(Math.max(lastEnd, p.download?.atMs ?? 0)),
-      updatedDate: new Date(Math.max(lastEnd, p.download?.atMs ?? 0)),
-    };
-    const byDay = (view.downloadsByDay ?? {}) as Record<string, unknown>;
-    const downloads = Object.values(byDay).reduce<number>((a, b) => a + (typeof b === "number" ? b : 0), 0);
-    if (downloads > 0) set.downloadsByDay = { [dayKey(p.download?.atMs ?? lastEnd)]: downloads };
-    viewOps.push({ updateOne: { filter: { _id: view._id }, update: { $set: set } } });
-  }
-  if (visitOps.length) count("sharevisits", (await db.collection("sharevisits").bulkWrite(visitOps, { ordered: false })).modifiedCount);
-  if (viewOps.length) count("shareviews", (await db.collection("shareviews").bulkWrite(viewOps, { ordered: false })).modifiedCount);
+  const { firstStartByViewer } = await backdateViewers({ db, plan, people, count });
 
   // 3: activity events of tagged docs.
   const downloadAtByViewer = new Map(people.filter((p) => p.download).map((p) => [`${p.shareId}|${sha256(p.botId)}`, p.download!.atMs]));
@@ -188,4 +140,68 @@ export async function runFixup(input: {
     log(`metrics rollup: ${rollup.processed} docs`);
   }
   return report;
+}
+
+/**
+ * Steps 1 and 2 for some people: each planned visit's ShareVisit row to its planned times, and the
+ * person's ShareView to their first start and last activity. Visits with no row are skipped.
+ */
+export async function backdateViewers(input: {
+  db: Db;
+  plan: Pick<Plan, "docs">;
+  people: PlannedPerson[];
+  count: (k: string, n: number) => void;
+}): Promise<{ firstStartByViewer: Map<string, number> }> {
+  const { db, people, count } = input;
+  const docById = new Map(input.plan.docs.map((d) => [d.docId, d]));
+  const visitOps: mongoose.mongo.AnyBulkWriteOperation[] = [];
+  const viewOps: mongoose.mongo.AnyBulkWriteOperation[] = [];
+  const firstStartByViewer = new Map<string, number>();
+  for (const p of people) {
+    const botIdHash = sha256(p.botId);
+    const docOid = new Types.ObjectId(p.docId);
+    const pageCount = docById.get(p.docId)!.pageCount;
+    let firstStart = Number.POSITIVE_INFINITY;
+    let lastEnd = 0;
+    for (const v of p.visits) {
+      const visitIdHash = sha256(v.visitId);
+      const row = await db
+        .collection("sharevisits")
+        .findOne({ shareId: p.shareId, botIdHash, visitIdHash, docId: docOid }, { projection: { pageEvents: 1 } });
+      if (!row) continue;
+      const events = (Array.isArray(row.pageEvents) ? row.pageEvents : []) as Array<{ enteredAt?: Date | null; leftAt?: Date | null }>;
+      const entered = events.map((e) => (e.enteredAt ? new Date(e.enteredAt).getTime() : NaN)).filter(Number.isFinite);
+      const left = events.map((e) => (e.leftAt ? new Date(e.leftAt).getTime() : NaN)).filter(Number.isFinite);
+      const { lastRequestAt } = compileVisit(v, { botId: p.botId, shareId: p.shareId, numPages: pageCount, intro: p.intro });
+      // The browser's first POST (load) stamps startedAt; its last POST stamps lastEventAt.
+      const startedAt = Math.min(v.startAt, ...entered);
+      const lastEventAt = Math.max(lastRequestAt, ...left);
+      visitOps.push({
+        updateOne: {
+          filter: { _id: row._id },
+          update: { $set: { startedAt: new Date(startedAt), lastEventAt: new Date(lastEventAt), createdDate: new Date(startedAt), updatedDate: new Date(lastEventAt) } },
+        },
+      });
+      firstStart = Math.min(firstStart, startedAt);
+      lastEnd = Math.max(lastEnd, lastEventAt);
+    }
+    if (!Number.isFinite(firstStart)) continue;
+    firstStartByViewer.set(`${p.shareId}|${botIdHash}`, firstStart);
+    const view = await db
+      .collection("shareviews")
+      .findOne({ shareId: p.shareId, botIdHash, docId: docOid }, { projection: { downloadsByDay: 1 } });
+    if (!view) continue;
+    const set: Record<string, unknown> = {
+      createdDate: new Date(firstStart),
+      lastViewedAt: new Date(Math.max(lastEnd, p.download?.atMs ?? 0)),
+      updatedDate: new Date(Math.max(lastEnd, p.download?.atMs ?? 0)),
+    };
+    const byDay = (view.downloadsByDay ?? {}) as Record<string, unknown>;
+    const downloads = Object.values(byDay).reduce<number>((a, b) => a + (typeof b === "number" ? b : 0), 0);
+    if (downloads > 0) set.downloadsByDay = { [dayKey(p.download?.atMs ?? lastEnd)]: downloads };
+    viewOps.push({ updateOne: { filter: { _id: view._id }, update: { $set: set } } });
+  }
+  if (visitOps.length) count("sharevisits", (await db.collection("sharevisits").bulkWrite(visitOps, { ordered: false })).modifiedCount);
+  if (viewOps.length) count("shareviews", (await db.collection("shareviews").bulkWrite(viewOps, { ordered: false })).modifiedCount);
+  return { firstStartByViewer };
 }

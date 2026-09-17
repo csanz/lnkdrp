@@ -131,6 +131,12 @@ describe("held attention longest", () => {
     expect(computeCallouts(rows, 40, 5)?.heldFlat).toEqual({ pages: [3, 4, 5], typicalMs: 11012, restTypicalMs: 6894 });
   });
 
+  test("a page that prints the same typical time as the leader counts as tied (live Harborline rows)", () => {
+    const typicals = [6652, 7688, 11291, 11450, 10796];
+    const rows = typicals.map((typicalMs, i) => row(i + 1, { readCount: 5 + i, typicalMs, stillReading: 20 }));
+    expect(computeCallouts(rows, 40, 5)).toMatchObject({ heldLongest: null, heldFlat: { pages: [3, 4, 5], typicalMs: 11291, restTypicalMs: 7170 } });
+  });
+
   test("heldFlat names the tied pages against the rest, or every eligible page when none lifts", () => {
     const typicals = [6652, 7688, 11291, 11007, 11012];
     const rows = typicals.map((typicalMs, i) => row(i + 1, { readCount: 5 + i, typicalMs, stillReading: 20 }));

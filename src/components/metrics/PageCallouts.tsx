@@ -10,7 +10,7 @@ import { CALLOUT_MIN_PEOPLE } from "@/lib/analytics/reading/constants";
 import { formatTypical } from "@/lib/analytics/reading/format";
 import type { Callouts, PageRow } from "@/lib/analytics/reading/types";
 import { tileLabelClass } from "./KpiStrip";
-import { heldLongestTied, joinAnd, pageHeadline, pageShortLabel, skippedBreakdown, thinPageBeatsLeader } from "./pageEmphasis";
+import { heldFlatShown, heldLongestTied, joinAnd, pageHeadline, pageShortLabel, skippedBreakdown, thinPageBeatsLeader } from "./pageEmphasis";
 
 export type PageCalloutsProps = {
   callouts: Callouts | null;
@@ -116,7 +116,7 @@ export default function PageCallouts({ callouts, calloutGate, pages }: PageCallo
     ) : null;
   }
   const { heldLongest, mostSkipped, mostLeft } = callouts;
-  const heldFlat = heldLongest ? null : (callouts.heldFlat ?? null);
+  const heldFlat = heldLongest || !callouts.heldFlat ? null : heldFlatShown(callouts.heldFlat, pages);
   if (!heldLongest && !heldFlat && !mostSkipped && !mostLeft) return null;
 
   let heldDetail = "";

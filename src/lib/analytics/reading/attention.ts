@@ -9,6 +9,7 @@ import {
   HOT_READ_RATIO,
   NOT_OPENED_AFTER_MS,
   RETURN_GAP_MS,
+  VERDICT_LONGEST_MIN_MS,
 } from "./constants";
 import { dwellRatio, formatDwell, formatReturnGap, formatTypical } from "./format";
 import { toMs } from "./normalize";
@@ -47,6 +48,11 @@ const HOT_TIE_SHARE = 0.9;
 /** The one-page standout quota: at least this many, or this share of people with detail. */
 const HOT_DWELL_MIN_KEEP = 2;
 const HOT_DWELL_SHARE = 0.1;
+/**
+ * The quota admits only clear standouts: at least 3× the page's typical time, and held long enough
+ * (VERDICT_LONGEST_MIN_MS) that the reader sheet's verdict names the same page.
+ */
+const HOT_DWELL_QUOTA_MIN_RATIO = 3;
 
 type HotEntry = { person: Person; reason: HotReason };
 
@@ -57,7 +63,7 @@ type HotEntry = { person: Person; reason: HotReason };
  * along a chain of same-kind scores each within 10% of the one before (up to twice the base cap).
  * Returners and people who stayed on most pages rank first and can fill that cap, so one-page
  * standouts get their own quota on top: the strongest max(2, 10% of people with detail) by ratio,
- * widened the same way.
+ * widened the same way, counting only pages at ≥ 3× typical held ≥ 20s.
  */
 export function computeHot(docPeople: Person[], P: number): Map<string, HotReason | null> {
   const out = new Map<string, HotReason | null>();
@@ -74,7 +80,7 @@ export function computeHot(docPeople: Person[], P: number): Map<string, HotReaso
   hot.sort(compareHot);
   const n = hotCutoff(hot, Math.min(hot.length, Math.max(HOT_MIN_KEEP, Math.ceil(HOT_MAX_SHARE * withDetail.length))));
   const dwell = hot
-    .filter((h) => h.reason.kind === "dwell")
+    .filter((h) => h.reason.kind === "dwell" && dwellScore(h.reason) >= HOT_DWELL_QUOTA_MIN_RATIO && h.reason.ms >= VERDICT_LONGEST_MIN_MS)
     .sort((a, b) => (hotScore(b) ?? 0) - (hotScore(a) ?? 0) || dwellMs(b) - dwellMs(a) || compareHot(a, b));
   const dwellKept = dwell.slice(0, hotCutoff(dwell, Math.max(HOT_DWELL_MIN_KEEP, Math.ceil(HOT_DWELL_SHARE * withDetail.length))));
   for (const h of [...hot.slice(0, n), ...dwellKept]) out.set(h.person.key, h.reason);

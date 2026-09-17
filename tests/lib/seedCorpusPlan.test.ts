@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
 import { DOC_SPECS, TYPE_COUNTS, TYPE_PAGES } from "../share/seed-corpus/content";
@@ -95,13 +97,62 @@ describe("seed corpus plan (seed 42)", () => {
     }
   });
 
-  it("spaces a returner's visits at least 12h apart", () => {
-    const returners = plan.people.filter((p) => p.visits.length === 2);
+  it("brings a returner back 12h to ~6 days later, and any third visit at least 2h after that", () => {
+    const returners = plan.people.filter((p) => p.visits.length >= 2);
     expect(returners.length).toBeGreaterThan(0);
+    expect(returners.length).toBe(plan.people.filter((p) => p.archetype === "returner").length);
     for (const p of returners) {
       expect(p.archetype).toBe("returner");
+      expect(p.visits.length).toBeLessThanOrEqual(3);
       expect(p.visits[1]!.startAt - p.visits[0]!.endAt).toBeGreaterThanOrEqual(12 * HOUR);
+      expect(p.visits[1]!.startAt - p.visits[0]!.endAt).toBeLessThanOrEqual(8 * DAY);
+      if (p.visits[2]) expect(p.visits[2].startAt - p.visits[1]!.endAt).toBeGreaterThanOrEqual(2 * HOUR);
     }
+  });
+
+  it("varies return visits by what the person came back for", () => {
+    const returners = plan.people.filter((p) => p.archetype === "returner");
+    const later = returners.flatMap((p) => p.visits.slice(1).map((v) => ({ p, v })));
+    const styles = new Map<string, number>();
+    for (const { v } of later) styles.set(v.returnStyle!, (styles.get(v.returnStyle!) ?? 0) + 1);
+    expect(styles.size).toBeGreaterThanOrEqual(5);
+    for (const n of styles.values()) expect(n / later.length).toBeLessThanOrEqual(0.4);
+    expect(returners.some((p) => p.visits.length === 3)).toBe(true);
+
+    const gaps = returners.map((p) => p.visits[1]!.startAt - p.visits[0]!.endAt);
+    expect(gaps.some((g) => g < 36 * HOUR)).toBe(true);
+    expect(gaps.some((g) => g > 4 * DAY)).toBe(true);
+
+    // The old script: cover, jump, flick one page on, flick back. No longer the shape of most returns.
+    const paths = later.map(({ v }) => v.stops.map((s) => s.page).join(">"));
+    expect(new Set(paths).size / later.length).toBeGreaterThanOrEqual(0.5);
+    const lengths = new Set(later.map(({ v }) => v.stops.length));
+    expect(lengths.size).toBeGreaterThanOrEqual(5);
+
+    for (const { p, v } of later) {
+      const roles = docById.get(p.docId)!.roles;
+      expect(v.stops[0]!.page).toBe(1);
+      for (let i = 1; i < v.stops.length; i++) expect(v.stops[i]!.page).not.toBe(v.stops[i - 1]!.page);
+      for (const s of v.stops) expect(s.ms).toBeLessThanOrEqual(240_000);
+      const longest = v.stops.reduce((a, s) => (s.ms > a.ms ? s : a));
+      if (v.returnStyle === "key_pages" || v.returnStyle === "compare") {
+        expect(roles[longest.page - 1]).toMatch(/^(pricing|financials|ask|team|traction|metrics|options|roi|compliance)$/);
+      }
+      if (v.returnStyle === "appendix") {
+        expect(v.stops.some((s) => /^(appendix|legal|terms|methodology)$/.test(roles[s.page - 1]!))).toBe(true);
+      }
+      if (v.returnStyle === "glance") expect(v.stops.length).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it("keeps first visits, intros and link picks where the single-script planner put them", () => {
+    // Return visits draw from their own stream; this digest was taken before they did, so a change
+    // that shifts the person stream (and so every existing seed's first visits) fails here.
+    const digest = createHash("sha256")
+      .update(JSON.stringify(plan.people.map((p) => [p.n, p.shareId, p.archetype, p.intro, p.visits[0]!.startAt, p.visits[0]!.endAt, p.visits[0]!.stops, !!p.download])))
+      .digest("hex")
+      .slice(0, 16);
+    expect(digest).toBe("da0338546192540c");
   });
 
   it("produces valid timing payloads: durations >= 1, enteredAtMs < leftAtMs, page time <= visit time", () => {

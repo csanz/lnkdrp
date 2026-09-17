@@ -1,13 +1,15 @@
 /**
- * "People by day" bar chart over the range. Day keys are calendar days in the viewer's time zone
+ * "People by day" smooth area chart over the range, with the count printed on the days that matter
+ * (the look chosen for every analytics chart in the app; bars read as sticks). Day keys are calendar days in the viewer's time zone
  * (the reading API buckets them with `tz`), so they are formatted as plain dates, never shifted.
  */
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { Bar, BarChart, LabelList, Tooltip, XAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
+import { valueLabels } from "@/components/charts/ChartValueLabel";
 
-/** One bar: `day` is "YYYY-MM-DD" in the viewer's time zone. */
+/** One day: `day` is "YYYY-MM-DD" in the viewer's time zone. */
 export type ActivityPoint = { day: string; people: number };
 
 export type ActivityChartProps = {
@@ -49,7 +51,7 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: Array<{
   );
 }
 
-/** Bar chart card body. */
+/** Chart card body. */
 export default function ActivityChart({ series, loading, error, onRetry }: ActivityChartProps) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
@@ -94,30 +96,47 @@ export default function ActivityChart({ series, loading, error, onRetry }: Activ
     body = (
       <div ref={wrapRef} className="h-[160px] w-full">
         {width > 0 ? (
-          <BarChart width={width} height={160} data={data} margin={{ top: 16, right: 4, bottom: 0, left: 4 }}>
+          <AreaChart width={width} height={160} data={data} margin={{ top: 18, right: 8, bottom: 0, left: 8 }}>
+            <defs>
+              <linearGradient id="lnkdrpActivityPeople" x1="0" x2="0" y1="0" y2="1">
+                <stop offset="0%" stopColor={EMERALD} stopOpacity={0.24} />
+                <stop offset="100%" stopColor={EMERALD} stopOpacity={0.02} />
+              </linearGradient>
+            </defs>
+            <YAxis hide domain={[0, "dataMax"]} />
+            <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
             <XAxis
               dataKey="day"
-              tickFormatter={(d: string) => formatLocalDayKey(d)}
               interval={interval}
-              padding={{ left: 12, right: 12 }}
               tickLine={false}
               axisLine={false}
-              tick={{ fontSize: 10, fill: "var(--muted)" }}
               height={18}
+              // First and last dates anchor to their outer edge so the card never clips them ("ug 18").
+              tick={(props: { x: number; y: number; index?: number; visibleTicksCount?: number; payload: { value: string } }) => {
+                const last = (props.visibleTicksCount ?? 0) - 1;
+                const anchor = props.index === 0 ? "start" : props.index === last ? "end" : "middle";
+                return (
+                  <text x={props.x} y={props.y + 10} textAnchor={anchor} fontSize={10} fill="var(--muted)">
+                    {formatLocalDayKey(props.payload.value)}
+                  </text>
+                );
+              }}
             />
-            <Tooltip cursor={{ fill: "var(--panel-hover)" }} content={<ChartTooltip />} />
-            <Bar dataKey="people" fill={EMERALD} radius={[3, 3, 0, 0]} maxBarSize={40} isAnimationActive={false}>
-              {data.length <= 31 ? (
-                <LabelList
-                  dataKey="people"
-                  position="top"
-                  fontSize={10}
-                  fill="var(--muted)"
-                  formatter={(v: unknown) => (typeof v === "number" && v > 0 ? v : "")}
-                />
-              ) : null}
-            </Bar>
-          </BarChart>
+            <Tooltip cursor={{ stroke: "var(--border)", strokeOpacity: 0.35 }} content={<ChartTooltip />} />
+            <Area
+              type="monotone"
+              dataKey="people"
+              stroke={EMERALD}
+              strokeWidth={1.5}
+              fill="url(#lnkdrpActivityPeople)"
+              fillOpacity={1}
+              dot={false}
+              activeDot={{ r: 3, strokeWidth: 1.5 }}
+              isAnimationActive={false}
+            >
+              <LabelList dataKey="people" content={valueLabels({ values: data.map((d) => d.people) })} />
+            </Area>
+          </AreaChart>
         ) : null}
       </div>
     );

@@ -121,7 +121,7 @@ function medianOf(xs: number[]): number | null {
   return s.length % 2 ? s[mid]! : Math.floor((s[mid - 1]! + s[mid]!) / 2);
 }
 
-type Ev = { page: number; d: number; enter: number; left: number; reason: string | null; i: number };
+type Ev = { page: number; d: number; enter: number; left: number; reason: string | null; toPage: number | null; i: number };
 type Visit = {
   visitId: string;
   startedAt: number;
@@ -131,6 +131,8 @@ type Visit = {
   timed: boolean;
   dwell: number[];
   exitPage: number | null;
+  /** Pages shown after a lost final turn and never timed (spec: killed tab). */
+  untimedTail: number[];
   validDurationSum: number;
   tv2: boolean;
 };
@@ -148,7 +150,9 @@ function recomputeVisit(row: Json, P: number): Visit {
     const enter = msOf(e.enteredAt);
     const left = msOf(e.leftAt);
     if (enter === null || left === null) return;
-    evs.push({ page: e.pageNumber, d: e.durationMs, enter, left, reason: typeof e.reason === "string" ? e.reason : null, i });
+    const reason = typeof e.reason === "string" ? e.reason : null;
+    const toPage = reason === "turn" && inRange(e.toPage, P) && e.toPage !== e.pageNumber ? e.toPage : null;
+    evs.push({ page: e.pageNumber, d: e.durationMs, enter, left, reason, toPage, i });
   });
   evs.sort((a, b) => a.enter - b.enter || a.left - b.left || a.i - b.i);
   const dwell = new Array<number>(P).fill(0);
@@ -172,29 +176,41 @@ function recomputeVisit(row: Json, P: number): Visit {
   for (const p of Array.isArray(row.pagesSeen) ? row.pagesSeen : []) if (inRange(p, P)) seen.add(p);
   for (const e of evs) seen.add(e.page);
   const seenArr = [...seen].sort((a, b) => a - b);
+  const startedAt = msOf(row.startedAt) ?? 0;
+  const lastEventAt = msOf(row.lastEventAt) ?? startedAt;
   let exitPage: number | null = null;
+  let untimedTail: number[] = [];
   if (evs.length) {
     let best = evs[0]!;
     for (const e of evs) if (e.left >= best.left) best = e;
     exitPage = best.page;
+    // Last timed event is a turn (the tab died before its final flush): they landed on its target, and
+    // pages seen after it with no timed event, and no other turn landing there, were flipped to later.
+    if (best.toPage !== null && seen.has(best.toPage)) {
+      const target = best.toPage;
+      const timedPages = new Set(evs.map((e) => e.page));
+      const otherTargets = new Set(evs.filter((e) => e !== best).map((e) => e.toPage));
+      untimedTail = seenArr.filter((p) => p === target || (p > target && !timedPages.has(p) && !otherTargets.has(p)));
+      exitPage = lastEventAt > best.left ? untimedTail[untimedTail.length - 1]! : target;
+    }
   } else if (seenArr.length) exitPage = seenArr[seenArr.length - 1]!;
   const ts = typeof row.timeSpentMs === "number" && Number.isFinite(row.timeSpentMs) && row.timeSpentMs > 0 ? row.timeSpentMs : 0;
-  const startedAt = msOf(row.startedAt) ?? 0;
   return {
     visitId: String(row._id),
     startedAt,
-    lastEventAt: msOf(row.lastEventAt) ?? startedAt,
+    lastEventAt,
     timeSpentMs: ts,
     seen: seenArr,
     timed: evs.length > 0,
     dwell,
     exitPage,
+    untimedTail,
     validDurationSum: evs.reduce((a, e) => a + e.d, 0),
     tv2: row.timingVersion === 2,
   };
 }
 
-type State = "read" | "passed" | "unknown" | "unreached";
+type State = "read" | "passed" | "unknown" | "jumped" | "unreached";
 type RPerson = {
   key: string;
   personId: string;
@@ -259,7 +275,9 @@ async function recompute(db: mongoose.mongo.Db, docId: Types.ObjectId, P: number
   const people = [...byKey.values()];
   for (const p of people) {
     let latest: Visit | null = null;
+    const untimedTail = new Set<number>();
     for (const v of p.visits) {
+      for (const t of v.untimedTail) untimedTail.add(t);
       p.totalMs += v.timeSpentMs;
       p.timed ||= v.timed;
       for (const s of v.seen) p.seen.add(s);
@@ -276,7 +294,17 @@ async function recompute(db: mongoose.mongo.Db, docId: Types.ObjectId, P: number
     p.maxPage = p.seen.size ? Math.max(...p.seen) : 0;
     p.hasDetail = p.seen.size > 0;
     p.states = Array.from({ length: P }, (_, i) =>
-      !p.seen.has(i + 1) ? "unreached" : !p.timed ? "unknown" : p.dwell[i]! >= READ_MIN_MS ? "read" : "passed",
+      !p.seen.has(i + 1)
+        ? i + 1 < p.maxPage
+          ? "jumped"
+          : "unreached"
+        : !p.timed
+          ? "unknown"
+          : p.dwell[i]! >= READ_MIN_MS
+            ? "read"
+            : p.dwell[i] === 0 && untimedTail.has(i + 1)
+              ? "unknown"
+              : "passed",
     );
   }
   const detail = people.filter((p) => p.hasDetail);

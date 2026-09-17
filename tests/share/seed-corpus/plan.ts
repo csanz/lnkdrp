@@ -48,6 +48,8 @@ export type PlannedVisit = {
   idle: { stopIndex: number; afterMs: number; idleMs: number } | null;
   killed: boolean;
   rngSeed: number;
+  /** Return visits only: what the person came back for. */
+  returnStyle?: ReturnStyle;
 };
 
 export type PlannedPerson = {
@@ -252,6 +254,10 @@ function buildStops(archetype: Archetype, roles: string[], r: Rng): PlannedStop[
     case "returner": {
       const k = Math.max(1, Math.ceil(uniform(r, 0.4, 0.7) * P));
       const first = Array.from({ length: Math.min(k, P) }, (_, i) => stay(i + 1, readerDwell(r, role(i + 1))));
+      // `second` is the one scripted return visit earlier plans sent. It is no longer sent (buildPlan
+      // swaps in `planReturnVisits`), but it is still drawn, injected and placed from the person's
+      // stream: the first visit's slot, the intro and the download come after it in that stream, so
+      // dropping these draws would move them for every returner of a seed that already exists.
       const second = [stay(1, randInt(r, 3000, 8000))];
       const tops = Array.from({ length: Math.max(0, P - 1) }, (_, i) => i + 2).sort(
         (a, b) => roleProfile(role(b)).interest - roleProfile(role(a)).interest || a - b,
@@ -308,6 +314,229 @@ function makeVisit(
 function place(v: PlannedVisit, startAt: number): void {
   v.startAt = Math.round(startAt);
   v.endAt = v.startAt + v.durationMs;
+}
+
+export const RETURN_STYLES = ["glance", "key_pages", "compare", "reread", "lingered", "pick_up", "appendix"] as const;
+export type ReturnStyle = (typeof RETURN_STYLES)[number];
+
+const KEY_INTEREST = 1.8;
+const BACK_MATTER_ROLES = new Set(["appendix", "legal", "terms", "methodology"]);
+const NY_WEEKDAY = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" });
+
+type ReturnContext = { roles: string[]; keys: number[]; back: number[] };
+
+function returnContext(roles: string[]): ReturnContext {
+  const pages = roles.map((role, i) => ({ role, page: i + 1 })).filter((x) => x.page > 1);
+  return {
+    roles,
+    keys: pages.filter((x) => roleProfile(x.role).interest >= KEY_INTEREST).map((x) => x.page),
+    back: pages.filter((x) => BACK_MATTER_ROLES.has(x.role)).map((x) => x.page),
+  };
+}
+
+function pickStyle(r: Rng, ctx: ReturnContext, earlier: PlannedStop[], again: boolean): ReturnStyle {
+  const P = ctx.roles.length;
+  const exit = earlier[earlier.length - 1]?.page ?? 1;
+  const k = ctx.keys.length;
+  const b = ctx.back.length;
+  const weights: Record<ReturnStyle, number> = again
+    ? { glance: 0.3, key_pages: k ? 0.3 : 0, compare: k >= 2 ? 0.1 : 0, reread: 0.05, lingered: 0.2, pick_up: 0, appendix: b ? 0.1 : 0 }
+    : { glance: 0.14, key_pages: k ? 0.22 : 0, compare: k >= 2 ? 0.1 : 0, reread: 0.14, lingered: 0.14, pick_up: exit < P ? 0.16 : 0, appendix: b ? 0.1 : 0 };
+  return RETURN_STYLES[weightedIndex(r, RETURN_STYLES.map((s) => weights[s]))] ?? "glance";
+}
+
+/** Stops for one return visit. Every visit opens on page 1, because the viewer always does. */
+function returnStops(style: ReturnStyle, ctx: ReturnContext, earlier: PlannedStop[], r: Rng, pace: number): PlannedStop[] {
+  const P = ctx.roles.length;
+  const role = (p: number) => ctx.roles[p - 1] ?? "other";
+  const stops: PlannedStop[] = [];
+  let at = 1;
+  const add = (page: number, ms: number, flip = false) => {
+    const prev = stops[stops.length - 1];
+    if (prev && prev.page === page) {
+      prev.ms += Math.round(ms);
+      prev.flip = prev.flip && flip && prev.ms < 2000;
+    } else {
+      stops.push({ page, ms: Math.round(ms), flip });
+    }
+    at = page;
+  };
+  const clampMs = (ms: number) => Math.round(Math.min(240_000, Math.max(2000, ms)));
+  const read = (p: number, scale = 1) => clampMs(readerDwell(r, role(p)) * pace * scale);
+  const linger = (p: number) => clampMs(Math.max(8000, 30_000 * Math.exp(0.6 * normal(r)) * Math.sqrt(roleProfile(role(p)).interest) * pace));
+  const brief = (lo: number, hi: number) => clampMs(uniform(r, lo, hi) * pace);
+  const go = (to: number) => {
+    const step = to > at ? 1 : -1;
+    const distance = Math.abs(to - at);
+    // Paging with the arrows shows every page in between for a moment; the thumbnail rail skips them.
+    if (distance > 1 && distance <= 6 && r() < (step > 0 ? 0.35 : 0.2)) {
+      for (let p = at + step; p !== to; p += step) add(p, randInt(r, 250, 900), true);
+    }
+  };
+  const openCover = () => (r() < 0.3 ? add(1, randInt(r, 500, 1800), true) : add(1, randInt(r, 2000, 7000)));
+  const pickKeys = (m: number) => {
+    const pool = ctx.keys.slice();
+    const out: number[] = [];
+    for (let i = 0; i < m && pool.length; i++) {
+      const idx = weightedIndex(r, pool.map((p) => roleProfile(role(p)).interest));
+      out.push(...pool.splice(Math.max(0, idx), 1));
+    }
+    return out;
+  };
+
+  switch (style) {
+    case "glance": {
+      add(1, randInt(r, 3000, 15_000));
+      if (P >= 2 && r() < 0.4) {
+        const ms = randInt(r, 900, 8000);
+        add(2, ms, ms < 2000);
+      }
+      break;
+    }
+    case "key_pages": {
+      openCover();
+      const picks = pickKeys(randInt(r, 1, Math.min(3, ctx.keys.length)));
+      if (r() < 0.6) picks.sort((x, y) => x - y);
+      for (const p of picks) {
+        go(p);
+        add(p, linger(p));
+      }
+      if (picks.length > 1 && r() < 0.25) {
+        go(picks[0]!);
+        add(picks[0]!, brief(5000, 30_000));
+      }
+      break;
+    }
+    case "compare": {
+      openCover();
+      const [a, b] = pickKeys(2) as [number, number];
+      const rounds = randInt(r, 2, 3);
+      for (let i = 0; i < rounds; i++) {
+        go(a);
+        add(a, i === 0 ? linger(a) : brief(4000, 25_000));
+        go(b);
+        add(b, i === 0 ? linger(b) : brief(4000, 25_000));
+      }
+      break;
+    }
+    case "reread": {
+      const scale = uniform(r, 0.35, 0.7);
+      add(1, randInt(r, 2000, 5000));
+      for (let p = 2; p <= P; p++) {
+        const prof = roleProfile(role(p));
+        if (r() < prof.skipBias) add(p, randInt(r, 300, 1500), true);
+        else add(p, read(p, scale));
+        if (p < P && prof.interest >= KEY_INTEREST && r() < 0.15) break;
+      }
+      break;
+    }
+    case "lingered": {
+      const byPage = new Map<number, number>();
+      for (const s of earlier) if (s.page > 1) byPage.set(s.page, (byPage.get(s.page) ?? 0) + s.ms);
+      const target = [...byPage.entries()].sort((x, y) => y[1] - x[1] || x[0] - y[0])[0]?.[0] ?? Math.min(2, P);
+      openCover();
+      if (target !== 1) {
+        go(target);
+        add(target, clampMs(linger(target) * uniform(r, 1, 1.6)));
+      }
+      const more = r() < 0.5 ? randInt(r, 1, 2) : 0;
+      for (let i = 0; i < more && at < P; i++) add(at + 1, read(at + 1));
+      break;
+    }
+    case "pick_up": {
+      const exit = earlier[earlier.length - 1]?.page ?? 1;
+      openCover();
+      if (exit > 1) {
+        go(exit);
+        add(exit, randInt(r, 2500, 10_000));
+      }
+      for (let p = exit + 1; p <= P; p++) {
+        add(p, read(p));
+        if (p < P && r() < roleProfile(role(p)).exitHazard) break;
+      }
+      break;
+    }
+    case "appendix": {
+      openCover();
+      if (ctx.keys.length && r() < 0.4) {
+        const [k] = pickKeys(1) as [number];
+        go(k);
+        add(k, linger(k));
+      }
+      for (const p of ctx.back.slice(0, 3)) {
+        go(p);
+        add(p, read(p, uniform(r, 1.2, 2.2)));
+      }
+      break;
+    }
+  }
+  return stops;
+}
+
+/** Move `t` to a plausible New York hour on its day, mostly off weekends, kept inside [earliest, latest]. */
+function returnTimeOfDay(r: Rng, t: number, earliest: number, latest: number): number {
+  const roll = r();
+  const minute = roll < 0.7 ? randInt(r, 8 * 60, 18 * 60 + 30) : roll < 0.9 ? randInt(r, 19 * 60, 23 * 60) : randInt(r, 6 * 60 + 30, 8 * 60);
+  let out = t + (minute - nyMinuteOfDay(t)) * MINUTE;
+  const weekday = NY_WEEKDAY.format(new Date(out));
+  if ((weekday === "Sat" || weekday === "Sun") && r() < 0.75) out += (weekday === "Sat" ? 2 : 1) * DAY;
+  if (out > latest) out -= Math.ceil((out - latest) / DAY) * DAY;
+  return Math.round(Math.min(latest, Math.max(earliest, out)));
+}
+
+/**
+ * A returner's later visits, from their own stream so they never move the person's first visit.
+ * Each one comes back for something: a glance at the cover, straight to the pages that matter, a
+ * back-and-forth between two of them, a faster re-read, the page they lingered on, picking up where
+ * they stopped, or the back matter. The second visit is 12 hours to ~6 days after the first; a
+ * quarter come back once more, from a couple of hours to three days later.
+ */
+export function planReturnVisits(a: { seed: number; tag: string; n: number; roles: string[]; first: PlannedVisit; runStart: number }): PlannedVisit[] {
+  const r = rngFor(a.seed, `returns:${a.n}`);
+  const ctx = returnContext(a.roles);
+  const pace = Math.exp(0.3 * normal(r));
+  const count = r() < 0.25 ? 2 : 1;
+  const out: PlannedVisit[] = [];
+  let prev = a.first;
+  let earlier = a.first.stops;
+  for (let i = 0; i < count; i++) {
+    const again = i > 0;
+    const vi = i + 2;
+    const ids = { visitId: `v_seed_${a.tag}_${a.n}_${vi}`, rngSeed: hashString(`${a.seed}|visit|${a.n}|${vi}`) };
+    const style = pickStyle(r, ctx, earlier, again);
+    const stops = returnStops(style, ctx, earlier, r, pace);
+    const gapRoll = r();
+    const gap = again
+      ? gapRoll < 0.5
+        ? uniform(r, 2 * HOUR, 10 * HOUR)
+        : uniform(r, 14 * HOUR, 3 * DAY)
+      : gapRoll < 0.35
+        ? uniform(r, 12 * HOUR, 36 * HOUR)
+        : gapRoll < 0.75
+          ? uniform(r, 36 * HOUR, 4 * DAY)
+          : uniform(r, 4 * DAY, 6.2 * DAY);
+    const earliest = prev.endAt + (again ? 2 * HOUR : 12 * HOUR);
+    const latestFor = (v: PlannedVisit) => a.runStart - 20 * MINUTE - v.durationMs;
+    let visit = makeVisit(r, stops, ids, { injections: true });
+    if (latestFor(visit) < earliest) {
+      // Too close to the run for this visit: a shorter one, without injections, or none at all.
+      const trimmed = stops.slice();
+      while (trimmed.length > 1 && a.runStart - 20 * MINUTE - trimmed.reduce((x, s) => x + s.ms, 0) < earliest) trimmed.pop();
+      visit = makeVisit(r, trimmed, ids, { injections: false });
+      if (latestFor(visit) < earliest && again) break;
+    }
+    const latest = latestFor(visit);
+    // A gap that overshoots the run is redrawn inside the window, not clamped: clamping piles every
+    // late returner onto the run's last day.
+    const target = prev.endAt + gap <= latest ? prev.endAt + gap : uniform(r, earliest, latest);
+    const start = latest < earliest ? latest : returnTimeOfDay(r, target, earliest, latest);
+    place(visit, start);
+    visit.returnStyle = style;
+    out.push(visit);
+    prev = visit;
+    earlier = [...earlier, ...visit.stops];
+  }
+  return out;
 }
 
 function drawFirstStart(r: Rng, earliest: number, latest: number, runStart: number): number {
@@ -530,11 +759,13 @@ export function buildPlan(input: PlanInput): Plan {
         if (start2 < 0) start2 = v1!.endAt + 12 * HOUR + uniform(rp, 0, Math.max(0, latest2 - (v1!.endAt + 12 * HOUR)));
         place(v2, start2);
       }
+      const downloadDelay = link.allowDownload && rp() < 0.3 ? uniform(rp, 20_000, 10 * MINUTE) : null;
+      const intro = rp() < 0.3 ? pickIntro(rp, usedNames, link.label) : null;
+      if (archetype === "returner") {
+        visits.splice(1, visits.length - 1, ...planReturnVisits({ seed, tag, n, roles: doc.roles, first: v1!, runStart }));
+      }
       const last = visits[visits.length - 1]!;
-      const download =
-        link.allowDownload && rp() < 0.3
-          ? { atMs: Math.round(Math.min(runStart - MINUTE, last.endAt + uniform(rp, 20_000, 10 * MINUTE))) }
-          : null;
+      const download = downloadDelay === null ? null : { atMs: Math.round(Math.min(runStart - MINUTE, last.endAt + downloadDelay)) };
       people.push({
         n,
         botId: botIdFor(tag, n),
@@ -544,7 +775,7 @@ export function buildPlan(input: PlanInput): Plan {
         linkLabel: link.label,
         archetype,
         ip: ipFor(n),
-        intro: rp() < 0.3 ? pickIntro(rp, usedNames, link.label) : null,
+        intro,
         visits,
         download,
         live: false,

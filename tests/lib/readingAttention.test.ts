@@ -259,6 +259,52 @@ describe("computeHot", () => {
     expect(kinds.slice(15).every((k) => k === null)).toBe(true);
   });
 
+  test("Harborline shape: the quota admits only clear standouts held long enough for the verdict to name", () => {
+    const P = 5;
+    const walk = (msFor: (page: number) => number, pages: number[]): EventSpec[] =>
+      pages.map((page, i) => (i + 1 < pages.length ? [page, msFor(page), "turn", pages[i + 1]] : [page, msFor(page), "pagehide"]));
+    const all = Array.from({ length: P }, (_, i) => i + 1);
+    const cover = (rest: (page: number) => number) => (page: number) => (page === 1 ? 6500 : rest(page));
+    const build = (weak: EventSpec[]) =>
+      fixture(
+        P,
+        [
+          ...Array.from({ length: 10 }, (_, i) => ({ name: `most${i}`, visits: [{ events: walk(() => 10000 + i * 200, all) }] })),
+          ...[0, 1, 2].map((i) => ({
+            name: `ret${i}`,
+            visits: [
+              { visitId: `ret${i}-a`, start: T0, events: walk(() => 5000, [1, 2]) },
+              { visitId: `ret${i}-b`, start: T0 + DAY, events: walk(() => 5000, [1, 2, 3]) },
+            ],
+          })),
+          { name: "leila", visits: [{ events: walk(cover((k) => (k === 3 ? 45000 : 5000)), [1, 2, 3]) }] },
+          { name: "reader2", visits: [{ events: walk(cover((k) => (k === 3 ? 39500 : 5000)), [1, 2, 3]) }] },
+          { name: "weak", visits: [{ events: weak }] },
+          ...Array.from({ length: 24 }, (_, i) => ({ name: `ord${i}`, visits: [{ events: walk(cover(() => 5000), [1, 2, 3]) }] })),
+        ],
+        { now: T0 + DAY + HOUR },
+      );
+    // 40 people: the cap is full of returners and people who stayed on most pages, so the quota is 4.
+    // Page 1 typical is 6.5s and page 3 typical is 5s: 45s is 9.0×, 39.5s is 7.9×.
+    const fx = build([[1, 13000, "pagehide"]]);
+    expect(fx.keys).toHaveLength(40);
+    const hot = computeHot(peopleOf(fx), P);
+    expect(fx.keys.slice(13, 16).map((k) => {
+      const r = hot.get(k);
+      return r?.kind === "dwell" ? [r.page, r.pageRatio] : null;
+    })).toEqual([[3, 9], [3, 7.9], null]);
+    // A 2.0× cover stop of 13s qualifies as a long page but is too weak for the quota.
+    const weak = fx.keys[15];
+    expect(hot.get(weak)).toBeNull();
+    // 3.6× but only 18s: the verdict would name no page, so it is not hot either.
+    const short = build(walk(cover((k) => (k === 2 ? 18000 : 5000)), [1, 2]));
+    expect(computeHot(peopleOf(short), P).get(short.keys[15])).toBeNull();
+    // 4.0× and 26s clears both floors.
+    const strong = build([[1, 26000, "pagehide"]]);
+    expect(computeHot(peopleOf(strong), P).get(strong.keys[15])).toMatchObject({ kind: "dwell", page: 1, ms: 26000, pageRatio: 4 });
+    expect(fx.keys.slice(16).every((k) => hot.get(k) === null)).toBe(true);
+  });
+
   test("page 1 time summed over several visits is never a long-page reason", () => {
     const ordinary = (i: number) => ({ name: `cov${i}`, visits: [{ events: [[1, 3000, "turn", 2], [2, 3000, "pagehide"]] as EventSpec[] }] });
     const fx = fixture(

@@ -6,7 +6,8 @@
  */
 
 import { CALLOUT_MIN_PEOPLE } from "@/lib/analytics/reading/constants";
-import { formatDwell } from "@/lib/analytics/reading/format";
+import { formatDwell, formatTypical } from "@/lib/analytics/reading/format";
+import { median } from "@/lib/analytics/reading/pageTable";
 import type { Callouts, LinkRow, PageRow } from "@/lib/analytics/reading/types";
 
 export type EmphasisPages = { typical: ReadonlySet<number>; skipped: ReadonlySet<number>; left: ReadonlySet<number> };
@@ -80,6 +81,42 @@ export function typicalDisplay(row: PageRow | undefined): TypicalDisplay {
 /** True when some page with a typical time too thin to rank beats the "held attention longest" leader. */
 export function thinPageBeatsLeader(held: HeldLongest, pages: PageRow[]): boolean {
   return pages.some((p) => typicalDisplay(p).kind === "thin" && (p.typicalMs ?? 0) > held.typicalMs);
+}
+
+type HeldFlat = NonNullable<Callouts["heldFlat"]>;
+
+/**
+ * The "no single page stood out" figures as shown: the API ties pages on raw ms, but the card and
+ * table print rounded times, so every ranked page that prints the same time as a listed page (or
+ * the card's "about" figure) joins the list and the rest median is taken over what's left. The
+ * rest figure is dropped if any remaining page would still print at or above the listed figure.
+ */
+export function heldFlatShown(flat: HeldFlat, pages: PageRow[]): HeldFlat {
+  // The lift branch already lists every ranked page.
+  if (flat.restTypicalMs === null) return flat;
+  const ranked = pages.filter((r): r is PageRow & { typicalMs: number } => typicalDisplay(r).kind === "ranked");
+  const listed = new Set(flat.pages);
+  const listedRows = () => ranked.filter((r) => listed.has(r.page));
+  if (listedRows().length !== listed.size) return flat;
+  for (;;) {
+    const rows = listedRows();
+    const shown = new Set(rows.map((r) => formatTypical(r.typicalMs)));
+    shown.add(formatTypical(median(rows.map((r) => r.typicalMs))));
+    const add = ranked.filter((r) => !listed.has(r.page) && shown.has(formatTypical(r.typicalMs)));
+    if (add.length === 0) break;
+    add.forEach((r) => listed.add(r.page));
+  }
+  const rows = listedRows();
+  const typicalMs = median(rows.map((r) => r.typicalMs)) as number;
+  const rest = ranked.filter((r) => !listed.has(r.page));
+  const restTypicalMs = median(rest.map((r) => r.typicalMs));
+  const minListed = Math.min(...rows.map((r) => r.typicalMs));
+  const restClashes = rest.some((r) => r.typicalMs >= minListed || formatTypical(r.typicalMs) === formatTypical(typicalMs));
+  return {
+    pages: rows.map((r) => r.page).sort((a, b) => a - b),
+    typicalMs,
+    restTypicalMs: restClashes || restTypicalMs === null || formatTypical(restTypicalMs) === formatTypical(typicalMs) ? null : restTypicalMs,
+  };
 }
 
 /** Short page label for tight spots ("Pricing"), falling back to the full label. */

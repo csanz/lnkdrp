@@ -1,4 +1,5 @@
 import { CALLOUT_MIN_COUNT, CALLOUT_MIN_PEOPLE, TYPICAL_MIN_READERS } from "./constants";
+import { formatTypical } from "./format";
 import type { Callouts, PageMeta, PageRow, Person } from "./types";
 
 export type { Callouts, PageRow } from "./types";
@@ -114,7 +115,12 @@ const typicalsOf = (rs: PageRow[]) => rs.map((r) => r.typicalMs as number);
 function heldLongestFor(rows: PageRow[], held: PageRow, P: number): Pick<Callouts, "heldLongest" | "heldFlat"> {
   const leaderMs = held.typicalMs as number;
   const eligible = rows.filter((r) => r.typicalMs !== null && r.readCount >= CALLOUT_MIN_PEOPLE);
-  const tiedRows = eligible.filter((r) => r.page === held.page || (r.typicalMs as number) >= HELD_TIE_SHARE * leaderMs).sort((a, b) => a.page - b.page);
+  // A page that prints the same typical time as the leader is tied too, or the callout would name fewer
+  // pages than the table beside it shows at that time (11.3s and 10.8s both read "11s").
+  const leaderText = formatTypical(leaderMs);
+  const tiedRows = eligible
+    .filter((r) => r.page === held.page || (r.typicalMs as number) >= HELD_TIE_SHARE * leaderMs || formatTypical(r.typicalMs) === leaderText)
+    .sort((a, b) => a.page - b.page);
   const canExplain = eligible.length >= 2;
   if (tiedRows.length > Math.min(CALLOUT_MAX_TIED, Math.max(1, Math.floor(P / 3)))) {
     const tiedSet = new Set(tiedRows.map((r) => r.page));

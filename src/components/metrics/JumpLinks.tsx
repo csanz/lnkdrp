@@ -51,15 +51,18 @@ export default function JumpLinks({ pages, links, className = "" }: JumpLinksPro
     { id: "links", label: "Links", show: links },
   ].filter((i) => i.show);
   const active = useActiveSection(items.map((i) => i.id));
+  // Phone tap area: the chip's ::before is placed inside its 1px border, so 7px each way makes 44px.
+  // The nav's matching padding keeps it inside the scroll box (which clips y too), and the negative
+  // margin keeps the sticky bar's height.
   return (
-    <nav aria-label="Jump to section" data-jump-links className={`flex gap-2 overflow-x-auto lg:flex-wrap lg:overflow-visible ${className}`}>
+    <nav aria-label="Jump to section" data-jump-links className={`-my-1.5 flex gap-2 overflow-x-auto py-1.5 lg:my-0 lg:flex-wrap lg:overflow-visible lg:py-0 ${className}`}>
       {items.map(({ id, label }) => (
         <a
           key={id}
           href={`#${id}`}
           onClick={(e) => jumpTo(e, id)}
           aria-current={active === id ? "location" : undefined}
-          className={`relative inline-flex h-8 shrink-0 items-center before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-[''] sm:before:hidden whitespace-nowrap rounded-full border px-3 text-xs font-semibold hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] lg:h-7 ${
+          className={`relative inline-flex h-8 shrink-0 items-center before:absolute before:inset-x-0 before:-inset-y-[7px] before:content-[''] sm:before:hidden whitespace-nowrap rounded-full border px-3 text-xs font-semibold hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] lg:h-7 ${
             active === id
               ? "border-emerald-500/40 bg-emerald-500/10 text-[var(--fg)]"
               : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)]"

@@ -159,6 +159,9 @@ function printDryRun(plan: Plan, opts: { postGap: [number, number]; pacing: Paci
     `injections: ${allVisits.filter((v) => v.hiddenSplit).length} hidden splits, ${allVisits.filter((v) => v.idle).length} idle, ${allVisits.filter((v) => v.killed).length} killed tabs; ` +
       `${plan.people.filter((p) => p.intro).length} introductions, ${plan.people.filter((p) => p.download).length} downloads`,
   );
+  const styles = new Map<string, number>();
+  for (const v of allVisits) if (v.returnStyle) styles.set(v.returnStyle, (styles.get(v.returnStyle) ?? 0) + 1);
+  log(`return visits: ${[...styles.entries()].sort((a, b) => b[1] - a[1]).map(([s, n]) => `${s} ${n}`).join(" · ") || "none"}`);
 
   log(`refused links (${plan.refused.length}):`);
   const limit = plan.runStart - MINUTE;
