@@ -586,6 +586,20 @@ belongs to the workspace, which is why the tools always read the project first.
 - Preview: document count and whether the public page is live. `severity: "high"` when the public page
   is on and lists documents.
 
+#### `lnkdrp_star_docs` (write)
+
+- In: `{ docIds: string[1..50], starred?: boolean = true }`. `GET /api/starred`, then
+  `POST /api/starred { docId, starred }` per document that needs a change (or a not-found check).
+- Out: `{ starred, changed, unchanged, notFound?, starredDocs }`. Stars are the key creator's own
+  sidebar shortlist, not the workspace's, and change nothing recipients see.
+- `starred` on the route sets the state; without it the route toggles (the web star button), which
+  is why the tool always sends it: a repeated call never unstars.
+
+#### `lnkdrp_list_starred` (read)
+
+- In: `{}`. `GET /api/starred`. Out: `{ total, starredDocs: [{ docId, title, starredAt }] }`, sidebar
+  order; deleted and archived documents are left out.
+
 ### Destructive tools: how confirmation works
 
 Nothing irreversible happens on an agent's say-so alone. Before `lnkdrp_delete_share_link`,

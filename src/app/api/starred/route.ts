@@ -107,7 +107,10 @@ export async function POST(request: Request) {
     const actor = await resolveActor(request);
     if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
-    const body = (await request.json().catch(() => ({}))) as Partial<{ docId: string; title?: string }>;
+    // `starred` (optional) sets the state instead of toggling it. The web star button toggles; an
+    // agent starring a batch must be able to repeat a call without unstarring what it starred.
+    const body = (await request.json().catch(() => ({}))) as Partial<{ docId: string; title?: string; starred?: boolean }>;
+    const wanted = typeof body.starred === "boolean" ? body.starred : null;
     const docId = typeof body.docId === "string" ? body.docId.trim() : "";
     const title = typeof body.title === "string" ? body.title.trim() : "";
     if (!isObjectIdString(docId)) return NextResponse.json({ error: "Invalid docId" }, { status: 400 });
@@ -126,7 +129,11 @@ export async function POST(request: Request) {
       .select({ _id: 1 })
       .lean();
 
-    if (existing?._id) {
+    if (existing?._id && wanted === true) {
+      // Already starred: nothing to do.
+    } else if (!existing?._id && wanted === false) {
+      // Already not starred: nothing to do.
+    } else if (existing?._id) {
       await StarredDocModel.deleteOne({ _id: existing._id });
     } else {
       const min = await StarredDocModel.findOne({ orgId, userId }).sort({ sortKey: 1 }).select({ sortKey: 1 }).lean();

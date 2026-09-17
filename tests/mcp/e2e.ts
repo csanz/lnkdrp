@@ -88,6 +88,8 @@ const EXPECTED_TOOLS = [
   "lnkdrp_remove_doc_from_project",
   "lnkdrp_update_project",
   "lnkdrp_delete_project",
+  "lnkdrp_star_docs",
+  "lnkdrp_list_starred",
 ] as const;
 
 /** A syntactically valid key (`lnk_` + 32 base62 chars) that was never minted. */

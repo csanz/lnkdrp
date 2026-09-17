@@ -610,6 +610,28 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
       note: "Only the project goes: its documents, their links and analytics are kept. Its public page stops working and the project can't be restored. It shows you the project, its document count and whether its public page is live, and will not proceed without your yes.",
     },
   },
+  {
+    name: "lnkdrp_star_docs",
+    purpose: "Star or unstar documents so they sit at the top of your sidebar.",
+    access: "write",
+    detail: {
+      inputs: ["docIds — 1 to 50 documents", "starred — true to star (default), false to unstar"],
+      output: "Which documents changed, which were already that way, which weren't found, and your starred list afterwards.",
+      errors: ["not_found — reported per document in notFound, not as an error"],
+      note: "Stars are yours, not the workspace's, and recipients never see them. Safe to repeat: starring a starred document does nothing.",
+    },
+  },
+  {
+    name: "lnkdrp_list_starred",
+    purpose: "List your starred documents, in sidebar order.",
+    access: "read",
+    detail: {
+      inputs: [],
+      output: "Each starred document's id, title and when it was starred.",
+      errors: [],
+      note: "Deleted and archived documents are left out; their stars come back if the document does.",
+    },
+  },
 ];
 
 /** Short answers to the questions people hit first. Shared by `/connect` and the public guides. */

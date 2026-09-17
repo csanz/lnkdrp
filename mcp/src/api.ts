@@ -208,6 +208,9 @@ export type DocPatch = Partial<{
 }>;
 
 /** One project from `/api/projects…`. Fields a given route does not return are null. */
+/** One starred document, as `GET /api/starred` lists it. */
+export type ApiStarredDoc = { id: string; title: string | null; starredAt: string | null };
+
 export type ApiProject = {
   id: string;
   shareId: string | null;
@@ -643,6 +646,27 @@ export class ApiClient {
 
   async deleteDoc(docId: string): Promise<void> {
     await this.request("DELETE", `/api/docs/${encodeURIComponent(docId)}`);
+  }
+
+  /**
+   * `GET /api/starred` — the key owner's starred documents in this workspace, in their sidebar order.
+   * Stars are per person: they are the key creator's, not the workspace's.
+   */
+  async listStarred(): Promise<ApiStarredDoc[]> {
+    const body = rec(await this.request("GET", "/api/starred"));
+    return (Array.isArray(body.docs) ? body.docs : []).map((raw) => {
+      const r = rec(raw);
+      return { id: strOrNull(r.id) ?? "", title: strOrNull(r.title), starredAt: typeof r.starredAt === "number" && r.starredAt > 0 ? new Date(r.starredAt).toISOString() : null };
+    });
+  }
+
+  /** `POST /api/starred { docId, starred }` — set one document's star (idempotent with `starred`). */
+  async setStarred(docId: string, starred: boolean): Promise<ApiStarredDoc[]> {
+    const body = rec(await this.request("POST", "/api/starred", { body: { docId, starred } }));
+    return (Array.isArray(body.docs) ? body.docs : []).map((raw) => {
+      const r = rec(raw);
+      return { id: strOrNull(r.id) ?? "", title: strOrNull(r.title), starredAt: typeof r.starredAt === "number" && r.starredAt > 0 ? new Date(r.starredAt).toISOString() : null };
+    });
   }
 
   /** `GET /api/projects` — non-request projects, most recently updated first, page-based. */
