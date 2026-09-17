@@ -8,9 +8,9 @@
  */
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { CheckIcon, ExclamationTriangleIcon } from "@heroicons/react/24/outline";
+import { CheckIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import Spinner from "@/components/ui/Spinner";
 import { PAYG_DEFAULT_SPEND_LIMIT_CENTS } from "@/lib/billing/subscriptionState";
 import { CREDITS_COPY } from "@/lib/client/planLimit";
@@ -27,6 +27,17 @@ type BillingStatus = {
   proPriceLabel?: string | null;
   error?: string;
 };
+
+/** The payment that made the change, from the workspace's newest paid invoice. */
+type Receipt = { amountCents: number; currency: string; url: string | null };
+
+function formatMoney(cents: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: currency.toUpperCase() }).format(cents / 100);
+  } catch {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
+}
 
 type Phase = "processing" | "active" | "timeout" | "error";
 
@@ -64,9 +75,7 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
   const [message, setMessage] = useState<string | null>(null);
   // Bumped by "Check again" to restart polling after a timeout or an error.
   const [run, setRun] = useState(0);
-  // The balance after the upgrade, read once Pro is confirmed, so the page states what the workspace
-  // actually has now rather than only what the plan promises.
-  const [creditsNow, setCreditsNow] = useState<number | null>(null);
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
 
   useEffect(() => {
     // Demo mode previews every state without auth or Stripe; it never touches access control.
@@ -159,33 +168,38 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
   const periodEnd = formatLongDate(status?.stripeCurrentPeriodEnd);
   const canceling = Boolean(status?.stripeCancelAtPeriodEnd);
 
-  // Pro checkout is only offered to workspaces that are not on Pro, so a confirmed Pro upgrade is
-  // always a change from Free.
+  // The payment behind the change, so the page confirms what was charged and links the receipt.
+  // Read from the newest paid invoice; if Stripe has not listed it yet the line simply omits it.
   useEffect(() => {
     if (!proActive) return;
     if (demo) {
-      setCreditsNow(proCredits);
+      setReceipt({ amountCents: 2900, currency: "usd", url: null });
       return;
     }
     let cancelled = false;
-    void fetch("/api/credits/snapshot?fast=1&bust=1", { cache: "no-store" })
+    void fetch("/api/billing/invoices", { cache: "no-store" })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j: { creditsRemaining?: unknown } | null) => {
-        if (!cancelled && typeof j?.creditsRemaining === "number") setCreditsNow(j.creditsRemaining);
+      .then((j: { invoices?: Array<{ date?: string; status?: string; amountCents?: number; currency?: string; hostedInvoiceUrl?: string | null }> } | null) => {
+        const paid = (j?.invoices ?? [])
+          .filter((inv) => inv.status === "paid" && typeof inv.amountCents === "number")
+          .sort((a, b) => String(b.date ?? "").localeCompare(String(a.date ?? "")))[0];
+        if (!cancelled && paid) {
+          setReceipt({ amountCents: paid.amountCents as number, currency: paid.currency || "usd", url: paid.hostedInvoiceUrl ?? null });
+        }
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [proActive, demo, proCredits]);
+  }, [proActive, demo]);
 
   let headline: string;
   let lede: string;
   if (proActive) {
     headline = `Your workspace ${workspaceName} is now on Pro.`;
     lede = canceling
-      ? `Heads up: this subscription is set to cancel. Pro stays on${periodEnd ? ` until ${periodEnd}` : " until the end of this billing period"}, then ${workspaceName} goes back to Free.`
-      : `Your plan changed from Free to Pro. It applies to everyone in ${workspaceName}, and Stripe has emailed your receipt.`;
+      ? `Heads up: this subscription is set to cancel. Pro stays on${periodEnd ? ` until ${periodEnd}` : " until the end of this billing period"}, then the workspace goes back to Free.`
+      : "Your plan changed from Free to Pro, for everyone in this workspace. You can cancel any time from Billing, and Pro stays on until the end of the period you paid for.";
   } else if (paygActive) {
     headline = `Pay-as-you-go is on for ${workspaceName}.`;
     lede = `Your card is on file. Once your credits run out, AI features keep working at ${CREDITS_COPY.perCreditUsd} per credit, billed monthly for what you use, up to ${formatUsdFromCents(PAYG_DEFAULT_SPEND_LIMIT_CENTS)} a month. Change that limit any time in Limits.`;
@@ -202,136 +216,118 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
       "Stripe has your payment. Pro turns on as soon as Stripe confirms it, usually within a few seconds. You can leave this page; it turns on either way.";
   }
 
-  const initial = workspaceName.trim().charAt(0).toUpperCase() || "W";
-  const done = proActive || paygActive;
-  const problem = phase === "timeout" || phase === "error";
-
-  // What changed, as a receipt: the facts someone checks right after paying.
-  const rows: Array<{ label: string; value: ReactNode }> = proActive
-    ? [
-        {
-          label: "Workspace",
-          value: (
-            <span className="inline-flex items-center gap-2">
-              <span aria-hidden="true" className="grid h-6 w-6 place-items-center rounded-md bg-black text-[11px] font-semibold text-white">
-                {initial}
-              </span>
-              {workspaceName}
-            </span>
-          ),
-        },
-        {
-          label: "Plan",
-          value: (
-            <span>
-              <span className="text-black/45 line-through decoration-black/30">Free</span>
-              <span className="mx-2 text-black/40" aria-hidden="true">
-                →
-              </span>
-              <span className="font-semibold">Pro</span>
-              {status?.proPriceLabel ? <span className="text-black/55"> · {status.proPriceLabel}</span> : null}
-            </span>
-          ),
-        },
-        {
-          label: "AI credits",
-          value: (
-            <span>
-              {creditsNow !== null ? `${creditsNow} available now` : `${proCredits} a month`}
-              <span className="text-black/55"> · refills every month</span>
-            </span>
-          ),
-        },
-        { label: "Documents", value: "Unlimited, plus unlimited projects" },
-        { label: "Analytics", value: "Who opened each link, time on every page" },
-        {
-          label: "Team",
-          value: `${proCollaborators} ${proCollaborators === 1 ? "collaborator" : "collaborators"} included · agents never take a seat`,
-        },
-        {
-          label: canceling ? "Pro ends" : "Renews",
-          value: periodEnd ?? "At the end of each billing period",
-        },
-      ]
-    : [];
-
   return (
-    <div className="mx-auto flex max-w-xl flex-col items-center text-center" aria-live="polite">
-      <div
-        aria-hidden="true"
-        className={[
-          "grid h-14 w-14 place-items-center rounded-full",
-          done ? "bg-white text-black motion-safe:animate-[lnkdrpUpgradeIn_500ms_cubic-bezier(0.22,0.61,0.36,1)_both]" : "bg-white/10 text-white",
-        ].join(" ")}
-      >
-        {done ? (
-          <CheckIcon className="h-7 w-7" strokeWidth={2.25} />
-        ) : problem ? (
-          <ExclamationTriangleIcon className="h-6 w-6 text-white/80" />
-        ) : (
-          <Spinner className="h-6 w-6 text-white/70" label={null} />
-        )}
-      </div>
-
-      {done ? (
-        <p className="mt-6 rounded-full border border-white/15 bg-white/[0.06] px-3 py-1 text-[13px] font-medium text-white/80">
-          Payment confirmed · plan changed
-        </p>
-      ) : null}
-
-      <h1 className="mt-5 font-serif text-balance text-4xl leading-[1.08] tracking-tight text-white sm:text-5xl">{headline}</h1>
-      <p className="mt-4 max-w-lg text-balance text-base leading-7 text-white/65">{lede}</p>
-
-      {rows.length ? (
-        <dl className="mt-8 w-full overflow-hidden rounded-2xl bg-white text-left text-black shadow-[0_30px_80px_-30px_rgba(255,255,255,0.25)] motion-safe:animate-[lnkdrpUpgradeIn_500ms_cubic-bezier(0.22,0.61,0.36,1)_both]">
-          {rows.map((row, i) => (
-            <div
-              key={row.label}
-              className={["flex flex-col gap-1 px-6 py-3.5 sm:flex-row sm:items-center sm:gap-6", i ? "border-t border-black/[0.07]" : ""].join(" ")}
-            >
-              <dt className="shrink-0 text-sm text-black/50 sm:w-28">{row.label}</dt>
-              <dd className="min-w-0 text-[15px] leading-6 text-black/85">{row.value}</dd>
-            </div>
-          ))}
-        </dl>
-      ) : null}
-
-      <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-        {problem ? (
-          <button type="button" onClick={() => setRun((r) => r + 1)} className={PRIMARY_BUTTON}>
-            Check again
-          </button>
-        ) : (
-          <Link href="/dashboard" className={PRIMARY_BUTTON}>
-            Go to dashboard
-          </Link>
-        )}
-        {problem ? (
-          <Link href="/dashboard" className={SECONDARY_BUTTON}>
-            Go to dashboard
-          </Link>
+    <div>
+      <div className="max-w-2xl" aria-live="polite">
+        <h1 className="font-serif text-balance text-5xl leading-[1.04] tracking-tight text-white sm:text-6xl md:text-[56px]">{headline}</h1>
+        <p className="mt-6 max-w-xl text-base leading-7 text-white/65">{lede}</p>
+        {phase === "processing" ? (
+          <div className="mt-6 flex items-center gap-3 text-sm text-white/55">
+            <Spinner className="h-4 w-4 text-white/60" label={null} />
+            Waiting for Stripe
+          </div>
         ) : null}
-        <Link href="/dashboard?tab=billing" className={SECONDARY_BUTTON}>
-          Manage billing
-        </Link>
+
+        {proActive ? (
+          <div className="mt-7 inline-flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-white/15 bg-white/[0.05] px-4 py-3 text-sm text-white/75">
+            <span className="inline-flex items-center gap-2 font-medium text-white">
+              <span aria-hidden="true" className="grid h-5 w-5 place-items-center rounded-full bg-white text-black">
+                <CheckIcon className="h-3.5 w-3.5" strokeWidth={2.5} />
+              </span>
+              Payment confirmed
+            </span>
+            {receipt ? (
+              <span className="sm:border-l sm:border-white/15 sm:pl-4 tabular-nums">{formatMoney(receipt.amountCents, receipt.currency)} charged</span>
+            ) : null}
+            {periodEnd ? (
+              <span className="sm:border-l sm:border-white/15 sm:pl-4">
+                {canceling ? "Pro ends" : "Renews"} {periodEnd}
+                {!canceling && status?.proPriceLabel ? <span className="text-white/50"> at {status.proPriceLabel}</span> : null}
+              </span>
+            ) : null}
+            {receipt?.url ? (
+              <a
+                href={receipt.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="sm:border-l sm:border-white/15 sm:pl-4 font-medium text-white underline decoration-white/30 underline-offset-4 hover:decoration-white"
+              >
+                View receipt
+              </a>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="mt-8 flex flex-wrap items-center gap-3">
+          {phase === "timeout" || phase === "error" ? (
+            <button type="button" onClick={() => setRun((r) => r + 1)} className={PRIMARY_BUTTON}>
+              Check again
+            </button>
+          ) : (
+            <Link href="/dashboard" className={PRIMARY_BUTTON}>
+              Go to dashboard
+            </Link>
+          )}
+          {phase === "timeout" || phase === "error" ? (
+            <Link href="/dashboard" className={SECONDARY_BUTTON}>
+              Go to dashboard
+            </Link>
+          ) : null}
+          <Link href="/dashboard?tab=billing" className={SECONDARY_BUTTON}>
+            Manage billing
+          </Link>
+        </div>
       </div>
 
       {proActive ? (
-        <p className="mt-8 text-sm leading-6 text-white/50">
-          Next:{" "}
-          <Link href="/upload" className="text-white/80 underline decoration-white/30 underline-offset-4 hover:text-white">
-            share a document
-          </Link>
-          ,{" "}
-          <Link href="/mcp" className="text-white/80 underline decoration-white/30 underline-offset-4 hover:text-white">
-            connect your agent
-          </Link>
-          , or{" "}
-          <Link href="/dashboard?tab=teams" className="text-white/80 underline decoration-white/30 underline-offset-4 hover:text-white">
-            invite a collaborator
-          </Link>
-          .
-        </p>
+        <>
+          <div className="mt-12 grid overflow-hidden rounded-2xl bg-white text-black shadow-[0_30px_80px_-30px_rgba(255,255,255,0.25)] motion-safe:animate-[lnkdrpUpgradeIn_500ms_cubic-bezier(0.22,0.61,0.36,1)_both] md:grid-cols-[minmax(0,1fr)_minmax(0,1.35fr)]">
+            <div className="p-7 sm:p-8">
+              <p className="text-sm text-black/55">AI credits, every month</p>
+              <p className="mt-2 font-serif text-6xl leading-none tracking-tight tabular-nums">{proCredits}</p>
+              <p className="mt-4 max-w-xs text-sm leading-6 text-black/60">
+                About 60 AI compares at standard quality. Unused credits don’t roll over to the next month.
+              </p>
+            </div>
+            <div className="border-t border-black/10 p-7 sm:p-8 md:border-l md:border-t-0">
+              <p className="text-sm text-black/55">What this workspace can do now</p>
+              <ul className="mt-4 space-y-3 text-[15px] leading-6 text-black/85">
+                <li>Unlimited documents and projects, with no cap on what you share</li>
+                <li>See who opened each link and how long they spent on every page</li>
+                <li>Recipients can browse every version and see what changed</li>
+                <li>
+                  {proCollaborators} {proCollaborators === 1 ? "collaborator" : "collaborators"} included, and agents never
+                  take a seat
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div className="mt-16">
+            <h2 className="font-serif text-2xl tracking-tight text-white">Where to start</h2>
+            <ul className="mt-5 divide-y divide-white/10 border-y border-white/10">
+              {[
+                { href: "/upload", title: "Share a document", body: "There is no document cap on Pro, so share the ones you were holding back." },
+                { href: "/activity", title: "See who’s reading", body: "Every open is recorded, by name when the reader signs in." },
+                { href: "/mcp", title: "Connect your agent", body: "Share and track documents from Claude Code, Cursor, or any MCP client." },
+                { href: "/dashboard?tab=teams", title: "Invite a collaborator", body: "Work on this workspace’s documents together." },
+              ].map((row) => (
+                <li key={row.href}>
+                  <Link
+                    href={row.href}
+                    className="group flex items-center gap-4 px-1 py-4 transition hover:bg-white/[0.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[15px] font-medium text-white">{row.title}</span>
+                      <span className="mt-0.5 block text-sm leading-6 text-white/55">{row.body}</span>
+                    </span>
+                    <ChevronRightIcon className="h-4 w-4 shrink-0 text-white/35 transition group-hover:text-white/70" aria-hidden="true" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </>
       ) : null}
 
       {demo ? (
