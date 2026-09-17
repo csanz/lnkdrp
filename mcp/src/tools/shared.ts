@@ -79,6 +79,25 @@ export type ShareView = {
   isArchived: boolean;
 };
 
+/**
+ * A share view whose link fields describe the default link's own state.
+ *
+ * The document's `shareEnabled` means "any link still opens", so a disabled default link read as
+ * enabled while lnkdrp_list_share_links said disabled. `shareEnabled` becomes the default link's,
+ * `anyLinkActive` keeps the document-wide answer, and `link` carries the default link's status.
+ * Used by every tool that returns this view, so get_share and set_share_access agree.
+ */
+export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: ShareView) {
+  const defaultLink = (await api.listShareLinks(doc.id).catch(() => [])).find((l) => l.isDefault) ?? null;
+  if (!defaultLink) return view;
+  return {
+    ...view,
+    shareEnabled: defaultLink.enabled && defaultLink.active,
+    anyLinkActive: doc.shareEnabled,
+    link: { id: defaultLink.id, isDefault: true, status: defaultLink.status, expiresAt: defaultLink.expiresAt },
+  };
+}
+
 /** The `lnkdrp_get_share` result for a doc. */
 export function shareView(api: ApiClient, doc: ApiDoc): ShareView {
   return {

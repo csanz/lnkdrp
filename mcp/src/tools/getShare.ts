@@ -6,7 +6,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { ToolContext } from "../context";
 import { handleTool } from "../errors";
 import { readAiOutcome } from "./aiWarnings";
-import { docRefShape, resolveDoc, SAFETY_TAIL, shareView } from "./shared";
+import { docRefShape, resolveDoc, SAFETY_TAIL, shareView, withDefaultLinkState } from "./shared";
 import { UNTRUSTED_LIMITS, untrustedOrNull } from "../untrusted";
 
 /** Register `lnkdrp_get_share`. */
@@ -65,21 +65,7 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
           };
         }
       }
-      // The default link. `shareUrl` and the settings fields are already that link's, but the
-      // document's `shareEnabled` means "any link still opens", so a disabled default link read as
-      // enabled here while lnkdrp_list_share_links said disabled. Report the link's own state, and
-      // keep the document-wide answer as anyLinkActive.
-      const defaultLink = (await ctx.api.listShareLinks(doc.id)).find((l) => l.isDefault) ?? null;
-      if (defaultLink) {
-        return {
-          ...view,
-          shareEnabled: defaultLink.enabled && defaultLink.active,
-          anyLinkActive: doc.shareEnabled,
-          link: { id: defaultLink.id, isDefault: true, status: defaultLink.status, expiresAt: defaultLink.expiresAt },
-          warnings,
-        };
-      }
-      return { ...view, warnings };
+      return { ...(await withDefaultLinkState(ctx.api, doc, view)), warnings };
     }),
   );
 }

@@ -9,7 +9,7 @@ import type { DocPatch } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
-import { docIdSchema, SAFETY_TAIL, shareView } from "./shared";
+import { docIdSchema, SAFETY_TAIL, shareView, withDefaultLinkState } from "./shared";
 
 export const setShareAccessInputShape = {
   idempotencyKey: z.string().min(1).max(128).describe("Caller-chosen key (1-128 chars); a retry with the same key returns the stored result."),
@@ -66,7 +66,8 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
       const { value } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "set_share_access", args.idempotencyKey), async () => {
         if (Object.keys(patch).length > 0) await ctx.api.patchDoc(args.docId, patch);
         if (wantsPassword) await ctx.api.setSharePassword(args.docId, args.password ?? null);
-        return shareView(ctx.api, await ctx.api.getDoc(args.docId));
+        const doc = await ctx.api.getDoc(args.docId);
+        return withDefaultLinkState(ctx.api, doc, shareView(ctx.api, doc));
       }, { fingerprint: fingerprintArgs(args) });
       return value;
     }),
