@@ -81,6 +81,13 @@ const EXPECTED_TOOLS = [
   "lnkdrp_delete_share_link",
   "lnkdrp_archive_doc",
   "lnkdrp_delete_doc",
+  "lnkdrp_create_project",
+  "lnkdrp_list_projects",
+  "lnkdrp_get_project",
+  "lnkdrp_add_docs_to_project",
+  "lnkdrp_remove_doc_from_project",
+  "lnkdrp_update_project",
+  "lnkdrp_delete_project",
 ] as const;
 
 /** A syntactically valid key (`lnk_` + 32 base62 chars) that was never minted. */
@@ -422,7 +429,9 @@ async function main(): Promise<void> {
       assert(Array.isArray(caps!.notMcpAccessible) && caps!.notMcpAccessible!.length > 0, "capabilities.notMcpAccessible is empty or missing");
       for (const f of caps!.notMcpAccessible!) assert(typeof f.feature === "string" && typeof f.reason === "string", `notMcpAccessible entry malformed: ${JSON.stringify(f)}`);
       const named = new Set(caps!.notMcpAccessible!.map((f) => f.feature));
-      assert(named.has("requestRepos") && named.has("downloadAccessRequests") && named.has("projectManagement"), `notMcpAccessible missing an expected feature: ${JSON.stringify([...named])}`);
+      assert(named.has("requestRepos") && named.has("downloadAccessRequests"), `notMcpAccessible missing an expected feature: ${JSON.stringify([...named])}`);
+      // The project tools exist now, so listing project management as uncovered would be a lie.
+      assert(!named.has("projectManagement"), `notMcpAccessible still names projectManagement: ${JSON.stringify([...named])}`);
       info("capabilities", caps);
     });
 

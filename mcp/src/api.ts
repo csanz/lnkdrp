@@ -30,6 +30,20 @@
  * - `POST /api/docs/:id/links` `{ label, … }`  -> 201 `{ link, planWarning? }` (always enabled — links are never plan-capped; `planWarning` only flags nearness to the shared-document cap)
  * - `PATCH /api/docs/:id/links/:linkId`        -> `{ link, planWarning? }`
  * - `DELETE /api/docs/:id/links/:linkId`       -> 204 (soft archive; analytics kept)
+ *
+ * Projects, verified against the route handlers on 2026-09-17:
+ * - `GET  /api/projects?q=&page=&limit=`       -> `{ total, page, limit, projects: [{ id, shareId, name, slug, description, docCount, autoAddFiles, createdDate, updatedDate }] }`
+ *                                                  (non-request projects only; `q` matches name/description, not slug; always pass `limit` — the route reads a missing one as 1)
+ * - `POST /api/projects` `{ name, description? }` -> 201 `{ project: { id, shareId, name, slug, description, docCount, autoAddFiles }, planWarning? }`;
+ *                                                  402 `{ code: "plan_limit", limit: "projects" }`; 409 duplicate name
+ * - `GET  /api/projects/:id/docs?q=&page=&limit=` -> `{ project: { id, shareId, name, slug, description, autoAddFiles, shareEnabled, isRequest, request }, total, page, limit,
+ *                                                  docs: [{ id, shareId, title, status, version, previewImageUrl, projectIds, createdDate, updatedDate }] }` (archived docs excluded; 404 unknown project)
+ * - `PATCH /api/projects/:id` `{ name, description, autoAddFiles, shareEnabled? }` -> `{ project }`. Without `name` it is a
+ *                                                  `shareEnabled`-only toggle; WITH `name` it overwrites description and autoAddFiles too
+ *                                                  (omitted = "" / false), so callers must send the current values.
+ * - `DELETE /api/projects/:id`                 -> `{ ok: true }` (hard delete; documents stay and lose the membership)
+ * - `PATCH /api/docs/:id` `{ addProjectId }` / `{ removeProjectId }` -> `{ doc: { …, projectIds } }`. The route does not
+ *                                                  check the project exists in the workspace, so the tools verify it first.
  */
 import { API_TIMEOUT_MS } from "./config";
 import { mapApiError, ToolError } from "./errors";
@@ -65,6 +79,8 @@ export type ApiDoc = {
   shareAllowPdfDownload: boolean;
   shareAllowRevisionHistory: boolean;
   sharePasswordEnabled: boolean;
+  /** Projects the document belongs to (only ones that exist in this workspace). */
+  projectIds: string[];
 };
 
 export type ApiDocListItem = { id: string; shareId: string | null; title: string | null; status: string };
@@ -185,7 +201,44 @@ export type DocPatch = Partial<{
   shareAllowPdfDownload: boolean;
   shareAllowRevisionHistory: boolean;
   isArchived: boolean;
+  /** Add the document to this project (membership only; the primary pointer is set if it had none). */
+  addProjectId: string;
+  /** Take the document out of this project. The document itself is untouched. */
+  removeProjectId: string;
 }>;
+
+/** One project from `/api/projects…`. Fields a given route does not return are null. */
+export type ApiProject = {
+  id: string;
+  shareId: string | null;
+  name: string;
+  slug: string;
+  description: string;
+  docCount: number | null;
+  autoAddFiles: boolean;
+  /** Whether the public `/p/:shareId` page resolves. Null where the route does not say (the list). */
+  shareEnabled: boolean | null;
+  /** Request repos share the collection; the project tools refuse them. */
+  isRequest: boolean;
+  createdDate: string | null;
+  updatedDate: string | null;
+};
+
+export type ApiProjectsPage = { total: number; page: number; limit: number; projects: ApiProject[] };
+
+/** One document row of `GET /api/projects/:id/docs`. */
+export type ApiProjectDoc = {
+  id: string;
+  shareId: string | null;
+  title: string | null;
+  status: string;
+  version: number | null;
+  previewImageUrl: string | null;
+  createdDate: string | null;
+  updatedDate: string | null;
+};
+
+export type ApiProjectDocsPage = { project: ApiProject; total: number; page: number; limit: number; docs: ApiProjectDoc[] };
 
 export type ShareViewsTotals = {
   views: number;
@@ -267,6 +320,28 @@ function asDoc(raw: unknown): ApiDoc {
     shareAllowPdfDownload: Boolean(d.shareAllowPdfDownload),
     shareAllowRevisionHistory: Boolean(d.shareAllowRevisionHistory),
     sharePasswordEnabled: Boolean(d.sharePasswordEnabled ?? d.sharePasswordHash),
+    projectIds: Array.isArray(d.projectIds) ? d.projectIds.filter((x): x is string => typeof x === "string") : [],
+  };
+}
+
+/** Normalise a project from any `/api/projects…` envelope (already unwrapped). */
+function asProject(raw: unknown): ApiProject {
+  const p = rec(raw);
+  const id = strOrNull(p.id);
+  if (!id) throw new ToolError("upstream", "lnkdrp API returned a project without an id.");
+  return {
+    id,
+    shareId: strOrNull(p.shareId),
+    name: strOrNull(p.name) ?? "",
+    slug: strOrNull(p.slug) ?? "",
+    description: strOrNull(p.description) ?? "",
+    docCount: typeof p.docCount === "number" && Number.isFinite(p.docCount) ? p.docCount : null,
+    autoAddFiles: Boolean(p.autoAddFiles),
+    shareEnabled: typeof p.shareEnabled === "boolean" ? p.shareEnabled : null,
+    // `request` is non-null only for request repos (the docs route sets it from the token too).
+    isRequest: Boolean(p.isRequest) || (p.request !== undefined && p.request !== null),
+    createdDate: strOrNull(p.createdDate),
+    updatedDate: strOrNull(p.updatedDate),
   };
 }
 
@@ -375,6 +450,16 @@ export class ApiClient {
   /** Public share URL for a doc. */
   shareUrl(shareId: string): string {
     return `${this.baseUrl}/s/${encodeURIComponent(shareId)}`;
+  }
+
+  /** Public project page (`/p/:shareId`): lists the project's documents whose links are on. */
+  projectPublicUrl(shareId: string): string {
+    return `${this.baseUrl}/p/${encodeURIComponent(shareId)}`;
+  }
+
+  /** The project's page inside the app, for the workspace's members. */
+  projectAppUrl(projectId: string): string {
+    return `${this.baseUrl}/project/${encodeURIComponent(projectId)}`;
   }
 
   /** Low-level request; throws `ToolError` on non-2xx, timeout or network failure. */
@@ -558,6 +643,74 @@ export class ApiClient {
 
   async deleteDoc(docId: string): Promise<void> {
     await this.request("DELETE", `/api/docs/${encodeURIComponent(docId)}`);
+  }
+
+  /** `GET /api/projects` — non-request projects, most recently updated first, page-based. */
+  async listProjects(input: { q?: string | undefined; page?: number | undefined; limit: number }): Promise<ApiProjectsPage> {
+    const body = rec(
+      await this.request("GET", "/api/projects", { query: { q: input.q || undefined, page: input.page, limit: input.limit } }),
+    );
+    const rows = Array.isArray(body.projects) ? body.projects : [];
+    return { total: num(body.total), page: num(body.page, 1), limit: num(body.limit, input.limit), projects: rows.map(asProject) };
+  }
+
+  /** `POST /api/projects` — 402 `plan_limit` at the Free project cap, 409 on a duplicate name. */
+  async createProject(input: { name: string; description?: string | undefined }): Promise<{ project: ApiProject; planWarning?: PlanWarning }> {
+    const body = rec(
+      await this.request("POST", "/api/projects", {
+        body: { name: input.name, ...(input.description !== undefined ? { description: input.description } : {}) },
+      }),
+    );
+    return { project: asProject(body.project), planWarning: asPlanWarning(body.planWarning) };
+  }
+
+  /** `GET /api/projects/:id/docs` — the project (404 when not in this workspace) and a page of its documents. */
+  async getProjectDocs(
+    projectId: string,
+    input: { q?: string | undefined; page?: number | undefined; limit: number },
+  ): Promise<ApiProjectDocsPage> {
+    const body = rec(
+      await this.request("GET", `/api/projects/${encodeURIComponent(projectId)}/docs`, {
+        query: { q: input.q || undefined, page: input.page, limit: input.limit },
+      }),
+    );
+    const rows = Array.isArray(body.docs) ? body.docs : [];
+    return {
+      project: asProject(body.project),
+      total: num(body.total),
+      page: num(body.page, 1),
+      limit: num(body.limit, input.limit),
+      docs: rows.map((raw) => {
+        const d = rec(raw);
+        return {
+          id: strOrNull(d.id) ?? "",
+          shareId: strOrNull(d.shareId),
+          title: strOrNull(d.title),
+          status: strOrNull(d.status) ?? "draft",
+          version: typeof d.version === "number" ? d.version : null,
+          previewImageUrl: strOrNull(d.previewImageUrl),
+          createdDate: strOrNull(d.createdDate),
+          updatedDate: strOrNull(d.updatedDate),
+        };
+      }),
+    };
+  }
+
+  /**
+   * `PATCH /api/projects/:id`. Pass `name` and the route rewrites description and autoAddFiles as
+   * well, so a rename must carry their current values; `{ shareEnabled }` alone touches nothing else.
+   */
+  async updateProject(
+    projectId: string,
+    patch: { name: string; description: string; autoAddFiles: boolean; shareEnabled?: boolean | undefined } | { shareEnabled: boolean },
+  ): Promise<ApiProject> {
+    const body = rec(await this.request("PATCH", `/api/projects/${encodeURIComponent(projectId)}`, { body: patch }));
+    return asProject(body.project);
+  }
+
+  /** `DELETE /api/projects/:id` — removes the project; its documents stay in the workspace. */
+  async deleteProject(projectId: string): Promise<void> {
+    await this.request("DELETE", `/api/projects/${encodeURIComponent(projectId)}`);
   }
 
   /** Set (`string`) or remove (`null`) the share password. */

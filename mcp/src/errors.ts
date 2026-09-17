@@ -64,7 +64,11 @@ function planLimitAlternatives(limit: string): string[] {
         "find one to archive with lnkdrp_list_docs, then archive it with lnkdrp_archive_doc — it frees a slot and keeps its analytics",
       ];
     case "projects":
-      return ["put the document in an existing project", "archive a finished project to free the slot"];
+      return [
+        "put the documents in the project this workspace already has: lnkdrp_list_projects finds it, lnkdrp_add_docs_to_project adds them",
+        "rename or repurpose an existing project with lnkdrp_update_project instead of creating another",
+        "delete a project that is no longer needed with lnkdrp_delete_project (its documents stay in the workspace) to free the slot",
+      ];
     case "collaborators":
       return ["share a link with them instead of adding them to the workspace — recipients never need an account"];
     case "version_history":
@@ -98,6 +102,7 @@ function str(value: unknown): string {
 
 const FETCH_BLOCKED_RE = /failed to fetch url|url is not allowed|timed out fetching|only http\(s\) urls|empty pdf|missing url/i;
 const TOO_LARGE_RE = /too large/i;
+const RATE_LIMITED_RE = /over its limit of \d+ requests/i;
 
 /** A finite number or null. */
 function numOrNull(value: unknown): number | null {
@@ -165,6 +170,9 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
 
   switch (status) {
     case 404:
+      if (/^\/api\/projects\//.test(path)) {
+        return new ToolError("not_found", "No such project in this workspace. lnkdrp_list_projects lists the projects you can use.", { status });
+      }
       // Link routes 404 when the link is not on that document, even though the document exists;
       // "No such document" sent agents looking for a document problem that was not there.
       if (/\/links\/[^/]+/.test(path) || /^link not found/i.test(errorText)) {
@@ -177,6 +185,10 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
       }
       return new ToolError("not_found", "No such document in this workspace.", { status });
     case 400: {
+      // Older routes (the project routes among them) catch the API-key limiter's error and answer 400.
+      if (RATE_LIMITED_RE.test(message)) {
+        return new ToolError("rate_limited", message, { status });
+      }
       if (FETCH_BLOCKED_RE.test(errorText)) {
         return new ToolError("fetch_blocked", `lnkdrp could not fetch the source URL: ${errorText}`, { status, details: { error: errorText } });
       }

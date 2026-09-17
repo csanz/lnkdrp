@@ -90,7 +90,7 @@ document/project limits are still Free's, but it will not just run dry once its 
 Also carries `capabilities` (mt_1mVhlEPXGT): `{ links: {limited:false}, documents/projects: {limit,used,remaining}|null,
 collaborators: {limit,used}|null, analyticsDaysLimit, deepAnalytics, recipientsCanBrowseVersions, notMcpAccessible:
 [{feature,reason}] }` — one call to answer "what can I do here" instead of learning a gate by hitting it.
-`notMcpAccessible` names product features (`requestRepos`, `downloadAccessRequests`, `projectManagement`) that have
+`notMcpAccessible` names product features (`requestRepos`, `downloadAccessRequests`) that have
 no MCP tool at all, `requestRepos`'s reason also saying whether `NEXT_PUBLIC_FEATURE_REQUESTS` is on for this
 deployment.
 
@@ -205,9 +205,32 @@ The two document-level operations the app has always had and the MCP lacked. Bot
 - delete — In `{ docId, confirm? }` → `DELETE /api/docs/:id` → `{ ok: true, deleted: { docId, title, links } }`. Permanent from
   the owner's side. Refuses while `status` is `preparing`.
 
+### Projects (`src/tools/projects.ts`)
+A project groups documents; a document can be in several. Each project has a public page `/p/:shareId` (on by default)
+listing its documents whose link is on. Tools naming a project take exactly one of `projectId` / `projectSlug` (a slug is
+resolved through `GET /api/projects`), then read it through the workspace-scoped `GET /api/projects/:id/docs`, which is
+also the existence check. Request repos are refused as `not_found`. `PATCH /api/docs/:id` does not check `addProjectId`
+belongs to the workspace, so membership changes always read the project first.
+
+- create_project — In `{ idempotencyKey, name (1–80), description? }` → `POST /api/projects` → `{ project: { projectId, slug,
+  name, description, docCount, appUrl, publicPageEnabled, publicUrl, … }, planWarning?, replayed? }`. `plan_limit` at the Free
+  project cap; a duplicate name (409) is `validation`.
+- list_projects — In `{ query?, page? = 1, limit? = 25 }` → `GET /api/projects?q=&page=&limit=` → `{ total, page, limit, hasMore,
+  projects }`. `query` matches names/descriptions.
+- get_project — In `{ projectId | projectSlug, query?, page?, limit? }` → `GET /api/projects/:id/docs` → `{ project, total, page,
+  limit, hasMore, docs: [{ docId, shareId, shareUrl, title, status, version, … }] }`. Archived documents excluded.
+- add_docs_to_project — In `{ projectId | projectSlug, docIds (1–50) }` → `GET /api/docs?ids=` (existence), then per document
+  `GET /api/docs/:id?lite=1` and `PATCH /api/docs/:id { addProjectId }` → `{ project, added, alreadyInProject, notFound, failed? }`.
+- remove_doc_from_project — In `{ projectId | projectSlug, docId }` → `PATCH /api/docs/:id { removeProjectId }` → `{ removed,
+  wasInProject, remainingProjectIds? }`. Membership only; no confirmation.
+- update_project — In `{ projectId | projectSlug, name?, description?, publicPageEnabled? }` → `PATCH /api/projects/:id`. The route
+  overwrites name, description and autoAddFiles together, so the tool fills in current values for what was not passed.
+- delete_project — In `{ projectId | projectSlug, confirm? }` → confirms with the human first → `DELETE /api/projects/:id` →
+  `{ ok, deleted: { projectId, slug, documentsDetached } }`. Documents stay.
+
 ### Destructive tools confirm with the human (`src/confirm.ts`)
-`destructiveHint: true` is metadata a client may display, not a gate. Before `delete_share_link`, `delete_doc` or
-`archive_doc(archived: true)` changes anything, the server builds a preview — what goes, recipient views and last-viewed,
+`destructiveHint: true` is metadata a client may display, not a gate. Before `delete_share_link`, `delete_doc`,
+`delete_project` or `archive_doc(archived: true)` changes anything, the server builds a preview — what goes, recipient views and last-viewed,
 links affected, whether it is reversible, a `low`/`high` severity — and gets a yes one of two ways:
 
 1. **Elicitation**, when the client declared `elicitation` at `initialize` (`server.server.getClientCapabilities()`; the

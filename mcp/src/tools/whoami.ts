@@ -33,9 +33,9 @@ type UncoveredFeature = { feature: string; reason: string };
  * to learn a gate existed was to call a write tool and read the `plan_limit` it happened to throw:
  * true, but only after the fact, per tool, and only for the handful of gates that tool's own code
  * path hits. This answers the question up front, and — the other half of the gap — names product
- * surfaces (requests, download-access requests, project management) that have no MCP tool at all,
- * so "no tool for X" reads as "not built yet" rather than being indistinguishable from "X doesn't
- * exist" or a silently-failed attempt.
+ * surfaces (requests, download-access requests) that have no MCP tool at all, so "no tool for X"
+ * reads as "not built yet" rather than being indistinguishable from "X doesn't exist" or a
+ * silently-failed attempt. Project management left this list when `tools/projects.ts` shipped.
  */
 function buildCapabilities(
   plan: { plan: string | null; limits: { documents: number | null; projects: number | null; analyticsDays: number | null; collaborators: number | null }; usage: { documents: number; projects: number; members: number } } | null,
@@ -53,7 +53,6 @@ function buildCapabilities(
         : "disabled on this deployment (NEXT_PUBLIC_FEATURE_REQUESTS) — the web app hides it too",
     },
     { feature: "downloadAccessRequests", reason: "no MCP tool, and the app itself has no read endpoint for these yet" },
-    { feature: "projectManagement", reason: "no MCP tool creates, lists or moves documents between projects (GET /api/projects exists in the app, unwrapped)" },
   ];
   return {
     // Links are never capped on any plan — stated here, not just in tool descriptions, so a plan
@@ -91,7 +90,7 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
         "before attempting anything: documents/projects (limit, used, remaining; limit null = unlimited), links " +
         "(never limited on any plan), collaborators, analyticsDaysLimit (the window lnkdrp_get_share_stats serves), " +
         "deepAnalytics and recipientsCanBrowseVersions (both Pro-only), and notMcpAccessible - real product features " +
-        "(request repos, download-access requests, project management) that have no MCP tool at all, so their absence " +
+        "(request repos, download-access requests) that have no MCP tool at all, so their absence " +
         "from the tool list reads as 'not built yet', not 'this workspace lacks it' or a silently unsupported request. " +
         "Call this first to confirm the connection works. " +
         SAFETY_TAIL,

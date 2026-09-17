@@ -291,7 +291,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     access: "read",
     detail: {
       inputs: ["none"],
-      output: "Your user id and email, the workspace id and name, plan (free or pro), the key's prefix and scopes, the client name lnkdrp recorded, credits remaining and when they reset, whether the workspace can be billed for on-demand credits (onDemand), the credit cost per AI action by tier, and a capabilities object answering \"what can I do here\" in one call: document/project/collaborator caps with what's used and left, whether links are ever limited (they're not), the analytics window, whether recipients can browse prior versions, and which product features (request repos, download-access requests, project management) have no MCP tool at all yet.",
+      output: "Your user id and email, the workspace id and name, plan (free or pro), the key's prefix and scopes, the client name lnkdrp recorded, credits remaining and when they reset, whether the workspace can be billed for on-demand credits (onDemand), the credit cost per AI action by tier, and a capabilities object answering \"what can I do here\" in one call: document/project/collaborator caps with what's used and left, whether links are ever limited (they're not), the analytics window, whether recipients can browse prior versions, and which product features (request repos, download-access requests) have no MCP tool at all yet.",
       errors: ["unauthorized — the key is missing or invalid", "key_revoked — the key was revoked"],
       note: "Call it first to confirm the connection; it costs nothing.",
     },
@@ -511,6 +511,103 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
       output: "ok, and what was deleted (document id, title, how many links).",
       errors: ["validation — still processing, or you did not confirm", "not_found"],
       note: "Permanent from the owner's side: the document, its file and every link disappear. It shows you the document, its links and traffic first, and will not proceed without your yes.",
+    },
+  },
+  {
+    name: "lnkdrp_create_project",
+    purpose: "Create a project to group documents, such as a data room for one deal.",
+    access: "write",
+    detail: {
+      inputs: [
+        "idempotencyKey — required; reuse it on retries and you get the same project back",
+        "name — 1 to 80 characters, unique in the workspace",
+        "description — optional; shown on the project's public page",
+      ],
+      output: "The project: id, slug, name, description, document count, its page in the app, and its public page URL.",
+      errors: [
+        "plan_limit — the Free plan's project cap; the error lists what you can still do without upgrading",
+        "validation — a missing or too-long name, or a name another project already uses",
+      ],
+      note: "A new project's public page is on from the start and lists every document you add whose link is on. Turn it off with update_project if you don't want it.",
+    },
+  },
+  {
+    name: "lnkdrp_list_projects",
+    purpose: "List the workspace's projects, or search them by name.",
+    access: "read",
+    detail: {
+      inputs: [
+        "query — optional; matches project names and descriptions",
+        "page — optional, default 1",
+        "limit — optional, 1 to 50, default 25",
+      ],
+      output: "total, page, limit, hasMore and the projects, most recently updated first: id, slug, name, description, document count, app URL and dates.",
+      errors: ["validation — an out-of-range page or limit"],
+    },
+  },
+  {
+    name: "lnkdrp_get_project",
+    purpose: "One project and a page of its documents.",
+    access: "read",
+    detail: {
+      inputs: [
+        "projectId or projectSlug — exactly one",
+        "query — optional; only documents whose title or link slug matches",
+        "page — optional, default 1",
+        "limit — optional, 1 to 50, default 25",
+      ],
+      output: "The project (id, slug, name, description, document count, app URL, whether its public page is on and its URL) and its documents: id, shareId and share URL, title, status, version and dates. Archived documents are left out.",
+      errors: ["not_found — no such project in this workspace", "validation — both or neither of projectId and projectSlug"],
+    },
+  },
+  {
+    name: "lnkdrp_add_docs_to_project",
+    purpose: "Put documents into a project. A document can be in several projects.",
+    access: "write",
+    detail: {
+      inputs: ["projectId or projectSlug — exactly one", "docIds — 1 to 50 document ids"],
+      output: "Which documents were added, which were already in the project, which were not found (unknown, deleted or archived), and any that failed with the reason.",
+      errors: ["not_found — no such project in this workspace", "forbidden — a read-only key, or a viewer in the workspace"],
+      note: "Safe to retry. While the project's public page is on, added documents whose link is on are listed there.",
+    },
+  },
+  {
+    name: "lnkdrp_remove_doc_from_project",
+    purpose: "Take a document out of a project. The document itself stays.",
+    access: "write",
+    detail: {
+      inputs: ["projectId or projectSlug — exactly one", "docId"],
+      output: "Whether it was removed, whether it was in the project at all, and the projects it is still in.",
+      errors: ["not_found — no such project or document in this workspace"],
+      note: "Not a delete: the document, its links, their analytics and its other projects are untouched, so it doesn't ask first.",
+    },
+  },
+  {
+    name: "lnkdrp_update_project",
+    purpose: "Rename a project, change its description, or turn its public page on or off.",
+    access: "write",
+    detail: {
+      inputs: [
+        "projectId or projectSlug — exactly one",
+        "name — optional, 1 to 80 characters",
+        "description — optional; an empty string clears it",
+        "publicPageEnabled — optional; whether the project's public page works",
+      ],
+      output: "The updated project.",
+      errors: ["validation — nothing to change, or a name another project already uses", "not_found"],
+      note: "Anything you don't pass is kept. Renaming keeps the slug and every URL.",
+    },
+  },
+  {
+    name: "lnkdrp_delete_project",
+    purpose: "Delete a project after confirming with you. Its documents stay in the workspace.",
+    access: "write",
+    confirms: true,
+    detail: {
+      inputs: ["projectId or projectSlug — exactly one", "confirm — only for clients that cannot show you a prompt"],
+      output: "ok, and what was deleted (project id, slug, how many documents left it).",
+      errors: ["validation — you did not confirm", "not_found"],
+      note: "Only the project goes: its documents, their links and analytics are kept. Its public page stops working and the project can't be restored. It shows you the project, its document count and whether its public page is live, and will not proceed without your yes.",
     },
   },
 ];
