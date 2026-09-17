@@ -39,6 +39,19 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { ToolError } from "./errors";
 
 /** What a destructive tool is about to do, in terms a person can weigh. */
+/**
+ * The workspace each session's server acts on, as a getter so a rename picked up by
+ * `lnkdrp_whoami` shows. Set by `createMcpServer`; a server without an entry (tests) has no label.
+ * A person can have one lnkdrp connection per workspace, so the prompt says which one is about to
+ * lose something.
+ */
+const workspaceLabels = new WeakMap<object, () => string>();
+
+/** Record the workspace name `requireHumanConfirmation` shows for this server. */
+export function setConfirmationWorkspace(server: McpServer, label: () => string): void {
+  workspaceLabels.set(server, label);
+}
+
 export type DestructivePreview = {
   /** One line naming the action and the target, e.g. `Delete the link "Sequoia" on "Q3 deck"`. */
   headline: string;
@@ -77,8 +90,10 @@ export async function requireHumanConfirmation(
   preview: DestructivePreview,
   args: { confirm?: boolean | undefined },
 ): Promise<{ via: "elicitation" | "confirm_flag"; elicitationFailed?: true }> {
+  const workspace = workspaceLabels.get(server)?.() ?? null;
   const previewDetails = {
     requiresConfirmation: true,
+    ...(workspace ? { workspace } : {}),
     preview,
     reversible: preview.reversible,
     severity: preview.severity,
@@ -90,7 +105,7 @@ export async function requireHumanConfirmation(
       result = await server.server.elicitInput({
         mode: "form",
         message:
-          `${preview.headline}\n\n` +
+          `${preview.headline}${workspace ? ` (workspace: ${workspace})` : ""}\n\n` +
           preview.facts.map((f) => `• ${f}`).join("\n") +
           `\n\n${preview.reversible ? "This can be undone from the app." : "This cannot be undone."}`,
         requestedSchema: {
@@ -143,7 +158,7 @@ export async function requireHumanConfirmation(
   if (args.confirm === true) return { via: "confirm_flag" };
   throw new ToolError(
     "validation",
-    `${preview.headline}. This needs the user's explicit go-ahead. Show them the facts in details.preview, ` +
+    `${preview.headline}${workspace ? ` in the workspace ${workspace}` : ""}. This needs the user's explicit go-ahead. Show them the facts in details.preview, ` +
       `ask, and only if they say yes call this tool again with confirm: true. ` +
       (preview.severity === "high"
         ? "This target has real recipient traffic — do not confirm on your own judgement."

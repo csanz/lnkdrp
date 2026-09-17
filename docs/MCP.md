@@ -150,6 +150,17 @@ under `lnkdrp` would replace or collide with the first; under its own name both 
 claude mcp add --transport http lnkdrp-acme https://mcp.lnkdrp.com/mcp \
   --header "Authorization: Bearer lnk_key_created_in_acme"
 ```
+
+The server tells the agent which workspace a connection is for, so the connection name is not the
+only clue (`mcp/src/server.ts`):
+
+- **Instructions:** the server instructions open with the workspace from the `initialize` whoami
+  (name, personal or team, plan) and tell the agent to use the connection named for the workspace
+  the person mentions, and to ask before writing when more than one lnkdrp connection is available
+  and no workspace was named.
+- **Every result:** every successful tool result carries `workspace: { id, name }`, added once in
+  `createMcpServer` rather than per tool, so the agent can say where a write landed.
+- **Confirmations:** destructive prompts name it: "Delete … (workspace: USAVX)".
  To
 verify a key without a client: `curl -H "Authorization: Bearer lnk_…" https://lnkdrp.com/api/agent/whoami`.
 That counts as "verified" on `/connect`; only an MCP client connecting counts as "connected".
