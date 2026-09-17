@@ -67,7 +67,7 @@ function SessionLoginControl() {
 }
 
 /**
- * Render the PublicHeader UI (static, transparent, logo left + About/MCP/Pricing/Log In right).
+ * Render the PublicHeader UI (static, transparent, logo left + About/Connect your agent/Pricing/Log In right).
  */
 export default function PublicHeader({ containerClassName }: { containerClassName?: string } = {}) {
   const authEnabled = useAuthEnabled();
@@ -86,8 +86,12 @@ export default function PublicHeader({ containerClassName }: { containerClassNam
             <Link href="/about" className={NAV_LINK_CLASS}>
               About
             </Link>
-            <Link href="/mcp" className={NAV_LINK_CLASS}>
-              MCP
+            {/* Says what the page is for rather than naming the protocol; the short form keeps all four
+                links on one row on a phone. Same words as the home page's "Connect your agent" section,
+                which links to the same guide. */}
+            <Link href="/mcp" className={NAV_LINK_CLASS} aria-label="Connect your agent">
+              <span className="sm:hidden">Connect</span>
+              <span className="hidden sm:inline">Connect your agent</span>
             </Link>
             <Link href="/pricing" className={NAV_LINK_CLASS}>
               Pricing
