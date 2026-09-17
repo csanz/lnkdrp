@@ -50,10 +50,11 @@ export function registerArchiveDocTool(server: McpServer, ctx: ToolContext): voi
         "the document stops resolving, the document stops counting toward the Free plan's shared-document cap, and all analytics " +
         "are kept. This is the right way to free a slot without losing anything - the alternative lnkdrp_share_pdf's plan_limit " +
         "error points to. Unarchiving re-checks the cap and may fail with plan_limit on Free. " +
-        "DESTRUCTIVE when archiving: it takes every link down at once, so this tool confirms with the human first. If the " +
-        "client supports it, the user is shown the document, its links and traffic, and a yes/no prompt. If not, the call fails " +
-        "with requiresConfirmation and a preview in details - show it to the user, ask, and call again with confirm: true only " +
-        "if they say yes. " +
+        "Archiving takes every link down at once. When no recipient has ever opened or downloaded the document it just " +
+        "archives (nothing anyone has seen goes away, and it is reversible). When recipients have opened it, this tool " +
+        "confirms with the human first: if the client supports it, the user is shown the document, its links and traffic, " +
+        "and a yes/no prompt; if not, the call fails with requiresConfirmation and a preview in details - show it to the " +
+        "user, ask, and call again with confirm: true only if they say yes. " +
         DISMISSED_PROMPT_NOTE +
         "Unarchiving needs no confirmation. " +
         SAFETY_TAIL,
@@ -65,7 +66,10 @@ export function registerArchiveDocTool(server: McpServer, ctx: ToolContext): voi
       if (args.archived && doc.isArchived) return { ok: true, docId: doc.id, isArchived: true, unchanged: true };
       if (!args.archived && !doc.isArchived) return { ok: true, docId: doc.id, isArchived: false, unchanged: true };
 
-      if (args.archived) {
+      // Owner decision 2026-09-17: archiving is reversible and keeps analytics, so it asks only when
+      // recipients have opened or downloaded the document. Deletes always ask.
+      const hasTraffic = recipientViews > 0 || downloads > 0;
+      if (args.archived && hasTraffic) {
         await requireHumanConfirmation(
           server,
           {
@@ -92,6 +96,7 @@ export function registerArchiveDocTool(server: McpServer, ctx: ToolContext): voi
         docId: updated.id,
         isArchived: updated.isArchived,
         linksAffected: live.length,
+        ...(args.archived && !hasTraffic ? { confirmation: "not needed: no recipient has opened or downloaded this document" } : {}),
         ...(planWarning ? { planWarning } : {}),
       };
     }),

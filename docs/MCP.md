@@ -510,7 +510,7 @@ session that did not set it (mt_GOKLLvF4-v).
 - Errors: `validation` (the default link cannot be deleted - disable it instead; or the user did
   not confirm), `not_found`.
 
-### `lnkdrp_archive_doc` (write, destructive when archiving, confirms first)
+### `lnkdrp_archive_doc` (write; confirms first only when recipients have opened the document)
 
 - In: `{ docId, archived: boolean, confirm?: boolean }`.
 - Out: `{ ok, docId, isArchived, linksAffected, planWarning? }`; `{ unchanged: true }` when the
@@ -519,8 +519,10 @@ session that did not set it (mt_GOKLLvF4-v).
   the Free plan's shared-document count, and all analytics are kept. It is the third alternative
   `lnkdrp_share_pdf`'s `plan_limit` error offers. `archived: false` brings everything back and
   re-checks the cap (may fail with `plan_limit` on Free).
-- Archiving confirms with the human first, because it takes every link down at once. Unarchiving
-  needs no confirmation.
+- Archiving takes every link down at once. Owner decision (2026-09-17): because it is reversible and
+  keeps analytics, it confirms with the human only when a recipient has opened or downloaded the
+  document; otherwise it archives straight away and says `confirmation: "not needed: ..."`.
+  Unarchiving never needs confirmation. Deletes always confirm.
 - Errors: `validation` (not confirmed), `not_found`, `plan_limit` (unarchiving at the cap).
 
 ### `lnkdrp_delete_doc` (write, destructive, confirms first)
@@ -628,7 +630,7 @@ belongs to the workspace, which is why the tools always read the project first.
 ### Destructive tools: how confirmation works
 
 Nothing irreversible happens on an agent's say-so alone. Before `lnkdrp_delete_share_link`,
-`lnkdrp_delete_doc`, `lnkdrp_delete_project` or `lnkdrp_archive_doc(archived: true)` changes anything, the server builds a
+`lnkdrp_delete_doc`, `lnkdrp_delete_project` or `lnkdrp_archive_doc(archived: true)` on a document recipients have opened changes anything, the server builds a
 **preview** — what will go, how many recipients opened it and when, how many links are affected,
 whether it can be undone — and gets a human's yes in one of two ways:
 
