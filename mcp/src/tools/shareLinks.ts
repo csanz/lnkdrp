@@ -147,13 +147,26 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
       if (args.audience !== undefined) settings.audience = args.audience;
       if (args.password !== undefined) settings.password = args.password;
       if (args.expiresAt !== undefined) settings.expiresAt = args.expiresAt;
+      // The label is how the human finds a link again; two identical ones on a document are
+      // indistinguishable in every list and search. Allowed (a resend can be deliberate), but said.
+      const wantedLabel = args.label.trim().toLowerCase();
+      const sameLabel = (await ctx.api.listShareLinks(args.docId).catch(() => [])).filter(
+        (l) => l.label.trim().toLowerCase() === wantedLabel,
+      );
       const { link, planWarning } = await ctx.api.createShareLink(args.docId, settings);
       const note = planNote(planWarning, ctx.api.baseUrl);
+      const warnings = sameLabel.length
+        ? [
+            `This document already has ${sameLabel.length === 1 ? "a link" : `${sameLabel.length} links`} labelled "${args.label.trim()}" ` +
+              `(shareId ${sameLabel.map((l) => l.shareId).join(", ")}). Tell the human, and consider a label or audience that tells them apart.`,
+          ]
+        : [];
       return {
         link: withUrl(ctx.api, link),
         shareUrl: ctx.api.shareUrl(link.shareId),
         ...(planWarning ? { planWarning } : {}),
         ...(note ? { planNote: note } : {}),
+        ...(warnings.length ? { warnings } : {}),
       };
     }),
   );
