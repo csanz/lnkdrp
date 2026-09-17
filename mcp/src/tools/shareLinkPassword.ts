@@ -78,7 +78,9 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
       description:
         "Test whether a password opens a share link, without revealing what the real one is. Use it to confirm the " +
         "password a human gave you actually works, after setting it or before passing it on. Returns { passwordEnabled, " +
-        "matches }; matches is false whenever the link has no password at all. This is safe to call: it does not open the " +
+        "matches, linkStatus, opensLink }; matches is false whenever the link has no password at all. matches only compares " +
+        "the password: a disabled or expired link opens for nobody, so check opensLink (matches and linkStatus active) " +
+        "before telling the human the link works. This is safe to call: it does not open the " +
         "link, does not record a view, and does not spend the recipient's unlock attempts - a recipient gets only 10 " +
         "tries per 5 minutes, so checking through the public link could lock out the person it was made for. This tool " +
         "has its own separate limit of 20 checks per link per 5 minutes. Owner or admin of the key's own workspace. " +
@@ -88,7 +90,18 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
     },
     handleTool(async (args) => {
       const res = await ctx.api.verifyShareLinkPassword(args.docId, args.linkId, args.password);
-      return { docId: args.docId, linkId: args.linkId, passwordEnabled: res.passwordEnabled, matches: res.matches };
+      // A matching password on a disabled or expired link still opens nothing. Without the link's
+      // status an agent told the human "the password works" about a link nobody can open.
+      const link = (await ctx.api.listShareLinks(args.docId)).find((l) => l.id === args.linkId) ?? null;
+      const linkStatus = link?.status ?? null;
+      return {
+        docId: args.docId,
+        linkId: args.linkId,
+        passwordEnabled: res.passwordEnabled,
+        matches: res.matches,
+        linkStatus,
+        opensLink: res.matches && linkStatus === "active",
+      };
     }),
   );
 }
