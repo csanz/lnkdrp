@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArchiveBoxIcon,
+  ArchiveBoxXMarkIcon,
   ChevronRightIcon,
   DocumentMagnifyingGlassIcon,
   EllipsisHorizontalIcon,
@@ -13,20 +14,41 @@ import {
   TrashIcon,
 } from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
+import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { fetchJson } from "@/lib/http/fetchJson";
+import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
+import { upsellKeyForLimit } from "@/lib/client/upsellCopy";
+import { refreshPlan } from "@/lib/client/usePlan";
 import { notifyDocsChanged, notifyProjectsChanged, optimisticallyAddProjectToSidebarCache } from "@/lib/sidebarCache";
 
 type ProjectDTO = { id: string; name: string; slug?: string };
 
 // Temporary: hide unfinished actions from the doc menu.
 const SHOW_QUALITY_REVIEW = false;
-const SHOW_ARCHIVE = false;
 const SHOW_REPORT = false;
+
+/** Width of the main menu and of the projects submenu (px); keep in sync with their `w-[…]` classes. */
+const MENU_WIDTH = 220;
+const SUBMENU_WIDTH = 260;
+const SUBMENU_GAP = 10;
+const MENU_ITEM_SELECTOR = '[role="menuitem"],[role="menuitemcheckbox"]';
+
+/**
+ * Trigger looks:
+ * - `outline` (default): the bordered 32px button on project and doc pages.
+ * - `ghost`: hover-revealed, the "..." on rows of the sidebar "See more" modals.
+ * - `sidebar`: hover-revealed, the "..." on left-sidebar rows (same as the project rows there).
+ */
+type TriggerVariant = "outline" | "ghost" | "sidebar";
+
 /**
  * Render the DocActionsMenu UI (uses effects, local state).
+ *
+ * The menu and its dialogs render through portals, so a caller inside a scrolling list or a
+ * transformed modal panel never clips them. Clicks and Enter/Space inside it don't reach the row
+ * that hosts it (rows here are usually clickable links).
  */
-
-
 export default function DocActionsMenu({
   docId,
   currentProjectId,
@@ -35,6 +57,14 @@ export default function DocActionsMenu({
   onDocPatched,
   onDeleted,
   onOpenQualityReview,
+  variant = "outline",
+  className,
+  projectsLabel = "Projects",
+  showRemoveFromProject = true,
+  showArchive = false,
+  isArchived = false,
+  showDelete = true,
+  onRequestDelete,
 }: {
   docId: string;
   currentProjectId?: string | null;
@@ -49,10 +79,26 @@ export default function DocActionsMenu({
   }) => void;
   onDeleted?: () => void;
   onOpenQualityReview?: () => void;
+  variant?: TriggerVariant;
+  /** Classes for the wrapper (e.g. absolute positioning inside a row). */
+  className?: string;
+  /** Label of the item that opens the project picker. */
+  projectsLabel?: string;
+  /** Show "Remove from this project" when `currentProjectId` is set. */
+  showRemoveFromProject?: boolean;
+  /** Show Archive (or Unarchive when `isArchived`). */
+  showArchive?: boolean;
+  isArchived?: boolean;
+  showDelete?: boolean;
+  /** When set, Delete hands off to the caller's own confirm dialog instead of the built-in one. */
+  onRequestDelete?: () => void;
 }) {
+  const { openUpgrade } = useUpgradeModal();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const projectsItemRef = useRef<HTMLButtonElement | null>(null);
+  const submenuRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectDTO[]>([]);
@@ -61,6 +107,11 @@ export default function DocActionsMenu({
   const [projectsLastLoadedAt, setProjectsLastLoadedAt] = useState<number>(0);
   const [projectMembershipBusyId, setProjectMembershipBusyId] = useState<string | null>(null);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [submenuSide, setSubmenuSide] = useState<"left" | "right">("left");
+  // Membership looked up on demand when the caller doesn't know it (e.g. rows from `/api/docs`).
+  const [fetchedProjectIds, setFetchedProjectIds] = useState<string[] | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
 
   const [showNewProject, setShowNewProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -78,17 +129,54 @@ export default function DocActionsMenu({
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const closeMenu = useCallback((opts?: { focusTrigger?: boolean }) => {
+    setOpen(false);
+    setProjectsOpen(false);
+    setMenuPos(null);
+    if (opts?.focusTrigger) buttonRef.current?.focus();
+  }, []);
+
   useEffect(() => {
     if (!open) return;
-/**
- * Handle key down events; updates state (setOpen, setProjectsOpen); uses setOpen, setProjectsOpen.
- */
-
+    /**
+     * Keyboard: Escape closes the submenu, then the menu (and doesn't reach a hosting modal's own
+     * Escape handler); arrows move between items; Tab leaves the menu. Capture phase on `window`
+     * so it runs before bubble-phase Escape listeners such as `Modal`'s.
+     */
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        setOpen(false);
-        setProjectsOpen(false);
+        e.preventDefault();
+        e.stopPropagation();
+        if (projectsOpen) {
+          setProjectsOpen(false);
+          projectsItemRef.current?.focus();
+          return;
+        }
+        closeMenu({ focusTrigger: true });
+        return;
       }
+      const menuEl = menuRef.current;
+      if (!menuEl) return;
+      if (e.key === "Tab") {
+        if (menuEl.contains(document.activeElement)) closeMenu({ focusTrigger: true });
+        return;
+      }
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "Home" && e.key !== "End") return;
+      const scope =
+        projectsOpen && submenuRef.current && submenuRef.current.contains(document.activeElement)
+          ? submenuRef.current
+          : menuEl;
+      const items = Array.from(scope.querySelectorAll<HTMLElement>(MENU_ITEM_SELECTOR)).filter(
+        (el) => !(el as HTMLButtonElement).disabled && (scope === submenuRef.current || !submenuRef.current?.contains(el)),
+      );
+      if (!items.length) return;
+      e.preventDefault();
+      const idx = items.indexOf(document.activeElement as HTMLElement);
+      let next = 0;
+      if (e.key === "End") next = items.length - 1;
+      else if (e.key === "ArrowDown") next = idx < 0 ? 0 : (idx + 1) % items.length;
+      else if (e.key === "ArrowUp") next = idx < 0 ? items.length - 1 : (idx - 1 + items.length) % items.length;
+      items[next]?.focus();
     }
 /**
  * Handle pointer down events; updates state (setOpen, setProjectsOpen); uses contains, setOpen, setProjectsOpen.
@@ -107,13 +195,32 @@ export default function DocActionsMenu({
         setProjectsOpen(false);
       }
     }
-    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("pointerdown", onPointerDown);
     return () => {
-      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("pointerdown", onPointerDown);
     };
+  }, [open, projectsOpen, closeMenu]);
+
+  useEffect(() => {
+    if (!open) return;
+    // Move focus into the menu so keyboard users land on the first item.
+    const id = window.requestAnimationFrame(() => {
+      const first = menuRef.current?.querySelector<HTMLElement>(MENU_ITEM_SELECTOR);
+      first?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
   }, [open]);
+
+  useEffect(() => {
+    if (!projectsOpen) return;
+    const id = window.requestAnimationFrame(() => {
+      const first = submenuRef.current?.querySelector<HTMLElement>(MENU_ITEM_SELECTOR);
+      first?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [projectsOpen]);
 
   const repositionMenu = useCallback(() => {
     const btn = buttonRef.current;
@@ -122,10 +229,13 @@ export default function DocActionsMenu({
 
     const margin = 8;
     const gap = 10;
-    const width = 220; // matches menu width class
+    const width = MENU_WIDTH;
 
     let left = rect.right - width;
     left = Math.max(margin, Math.min(window.innerWidth - width - margin, left));
+    // The projects submenu opens to the left; flip it right when that would leave the viewport
+    // (rows in the left sidebar).
+    setSubmenuSide(left - SUBMENU_GAP - SUBMENU_WIDTH < margin ? "right" : "left");
 
     let top = rect.bottom + gap;
     const menuEl = menuRef.current;
@@ -154,6 +264,17 @@ export default function DocActionsMenu({
 
 
   async function loadProjects() {
+    // Callers that don't know the doc's projects (e.g. rows listed from `/api/docs`) get the
+    // membership looked up once, so the picker can show checkmarks and toggle a project off.
+    if (!Array.isArray(currentProjectIds) && !currentProjectId && fetchedProjectIds === null) {
+      void fetchJson<{ doc?: { projectIds?: string[] } }>(`/api/docs/${encodeURIComponent(docId)}?lite=1`, {
+        method: "GET",
+      })
+        .then((r) => setFetchedProjectIds(Array.isArray(r?.doc?.projectIds) ? r.doc.projectIds : []))
+        .catch(() => {
+          // best-effort: without membership the picker still adds
+        });
+    }
     // Avoid refetching on every open; keeps the picker feeling instant.
     // Still allow refresh after a short window or after an error.
     const now = Date.now();
@@ -195,6 +316,7 @@ export default function DocActionsMenu({
         body: JSON.stringify({ addProjectId: projectId }),
         },
       );
+      if (Array.isArray(res?.doc?.projectIds)) setFetchedProjectIds(res.doc.projectIds);
       onDocPatched?.({
         projectId: typeof res?.doc?.projectId === "string" ? res.doc.projectId : null,
         project: res?.doc?.project ?? null,
@@ -303,27 +425,46 @@ export default function DocActionsMenu({
       setProjectMembershipBusyId(null);
     }
   }
-/**
- * Archive Doc (updates state (setOpen, setProjectsOpen); uses fetchJson, stringify, onDocPatched).
- */
-
-
-  async function archiveDoc() {
+  /**
+   * Archive or unarchive the doc. Un-archiving a shared doc can hit the Free document cap (402), which
+   * opens the upgrade modal instead of an inline error.
+   */
+  async function setArchived(next: boolean) {
+    if (archiveBusy) return;
+    setArchiveBusy(true);
+    setArchiveError(null);
     try {
-      await fetchJson(`/api/docs/${docId}`, {
+      const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ isArchived: true }),
+        body: JSON.stringify({ isArchived: next }),
       });
-      onDocPatched?.({ isArchived: true });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: unknown } | null;
+        const limitErr = res.status === 402 ? parsePlanLimitError(json) : null;
+        if (limitErr) {
+          // Un-archiving a shared doc counts against the Free document cap.
+          closeMenu();
+          openUpgrade(upsellKeyForLimit(limitErr.limit), {
+            used: limitErr.used,
+            max: limitErr.max,
+            graceHint: planLimitGraceHint(limitErr),
+          });
+          return;
+        }
+        throw new Error(typeof json?.error === "string" && json.error ? json.error : `Request failed (${res.status})`);
+      }
+      onDocPatched?.({ isArchived: next });
       notifyDocsChanged();
       // Archiving affects project doc counts (active docs only).
       notifyProjectsChanged();
-      setOpen(false);
-      setProjectsOpen(false);
-      // Archiving removes it from `/api/docs` lists; the current page is still valid.
-    } catch {
-      // ignore (best-effort)
+      // Archived docs don't count as shared documents on the Free plan.
+      refreshPlan();
+      closeMenu({ focusTrigger: false });
+    } catch (e) {
+      setArchiveError(e instanceof Error ? e.message : next ? "Failed to archive" : "Failed to unarchive");
+    } finally {
+      setArchiveBusy(false);
     }
   }
 /**
@@ -377,23 +518,29 @@ export default function DocActionsMenu({
   }
 
   const menuItemBase =
-    "flex w-full items-center justify-between gap-3 px-3 py-2 text-[13px] text-[var(--fg)] hover:bg-[var(--panel-hover)]";
+    "flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[13px] text-[var(--fg)] hover:bg-[var(--panel-hover)] focus:outline-none focus-visible:bg-[var(--panel-hover)]";
 
   const disabledClass = disabled ? "cursor-not-allowed opacity-60 hover:bg-[var(--panel)]" : "";
   const selectedProjectIds = new Set(
     (Array.isArray(currentProjectIds) ? currentProjectIds : null) ??
-      (currentProjectId ? [currentProjectId] : []),
+      (currentProjectId ? [currentProjectId] : (fetchedProjectIds ?? [])),
   );
 
   const projectsPanel = (
     <div
+      ref={submenuRef}
       role="menu"
-      className="absolute right-[calc(100%+10px)] top-0 z-50 w-[260px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+      aria-label={projectsLabel}
+      className={[
+        "absolute top-0 z-50 w-[260px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg",
+        submenuSide === "right" ? "left-[calc(100%+10px)]" : "right-[calc(100%+10px)]",
+      ].join(" ")}
     >
       <ul className="max-h-[320px] overflow-auto py-1">
         <li>
           <button
             type="button"
+            role="menuitem"
             className={menuItemBase}
             onClick={() => {
               setShowNewProject(true);
@@ -420,6 +567,8 @@ export default function DocActionsMenu({
             <li key={p.id}>
               <button
                 type="button"
+                role="menuitemcheckbox"
+                aria-checked={selectedProjectIds.has(p.id)}
                 className={menuItemBase}
                 disabled={Boolean(projectMembershipBusyId)}
                 aria-disabled={Boolean(projectMembershipBusyId)}
@@ -441,6 +590,7 @@ export default function DocActionsMenu({
                       body: JSON.stringify({ removeProjectId: p.id }),
                     })
                       .then((r) => {
+                        if (Array.isArray(r?.doc?.projectIds)) setFetchedProjectIds(r.doc.projectIds);
                         onDocPatched?.({
                           projectId: typeof r?.doc?.projectId === "string" ? r.doc.projectId : null,
                           project: r?.doc?.project ?? null,
@@ -482,11 +632,14 @@ export default function DocActionsMenu({
     </div>
   );
 
+  const archiveLabel = isArchived ? "Unarchive" : "Archive";
+
   const renderedMenu =
     open && !disabled ? (
       <div
         ref={menuRef}
         role="menu"
+        aria-label="Document actions"
         className="fixed z-[1000] w-[220px] overflow-visible rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
         style={{
           // Always render visibly; if positioning hasn't computed yet, fall back to a safe default.
@@ -497,7 +650,11 @@ export default function DocActionsMenu({
         <ul className="py-1">
           <li className="relative">
             <button
+              ref={projectsItemRef}
               type="button"
+              role="menuitem"
+              aria-haspopup="menu"
+              aria-expanded={projectsOpen}
               className={menuItemBase}
               onClick={() => {
                 const next = !projectsOpen;
@@ -512,17 +669,18 @@ export default function DocActionsMenu({
                 <span className="text-[var(--muted-2)]">
                   <FolderIcon className="h-4 w-4" />
                 </span>
-                <span>Projects</span>
+                <span>{projectsLabel}</span>
               </span>
               <ChevronRightIcon className="h-4 w-4 text-[var(--muted-2)]" />
             </button>
             {projectsOpen ? projectsPanel : null}
           </li>
 
-          {currentProjectId ? (
+          {currentProjectId && showRemoveFromProject ? (
             <li>
               <button
                 type="button"
+                role="menuitem"
                 className={menuItemBase}
                 onClick={() => {
                   setProjectsError(null);
@@ -539,12 +697,15 @@ export default function DocActionsMenu({
             </li>
           ) : null}
 
-          <li className="my-1 h-px bg-[var(--border)]" />
+          {showArchive || SHOW_QUALITY_REVIEW || SHOW_REPORT || showDelete ? (
+            <li className="my-1 h-px bg-[var(--border)]" role="separator" />
+          ) : null}
 
           {SHOW_QUALITY_REVIEW ? (
             <li>
               <button
                 type="button"
+                role="menuitem"
                 className={menuItemBase}
                 onClick={() => {
                   setOpen(false);
@@ -562,16 +723,33 @@ export default function DocActionsMenu({
             </li>
           ) : null}
 
-          {SHOW_ARCHIVE ? (
+          {showArchive ? (
             <li>
-              <button type="button" className={menuItemBase} onClick={() => void archiveDoc()}>
+              <button
+                type="button"
+                role="menuitem"
+                className={menuItemBase}
+                disabled={archiveBusy}
+                aria-disabled={archiveBusy}
+                onClick={() => void setArchived(!isArchived)}
+              >
                 <span className="inline-flex items-center gap-2">
-                  <span className="text-zinc-500">
-                    <ArchiveBoxIcon className="h-4 w-4" />
+                  <span className="text-[var(--muted-2)]">
+                    {isArchived ? (
+                      <ArchiveBoxXMarkIcon className="h-4 w-4" />
+                    ) : (
+                      <ArchiveBoxIcon className="h-4 w-4" />
+                    )}
                   </span>
-                  <span>Archive</span>
+                  <span>{archiveLabel}</span>
                 </span>
+                {archiveBusy ? <Spinner className="h-4 w-4 text-[var(--muted-2)]" /> : null}
               </button>
+              {archiveError ? (
+                <div className="px-3 pb-2 text-[12px] font-medium text-red-600" role="alert">
+                  {archiveError}
+                </div>
+              ) : null}
             </li>
           ) : null}
 
@@ -579,6 +757,7 @@ export default function DocActionsMenu({
             <li>
               <button
                 type="button"
+                role="menuitem"
                 className={menuItemBase}
                 onClick={() => {
                   setShowReport(true);
@@ -597,45 +776,83 @@ export default function DocActionsMenu({
               </button>
             </li>
           ) : null}
-          <li>
-            <button
-              type="button"
-              className={[menuItemBase, "text-red-700 hover:bg-red-50"].join(" ")}
-              onClick={() => {
-                setShowDeleteConfirm(true);
-                setDeleteError(null);
-                setOpen(false);
-                setProjectsOpen(false);
-              }}
-            >
-              <span className="inline-flex items-center gap-2">
-                <span className="text-red-600">
-                  <TrashIcon className="h-4 w-4" />
+          {showDelete ? (
+            <li>
+              <button
+                type="button"
+                role="menuitem"
+                className={[menuItemBase, "text-red-700 hover:bg-red-50"].join(" ")}
+                onClick={() => {
+                  closeMenu();
+                  if (onRequestDelete) {
+                    onRequestDelete();
+                    return;
+                  }
+                  setShowDeleteConfirm(true);
+                  setDeleteError(null);
+                }}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <span className="text-red-600">
+                    <TrashIcon className="h-4 w-4" />
+                  </span>
+                  <span>Delete document…</span>
                 </span>
-                <span>Delete document…</span>
-              </span>
-            </button>
-          </li>
+              </button>
+            </li>
+          ) : null}
         </ul>
       </div>
     ) : null;
 
+  const triggerClass =
+    variant === "ghost"
+      ? [
+          // Same as the hover-revealed "..." on the sidebar "See more" modal rows.
+          "inline-flex items-center justify-center rounded-lg p-1 text-[var(--muted-2)] transition-opacity hover:bg-[var(--panel)] hover:text-[var(--fg)]",
+          "focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+          open ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+        ].join(" ")
+      : variant === "sidebar"
+        ? [
+            // Same as the "..." on left-sidebar project rows (`IconButton` ghost, xs).
+            "inline-flex items-center justify-center rounded-md p-1 text-[var(--muted-2)] transition-opacity hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+            "focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+            open ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          ].join(" ")
+        : [
+            "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
+            "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+          ].join(" ");
+
+  /** Dialogs render at `document.body` so a transformed ancestor (a modal panel) can't trap them. */
+  const portal = (node: React.ReactNode) =>
+    typeof document !== "undefined" ? createPortal(node, document.body) : null;
+
   return (
-    <div ref={rootRef} className="relative">
+    <div
+      ref={rootRef}
+      // No positioning of its own: the menu and dialogs are portals, so callers may place this freely.
+      className={className}
+      // Rows hosting this menu are usually clickable links. React bubbles events from the portals
+      // up through this element, so stop clicks and Enter/Space here instead of in every caller.
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+      }}
+    >
       <button
         ref={buttonRef}
         type="button"
         disabled={disabled}
         aria-disabled={disabled}
-        className={[
-          "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
-          "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-          disabledClass,
-        ].join(" ")}
+        className={[triggerClass, disabledClass].join(" ")}
         aria-label="Document actions"
+        title="Document actions"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => {
+        onClick={(e) => {
+          e.preventDefault();
           if (disabled) return;
           // Compute position immediately so the menu never renders "invisible".
           repositionMenu();
@@ -643,6 +860,7 @@ export default function DocActionsMenu({
             const next = !v;
             if (next) {
               setProjectsOpen(false);
+              setArchiveError(null);
               // Ensure menu is positioned even when inside scroll containers (avoids clipping).
               window.requestAnimationFrame(() => repositionMenu());
             } else {
@@ -655,159 +873,171 @@ export default function DocActionsMenu({
         <EllipsisHorizontalIcon className="h-4 w-4" />
       </button>
 
-      {renderedMenu && typeof document !== "undefined" ? createPortal(renderedMenu, document.body) : null}
+      {renderedMenu ? portal(renderedMenu) : null}
 
-      <Modal
-        open={showNewProject}
-        onClose={() => {
-          if (newProjectBusy) return;
-          setShowNewProject(false);
-        }}
-        ariaLabel="New project"
-      >
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-base font-semibold text-[var(--fg)]">New project</div>
-            {newProjectBusy ? (
-              <div
-                className="inline-flex items-center gap-2 text-xs font-medium text-[var(--muted-2)]"
-                aria-live="polite"
-              >
-                <Spinner className="h-4 w-4 text-[var(--muted-2)]" />
-                <span>Creating…</span>
+      {showNewProject
+        ? portal(
+            <Modal
+              open={showNewProject}
+              onClose={() => {
+                if (newProjectBusy) return;
+                setShowNewProject(false);
+              }}
+              ariaLabel="New project"
+            >
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-base font-semibold text-[var(--fg)]">New project</div>
+                  {newProjectBusy ? (
+                    <div
+                      className="inline-flex items-center gap-2 text-xs font-medium text-[var(--muted-2)]"
+                      aria-live="polite"
+                    >
+                      <Spinner className="h-4 w-4 text-[var(--muted-2)]" />
+                      <span>Creating…</span>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="text-sm text-[var(--muted)]">
+                  Give it a short name and describe it so AI can auto-add docs to this project later.
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Name</div>
+                  <input
+                    value={newProjectName}
+                    onChange={(e) => setNewProjectName(e.target.value)}
+                    disabled={newProjectBusy}
+                    placeholder="e.g. Lnkdrp fundraising"
+                    className="mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  />
+                </div>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                    Description
+                  </div>
+                  <textarea
+                    value={newProjectDesc}
+                    onChange={(e) => setNewProjectDesc(e.target.value)}
+                    disabled={newProjectBusy}
+                    placeholder="What kinds of docs belong here?"
+                    className="mt-1 min-h-[96px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                  />
+                </div>
+                {newProjectError ? (
+                  <div className="text-sm font-medium text-red-700">{newProjectError}</div>
+                ) : null}
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
+                    disabled={newProjectBusy}
+                    onClick={() => setShowNewProject(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
+                    disabled={newProjectBusy}
+                    onClick={() => void createProjectAndMove()}
+                  >
+                    {newProjectBusy ? (
+                      <span className="inline-flex items-center gap-2">
+                        <Spinner className="h-4 w-4 text-[var(--primary-fg)]" />
+                        <span>Creating…</span>
+                      </span>
+                    ) : (
+                      "Create project"
+                    )}
+                  </button>
+                </div>
               </div>
-            ) : null}
-          </div>
-          <div className="text-sm text-[var(--muted)]">
-            Give it a short name and describe it so AI can auto-add docs to this project later.
-          </div>
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Name</div>
-            <input
-              value={newProjectName}
-              onChange={(e) => setNewProjectName(e.target.value)}
-              disabled={newProjectBusy}
-              placeholder="e.g. Lnkdrp fundraising"
-              className="mt-1 w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-            />
-          </div>
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-              Description
-            </div>
-            <textarea
-              value={newProjectDesc}
-              onChange={(e) => setNewProjectDesc(e.target.value)}
-              disabled={newProjectBusy}
-              placeholder="What kinds of docs belong here?"
-              className="mt-1 min-h-[96px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-            />
-          </div>
-          {newProjectError ? (
-            <div className="text-sm font-medium text-red-700">{newProjectError}</div>
-          ) : null}
-          <div className="flex items-center justify-end gap-3">
-            <button
-              type="button"
-              className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
-              disabled={newProjectBusy}
-              onClick={() => setShowNewProject(false)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
-              disabled={newProjectBusy}
-              onClick={() => void createProjectAndMove()}
-            >
-              {newProjectBusy ? (
-                <span className="inline-flex items-center gap-2">
-                  <Spinner className="h-4 w-4 text-[var(--primary-fg)]" />
-                  <span>Creating…</span>
-                </span>
-              ) : (
-                "Create project"
-              )}
-            </button>
-          </div>
-        </div>
-      </Modal>
+            </Modal>
+          )
+        : null}
 
-      <Modal
-        open={showReport}
-        onClose={() => {
-          if (reportBusy) return;
-          setShowReport(false);
-        }}
-        ariaLabel="Report"
-      >
-        <div className="space-y-4">
-          <div className="text-base font-semibold text-[var(--fg)]">Report</div>
-          <div className="text-sm text-[var(--muted)]">Tell us what’s wrong (optional).</div>
-          <textarea
-            value={reportMessage}
-            onChange={(e) => setReportMessage(e.target.value)}
-            placeholder="Describe the issue…"
-            className="min-h-[120px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
-          />
-          {reportError ? <div className="text-sm font-medium text-red-700">{reportError}</div> : null}
-          {reportDone ? <div className="text-sm font-medium text-emerald-700">Reported.</div> : null}
-          <div className="flex items-center justify-end gap-3">
-            <button
-              type="button"
-              className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
-              disabled={reportBusy}
-              onClick={() => setShowReport(false)}
+      {showReport
+        ? portal(
+            <Modal
+              open={showReport}
+              onClose={() => {
+                if (reportBusy) return;
+                setShowReport(false);
+              }}
+              ariaLabel="Report"
             >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
-              disabled={reportBusy}
-              onClick={() => void submitReport()}
-            >
-              {reportBusy ? "Sending…" : "Send report"}
-            </button>
-          </div>
-        </div>
-      </Modal>
+              <div className="space-y-4">
+                <div className="text-base font-semibold text-[var(--fg)]">Report</div>
+                <div className="text-sm text-[var(--muted)]">Tell us what’s wrong (optional).</div>
+                <textarea
+                  value={reportMessage}
+                  onChange={(e) => setReportMessage(e.target.value)}
+                  placeholder="Describe the issue…"
+                  className="min-h-[120px] w-full resize-y rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+                />
+                {reportError ? <div className="text-sm font-medium text-red-700">{reportError}</div> : null}
+                {reportDone ? <div className="text-sm font-medium text-emerald-700">Reported.</div> : null}
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
+                    disabled={reportBusy}
+                    onClick={() => setShowReport(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-lg bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
+                    disabled={reportBusy}
+                    onClick={() => void submitReport()}
+                  >
+                    {reportBusy ? "Sending…" : "Send report"}
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          )
+        : null}
 
-      <Modal
-        open={showDeleteConfirm}
-        onClose={() => {
-          if (deleteBusy) return;
-          setShowDeleteConfirm(false);
-        }}
-        ariaLabel="Delete document"
-      >
-        <div className="space-y-4">
-          <div className="text-base font-semibold text-[var(--fg)]">Delete document?</div>
-          <div className="text-sm text-[var(--muted)]">
-            This will permanently delete the document. This can’t be undone.
-          </div>
-          {deleteError ? <div className="text-sm font-medium text-red-700">{deleteError}</div> : null}
-          <div className="flex items-center justify-end gap-3">
-            <button
-              type="button"
-              className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
-              disabled={deleteBusy}
-              onClick={() => setShowDeleteConfirm(false)}
+      {showDeleteConfirm
+        ? portal(
+            <Modal
+              open={showDeleteConfirm}
+              onClose={() => {
+                if (deleteBusy) return;
+                setShowDeleteConfirm(false);
+              }}
+              ariaLabel="Delete document"
             >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-              disabled={deleteBusy}
-              onClick={() => void deleteDoc()}
-            >
-              {deleteBusy ? "Deleting…" : "Delete"}
-            </button>
-          </div>
-        </div>
-      </Modal>
+              <div className="space-y-4">
+                <div className="text-base font-semibold text-[var(--fg)]">Delete document?</div>
+                <div className="text-sm text-[var(--muted)]">
+                  This will permanently delete the document. This can’t be undone.
+                </div>
+                {deleteError ? <div className="text-sm font-medium text-red-700">{deleteError}</div> : null}
+                <div className="flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50"
+                    disabled={deleteBusy}
+                    onClick={() => setShowDeleteConfirm(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                    disabled={deleteBusy}
+                    onClick={() => void deleteDoc()}
+                  >
+                    {deleteBusy ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          )
+        : null}
     </div>
   );
 }

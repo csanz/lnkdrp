@@ -59,12 +59,16 @@ export async function GET(
     const limit = Math.max(1, Math.min(50, Number.isFinite(limitNum) && limitNum > 0 ? Math.floor(limitNum) : 25));
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
     const q = qRaw.trim();
+    // `archived=1` lists the project's archived documents (the project page's Archive view).
+    // Default (absent or anything else) keeps listing active documents only.
+    const archived = url.searchParams.get("archived") === "1";
 
     debugLog(2, "[api/projects/:slug/docs] GET", {
       projectSlug,
       limit,
       page,
       q: q ? "[redacted]" : "",
+      archived,
     });
 
     // Hot path (/project/:id): avoid heavy resolver; preserve correct personalOrgId for legacy scoping.
@@ -257,7 +261,7 @@ export async function GET(
           }
         : { orgId }),
       isDeleted: { $ne: true },
-      isArchived: { $ne: true },
+      isArchived: archived ? true : { $ne: true },
       $and: [
         // Backward-compat: old docs only have `projectId`; new docs use `projectIds[]`.
         { $or: [{ projectId: project._id }, { projectIds: project._id }] },
@@ -297,7 +301,8 @@ export async function GET(
       .limit(limit)
       .lean();
 
-    const [total, docs] = q
+    // `Project.docCount` counts active documents only, so the archived view always counts.
+    const [total, docs] = q || archived
       ? await Promise.all([DocModel.countDocuments(filter), docsQuery])
       : [projectDocCount ?? (await DocModel.countDocuments(filter)), await docsQuery];
 
@@ -381,6 +386,7 @@ export async function GET(
         isRequest: Boolean((project as unknown as { isRequest?: unknown }).isRequest),
         request: requestSettings,
       },
+      archived,
       total,
       page,
       limit,

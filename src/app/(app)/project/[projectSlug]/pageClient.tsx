@@ -97,6 +97,14 @@ type SuggestedDocsResponse = {
   error?: string;
 };
 
+/** Which documents the project list shows: active ones, or the ones archived from this project. */
+type ProjectDocsView = "active" | "archived";
+
+const PROJECT_DOCS_VIEWS: ReadonlyArray<{ id: ProjectDocsView; label: string }> = [
+  { id: "active", label: "Docs" },
+  { id: "archived", label: "Archive" },
+];
+
 const PROJECT_DOCS_CACHE_MAX = 75;
 const PROJECT_DOCS_CACHE_TTL_MS = 3 * 60 * 1000;
 const projectDocsCache = new Map<string, ProjectDocsCacheEntry>();
@@ -105,9 +113,16 @@ const projectDocsCache = new Map<string, ProjectDocsCacheEntry>();
  */
 
 
-function projectDocsCacheKey(params: { projectSlug: string; page: number; limit: number; q: string }) {
+function projectDocsCacheKey(params: {
+  projectSlug: string;
+  page: number;
+  limit: number;
+  q: string;
+  view: ProjectDocsView;
+}) {
   return [
     encodeURIComponent(params.projectSlug),
+    params.view,
     String(params.page),
     String(params.limit),
     params.q.trim(),
@@ -207,6 +222,12 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   const [docsChangedTick, setDocsChangedTick] = useState(0);
   const [docsThumbAspectById, setDocsThumbAspectById] = useState<Record<string, number>>({});
   const [requestSort, setRequestSort] = useState<"recent" | "score">("recent");
+  // Keyed by project so moving to another project starts back on the active docs.
+  const [viewState, setViewState] = useState<{ projectSlug: string; view: ProjectDocsView }>({
+    projectSlug,
+    view: "active",
+  });
+  const view: ProjectDocsView = viewState.projectSlug === projectSlug ? viewState.view : "active";
 
   // Track project "view" (deduped server-side per session).
   useEffect(() => {
@@ -228,6 +249,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         page: docs.page,
         limit: docs.limit,
         q: trimmedQ,
+        view,
       });
       const cached = projectDocsCacheGet(key);
 
@@ -241,7 +263,8 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
       setDocsLoading(!cached);
       try {
         const qStr = trimmedQ ? `&q=${encodeURIComponent(trimmedQ)}` : "";
-        const url = `/api/projects/${encodeURIComponent(projectSlug)}/docs?limit=${docs.limit}&page=${docs.page}${qStr}`;
+        const archivedStr = view === "archived" ? "&archived=1" : "";
+        const url = `/api/projects/${encodeURIComponent(projectSlug)}/docs?limit=${docs.limit}&page=${docs.page}${qStr}${archivedStr}`;
 
         const res = await fetchWithTempUser(url, {
           // Only fetch JSON when the server says the list changed.
@@ -297,7 +320,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
     return () => {
       cancelled = true;
     };
-  }, [projectSlug, docs.page, docs.limit, q, docsChangedTick]);
+  }, [projectSlug, docs.page, docs.limit, q, view, docsChangedTick]);
 
   useEffect(() => {
 /**
@@ -855,7 +878,9 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         </div>
         {project ? (
           <div className="shrink-0 text-xs text-[var(--muted-2)]">
-            {docs.total} {docs.total === 1 ? "doc" : "docs"}
+            {view === "archived"
+              ? `${docs.total} archived`
+              : `${docs.total} ${docs.total === 1 ? "doc" : "docs"}`}
           </div>
         ) : null}
       </div>
@@ -871,14 +896,46 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
               <section className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
                 {subtitle ? <div className="text-xs text-[var(--muted-2)]">{subtitle}</div> : null}
 
-                <div className={["flex items-center justify-between gap-3", subtitle ? "mt-5" : ""].join(" ")}>
+                <div
+                  className={["flex flex-wrap items-center gap-2", subtitle ? "mt-5" : ""].join(" ")}
+                  role="tablist"
+                  aria-label="Project documents"
+                >
+                  {PROJECT_DOCS_VIEWS.map((v) => {
+                    const active = v.id === view;
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => {
+                          if (active) return;
+                          setViewState({ projectSlug, view: v.id });
+                          setDocs((s) => ({ ...s, items: [], total: 0, page: 1 }));
+                          setDocsLoading(true);
+                        }}
+                        className={[
+                          "h-8 rounded-full px-3 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                          active
+                            ? "bg-[var(--fg)] text-[var(--bg)]"
+                            : "border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
+                        ].join(" ")}
+                      >
+                        {v.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-3">
                   <input
                     value={q}
                     onChange={(e) => {
                       setQ(e.target.value);
                       setDocs((s) => ({ ...s, page: 1 }));
                     }}
-                    placeholder="Search docs"
+                    placeholder={view === "archived" ? "Search archived docs" : "Search docs"}
                     className="w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
                   />
                   {isRequestRepo ? (
@@ -1033,10 +1090,16 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                                 <DocActionsMenu
                                   docId={d.id}
                                   currentProjectId={projectIdForMenu}
+                                  showArchive
+                                  isArchived={view === "archived"}
                                   onOpenQualityReview={() => router.push(`/doc/${d.id}/review`)}
                                   onDocPatched={(patch) => {
-                                    // If the doc is no longer in this project, drop it from this list.
-                                    if (Array.isArray(patch.projectIds) && !patch.projectIds.includes(projectIdForMenu)) {
+                                    const leftThisView =
+                                      // Archived or unarchived: the row moves to the other view.
+                                      (typeof patch.isArchived === "boolean" && patch.isArchived !== (view === "archived")) ||
+                                      // No longer in this project.
+                                      (Array.isArray(patch.projectIds) && !patch.projectIds.includes(projectIdForMenu));
+                                    if (leftThisView) {
                                       setDocs((s) => ({
                                         ...s,
                                         items: s.items.filter((x) => x.id !== d.id),
@@ -1065,7 +1128,13 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                     </li>
                   ) : !docs.items.length ? (
                     <li>
-                      <div className="py-8 text-sm text-[var(--muted)]">No docs in this project yet.</div>
+                      <div className="py-8 text-sm text-[var(--muted)]">
+                        {q.trim()
+                          ? "No docs match that search."
+                          : view === "archived"
+                            ? "No archived docs in this project. Archive a doc from its … menu and it shows up here."
+                            : "No docs in this project yet."}
+                      </div>
                     </li>
                   ) : null}
                 </ul>
