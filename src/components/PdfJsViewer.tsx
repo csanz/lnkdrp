@@ -2204,7 +2204,7 @@ export function PdfJsViewer({
                   {viewerProfile?.name || viewerProfile?.email ? (
                     <button
                       type="button"
-                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                      className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
                       onClick={() => {
                         setIntroError(null);
                         setIntroName(viewerProfile?.name ?? "");
@@ -2221,7 +2221,7 @@ export function PdfJsViewer({
                   ) : (
                     <button
                       type="button"
-                      className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                      className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
                       onClick={() => {
                         setIntroError(null);
                         setIntroName("");
@@ -2351,14 +2351,14 @@ export function PdfJsViewer({
                 canDownload ? (
                   <a
                     href={(downloadHref ?? (downloadUrl as string)) as string}
-                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                    className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
                   >
                     Download PDF
                   </a>
                 ) : (
                   <button
                     type="button"
-                    className="inline-flex h-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
+                    className="inline-flex h-[46px] items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-3 sm:px-4 text-xs font-semibold text-white/90 hover:bg-white/10"
                     onClick={() => {
                       setDownloadRequestOpen(true);
                       setDownloadRequestSent(false);
@@ -3167,7 +3167,7 @@ export function PdfJsViewer({
 
         {/* Page arrows (centered within PDF viewport). Always visible at rest so touch and first-time
             viewers see them; brighter on hover. Dimmed, not hidden, at the first/last page. */}
-        {viewMode === "single" ? (
+        {viewMode === "single" && (numPages ?? 0) > 1 ? (
           <button
             type="button"
             aria-label="Previous page"
@@ -3197,7 +3197,7 @@ export function PdfJsViewer({
           </button>
         ) : null}
 
-        {viewMode === "single" ? (
+        {viewMode === "single" && (numPages ?? 0) > 1 ? (
           <button
             type="button"
             aria-label="Next page"
