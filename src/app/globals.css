@@ -25,6 +25,9 @@
   --row-archived-fg: #b45309;
   --row-deleted-bg: rgba(220, 38, 38, 0.12);
   --row-deleted-fg: #b91c1c;
+  /* A paid plan that is cancelled and running out its period; same amber, by role not by row. */
+  --plan-ending-bg: var(--row-archived-bg);
+  --plan-ending-fg: var(--row-archived-fg);
   --panel-2: #fafafa;
   --panel-hover: #f4f4f5;
 

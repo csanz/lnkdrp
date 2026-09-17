@@ -48,8 +48,12 @@ export async function startCheckout(): Promise<void> {
  * Side effects: navigates current tab by default, or opens a new tab when `target: "_blank"`.
  * Errors: throws when the API responds with an error or returns an invalid portal URL.
  */
-export async function openBillingPortal(opts?: { target?: "_self" | "_blank" }): Promise<void> {
-  const res = await fetch("/api/stripe/portal", { method: "POST" });
+export async function openBillingPortal(opts?: { target?: "_self" | "_blank"; flow?: "cancel" }): Promise<void> {
+  const res = await fetch("/api/stripe/portal", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(opts?.flow ? { flow: opts.flow } : {}),
+  });
   const json = (await res.json().catch(() => null)) as StripeRedirectResponse;
   if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
   const url = parseUrl(json);
@@ -62,4 +66,12 @@ export async function openBillingPortal(opts?: { target?: "_self" | "_blank" }):
   window.location.assign(url);
 }
 
-
+/**
+ * Undo a scheduled cancellation (`POST /api/stripe/subscription/resume`): the subscription renews
+ * as normal. Throws with the API's message when it fails (not an admin, already ended).
+ */
+export async function resumeSubscription(): Promise<void> {
+  const res = await fetch("/api/stripe/subscription/resume", { method: "POST" });
+  const json = (await res.json().catch(() => null)) as { error?: string } | null;
+  if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+}

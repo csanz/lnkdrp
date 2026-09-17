@@ -9,7 +9,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import Panel from "@/components/ui/Panel";
 import DataTable from "@/components/ui/DataTable";
@@ -22,7 +22,7 @@ import { debugEnabled as isDebugEnabled } from "@/lib/debug";
 import { clampNonNegInt, formatInt } from "@/lib/format/number";
 import { formatDateRange, formatMonthLabel, formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents, formatUsdOrNotAvailable } from "@/lib/format/money";
-import { openBillingPortal } from "@/lib/billing/clientActions";
+import { openBillingPortal, resumeSubscription } from "@/lib/billing/clientActions";
 import { usePlan } from "@/lib/client/usePlan";
 import WorkspaceIcon from "@/components/WorkspaceIcon";
 
@@ -45,23 +45,37 @@ type BilledWorkspace = {
 function BilledWorkspaceHeader({
   workspace,
   isPersonal,
+  canManageBilling,
   manageBusy,
   onManage,
+  cancelBusy,
+  onCancel,
+  resumeBusy,
+  onResume,
 }: {
   workspace: BilledWorkspace | null;
   isPersonal: boolean;
+  /** Owner or admin: cancelling and resuming are theirs. */
+  canManageBilling: boolean;
   manageBusy: boolean;
   onManage: () => void;
+  cancelBusy: boolean;
+  onCancel: () => void;
+  resumeBusy: boolean;
+  onResume: () => void;
 }) {
   const name = workspace?.name ?? (isPersonal ? "Personal" : "This workspace");
   const initial = name.trim().charAt(0).toUpperCase() || "W";
   const isPro = workspace?.plan === "pro";
+  // A cancelled Pro subscription stays Pro until the paid period ends. This used to read "Ends Oct 16."
+  // in muted text next to a Pro badge, so a person who had just cancelled saw nothing change.
+  const ending = isPro && Boolean(workspace?.cancelAtPeriodEnd);
+  const endDate = workspace?.periodEnd ? formatShortDate(workspace.periodEnd) : "";
   const hasSubscription = isPro || Boolean(workspace?.payg);
-  const planLabel = isPro ? "Pro" : workspace?.payg ? "Free, pay-as-you-go" : "Free";
-  const renewal =
-    isPro && workspace?.periodEnd
-      ? `${workspace.cancelAtPeriodEnd ? "Ends" : "Renews"} ${formatShortDate(workspace.periodEnd)}. `
-      : "";
+  const planLabel = ending ? (endDate ? `Pro until ${endDate}` : "Pro, ending") : isPro ? "Pro" : workspace?.payg ? "Free, pay-as-you-go" : "Free";
+  const renewal = isPro && !ending && endDate ? `Renews ${endDate}. ` : "";
+  const secondaryButton =
+    "rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60";
 
   return (
     <Panel padding="lg">
@@ -80,9 +94,11 @@ function BilledWorkspaceHeader({
                 <span className="truncate text-[18px] font-semibold tracking-tight text-[var(--fg)]">{name}</span>
                 <span
                   className={
-                    isPro
-                      ? "rounded-full bg-[var(--fg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--bg)]"
-                      : "rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]"
+                    ending
+                      ? "rounded-full bg-[var(--plan-ending-bg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--plan-ending-fg)]"
+                      : isPro
+                        ? "rounded-full bg-[var(--fg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--bg)]"
+                        : "rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]"
                   }
                 >
                   {planLabel}
@@ -100,19 +116,11 @@ function BilledWorkspaceHeader({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Link
-            href="/dashboard?tab=workspace"
-            className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
-          >
+          <Link href="/dashboard?tab=workspace" className={secondaryButton}>
             Switch workspace
           </Link>
           {!workspace ? null : hasSubscription ? (
-            <button
-              type="button"
-              className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-              onClick={onManage}
-              disabled={manageBusy}
-            >
+            <button type="button" className={secondaryButton} onClick={onManage} disabled={manageBusy}>
               {manageBusy ? "Opening…" : "Manage subscription"}
             </button>
           ) : (
@@ -125,6 +133,37 @@ function BilledWorkspaceHeader({
           )}
         </div>
       </div>
+
+      {ending ? (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[var(--plan-ending-bg)] px-4 py-3">
+          <div className="min-w-0 flex-1 text-[13px] leading-5 text-[var(--fg)]">
+            <span className="font-semibold text-[var(--plan-ending-fg)]">Pro is cancelled.</span>{" "}
+            {name} keeps Pro {endDate ? `until ${endDate}` : "until the end of this billing period"}, then moves to Free. It
+            won&apos;t renew.
+          </div>
+          {canManageBilling ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-xl bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] hover:opacity-90 disabled:opacity-60"
+              onClick={onResume}
+              disabled={resumeBusy}
+            >
+              {resumeBusy ? "Resuming…" : "Resume Pro"}
+            </button>
+          ) : null}
+        </div>
+      ) : isPro && canManageBilling ? (
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            className="text-[12px] font-semibold text-[var(--muted-2)] underline-offset-2 hover:text-[var(--fg)] hover:underline disabled:opacity-60"
+            onClick={onCancel}
+            disabled={cancelBusy}
+          >
+            {cancelBusy ? "Opening…" : "Cancel subscription"}
+          </button>
+        </div>
+      ) : null}
     </Panel>
   );
 }
@@ -285,6 +324,9 @@ export default function BillingInvoicesTab() {
   const [selectedMonth, setSelectedMonth] = useState<string | null>(() => cached?.invoicesByMonth?.["__default__"]?.selectedMonth ?? null);
   const [manageBusy, setManageBusy] = useState(false);
   const [workspace, setWorkspace] = useState<BilledWorkspace | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [resumeBusy, setResumeBusy] = useState(false);
+  const [billingNotice, setBillingNotice] = useState<string | null>(null);
   const { plan: planSnapshot } = usePlan();
   const [manageError, setManageError] = useState<string | null>(null);
   const [creditsInfoOpen, setCreditsInfoOpen] = useState(false);
@@ -315,35 +357,64 @@ export default function BillingInvoicesTab() {
     return out;
   }, [summary?.cycle?.start, summary?.cycle?.end]);
 
+  const loadWorkspace = useCallback(async (fresh = false): Promise<BilledWorkspace | null> => {
+    try {
+      const res = await fetch(`/api/billing/status${fresh ? "?fresh=1" : ""}`, { cache: "no-store" });
+      const json = (await res.json().catch(() => null)) as {
+        org?: { name?: string | null; avatarUrl?: string | null };
+        plan?: string;
+        payg?: boolean;
+        stripeCurrentPeriodEnd?: string | null;
+        stripeCancelAtPeriodEnd?: boolean;
+      } | null;
+      if (!res.ok || !json) return null;
+      const next: BilledWorkspace = {
+        name: json.org?.name ?? null,
+        avatarUrl: json.org?.avatarUrl ?? null,
+        plan: json.plan === "pro" ? "pro" : "free",
+        payg: Boolean(json.payg),
+        periodEnd: json.stripeCurrentPeriodEnd ?? null,
+        cancelAtPeriodEnd: Boolean(json.stripeCancelAtPeriodEnd),
+      };
+      setWorkspace(next);
+      return next;
+    } catch {
+      // The header falls back to a generic name; the rest of the tab does not depend on it.
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try {
-        const res = await fetch("/api/billing/status", { cache: "no-store" });
-        const json = (await res.json().catch(() => null)) as {
-          org?: { name?: string | null; avatarUrl?: string | null };
-          plan?: string;
-          payg?: boolean;
-          stripeCurrentPeriodEnd?: string | null;
-          stripeCancelAtPeriodEnd?: boolean;
-        } | null;
-        if (!res.ok || !json || cancelled) return;
-        setWorkspace({
-          name: json.org?.name ?? null,
-          avatarUrl: json.org?.avatarUrl ?? null,
-          plan: json.plan === "pro" ? "pro" : "free",
-          payg: Boolean(json.payg),
-          periodEnd: json.stripeCurrentPeriodEnd ?? null,
-          cancelAtPeriodEnd: Boolean(json.stripeCancelAtPeriodEnd),
-        });
-      } catch {
-        // The header falls back to a generic name; the rest of the tab does not depend on it.
+      // Back from Stripe's cancel flow (`?subscription=canceled`): the webhook usually lands within a
+      // second or two, so read fresh and retry briefly until the cancellation shows, then confirm it.
+      const params = new URLSearchParams(window.location.search);
+      const backFromCancel = params.get("subscription") === "canceled";
+      if (backFromCancel) {
+        params.delete("subscription");
+        const qs = params.toString();
+        window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+      }
+      let next = await loadWorkspace(backFromCancel);
+      for (let i = 0; backFromCancel && !cancelled && next && !next.cancelAtPeriodEnd && i < 6; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        next = await loadWorkspace(true);
+      }
+      if (backFromCancel && !cancelled) {
+        const date = next?.periodEnd ? formatShortDate(next.periodEnd) : "";
+        setBillingNotice(
+          next?.cancelAtPeriodEnd
+            ? `Subscription cancelled. ${next.name ?? "This workspace"} keeps Pro${date ? ` until ${date}` : " until the end of this period"}, then moves to Free.`
+            : "Back from Stripe. If you cancelled, it can take a moment to show here; refresh in a few seconds.",
+        );
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadWorkspace]);
+
 
   useEffect(() => {
     // Show debug UI only when DEBUG_LEVEL>0 (injected into window.__DEBUG_LEVEL__ by RootLayout).
@@ -530,11 +601,41 @@ export default function BillingInvoicesTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMonth, invoices]);
 
+  async function openCancelFlow() {
+    setCancelBusy(true);
+    setManageError(null);
+    setBillingNotice(null);
+    try {
+      // Same tab: Stripe's cancel flow redirects back here with `?subscription=canceled` when done.
+      await openBillingPortal({ flow: "cancel" });
+    } catch (e) {
+      setManageError(e instanceof Error ? e.message : "Failed to open cancellation");
+      setCancelBusy(false);
+    }
+  }
+
+  async function resumePro() {
+    setResumeBusy(true);
+    setManageError(null);
+    setBillingNotice(null);
+    try {
+      await resumeSubscription();
+      const next = await loadWorkspace(true);
+      const date = next?.periodEnd ? formatShortDate(next.periodEnd) : "";
+      setBillingNotice(`Pro resumed. ${next?.name ?? "This workspace"} renews${date ? ` on ${date}` : " as normal"}.`);
+    } catch (e) {
+      setManageError(e instanceof Error ? e.message : "Failed to resume the subscription");
+    } finally {
+      setResumeBusy(false);
+    }
+  }
+
   async function openPortal() {
     setManageBusy(true);
     setManageError(null);
     try {
-      await openBillingPortal({ target: "_blank" });
+      // Same tab, so Stripe's "Return to LinkDrop" lands back on this tab instead of leaving a stray tab.
+      await openBillingPortal();
     } catch (e) {
       setManageError(e instanceof Error ? e.message : "Failed to open billing portal");
     } finally {
@@ -582,9 +683,20 @@ export default function BillingInvoicesTab() {
       <BilledWorkspaceHeader
         workspace={workspace}
         isPersonal={Boolean(planSnapshot?.isPersonalOrg)}
+        canManageBilling={planSnapshot?.role === "owner" || planSnapshot?.role === "admin"}
         manageBusy={manageBusy}
         onManage={openPortal}
+        cancelBusy={cancelBusy}
+        onCancel={() => void openCancelFlow()}
+        resumeBusy={resumeBusy}
+        onResume={() => void resumePro()}
       />
+
+      {billingNotice ? (
+        <Alert variant="info" className="text-[12px]">
+          {billingNotice}
+        </Alert>
+      ) : null}
 
       {manageError ? (
         <Alert variant="error" className="text-[12px]">

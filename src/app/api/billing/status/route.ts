@@ -39,7 +39,10 @@ export async function GET(request: Request) {
       billingStatusCache = billingStatusCache ?? new Map();
       const cached = billingStatusCache.get(orgIdStr);
       const benchmarkMode = request.headers.get("x-lnkdrp-benchmark") === "1";
-      if (!benchmarkMode && cached && Date.now() - cached.at < BILLING_STATUS_CACHE_TTL_MS) {
+      // `?fresh=1`: the caller just changed the subscription (resumed, or came back from cancelling
+      // in Stripe) and must not be shown the cached state from before.
+      const fresh = new URL(request.url).searchParams.get("fresh") === "1";
+      if (!benchmarkMode && !fresh && cached && Date.now() - cached.at < BILLING_STATUS_CACHE_TTL_MS) {
         return NextResponse.json(cached.payload, { headers: { "cache-control": "no-store" } });
       }
 

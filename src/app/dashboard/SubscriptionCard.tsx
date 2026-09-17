@@ -18,7 +18,7 @@ import SpendLimitModule from "./SpendLimitModule";
 import { formatShortDate } from "@/lib/format/date";
 import PlanUsageMeter from "@/components/PlanUsageMeter";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
-import { openBillingPortal, startCheckout as startCheckoutAction } from "@/lib/billing/clientActions";
+import { openBillingPortal, resumeSubscription, startCheckout as startCheckoutAction } from "@/lib/billing/clientActions";
 import { CREDITS_COPY, FEATURE_CREDITS_ENABLED, FREE_PLAN_LIMITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { usePlan } from "@/lib/client/usePlan";
 
@@ -50,6 +50,7 @@ export default function SubscriptionCard() {
   const [busy, setBusy] = useState(false);
   const [upgradeBusy, setUpgradeBusy] = useState(false);
   const [manageBusy, setManageBusy] = useState(false);
+  const [resumeBusy, setResumeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<BillingStatusResponse | null>(() => billingStatusCache?.data ?? null);
 
@@ -88,6 +89,31 @@ export default function SubscriptionCard() {
   const status = (data?.stripeSubscriptionStatus ?? "").trim() || (plan === "pro" ? "active" : "");
   const showStatusPill = plan === "pro" && status && status !== "active";
   const proPriceLabel = typeof data?.proPriceLabel === "string" ? data.proPriceLabel.trim() : "";
+  // Cancelled but still inside the paid period: Pro until the end date, then Free. Used to be a muted
+  // "Cancels on <date>." inside the Pro card, which read as nothing having changed.
+  const ending = plan === "pro" && Boolean(data?.stripeCancelAtPeriodEnd);
+  const endDate = data?.stripeCurrentPeriodEnd ? formatShortDate(data.stripeCurrentPeriodEnd, { invalid: "empty" }) : "";
+  const canManageBilling = planSnapshot?.role === "owner" || planSnapshot?.role === "admin";
+
+  async function resumePro() {
+    if (resumeBusy) return;
+    setResumeBusy(true);
+    setError(null);
+    try {
+      await resumeSubscription();
+      const res = await fetch("/api/billing/status?fresh=1", { cache: "no-store" });
+      const json = (await res.json().catch(() => null)) as BillingStatusResponse | null;
+      if (res.ok && json) {
+        setData(json);
+        billingStatusCache = { data: json, at: Date.now() };
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to resume the subscription");
+    } finally {
+      setResumeBusy(false);
+    }
+  }
+
   const periodHint = useMemo(() => {
     const end = data?.stripeCurrentPeriodEnd;
     if (!end || plan !== "pro") return "";
@@ -244,19 +270,41 @@ export default function SubscriptionCard() {
           </div>
         ) : plan === "pro" ? (
           <PlanPanel
-            planLabel="Pro"
-            price={proPriceLabel || undefined}
+            planLabel={ending ? (endDate ? `Pro until ${endDate}` : "Pro, ending") : "Pro"}
+            price={ending ? undefined : proPriceLabel || undefined}
             subtitle={
-              <span>
-                {periodHint ? periodHint : "Your subscription is active."} Unlimited documents · Unlimited projects · Deep
-                analytics · Full history · 1 collaborator included.
-              </span>
+              ending ? (
+                <div className="rounded-xl bg-[var(--plan-ending-bg)] px-3.5 py-2.5 text-[13px] leading-5 text-[var(--fg)]">
+                  <span className="font-semibold text-[var(--plan-ending-fg)]">Pro is cancelled.</span> This workspace keeps Pro{" "}
+                  {endDate ? `until ${endDate}` : "until the end of this billing period"}, then moves to Free. It won&apos;t
+                  renew.
+                </div>
+              ) : (
+                <span>
+                  {periodHint ? periodHint : "Your subscription is active."} Unlimited documents · Unlimited projects · Deep
+                  analytics · Full history · 1 collaborator included.
+                </span>
+              )
             }
             cta={
               <div className="flex flex-col items-stretch gap-2 md:flex-row md:flex-wrap md:items-center">
+                {ending && canManageBilling ? (
+                  <button
+                    type="button"
+                    className="w-full whitespace-normal rounded-lg bg-[var(--fg)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60 md:w-auto"
+                    disabled={resumeBusy}
+                    onClick={() => void resumePro()}
+                  >
+                    {resumeBusy ? "Resuming…" : "Resume Pro"}
+                  </button>
+                ) : null}
                 <button
                   type="button"
-                  className="w-full whitespace-normal rounded-lg bg-[var(--fg)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60 md:w-auto"
+                  className={
+                    ending
+                      ? "w-full whitespace-normal rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60 md:w-auto"
+                      : "w-full whitespace-normal rounded-lg bg-[var(--fg)] px-3 py-2 text-center text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60 md:w-auto"
+                  }
                   disabled={busy || manageBusy}
                   onClick={() => void openManageSubscription()}
                 >
