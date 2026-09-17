@@ -10,6 +10,7 @@
  */
 
 import { DOC_BLOB_PREFIX, ORG_AVATAR_PREFIX } from "./clientUpload";
+import { BROWSER_DIRECT_UPLOAD_MAX_BYTES } from "@/lib/limits/uploads";
 
 /**
  * Content types allowed for document uploads (`docs/{docId}/uploads/{uploadId}/...`).
@@ -116,10 +117,11 @@ export function isPdfUploadMeta(params: { contentType?: string | null; fileName?
 }
 
 /**
- * Max file size for client uploads (client uploads can support large files,
- * but we keep this reasonable so accidental huge uploads don't happen).
+ * Max file size for client uploads. Much larger than the server-side import ceiling because these
+ * bytes go from the browser straight to Blob and never pass through a function body; the number
+ * itself lives with every other upload limit in `src/lib/limits/uploads.ts`.
  */
-export const CLIENT_UPLOAD_MAX_SIZE_BYTES = 250 * 1024 * 1024; // 250MB
+export const CLIENT_UPLOAD_MAX_SIZE_BYTES = BROWSER_DIRECT_UPLOAD_MAX_BYTES;
 
 /**
  * Guardrail: only allow destinations under our known production prefixes.

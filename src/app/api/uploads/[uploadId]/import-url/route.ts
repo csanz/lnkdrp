@@ -18,12 +18,18 @@ import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { PDF_ONLY_ERROR_MESSAGE, UNSUPPORTED_FILE_TYPE_CODE, looksLikePdfBytes, sanitizeFileName } from "@/lib/blob/serverClientUploadRoute";
 import { recordActivity } from "@/lib/activity/log";
 import { abandonUploadIfImportFailed } from "@/lib/uploads/abandonUpload";
+import { UPLOAD_MAX_BYTES, UPLOAD_MAX_LABEL } from "@/lib/limits/uploads";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-/** Keep a conservative download limit to avoid memory pressure. */
-const IMPORT_MAX_BYTES = 25 * 1024 * 1024; // 25MB
+/**
+ * Download ceiling — the single upload limit (src/lib/limits/uploads.ts), the same number the
+ * inline `import-bytes` path enforces. Unlike that path this one has no platform body limit above
+ * it: the bytes arrive as a *response* body this function reads itself, so the full limit is real
+ * here. `maxDuration` above is what actually bounds a slow 50MB fetch.
+ */
+const IMPORT_MAX_BYTES = UPLOAD_MAX_BYTES;
 /** Per-download timeout (DNS + connect + body). */
 const IMPORT_TIMEOUT_MS = 60_000;
 /**
@@ -343,7 +349,7 @@ async function importUrl(
     }
     if (sizeBytes > IMPORT_MAX_BYTES) {
       return applyTempUserHeaders(
-        NextResponse.json({ error: "PDF is too large (max 25MB)" }, { status: 400 }),
+        NextResponse.json({ error: `PDF is too large (max ${UPLOAD_MAX_LABEL})` }, { status: 400 }),
         actor,
       );
     }
@@ -430,7 +436,7 @@ async function importUrl(
     const friendly =
       err instanceof SafeFetchError
         ? err.code === "BODY_TOO_LARGE"
-          ? "PDF is too large (max 25MB)"
+          ? `PDF is too large (max ${UPLOAD_MAX_LABEL})`
           : err.code === "PRIVATE_ADDRESS" || err.code === "UNSUPPORTED_PROTOCOL"
             ? "URL is not allowed"
             : err.code === "TIMEOUT"

@@ -7,16 +7,17 @@
  * `lnkdrp_replace_pdf`), whose only path in used to be "publish the file somewhere on the open
  * internet first" (mt_bJwX4CtmhU).
  *
- * Body-size ceiling, and why it's small: Vercel Functions cap a request body at 4.5MB regardless
- * of content type. Base64 inflates by ~4/3, so the encoded body alone eats most of that budget
- * before the JSON envelope or headers are counted. 3MB decoded (§ MAX_DECODED_BYTES) keeps real
- * margin under the hard platform ceiling; it is not a product decision to keep files small, it is
- * the honest limit of "bytes through a serverless function body." A file too big for this still
- * needs `import-url` (a URL the server can fetch) — there is no direct-to-Blob path for a caller
- * that only speaks JSON tool calls, and building one would mean either reverse-engineering Vercel
- * Blob's client-token wire protocol for third-party callers (undocumented, SDK-only) or handing
- * the MCP server its own Blob credential and re-implementing this route's validation a second time
- * outside the app of record — both worse than a documented ceiling.
+ * Body-size ceiling: `UPLOAD_MAX_BYTES` (src/lib/limits/uploads.ts), the same number `import-url`
+ * enforces — one limit for one file, however it arrives. What differs is what the platform under
+ * this route will actually carry: these bytes come in as a JSON request body, and a serverless host
+ * caps request bodies far below that (Vercel Functions: 4.5MB regardless of content type, and
+ * base64 inflates by ~4/3 before the JSON envelope is counted). So on such a deployment a large
+ * inline upload fails with the platform's own 413, usually before this code runs at all — see the
+ * caveat in the limits module. A file too big to arrive this way still needs `import-url` (a URL
+ * the server can fetch): there is no direct-to-Blob path for a caller that only speaks JSON tool
+ * calls, and building one would mean either reverse-engineering Vercel Blob's client-token wire
+ * protocol for third-party callers (undocumented, SDK-only) or handing the MCP server its own Blob
+ * credential and re-implementing this route's validation a second time outside the app of record.
  *
  * Everything past "how the bytes arrived" is identical to `import-url`: same ownership check, same
  * PDF-signature validation (never trust a filename or declared type alone), same Blob pathname
@@ -37,18 +38,16 @@ import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/act
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
 import { abandonUploadIfImportFailed } from "@/lib/uploads/abandonUpload";
+import { UPLOAD_MAX_BASE64_CHARS, UPLOAD_MAX_BYTES, UPLOAD_MAX_LABEL } from "@/lib/limits/uploads";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * Decoded-size ceiling — see the module doc for why this is well under Vercel's 4.5MB request-body
- * limit rather than the 25MB `import-url` allows for a server-side fetch (a fetch's response body
- * is read directly by this same function; a base64 request body first has to arrive intact).
- */
-const MAX_DECODED_BYTES = 3 * 1024 * 1024; // 3MB
-/** `MAX_DECODED_BYTES` as base64 text length, for a fast reject before decoding. */
-const MAX_BASE64_CHARS = Math.ceil(MAX_DECODED_BYTES / 3) * 4 + 4;
+/** Decoded-size ceiling and its base64 length — the single upload limit, see the module doc. */
+const MAX_DECODED_BYTES = UPLOAD_MAX_BYTES;
+const MAX_BASE64_CHARS = UPLOAD_MAX_BASE64_CHARS;
+/** Quoted in the too-large messages below, e.g. "50MB". */
+const MAX_LABEL = UPLOAD_MAX_LABEL;
 
 function asString(v: unknown): string | null {
   return typeof v === "string" ? v : null;
@@ -79,7 +78,7 @@ async function importBytes(request: Request, ctx: { params: Promise<{ uploadId: 
     }
     if (contentBase64.length > MAX_BASE64_CHARS) {
       return applyTempUserHeaders(
-        NextResponse.json({ error: `PDF is too large (max ${Math.floor(MAX_DECODED_BYTES / (1024 * 1024))}MB for inline upload; use a URL instead for anything larger)` }, { status: 400 }),
+        NextResponse.json({ error: `PDF is too large (max ${MAX_LABEL}; use a URL instead for anything larger)` }, { status: 400 }),
         actor,
       );
     }
@@ -96,7 +95,7 @@ async function importBytes(request: Request, ctx: { params: Promise<{ uploadId: 
     }
     if (sizeBytes > MAX_DECODED_BYTES) {
       return applyTempUserHeaders(
-        NextResponse.json({ error: `PDF is too large (max ${Math.floor(MAX_DECODED_BYTES / (1024 * 1024))}MB for inline upload; use a URL instead for anything larger)` }, { status: 400 }),
+        NextResponse.json({ error: `PDF is too large (max ${MAX_LABEL}; use a URL instead for anything larger)` }, { status: 400 }),
         actor,
       );
     }
