@@ -1219,6 +1219,46 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
               </div>
             </div>
 
+            {/* Two separate charts (Views + Downloads) */}
+            <div className="grid gap-5 lg:grid-cols-2">
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+                <div className="text-sm font-semibold text-[var(--fg)]">Views</div>
+                <div className="mt-3 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+                  {loading ? (
+                    <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                  ) : (
+                    <MiniLineChartSingle
+                      series={chartSeries}
+                      values={viewsSeries}
+                      stroke="rgb(16 185 129)"
+                      fillId="lnkdrpMetricsPageFillViews"
+                      fillStops={{ topOpacity: 0.22, bottomOpacity: 0 }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-[var(--fg)]">Downloads</div>
+                  {!loading && !downloadsEnabled ? <div className="text-xs font-medium text-[var(--muted)]">Downloads off</div> : null}
+                </div>
+                <div className="mt-3 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+                  {loading ? (
+                    <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                  ) : (
+                    <MiniLineChartSingle
+                      series={chartSeries}
+                      values={downloadsSeries}
+                      stroke="rgb(34 197 94)"
+                      fillId="lnkdrpMetricsPageFillDownloads"
+                      fillStops={{ topOpacity: 0.18, bottomOpacity: 0 }}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* The card that makes this the *master* metrics page rather than a wider version of
                 a single link's: how many links this document has, which ones are pulling the
                 traffic, and which are live right now. Master mode only — under a single-link
@@ -1325,46 +1365,6 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                 ) : null}
               </div>
             ) : null}
-
-            {/* Two separate charts (Views + Downloads) */}
-            <div className="grid gap-5 lg:grid-cols-2">
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
-                <div className="text-sm font-semibold text-[var(--fg)]">Views</div>
-                <div className="mt-3 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-                  {loading ? (
-                    <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                  ) : (
-                    <MiniLineChartSingle
-                      series={chartSeries}
-                      values={viewsSeries}
-                      stroke="rgb(16 185 129)"
-                      fillId="lnkdrpMetricsPageFillViews"
-                      fillStops={{ topOpacity: 0.22, bottomOpacity: 0 }}
-                    />
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold text-[var(--fg)]">Downloads</div>
-                  {!loading && !downloadsEnabled ? <div className="text-xs font-medium text-[var(--muted)]">Downloads off</div> : null}
-                </div>
-                <div className="mt-3 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-                  {loading ? (
-                    <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                  ) : (
-                    <MiniLineChartSingle
-                      series={chartSeries}
-                      values={downloadsSeries}
-                      stroke="rgb(34 197 94)"
-                      fillId="lnkdrpMetricsPageFillDownloads"
-                      fillStops={{ topOpacity: 0.18, bottomOpacity: 0 }}
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
 
             {!deepAnalytics ? (
               <LockedViewersBlock
