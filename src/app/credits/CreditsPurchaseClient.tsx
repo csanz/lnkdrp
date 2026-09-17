@@ -36,8 +36,16 @@ export default function CreditsPurchaseClient(props: Props) {
 }
 
 function WithSession(props: Props) {
-  const { status } = useSession();
-  return <Body {...props} signedIn={status === "authenticated"} authEnabled sessionLoading={status === "loading"} />;
+  const { data, status } = useSession();
+  return (
+    <Body
+      {...props}
+      signedIn={status === "authenticated"}
+      accountEmail={data?.user?.email ?? null}
+      authEnabled
+      sessionLoading={status === "loading"}
+    />
+  );
 }
 
 type Workspace = { name: string | null; plan: "free" | "pro"; credits: number | null };
@@ -47,9 +55,10 @@ function Body({
   proPriceLabel,
   proCredits,
   signedIn,
+  accountEmail = null,
   authEnabled,
   sessionLoading = false,
-}: Props & { signedIn: boolean; authEnabled: boolean; sessionLoading?: boolean }) {
+}: Props & { signedIn: boolean; accountEmail?: string | null; authEnabled: boolean; sessionLoading?: boolean }) {
   const params = useSearchParams();
   const purchase = params.get("purchase");
   const sessionId = params.get("session_id");
@@ -168,11 +177,22 @@ function Body({
         </div>
       ) : null}
 
+      {/*
+        Say whose balance this is. It read `“Personal” has 9 credits.` — a bare quoted name with no
+        owner, which a reader takes for placeholder text rather than their own workspace. Naming the
+        account underneath also answers the question a purchase page actually raises: if I pay, where
+        do the credits land.
+      */}
       <div className="mt-10 min-h-5 text-sm text-white/55">
         {signedIn && workspace ? (
           <>
-            {workspace.name ? `“${workspace.name}”` : "Your workspace"} has{" "}
-            <span className="font-semibold tabular-nums text-white">{workspace.credits ?? "—"}</span> credits.
+            <div>
+              Your workspace <span className="font-semibold text-white">{workspace.name ?? "Personal"}</span> has{" "}
+              <span className="font-semibold tabular-nums text-white">{workspace.credits ?? "—"}</span> credits.
+            </div>
+            <div className="mt-1 text-white/40">
+              {accountEmail ? <>Signed in as {accountEmail}. Credits</> : <>Credits</>} you buy are added to this workspace.
+            </div>
           </>
         ) : !signedIn && !sessionLoading && authEnabled ? (
           "Sign in to buy credits for your workspace."
