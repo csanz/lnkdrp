@@ -59,6 +59,14 @@ async function loadPrompts(): Promise<{ system: string; user: string }> {
   return cachedPrompts;
 }
 
+/** What a compare says when the new version reads the same as the old one. */
+export const NO_CHANGE_SUMMARY = "No changes: this version reads the same as the previous one.";
+
+/** Whitespace-insensitive text for the "did anything change at all" check. */
+export function normalizeForCompare(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
 /** Trim and cap prompt text to keep token usage bounded (preserves head + tail). */
 function trimForPrompt(input: string, max: number): string {
   const text = (input ?? "").trim();
@@ -116,6 +124,17 @@ export async function runDocChangeDiff(input: {
    */
   abortSignal?: AbortSignal;
 }): Promise<DocChangeDiff | null> {
+  // A re-upload of the same file: the model was asked to compare two identical texts and duly
+  // invented "reorganized sections" and "updated terminology" (owner, 2026-09-17). Answered here,
+  // before the model and before the API-key check, unless a page's image changed (same words, new
+  // artwork) - that is a real change the text cannot show.
+  const pagesIn = Array.isArray(input.changedPages) ? input.changedPages : [];
+  if (
+    normalizeForCompare(input.previousText) === normalizeForCompare(input.newText) &&
+    !pagesIn.some((p) => p.imageChanged === true)
+  ) {
+    return { summary: NO_CHANGE_SUMMARY, changes: [], pagesThatChanged: [] };
+  }
   if (!process.env.OPENAI_API_KEY) return null;
 
   const qualityTier = input.qualityTier ?? "standard";
@@ -125,6 +144,7 @@ export async function runDocChangeDiff(input: {
   if (!previousText || !newText) return null;
 
   const changedPages = Array.isArray(input.changedPages) ? input.changedPages : [];
+
   const changedPagesText = changedPages.length
     ? changedPages
         .slice(0, MAX_PAGES_THAT_CHANGED)

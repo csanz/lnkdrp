@@ -22,7 +22,7 @@ import {
   buildDocPageThumbPathname,
 } from "@/lib/blob/clientUpload";
 import { analyzePdfText, isFallbackAnalysis, analysisTelemetry } from "@/lib/ai/analyzePdfText";
-import { runDocChangeDiff } from "@/lib/ai/docChangeDiff";
+import { normalizeForCompare, runDocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { attachPageContext, extractPdfTextByPage, fetchPdfBytes, loadChangedPages, type ChangedPage } from "@/lib/history/changedPages";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
 import { runRequestReviewInvestorFocused } from "@/lib/ai/requestReviewInvestorFocused";
@@ -1924,7 +1924,16 @@ export async function POST(
             // Credit-gated on every plan (no plan check): a Free workspace with credits gets the compare
             // at its default tier (Basic unless pinned); short of credits the reservation fails and the
             // compare is skipped with `out_of_credits`. Recipient uploads never bill the owner: no compare.
-            const historyAllowed = !viaUploadSecret;
+            // The same file uploaded again: no model call and no credits. runDocChangeDiff answers
+            // this case itself, so the DocChange is still written and history reads "no changes"
+            // instead of an invented list of edits (owner, 2026-09-17).
+            const nothingChanged =
+              normalizeForCompare(previousText) === normalizeForCompare(newText) &&
+              !changedPages.some((p) => p.imageChanged === true);
+            const historyAllowed = !viaUploadSecret && !nothingChanged;
+            if (nothingChanged) {
+              debugLog(1, "[process] history compare skipped: identical text", { uploadId, docId: String(docId), version: uploadVersion });
+            }
             if (!historyAllowed) {
               aiState.compare = "skipped";
               warningDetails.historyPlan = "recipient upload; AI compare is not run on the owner's credits";
@@ -1961,6 +1970,11 @@ export async function POST(
             }
 
             let diff = null as any;
+            if (nothingChanged) {
+              // Free path: the fixed "no changes" record, without touching the model.
+              diff = await runDocChangeDiff({ previousText, newText, changedPages, qualityTier: historyTier }).catch(() => null);
+              aiState.compare = "done";
+            }
             if (historyLedgerId) {
               try {
                 diff = await runDocChangeDiff({ previousText, newText, changedPages, qualityTier: historyTier });

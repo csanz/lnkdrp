@@ -1,4 +1,5 @@
-This might be an updated version of the deck because this is a replacement upload.
+This might be an updated version of the deck because this is a replacement upload - or it might be
+the same file uploaded again. Do not assume something changed.
 Compare the text from the current document (PREVIOUS) with the new one (NEW), and summarize what changed.
 
 PREVIOUS (PDF-extracted text):
