@@ -41,6 +41,11 @@ export async function GET(request: Request) {
       const url = new URL(request.url);
       const days = clampDays(url.searchParams.get("days"));
       const includeSpend = url.searchParams.get("includeSpend") === "1";
+      // Paged: the table shows one page at a time with a total, instead of the first 200 rows.
+      const limitRaw = Number(url.searchParams.get("limit"));
+      const limit = Number.isFinite(limitRaw) && limitRaw >= 1 ? Math.min(100, Math.floor(limitRaw)) : 25;
+      const pageRaw = Number(url.searchParams.get("page"));
+      const page = Number.isFinite(pageRaw) && pageRaw >= 1 ? Math.floor(pageRaw) : 1;
 
       await connectMongo();
 
@@ -68,7 +73,12 @@ export async function GET(request: Request) {
           },
         },
         { $sort: { createdDate: -1 } },
-        { $limit: 200 },
+        {
+          $facet: {
+            total: [{ $count: "n" }],
+            rows: [
+        { $skip: (page - 1) * limit },
+        { $limit: limit },
         {
           $lookup: {
             from: "docs",
@@ -99,6 +109,9 @@ export async function GET(request: Request) {
             user: { _id: 1, name: 1, email: 1 },
           },
         },
+            ],
+          },
+        },
       ]);
 
       const monthSpendAggPromise = canViewSpend
@@ -115,7 +128,10 @@ export async function GET(request: Request) {
           ])
         : Promise.resolve([]);
 
-      const [rowsAgg, monthAgg] = await Promise.all([rowsAggPromise, monthSpendAggPromise]);
+      const [facetAgg, monthAgg] = await Promise.all([rowsAggPromise, monthSpendAggPromise]);
+      const facet = (Array.isArray(facetAgg) ? facetAgg[0] : null) as { total?: Array<{ n?: number }>; rows?: unknown[] } | null;
+      const rowsAgg = Array.isArray(facet?.rows) ? facet.rows : [];
+      const total = typeof facet?.total?.[0]?.n === "number" ? facet.total[0].n : 0;
 
       // Optional: month-to-date spend (credits × USD_CENTS_PER_CREDIT), owner/admin only.
       let monthSpendCents: number | null = null;
@@ -131,6 +147,9 @@ export async function GET(request: Request) {
         {
           ok: true,
           days,
+          page,
+          limit,
+          total,
           canViewSpend: Boolean(canViewSpend),
           monthSpendCents,
           rows: (Array.isArray(rowsAgg) ? rowsAgg : []).map((r: any) => ({
