@@ -20,7 +20,7 @@ import { type CreditPack, formatPackPrice, formatPerCredit } from "@/lib/credits
 import { formatShortDate } from "@/lib/format/date";
 import { cn } from "@/lib/cn";
 
-type Props = { packs: CreditPack[]; proPriceLabel: string | null; proCredits: number };
+type Props = { packs: CreditPack[]; proPriceLabel: string | null; proCredits: number; freeCredits: number };
 
 const BUTTON =
   "relative inline-flex w-full items-center justify-center rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10 disabled:opacity-70";
@@ -55,7 +55,6 @@ type Workspace = {
   /** A pay-as-you-go subscription: still Free, but `purchased` includes on-demand headroom. */
   payg: boolean;
   credits: number | null;
-  included: number | null;
   purchased: number | null;
   /** Pro only: when the subscription renews, or ends if `cancelAtPeriodEnd`. */
   periodEnd: string | null;
@@ -66,6 +65,7 @@ function Body({
   packs,
   proPriceLabel,
   proCredits,
+  freeCredits,
   signedIn,
   accountEmail = null,
   authEnabled,
@@ -97,7 +97,6 @@ function Body({
       } | null;
       const credits = (await creditsRes.json().catch(() => null)) as {
         creditsRemaining?: unknown;
-        includedRemaining?: unknown;
         paidRemaining?: unknown;
       } | null;
       if (!statusRes.ok || !status) return;
@@ -108,7 +107,6 @@ function Body({
         plan: status.plan === "pro" ? "pro" : "free",
         payg: Boolean(status.payg),
         credits: num(credits?.creditsRemaining),
-        included: num(credits?.includedRemaining),
         purchased: num(credits?.paidRemaining),
         periodEnd: status.stripeCurrentPeriodEnd ?? null,
         cancelAtPeriodEnd: Boolean(status.stripeCancelAtPeriodEnd),
@@ -214,7 +212,7 @@ function Body({
         before buying. Credits cannot move between workspaces afterwards, so this is the moment to check.
       */}
       {signedIn && workspace ? (
-        <WorkspacePanel workspace={workspace} accountEmail={accountEmail} proCredits={proCredits} />
+        <WorkspacePanel workspace={workspace} accountEmail={accountEmail} proCredits={proCredits} freeCredits={freeCredits} />
       ) : !signedIn && !sessionLoading && authEnabled ? (
         <Link
           href="/login?next=%2Fcredits"
@@ -305,20 +303,25 @@ function WorkspacePanel({
   workspace,
   accountEmail,
   proCredits,
+  freeCredits,
 }: {
   workspace: Workspace;
   accountEmail: string | null;
   proCredits: number;
+  freeCredits: number;
 }) {
   const name = workspace.name ?? "Personal";
   const initial = name.trim().charAt(0).toUpperCase() || "W";
   const isPro = workspace.plan === "pro";
   const planLabel = isPro ? "Pro" : workspace.payg ? "Free · pay-as-you-go" : "Free";
+  // What the plan grants, not what is left of it: "Included with Free: 9" read as a live counter
+  // and hid the 50 the account actually came with. What is left is the first column's job.
+  const planCredits = isPro ? proCredits : freeCredits;
   const planDetail = isPro
     ? workspace.periodEnd
-      ? `${workspace.cancelAtPeriodEnd ? "Ends" : "Renews"} ${formatShortDate(workspace.periodEnd)}`
-      : `${proCredits} credits every month`
-    : "No monthly refill";
+      ? `Every month · ${workspace.cancelAtPeriodEnd ? "ends" : "renews"} ${formatShortDate(workspace.periodEnd)}`
+      : "Every month"
+    : "One time, when the account was created";
 
   return (
     <section
@@ -364,12 +367,12 @@ function WorkspacePanel({
 
       <dl className="grid grid-cols-1 border-t border-white/10 sm:grid-cols-3">
         <div className="px-6 py-4">
-          <dt className="text-[12px] text-white/50">Available now</dt>
+          <dt className="text-[12px] text-white/50">Credits left</dt>
           <dd className="mt-1 font-serif text-4xl leading-none tabular-nums text-white">{workspace.credits ?? "—"}</dd>
         </div>
         <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">
           <dt className="text-[12px] text-white/50">Included with {isPro ? "Pro" : "Free"}</dt>
-          <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{workspace.included ?? "—"}</dd>
+          <dd className="mt-1 text-2xl font-semibold tabular-nums text-white">{planCredits}</dd>
           <div className="mt-1 text-[12px] text-white/45">{planDetail}</div>
         </div>
         <div className="border-t border-white/10 px-6 py-4 sm:border-l sm:border-t-0">

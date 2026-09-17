@@ -11,7 +11,7 @@ import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
 import { CREDIT_PACKS, PURCHASED_CREDITS_EXPIRY_MONTHS } from "@/lib/credits/packs";
-import { INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
+import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 import CreditsPurchaseClient from "./CreditsPurchaseClient";
 
 export const runtime = "nodejs";
@@ -60,7 +60,7 @@ export default async function CreditsPage() {
             </p>
           </div>
 
-          <CreditsPurchaseClient packs={[...CREDIT_PACKS]} proPriceLabel={proPriceLabel} proCredits={INCLUDED_CREDITS_PER_CYCLE} />
+          <CreditsPurchaseClient packs={[...CREDIT_PACKS]} proPriceLabel={proPriceLabel} proCredits={INCLUDED_CREDITS_PER_CYCLE} freeCredits={FREE_STARTER_CREDITS} />
 
           <div className="mt-20 grid gap-10 md:grid-cols-3 md:gap-8">
             <div>
