@@ -807,7 +807,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       {/* A table, not cards: a document can carry dozens of links, and the useful comparison is
           across rows — who opened what, which are still open. Thin rows, full width, and the
           settings collapse to icons so a row stays on one line. */}
-      <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+      <div className="relative overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--panel)]">
         <table className="w-full min-w-[980px] border-collapse text-[13px]">
           <thead>
             <tr className="border-b border-[var(--border)] text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">

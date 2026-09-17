@@ -1816,7 +1816,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           </div>
         ) : null}
         {/* Top bar */}
-        <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-6 md:px-8 md:py-5">
+        <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-6 md:px-6 md:py-5">
             <div className="flex w-full min-w-0 items-center gap-3 md:w-auto">
               {isReceivedViaRequest ? (
                 <div
@@ -1955,129 +1955,133 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : (
-                    <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleStar()}
-                        className={[
-                          "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors",
-                          starred ? "text-amber-600 dark:text-amber-200" : "text-[var(--muted)] hover:text-[var(--fg)]",
-                          "hover:bg-[var(--panel-hover)]",
-                          navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
-                        ].join(" ")}
-                        disabled={navLockActive && !isReceivedViaRequest}
-                        aria-disabled={navLockActive && !isReceivedViaRequest}
-                        aria-label={starred ? "Unstar document" : "Star document"}
-                        title={
-                          navLockActive && !isReceivedViaRequest
-                            ? "Disabled while uploading"
-                            : starred
-                              ? "Starred"
-                              : "Star"
-                        }
-                      >
-                        <StarIcon filled={starred} />
-                      </button>
-                      <button
-                        type="button"
-                        disabled={navLockActive}
-                        aria-disabled={navLockActive}
-                        aria-label={hasHydratedFromServer ? displayDocName : "Loading document name"}
-                        title={navLockActive ? "Disabled while uploading" : "Rename document"}
-                        onClick={() => {
-                          if (navLockActive) return;
-                          setTitleDraft(displayDocName);
-                          setTitleSaveError(null);
-                          setEditingTitle(true);
-                        }}
-                        className={[
-                          "block min-w-0 truncate text-left text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg",
-                          navLockActive ? "cursor-not-allowed opacity-70" : "hover:underline",
-                        ].join(" ")}
-                      >
-                        {!hasHydratedFromServer ? (
-                          <span
-                            className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          displayDocName
-                        )}
-                      </button>
-                      {displayVersion != null ? (
-                        navLockActive ? (
-                          <span
-                            className="shrink-0 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
-                            aria-label={`Document version ${displayVersion}`}
-                            title={`Version ${displayVersion}`}
-                          >
-                            v{displayVersion}
-                          </span>
-                        ) : (
-                          <Link
-                            href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
-                            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:text-[var(--fg)]"
-                            aria-label={`Document version ${displayVersion} (view history)`}
-                            title={`Version ${displayVersion} (view history)`}
-                          >
-                            <span>v{displayVersion}</span>
-                            <span aria-hidden="true" className="opacity-50">·</span>
-                            <span>History</span>
-                          </Link>
-                        )
-                      ) : null}
-
-                      {projectsInline.length ? (
-                        <div className="inline-flex shrink-0 flex-wrap items-center gap-1 text-sm font-medium text-[var(--muted-2)]">
-                          {projectsInline.map((p) => {
-                            const href = p.id ? `/project/${encodeURIComponent(p.id)}` : null;
-                            const isRequestProject = Boolean((p as unknown as { isRequest?: unknown }).isRequest);
-                            const Pill = (
-                              <span
-                                className={[
-                                  "inline-flex items-center gap-1.5 rounded-md px-2 py-1 align-middle",
-                                  "text-[12px] font-medium leading-none text-[var(--muted-2)]",
-                                  "bg-transparent hover:bg-[var(--panel-hover)]",
-                                ].join(" ")}
-                              >
-                                {isRequestProject ? (
-                                  <InboxArrowDownIcon
-                                    className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]"
-                                    aria-hidden="true"
-                                  />
-                                ) : (
-                                  <FolderIcon
-                                    className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]"
-                                    aria-hidden="true"
-                                  />
-                                )}
-                                <span className="max-w-[160px] truncate">{p.name}</span>
-                              </span>
-                            );
-                            return href ? (
-                              <Link key={p.id} href={href} className="hover:opacity-90">
-                                {Pill}
-                              </Link>
-                            ) : (
-                              <span key={p.id}>{Pill}</span>
-                            );
-                          })}
-
-                          {projectsMoreCount > 0 ? (
-                            <button
-                              type="button"
-                              className="ml-1 text-[12px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] hover:underline underline-offset-4"
-                              onClick={() => setShowProjectsModal(true)}
+                    <div className="flex min-w-0 items-start gap-2.5">
+                      <span className="flex h-6 shrink-0 items-center md:h-7">
+                        <button
+                          type="button"
+                          onClick={() => void handleToggleStar()}
+                          className={[
+                            "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors",
+                            starred ? "text-amber-600 dark:text-amber-200" : "text-[var(--muted)] hover:text-[var(--fg)]",
+                            "hover:bg-[var(--panel-hover)]",
+                            navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
+                          ].join(" ")}
+                          disabled={navLockActive && !isReceivedViaRequest}
+                          aria-disabled={navLockActive && !isReceivedViaRequest}
+                          aria-label={starred ? "Unstar document" : "Star document"}
+                          title={
+                            navLockActive && !isReceivedViaRequest
+                              ? "Disabled while uploading"
+                              : starred
+                                ? "Starred"
+                                : "Star"
+                          }
+                        >
+                          <StarIcon filled={starred} />
+                        </button>
+                      </span>
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+                        <button
+                          type="button"
+                          disabled={navLockActive}
+                          aria-disabled={navLockActive}
+                          aria-label={hasHydratedFromServer ? displayDocName : "Loading document name"}
+                          title={navLockActive ? "Disabled while uploading" : "Rename document"}
+                          onClick={() => {
+                            if (navLockActive) return;
+                            setTitleDraft(displayDocName);
+                            setTitleSaveError(null);
+                            setEditingTitle(true);
+                          }}
+                          className={[
+                            "block min-w-0 truncate text-left text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg",
+                            navLockActive ? "cursor-not-allowed opacity-70" : "hover:underline",
+                          ].join(" ")}
+                        >
+                          {!hasHydratedFromServer ? (
+                            <span
+                              className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            displayDocName
+                          )}
+                        </button>
+                        {displayVersion != null ? (
+                          navLockActive ? (
+                            <span
+                              className="shrink-0 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]"
+                              aria-label={`Document version ${displayVersion}`}
+                              title={`Version ${displayVersion}`}
                             >
-                              See more
-                            </button>
-                          ) : null}
-                        </div>
-                      ) : null}
+                              v{displayVersion}
+                            </span>
+                          ) : (
+                            <Link
+                              href={`/doc/${encodeURIComponent(doc.id)}/history#v-${displayVersion}`}
+                              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:text-[var(--fg)]"
+                              aria-label={`Document version ${displayVersion} (view history)`}
+                              title={`Version ${displayVersion} (view history)`}
+                            >
+                              <span>v{displayVersion}</span>
+                              <span aria-hidden="true" className="opacity-50">·</span>
+                              <span>History</span>
+                            </Link>
+                          )
+                        ) : null}
+
+                        {projectsInline.length ? (
+                          <div className="inline-flex shrink-0 flex-wrap items-center gap-1 text-sm font-medium text-[var(--muted-2)]">
+                            {projectsInline.map((p) => {
+                              const href = p.id ? `/project/${encodeURIComponent(p.id)}` : null;
+                              const isRequestProject = Boolean((p as unknown as { isRequest?: unknown }).isRequest);
+                              const Pill = (
+                                <span
+                                  className={[
+                                    "inline-flex items-center gap-1.5 rounded-md px-2 py-1 align-middle",
+                                    "text-[12px] font-medium leading-none text-[var(--muted-2)]",
+                                    "bg-transparent hover:bg-[var(--panel-hover)]",
+                                  ].join(" ")}
+                                >
+                                  {isRequestProject ? (
+                                    <InboxArrowDownIcon
+                                      className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]"
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <FolderIcon
+                                      className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]"
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                  <span className="max-w-[160px] truncate">{p.name}</span>
+                                </span>
+                              );
+                              return href ? (
+                                <Link key={p.id} href={href} className="hover:opacity-90">
+                                  {Pill}
+                                </Link>
+                              ) : (
+                                <span key={p.id}>{Pill}</span>
+                              );
+                            })}
+
+                            {projectsMoreCount > 0 ? (
+                              <button
+                                type="button"
+                                className="ml-1 text-[12px] font-medium text-[var(--muted-2)] hover:text-[var(--fg)] hover:underline underline-offset-4"
+                                onClick={() => setShowProjectsModal(true)}
+                              >
+                                See more
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   )}
                   {doc.lastUpdate?.uploadedAt ? (
-                    <div className="mt-1.5 flex items-center gap-2 pl-7 text-[12px] text-[var(--muted)]">
+                    <div className="mt-1.5 flex items-center gap-2 pl-[30px] text-[12px] text-[var(--muted)]">
                       <span>
                         {(() => {
                           const iso = doc.lastUpdate?.uploadedAt ?? "";
@@ -2280,16 +2284,16 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           </div>
 
           {/* Content */}
-          <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-          <div className="h-full px-6 py-6">
+          <div className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
+          <div className="px-4 py-6 md:px-6 lg:h-full">
             <div
               className={[
-                "grid h-full min-h-0 gap-5",
+                "grid min-h-0 gap-5 lg:h-full",
                 hasSidePanel ? "lg:grid-cols-[1.35fr_0.65fr]" : "lg:grid-cols-[1fr]",
               ].join(" ")}
             >
               {/* PDF left, info panel right (desktop). On mobile: show the PDF first, then the side panel. */}
-              <div className="order-1 min-h-0 h-full flex flex-col gap-3 lg:order-1">
+              <div className="order-1 min-h-0 flex flex-col gap-3 lg:order-1 lg:h-full">
                 {replaceNotice ? (
                   <div
                     className={[
@@ -2385,7 +2389,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 }
               `}</style>
 
-                <section className="relative flex-1 min-h-0 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                <section className="relative h-[70svh] min-h-0 overflow-hidden rounded-2xl lg:h-auto lg:flex-1 border border-[var(--border)] bg-[var(--panel)]">
                   {/* progress bar (pinned top) */}
                   {(!hasHydratedFromServer ||
                     doc.status === "preparing" ||
@@ -2480,7 +2484,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 </section>
               </div>
 
-              <div className="order-2 min-h-0 h-full lg:order-2">
+              <div className="order-2 min-h-0 lg:order-2 lg:h-full">
                 {doc.status === "ready" && !isReceivedViaRequest && !isReplacing ? (
                   <DocSharePanel
                     docId={doc.id}

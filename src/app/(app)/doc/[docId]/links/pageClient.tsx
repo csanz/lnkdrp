@@ -43,7 +43,7 @@ export default function LinksPageClient({ docId }: { docId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
+      <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-4 py-4 sm:px-6">
         <Link
           href={`/doc/${encodeURIComponent(docId)}`}
           className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
@@ -55,7 +55,7 @@ export default function LinksPageClient({ docId }: { docId: string }) {
 
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-[var(--fg)]">{docTitle || "Document"}</div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+          <div className="mt-0.5 flex items-center gap-2 whitespace-nowrap text-xs text-[var(--muted)]">
             <Link href={`/doc/${encodeURIComponent(docId)}`} className="hover:underline underline-offset-4">
               Document
             </Link>
@@ -70,10 +70,11 @@ export default function LinksPageClient({ docId }: { docId: string }) {
             themselves to see the combined picture. */}
         <Link
           href={`/doc/${encodeURIComponent(docId)}/metrics`}
+          aria-label="Metrics"
           className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
         >
           <ChartBarIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-          Metrics
+          <span className="hidden sm:inline">Metrics</span>
         </Link>
 
         <button

@@ -554,48 +554,54 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   ) : null}
 
                   {/* Controls */}
-                  <div className="mb-3 flex flex-wrap items-center gap-2">
-                    <div className="text-[11px] font-semibold text-[var(--muted)]">Filter</div>
-                    <select
-                      className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                      value={impactFilter}
-                      onChange={(e) => setImpactFilter(e.target.value as any)}
-                      aria-label="Filter by impact"
-                      title="Filter by impact"
-                    >
-                      <option value="all">All</option>
-                      <option value="none">None</option>
-                      <option value="minor">Minor</option>
-                      <option value="medium">Medium</option>
-                      <option value="major">Major</option>
-                    </select>
-
-                    <div className="ml-2 text-[11px] font-semibold text-[var(--muted)]">Sort</div>
-                    <select
-                      className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                      value={sort}
-                      onChange={(e) => setSort(e.target.value as any)}
-                      aria-label="Sort versions"
-                      title="Sort versions"
-                    >
-                      <option value="version_desc">Newest first</option>
-                      <option value="version_asc">Oldest first</option>
-                    </select>
-
-                    <div className="ml-2 text-[11px] font-semibold text-[var(--muted)]">Page size</div>
-                    <select
-                      className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                      value={String(pageSize)}
-                      onChange={(e) => setPageSize(Math.max(5, Math.min(50, Number(e.target.value) || 20)))}
-                      aria-label="Page size"
-                      title="Page size"
-                    >
-                      <option value="10">10</option>
-                      <option value="20">20</option>
-                      <option value="30">30</option>
-                      <option value="50">50</option>
-                    </select>
-                  </div>
+                  {loading || hasHistory ? (
+                    <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="text-[11px] font-semibold text-[var(--muted)]">Filter</div>
+                        <select
+                          className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                          value={impactFilter}
+                          onChange={(e) => setImpactFilter(e.target.value as any)}
+                          aria-label="Filter by impact"
+                          title="Filter by impact"
+                        >
+                          <option value="all">All</option>
+                          <option value="none">None</option>
+                          <option value="minor">Minor</option>
+                          <option value="medium">Medium</option>
+                          <option value="major">Major</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-[11px] font-semibold text-[var(--muted)]">Sort</div>
+                        <select
+                          className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                          value={sort}
+                          onChange={(e) => setSort(e.target.value as any)}
+                          aria-label="Sort versions"
+                          title="Sort versions"
+                        >
+                          <option value="version_desc">Newest first</option>
+                          <option value="version_asc">Oldest first</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-[11px] font-semibold text-[var(--muted)]">Page size</div>
+                        <select
+                          className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                          value={String(pageSize)}
+                          onChange={(e) => setPageSize(Math.max(5, Math.min(50, Number(e.target.value) || 20)))}
+                          aria-label="Page size"
+                          title="Page size"
+                        >
+                          <option value="10">10</option>
+                          <option value="20">20</option>
+                          <option value="30">30</option>
+                          <option value="50">50</option>
+                        </select>
+                      </div>
+                    </div>
+                  ) : null}
 
                   <div className="space-y-2">
                     {filteredItems.map((it) => {
@@ -924,7 +930,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
             <div className="min-w-0">
               <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 xl:sticky xl:top-6">
                 <div className="text-sm font-semibold text-[var(--fg)]">History overview</div>
-                <div className="mt-0.5 text-xs text-[var(--muted)]">Aggregate stats (best-effort)</div>
+                <div className="mt-0.5 text-xs text-[var(--muted)]">Across all versions</div>
 
                 <div className="mt-3 space-y-2 text-xs text-[var(--muted)]">
                   <div className="flex items-center justify-between gap-2">
@@ -961,8 +967,11 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                   </div>
                   <div className="flex items-center justify-between gap-2">
                     <span>Avg cadence</span>
-                    <span className="font-medium text-[var(--fg)]">
-                      {overview.avgDeltaMs ? formatDuration(overview.avgDeltaMs) : "— (needs 2+ changes)"}
+                    <span
+                      className="font-medium text-[var(--fg)]"
+                      title={overview.avgDeltaMs ? undefined : "Needs at least two replacements"}
+                    >
+                      {overview.avgDeltaMs ? formatDuration(overview.avgDeltaMs) : "—"}
                     </span>
                   </div>
                 </div>

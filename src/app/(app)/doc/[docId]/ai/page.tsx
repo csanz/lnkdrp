@@ -122,7 +122,7 @@ export default function DocAiExtractPage(props: { params: Promise<{ docId: strin
   }
 
   return (
-    <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]">
+    <div className="h-full overflow-auto bg-[var(--bg)] text-[var(--fg)]">
       <div className="mx-auto w-full max-w-4xl px-6 py-10">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -131,7 +131,7 @@ export default function DocAiExtractPage(props: { params: Promise<{ docId: strin
                 ← Back to doc
               </Link>
             </div>
-            <h1 className="mt-3 truncate text-xl font-semibold tracking-tight">
+            <h1 className="mt-3 break-words text-xl font-semibold tracking-tight sm:truncate">
               AI extract{doc?.title ? `: ${doc.title}` : ""}
             </h1>
             <div className="mt-2 text-sm text-[var(--muted)]">
@@ -255,7 +255,6 @@ export default function DocAiExtractPage(props: { params: Promise<{ docId: strin
             <div className="mt-8 rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="text-sm font-semibold text-[var(--fg)]">Raw JSON</div>
-                <div className="text-xs text-[var(--muted-2)]">(matches stored aiOutput)</div>
               </div>
               <pre className="mt-4 overflow-auto rounded-xl bg-[var(--code-bg)] p-4 text-xs text-[var(--fg)] ring-1 ring-[var(--code-border)]">
                 {JSON.stringify(doc?.aiOutput ?? null, null, 2)}
@@ -264,7 +263,7 @@ export default function DocAiExtractPage(props: { params: Promise<{ docId: strin
           </>
         ) : null}
       </div>
-    </main>
+    </div>
   );
 }
 

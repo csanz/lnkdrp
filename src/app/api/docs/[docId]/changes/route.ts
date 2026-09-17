@@ -65,7 +65,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           }
         : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
     })
-      .select({ _id: 1, orgId: 1, title: 1, currentUploadVersion: 1 })
+      .select({ _id: 1, orgId: 1, title: 1, currentUploadVersion: 1, currentUploadId: 1 })
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -262,6 +262,20 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       }
     }
 
+    // Doc.currentUploadVersion can be unset on older docs; fall back to the current Upload's
+    // version, as the doc route does, so History matches the doc header's `vN` badge.
+    let currentUploadVersion: number | null = null;
+    if (noText) {
+      const stored = (doc as any)?.currentUploadVersion;
+      if (typeof stored === "number" && Number.isFinite(stored)) {
+        currentUploadVersion = stored;
+      } else if ((doc as any)?.currentUploadId) {
+        const up = await UploadModel.findById((doc as any).currentUploadId).select({ version: 1 }).lean();
+        const v = up ? Number((up as any).version) : NaN;
+        currentUploadVersion = Number.isFinite(v) ? v : null;
+      }
+    }
+
     return applyTempUserHeaders(
       NextResponse.json(
         {
@@ -269,10 +283,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           ...(noText
             ? {
                 docTitle: typeof (doc as any)?.title === "string" ? String((doc as any).title).trim() : "",
-                currentUploadVersion:
-                  typeof (doc as any)?.currentUploadVersion === "number" && Number.isFinite((doc as any).currentUploadVersion)
-                    ? (doc as any).currentUploadVersion
-                    : null,
+                currentUploadVersion,
               }
             : {}),
           changes: changesAgg.map((c) => ({
