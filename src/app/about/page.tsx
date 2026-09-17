@@ -4,7 +4,7 @@
  * Same frame as the logged-out homepage (`HomeUnauthedClient`): the paper plane + globe animation
  * behind the first viewport on desktop, the same soft lighting, the same content column and
  * serif headline, so moving between "/" and "/about" feels like one site. The copy itself is the
- * shared `AboutCopy` (also used by the in-app About modal), pinned to the homepage's white-on-dark
+ * shared `AboutCopy` (the account menu links here), pinned to the homepage's white-on-dark
  * tones.
  */
 import AboutCopy from "@/components/AboutCopy";

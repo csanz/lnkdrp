@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import {
@@ -16,8 +16,6 @@ import {
 } from "@heroicons/react/24/outline";
 import { useTheme } from "next-themes";
 import { useAuthEnabled, useNavigationLocked } from "@/app/providers";
-import AboutCopy from "@/components/AboutCopy";
-import Modal from "@/components/modals/Modal";
 import IconLink from "@/components/ui/IconLink";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
 import {
@@ -61,21 +59,10 @@ export default function AccountMenu({ variant }: { variant?: "sidebar" | "topbar
 
 
 function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
-  const [showAboutModal, setShowAboutModal] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const navLocked = useNavigationLocked();
-  // Avoid hydration mismatch: theme can differ between SSR and the first client render.
-  const mounted = useSyncExternalStore(
-    () => () => {
-      // no-op subscription
-    },
-    () => true,
-    () => false,
-  );
-  const isDark = mounted && (resolvedTheme ?? theme) === "dark";
-  const logoSrc = isDark ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
 
   const displayName = "Guest";
   const subLabel = "Auth disabled";
@@ -85,16 +72,11 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   const menuItems: MenuItem[] = useMemo(() => {
     return [
       { type: "link", label: "Dashboard", href: "/dashboard", icon: <Cog6ToothIcon className="h-4 w-4" /> },
-      {
-        type: "button",
-        label: "About us",
-        icon: <QuestionMarkCircleIcon className="h-4 w-4" />,
-        onClick: () => setShowAboutModal(true),
-      },
+      { type: "link", label: "About us", href: "/about", icon: <QuestionMarkCircleIcon className="h-4 w-4" /> },
       { type: "separator" },
       { type: "link", label: "Log in", href: "/login", icon: <ArrowRightOnRectangleIcon className="h-4 w-4" /> },
     ];
-  }, [setShowAboutModal]);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -300,17 +282,6 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         </div>
       ) : null}
 
-      <Modal open={showAboutModal} onClose={() => setShowAboutModal(false)} ariaLabel="About us">
-        <div className="flex items-center gap-3">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)]">
-            <Image src={logoSrc} alt="" width={18} height={18} />
-          </div>
-          <div className="text-base font-semibold text-[var(--fg)]">About us</div>
-        </div>
-        <div className="mt-3">
-          <AboutCopy />
-        </div>
-      </Modal>
     </div>
   );
 }
@@ -322,9 +293,8 @@ function AccountMenuDisabled({ variant }: { variant?: "sidebar" | "topbar" }) {
 function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   const router = useRouter();
   const { data: session } = useSession();
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
-  const [showAboutModal, setShowAboutModal] = useState(false);
   const [loginBusy, setLoginBusy] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const navLocked = useNavigationLocked();
@@ -335,16 +305,6 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
   const [orgs, setOrgs] = useState<Array<{ id: string; name: string; type: string; role: string; avatarUrl?: string | null }>>([]);
   const [serverActiveOrgId, setServerActiveOrgId] = useState<string | null>(null);
 
-  // Avoid hydration mismatch: theme can differ between SSR and the first client render.
-  const mounted = useSyncExternalStore(
-    () => () => {
-      // no-op subscription
-    },
-    () => true,
-    () => false,
-  );
-  const isDark = mounted && (resolvedTheme ?? theme) === "dark";
-  const logoSrc = isDark ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3";
 
   const displayName = session?.user?.name?.trim() || (session?.user ? "Account" : "Guest");
   const subLabel = session?.user ? null : "Not signed in";
@@ -497,12 +457,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
       return [
         { type: "link", label: "Dashboard", href: "/dashboard", icon: <Cog6ToothIcon className="h-4 w-4" /> },
         { type: "separator" },
-        {
-          type: "button",
-          label: "About us",
-          icon: <QuestionMarkCircleIcon className="h-4 w-4" />,
-          onClick: () => setShowAboutModal(true),
-        },
+        { type: "link", label: "About us", href: "/about", icon: <QuestionMarkCircleIcon className="h-4 w-4" /> },
         { type: "separator" },
         {
           type: "button",
@@ -524,12 +479,7 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
 
     return [
       { type: "link", label: "Dashboard", href: "/dashboard", icon: <Cog6ToothIcon className="h-4 w-4" /> },
-      {
-        type: "button",
-        label: "About us",
-        icon: <QuestionMarkCircleIcon className="h-4 w-4" />,
-        onClick: () => setShowAboutModal(true),
-      },
+      { type: "link", label: "About us", href: "/about", icon: <QuestionMarkCircleIcon className="h-4 w-4" /> },
       { type: "separator" },
       {
         type: "button",
@@ -775,17 +725,6 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         </div>
       ) : null}
 
-      <Modal open={showAboutModal} onClose={() => setShowAboutModal(false)} ariaLabel="About us">
-        <div className="flex items-center gap-3">
-          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-2)]">
-            <Image src={logoSrc} alt="" width={18} height={18} />
-          </div>
-          <div className="text-base font-semibold text-[var(--fg)]">About us</div>
-        </div>
-        <div className="mt-3">
-          <AboutCopy />
-        </div>
-      </Modal>
     </div>
   );
 }
