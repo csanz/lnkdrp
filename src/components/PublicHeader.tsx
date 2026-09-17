@@ -66,6 +66,29 @@ function SessionLoginControl() {
   return <LoginButton enabled />;
 }
 
+const CONNECT_AGENT_CLASS =
+  "rounded-full border border-white/20 px-2.5 py-1 text-sm font-medium text-white transition hover:border-white/35 hover:bg-white/5 sm:px-3.5";
+
+/** The "Connect your agent" pill. */
+function ConnectAgentLink({ href }: { href: string }) {
+  return (
+    <Link href={href} aria-label="Connect your agent" className={CONNECT_AGENT_CLASS}>
+      <span className="sm:hidden">Connect</span>
+      <span className="hidden sm:inline">Connect your agent</span>
+    </Link>
+  );
+}
+
+/**
+ * Signed in, the pill opens the in-app agent page (keys, status, setup for this workspace) instead of
+ * the public guide. It renders the public href until the session resolves, the same on server and
+ * client, so there is no hydration mismatch.
+ */
+function SessionConnectAgentLink() {
+  const { status } = useSession();
+  return <ConnectAgentLink href={status === "authenticated" ? "/connect" : "/mcp"} />;
+}
+
 /**
  * Render the PublicHeader UI (static, transparent, logo left + About/Connect your agent/Pricing/Log in right).
  */
@@ -92,14 +115,7 @@ export default function PublicHeader({ containerClassName }: { containerClassNam
             {/* A quiet outlined pill: the one nav item that is about the product itself, so it shouldn't
                 read as part of a sentence with About / Pricing / Log in. Not filled, so it never competes
                 with the hero's white Get started button. */}
-            <Link
-              href="/mcp"
-              aria-label="Connect your agent"
-              className="rounded-full border border-white/20 px-2.5 py-1 text-sm font-medium text-white transition hover:border-white/35 hover:bg-white/5 sm:px-3.5"
-            >
-              <span className="sm:hidden">Connect</span>
-              <span className="hidden sm:inline">Connect your agent</span>
-            </Link>
+            {authEnabled ? <SessionConnectAgentLink /> : <ConnectAgentLink href="/mcp" />}
             <Link href="/pricing" className={NAV_LINK_CLASS}>
               Pricing
             </Link>
