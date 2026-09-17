@@ -53,6 +53,7 @@ import {
   type InFlightUpload,
 } from "@/lib/uploads/inFlight";
 import { isTerminalUploadStatus } from "@/lib/uploads/progress";
+import ActivityStatsHeader from "./StatsHeader";
 
 const PAGE_SIZES = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = 25;
@@ -814,6 +815,11 @@ export default function ActivityPageClient() {
             {error}
           </div>
         ) : null}
+
+        {/* What was done here over the last 30 days, and who did it. Workspace-wide and outside the
+            feed's filters and paging: it is the page's standing summary, not a view of the rows
+            below it. It draws nothing at all until it has numbers worth showing. */}
+        <ActivityStatsHeader />
 
         {/* In-flight uploads sit above the feed and outside its loading/empty states: the one thing
             on this page that is happening now should not wait on a page of things that already
