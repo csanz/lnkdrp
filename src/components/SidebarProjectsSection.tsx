@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ArrowsPointingOutIcon,
   EllipsisHorizontalIcon,
   InboxArrowDownIcon,
   PlusIcon,
@@ -70,7 +71,7 @@ export default function SidebarProjectsSection({
 }) {
   return (
     <section>
-      <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
+      <div className="group flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
         <button
           type="button"
           className="inline-flex h-6 items-center rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -97,12 +98,31 @@ export default function SidebarProjectsSection({
           <StablePlusMinusIcon expanded={!(projectsCollapsedLoaded ? projectsCollapsed : true)} />
         </IconButton>
         <IconButton
+          ariaLabel="Open all projects"
+          title="Open all projects"
+          variant="ghost"
+          size="sm"
+          disabled={navLocked}
+          className={[
+            // Revealed on hover/focus: the list modal is otherwise only reachable through "See
+            // more", which a short list never shows — and archived projects live there.
+            "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-0 transition-opacity hover:text-[var(--fg)]",
+            "group-hover:opacity-100 focus-visible:opacity-100",
+          ].join(" ")}
+          onClick={() => {
+            if (navLocked) return;
+            setShowProjectsModal(true);
+          }}
+        >
+          <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
+        </IconButton>
+        <IconButton
           ariaLabel="New project"
           title="New project"
           variant="ghost"
           size="sm"
           disabled={navLocked}
-          className="ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] hover:text-[var(--fg)]"
+          className="h-6 w-6 rounded-md p-0 text-[var(--muted-2)] hover:text-[var(--fg)]"
           onClick={() => {
             if (navLocked) return;
             onClickNewProject();
