@@ -100,6 +100,24 @@ const uploadSchema = new Schema(
     extractedTextBlobPathname: { type: String, trim: true, default: null },
 
     /**
+     * Where this run has got to, written at the real boundaries of the pipeline (see
+     * `src/lib/uploads/progress.ts`) and throttled to roughly one write per 750ms.
+     *
+     * `percent` is 0–100, `stage` is the sentence a person or an agent reads ("rendering page 3 of
+     * 9"), `stageKey` is the machine-readable half. `orgId`/`docId` are stamped here so the
+     * realtime server can route the frame to a workspace room straight off the change stream
+     * without a second query per page.
+     */
+    progress: {
+      percent: { type: Number, min: 0, max: 100, default: null },
+      stage: { type: String, trim: true, default: null },
+      stageKey: { type: String, trim: true, default: null },
+      orgId: { type: Schema.Types.ObjectId, ref: "Org", default: null },
+      docId: { type: Schema.Types.ObjectId, ref: "Doc", default: null },
+      updatedAt: { type: Date, default: null },
+    },
+
+    /**
      * Retryable derived metadata.
      */
     metadata: {
@@ -192,6 +210,18 @@ if (ExistingUploadModel && !ExistingUploadModel.schema.path("agentSummary")) {
 if (ExistingUploadModel && !ExistingUploadModel.schema.path("processingStartedAt")) {
   ExistingUploadModel.schema.add({
     processingStartedAt: { type: Date, default: null },
+  } as any);
+}
+if (ExistingUploadModel && !ExistingUploadModel.schema.path("progress.percent")) {
+  ExistingUploadModel.schema.add({
+    progress: {
+      percent: { type: Number, min: 0, max: 100, default: null },
+      stage: { type: String, trim: true, default: null },
+      stageKey: { type: String, trim: true, default: null },
+      orgId: { type: Schema.Types.ObjectId, ref: "Org", default: null },
+      docId: { type: Schema.Types.ObjectId, ref: "Doc", default: null },
+      updatedAt: { type: Date, default: null },
+    },
   } as any);
 }
 

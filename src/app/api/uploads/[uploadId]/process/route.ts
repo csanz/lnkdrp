@@ -42,6 +42,7 @@ import { agentFromRequest, recordActivity } from "@/lib/activity/log";
 import { agentSummaryToAnalysis, readStoredAgentSummary } from "@/lib/ai/agentSummary";
 import { findRaiseAmount, resolveAsk } from "@/lib/ai/askFromText";
 import { INTERNAL_PROCESS_HEADER, verifyInternalProcessToken } from "@/lib/uploads/internalProcess";
+import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
 
 export const runtime = "nodejs";
 // PDF rasterization + AI passes can take minutes for large decks (Vercel Pro/Enterprise cap).
@@ -1076,6 +1077,20 @@ export async function POST(
         existingDocOrgIdRaw && Types.ObjectId.isValid(String(existingDocOrgIdRaw))
           ? new Types.ObjectId(String(existingDocOrgIdRaw))
           : new Types.ObjectId(actor.orgId);
+      /**
+       * Live progress for this run.
+       *
+       * Every stage below reports through this; the writes are throttled inside the reporter
+       * (~one per 750ms, first and last exempt) and each one becomes an `upload` frame on the
+       * realtime channel, which is what draws the moving bar in the Activity feed. Nothing here
+       * is allowed to fail the pipeline — the reporter swallows its own errors.
+       */
+      const progress = createUploadProgressReporter({
+        uploadId,
+        docId: String(docId),
+        orgId: String(existingDocOrgId),
+      });
+
       // When replacing a file, if AI extraction fails/skips for the new version,
       // we keep the prior AI-derived fields so the UI doesn't "lose" them.
       const priorDocAiOutput = existingDocObj ? (existingDocObj.aiOutput ?? null) : null;
@@ -1129,6 +1144,7 @@ export async function POST(
       const blobUrl = upload.blobUrl;
       if (!blobUrl) {
         debugError(1, "[process] missing blobUrl", { uploadId, docId: String(docId) });
+        await progress.report("failed", { force: true });
         await UploadModel.findByIdAndUpdate(uploadId, {
           status: "failed",
           error: { message: "Missing blobUrl" },
@@ -1555,11 +1571,13 @@ export async function POST(
       let pdfBytes: Uint8Array;
       try {
         debugLog(1, "[process] fetching pdf", { uploadId });
+        await progress.report("fetching", { force: true });
         pdfBytes = await fetchPdfBytes(blobUrl);
         debugLog(1, "[process] fetched pdf", { uploadId, bytes: pdfBytes.length });
       } catch (e) {
         const message = e instanceof Error ? e.message : "Failed to fetch PDF";
         debugError(1, "[process] fetch failed", { uploadId, message });
+        await progress.report("failed", { force: true });
         await UploadModel.findByIdAndUpdate(uploadId, {
           status: "failed",
           error: { message },
@@ -1608,6 +1626,7 @@ export async function POST(
 
       // Preview PNG (retryable)
       try {
+        await progress.report("preview");
         debugLog(2, "[process] preview begin", { uploadId, isReplacement, uploadVersion });
         const existingPreview =
           upload.previewImageUrl ?? upload.firstPagePngUrl ?? null;
@@ -1648,6 +1667,7 @@ export async function POST(
 
       // Extract text (retryable)
       try {
+        await progress.report("extracting");
         const existingText = upload.rawExtractedText ?? upload.pdfText ?? null;
         if (existingText) {
           extractedText = existingText;
@@ -1706,6 +1726,9 @@ export async function POST(
           }
 
           debugLog(1, "[process] building slideNodes", { uploadId, pageCount });
+          // The one stage worth a sub-position: this loop is most of the wait, so the bar moves
+          // inside it ("rendering page 3 of 9") instead of holding one number for a minute.
+          await progress.report("rendering", { page: 0, pages: pageCount, force: true });
 
           const PAGE_IMAGE_MAX_WIDTH = 1200;
           const PAGE_IMAGE_QUALITY = 78;
@@ -1766,6 +1789,9 @@ export async function POST(
               width,
               height,
             });
+            // Throttled inside the reporter: a nine-page deck writes a handful of times, a
+            // two-hundred-page one does not write two hundred times.
+            await progress.report("rendering", { page: pageNumber, pages: pageCount });
           }
 
           slideNodes = nodes;
@@ -1860,6 +1886,7 @@ export async function POST(
             // thumbnails, so the compare can cite pages. Shared with the manual rerun.
             let changedPages: ChangedPage[] = [];
             let previousUploadId: Types.ObjectId | null = null;
+            await progress.report("comparing");
             try {
               if (!extractedPages) {
                 extractedPages = await extractPdfTextByPage(pdfBytes).catch(() => []);
@@ -2034,6 +2061,7 @@ export async function POST(
 
       // AI extraction (retryable; should not fail the upload if it errors)
       try {
+        await progress.report("summarizing");
         const existingAi = upload.aiOutput ?? null;
         if (existingAi) {
           aiOutput = existingAi;
@@ -2350,6 +2378,7 @@ export async function POST(
       });
 
       debugLog(1, "[process] persisting results", { uploadId, failed });
+      await progress.report("finishing");
       await UploadModel.findByIdAndUpdate(uploadId, {
         status: failed ? "failed" : "completed",
         blobUrl,
@@ -2449,6 +2478,10 @@ export async function POST(
         await updateDocUnlessSuperseded(docId, upload, docUpdate);
       }
 
+      // Last frame of the run: forced past the throttle so the bar always finishes, rather than
+      // being swallowed because the previous write was under 750ms ago.
+      await progress.report(failed ? "failed" : "ready", { force: true });
+
       // Activity: the pipeline finished and the doc flipped to `ready` (best-effort, after the write).
       // Attributed to the same workspace the credits were billed to (`existingDocOrgId`).
       if (!failed) {
@@ -2540,6 +2573,10 @@ export async function POST(
             message,
           },
         });
+        // A crash is exactly when a watcher is left staring at a bar that stopped moving; say so.
+        // The reporter built inside the try is out of scope here, so this one resolves the
+        // workspace itself.
+        await createUploadProgressReporter({ uploadId }).report("failed", { force: true });
       } catch {
         // ignore
       }

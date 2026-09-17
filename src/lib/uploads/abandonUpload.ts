@@ -17,6 +17,7 @@ import { debugLog } from "@/lib/debug";
 import type { Actor } from "@/lib/gating/actor";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
+import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
 import { connectMongo } from "@/lib/mongodb";
 
 export async function abandonUpload(input: { uploadId: string; userId: string; reason: string }): Promise<void> {
@@ -55,6 +56,11 @@ export async function abandonUpload(input: { uploadId: string; userId: string; r
     ? { status: "ready", currentUploadId: previous._id, uploadId: previous._id }
     : { status: "failed" };
   const res = await DocModel.updateOne({ _id: upload.docId, currentUploadId: upload._id }, { $set: restore });
+  // Stop the live bar: a watcher on the Activity feed would otherwise be left with an entry that
+  // simply stopped moving, with nothing saying the import never happened.
+  await createUploadProgressReporter({ uploadId: String(upload._id), docId: String(upload.docId) })
+    .report("failed", { force: true })
+    .catch(() => undefined);
   debugLog(1, "[uploads] abandoned upload after failed import", {
     uploadId: input.uploadId,
     docId: String(upload.docId),

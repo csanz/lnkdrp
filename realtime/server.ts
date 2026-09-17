@@ -15,6 +15,7 @@
  *     {"type":"agent","orgId":…,"at":iso}             an API key was used, created or revoked
  *     {"type":"activity","orgId":…,"event":{id,type,createdDate}}  a new activity row
  *     {"type":"doc","orgId":…,"doc":{id,status,shareId}}  a document's processing status changed
+ *     {"type":"upload","orgId":…,"upload":{id,docId,percent,stage,status}}  an upload moved along
  *     {"type":"ping"}                                 every 25s; client answers {"type":"pong"}
  *
  * The MCP server uses the same channel two ways: everything it writes (activity rows, docs it
@@ -95,7 +96,7 @@ async function main() {
   // cursor, which emits 'close'. So after either, wait out the resume and only then trust `closed`.
   // A dead stream turns /healthz 503 and exits the process: Fly http checks only pull the one
   // machine out of routing, and only an exit gets it restarted with fresh streams.
-  const streamHealth: Record<"activity" | "apikeys" | "docs" | "projects", boolean> = { activity: true, apikeys: true, docs: true, projects: true };
+  const streamHealth: Record<"activity" | "apikeys" | "docs" | "projects" | "uploads", boolean> = { activity: true, apikeys: true, docs: true, projects: true, uploads: true };
   let shuttingDown = false;
   let exiting = false;
   const watchHealth = (name: keyof typeof streamHealth, stream: mongoose.mongo.ChangeStream) => {
@@ -175,6 +176,44 @@ async function main() {
   });
   watchHealth("projects", projects);
 
+  // Upload progress. A doc's status flip above says "it finished"; this says how far along it is
+  // while it is still going — the percent and the stage the pipeline wrote on the Upload row (see
+  // src/lib/uploads/progress.ts). Matching on `progress` keeps the other upload writes (the blob
+  // url, the extracted text, the AI output — all large) off the channel entirely.
+  //
+  // `progress.orgId` is stamped by the writer precisely so this handler needs no second query per
+  // page: a fifty-page deck is fifteen-odd frames, and a lookup on each would be a lookup per frame.
+  const uploads = db
+    .collection("uploads")
+    .watch([{ $match: { operationType: "update", "updateDescription.updatedFields.progress": { $exists: true } } }], {
+      fullDocument: "updateLookup",
+    });
+  uploads.on("change", (change) => {
+    const doc = (change as {
+      fullDocument?: {
+        _id?: unknown;
+        orgId?: unknown;
+        docId?: unknown;
+        status?: unknown;
+        progress?: { percent?: unknown; stage?: unknown; orgId?: unknown };
+      };
+    }).fullDocument;
+    const orgId = doc?.progress?.orgId ?? doc?.orgId;
+    if (!orgId) return;
+    const percent = Number(doc?.progress?.percent);
+    broadcast(String(orgId), {
+      type: "upload",
+      upload: {
+        id: String(doc?._id ?? ""),
+        docId: doc?.docId ? String(doc.docId) : null,
+        percent: Number.isFinite(percent) ? Math.max(0, Math.min(100, Math.round(percent))) : 0,
+        stage: typeof doc?.progress?.stage === "string" ? doc.progress.stage : null,
+        status: typeof doc?.status === "string" ? doc.status : null,
+      },
+    });
+  });
+  watchHealth("uploads", uploads);
+
   // --- http + ws ---------------------------------------------------------------------------------
   const server = http.createServer((req, res) => {
     if (req.url === "/healthz") {
@@ -251,7 +290,7 @@ async function main() {
     shuttingDown = true;
     clearInterval(heartbeat);
     for (const room of rooms.values()) for (const c of room) c.close(1001, "server shutting down");
-    await Promise.allSettled([activity.close(), keys.close(), docs.close()]);
+    await Promise.allSettled([activity.close(), keys.close(), docs.close(), projects.close(), uploads.close()]);
     await mongoose.disconnect();
     server.close(() => process.exit(0));
   };

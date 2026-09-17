@@ -19,6 +19,14 @@ export type RealtimeFrame =
   | { type: "agent"; orgId: string; at: string }
   | { type: "activity"; orgId: string; event: { id: string; type: string | null; createdDate: string | null } }
   | { type: "doc"; orgId: string; doc: { id: string; status: string | null; shareId: string | null } }
+  // An upload moved: the percent and the stage the pipeline wrote on the Upload row. Several of
+  // these arrive per upload (the render loop throttles to ~one per 750ms); the Activity feed folds
+  // them into its in-flight list with `mergeUploadFrame`.
+  | {
+      type: "upload";
+      orgId: string;
+      upload: { id: string; docId: string | null; percent: number; stage: string | null; status: string | null };
+    }
   | { type: "project"; orgId: string; project: { id: string; name: string | null } }
   | { type: "ping" };
 

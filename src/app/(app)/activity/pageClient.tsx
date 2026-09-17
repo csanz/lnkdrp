@@ -45,6 +45,14 @@ import {
   type ActivityFilterId,
   type ActivityItem,
 } from "@/lib/activity/labels";
+import {
+  markDocFinished,
+  mergeInFlightSnapshot,
+  mergeUploadFrame,
+  pruneUploads,
+  type InFlightUpload,
+} from "@/lib/uploads/inFlight";
+import { isTerminalUploadStatus } from "@/lib/uploads/progress";
 
 const PAGE_SIZES = [25, 50, 100] as const;
 const DEFAULT_PAGE_SIZE = 25;
@@ -162,6 +170,81 @@ function ActorAvatar({ item }: { item: ActivityItem }) {
     <div className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[var(--panel-hover)] text-[10px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]" aria-hidden="true">
       ?
     </div>
+  );
+}
+
+/**
+ * One upload that is still happening.
+ *
+ * The feed's own rows are all past tense — they exist because something finished. This is the one
+ * thing on the page that is still going, so it gets the only moving element: a hairline bar, the
+ * percent, and the stage the pipeline is actually in ("rendering page 3 of 9"), all of it fed by
+ * `upload` frames off the realtime channel rather than a poll. It keeps the row grammar of
+ * everything below it — icon tile, title, a small second line — so the section reads as part of
+ * the feed and not a widget bolted above it.
+ */
+function UploadProgressRow({ item }: { item: InFlightUpload }) {
+  const failed = item.status === "failed";
+  const done = item.status === "completed";
+  const Icon = failed ? XCircleIcon : done ? CheckCircleIcon : ArrowUpTrayIcon;
+  const title = item.docTitle?.trim() || "Untitled document";
+  const href = item.docId ? `/doc/${encodeURIComponent(item.docId)}` : null;
+  const percent = Math.max(0, Math.min(100, Math.round(item.percent)));
+  // A replacement says so: "v3" is how an owner tells this bar apart from the first upload's.
+  const version = typeof item.version === "number" && item.version > 1 ? `v${item.version}` : null;
+
+  return (
+    <li className="flex items-start gap-3 px-4 py-3">
+      <div
+        className={[
+          "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg ring-1 ring-[var(--border)]",
+          failed ? "bg-[var(--panel-hover)] text-red-400" : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
+        ].join(" ")}
+      >
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-x-2 text-[13px] leading-5 text-[var(--muted)]">
+          {href ? (
+            <Link href={href} className="min-w-0 truncate font-semibold text-[var(--fg)] hover:underline underline-offset-4">
+              {title}
+            </Link>
+          ) : (
+            <span className="min-w-0 truncate font-semibold text-[var(--fg)]">{title}</span>
+          )}
+          {version ? <span className="shrink-0 text-[11px] text-[var(--muted-2)]">{version}</span> : null}
+          <span
+            className={[
+              "ml-auto shrink-0 text-[12px] font-semibold tabular-nums",
+              failed ? "text-red-400" : "text-[var(--fg)]",
+            ].join(" ")}
+          >
+            {failed ? "Failed" : `${percent}%`}
+          </span>
+        </div>
+        {/* The bar. Width is the only thing that animates, so a frame arriving mid-transition
+            simply retargets it instead of restarting anything. */}
+        <div
+          className="mt-2 h-1 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={percent}
+          aria-label={`${title}: ${item.stage}`}
+        >
+          <div
+            className={[
+              "h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
+              failed ? "bg-red-500/70" : done ? "bg-[var(--chart-views)]" : "bg-[var(--fg)]",
+            ].join(" ")}
+            style={{ width: `${failed ? Math.max(percent, 4) : percent}%` }}
+          />
+        </div>
+        <div className="mt-1.5 text-[11px] text-[var(--muted-2)]" aria-live="polite">
+          {failed ? "Upload failed" : done ? "Ready" : item.stage}
+        </div>
+      </div>
+    </li>
   );
 }
 
@@ -378,6 +461,70 @@ export default function ActivityPageClient() {
   const { plan } = usePlan();
   const isFree = plan?.plan === "free";
   const { openUpgrade } = useUpgradeModal();
+
+  /**
+   * Uploads still in flight, drawn above the feed.
+   *
+   * Two inputs. `GET /api/uploads/in-progress` is the snapshot — without it a page opened partway
+   * through a long import would be blank until the next frame happened to land. `upload` frames
+   * are everything after that, and they also carry the titles' only refresh trigger: a frame for
+   * an id we have never seen means an upload started somewhere else (another tab, an agent), so we
+   * re-fetch the snapshot once to learn which document it is on.
+   */
+  const [inFlight, setInFlight] = useState<InFlightUpload[]>([]);
+  const inFlightIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    inFlightIdsRef.current = new Set(inFlight.map((u) => u.id));
+  }, [inFlight]);
+
+  const loadInFlight = useCallback(async () => {
+    try {
+      const res = await fetchWithTempUser("/api/uploads/in-progress", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = (await res.json().catch(() => ({}))) as { items?: InFlightUpload[] };
+      const items = Array.isArray(json.items) ? json.items : [];
+      setInFlight((prev) => mergeInFlightSnapshot(prev, items));
+    } catch {
+      // The feed itself is unaffected; the bars just wait for the next frame.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadInFlight();
+    const onUpload = (frame: { type: string }) => {
+      const f = frame as { type: "upload"; upload: { id: string; docId: string | null; percent: number; stage: string | null; status: string | null } };
+      if (f.type !== "upload" || !f.upload?.id) return;
+      const unknown = !inFlightIdsRef.current.has(f.upload.id);
+      setInFlight((prev) => mergeUploadFrame(prev, f.upload));
+      // Frames carry no title (the realtime server stays free of per-frame lookups), so the first
+      // sighting of an upload is what sends us back for the document it belongs to.
+      if (unknown && !isTerminalUploadStatus(f.upload.status)) void loadInFlight();
+    };
+    const onDoc = (frame: { type: string }) => {
+      const f = frame as { type: "doc"; doc: { id: string; status: string | null } };
+      if (f.type !== "doc" || !f.doc?.id) return;
+      // The document's flip usually beats the pipeline's last progress write, and it is the more
+      // authoritative "it is over": settle the bar on it rather than leaving it at 96%.
+      setInFlight((prev) => markDocFinished(prev, f.doc.id, f.doc.status));
+    };
+    const offUpload = subscribeRealtime("upload", onUpload);
+    const offDoc = subscribeRealtime("doc", onDoc);
+    // Finished entries hold their filled bar for a beat, then go; the feed row that replaced them
+    // has already arrived underneath by then.
+    const prune = window.setInterval(() => setInFlight((prev) => pruneUploads(prev)), 1000);
+    // Fallback for a deployment with no realtime url (the socket stays "unavailable"): a slow poll
+    // is better than a bar that never moves.
+    const poll = window.setInterval(() => {
+      if (realtimeState() === "open" || document.visibilityState !== "visible") return;
+      void loadInFlight();
+    }, 5000);
+    return () => {
+      offUpload();
+      offDoc();
+      window.clearInterval(prune);
+      window.clearInterval(poll);
+    };
+  }, [loadInFlight]);
 
   const fetchPage = useCallback(
     async (cursor: string | null): Promise<{ items: ActivityItem[]; nextCursor: string | null }> => {
@@ -611,6 +758,25 @@ export default function ActivityPageClient() {
           </div>
         ) : null}
 
+        {/* In-flight uploads sit above the feed and outside its loading/empty states: the one thing
+            on this page that is happening now should not wait on a page of things that already
+            happened, and an empty workspace whose first upload is mid-flight is the opposite of
+            "no activity yet". */}
+        {inFlight.length ? (
+          <section aria-label="Uploads in progress" className="mb-6">
+            <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
+              In progress
+            </div>
+            <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+              <ul className="divide-y divide-[var(--border)]">
+                {inFlight.map((u) => (
+                  <UploadProgressRow key={u.id} item={u} />
+                ))}
+              </ul>
+            </div>
+          </section>
+        ) : null}
+
         {loading ? (
           <div className="grid gap-6" aria-hidden="true">
             <div className="mb-2 h-3 w-16 rounded bg-[var(--panel-hover)]" />
@@ -629,9 +795,11 @@ export default function ActivityPageClient() {
             </div>
           </div>
         ) : !items.length ? (
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-10 text-center text-sm text-[var(--muted)]">
-            No activity yet. Uploads, share changes and views will show up here.
-          </div>
+          inFlight.length ? null : (
+            <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-10 text-center text-sm text-[var(--muted)]">
+              No activity yet. Uploads, share changes and views will show up here.
+            </div>
+          )
         ) : (
           <div
             key={pageKey}

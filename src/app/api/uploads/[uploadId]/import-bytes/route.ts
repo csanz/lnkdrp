@@ -38,6 +38,7 @@ import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/act
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
 import { abandonUploadIfImportFailed } from "@/lib/uploads/abandonUpload";
+import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
 import { UPLOAD_MAX_BASE64_CHARS, UPLOAD_MAX_BYTES, UPLOAD_MAX_LABEL } from "@/lib/limits/uploads";
 
 export const runtime = "nodejs";
@@ -129,12 +130,19 @@ async function importBytes(request: Request, ctx: { params: Promise<{ uploadId: 
     const fileName = sanitizeFileName(asString(body.fileName) ?? "document.pdf");
     const pathname = buildDocBlobPathname({ docId, uploadId, fileName });
 
+    // Live progress: the MCP's `filePath` path lands here, and the blob write is the part of it
+    // that is worth showing before the process job takes over.
+    const progress = createUploadProgressReporter({ uploadId, docId, orgId: upload.orgId ? String(upload.orgId) : null });
+    await progress.report("receiving", { force: true });
+
     debugLog(1, "[import-bytes] uploading to blob", { uploadId, sizeBytes });
+    await progress.report("storing", { force: true });
     const blob = await put(pathname, buf, {
       access: "public",
       contentType: "application/pdf",
       addRandomSuffix: false,
     });
+    await progress.report("stored", { force: true });
 
     await UploadModel.findByIdAndUpdate(uploadId, {
       status: "uploaded",

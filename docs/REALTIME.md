@@ -23,6 +23,12 @@ socket, so this runs on its own host.
    - `activityevents` inserts → `{"type":"activity","orgId","event":{id,type,createdDate}}`
    - `apikeys` insert/update/replace → `{"type":"agent","orgId","at"}` (key used, created, revoked)
    - `docs` status changes → `{"type":"doc","orgId","doc":{id,status,shareId}}`
+   - `projects` insert/update/replace/delete → `{"type":"project","orgId","project":{id,name}}`
+   - `uploads` writes that touch `progress` → `{"type":"upload","orgId","upload":{id,docId,percent,stage,status}}`
+     — how far a running upload has got ("rendering page 3 of 9"). The pipeline writes it at every
+     real boundary, throttled to ~one write per 750ms per upload (first and last exempt), and the
+     Activity feed draws it as a bar. The routing key is `progress.orgId`, stamped by the writer so
+     this handler needs no lookup per frame. See `src/lib/uploads/progress.ts`.
 4. Heartbeat: `{"type":"ping"}` every 25s; the client answers `{"type":"pong"}`; two misses drop
    the socket. The client reconnects with jittered backoff (1s → 30s), re-tickets on a workspace
    switch, and reconnects when a sleeping tab wakes.

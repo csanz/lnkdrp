@@ -16,6 +16,7 @@ import { newShareId } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { INVALID_SUMMARY_CODE, parseAgentSummaryInput } from "@/lib/ai/agentSummary";
 import { agentFromRequest, agentLabel } from "@/lib/activity/log";
+import { uploadProgressFor } from "@/lib/uploads/progress";
 import {
   isPdfUploadMeta,
   PDF_ONLY_ERROR_MESSAGE,
@@ -245,11 +246,24 @@ export async function POST(request: Request) {
     // Allocated via an atomic `$inc` so concurrent uploads never share a version.
     const version = await allocateDocUploadVersion(new Types.ObjectId(body.docId));
 
+    // The bar starts here, not when processing does: from the owner's side the wait begins the
+    // moment they (or an agent) ask for the upload, and a row that appears only once bytes have
+    // landed misses the whole import. `orgId` is stamped so the realtime server can route it.
+    const initialProgress = uploadProgressFor({ stage: "created" });
     const upload = await UploadModel.create({
       userId: new Types.ObjectId(actor.userId),
+      orgId: doc?.orgId ?? null,
       docId: new Types.ObjectId(body.docId),
       version,
       status: "uploading",
+      progress: {
+        percent: initialProgress.percent,
+        stage: initialProgress.stage,
+        stageKey: initialProgress.stageKey,
+        orgId: doc?.orgId ?? null,
+        docId: new Types.ObjectId(body.docId),
+        updatedAt: new Date(),
+      },
       originalFileName: body.originalFileName ?? null,
       contentType: body.contentType ?? null,
       sizeBytes,

@@ -18,6 +18,7 @@ import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { PDF_ONLY_ERROR_MESSAGE, UNSUPPORTED_FILE_TYPE_CODE, looksLikePdfBytes, sanitizeFileName } from "@/lib/blob/serverClientUploadRoute";
 import { recordActivity } from "@/lib/activity/log";
 import { abandonUploadIfImportFailed } from "@/lib/uploads/abandonUpload";
+import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
 import { UPLOAD_MAX_BYTES, UPLOAD_MAX_LABEL } from "@/lib/limits/uploads";
 
 export const runtime = "nodejs";
@@ -264,6 +265,11 @@ async function importUrl(
       return applyTempUserHeaders(NextResponse.json({ error: "Upload missing docId" }, { status: 400 }), actor);
     }
 
+    // Live progress: the download is the first thing that takes real time on this path, and on a
+    // large deck it is most of the wait before processing even starts.
+    const progress = createUploadProgressReporter({ uploadId, docId, orgId: upload.orgId ? String(upload.orgId) : null });
+    await progress.report("downloading", { force: true });
+
     const baseHeaders: Record<string, string> = {
       // Some hosts reject requests without a UA and/or accept header.
       "user-agent": "lnkdrp-import-url/1.0",
@@ -386,11 +392,13 @@ async function importUrl(
     });
 
     debugLog(1, "[import-url] uploading to blob", { uploadId });
+    await progress.report("storing", { force: true });
     const blob = await put(pathname, buf, {
       access: "public",
       contentType: "application/pdf",
       addRandomSuffix: false,
     });
+    await progress.report("stored", { force: true });
 
     await UploadModel.findByIdAndUpdate(uploadId, {
       status: "uploaded",
