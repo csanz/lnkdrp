@@ -39,16 +39,41 @@ function docsVisibilityFilter(actor: { orgId: string; personalOrgId?: string | n
   };
 }
 
-async function listStarred(actor: { orgId: string; userId: string }): Promise<StarredRow[]> {
+/**
+ * The caller's starred documents, minus any that are no longer visible.
+ *
+ * A `StarredDoc` row carries a title cached at the moment of starring and has no idea what happened
+ * to the document afterwards. Starring already checks visibility, but nothing re-checked it on read,
+ * so deleting or archiving a starred document left it sitting in the sidebar under its old title
+ * forever — reported live on 2026-09-16, after a delete that had otherwise worked everywhere else.
+ *
+ * The star row itself is deliberately kept: a document that comes back should come back starred.
+ * The live title wins over the cached one while we are here, since it is the same query.
+ */
+async function listStarred(actor: { orgId: string; personalOrgId?: string | null; userId: string }): Promise<StarredRow[]> {
   const orgId = new Types.ObjectId(actor.orgId);
   const userId = new Types.ObjectId(actor.userId);
   const rows = await StarredDocModel.find({ orgId, userId })
     .sort({ sortKey: 1, createdDate: 1, _id: 1 })
     .select({ docId: 1, title: 1, starredAt: 1, sortKey: 1 })
     .lean();
-  return rows.map((r) => ({
+  if (rows.length === 0) return [];
+
+  const docIds = rows
+    .map((r) => (r as unknown as { docId?: unknown }).docId)
+    .filter((v): v is Types.ObjectId => Boolean(v));
+  const visible = (await DocModel.find({ ...docsVisibilityFilter(actor), _id: { $in: docIds } })
+    .select({ _id: 1, title: 1 })
+    .lean()) as Array<{ _id: Types.ObjectId; title?: unknown }>;
+  const liveTitleById = new Map(visible.map((d) => [String(d._id), typeof d.title === "string" ? d.title : ""]));
+
+  return rows
+    .filter((r) => liveTitleById.has(String((r as unknown as { docId?: unknown }).docId)))
+    .map((r) => ({
     id: String((r as unknown as { docId?: unknown }).docId),
-    title: String((r as unknown as { title?: unknown }).title ?? ""),
+    title:
+      liveTitleById.get(String((r as unknown as { docId?: unknown }).docId)) ||
+      String((r as unknown as { title?: unknown }).title ?? ""),
     starredAt: (() => {
       const d = (r as unknown as { starredAt?: unknown }).starredAt;
       const t = d instanceof Date ? d.getTime() : Date.parse(String(d ?? ""));
@@ -67,7 +92,7 @@ export async function GET(request: Request) {
     if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
     await connectMongo();
 
-    const docs = await listStarred({ orgId: actor.orgId, userId: actor.userId });
+    const docs = await listStarred({ orgId: actor.orgId, personalOrgId: actor.personalOrgId, userId: actor.userId });
     return NextResponse.json({ docs }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -119,7 +144,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const docs = await listStarred({ orgId: actor.orgId, userId: actor.userId });
+    const docs = await listStarred({ orgId: actor.orgId, personalOrgId: actor.personalOrgId, userId: actor.userId });
     return NextResponse.json({ docs }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -173,7 +198,7 @@ export async function PATCH(request: Request) {
     }));
     if (ops.length) await StarredDocModel.bulkWrite(ops as any, { ordered: false });
 
-    const docs = await listStarred({ orgId: actor.orgId, userId: actor.userId });
+    const docs = await listStarred({ orgId: actor.orgId, personalOrgId: actor.personalOrgId, userId: actor.userId });
     return NextResponse.json({ docs }, { headers: { "cache-control": "no-store" } });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
