@@ -66,7 +66,8 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const sidebar = url.searchParams.get("sidebar") === "1";
     // Default list sizes match the client sidebar cache snapshot.
-    const docsLimit = 5;
+    // Keep equal to DOCS_SIDEBAR_LIMIT in LeftSidebar.tsx: the sidebar shows what this returns.
+    const docsLimit = 20;
     const projectsLimit = 10;
     const requestsLimit = 10;
 

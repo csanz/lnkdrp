@@ -121,7 +121,7 @@ const REQUESTS_COLLAPSED_KEY = "lnkdrp.sidebar.requestsCollapsed.v1";
 const STARRED_SIDEBAR_LIMIT = 3;
 const PROJECTS_SIDEBAR_LIMIT = 4;
 const REQUESTS_SIDEBAR_LIMIT = 3;
-const DOCS_SIDEBAR_LIMIT = 10;
+const DOCS_SIDEBAR_LIMIT = 20;
 
 type DocFolder = { id: string; name: string; slug: string };
 /**

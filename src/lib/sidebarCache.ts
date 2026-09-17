@@ -394,7 +394,7 @@ export async function refreshSidebarCache(opts?: { force?: boolean; reason?: str
           items: Array.isArray(json.docs?.items) ? json.docs!.items : [],
           total: typeof json.docs?.total === "number" ? json.docs.total : 0,
           page: typeof json.docs?.page === "number" ? json.docs.page : 1,
-          limit: typeof json.docs?.limit === "number" ? json.docs.limit : 5,
+          limit: typeof json.docs?.limit === "number" ? json.docs.limit : 20,
         },
         projects: {
           items: Array.isArray(json.projects?.items) ? json.projects!.items : [],
