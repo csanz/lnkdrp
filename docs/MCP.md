@@ -158,8 +158,9 @@ only clue (`mcp/src/server.ts`):
   (name, personal or team, plan) and tell the agent to use the connection named for the workspace
   the person mentions, and to ask before writing when more than one lnkdrp connection is available
   and no workspace was named.
-- **Every result:** every successful tool result carries `workspace: { id, name }`, added once in
-  `createMcpServer` rather than per tool, so the agent can say where a write landed.
+- **Every result:** every tool result, errors included, carries `workspace: { id, name }` (next to
+  `error` on a failure), added once in `createMcpServer` rather than per tool, so the agent can say
+  where a write landed and which workspace a "not found" or cap error came from.
 - **Confirmations:** destructive prompts name it: "Delete … (workspace: USAVX)".
  To
 verify a key without a client: `curl -H "Authorization: Bearer lnk_…" https://lnkdrp.com/api/agent/whoami`.

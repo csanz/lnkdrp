@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { z } from "zod";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import type { Whoami } from "../../mcp/src/api";
@@ -42,11 +43,19 @@ describe("withWorkspace", () => {
     expect(JSON.parse((out.content[0] as { text: string }).text)).toEqual(out.structuredContent);
   });
 
-  it("leaves errors and a tool's own workspace field alone", () => {
-    const err = toolErrorResult(new ToolError("validation", "nope"));
-    expect(withWorkspace(err, usavx)).toBe(err);
+  it("adds workspace to error results next to error", () => {
+    const out = withWorkspace(toolErrorResult(new ToolError("not_found", "No such document.")), usavx);
+    expect(out.isError).toBe(true);
+    const payload = JSON.parse((out.content[0] as { text: string }).text);
+    expect(payload.workspace).toEqual({ id: usavx.orgId, name: "USAVX" });
+    expect(payload.error.code).toBe("not_found");
+  });
+
+  it("leaves a tool's own workspace field and non-JSON error text alone", () => {
     const own = toolResult({ workspace: "kept" });
     expect(withWorkspace(own, usavx)).toBe(own);
+    const plain = { isError: true, content: [{ type: "text" as const, text: "plain failure" }] };
+    expect(withWorkspace(plain, usavx).content).toEqual(plain.content);
   });
 });
 
@@ -66,6 +75,21 @@ describe("createMcpServer", () => {
 
     const result = await client.callTool({ name: "probe", arguments: {} });
     expect(result.structuredContent).toEqual({ workspace: { id: usavx.orgId, name: "USAVX" }, done: true });
+
+    server.registerTool("probe_fail", { description: "test" }, async () => toolErrorResult(new ToolError("validation", "bad")));
+    const failed = await client.callTool({ name: "probe_fail", arguments: {} });
+    expect(failed.isError).toBe(true);
+    expect(JSON.parse((failed.content as Array<{ text: string }>)[0].text).workspace).toEqual({ id: usavx.orgId, name: "USAVX" });
+
+    // Errors the SDK raises before any tool callback: bad arguments and an unknown tool.
+    server.registerTool("probe_args", { description: "test", inputSchema: { n: z.number() } }, async () => toolResult({ done: true }));
+    for (const call of [{ name: "probe_args", arguments: { n: "not a number" } }, { name: "no_such_tool", arguments: {} }]) {
+      const res = await client.callTool(call);
+      expect(res.isError, call.name).toBe(true);
+      const payload = JSON.parse((res.content as Array<{ text: string }>)[0].text);
+      expect(payload.workspace, call.name).toEqual({ id: usavx.orgId, name: "USAVX" });
+      expect(payload.error.code, call.name).toBe("validation");
+    }
     await client.close();
   });
 });

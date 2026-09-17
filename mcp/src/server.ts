@@ -12,6 +12,7 @@ import type { Whoami } from "./api";
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from "./config";
 import { setConfirmationWorkspace } from "./confirm";
 import type { ToolContext } from "./context";
+import { ToolError, toolErrorResult } from "./errors";
 import { registerGetShareTool } from "./tools/getShare";
 import { registerGetShareStatsTool } from "./tools/getShareStats";
 import { registerSetShareAccessTool } from "./tools/setShareAccess";
@@ -80,7 +81,7 @@ export function workspaceInstructions(who: Pick<Whoami, "orgName" | "isPersonalO
   const plan = who.plan === "pro" ? "Pro" : "Free";
   return (
     `This connection acts on the lnkdrp workspace "${name}" (${kind}, ${plan} plan): everything these tools read, create, ` +
-    "change or spend is in that workspace, and every result carries workspace { id, name }. The person may have other lnkdrp " +
+    "change or spend is in that workspace, and every result, errors included, carries workspace { id, name }. The person may have other lnkdrp " +
     "connections, one per workspace, each named after it (lnkdrp for Personal, lnkdrp-<workspace> otherwise). When they name a " +
     "workspace, use the connection for it. When more than one lnkdrp connection is available and they have not said which " +
     "workspace, ask before creating, changing or deleting anything. "
@@ -88,14 +89,32 @@ export function workspaceInstructions(who: Pick<Whoami, "orgName" | "isPersonalO
 }
 
 /**
- * Adds `workspace: { id, name }` to a successful tool result (structured content and its JSON text),
- * so the agent can say where a write landed and a wrong-workspace call is visible in the result.
- * Error results and results without structured content pass through; a tool's own `workspace` wins.
+ * Adds `workspace: { id, name }` to a tool result, so the agent can say where a write landed and a
+ * wrong-workspace call is visible in the result. Successes get it in structured content and its JSON
+ * text; errors (`{ error }` JSON text, no structured content) get it next to `error`, since "not found"
+ * or "over the cap" in the wrong workspace is exactly when the agent needs to know which one it hit.
+ * A tool's own `workspace` field wins; content that is not the result JSON passes through.
  */
 export function withWorkspace(result: CallToolResult, who: Pick<Whoami, "orgId" | "orgName" | "isPersonalOrg">): CallToolResult {
+  const workspace = { id: who.orgId, name: workspaceLabel(who) };
+  if (result.isError) {
+    return {
+      ...result,
+      content: result.content.map((c) => {
+        if (c.type !== "text") return c;
+        try {
+          const parsed = JSON.parse(c.text) as unknown;
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !("error" in parsed) || "workspace" in parsed) return c;
+          return { ...c, text: JSON.stringify({ workspace, ...parsed }) };
+        } catch {
+          return c;
+        }
+      }),
+    };
+  }
   const structured = result.structuredContent;
-  if (result.isError || !structured || "workspace" in structured) return result;
-  const next = { workspace: { id: who.orgId, name: workspaceLabel(who) }, ...structured };
+  if (!structured || "workspace" in structured) return result;
+  const next = { workspace, ...structured };
   const text = JSON.stringify(structured);
   return {
     ...result,
@@ -112,11 +131,19 @@ export function createMcpServer(ctx: ToolContext): McpServer {
   );
   setConfirmationWorkspace(server, () => workspaceLabel(ctx.whoami()));
 
-  // Every tool registered below returns its result through `withWorkspace`, so no tool has to
+  // Every tool registered below returns its result (success or error) through `withWorkspace`, so no tool has to
   // remember to label itself (reads with ctx.whoami() at call time: lnkdrp_whoami refreshes it).
   const registerTool = server.registerTool.bind(server) as (name: string, config: unknown, cb: (...args: unknown[]) => unknown) => unknown;
   (server as unknown as { registerTool: typeof registerTool }).registerTool = (name, config, cb) =>
     registerTool(name, config, async (...args: unknown[]) => withWorkspace((await cb(...args)) as CallToolResult, ctx.whoami()));
+  // Errors the SDK produces itself (arguments that fail a tool's schema, an unknown tool name) never
+  // reach a tool callback; they come from McpServer's private createToolError as plain text. Replace
+  // it on this instance so those carry the workspace and the same { error: { code, message } } shape.
+  // tests/lib/mcpWorkspaceLabel.test.ts fails if an SDK upgrade renames it.
+  const sdkServer = server as unknown as { createToolError?: (message: string) => CallToolResult };
+  if (typeof sdkServer.createToolError === "function") {
+    sdkServer.createToolError = (message: string) => withWorkspace(toolErrorResult(new ToolError("validation", message)), ctx.whoami());
+  }
 
   registerWhoamiTool(server, ctx);
   registerListDocsTool(server, ctx);
