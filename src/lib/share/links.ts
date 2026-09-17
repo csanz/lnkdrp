@@ -569,6 +569,8 @@ export async function updateShareLink(input: {
   orgId: string | Types.ObjectId;
   linkId: string | Types.ObjectId;
   settings: ShareLinkSettingsInput;
+  /** Internal: set by the document-level switch so it can tell its own disables from the sender's. */
+  viaDocSwitch?: boolean;
 }): Promise<UpdateShareLinkResult> {
   await connectMongo();
   const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null }).lean<ShareLink>();
@@ -593,6 +595,7 @@ export async function updateShareLink(input: {
     // Re-enabling a link is not a plan decision either: the Free cap counts the *document*, and
     // that document is counted whether this link is switched on or off.
     set.enabled = Boolean(s.enabled);
+    set.disabledByDocSwitch = !s.enabled && input.viaDocSwitch === true;
   }
   if (Object.keys(set).length === 0) return { link, limit };
   const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true }).lean<ShareLink>();
@@ -638,15 +641,22 @@ export async function archiveShareLink(input: { orgId: string | Types.ObjectId; 
 
 /**
  * Enable or disable every link of a document at once (the document-level share switch).
- * Enabling goes through the cap for each link that was off; links that do not fit stay off.
+ *
+ * Turning the switch off marks each link it disables (`disabledByDocSwitch`). Turning it back on
+ * re-enables only those, so a link the sender revoked on its own stays revoked. Documents switched
+ * off before the marker existed have no marked links and no enabled ones; for those the switch
+ * falls back to enabling every link, which is what it always did.
  */
 export async function setAllLinksEnabled(input: { orgId: string | Types.ObjectId; docId: string | Types.ObjectId; enabled: boolean }): Promise<{ changed: number; limit: LimitCheck | null }> {
   const links = await listShareLinks({ orgId: input.orgId, docId: input.docId });
+  const marked = links.filter((l) => !l.enabled && l.disabledByDocSwitch);
+  const legacyAllOff = marked.length === 0 && links.every((l) => !l.enabled);
   let changed = 0;
   let limit: LimitCheck | null = null;
   for (const l of links) {
     if (Boolean(l.enabled) === input.enabled) continue;
-    const res = await updateShareLink({ orgId: input.orgId, linkId: l._id, settings: { enabled: input.enabled } });
+    if (input.enabled && !l.disabledByDocSwitch && !legacyAllOff) continue;
+    const res = await updateShareLink({ orgId: input.orgId, linkId: l._id, settings: { enabled: input.enabled }, viaDocSwitch: true });
     if (res.limit && !res.limit.ok) {
       limit = res.limit;
       break;

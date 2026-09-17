@@ -26,6 +26,12 @@ const ShareLinkSchema = new Schema(
     isDefault: { type: Boolean, default: false, index: true },
 
     enabled: { type: Boolean, default: true },
+    /**
+     * True when the document-level share switch turned this link off, as opposed to the sender
+     * disabling this one link. Switching the document back on re-enables only these, so a
+     * recipient whose link was revoked on its own does not get access back.
+     */
+    disabledByDocSwitch: { type: Boolean, default: false },
     allowDownload: { type: Boolean, default: false },
     allowRevisionHistory: { type: Boolean, default: false },
     /** Refuse the link after this instant (null = never). */
