@@ -6,6 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback } from "react";
 import { useTheme } from "next-themes";
 import {
+  ArrowsPointingOutIcon,
+  ChartBarSquareIcon,
   ClipboardDocumentCheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
@@ -1966,6 +1968,31 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                navLocked
+                  ? "cursor-not-allowed opacity-50"
+                  : pathname.startsWith("/metrics")
+                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
+              ].join(" ")}
+              onClick={() => {
+                if (navLocked) return;
+                router.push("/metrics");
+              }}
+              aria-label="Metrics"
+              aria-current={pathname.startsWith("/metrics") ? "page" : undefined}
+              title={navLocked ? "Disabled while uploading" : "Metrics"}
+            >
+              <div className="flex items-center gap-2">
+                <ChartBarSquareIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)] opacity-80" />
+                <span>Metrics</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              disabled={navLocked}
+              className={[
                 "group relative w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
@@ -2164,7 +2191,7 @@ export default function LeftSidebar({
               used to widen the Docs section, pushing rows and their "..." past the sidebar edge. */}
           <div className="grid gap-4 [&>*]:min-w-0">
             <section>
-              <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
+              <div className="group flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="inline-flex h-6 items-center gap-1.5 rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -2191,6 +2218,25 @@ export default function LeftSidebar({
                   }}
                 >
                   <StablePlusMinusIcon expanded={!(starredCollapsedLoaded ? starredCollapsed : true)} />
+                </IconButton>
+                <IconButton
+                  ariaLabel="Open all starred docs"
+                  title="Open all starred docs"
+                  variant="ghost"
+                  size="sm"
+                  disabled={navLocked}
+                  className={[
+                    // Revealed on hover/focus: the list modal is otherwise only reachable through
+                    // "See more", which a short list never shows — and archived items live there.
+                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-0 transition-opacity hover:text-[var(--fg)]",
+                    "group-hover:opacity-100 focus-visible:opacity-100",
+                  ].join(" ")}
+                  onClick={() => {
+                    if (navLocked) return;
+                    setShowStarredModal(true);
+                  }}
+                >
+                  <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
                 </IconButton>
               </div>
 
@@ -2282,7 +2328,7 @@ export default function LeftSidebar({
             {/* Received (request inboxes): hidden entirely unless the requests flag is on. */}
             {FEATURE_REQUESTS_ENABLED ? (
             <section>
-              <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
+              <div className="group flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="inline-flex h-6 items-center gap-1.5 rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -2308,6 +2354,25 @@ export default function LeftSidebar({
                   }}
                 >
                   <StablePlusMinusIcon expanded={!(requestsCollapsedLoaded ? requestsCollapsed : true)} />
+                </IconButton>
+                <IconButton
+                  ariaLabel="Open all received docs"
+                  title="Open all received docs"
+                  variant="ghost"
+                  size="sm"
+                  disabled={navLocked}
+                  className={[
+                    // Revealed on hover/focus: the list modal is otherwise only reachable through
+                    // "See more", which a short list never shows — and archived items live there.
+                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-0 transition-opacity hover:text-[var(--fg)]",
+                    "group-hover:opacity-100 focus-visible:opacity-100",
+                  ].join(" ")}
+                  onClick={() => {
+                    if (navLocked) return;
+                    setShowRequestsModal(true);
+                  }}
+                >
+                  <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
                 </IconButton>
               </div>
 
@@ -2473,7 +2538,7 @@ export default function LeftSidebar({
             </section>
 
             <section>
-              <div className="flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
+              <div className="group flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
                 <button
                   type="button"
                   className="inline-flex h-6 items-center rounded-md px-1 py-0 text-left hover:bg-[var(--sidebar-hover)]"
@@ -2499,6 +2564,25 @@ export default function LeftSidebar({
                   }}
                 >
                   <StablePlusMinusIcon expanded={!(docsCollapsedLoaded ? docsCollapsed : true)} />
+                </IconButton>
+                <IconButton
+                  ariaLabel="Open all docs"
+                  title="Open all docs"
+                  variant="ghost"
+                  size="sm"
+                  disabled={navLocked}
+                  className={[
+                    // Revealed on hover/focus: the list modal is otherwise only reachable through
+                    // "See more", which a short list never shows — and archived items live there.
+                    "ml-auto h-6 w-6 rounded-md p-0 text-[var(--muted-2)] opacity-0 transition-opacity hover:text-[var(--fg)]",
+                    "group-hover:opacity-100 focus-visible:opacity-100",
+                  ].join(" ")}
+                  onClick={() => {
+                    if (navLocked) return;
+                    setShowDocsModal(true);
+                  }}
+                >
+                  <ArrowsPointingOutIcon className="h-3.5 w-3.5" />
                 </IconButton>
               </div>
 

@@ -133,6 +133,13 @@ shareVisitSchema.index({ shareId: 1, botIdHash: 1, lastEventAt: -1 });
 
 // Workspace-level reads.
 shareVisitSchema.index({ orgId: 1, createdDate: -1 });
+/**
+ * The workspace metrics window (`GET /api/metrics/workspace`): opens and reading time for a whole
+ * org over a range are `{ orgId, docId: { $in: <live docs> }, lastEventAt: { $gte: start } }`.
+ * Without this the planner falls back to the per-document compounds, which grow with the
+ * workspace's whole history rather than with the window being asked about.
+ */
+shareVisitSchema.index({ orgId: 1, lastEventAt: -1 });
 
 export type ShareVisit = InferSchemaType<typeof shareVisitSchema>;
 

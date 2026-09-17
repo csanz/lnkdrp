@@ -122,6 +122,11 @@ shareViewSchema.index({ shareId: 1, lastViewedAt: -1 });
 // Workspace-level reads (usage meter, org exports, retention sweeps).
 shareViewSchema.index({ orgId: 1, createdDate: -1 });
 
+// The workspace metrics window: `/api/metrics/workspace` aggregates a whole workspace for a range,
+// so it needs the activity window keyed on the workspace the way the document reads have it keyed
+// on the document. Also created by db/migration/20260917_0001 so it exists before traffic.
+shareViewSchema.index({ orgId: 1, lastViewedAt: -1 });
+
 export type ShareView = InferSchemaType<typeof shareViewSchema>;
 
 export const ShareViewModel: Model<ShareView> =
