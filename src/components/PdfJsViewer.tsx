@@ -2484,12 +2484,27 @@ export function PdfJsViewer({
           </div>
           </div>
 
+          {/* A recipient is someone who sends documents too. Say what an account is for in the
+              reader's own terms — one sign-in, then their own links — and name the agent path,
+              which is the part no other document link has. Links leave for a public page, so they
+              open in a new tab: nobody should lose the document they were reading. */}
           <div className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3">
-            <div className="text-[13px] font-semibold text-white">Or register with lnkdrp</div>
-            <div className="mt-1 text-xs leading-5 text-white/60">
-              Sign in once and every document you open recognises you, here and on any other lnkdrp link, with no typing. You can
-              share your own PDFs from the same account.
-            </div>
+            <div className="text-[13px] font-semibold text-white">Or use a free lnkdrp account</div>
+            <ul className="mt-1.5 grid gap-1 text-xs leading-5 text-white/60">
+              <li>Sign in once and every lnkdrp link you open knows you, with no typing.</li>
+              <li>Send your own PDFs as links, and see who read them, which pages, and for how long.</li>
+              <li>
+                Or let an AI agent do it: Claude, Cursor and other MCP clients can create links and read the stats for you.{" "}
+                <a
+                  href="/mcp"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-white/80 underline underline-offset-2 hover:text-white"
+                >
+                  How that works
+                </a>
+              </li>
+            </ul>
           </div>
 
           <ul className="grid gap-1.5 text-xs leading-5 text-white/60">
