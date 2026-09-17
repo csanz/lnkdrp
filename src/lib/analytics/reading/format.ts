@@ -1,5 +1,6 @@
 /**
- * Duration, gap, ratio and date wording shared by the metrics page and reader sheet. Values floor;
+ * Duration, gap, ratio and date wording shared by the metrics page and reader sheet. Values floor
+ * (except formatTypical);
  * return gaps of a day or more count calendar days in the viewer's time zone.
  */
 import { dayKeyInZone } from "./days";
@@ -19,6 +20,18 @@ export function formatDwell(ms: number | null | undefined): string {
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+/**
+ * A typical (median) time printed beside a ratio: rounded, not floored, with tenths under 10s, so
+ * "17s · typical 4.7s · 3.6×" divides the way it reads. "4.7s", "5s", "47s", "1m 5s"; "—" for null.
+ */
+export function formatTypical(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
+  if (ms < 1000) return "<1s";
+  if (ms < 9950) return `${(Math.round(ms / 100) / 10).toFixed(1).replace(/\.0$/, "")}s`;
+  if (ms < 59_500) return `${Math.round(ms / 1000)}s`;
+  return formatDwell(Math.round(ms / 1000) * 1000);
 }
 
 /** Single-unit form for narrow cells: "<1s", "12s", "4m", "2h"; "—" for null. */

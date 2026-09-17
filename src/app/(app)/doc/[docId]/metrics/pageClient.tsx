@@ -27,6 +27,7 @@ import PagePerformanceTable from "@/components/metrics/PagePerformanceTable";
 import ReadingMatrix, { MatrixLegend } from "@/components/metrics/ReadingMatrix";
 import ReaderSheet from "@/components/metrics/reader/ReaderSheet";
 import { parseMetricsUrl, serializeMetricsUrl, type MetricsUrlState } from "@/components/metrics/metricsUrlState";
+import { LINK_COMPARE_MIN_PEOPLE } from "@/components/metrics/pageEmphasis";
 import { useJsonFetch } from "@/components/metrics/useJsonFetch";
 import type { ReadingResponse, ReadingTier } from "@/lib/analytics/reading/types";
 import { usePlan } from "@/lib/client/usePlan";
@@ -46,6 +47,8 @@ type ActivityResponse = {
 const REFRESH_DEBOUNCE_MS = 3000;
 const cardClass = "rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4 sm:p-5";
 const sectionTitleClass = "text-sm font-semibold text-[var(--fg)]";
+/** Clears the sticky control bar, which carries a second row of jump chips below 1024px. */
+const sectionScrollMargin = "scroll-mt-28 lg:scroll-mt-16";
 
 const noopSubscribe = () => () => {};
 
@@ -251,6 +254,13 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   const jumpLinks =
     deep && reading && reading.people > 0 ? <JumpLinks pages={(reading.peopleWithDetail ?? 0) > 0} links={!hideLinks} /> : null;
   const linksSelectable = Boolean(reading && reading.links.length > 1 && reading.links.some((l) => l.status !== "deleted"));
+  const anyThinLink = Boolean(
+    deep && reading?.links.some((l) => (l.peopleWithDetail ?? 0) > 0 && (l.peopleWithDetail ?? 0) < LINK_COMPARE_MIN_PEOPLE),
+  );
+  const showRecentRows = useCallback(() => {
+    setMatrixAll(false);
+    document.getElementById("reading")?.scrollIntoView({ block: "start" });
+  }, []);
 
   let readingBody: React.ReactNode;
   let pagesCard: React.ReactNode = null;
@@ -310,6 +320,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                   now={now}
                   onOpenPerson={(row, page) => openPerson(row.personId, page ?? null)}
                   onShowAll={() => setMatrixAll(true)}
+                  onShowRecent={showRecentRows}
                   loadingAll={matrixAll && a.loading}
                 />
               </div>
@@ -320,7 +331,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
     );
     if (deep && reading.people > 0 && withDetail > 0) {
       pagesCard = (
-        <section id="pages" data-pages-card className={`${cardClass} scroll-mt-16`}>
+        <section id="pages" data-pages-card className={`${cardClass} ${sectionScrollMargin}`}>
           <h2 className={sectionTitleClass}>Pages</h2>
           <p className="mt-0.5 text-[12px] text-[var(--muted)]">Which pages held attention, were skipped, and where people left</p>
           <div className="mt-3 grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -365,7 +376,7 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
+      <div className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
         <div className="mx-auto grid w-full max-w-[1200px] grid-cols-[minmax(0,1fr)] gap-4 px-4 pb-6 pt-2 sm:px-6">
           <MetricsControlBar
             links={reading?.links ?? null}
@@ -393,20 +404,21 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
             <KpiStrip reading={reading} loading={!reading && !readingError} error={readingError} downloads={downloads} now={now} />
           )}
 
-          {jumpLinks ? <div className="-mt-1 lg:hidden">{jumpLinks}</div> : null}
-
-          <section id="reading" className="grid scroll-mt-16 grid-cols-[minmax(0,1fr)] gap-4">
+          <section id="reading" className={`grid ${sectionScrollMargin} grid-cols-[minmax(0,1fr)] gap-4`}>
             {readingBody}
           </section>
 
           {pagesCard}
 
-          <section id="links" className={`${cardClass} scroll-mt-16`} hidden={hideLinks}>
+          <section id="links" className={`${cardClass} ${sectionScrollMargin}`} hidden={hideLinks}>
             <h2 className={sectionTitleClass}>Links</h2>
             {linksSelectable ? (
               <p className="mt-0.5 text-[12px] text-[var(--muted)]">
                 {reading?.tier === "basic" ? "Click a link to see only its numbers." : "Click a link to see only its people."}
               </p>
+            ) : null}
+            {anyThinLink ? (
+              <p className="mt-0.5 text-[12px] text-[var(--muted-2)]">{`Links with fewer than ${LINK_COMPARE_MIN_PEOPLE} people are greyed and not compared.`}</p>
             ) : null}
             <div className="mt-3">
               {readingError ? (

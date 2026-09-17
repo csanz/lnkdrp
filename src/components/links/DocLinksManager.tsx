@@ -38,6 +38,7 @@ import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
 import { fetchJson } from "@/lib/http/fetchJson";
+import { awaitingFirstOpen } from "@/lib/analytics/reading";
 import { formatRelative } from "@/lib/analytics/reading/format";
 import { buildPublicShareUrl } from "@/lib/urls";
 import type { ShareLinkDTO } from "@/lib/share/links";
@@ -67,6 +68,14 @@ function formatDate(iso: string | null): string {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return "";
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(ms));
+}
+
+/** A link's state from its own fields, the same precedence as the reading analytics' `linkStatus`. */
+function linkStatusOf(l: Pick<ShareLinkDTO, "status" | "enabled" | "expiresAt">): ShareLinkDTO["status"] {
+  if (l.status === "archived") return "archived";
+  if (!l.enabled) return "disabled";
+  if (l.expiresAt && Date.parse(l.expiresAt) <= Date.now()) return "expired";
+  return "active";
 }
 
 const LINK_STATUS_PILL: Record<ShareLinkDTO["status"], { label: string; className: string }> = {
@@ -758,8 +767,19 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                 <ChartBarIcon className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden="true" />
                 {/* The window is in the badge: the Analytics card below counts a different scope, and a
                     bare "1 person" read as contradicting it. */}
+                {/* "Not opened yet" follows the metrics page rule: an unused default link beside other
+                    links is not waiting on anyone, and the Analytics card's not-opened count leaves it out. */}
                 {panelViewers
-                  ? panelViewers.viewers === 0 && !(panelViewers.lastViewedAt ?? defaultLink.lastViewedAt)
+                  ? panelViewers.viewers === 0 &&
+                    awaitingFirstOpen(
+                      {
+                        shareId: defaultLink.shareId,
+                        isDefault: defaultLink.isDefault,
+                        status: linkStatusOf(defaultLink),
+                        everOpened: Boolean(panelViewers.lastViewedAt ?? defaultLink.lastViewedAt),
+                      },
+                      (links ?? []).map((l) => ({ shareId: l.shareId, status: linkStatusOf(l) })),
+                    )
                     ? "Not opened yet"
                     : `${panelViewers.viewers} ${panelViewers.viewers === 1 ? "person" : "people"} · ${panelViewers.days ?? LINK_STATS_DAYS} days`
                   : "Analytics"}

@@ -5,6 +5,7 @@
 "use client";
 
 import { useState } from "react";
+import { TYPICAL_MIN_READERS } from "@/lib/analytics/reading/constants";
 import { formatCountOf, formatDwell, formatRelative } from "@/lib/analytics/reading/format";
 import type { ReadingResponse } from "@/lib/analytics/reading/types";
 
@@ -72,7 +73,10 @@ export default function KpiStrip({ reading, loading, error, downloads, now }: Kp
       label: "Total time",
       info: "Time people spent with it open during this range.",
       value: r ? formatDwell(r.totalMs) : "—",
-      sub: deep && r?.totals?.medianTotalMs != null ? `typical ${formatDwell(r.totals.medianTotalMs)} per person` : null,
+      sub:
+        deep && r?.totals?.medianTotalMs != null && (r.peopleWithDetail ?? 0) >= TYPICAL_MIN_READERS
+          ? `typical ${formatDwell(r.totals.medianTotalMs)} per person`
+          : null,
     },
   ];
   if (deep && r) {
@@ -94,33 +98,41 @@ export default function KpiStrip({ reading, loading, error, downloads, now }: Kp
 
   return (
     <div data-kpis className={`grid gap-3 ${cols}`}>
-      {tiles.map((t, i) => (
-        <div
-          key={t.key}
-          data-kpi={t.key}
-          className={`flex min-w-0 flex-col rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3 sm:p-4${i === tiles.length - 1 ? spanLast : ""}`}
-        >
-          <div className={tileLabelClass}>
-            {t.shortLabel ? (
-              <>
-                <span className="sm:hidden">{t.shortLabel}</span>
-                <span className="hidden sm:inline">{t.label}</span>
-              </>
-            ) : (
-              t.label
-            )}{" "}
-            {t.info ? <InfoTip text={t.info} /> : null}
+      {tiles.map((t, i) => {
+        // A lone full-width phone tile puts its value beside the label rather than under it.
+        const inline = i === tiles.length - 1 && spanLast !== "" && !t.sub;
+        const inlineTile = inline ? " max-sm:flex-row max-sm:items-center max-sm:justify-between max-sm:gap-3" : "";
+        return (
+          <div
+            key={t.key}
+            data-kpi={t.key}
+            className={`flex min-w-0 flex-col rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-3 sm:p-4${i === tiles.length - 1 ? spanLast : ""}${inlineTile}`}
+          >
+            <div className={tileLabelClass}>
+              {t.shortLabel ? (
+                <>
+                  <span className="sm:hidden">{t.shortLabel}</span>
+                  <span className="hidden sm:inline">{t.label}</span>
+                </>
+              ) : (
+                t.label
+              )}{" "}
+              {t.info ? <InfoTip text={t.info} /> : null}
+            </div>
+            <div
+              data-kpi-value
+              className={`mt-auto truncate pt-1 text-xl font-semibold sm:text-2xl tabular-nums text-[var(--fg)]${inline ? " max-sm:mt-0 max-sm:pt-0" : ""}`}
+            >
+              {t.value}
+            </div>
+            {t.sub ? (
+              <div className="mt-0.5 min-h-4 text-[12px] leading-4 text-[var(--muted)]">{t.sub}</div>
+            ) : anySub ? (
+              <div aria-hidden="true" className={`mt-0.5 min-h-4${inline ? " max-sm:hidden" : ""}`} />
+            ) : null}
           </div>
-          <div data-kpi-value className="mt-auto truncate pt-1 text-xl font-semibold sm:text-2xl tabular-nums text-[var(--fg)]">
-            {t.value}
-          </div>
-          {t.sub ? (
-            <div className="mt-0.5 min-h-4 text-[12px] leading-4 text-[var(--muted)]">{t.sub}</div>
-          ) : anySub ? (
-            <div aria-hidden="true" className="mt-0.5 min-h-4" />
-          ) : null}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

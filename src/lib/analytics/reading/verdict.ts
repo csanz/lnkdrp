@@ -1,5 +1,5 @@
 import { CALLOUT_MIN_PEOPLE, READ_MIN_MS, VERDICT_LONGEST_MIN_MS, VERDICT_READ_MEDIAN_MS } from "./constants";
-import { coverSummedAcrossVisits, largestReturn, pickStandout } from "./attention";
+import { coverSummedAcrossVisits, largestReturn, pickStandout, type ReturnGap } from "./attention";
 import { dwellRatio, formatDwell, formatReturnGap } from "./format";
 import { median } from "./pageTable";
 import type { Person, Verdict } from "./types";
@@ -12,6 +12,8 @@ const STANDOUT_MULTIPLIER = 2;
 /** Out-of-order paths longer than this are summarised as a count. */
 const PATH_LIST_MAX = 4;
 const NBSP = "\u00a0";
+/** Word joiner: keeps "7–9" on one line, since browsers may break after an en dash. */
+const WJ = "\u2060";
 
 /** The page table's figures for one page. */
 export type PageTypical = { typicalMs: number | null; readCount: number };
@@ -32,8 +34,9 @@ export function buildVerdict(p: Person, P: number, labels?: (page: number) => st
   const downloaded = p.downloads > 0 ? " Downloaded it." : "";
   if (!p.hasDetail) return { coverage: null, behaviour: null, text: `No page detail was recorded for this person.${downloaded}`, page: null };
 
-  const coverage = coverageFor(p, P);
-  const b = behaviourFor(p, labels, opts);
+  const ret = largestReturn(p);
+  const coverage = coverageFor(p, P, ret !== null);
+  const b = behaviourFor(p, P, ret, labels, opts);
   const behaviour = b?.text ?? null;
   return { coverage, behaviour, text: `${behaviour ? `${coverage}. ${behaviour}.` : `${coverage}.`}${downloaded}`, page: b?.page ?? null };
 }
@@ -47,7 +50,7 @@ function pgs(list: string): string {
   return `pages${NBSP}${list}`;
 }
 
-function coverageFor(p: Person, P: number): string {
+function coverageFor(p: Person, P: number, cameBack: boolean): string {
   const stopMs = p.visits.flatMap((v) => v.stops.map((s) => s.ms));
   const medianStopMs = median(stopMs) ?? 0;
   const allRead = p.cells.length > 0 && p.cells.every((c) => c.state === "read");
@@ -60,8 +63,12 @@ function coverageFor(p: Person, P: number): string {
   const lastState = p.cells[P - 1]?.state;
   // Only a last page that was stayed on (or whose time is unknown) counts as reaching it; a flick past it does not.
   if (p.maxPage === P && p.reachedCount < p.maxPage && (lastState === "read" || lastState === "unknown")) {
-    return `Reached the last page, skipping ${skippedText(p, P)}`;
+    return `Reached the last page, jumping past ${skippedText(p, P)}`;
   }
+  const jumping = p.reachedCount < p.maxPage ? `, jumping past ${skippedText(p, P)}` : "";
+  // Reach over all visits only: an exit, path or jump here would read as the first visit's once
+  // "Came back" follows, though it may have happened on the return. The behaviour says where they left.
+  if (cameBack) return `Got as far as ${pg(p.maxPage)} of ${P}${jumping}`;
   const exit = p.exitPage;
   if (exit !== null && exit < p.maxPage) {
     const path = latestPath(p);
@@ -71,10 +78,9 @@ function coverageFor(p: Person, P: number): string {
       if (listed.length > PATH_LIST_MAX) return `Jumped around ${order.length} pages and left on ${pg(exit)}`;
       if (listed.length >= 2) return `Went to ${pgs(joinList(listed.map(String)))} out of order and left on ${pg(exit)}`;
     }
-    const skipping = p.reachedCount < p.maxPage ? `, skipping ${skippedText(p, P)},` : "";
-    return `Got as far as ${pg(p.maxPage)} of ${P}${skipping} and left on ${pg(exit)}`;
+    return `Got as far as ${pg(p.maxPage)} of ${P}${jumping ? `${jumping},` : ""} and left on ${pg(exit)}`;
   }
-  if (p.reachedCount < p.maxPage) return `Jumped to ${pg(p.maxPage)} of ${P}, skipping ${skippedText(p, P)}`;
+  if (p.reachedCount < p.maxPage) return `Jumped to ${pg(p.maxPage)} of ${P}${jumping}`;
   return `Stopped at ${pg(p.maxPage)} of ${P}`;
 }
 
@@ -116,7 +122,7 @@ function skippedText(p: Person, P: number): string {
     else runs.push([page, page]);
   }
   if (runs.length > 2) return `${total} of ${P} pages`;
-  const joined = joinList(runs.map(([a, b]) => (a === b ? `${a}` : `${a}–${b}`)));
+  const joined = joinList(runs.map(([a, b]) => (a === b ? `${a}` : `${a}${WJ}–${WJ}${b}`)));
   return total === 1 ? pg(joined) : pgs(joined);
 }
 
@@ -130,22 +136,36 @@ type Behaviour = { text: string; page: number | null };
 /** kind "typical": above the page's typical time (ratio null below CALLOUT_MIN_PEOPLE stayers); "longest": the person's own clearly longest page. */
 type Standout = { kind: "typical" | "longest"; page: number; ms: number; ratio: number | null };
 
-function behaviourFor(p: Person, labels: ((page: number) => string | null) | undefined, opts: VerdictOptions): Behaviour | null {
+function behaviourFor(
+  p: Person,
+  P: number,
+  ret: ReturnGap | null,
+  labels: ((page: number) => string | null) | undefined,
+  opts: VerdictOptions,
+): Behaviour | null {
   const L = (k: number) => {
     const label = labels?.(k) ?? null;
     return label ? ` (${label})` : "";
   };
   const ratioClause = (s: Standout) => (s.ratio !== null ? `, ${s.ratio.toFixed(1)}× the typical time` : "");
 
-  const ret = largestReturn(p);
-  const standout = standoutPage(p, opts.typicalFor);
-
   if (ret !== null) {
+    // Must equal hotReasonText's chip: the reader sheet hides the chip when the behaviour starts with it.
     const came = `Came back ${formatReturnGap(ret.fromMs, ret.toMs, opts.tz)}`;
-    if (!standout) return { text: came, page: null };
-    return { text: `${came} and spent ${dur(standout.ms)} on ${pg(standout.page)}${L(standout.page)}${ratioClause(standout)}`, page: standout.page };
+    const exit = p.exitPage;
+    // Only the return visits may be named after "Came back". No ratio: the page row's ratio is over all
+    // visits, so a return-only ratio beside it would disagree for the same page.
+    const returnVisits = p.visits.filter((v) => v.startedAtMs >= ret.toMs);
+    const back = returnStandout(p, returnVisits, opts.typicalFor);
+    if (back) {
+      const k = back.page;
+      const left = exit === null ? "" : exit === k ? " and left there" : `, then left on ${pg(exit)}`;
+      return { text: `${came}, spent ${dur(back.ms)} on ${pg(k)}${L(k)}${left}`, page: k };
+    }
+    return { text: exit === null ? came : `${came} and left on ${pg(exit)}`, page: null };
   }
 
+  const standout = standoutPage(p, opts.typicalFor);
   if (standout) {
     const k = standout.page;
     if (standout.kind === "typical") {
@@ -173,7 +193,8 @@ function behaviourFor(p: Person, labels: ((page: number) => string | null) | und
 
   const passed = p.cells
     .map((c, i) => ({ page: i + 1, c }))
-    .filter(({ page, c }) => c.state === "passed" && c.ms < READ_MIN_MS && page < p.maxPage)
+    // Every visit starts on the cover, so a flick past it says the least.
+    .filter(({ page, c }) => c.state === "passed" && c.ms < READ_MIN_MS && page < p.maxPage && !(P > 2 && page === 1))
     .map(({ page }) => page);
   let bestA = 0;
   let bestB = -1;
@@ -187,7 +208,7 @@ function behaviourFor(p: Person, labels: ((page: number) => string | null) | und
     i = j + 1;
   }
   if (bestB >= bestA && bestA > 0) {
-    return { text: bestA === bestB ? `Passed over ${pg(bestA)} quickly` : `Passed over ${pgs(`${bestA}–${bestB}`)} quickly`, page: null };
+    return { text: bestA === bestB ? `Passed over ${pg(bestA)} quickly` : `Passed over ${pgs(`${bestA}${WJ}–${WJ}${bestB}`)} quickly`, page: null };
   }
   return null;
 }
@@ -200,16 +221,27 @@ function behaviourFor(p: Person, labels: ((page: number) => string | null) | und
  */
 function standoutPage(p: Person, typicalFor?: (page: number) => PageTypical | null): Standout | null {
   const dwell = coverSummedAcrossVisits(p) ? p.dwellByPage.map((ms, i) => (i === 0 ? 0 : ms)) : p.dwellByPage;
+  return standoutIn(dwell, (i) => p.cells[i]?.state === "read", typicalFor);
+}
 
+/** standoutPage over the return visits alone: their summed dwell, page 1 left out when more than one of them landed on it. */
+function returnStandout(p: Person, returnVisits: Person["visits"], typicalFor?: (page: number) => PageTypical | null): Standout | null {
+  const dwell = new Array<number>(p.dwellByPage.length).fill(0);
+  for (const v of returnVisits) for (let i = 0; i < dwell.length; i++) dwell[i] += v.dwellByPage[i] ?? 0;
+  if (returnVisits.filter((v) => (v.dwellByPage[0] ?? 0) > 0).length > 1) dwell[0] = 0;
+  return standoutIn(dwell, (i) => dwell[i] >= READ_MIN_MS, typicalFor);
+}
+
+function standoutIn(dwell: number[], stayed: (i: number) => boolean, typicalFor?: (page: number) => PageTypical | null): Standout | null {
   if (typicalFor) {
     const candidates: Array<{ page: number; ms: number; ratio: number; readCount: number }> = [];
-    for (let i = 0; i < p.cells.length; i++) {
-      const c = p.cells[i];
-      if (c.state !== "read" || dwell[i] === 0 || c.ms < VERDICT_LONGEST_MIN_MS) continue;
+    for (let i = 0; i < dwell.length; i++) {
+      const ms = dwell[i];
+      if (!stayed(i) || ms === 0 || ms < VERDICT_LONGEST_MIN_MS) continue;
       const t = typicalFor(i + 1);
-      if (!t || t.typicalMs === null || t.typicalMs <= 0 || c.ms < STANDOUT_MULTIPLIER * t.typicalMs) continue;
-      const ratio = dwellRatio(c.ms, t.typicalMs);
-      candidates.push({ page: i + 1, ms: c.ms, ratio, readCount: t.readCount });
+      if (!t || t.typicalMs === null || t.typicalMs <= 0 || ms < STANDOUT_MULTIPLIER * t.typicalMs) continue;
+      const ratio = dwellRatio(ms, t.typicalMs);
+      candidates.push({ page: i + 1, ms, ratio, readCount: t.readCount });
     }
     const best = pickStandout(candidates, (x) => x.ratio);
     if (best) return { kind: "typical", page: best.page, ms: best.ms, ratio: best.readCount >= CALLOUT_MIN_PEOPLE ? best.ratio : null };

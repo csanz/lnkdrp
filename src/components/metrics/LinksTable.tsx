@@ -6,12 +6,15 @@
 
 import Link from "next/link";
 import { ChevronRightIcon } from "@heroicons/react/20/solid";
+import { awaitingFirstOpen } from "@/lib/analytics/reading";
 import { formatCountOf, formatDwell, formatRelative } from "@/lib/analytics/reading/format";
 import type { LinkRow, LinkStatus, ReadingTier } from "@/lib/analytics/reading/types";
 import { tileLabelClass } from "./KpiStrip";
 import { LINK_COMPARE_MIN_PEOPLE, linkLeaders } from "./pageEmphasis";
 
 const LINKS_SHOWN = 10;
+const END_LEADER_TITLE = `Highest share reaching the last page among links with ${LINK_COMPARE_MIN_PEOPLE} or more people`;
+const TYPICAL_LEADER_TITLE = `Highest typical time per person among links with ${LINK_COMPARE_MIN_PEOPLE} or more people`;
 
 const STATUS_CHIP: Partial<Record<LinkStatus, string>> = {
   disabled: "Disabled",
@@ -36,16 +39,19 @@ function peopleText(n: number): string {
   return `${n} ${n === 1 ? "person" : "people"}`;
 }
 
-/** A default link nobody has used: it was never sent anywhere, so "not opened yet" would mislead. */
-function unusedDefault(link: LinkRow): boolean {
-  return link.isDefault && link.people === 0 && !link.everOpened;
+/**
+ * A default link nobody has used next to other links: it was never sent anywhere, so "not opened
+ * yet" would mislead. A lone default link is the one that was shared, so it counts as awaiting.
+ */
+function unusedDefault(link: LinkRow, links: LinkRow[]): boolean {
+  return link.isDefault && link.people === 0 && !link.everOpened && !awaitingFirstOpen(link, links);
 }
 
 function sentText(link: LinkRow, now: number): string | null {
   return link.createdAt ? `sent ${formatRelative(link.createdAt, now)}` : null;
 }
 
-function LastOpened({ link, now }: { link: LinkRow; now: number }) {
+function LastOpened({ link, links, now }: { link: LinkRow; links: LinkRow[]; now: number }) {
   if (link.people > 0 && link.lastOpenedAt) return <>{formatRelative(link.lastOpenedAt, now)}</>;
   if (link.everOpened && link.lastOpenedAtAllTime) {
     return (
@@ -55,7 +61,7 @@ function LastOpened({ link, now }: { link: LinkRow; now: number }) {
       </span>
     );
   }
-  if (unusedDefault(link)) return <span className="text-[var(--muted)]">—</span>;
+  if (unusedDefault(link, links)) return <span className="text-[var(--muted)]">—</span>;
   const sent = sentText(link, now);
   return (
     <span className="text-[var(--muted)]">
@@ -65,10 +71,10 @@ function LastOpened({ link, now }: { link: LinkRow; now: number }) {
   );
 }
 
-function lastOpenedInline(link: LinkRow, now: number): string {
+function lastOpenedInline(link: LinkRow, links: LinkRow[], now: number): string {
   if (link.people > 0 && link.lastOpenedAt) return `${peopleText(link.people)} · ${formatRelative(link.lastOpenedAt, now)}`;
   if (link.everOpened && link.lastOpenedAtAllTime) return `None in this range, last opened ${formatRelative(link.lastOpenedAtAllTime, now)}`;
-  if (unusedDefault(link)) return "—";
+  if (unusedDefault(link, links)) return "—";
   const sent = sentText(link, now);
   return sent ? `Not opened yet · ${sent}` : "Not opened yet";
 }
@@ -76,7 +82,7 @@ function lastOpenedInline(link: LinkRow, now: number): string {
 /** Per-link table; cards under 640px. */
 export default function LinksTable({ docId, links, tier, selectedShareId, now, onSelect }: LinksTableProps) {
   const deep = tier === "deep";
-  const ordered = [...links.filter((l) => !unusedDefault(l)), ...links.filter(unusedDefault)];
+  const ordered = [...links.filter((l) => !unusedDefault(l, links)), ...links.filter((l) => unusedDefault(l, links))];
   const shown = ordered.slice(0, LINKS_SHOWN);
   const grid = deep
     ? "grid-cols-[minmax(0,1fr)_16px] sm:grid-cols-[minmax(0,2.2fr)_minmax(0,0.8fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_minmax(0,1.3fr)_16px]"
@@ -102,9 +108,9 @@ export default function LinksTable({ docId, links, tier, selectedShareId, now, o
           const chip = STATUS_CHIP[l.status];
           const withDetail = l.peopleWithDetail ?? 0;
           const reachedEnd = deep && withDetail > 0 ? formatCountOf(l.reachedEnd ?? 0, withDetail) : "—";
-          // Fewer than LINK_COMPARE_MIN_PEOPLE people: the figures are muted and carry their count.
+          // Fewer than LINK_COMPARE_MIN_PEOPLE people: the figures are muted and not compared.
           const thin = deep && withDetail > 0 && withDetail < LINK_COMPARE_MIN_PEOPLE;
-          const typical = deep ? `${formatDwell(l.medianTotalMs ?? null)}${thin && l.medianTotalMs != null ? ` · ${peopleText(withDetail)}` : ""}` : "—";
+          const typical = deep ? formatDwell(l.medianTotalMs ?? null) : "—";
           const idle = l.people === 0;
           const valueText = idle ? "text-[var(--muted)]" : "text-[var(--fg)]";
           const figureText = idle || thin ? "text-[var(--muted)]" : "text-[var(--fg)]";
@@ -119,7 +125,10 @@ export default function LinksTable({ docId, links, tier, selectedShareId, now, o
               </div>
               <div className={`hidden text-[13px] tabular-nums sm:block ${valueText}`}>{l.people}</div>
               {deep ? (
-                <div className={`hidden items-center gap-2 text-[13px] tabular-nums sm:flex ${figureText}${strongEnd}`}>
+                <div
+                  title={strongEnd ? END_LEADER_TITLE : undefined}
+                  className={`hidden items-center gap-2 text-[13px] tabular-nums sm:flex ${figureText}${strongEnd}`}
+                >
                   {reachedEnd}
                   {withDetail > 0 ? (
                     <span aria-hidden="true" className="block h-1 w-8 shrink-0 overflow-hidden rounded-full bg-[var(--panel-hover)]">
@@ -132,10 +141,15 @@ export default function LinksTable({ docId, links, tier, selectedShareId, now, o
                 </div>
               ) : null}
               {deep ? (
-                <div className={`hidden text-[13px] tabular-nums sm:block ${figureText}${strongTypical}`}>{typical}</div>
+                <div
+                  title={strongTypical ? TYPICAL_LEADER_TITLE : undefined}
+                  className={`hidden text-[13px] tabular-nums sm:block ${figureText}${strongTypical}`}
+                >
+                  {typical}
+                </div>
               ) : null}
               <div className={`hidden text-[13px] sm:block ${valueText}`}>
-                <LastOpened link={l} now={now} />
+                <LastOpened link={l} links={links} now={now} />
               </div>
               <span
                 aria-hidden="true"
@@ -143,10 +157,10 @@ export default function LinksTable({ docId, links, tier, selectedShareId, now, o
               >
                 <ChevronRightIcon className="h-4 w-4" />
               </span>
-              <div className="col-start-1 text-[12px] text-[var(--muted)] sm:hidden">{lastOpenedInline(l, now)}</div>
+              <div className="col-start-1 text-[12px] text-[var(--muted)] sm:hidden">{lastOpenedInline(l, links, now)}</div>
               {deep && l.people > 0 ? (
                 <div className="col-start-1 text-[12px] text-[var(--muted)] sm:hidden">
-                  {`Reached the last page ${reachedEnd} · typical ${formatDwell(l.medianTotalMs ?? null)} per person${thin ? ` (${peopleText(withDetail)})` : ""}`}
+                  {`Reached the last page ${reachedEnd} · typical ${formatDwell(l.medianTotalMs ?? null)} per person`}
                 </div>
               ) : null}
             </>

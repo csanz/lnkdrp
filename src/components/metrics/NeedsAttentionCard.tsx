@@ -10,6 +10,7 @@ import { hotReasonText } from "@/lib/analytics/reading/attention";
 import { formatDwell, formatRelative } from "@/lib/analytics/reading/format";
 import type { AttentionRow } from "@/lib/analytics/reading/types";
 import { buildPublicShareUrl } from "@/lib/urls";
+import { shortLinkLabel } from "./pageEmphasis";
 
 /** Copy text to the clipboard and remember which key was copied for 2 seconds. */
 export function useCopiedKey(): [string | null, (key: string, text: string) => void] {
@@ -57,7 +58,7 @@ const readerChip = "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
 const neutralChip = "border border-[var(--border)] text-[var(--muted)]";
 
 const rowButtonClass =
-  "-mx-2 flex min-h-14 w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2 text-left transition hover:bg-[var(--panel-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
+  "-mx-2 flex min-h-14 w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-1.5 text-left sm:py-2 transition hover:bg-[var(--panel-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
 
 function rowKey(r: AttentionRow): string {
   return r.kind === "not_opened" ? `n:${r.shareId}` : `${r.kind}:${r.personId}`;
@@ -90,8 +91,8 @@ function Row({
 }: {
   title: string;
   sub: string;
-  /** Phone variant of `sub`, ordered so the part that truncates is the least useful. */
-  subNarrow?: string;
+  /** Phone variant of `sub`, one muted line each, so the link that names an anonymous reader keeps its own line. */
+  subNarrow?: string[];
   chip: string | null;
   chipTone: "reader" | "neutral";
   action: string;
@@ -111,7 +112,11 @@ function Row({
         </span>
         {subNarrow ? (
           <>
-            <span className="mt-0.5 block truncate text-[12px] text-[var(--muted)] sm:hidden">{subNarrow}</span>
+            {subNarrow.map((line, i) => (
+              <span key={i} className={`${i === 0 ? "mt-0.5" : ""} block truncate text-[12px] leading-4 text-[var(--muted)] sm:hidden`}>
+                {line}
+              </span>
+            ))}
             <span className="mt-0.5 hidden truncate text-[12px] text-[var(--muted)] sm:block">{sub}</span>
           </>
         ) : (
@@ -145,7 +150,7 @@ export default function NeedsAttentionCard({ rows, more, now, shareId, onOpenPer
     const left = r.kind === "hot" && r.exitPage != null ? `left on page ${r.exitPage}` : null;
     const join = (parts: Array<string | null>) => parts.filter(Boolean).join(" · ");
     const sub = join([when, onPage, via, total, left]);
-    const subNarrow = join([when, onPage, total, left, via]);
+    const subNarrow = [shareId ? null : `via ${shortLinkLabel(r.linkLabel)}`, join([when, onPage, total, left])].filter((l): l is string => Boolean(l));
     return (
       <li key={rowKey(r)}>
         <Row

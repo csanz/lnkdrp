@@ -7,6 +7,7 @@ import {
   formatCountOf,
   formatDwell,
   formatDwellCompact,
+  formatTypical,
   dwellRatio,
   formatGap,
   formatRelative,
@@ -38,6 +39,25 @@ describe("formatDwell", () => {
     [3900000, "1h 5m"],
   ])("%s → %s", (ms, expected) => {
     expect(formatDwell(ms as number | null)).toBe(expected);
+  });
+});
+
+describe("formatTypical", () => {
+  test.each([
+    [null, "—"],
+    [undefined, "—"],
+    [600, "<1s"],
+    [4677, "4.7s"],
+    [5000, "5s"],
+    [7864, "7.9s"],
+    [9949, "9.9s"],
+    [9960, "10s"],
+    [11291, "11s"],
+    [46738, "47s"],
+    [59600, "1m"],
+    [65000, "1m 5s"],
+  ])("%s → %s", (ms, expected) => {
+    expect(formatTypical(ms as number | null | undefined)).toBe(expected);
   });
 });
 

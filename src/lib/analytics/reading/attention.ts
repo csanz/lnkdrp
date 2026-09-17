@@ -10,10 +10,10 @@ import {
   NOT_OPENED_AFTER_MS,
   RETURN_GAP_MS,
 } from "./constants";
-import { dwellRatio, formatDwell, formatReturnGap } from "./format";
+import { dwellRatio, formatDwell, formatReturnGap, formatTypical } from "./format";
 import { toMs } from "./normalize";
 import { buildReadPairs, computePageTable, typicalFromPairs } from "./pageTable";
-import type { AttentionRow, HotReason, LinkInput, PageRow, Person } from "./types";
+import type { AttentionRow, HotReason, LinkInput, LinkRow, PageRow, Person } from "./types";
 
 export type { AttentionRow, HotReason } from "./types";
 
@@ -44,6 +44,9 @@ export function largestReturnGap(p: Person): number | null {
 
 /** Scores within this share of each other are a tie band: the hot cap never splits one. */
 const HOT_TIE_SHARE = 0.9;
+/** The one-page standout quota: at least this many, or this share of people with detail. */
+const HOT_DWELL_MIN_KEEP = 2;
+const HOT_DWELL_SHARE = 0.1;
 
 type HotEntry = { person: Person; reason: HotReason };
 
@@ -51,8 +54,10 @@ type HotEntry = { person: Person; reason: HotReason };
  * Hot reason per person key, always computed over the whole document's people in range so a link
  * filter never changes who is hot. Only the strongest max(HOT_MIN_KEEP, HOT_MAX_SHARE of people
  * with detail) stay hot, so the flag keeps meaning something on a busy document; the cut is widened
- * to everyone within 10% of the last kept score, and one long-page person is always kept when any
- * qualifies, so near-identical readers and one-page standouts are not dropped arbitrarily.
+ * along a chain of same-kind scores each within 10% of the one before (up to twice the base cap).
+ * Returners and people who stayed on most pages rank first and can fill that cap, so one-page
+ * standouts get their own quota on top: the strongest max(2, 10% of people with detail) by ratio,
+ * widened the same way.
  */
 export function computeHot(docPeople: Person[], P: number): Map<string, HotReason | null> {
   const out = new Map<string, HotReason | null>();
@@ -67,25 +72,40 @@ export function computeHot(docPeople: Person[], P: number): Map<string, HotReaso
     if (reason) hot.push({ person: p, reason });
   }
   hot.sort(compareHot);
-  let n = Math.min(hot.length, Math.max(HOT_MIN_KEEP, Math.ceil(HOT_MAX_SHARE * withDetail.length)));
-  const last = n > 0 ? hot[n - 1] : null;
-  const lastScore = last ? hotScore(last) : null;
-  if (last && lastScore !== null) {
-    while (n < hot.length && hot[n].reason.kind === last.reason.kind && (hotScore(hot[n]) as number) >= HOT_TIE_SHARE * lastScore) n += 1;
-  }
-  const kept = hot.slice(0, n);
-  if (!kept.some((h) => h.reason.kind === "dwell")) {
-    const dwell = hot.find((h) => h.reason.kind === "dwell");
-    if (dwell) kept.push(dwell);
-  }
-  for (const h of kept) out.set(h.person.key, h.reason);
+  const n = hotCutoff(hot, Math.min(hot.length, Math.max(HOT_MIN_KEEP, Math.ceil(HOT_MAX_SHARE * withDetail.length))));
+  const dwell = hot
+    .filter((h) => h.reason.kind === "dwell")
+    .sort((a, b) => (hotScore(b) ?? 0) - (hotScore(a) ?? 0) || dwellMs(b) - dwellMs(a) || compareHot(a, b));
+  const dwellKept = dwell.slice(0, hotCutoff(dwell, Math.max(HOT_DWELL_MIN_KEEP, Math.ceil(HOT_DWELL_SHARE * withDetail.length))));
+  for (const h of [...hot.slice(0, n), ...dwellKept]) out.set(h.person.key, h.reason);
   return out;
+}
+
+/**
+ * How many of `sorted` (compareHot order) stay hot given a base cap: the cut moves past each next
+ * person of the same kind whose score is within 10% of the one before it. Chaining (not anchoring on
+ * the last kept score) keeps a run of near-identical readers together; the 2× bound stops a long
+ * gentle slope from keeping everyone.
+ */
+export function hotCutoff(sorted: HotEntry[], base: number): number {
+  let n = Math.min(sorted.length, base);
+  while (n > 0 && n < sorted.length && n < 2 * base && sorted[n].reason.kind === sorted[n - 1].reason.kind) {
+    const prev = hotScore(sorted[n - 1]);
+    const next = hotScore(sorted[n]);
+    if (prev === null || next === null || next < HOT_TIE_SHARE * prev) break;
+    n += 1;
+  }
+  return n;
 }
 
 const HOT_KIND_RANK: Record<HotReason["kind"], number> = { returned: 0, read_most: 1, dwell: 2 };
 
 function dwellScore(r: Extract<HotReason, { kind: "dwell" }>): number {
   return r.pageRatio ?? r.ratio;
+}
+
+function dwellMs(h: HotEntry): number {
+  return h.reason.kind === "dwell" ? h.reason.ms : 0;
 }
 
 /** Strength within a kind: total time for read_most, ratio for dwell; returners have none. */
@@ -212,6 +232,22 @@ export function pickStandout<T extends { ms: number }>(candidates: T[], ratio: (
   return best;
 }
 
+/**
+ * True when a link still waits for its first open. An unused default link counts only when it is the
+ * doc's only non-archived link: otherwise the owner shared the other links instead. Pure, so client
+ * components can share it with buildAttention.
+ */
+export function awaitingFirstOpen(
+  link: Pick<LinkRow, "shareId" | "isDefault" | "status" | "everOpened">,
+  links: ReadonlyArray<Pick<LinkRow, "shareId" | "status">>,
+): boolean {
+  return (
+    link.status === "active" &&
+    !link.everOpened &&
+    (!link.isDefault || links.filter((l) => l.status !== "archived" && l.status !== "deleted").every((l) => l.shareId === link.shareId))
+  );
+}
+
 /** Link state at `now`: archived wins over disabled, disabled over expired. */
 export function linkStatus(l: LinkInput, now: number): "active" | "disabled" | "expired" | "archived" {
   if (l.archivedAt) return "archived";
@@ -285,6 +321,7 @@ export function buildAttention(a: {
       const created = toMs(l.createdDate);
       if (created === null || created > cutoff) return false;
       if (a.openedShareIds.has(l.shareId)) return false;
+      // Same rule as awaitingFirstOpen, plus the 48h grace period.
       return !l.isDefault || (nonArchived.length === 1 && nonArchived[0].shareId === l.shareId);
     })
     .map((l) => ({ l, created: toMs(l.createdDate) as number }))
@@ -310,7 +347,7 @@ export function hotReasonText(r: HotReason, tz?: string): string {
       return `Stayed on ${r.read} of ${r.pageCount} pages · ${formatDwell(r.totalMs)}`;
     case "dwell":
       return r.pageRatio !== null && r.pageTypicalMs !== null
-        ? `Spent ${formatDwell(r.ms)} on page ${r.page}, ${r.pageRatio.toFixed(1)}× its typical ${formatDwell(r.pageTypicalMs)}`
-        : `Spent ${formatDwell(r.ms)} on page ${r.page}; most pages take about ${formatDwell(r.docTypicalMs)}`;
+        ? `Spent ${formatDwell(r.ms)} on page ${r.page}, ${r.pageRatio.toFixed(1)}× its typical ${formatTypical(r.pageTypicalMs)}`
+        : `Spent ${formatDwell(r.ms)} on page ${r.page}; most pages take about ${formatTypical(r.docTypicalMs)}`;
   }
 }

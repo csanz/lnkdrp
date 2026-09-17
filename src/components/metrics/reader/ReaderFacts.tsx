@@ -1,15 +1,19 @@
 /**
  * Key facts for one person: where they left, their longest pages, the page most above its typical
- * time, visits (or when they opened it), total time, pages reached and downloads. A one-visit bounce
- * (page 2 or less) swaps the page facts and Pages reached for how long a typical person spent.
+ * time, visits (or when they opened it), total time, pages stayed on and downloads. A one-visit bounce
+ * (page 2 or less) swaps the page facts and Stayed on for how long a typical person spent.
  */
-import { formatDwell, formatRelative } from "@/lib/analytics/reading/format";
+import { calendarDaysBetween, formatDwell, formatRelative, formatTypical } from "@/lib/analytics/reading";
 import type { PersonPageRow, PersonResponse, PersonVisitRow } from "@/lib/analytics/reading/types";
+import { coverTimedVisits } from "./coverVisits";
 import { formatRatio } from "./ReaderPageBars";
 
 const NBSP = "\u00a0";
 const RATIO_SHOWN_FROM = 2;
 const LONGEST_PAGES = 2;
+/** A second longest page is listed only from this long and this share of the first. */
+const SECOND_LONGEST_MIN_MS = 10_000;
+const SECOND_LONGEST_MIN_SHARE = 0.25;
 
 /**
  * "Sep 10, 1:42 PM" in the viewer's time zone (", 2025" before the time when not in `now`'s year),
@@ -32,7 +36,8 @@ export function formatDateTimeShort(iso: string, now?: number): string {
 export function agoText(iso: string, now: number): string {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return "—";
-  const days = Math.floor((now - t) / 86_400_000);
+  // Calendar days, like formatRelative and the dates beside it, not 24-hour blocks.
+  const days = calendarDaysBetween(t, now);
   if (days < 7) return formatRelative(t, now);
   if (days < 60) return `${days} days ago`;
   const months = Math.floor(days / 30);
@@ -48,15 +53,17 @@ function pageName(p: PersonPageRow): string {
  * return lands on the cover, so its total says more about coming back than about the page.
  */
 function stayedPages(pages: PersonPageRow[], visits: PersonVisitRow[]): PersonPageRow[] {
-  const coverVisits = visits.filter((v) => v.stops.some((s) => s.page === 1 && !s.passed && !s.untimed && s.ms > 0)).length;
+  const coverVisits = coverTimedVisits(visits);
   return pages.filter((p) => p.state === "read" && p.ms > 0 && !(p.page === 1 && coverVisits > 1));
 }
 
-/** The two longest stayed pages, longest first. */
+/** The longest stayed page, plus the next one when it isn't trivial beside it. */
 export function longestPages(pages: PersonPageRow[], visits: PersonVisitRow[]): PersonPageRow[] {
-  return stayedPages(pages, visits)
+  const [first, ...rest] = stayedPages(pages, visits)
     .sort((a, b) => b.ms - a.ms || a.page - b.page)
     .slice(0, LONGEST_PAGES);
+  if (!first) return [];
+  return [first, ...rest.filter((p) => p.ms >= SECOND_LONGEST_MIN_MS && p.ms >= SECOND_LONGEST_MIN_SHARE * first.ms)];
 }
 
 /** "Page 10 · Financials 47s" */
@@ -68,6 +75,22 @@ export function longestPageText(p: PersonPageRow): string {
 export function longestPagesText(pages: PersonPageRow[], visits: PersonVisitRow[]): string | null {
   const top = longestPages(pages, visits);
   return top.length > 0 ? top.map(longestPageText).join(", ") : null;
+}
+
+/**
+ * "Stayed on 8 of 12" with "3 jumped past · 1 under 2s · 1 time not recorded" for the pages that
+ * weren't stayed on (null when there are none). Counts come from the page rows, so they add up to
+ * the rows shown below.
+ */
+export function stayedOnFact(pages: PersonPageRow[], pageCount: number): { value: string; sub: string | null } {
+  const n = (state: PersonPageRow["state"]) => pages.filter((p) => p.state === state).length;
+  const unknown = n("unknown");
+  const parts = [
+    n("jumped") > 0 ? `${n("jumped")} jumped past` : null,
+    n("passed") > 0 ? `${n("passed")} under 2s` : null,
+    unknown > 0 ? `${unknown} ${unknown === 1 ? "time" : "times"} not recorded` : null,
+  ].filter((x): x is string => x !== null);
+  return { value: `${n("read")} of ${pageCount}`, sub: parts.length > 0 ? parts.join(" · ") : null };
 }
 
 /**
@@ -85,7 +108,7 @@ export function aboveTypicalRow(pages: PersonPageRow[], visits: PersonVisitRow[]
 
 /** "Page 8 · Pricing — 5.6× (44s vs 7s typical)" */
 export function aboveTypicalText(p: PersonPageRow): string {
-  return `${pageName(p)} — ${formatRatio(p.ratio ?? 0)} (${formatDwell(p.ms)} vs ${formatDwell(p.typicalMs)} typical)`;
+  return `${pageName(p)} — ${formatRatio(p.ratio ?? 0)} (${formatDwell(p.ms)} vs ${formatTypical(p.typicalMs)} typical)`;
 }
 
 function Fact({
@@ -118,7 +141,7 @@ export default function ReaderFacts({ data, now }: { data: PersonResponse; now: 
   const exitShort = exitRow?.shortLabel ?? exitLabel;
   const leftOn = facts.exitPage === null ? "—" : exitShort ? `Page ${facts.exitPage} · ${exitShort}` : `Page ${facts.exitPage}`;
   const leftOnTitle = facts.exitPage !== null && exitLabel ? `Page ${facts.exitPage} · ${exitLabel}` : undefined;
-  const skipped = facts.maxPage - facts.reachedCount;
+  const stayedOn = stayedOnFact(pages, pageCount);
   const bounce = facts.visits === 1 && facts.maxPage <= 2;
   const longest = bounce ? [] : longestPages(pages, visits);
   const above = bounce ? null : aboveTypicalRow(pages, visits, data.verdict.page);
@@ -128,7 +151,7 @@ export default function ReaderFacts({ data, now }: { data: PersonResponse; now: 
         {leftOn}
       </Fact>
       {longest.length > 0 ? (
-        <Fact label="Longest pages" title={longestPagesText(pages, visits) ?? undefined}>
+        <Fact label={longest.length === 1 ? "Longest page" : "Longest pages"} title={longestPagesText(pages, visits) ?? undefined}>
           {longest.map((p, i) => (
             <span key={p.page} className="block">
               {`${pageName(p)} `}
@@ -138,7 +161,11 @@ export default function ReaderFacts({ data, now }: { data: PersonResponse; now: 
         </Fact>
       ) : null}
       {above ? (
-        <Fact label="Above typical" sub={`${formatDwell(above.ms)} vs ${formatDwell(above.typicalMs)} typical`} title={aboveTypicalText(above)}>
+        <Fact
+          label={data.verdict.page !== null ? "Also above typical" : "Above typical"}
+          sub={`${formatDwell(above.ms)} vs ${formatTypical(above.typicalMs)} typical`}
+          title={aboveTypicalText(above)}
+        >
           {`${pageName(above)} — ${formatRatio(above.ratio ?? 0)}`}
         </Fact>
       ) : null}
@@ -156,8 +183,8 @@ export default function ReaderFacts({ data, now }: { data: PersonResponse; now: 
       )}
       <Fact label="Total time">{formatDwell(facts.totalMs)}</Fact>
       {bounce ? null : (
-        <Fact label="Pages reached" sub={skipped > 0 ? `${skipped} skipped` : null}>
-          {`${facts.reachedCount} of ${pageCount}`}
+        <Fact label="Stayed on" sub={stayedOn.sub}>
+          {stayedOn.value}
         </Fact>
       )}
       {bounce && facts.typicalTotalMs !== null ? (

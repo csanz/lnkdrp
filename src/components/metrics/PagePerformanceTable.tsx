@@ -6,7 +6,7 @@
 "use client";
 
 import { useState } from "react";
-import { formatDwell } from "@/lib/analytics/reading/format";
+import { formatTypical } from "@/lib/analytics/reading/format";
 import type { Callouts, PageRow } from "@/lib/analytics/reading/types";
 import { InfoTip, tileLabelClass } from "./KpiStrip";
 import { LEFT_TOOLTIP, REACHED_TOOLTIP, SKIPPED_TOOLTIP, TYPICAL_TOOLTIP } from "./ReadingMatrix";
@@ -105,11 +105,11 @@ const subClass = "block truncate text-[11px] leading-4 text-[var(--muted)]";
 
 /** The typical-time value by the shared stayer rule: ranked may be bold, thin is muted with its count, few is a dash. */
 function TypicalValue({ t, strong }: { t: TypicalDisplay; strong: boolean }) {
-  if (t.kind === "ranked") return <span className={strong ? "font-semibold text-[var(--fg)]" : "text-[var(--fg)]"}>{formatDwell(t.ms)}</span>;
+  if (t.kind === "ranked") return <span className={strong ? "font-semibold text-[var(--fg)]" : "text-[var(--fg)]"}>{formatTypical(t.ms)}</span>;
   if (t.kind === "thin") {
     return (
       <span className="text-[var(--muted)]" title={t.title}>
-        {`${formatDwell(t.ms)} (${t.readCount})`}
+        {`${formatTypical(t.ms)} · ${t.readCount} stayed`}
       </span>
     );
   }
@@ -213,12 +213,10 @@ export default function PagePerformanceTable({ pages, pageCount, peopleWithDetai
                 </div>
                 <div data-col="left" className="min-w-0 text-[13px] leading-5 tabular-nums">
                   <span className="flex items-center gap-2">
-                    <span className="whitespace-nowrap">
-                      {row.leftHere > 0 ? <span className={strong(leftBold)}>{row.leftHere}</span> : <span className="text-[var(--muted)]">—</span>}
-                      {isLast ? <span className="text-[var(--muted)]"> · last page</span> : null}
-                    </span>
+                    {row.leftHere > 0 ? <span className={strong(leftBold)}>{row.leftHere}</span> : <span className="text-[var(--muted)]">—</span>}
                     {row.leftHere > 0 ? <Bar value={row.leftHere} max={peopleWithDetail} muted /> : null}
                   </span>
+                  {isLast ? <span className={subClass}>last page</span> : null}
                 </div>
               </div>
 
@@ -248,7 +246,7 @@ export default function PagePerformanceTable({ pages, pageCount, peopleWithDetai
                     <span>
                       <span className="text-[var(--muted)]">Left </span>
                       {row.leftHere > 0 ? <span className={strong(leftBold)}>{row.leftHere}</span> : <span className="text-[var(--muted)]">—</span>}
-                      {isLast ? <span className="text-[var(--muted)]"> · last page</span> : null}
+                      {isLast ? <span className="text-[11px] text-[var(--muted)]"> (last page)</span> : null}
                     </span>
                   </div>
                 </div>

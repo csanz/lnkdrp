@@ -214,6 +214,8 @@ export default function ReaderHeader({
   const repeatsVerdict =
     !person.activeNow &&
     ((chipText ?? "").trim() === (verdictBehaviour ?? "").trim() ||
+      // "Came back 2 days later" chip over a behaviour that opens with those words.
+      Boolean(chipText && (verdictBehaviour ?? "").startsWith(chipText.trim())) ||
       (person.hot?.kind === "dwell" && verdictPage !== null && person.hot.page === verdictPage));
   const chip = chipText && !repeatsVerdict ? chipText : null;
   const showFilter = Boolean(onFilterLink) && filteredShareId !== person.shareId;

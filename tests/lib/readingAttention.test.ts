@@ -4,9 +4,12 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  awaitingFirstOpen,
   buildAttention,
   buildReadingResponse,
+  compareHot,
   computeHot,
+  hotCutoff,
   hotReasonText,
   largestReturnGap,
   linkStatus,
@@ -172,25 +175,88 @@ describe("computeHot", () => {
     expect(nadia).toMatchObject({ totalMs: 269885, exitPage: 4 });
   });
 
-  test("when no long-page person survives the cap, the strongest one keeps a slot", () => {
+  test("the tie band chains from each kept score, up to twice the base cap", () => {
+    const entry = (i: number, totalMs: number) => ({
+      person: { ...personOf(F1), key: `band${i}`, totalMs, lastSeenMs: T0 },
+      reason: { kind: "read_most" as const, read: 4, pageCount: 4, totalMs },
+    });
+    const scores = [300_000, 273_000, 252_000, 228_700, 227_400, 150_000];
+    const sorted = scores.map((s, i) => entry(i, s)).sort(compareHot);
+    // Each of 273k, 252k, 228.7k, 227.4k is within 10% of the one before; 150k is not.
+    expect(hotCutoff(sorted, 3)).toBe(5);
+    // A base of 2 stops at 4 even though the slope keeps going.
+    expect(hotCutoff(sorted, 2)).toBe(4);
+    const gentle = Array.from({ length: 12 }, (_, i) => entry(i, Math.round(300_000 * 0.95 ** i))).sort(compareHot);
+    expect(hotCutoff(gentle, 3)).toBe(6);
+    // Returners have no score, so their band never widens.
+    const returned = [0, 1, 2, 3].map((i) => ({ person: { ...personOf(F1), key: `ret${i}`, lastSeenMs: T0 - i }, reason: { kind: "returned" as const, gapMs: DAY, fromAt: "", toAt: "" } }));
+    expect(hotCutoff(returned, 3)).toBe(3);
+    expect(hotCutoff([], 3)).toBe(0);
+  });
+
+  test("long-page people have their own quota on top of the cap: max(2, 10% of people with detail)", () => {
     const P = 4;
     const full = (name: string, each: number) => ({
       name,
       visits: [{ events: Array.from({ length: P }, (_, i): EventSpec => (i + 1 < P ? [i + 1, each, "turn", i + 2] : [i + 1, each, "pagehide"])) }],
     });
     const ordinary = (i: number) => ({ name: `ord${i}`, visits: [{ events: [[1, 3000, "turn", 2], [2, 3000, "pagehide"]] as EventSpec[] }] });
-    const fx = fixture(P, [
-      full("full140", 35000),
-      full("full120", 30000),
-      full("full100", 25000),
-      { name: "longPage", visits: [{ events: [[1, 3000, "turn", 2], [2, 70000, "pagehide"]] }] },
-      { name: "longPage2", visits: [{ events: [[1, 3000, "turn", 2], [2, 50000, "pagehide"]] }] },
-      ...Array.from({ length: 5 }, (_, i) => ordinary(i)),
-    ]);
+    const longPage = (name: string, ms: number) => ({ name, visits: [{ events: [[1, 3000, "turn", 2], [2, ms, "pagehide"]] as EventSpec[] }] });
+    const withThird = (thirdMs: number) =>
+      fixture(P, [
+        full("full140", 35000),
+        full("full120", 30000),
+        full("full100", 25000),
+        full("full80", 20000),
+        longPage("longPage", 70000),
+        longPage("longPage2", 50000),
+        longPage("longPage3", thirdMs),
+        ...Array.from({ length: 9 }, (_, i) => ordinary(i)),
+      ]);
+    // 16 people: the cap (4) is full of people who stayed on most pages, and the quota is 2.
+    // Page 2's typical time is 3s, so the long pages are 23.3×, 16.7× and 12.0×.
+    const fx = withThird(36000);
     const hot = computeHot(peopleOf(fx), P);
-    expect(fx.keys.map((k) => hot.get(k)?.kind ?? null)).toEqual(["read_most", "read_most", "read_most", "dwell", null, null, null, null, null, null]);
-    // Page 2 stayed: 3s ×5, 25s, 30s, 35s, 50s, 70s → typical 14s. Both long-page people qualify; only the stronger is kept.
-    expect(hot.get(fx.keys[3])).toMatchObject({ page: 2, ms: 70000, pageTypicalMs: 14000, pageRatio: 5 });
+    expect(fx.keys.slice(0, 7).map((k) => hot.get(k)?.kind ?? null)).toEqual(["read_most", "read_most", "read_most", "read_most", "dwell", "dwell", null]);
+    expect(hot.get(fx.keys[4])).toMatchObject({ page: 2, ms: 70000, pageTypicalMs: 3000 });
+    expect(hot.get(fx.keys[5])).toMatchObject({ page: 2, ms: 50000 });
+    // 15.3× is within 10% of 16.7×, so the quota widens to keep it.
+    const close = withThird(46000);
+    expect(computeHot(peopleOf(close), P).get(close.keys[6])).toMatchObject({ kind: "dwell", ms: 46000 });
+  });
+
+  test("Lumen shape: strong one-page readers stay hot beside returners and ten people who stayed on most pages", () => {
+    const P = 12;
+    const walk = (msFor: (page: number) => number, pages: number[]): EventSpec[] =>
+      pages.map((page, i) => (i + 1 < pages.length ? [page, msFor(page), "turn", pages[i + 1]] : [page, msFor(page), "pagehide"]));
+    const all = Array.from({ length: P }, (_, i) => i + 1);
+    const readMost = Array.from({ length: 10 }, (_, i) => ({ name: `most${i}`, visits: [{ events: walk(() => 10000 + i * 200, all) }] }));
+    const returners = [0, 1].map((i) => ({
+      name: `ret${i}`,
+      visits: [
+        { visitId: `ret${i}-a`, start: T0, events: walk(() => 5000, [1, 2]) },
+        { visitId: `ret${i}-b`, start: T0 + DAY, events: walk(() => 5000, [1, 2, 3]) },
+      ],
+    }));
+    const oneLongPage = (name: string, page: number, ms: number) => ({ name, visits: [{ events: walk((k) => (k === page ? ms : 5000), [1, page]) }] });
+    const ordinary = Array.from({ length: 17 }, (_, i) => ({ name: `ord${i}`, visits: [{ events: walk(() => 5000, [1, 2, 3]) }] }));
+    const fx = fixture(
+      P,
+      [...readMost, ...returners, oneLongPage("reader17", 2, 33000), oneLongPage("reader18", 6, 50600), oneLongPage("reader6", 9, 41800), ...ordinary],
+      { now: T0 + DAY + HOUR },
+    );
+    expect(fx.keys).toHaveLength(32);
+    const hot = computeHot(peopleOf(fx), P);
+    const kinds = fx.keys.map((k) => hot.get(k)?.kind ?? null);
+    expect(kinds.filter((k) => k === "returned")).toHaveLength(2);
+    expect(kinds.filter((k) => k === "read_most")).toHaveLength(10);
+    const dwell = fx.keys.slice(12, 15).map((k) => hot.get(k));
+    expect(dwell.map((r) => (r?.kind === "dwell" ? [r.page, r.pageRatio] : null))).toEqual([
+      [2, 6.6],
+      [6, 4.6],
+      [9, 3.8],
+    ]);
+    expect(kinds.slice(15).every((k) => k === null)).toBe(true);
   });
 
   test("page 1 time summed over several visits is never a long-page reason", () => {
@@ -241,7 +307,40 @@ describe("hotReasonText", () => {
     expect(hotReasonText({ kind: "dwell", page: 2, ms: 70000, ratio: 5.8, pageTypicalMs: 8000, pageRatio: 8.7, docTypicalMs: 12000 })).toBe(
       "Spent 1m 10s on page 2, 8.7× its typical 8s",
     );
+    // Typical times round (tenths under 10s) so the ratio beside them divides the way it reads.
+    expect(hotReasonText({ kind: "dwell", page: 9, ms: 104000, ratio: 9.1, pageTypicalMs: 7864, pageRatio: 13.2, docTypicalMs: 11400 })).toBe(
+      "Spent 1m 44s on page 9, 13.2× its typical 7.9s",
+    );
+    expect(hotReasonText({ kind: "dwell", page: 2, ms: 17000, ratio: 3.6, pageTypicalMs: null, pageRatio: null, docTypicalMs: 4677 })).toBe(
+      "Spent 17s on page 2; most pages take about 4.7s",
+    );
     expect(hotReasonText({ kind: "read_most", read: 3, pageCount: 4, totalMs: 273117 })).toBe("Stayed on 3 of 4 pages · 4m 33s");
+  });
+});
+
+describe("awaitingFirstOpen", () => {
+  const link = (shareId: string, over: Partial<{ isDefault: boolean; status: "active" | "disabled" | "expired" | "archived" | "deleted"; everOpened: boolean }> = {}) => ({
+    shareId,
+    isDefault: false,
+    status: "active" as const,
+    everOpened: false,
+    ...over,
+  });
+
+  test("an unused default link counts only when it is the only non-archived link", () => {
+    const def = link("def", { isDefault: true });
+    expect(awaitingFirstOpen(def, [def, link("other")])).toBe(false);
+    expect(awaitingFirstOpen(def, [def])).toBe(true);
+    expect(awaitingFirstOpen(def, [def, link("old", { status: "archived" }), link("gone", { status: "deleted" })])).toBe(true);
+    expect(awaitingFirstOpen(def, [def, link("off", { status: "disabled" })])).toBe(false);
+  });
+
+  test("opened, disabled or expired links are not waiting", () => {
+    const other = link("other");
+    expect(awaitingFirstOpen(other, [link("def", { isDefault: true }), other])).toBe(true);
+    expect(awaitingFirstOpen(link("seen", { everOpened: true }), [])).toBe(false);
+    expect(awaitingFirstOpen(link("off", { status: "disabled" }), [])).toBe(false);
+    expect(awaitingFirstOpen(link("exp", { status: "expired" }), [])).toBe(false);
   });
 });
 

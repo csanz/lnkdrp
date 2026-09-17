@@ -147,6 +147,7 @@ describe("samples", () => {
     expect(r.totalMs).toBe(145300);
     expect(r.pages?.map((p) => p.typicalMs)).toEqual([4000, 30000, null, null]);
     expect(r.callouts).toEqual(computeCallouts(r.pages!, 5, 4));
+    expect(r.callouts).toHaveProperty("heldFlat");
     expect(r.matrix?.rows).toHaveLength(5);
     expect(r.matrix?.rows[0].activeNow).toBe(true);
     expect(r.matrix?.rows[0].exitPage).toBe(4);
@@ -453,6 +454,12 @@ function checkResponse(r: ReadingResponse, P: number) {
   if (firstLink !== -1) expect(r.attention.rows.slice(firstLink).every((x) => x.kind === "not_opened")).toBe(true);
   if (r.callouts?.mostSkipped) expect(r.callouts.mostSkipped.tiedPages).toContain(r.callouts.mostSkipped.page);
   if (r.callouts?.mostLeft) expect(r.callouts.mostLeft.tiedPages).toContain(r.callouts.mostLeft.page);
+  if (r.callouts) {
+    const eligible = r.pages!.filter((p) => p.typicalMs !== null && p.readCount >= 5);
+    if (r.callouts.heldLongest) expect(r.callouts.heldFlat).toBeNull();
+    else expect(r.callouts.heldFlat === null).toBe(eligible.length < 2);
+    for (const page of r.callouts.heldFlat?.pages ?? []) expect(eligible.map((p) => p.page)).toContain(page);
+  }
   expect(N).toBeLessThanOrEqual(r.people);
   expect(r.matrix!.rows.length).toBe(Math.min(N, r.matrix!.limit));
   for (const row of r.matrix!.rows) expect(row.cells).toHaveLength(P);

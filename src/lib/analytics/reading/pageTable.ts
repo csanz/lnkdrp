@@ -99,27 +99,50 @@ export function computeCallouts(rows: PageRow[], peopleWithDetail: number, P: nu
     }
   }
 
-  return { heldLongest: held ? heldLongestFor(rows, held, P) : null, mostSkipped, mostLeft };
+  const { heldLongest, heldFlat } = held ? heldLongestFor(rows, held, P) : { heldLongest: null, heldFlat: null };
+  return { heldLongest, heldFlat, mostSkipped, mostLeft };
 }
+
+const typicalsOf = (rs: PageRow[]) => rs.map((r) => r.typicalMs as number);
 
 /**
  * The held-longest highlight, or null when it would not single anything out: more tied pages than
  * min(CALLOUT_MAX_TIED, a third of the document), or a leader under HELD_MIN_LIFT× the median typical
- * time of the pages enough people stayed on.
+ * time of the pages enough people stayed on. When it is null over two or more eligible pages,
+ * `heldFlat` says why, so the slot can explain the flat result instead of vanishing.
  */
-function heldLongestFor(rows: PageRow[], held: PageRow, P: number): Callouts["heldLongest"] {
+function heldLongestFor(rows: PageRow[], held: PageRow, P: number): Pick<Callouts, "heldLongest" | "heldFlat"> {
   const leaderMs = held.typicalMs as number;
   const eligible = rows.filter((r) => r.typicalMs !== null && r.readCount >= CALLOUT_MIN_PEOPLE);
   const tiedRows = eligible.filter((r) => r.page === held.page || (r.typicalMs as number) >= HELD_TIE_SHARE * leaderMs).sort((a, b) => a.page - b.page);
-  if (tiedRows.length > Math.min(CALLOUT_MAX_TIED, Math.max(1, Math.floor(P / 3)))) return null;
-  const typicalMedian = median(eligible.map((r) => r.typicalMs as number)) ?? 0;
-  if (leaderMs < HELD_MIN_LIFT * typicalMedian) return null;
+  const canExplain = eligible.length >= 2;
+  if (tiedRows.length > Math.min(CALLOUT_MAX_TIED, Math.max(1, Math.floor(P / 3)))) {
+    const tiedSet = new Set(tiedRows.map((r) => r.page));
+    const heldFlat = canExplain
+      ? {
+          pages: tiedRows.map((r) => r.page),
+          typicalMs: median(typicalsOf(tiedRows)) as number,
+          restTypicalMs: median(typicalsOf(eligible.filter((r) => !tiedSet.has(r.page)))),
+        }
+      : null;
+    return { heldLongest: null, heldFlat };
+  }
+  const typicalMedian = median(typicalsOf(eligible)) ?? 0;
+  if (leaderMs < HELD_MIN_LIFT * typicalMedian) {
+    const heldFlat = canExplain
+      ? { pages: eligible.map((r) => r.page).sort((a, b) => a - b), typicalMs: typicalMedian, restTypicalMs: null }
+      : null;
+    return { heldLongest: null, heldFlat };
+  }
   return {
-    page: held.page,
-    typicalMs: leaderMs,
-    readCount: held.readCount,
-    tiedPages: tiedRows.map((r) => r.page),
-    tied: tiedRows.map((r) => ({ page: r.page, typicalMs: r.typicalMs as number, readCount: r.readCount })),
+    heldLongest: {
+      page: held.page,
+      typicalMs: leaderMs,
+      readCount: held.readCount,
+      tiedPages: tiedRows.map((r) => r.page),
+      tied: tiedRows.map((r) => ({ page: r.page, typicalMs: r.typicalMs as number, readCount: r.readCount })),
+    },
+    heldFlat: null,
   };
 }
 

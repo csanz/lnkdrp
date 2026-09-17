@@ -1,6 +1,6 @@
 /**
  * Visits for one person, newest first: a ribbon of stops sized by time, the page path with the
- * exit, passed pages, and "… earlier" dividers between visits an hour or more apart.
+ * exit, under-2s pages, and "… earlier" dividers between visits an hour or more apart.
  */
 "use client";
 
@@ -12,15 +12,10 @@ const INITIAL_VISITS = 5;
 const RETURN_DIVIDER_MS = 3_600_000;
 const EMERALD = "rgb(16 185 129)";
 const EMERALD_DARK = "rgb(4 120 87)";
-/** Ribbon rows never shrink below this share of the card, so a short visit is still readable. */
-const MIN_RIBBON_PCT = 35;
 const PASSED_PX = 8;
 const UNTIMED_PX = 16;
-/** Under 640px each timed stop is this wide at the longest stop shown, and never under TIMED_MIN_PX. */
-const TIMED_SCALE_PX = 240;
-const TIMED_MIN_PX = 24;
-/** Matches the `sm:min-w-[6px]` class on timed segments. */
-const TIMED_MIN_PX_WIDE = 6;
+/** Floor for a timed stop's drawn width; its hit area reaches past it into the gaps. */
+const TIMED_MIN_PX = 6;
 /** Tailwind `gap-0.5`. */
 const SEGMENT_GAP_PX = 2;
 
@@ -66,7 +61,7 @@ export function visitPathParts(visit: PersonVisitRow, pageCount: number): { noun
       }
       steps.push(`${run.join(", ")} (time not recorded)`);
     } else {
-      steps.push(s.passed ? `${s.page} (passed)` : String(s.page));
+      steps.push(s.passed ? `${s.page} (under 2s)` : String(s.page));
     }
   }
   const noun = visit.stops.length === 1 ? "Page" : "Pages";
@@ -76,7 +71,7 @@ export function visitPathParts(visit: PersonVisitRow, pageCount: number): { noun
 }
 
 /**
- * "Pages 1 → 12 (passed) → 3 · left on page 3" or "… · ended on the last page". Consecutive
+ * "Pages 1 → 12 (under 2s) → 3 · left on page 3" or "… · ended on the last page". Consecutive
  * untimed steps share one note: "6, 7, 8 (time not recorded)".
  */
 export function visitPathText(visit: PersonVisitRow, pageCount: number): string {
@@ -113,7 +108,7 @@ export function earlierGapText(fromMs: number, toMs: number): string {
 export function ribbonKeyText(visits: PersonVisitRow[]): string | null {
   const stops = visits.filter(hasRibbon).flatMap((v) => v.stops);
   const parts: string[] = [];
-  if (stops.some((s) => s.passed)) parts.push("hatched = passed");
+  if (stops.some((s) => s.passed)) parts.push("hatched = under 2s");
   if (stops.some((s) => s.revisit && !s.passed && !s.untimed)) parts.push("outlined = went back");
   if (stops.some((s) => s.untimed)) parts.push("dotted = time not recorded");
   return parts.length > 0 ? parts.join(" · ") : null;
@@ -130,30 +125,60 @@ function visitDurationMs(visit: PersonVisitRow): number {
 
 function stopLabel(stop: Stop): string {
   if (stop.untimed) return `Page ${stop.page} · time not recorded`;
-  return `Page ${stop.page} · ${stop.passed ? "passed (under 2s)" : formatDwell(stop.ms)}`;
+  return `Page ${stop.page} · ${stop.passed ? "under 2s" : formatDwell(stop.ms)}`;
 }
 
 const PASSED_HATCH = "repeating-linear-gradient(45deg, rgb(16 185 129 / .55) 0 2px, transparent 2px 4px)";
 
+/** Past this many characters the last step and ending could outgrow a phone card on one line. */
+const NOWRAP_ENDING_CHARS = 40;
+
+/**
+ * A short ending stays on the last step's line, so a wrap never leaves "· left on page 10" on its own;
+ * a long one wraps as a whole phrase.
+ */
 function VisitPath({ visit, pageCount }: { visit: PersonVisitRow; pageCount: number }) {
   const { noun, steps, end } = visitPathParts(visit, pageCount);
+  if (steps.length === 0) return <p className="text-[13px] text-[var(--fg)]">{end}</p>;
+  const last = steps.length - 1;
   return (
     <p className="text-[13px] text-[var(--fg)]">
-      {steps.map((step, i) => (
-        <span key={i}>
-          {i === 0 ? <span className="whitespace-nowrap">{`${noun} ${step}`}</span> : <> <span className="whitespace-nowrap">{`→ ${step}`}</span></>}
-        </span>
-      ))}
-      {end === null ? null : steps.length > 0 ? <> <span className="whitespace-nowrap">{`· ${end}`}</span></> : end}
+      {steps.map((step, i) => {
+        const head = i === 0 ? `${noun} ${step}` : `→ ${step}`;
+        const lead = i === 0 ? null : " ";
+        if (i < last || end === null) {
+          return (
+            <span key={i}>
+              {lead}
+              <span className="whitespace-nowrap">{head}</span>
+            </span>
+          );
+        }
+        const whole = `${head} · ${end}`;
+        if (whole.length <= NOWRAP_ENDING_CHARS) {
+          return (
+            <span key={i}>
+              {lead}
+              <span className="whitespace-nowrap">{whole}</span>
+            </span>
+          );
+        }
+        // Long (e.g. an untimed run): the ending moves to the next line whole, never split mid-phrase.
+        return (
+          <span key={i}>
+            {lead}
+            <span className="whitespace-nowrap">{head}</span>{" "}
+            <span className="whitespace-nowrap">{`· ${end}`}</span>
+          </span>
+        );
+      })}
     </p>
   );
 }
 
 type Scale = {
-  /** Visit length that fills the card at ≥640px. */
+  /** Visit length that fills the card. */
   referenceMs: number;
-  /** Longest single timed stop shown, for the under-640px segment widths. */
-  maxStopMs: number;
   typicalTotalMs: number | null;
 };
 
@@ -179,41 +204,49 @@ function Ribbon({
   const pathPages = new Set(stops.map((s) => s.page));
   const passedNotInPath = visit.passedPages.filter((p) => !pathPages.has(p));
   const topPages = visitTopPagesText(visit);
-  // At ≥640px width follows the visit's length against the longest visit shown (or the typical
-  // person's total when longer), so an 8s bounce reads short.
-  const { referenceMs, maxStopMs, typicalTotalMs } = scale;
-  const widthPct = referenceMs > 0 ? Math.max(MIN_RIBBON_PCT, Math.min(100, (visitDurationMs(visit) / referenceMs) * 100)) : 100;
+  // Width follows the visit's length against the longest visit shown (or the typical person's total
+  // when longer), at every screen width, so an 8s bounce reads short. The pixel floor only keeps each
+  // stop tappable; past the card's width the row wraps instead of scrolling.
+  const { referenceMs, typicalTotalMs } = scale;
+  const widthPct = referenceMs > 0 ? Math.min(100, (visitDurationMs(visit) / referenceMs) * 100) : 100;
   const fixedPx = passedCount * PASSED_PX + untimedCount * UNTIMED_PX + Math.max(0, total - 1) * SEGMENT_GAP_PX;
   const typicalPct =
     typicalTotalMs !== null && typicalTotalMs > 0 && referenceMs > 0 && typicalTotalMs <= referenceMs
       ? (typicalTotalMs / referenceMs) * 100
       : null;
-  const rowVars = {
+  const rowStyle = {
     "--ribbon-w": `${widthPct}%`,
-    "--ribbon-min": `${TIMED_MIN_PX_WIDE * timedCount + fixedPx}px`,
+    "--ribbon-min": `${TIMED_MIN_PX * timedCount + fixedPx}px`,
+    width: "max(var(--ribbon-w), var(--ribbon-min))",
   } as React.CSSProperties;
 
   return (
     <div className="space-y-2">
-      <div data-ribbon className="relative overflow-x-auto">
-        <div
-          data-ribbon-row
-          className="flex h-11 w-max min-w-full gap-0.5 sm:h-7 sm:w-[var(--ribbon-w)] sm:min-w-[var(--ribbon-min)]"
-          style={rowVars}
-        >
+      <div data-ribbon className="relative overflow-visible">
+        {/* `isolate` keeps the hit areas' -z-10 inside the row: above the card, below every stop's own box,
+            so a neighbour's hit area never covers a narrow stop. */}
+        <div data-ribbon-row className="isolate flex max-w-full flex-wrap gap-0.5" style={rowStyle}>
           {stops.map((stop, i) => {
             const label = stopLabel(stop);
-            const timed = !stop.untimed && !stop.passed;
+            const passed = stop.passed && !stop.untimed;
             let style: React.CSSProperties;
-            if (stop.untimed) style = { flex: `0 0 ${UNTIMED_PX}px` };
-            else if (stop.passed) style = { flex: `0 0 ${PASSED_PX}px`, backgroundImage: PASSED_HATCH };
-            else
+            let look: React.CSSProperties;
+            if (stop.untimed) {
+              style = { flex: `0 0 ${UNTIMED_PX}px` };
+              look = {};
+            } else if (passed) {
+              style = { flex: `0 0 ${PASSED_PX}px` };
+              look = { backgroundImage: PASSED_HATCH };
+            } else {
               style = {
-                "--seg-w": `${Math.max(TIMED_MIN_PX, maxStopMs > 0 ? (stop.ms / maxStopMs) * TIMED_SCALE_PX : 0)}px`,
                 "--seg-flex": `${Math.max(1, stop.ms)} 1 0px`,
-                backgroundColor: EMERALD,
-                boxShadow: stop.revisit ? `inset 0 0 0 2px ${EMERALD_DARK}` : undefined,
+                flex: "var(--seg-flex)",
+                minWidth: TIMED_MIN_PX,
               } as React.CSSProperties;
+              look = { backgroundColor: EMERALD, boxShadow: stop.revisit ? `inset 0 0 0 2px ${EMERALD_DARK}` : undefined };
+            }
+            // Fill, dimming and the @container (all of which make stacking contexts) sit on the inner span,
+            // so the button stays out of the way and its hit area can drop below its neighbours.
             return (
               <button
                 key={i}
@@ -222,16 +255,20 @@ function Ribbon({
                 aria-label={label}
                 aria-pressed={selected === i}
                 onClick={() => setSelected((cur) => (cur === i ? null : i))}
-                className={`@container relative flex items-center justify-center overflow-hidden rounded-[4px] text-[10px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
-                  timed ? `w-[var(--seg-w)] shrink-0 sm:w-auto sm:min-w-[6px] sm:flex-[var(--seg-flex)]` : ""
-                } ${stop.untimed ? "border border-dotted border-[var(--fg)]/50 text-[var(--fg)]" : "text-white"}`}
-                style={{ ...style, opacity: selected !== null && selected !== i ? 0.7 : 1 }}
+                className={`relative h-11 rounded-[4px] text-[10px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] sm:h-7 ${
+                  stop.untimed ? "text-[var(--fg)]" : "text-white before:absolute before:inset-y-0 before:-inset-x-2 before:-z-10 before:content-['']"
+                }`}
+                style={style}
               >
-                {stop.passed && !stop.untimed ? null : (
-                  <span aria-hidden="true" className="hidden @min-[16px]:inline">
-                    {String(stop.page)}
-                  </span>
-                )}
+                <span
+                  aria-hidden="true"
+                  className={`@container absolute inset-0 flex items-center justify-center overflow-hidden rounded-[4px] ${
+                    stop.untimed ? "border border-dotted border-[var(--fg)]/50" : ""
+                  }`}
+                  style={{ ...look, opacity: selected !== null && selected !== i ? 0.7 : 1 }}
+                >
+                  {passed ? null : <span className="hidden @min-[16px]:inline">{String(stop.page)}</span>}
+                </span>
               </button>
             );
           })}
@@ -240,13 +277,13 @@ function Ribbon({
           <span
             data-typical-visit
             aria-hidden="true"
-            className="pointer-events-none absolute inset-y-0 hidden w-0 border-l border-dashed border-[var(--muted)] opacity-60 sm:block"
-            style={{ left: `${typicalPct}%` }}
+            className="pointer-events-none absolute inset-y-0 block w-0 border-l border-dashed border-[var(--muted)] opacity-60"
+            style={{ left: `min(${typicalPct}%, calc(100% - 1px))` }}
           />
         ) : null}
       </div>
       {typicalPct !== null && typicalTotalMs !== null ? (
-        <div className="relative hidden h-3.5 sm:block">
+        <div className="relative h-3.5">
           <span
             className={`absolute top-0 whitespace-nowrap text-[10px] leading-none text-[var(--muted)] ${typicalPct > 50 ? "-translate-x-full pr-1" : "pl-1"}`}
             style={{ left: `${typicalPct}%` }}
@@ -270,8 +307,8 @@ function Ribbon({
       {passedNotInPath.length > 0 ? (
         <p className="text-[12px] text-[var(--muted)]">
           {passedNotInPath.length === 1
-            ? `Passed: page ${passedNotInPath[0]}`
-            : `Passed: pages ${passedNotInPath.join(", ")}`}
+            ? `Under 2s: page ${passedNotInPath[0]}`
+            : `Under 2s: pages ${passedNotInPath.join(", ")}`}
         </p>
       ) : null}
     </div>
@@ -336,7 +373,6 @@ export default function VisitTimeline({
   const longestMs = ribbons.reduce((max, v) => Math.max(max, visitDurationMs(v)), 0);
   const scale: Scale = {
     referenceMs: Math.max(longestMs, typicalTotalMs ?? 0),
-    maxStopMs: ribbons.flatMap((v) => v.stops).reduce((max, s) => (isTimedStop(s) ? Math.max(max, s.ms) : max), 0),
     typicalTotalMs,
   };
   const totalVisits = visits.length + moreVisits;

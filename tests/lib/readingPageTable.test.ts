@@ -54,6 +54,7 @@ describe("computePageTable PT1", () => {
     expect(computeCallouts(rows, 5, 4)).toEqual({
       // Page 2's 30s comes from only 3 people, and page 1 alone is no standout against itself.
       heldLongest: null,
+      heldFlat: null,
       mostSkipped: { page: 3, skipped: 2, of: 4, tiedPages: [3] },
       mostLeft: { page: 3, leftHere: 2, people: 5, tiedPages: [3] },
     });
@@ -127,6 +128,22 @@ describe("held attention longest", () => {
       row(5, { readCount: 15, typicalMs: 11012, stillReading: 20 }),
     ];
     expect(computeCallouts(rows, 40, 5)?.heldLongest).toBeNull();
+    expect(computeCallouts(rows, 40, 5)?.heldFlat).toEqual({ pages: [3, 4, 5], typicalMs: 11012, restTypicalMs: 6894 });
+  });
+
+  test("heldFlat names the tied pages against the rest, or every eligible page when none lifts", () => {
+    const typicals = [6652, 7688, 11291, 11007, 11012];
+    const rows = typicals.map((typicalMs, i) => row(i + 1, { readCount: 5 + i, typicalMs, stillReading: 20 }));
+    expect(computeCallouts(rows, 40, 5)).toMatchObject({ heldLongest: null, heldFlat: { pages: [3, 4, 5], typicalMs: 11012, restTypicalMs: 7170 } });
+    // Low lift: one leader, but under 1.25× the median of the six eligible pages.
+    const flat = Array.from({ length: 6 }, (_, i) => row(i + 1, { readCount: 9, typicalMs: i === 2 ? 12000 : 10000 }));
+    expect(computeCallouts(flat, 9, 6)?.heldFlat).toEqual({ pages: [1, 2, 3, 4, 5, 6], typicalMs: 10000, restTypicalMs: null });
+    // A highlighted leader carries no heldFlat; nor does a single eligible page, which has nothing to be flat against.
+    expect(computeCallouts(lumen(), 20, P)).toMatchObject({ heldLongest: { page: 10 }, heldFlat: null });
+    const one = rows.map((r) => (r.page === 3 ? r : { ...r, readCount: 4 }));
+    expect(computeCallouts(one, 40, 5)).toMatchObject({ heldLongest: null, heldFlat: null });
+    const none = rows.map((r) => ({ ...r, readCount: 4 }));
+    expect(computeCallouts(none, 40, 5)).toMatchObject({ heldLongest: null, heldFlat: null });
   });
 
   test("more tied pages than a third of the document, or a leader under 1.25× the median, is null", () => {

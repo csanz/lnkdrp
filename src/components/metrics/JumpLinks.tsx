@@ -52,14 +52,14 @@ export default function JumpLinks({ pages, links, className = "" }: JumpLinksPro
   ].filter((i) => i.show);
   const active = useActiveSection(items.map((i) => i.id));
   return (
-    <nav aria-label="Jump to section" data-jump-links className={`flex flex-wrap gap-2 ${className}`}>
+    <nav aria-label="Jump to section" data-jump-links className={`flex gap-2 overflow-x-auto lg:flex-wrap lg:overflow-visible ${className}`}>
       {items.map(({ id, label }) => (
         <a
           key={id}
           href={`#${id}`}
           onClick={(e) => jumpTo(e, id)}
           aria-current={active === id ? "location" : undefined}
-          className={`inline-flex h-11 items-center rounded-full border px-3.5 text-[12px] font-semibold hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] sm:h-7 sm:px-3 ${
+          className={`relative inline-flex h-8 shrink-0 items-center before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-[''] sm:before:hidden whitespace-nowrap rounded-full border px-3 text-xs font-semibold hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] lg:h-7 ${
             active === id
               ? "border-emerald-500/40 bg-emerald-500/10 text-[var(--fg)]"
               : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)]"

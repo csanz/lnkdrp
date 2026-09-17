@@ -7,7 +7,7 @@
 "use client";
 
 import { CALLOUT_MIN_PEOPLE } from "@/lib/analytics/reading/constants";
-import { formatDwell } from "@/lib/analytics/reading/format";
+import { formatTypical } from "@/lib/analytics/reading/format";
 import type { Callouts, PageRow } from "@/lib/analytics/reading/types";
 import { tileLabelClass } from "./KpiStrip";
 import { heldLongestTied, joinAnd, pageHeadline, pageShortLabel, skippedBreakdown, thinPageBeatsLeader } from "./pageEmphasis";
@@ -37,9 +37,40 @@ function peopleText(n: number): string {
   return `${n} ${n === 1 ? "person" : "people"}`;
 }
 
-function CalloutCard({ title, list, pages, detail }: { title: string; list: number[]; pages: PageRow[]; detail: string }) {
+/** "Page 3", "Pages 3–5", "Pages 2, 4 and 5": consecutive runs of three or more collapse to a range. */
+function pagesText(list: number[]): string {
+  const sorted = [...list].sort((a, b) => a - b);
+  if (sorted.length === 1) return `Page ${sorted[0]}`;
+  const runs: number[][] = [];
+  for (const p of sorted) {
+    const run = runs[runs.length - 1];
+    if (run && p === run[run.length - 1] + 1) run.push(p);
+    else runs.push([p]);
+  }
+  const parts = runs.flatMap((r) => (r.length >= 3 ? [`${r[0]}–${r[r.length - 1]}`] : r.map(String)));
+  return `Pages ${joinAnd(parts)}`;
+}
+
+const TIED_LABELS_SHOWN = 3;
+
+function CalloutCard({
+  title,
+  list,
+  pages,
+  detail,
+  note,
+}: {
+  title: string;
+  list: number[];
+  pages: PageRow[];
+  detail: string;
+  /** Muted aside after the detail. */
+  note?: string | null;
+}) {
   const first = list[0];
-  const labels = list.map((p) => pageShortLabel(pages[p - 1])).filter((l): l is string => Boolean(l));
+  const labels = list
+    .map((p) => ({ p, label: pageShortLabel(pages[p - 1]) }))
+    .filter((l): l is { p: number; label: string } => Boolean(l.label));
   const fullTitle = list.map((p) => pageHeadline(p, pages[p - 1])).join("; ");
   return (
     <button
@@ -51,14 +82,25 @@ function CalloutCard({ title, list, pages, detail }: { title: string; list: numb
     >
       <span
         data-callout-badge
-        className="flex h-12 min-w-12 shrink-0 items-center justify-center whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--panel-2)] px-2.5 text-[18px] font-semibold tabular-nums text-[var(--fg)]"
+        className="flex h-10 min-w-10 shrink-0 items-center justify-center whitespace-nowrap rounded-md border border-[var(--border)] bg-[var(--panel-2)] px-2 text-[15px] font-semibold tabular-nums text-[var(--fg)] sm:h-12 sm:min-w-12 sm:px-2.5 sm:text-[18px]"
       >
         {list.length > 1 ? `Pages ${list.join(", ")}` : `Page ${first}`}
       </span>
       <span className="min-w-0">
         <span className={`block ${tileLabelClass}`}>{title}</span>
-        {labels.length > 0 ? <span className="mt-0.5 block truncate text-[13px] font-semibold text-[var(--fg)]">{labels.join(" · ")}</span> : null}
-        <span className="block text-[12px] text-[var(--muted)]">{detail}</span>
+        {list.length > 1 ? (
+          labels.slice(0, TIED_LABELS_SHOWN).map(({ p, label }, i) => (
+            <span key={p} className={`${i === 0 ? "mt-0.5" : ""} block truncate text-[13px] font-semibold text-[var(--fg)]`}>
+              {`${p} · ${label}`}
+            </span>
+          ))
+        ) : labels.length > 0 ? (
+          <span className="mt-0.5 line-clamp-2 break-words text-[13px] font-semibold text-[var(--fg)]">{labels[0].label}</span>
+        ) : null}
+        <span className="block text-[12px] text-[var(--muted)]">
+          {detail}
+          {note ? <span className="text-[var(--muted-2)]">{` · ${note}`}</span> : null}
+        </span>
       </span>
     </button>
   );
@@ -74,15 +116,16 @@ export default function PageCallouts({ callouts, calloutGate, pages }: PageCallo
     ) : null;
   }
   const { heldLongest, mostSkipped, mostLeft } = callouts;
-  if (!heldLongest && !mostSkipped && !mostLeft) return null;
+  const heldFlat = heldLongest ? null : (callouts.heldFlat ?? null);
+  if (!heldLongest && !heldFlat && !mostSkipped && !mostLeft) return null;
 
   let heldDetail = "";
   if (heldLongest) {
     const tied = heldLongestTied(heldLongest, pages);
     heldDetail =
       tied.length > 1
-        ? `typical about ${formatDwell(heldLongest.typicalMs)} each · ${joinAnd(tied.map((t) => t.readCount))} people stayed on them`
-        : `typical ${formatDwell(heldLongest.typicalMs)} · ${peopleText(heldLongest.readCount)} stayed on it`;
+        ? `typical about ${formatTypical(heldLongest.typicalMs)} each · ${joinAnd(tied.map((t) => t.readCount))} people stayed on them`
+        : `typical ${formatTypical(heldLongest.typicalMs)} · ${peopleText(heldLongest.readCount)} stayed on it`;
     if (thinPageBeatsLeader(heldLongest, pages)) heldDetail += ` · pages fewer than ${CALLOUT_MIN_PEOPLE} people stayed on aren't ranked`;
   }
 
@@ -98,6 +141,8 @@ export default function PageCallouts({ callouts, calloutGate, pages }: PageCallo
   }
 
   const leftTie = (mostLeft?.tiedPages.length ?? 0) > 1;
+  // mostLeft only ranks pages before the last, so the last page's count is named beside it.
+  const leftOnLast = pages[pages.length - 1]?.leftHere ?? 0;
   return (
     <div data-callouts>
       <div className="grid gap-3 lg:grid-cols-3">
@@ -108,20 +153,29 @@ export default function PageCallouts({ callouts, calloutGate, pages }: PageCallo
             pages={pages}
             detail={heldDetail}
           />
+        ) : heldFlat ? (
+          <div data-callout data-callout-flat className="flex min-w-0 items-center rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+            <span className="min-w-0">
+              <span className={`block ${tileLabelClass}`}>Held attention longest</span>
+              <span className="mt-0.5 block text-[13px] font-semibold text-[var(--muted)]">No single page stood out</span>
+              <span className="block text-[12px] text-[var(--muted)]">
+                {`${pagesText(heldFlat.pages)} each about ${formatTypical(heldFlat.typicalMs)}${
+                  heldFlat.restTypicalMs !== null ? ` · other pages about ${formatTypical(heldFlat.restTypicalMs)}` : ""
+                }`}
+              </span>
+            </span>
+          </div>
         ) : null}
         {mostSkipped ? (
           <CalloutCard title="Most skipped" list={sortedPages(mostSkipped.page, mostSkipped.tiedPages)} pages={pages} detail={skippedDetail} />
         ) : null}
         {mostLeft ? (
           <CalloutCard
-            title="Most people left here"
+            title="Most people dropped off here"
             list={sortedPages(mostLeft.page, mostLeft.tiedPages)}
             pages={pages}
-            detail={
-              leftTie
-                ? `${mostLeft.leftHere} of ${mostLeft.people} people last left from each of these`
-                : `${mostLeft.leftHere} of ${mostLeft.people} people last left from here`
-            }
+            detail={`${mostLeft.leftHere} of ${mostLeft.people} people left ${leftTie ? "from each of these" : "here"} before the last page`}
+            note={leftOnLast > 0 ? `${leftOnLast} left on the last page` : null}
           />
         ) : null}
       </div>

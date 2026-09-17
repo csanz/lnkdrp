@@ -1,12 +1,12 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { aboveTypicalRow, aboveTypicalText, agoText, longestPagesText } from "@/components/metrics/reader/ReaderFacts";
-import { pageBarDomainMs, typicalValueText } from "@/components/metrics/reader/ReaderPageBars";
+import { aboveTypicalRow, aboveTypicalText, agoText, longestPages, longestPagesText, stayedOnFact } from "@/components/metrics/reader/ReaderFacts";
+import { pageBarDomainMs, typicalValueText, valueSubLineChars } from "@/components/metrics/reader/ReaderPageBars";
 import ReaderSheetBody from "@/components/metrics/reader/ReaderSheetBody";
 import { earlierGapText, visitPathText, visitTopPagesText } from "@/components/metrics/reader/VisitTimeline";
 import { formatRelative } from "@/lib/analytics/reading/format";
-import type { PersonResponse } from "@/lib/analytics/reading/types";
+import type { PersonPageRow, PersonResponse } from "@/lib/analytics/reading/types";
 import { personResponseF1, personResponseF6, personResponsePT1A } from "./fixtures/readingFixtures";
 
 const noop = () => {};
@@ -79,14 +79,14 @@ describe("ReaderSheetBody render", () => {
     expect(html).not.toContain("came back");
     expect(plain.indexOf("Visit 2 of 2")).toBeLessThan(plain.indexOf("Visit 1 of 2"));
     expect(html).toContain("ended on the last page");
-    expect(html).toContain("Passed: page 1");
+    expect(html).toContain("Under 2s: page 1");
     expect(plain.indexOf("5 → 6")).toBeLessThan(plain.indexOf("1 → 2 · left on page 2"));
     expect(count(html, /data-reader-page=/g)).toBe(6);
     expect(personResponseF6.pages.filter((p) => p.state === "jumped").map((p) => p.page)).toEqual([3, 4]);
-    expect(count(html, />Skipped</g)).toBe(2);
+    expect(count(html, />Jumped past</g)).toBe(2);
     expect(html).not.toContain("Not reached");
     expect(plain).toContain("Pages 5 → 6");
-    expect(html).toContain('<span class="whitespace-nowrap">→ 6</span>');
+    expect(html).toContain('<span class="whitespace-nowrap">→ 6 · ended on the last page</span>');
     expectNoForbiddenCopy(html);
   });
 
@@ -155,7 +155,7 @@ describe("ReaderSheetBody render", () => {
     expect(count(html, /data-reader-visit/g)).toBe(5);
     expect(html).toContain("Show 2 earlier visits");
   });
-  it("page rows: passed '<2s', skipped, untimed exit with Left here, and a 30s bar floor", () => {
+  it("page rows: passed '<2s', jumped past, untimed exit with Left here, and a 30s bar floor", () => {
     const base = personResponseF1;
     const data: PersonResponse = {
       ...base,
@@ -169,7 +169,8 @@ describe("ReaderSheetBody render", () => {
     const html = render(data);
     expect(html).toContain(">&lt;2s<");
     expect(html).not.toMatch(/>0s</);
-    expect(html).toContain(">Skipped<");
+    expect(html).toContain(">Jumped past<");
+    expect(html).not.toContain(">Skipped<");
     expect(html).toContain(">Time not recorded<");
     expect(html).toContain("width:16.666666666666664%");
     // Every value cell has two lines, so rows without a typical time stay aligned with the bar.
@@ -196,7 +197,9 @@ describe("ReaderSheetBody render", () => {
     expect(html).not.toContain(">Opened<");
     expect(html).not.toContain(">Link<");
     expect(html).not.toContain("first opened");
-    expect(html).toContain("2 skipped");
+    expect(html).toContain(">Stayed on<");
+    expect(html).toContain(">2 jumped past<");
+    expect(html).not.toMatch(/\d skipped/);
   });
 
   it("visit path keeps passed steps inline and lists the longest pages", () => {
@@ -213,16 +216,16 @@ describe("ReaderSheetBody render", () => {
       ],
     };
     const html = render({ ...base, visits: [visit] });
-    expect(text(html)).toContain("Pages 1 → 4 (passed) → 3 → 2 · left on page 2");
+    expect(text(html)).toContain("Pages 1 → 4 (under 2s) → 3 → 2 · left on page 2");
     expect(html).toContain("Page 2 47s · Page 3 17s · Page 1 7s");
     expect(visitTopPagesText({ ...visit, stops: visit.stops.slice(0, 3) })).toBeNull();
     expect(html).not.toContain("Passed: page");
     expect(html).toContain("flex:0 0 8px");
-    // Under 640px a timed stop is sized against the longest stop (47s = 240px), never under 24px.
-    expect(html).toContain("--seg-w:35.744680851063826px");
-    expect(html).toContain("--seg-w:240px");
     expect(html).toContain("--seg-flex:7000 1 0px");
-    expect(html).toContain("hatched = passed");
+    // Three timed stops at the 6px floor plus one 8px under-2s stop and three 2px gaps.
+    expect(html).toContain("--ribbon-min:32px");
+    expect(html).toContain("min-width:6px");
+    expect(html).toContain("hatched = under 2s");
     expect(html).not.toContain("stop 1 of");
   });
 
@@ -242,10 +245,12 @@ describe("ReaderSheetBody render", () => {
     const html = render({ ...base, visits: [visit] });
     expect(text(html)).toContain("Pages 1 → 2, 3, 4 (time not recorded) · ended on the last page");
     expect(html).toContain('aria-label="Page 4 · time not recorded"');
-    expect(html).not.toContain("(passed)");
+    expect(html).not.toContain("(under 2s)");
     expect(html).toContain("flex:0 0 16px");
     expect(html).toContain("dotted = time not recorded");
-    expect(html).not.toContain("hatched = passed");
+    expect(html).not.toContain("hatched = under 2s");
+    // A long ending wraps as one phrase, never "· ended on" / "the last page".
+    expect(html).toContain('<span class="whitespace-nowrap">· ended on the last page</span>');
     expect(visitPathText({ ...visit, stops: [visit.stops[0], visit.stops[3]] }, 12)).toBe(
       "Pages 1 → 4 (time not recorded) · left on page 4",
     );
@@ -259,7 +264,7 @@ describe("ReaderSheetBody render", () => {
     expect(html).toContain(`--ribbon-w:${(50_000 / 90_000) * 100}%`);
     expect(html).not.toContain("data-typical-visit");
     const short = { ...f6.visits[1], totalMs: 2_000 };
-    expect(render({ ...f6, visits: [f6.visits[0], short] })).toContain("--ribbon-w:35%");
+    expect(render({ ...f6, visits: [f6.visits[0], short] })).toContain(`--ribbon-w:${(2_000 / 90_000) * 100}%`);
     // A typical person longer than every visit becomes the reference and draws its marker.
     const typical = render({ ...f6, facts: { ...f6.facts, typicalTotalMs: 180_000 } });
     expect(typical).toContain("--ribbon-w:50%");
@@ -319,7 +324,7 @@ describe("ReaderSheetBody render", () => {
     const pages = [row(1, 20_000, 8_000, 2.5), row(2, 170_541, 7_700, 22.1), row(3, 10_000, null), row(4, 15_000, null)];
     expect(pageBarDomainMs(pages)).toBe(40_000);
     expect(pageBarDomainMs([row(1, 5_000, null)])).toBe(30_000);
-    expect(typicalValueText(pages[1])).toBe("typical 7s · 22.1×");
+    expect(typicalValueText(pages[1])).toBe("typical 7.7s · 22.1×");
     expect(typicalValueText(row(1, 12_000, 8_000, 1.5))).toBe("typical 8s");
     // The ratio only ever comes from the API: none there, none shown.
     expect(typicalValueText(row(1, 40_000, 8_000, null))).toBe("typical 8s");
@@ -388,7 +393,7 @@ describe("ReaderSheetBody render", () => {
     // One visit: the cover counts and leads Longest pages, leaving page 8 as Above typical.
     const single = { ...visitB, stops: [stop(1, 60_000), ...visitB.stops.slice(1)] };
     expect(longestPagesText(pages, [single])).toBe("Page 1 · Cover 1m, Page 10 · Financials 47s");
-    expect(aboveTypicalText(aboveTypicalRow(pages, [single], null)!)).toBe("Page 8 · Pricing — 5.6× (44s vs 7s typical)");
+    expect(aboveTypicalText(aboveTypicalRow(pages, [single], null)!)).toBe("Page 8 · Pricing — 5.6× (44s vs 7.8s typical)");
     expect(aboveTypicalRow(pages, [single], 8)).toBeNull();
     const now = Date.parse(base.person.lastSeen) + 2 * 3_600_000;
     const html = render({ ...base, pages, visits: [single], facts: { ...base.facts, visits: 1, maxPage: 12 }, verdict: { ...base.verdict, page: null } }, now);
@@ -422,5 +427,107 @@ describe("ReaderSheetBody render", () => {
     expect(html).toContain(">Copy link<");
     expect(html).toContain(">Page 4 · Cover<");
     expect(html).toContain('title="Page 4 · Cover series a deck lumen health"');
+  });
+
+  describe("Stayed on fact, value column, chip and ribbon", () => {
+    const base = personResponseF1;
+    const pageRow = (page: number, state: PersonPageRow["state"], ms = 0): PersonPageRow => ({
+      ...base.pages[0],
+      page,
+      state,
+      ms,
+      label: null,
+      shortLabel: null,
+      typicalMs: null,
+      ratio: null,
+      revisits: 0,
+      leftHere: false,
+    });
+    const twelve = (stateOf: (page: number) => PersonPageRow["state"]) =>
+      Array.from({ length: 12 }, (_, i) => pageRow(i + 1, stateOf(i + 1), stateOf(i + 1) === "read" ? 20_000 : 0));
+
+    it("reader-21 shape: stayed on 8 of 12 with jumped past and under 2s spelled out, adding up to 12", () => {
+      const pages = twelve((p) => (p >= 7 && p <= 9 ? "jumped" : p === 12 ? "passed" : "read"));
+      expect(stayedOnFact(pages, 12)).toEqual({ value: "8 of 12", sub: "3 jumped past · 1 under 2s" });
+      const html = render({
+        ...base,
+        pageCount: 12,
+        pages,
+        facts: { ...base.facts, visits: 2, maxPage: 12, reachedCount: 9, exitPage: 12 },
+      });
+      expect(html).toContain(">Stayed on<");
+      expect(html).toContain(">8 of 12<");
+      expect(html).toContain(">3 jumped past · 1 under 2s<");
+      expect(html).not.toContain(">Pages reached<");
+      expect(count(html, />Jumped past</g)).toBe(3);
+    });
+
+    it("Nadia shape: 11 of 12 matches the chip, and the unrecorded page is named", () => {
+      const pages = twelve((p) => (p === 12 ? "unknown" : "read"));
+      expect(stayedOnFact(pages, 12)).toEqual({ value: "11 of 12", sub: "1 time not recorded" });
+      expect(stayedOnFact(twelve((p) => (p >= 11 ? "unknown" : "read")), 12).sub).toBe("2 times not recorded");
+      expect(stayedOnFact(twelve(() => "read"), 12)).toEqual({ value: "12 of 12", sub: null });
+      const html = render({ ...base, pageCount: 12, pages, facts: { ...base.facts, visits: 2, maxPage: 12, reachedCount: 12, exitPage: 12 } });
+      expect(html).toContain(">11 of 12<");
+      expect(html).toContain(">1 time not recorded<");
+    });
+
+    it("Longest pages drops a trivial second page", () => {
+      const read = (page: number, ms: number) => ({ ...pageRow(page, "read"), ms });
+      expect(longestPages([read(6, 93_000), read(1, 5_000)], []).map((p) => p.page)).toEqual([6]);
+      // 10s or more but under a quarter of the first: still dropped.
+      expect(longestPages([read(6, 93_000), read(2, 20_000)], []).map((p) => p.page)).toEqual([6]);
+      expect(longestPages([read(6, 40_000), read(2, 10_000)], []).map((p) => p.page)).toEqual([6, 2]);
+      const html = render({ ...base, pages: [read(1, 93_000), read(2, 5_000), read(3, 0), read(4, 0)] });
+      expect(html).toContain(">Longest page<");
+    });
+
+    it("every row reserves the widest value sub-line so the value column is shared and never spills", () => {
+      const read = (page: number, typicalMs: number | null, ratio: number | null) => ({ ...pageRow(page, "read", 30_000), typicalMs, ratio });
+      const pages = [read(1, 7_700, 15.3), read(2, 7_700, 1.1), read(3, null, null)];
+      expect(valueSubLineChars(pages)).toBe("typical 7.7s · 15.3×".length);
+      const html = render({ ...base, pages });
+      expect(count(html, /grid-cols-\[56px_minmax\(0,1fr\)_auto\] /g)).toBe(3);
+      expect(html).toContain("sm:grid-cols-[56px_12rem_minmax(0,1fr)_auto]");
+      expect(count(html, /min-width:20ch/g)).toBe(3);
+      expect(count(html, /min-w-\[4\.5rem\] self-start text-right/g)).toBe(3);
+    });
+
+    it("header hides a Came back chip when the verdict's behaviour opens with it", () => {
+      const person = {
+        ...base.person,
+        activeNow: false,
+        hot: { kind: "returned" as const, gapMs: 2 * 86_400_000, fromAt: "2026-09-10T15:00:00.000Z", toAt: "2026-09-12T15:00:00.000Z" },
+      };
+      const chip = render({ ...base, person, verdict: { ...base.verdict, page: null, behaviour: "Went back to page 3" } });
+      const chipText = chip.match(/data-reader-chip[^>]*><span[^>]*><\/span>([^<]*)</);
+      expect(chipText?.[1]).toMatch(/^Came back /);
+      const behaviour = `${chipText?.[1]} and spent 47s on page 10`;
+      const hidden = render({ ...base, person, verdict: { ...base.verdict, page: null, behaviour } });
+      expect(count(hidden, /data-reader-chip/g)).toBe(0);
+    });
+
+    it("ribbon: timed stops floor at 6px and every non-untimed stop gets a hit area below its neighbours", () => {
+      const visit = {
+        ...base.visits[0],
+        exitPage: 3,
+        passedPages: [2],
+        stops: [
+          { page: 1, ms: 4_000, revisit: false, passed: false, untimed: false },
+          { page: 2, ms: 0, revisit: false, passed: true, untimed: false },
+          { page: 3, ms: 11_000, revisit: true, passed: false, untimed: false },
+          { page: 4, ms: 0, revisit: false, passed: false, untimed: true },
+        ],
+      };
+      const html = render({ ...base, visits: [visit] });
+      const buttons = html.match(/<button[^>]*aria-label="Page \d[^"]*"[^>]*>/g) ?? [];
+      expect(buttons).toHaveLength(4);
+      expect(buttons.filter((b) => b.includes("before:-inset-x-2") && b.includes("before:-z-10"))).toHaveLength(3);
+      expect(buttons[3]).not.toContain("before:");
+      expect(buttons.every((b) => !b.includes("@container") && !b.includes("opacity"))).toBe(true);
+      expect(html).toContain("isolate flex max-w-full flex-wrap");
+      // 2 timed × 6px + 8px under 2s + 16px untimed + 3 × 2px gaps.
+      expect(html).toContain("--ribbon-min:42px");
+    });
   });
 });

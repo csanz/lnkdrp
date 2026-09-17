@@ -1,13 +1,14 @@
 /**
  * Page by page: one row per page with this person's time as a bar, a dashed tick for the page's
- * typical time, and the passed / skipped / not-recorded / not-reached states.
+ * typical time, and the under-2s / jumped-past / not-recorded / not-reached states.
  * Runs of three or more unreached pages collapse into one row.
  */
 "use client";
 
 import { useState } from "react";
-import { formatDwell, formatDwellCompact } from "@/lib/analytics/reading/format";
-import type { PersonPageRow } from "@/lib/analytics/reading/types";
+import { formatDwell, formatTypical } from "@/lib/analytics/reading";
+import type { PersonPageRow, PersonVisitRow } from "@/lib/analytics/reading/types";
+import { coverTimedVisits } from "./coverVisits";
 
 const EMERALD = "rgb(16 185 129)";
 /** Time up to the typical time; the part past it is full EMERALD so above-typical time stands out. */
@@ -97,22 +98,44 @@ export function hasTypicalTick(pages: PersonPageRow[]): boolean {
   return pages.some((r) => r.state === "read" && r.typicalMs !== null);
 }
 
-/** True when some stayed row runs past its typical time (the full-emerald part of a bar). */
-export function hasAboveTypical(pages: PersonPageRow[]): boolean {
-  return pages.some((r) => r.state === "read" && r.typicalMs !== null && r.ms > r.typicalMs);
+/** Page 1 time added up over several landings isn't compared with a typical single stay. */
+function isSummedCover(row: PersonPageRow, coverVisits: number): boolean {
+  return row.page === 1 && row.state === "read" && coverVisits > 1;
 }
 
-/** "typical 8s", or "typical 8s · 8.7×" when the API's ratio is twice the typical time or more. */
-export function typicalValueText(row: PersonPageRow): string | null {
+/** True when some stayed row runs past its typical time (the full-emerald part of a bar). */
+export function hasAboveTypical(pages: PersonPageRow[], visits: PersonVisitRow[] = []): boolean {
+  const coverVisits = coverTimedVisits(visits);
+  return pages.some((r) => r.state === "read" && r.typicalMs !== null && r.ms > r.typicalMs && !isSummedCover(r, coverVisits));
+}
+
+/**
+ * "typical 4.7s", or "typical 4.7s · 3.6×" when the API's ratio is twice the typical time or more
+ * and `withRatio` is on.
+ */
+export function typicalValueText(row: PersonPageRow, withRatio = true): string | null {
   if (row.typicalMs === null || row.state === "unreached") return null;
-  const base = `typical ${formatDwellCompact(row.typicalMs)}`;
+  const base = `typical ${formatTypical(row.typicalMs)}`;
   const ratio = row.ratio ?? null;
-  if (row.state !== "read" || ratio === null || ratio < RATIO_SHOWN_FROM) return base;
+  if (!withRatio || row.state !== "read" || ratio === null || ratio < RATIO_SHOWN_FROM) return base;
   return `${base} · ${formatRatio(ratio)}`;
 }
 
+/**
+ * Widest value sub-line across the rows, in characters. Every row reserves it so the auto value
+ * column (and so the bar track) is the same width on each row and the bars stay comparable.
+ */
+export function valueSubLineChars(pages: PersonPageRow[], visits: PersonVisitRow[] = []): number {
+  const coverVisits = coverTimedVisits(visits);
+  return pages.reduce((max, row) => {
+    const summed = isSummedCover(row, coverVisits);
+    const typical = typicalValueText(row, !summed)?.length ?? 0;
+    return Math.max(max, typical, summed ? `over ${coverVisits} visits`.length : 0);
+  }, 0);
+}
+
 /** Inline key for the section header: the bar swatch, the typical tick and, when drawn, above-typical time. */
-export function PageBarsKey({ pages }: { pages: PersonPageRow[] }) {
+export function PageBarsKey({ pages, visits = [] }: { pages: PersonPageRow[]; visits?: PersonVisitRow[] }) {
   return (
     <span data-page-bars-key className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--muted)]">
       <span className="inline-flex items-center gap-1.5">
@@ -123,7 +146,7 @@ export function PageBarsKey({ pages }: { pages: PersonPageRow[] }) {
         <span aria-hidden="true" className="h-3 w-0 border-l border-dashed border-[var(--muted)]" />
         typical
       </span>
-      {hasAboveTypical(pages) ? (
+      {hasAboveTypical(pages, visits) ? (
         <span className="inline-flex items-center gap-1.5">
           <span aria-hidden="true" className="h-2.5 w-2 rounded-sm" style={{ backgroundColor: EMERALD }} />
           more than typical
@@ -139,6 +162,8 @@ function PageBarRow({
   highlighted,
   hidden,
   compared,
+  coverVisits,
+  subLineChars,
 }: {
   row: PersonPageRow;
   domainMs: number;
@@ -146,8 +171,12 @@ function PageBarRow({
   hidden: boolean;
   /** Some row has a typical tick, so bars use the soft/full two-tone that the key explains. */
   compared: boolean;
+  /** Visits that spent time on page 1. */
+  coverVisits: number;
+  subLineChars: number;
 }) {
   const state = row.state;
+  const summedCover = isSummedCover(row, coverVisits);
   const barClipped = state === "read" && row.ms > domainMs;
   const pct = row.ms > 0 ? Math.min(100, (row.ms / domainMs) * 100) : 0;
   const tickClipped = row.typicalMs !== null && row.typicalMs > domainMs;
@@ -155,7 +184,7 @@ function PageBarRow({
   const tickMuted = row.readCount < TYPICAL_SOLID_FROM;
   // Share of the drawn bar that sits past the typical time, so above-typical time shows at any scale.
   const aboveTypicalPct =
-    state === "read" && row.typicalMs !== null && row.ms > row.typicalMs
+    state === "read" && !summedCover && row.typicalMs !== null && row.ms > row.typicalMs
       ? 100 - (Math.min(row.typicalMs, domainMs) / Math.min(row.ms, domainMs)) * 100
       : 0;
 
@@ -164,7 +193,7 @@ function PageBarRow({
   if (state === "read") {
     track = (
       <div className="relative h-2.5" style={{ width: `${pct}%`, minWidth: row.ms > 0 ? 2 : 0 }}>
-        <div className="relative h-full overflow-hidden rounded-full" style={{ backgroundColor: compared ? EMERALD_SOFT : EMERALD }}>
+        <div className="relative h-full overflow-hidden rounded-full" style={{ backgroundColor: compared || summedCover ? EMERALD_SOFT : EMERALD }}>
           {aboveTypicalPct > 0 ? (
             <div
               data-above-typical
@@ -178,10 +207,10 @@ function PageBarRow({
     );
     value = formatDwell(row.ms);
   } else if (state === "passed") {
-    track = <Stub hatch={HATCH} text="Passed" />;
+    track = <Stub hatch={HATCH} text="Under 2s" />;
     value = "<2s";
   } else if (state === "jumped") {
-    track = <Stub hatch={MUTED_HATCH} text="Skipped" />;
+    track = <Stub hatch={MUTED_HATCH} text="Jumped past" />;
     value = "—";
   } else if (state === "unknown") {
     track = <span className="block truncate text-[12px] text-[var(--muted)]">Time not recorded</span>;
@@ -191,13 +220,13 @@ function PageBarRow({
     value = "—";
   }
 
-  const typicalText = typicalValueText(row);
+  const typicalText = typicalValueText(row, !summedCover);
 
   return (
     <li
       data-reader-page={row.page}
       hidden={hidden}
-      className={`grid grid-cols-[56px_minmax(0,1fr)_5.5rem] items-center gap-x-3 gap-y-1 rounded-lg py-2 transition-colors duration-500 sm:grid-cols-[56px_12rem_minmax(0,1fr)_5.5rem] ${
+      className={`grid grid-cols-[56px_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-lg py-2 transition-colors duration-500 sm:grid-cols-[56px_12rem_minmax(0,1fr)_auto] ${
         state === "unreached" ? "opacity-50" : ""
       } ${highlighted ? "bg-emerald-500/10" : ""}`}
     >
@@ -240,9 +269,16 @@ function PageBarRow({
           </div>
         ) : null}
       </div>
-      <div className="self-start text-right leading-tight">
+      <div className="min-w-[4.5rem] self-start text-right leading-tight">
         <div className="pt-0.5 text-[13px] tabular-nums text-[var(--fg)]">{value}</div>
-        <div className="whitespace-nowrap text-[11px] tabular-nums text-[var(--muted)]">{typicalText ?? NBSP}</div>
+        <div className="whitespace-nowrap text-[11px] tabular-nums text-[var(--muted)]" style={{ minWidth: `${subLineChars}ch` }}>
+          {typicalText ?? NBSP}
+        </div>
+        {summedCover ? (
+          <div data-summed-cover className="whitespace-nowrap text-[11px] tabular-nums text-[var(--muted)]">
+            {`over ${coverVisits} visits`}
+          </div>
+        ) : null}
       </div>
     </li>
   );
@@ -276,12 +312,16 @@ function CollapsedRange({
   highlightPage,
   revealPage,
   compared,
+  coverVisits,
+  subLineChars,
 }: {
   rows: PersonPageRow[];
   domainMs: number;
   highlightPage: number | null;
   revealPage: number | null;
   compared: boolean;
+  coverVisits: number;
+  subLineChars: number;
 }) {
   const [open, setOpen] = useState<boolean | null>(null);
   const first = rows[0].page;
@@ -311,6 +351,8 @@ function CollapsedRange({
           highlighted={highlightPage === row.page}
           hidden={!expanded}
           compared={compared}
+          coverVisits={coverVisits}
+          subLineChars={subLineChars}
         />
       ))}
     </>
@@ -322,14 +364,19 @@ export default function ReaderPageBars({
   pages,
   highlightPage = null,
   revealPage = null,
+  visits = [],
 }: {
   pages: PersonPageRow[];
+  /** This person's visits, to tell when page 1 time adds up over several landings. */
+  visits?: PersonVisitRow[];
   highlightPage?: number | null;
   /** Page that must be visible (expands its collapsed range), e.g. the page a matrix cell opened. */
   revealPage?: number | null;
 }) {
   const domainMs = pageBarDomainMs(pages);
   const compared = hasTypicalTick(pages);
+  const coverVisits = coverTimedVisits(visits);
+  const subLineChars = valueSubLineChars(pages, visits);
   return (
     <ul className="divide-y divide-[var(--divider)]">
       {pageBarSegments(pages).map((seg) =>
@@ -341,6 +388,8 @@ export default function ReaderPageBars({
             highlighted={highlightPage === seg.row.page}
             hidden={false}
             compared={compared}
+            coverVisits={coverVisits}
+            subLineChars={subLineChars}
           />
         ) : (
           <CollapsedRange
@@ -350,6 +399,8 @@ export default function ReaderPageBars({
             highlightPage={highlightPage}
             revealPage={revealPage}
             compared={compared}
+            coverVisits={coverVisits}
+            subLineChars={subLineChars}
           />
         ),
       )}

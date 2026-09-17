@@ -70,7 +70,7 @@ export function typicalDisplay(row: PageRow | undefined): TypicalDisplay {
       kind: "thin",
       ms: row.typicalMs,
       readCount: row.readCount,
-      title: `${row.readCount} ${row.readCount === 1 ? "person" : "people"} stayed; highlights need ${CALLOUT_MIN_PEOPLE}`,
+      title: `Fewer than ${CALLOUT_MIN_PEOPLE} people stayed on this page, so it isn't ranked`,
     };
   }
   const few = fewStayersText(row.fewMs);
@@ -122,19 +122,28 @@ const LINK_END_MARGIN = 0.1;
 /** Typical time the leader must beat the runner-up by, as a ratio. */
 const LINK_TYPICAL_MARGIN = 1.25;
 
-/** Share ids whose Reached-the-last-page and typical-time figures earn bold; null when nothing clearly leads. */
+/**
+ * Share ids whose Reached-the-last-page and typical-time figures earn bold; null when nothing clearly
+ * leads, or when a link with too few people to compare shows a better figure right beside it.
+ */
 export function linkLeaders(links: LinkRow[]): { end: string | null; typical: string | null } {
   const comparable = links.filter((l) => (l.peopleWithDetail ?? 0) >= LINK_COMPARE_MIN_PEOPLE);
   if (comparable.length < LINK_COMPARE_MIN_LINKS) return { end: null, typical: null };
+  const thin = links.filter((l) => (l.peopleWithDetail ?? 0) > 0 && (l.peopleWithDetail ?? 0) < LINK_COMPARE_MIN_PEOPLE);
   const endRate = (l: LinkRow) => (l.reachedEnd ?? 0) / (l.peopleWithDetail ?? 1);
   const byEnd = [...comparable].sort((a, b) => endRate(b) - endRate(a));
-  const end = endRate(byEnd[0]) > 0 && endRate(byEnd[0]) - endRate(byEnd[1]) >= LINK_END_MARGIN - 1e-9 ? byEnd[0].shareId : null;
+  const endLeads =
+    endRate(byEnd[0]) > 0 &&
+    endRate(byEnd[0]) - endRate(byEnd[1]) >= LINK_END_MARGIN - 1e-9 &&
+    !thin.some((l) => endRate(l) > endRate(byEnd[0]));
+  const end = endLeads ? byEnd[0].shareId : null;
   const timed = comparable.filter((l) => l.medianTotalMs != null && l.medianTotalMs > 0);
   const byTypical = [...timed].sort((a, b) => (b.medianTotalMs ?? 0) - (a.medianTotalMs ?? 0));
-  const typical =
-    byTypical.length >= 2 && (byTypical[0].medianTotalMs ?? 0) >= (byTypical[1].medianTotalMs ?? 0) * LINK_TYPICAL_MARGIN
-      ? byTypical[0].shareId
-      : null;
+  const typicalLeads =
+    byTypical.length >= 2 &&
+    (byTypical[0].medianTotalMs ?? 0) >= (byTypical[1].medianTotalMs ?? 0) * LINK_TYPICAL_MARGIN &&
+    !thin.some((l) => (l.medianTotalMs ?? 0) > (byTypical[0].medianTotalMs ?? 0));
+  const typical = typicalLeads ? byTypical[0].shareId : null;
   return { end, typical };
 }
 

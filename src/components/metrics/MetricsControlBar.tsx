@@ -26,7 +26,7 @@ export type MetricsControlBarProps = {
   onShareId: (shareId: string | null) => void;
   onDays: (days: MetricsDays) => void;
   onMoreHistory: () => void;
-  /** Shown right-aligned after the selects from 1024px (the section jump chips). */
+  /** The section jump chips: right-aligned after the selects from 1024px, a second row below that. */
   children?: React.ReactNode;
 };
 
@@ -42,7 +42,7 @@ export default function MetricsControlBar({ links, shareId, days, tier, onShareI
 
   return (
     <div data-control-bar className="sticky top-0 z-10 bg-[var(--bg)]/95 py-2 backdrop-blur-sm">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Select
           aria-label="Link"
           variant="panel"
@@ -86,7 +86,7 @@ export default function MetricsControlBar({ links, shareId, days, tier, onShareI
             ))}
           </Select>
         )}
-        {children ? <div className="ml-auto hidden lg:block">{children}</div> : null}
+        {children ? <div className="w-full min-w-0 lg:ml-auto lg:w-auto">{children}</div> : null}
       </div>
     </div>
   );

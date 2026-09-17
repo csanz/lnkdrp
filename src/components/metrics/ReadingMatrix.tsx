@@ -9,8 +9,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { hotReasonText } from "@/lib/analytics/reading/attention";
-import { MATRIX_ALL_LIMIT } from "@/lib/analytics/reading/constants";
-import { formatDwell, formatRelative } from "@/lib/analytics/reading/format";
+import { CALLOUT_MIN_PEOPLE, MATRIX_ALL_LIMIT, MATRIX_ROW_LIMIT } from "@/lib/analytics/reading/constants";
+import { formatDwell, formatRelative, formatTypical } from "@/lib/analytics/reading/format";
 import type { Callouts, CellState, HotReason, MatrixRow, PageRow } from "@/lib/analytics/reading/types";
 import { InfoTip } from "./KpiStrip";
 import { CELL_STEP_LABELS, MATRIX_RAMP_CSS, cellStep, formatCellDwell } from "./matrixScale";
@@ -26,10 +26,10 @@ const TOUCH_QUERY = "(hover: none)";
 const NARROW_QUERY = "(max-width: 639px)";
 
 export const REACHED_TOOLTIP = "People who had this page on screen.";
-export const TYPICAL_TOOLTIP =
-  "Median time among people who stayed on this page for 2 seconds or more. Shown once 3 people have; greyed until 5 have.";
+export const TYPICAL_TOOLTIP = `Median time among people who stayed on this page for 2 seconds or more. Shown once 3 people have. A greyed time means fewer than ${CALLOUT_MIN_PEOPLE} people stayed on that page, so it isn't ranked.`;
 export const SKIPPED_TOOLTIP = "People who jumped past this page or had it on screen for under 2 seconds.";
-export const LEFT_TOOLTIP = "People whose most recent time in the document ended on this page.";
+export const LEFT_TOOLTIP =
+  "People whose most recent time in the document ended on this page. Leaving from the last page isn't counted as dropping off.";
 
 export type ReadingMatrixProps = {
   rows: MatrixRow[];
@@ -45,6 +45,8 @@ export type ReadingMatrixProps = {
   /** `page` is set when a cell was clicked, so the reader can open at that page. */
   onOpenPerson: (row: MatrixRow, page?: number) => void;
   onShowAll: () => void;
+  /** Collapses the all-people view back to the most recent rows. */
+  onShowRecent: () => void;
   loadingAll: boolean;
 };
 
@@ -67,7 +69,7 @@ function cellText(row: MatrixRow, p: number, pages: PageRow[], narrow = false): 
   let what: string;
   if (kind === "read") {
     const typical = typicalDisplay(pages[p - 1]);
-    what = `${formatDwell(cell?.ms ?? 0)}${typical.kind === "ranked" ? ` · typical ${formatDwell(typical.ms)}` : ""}`;
+    what = `${formatDwell(cell?.ms ?? 0)}${typical.kind === "ranked" ? ` · typical ${formatTypical(typical.ms)}` : ""}`;
   } else if (kind === "passed") what = "<2s";
   else if (kind === "jumped") what = "jumped past";
   else if (kind === "unknown") what = "time not recorded";
@@ -77,13 +79,21 @@ function cellText(row: MatrixRow, p: number, pages: PageRow[], narrow = false): 
   }`;
 }
 
-function hotPillText(r: HotReason, withTotal = true): string {
+/** Short pill text, key part first; the total is left to the Time column. */
+function hotPillText(r: HotReason): string {
   if (r.kind === "returned") return "Came back";
-  if (r.kind === "read_most") {
-    const base = r.read >= r.pageCount ? "Stayed on all" : `Stayed on ${r.read}/${r.pageCount}`;
-    return withTotal && Number.isFinite(r.totalMs) ? `${base} · ${formatDwell(r.totalMs)}` : base;
-  }
-  return `${formatDwell(r.ms)} on page ${r.page}`;
+  if (r.kind === "read_most") return r.read >= r.pageCount ? "Stayed on all" : `Stayed on ${r.read}/${r.pageCount}`;
+  return `Page ${r.page} · ${formatDwell(r.ms)}`;
+}
+
+/** Phone form of hotPillText, short enough to never truncate beside the link label. */
+function hotPillTextNarrow(r: HotReason): string {
+  return r.kind === "dwell" ? `p${r.page} · ${formatDwell(r.ms)}` : hotPillText(r);
+}
+
+/** Typical time in a matrix footer cell: formatTypical's rounding, in the cells' seconds unit so it fits a 28px column. */
+function footerTypical(ms: number): string {
+  return ms < 9950 ? formatTypical(ms) : formatCellDwell(Math.round(ms / 1000) * 1000);
 }
 
 const swatchClass = "inline-block h-3 w-3 shrink-0 rounded-[3px]";
@@ -108,7 +118,7 @@ function RampStyle() {
 /** Legend for the matrix, placed directly above it. */
 export function MatrixLegend() {
   return (
-    <div data-matrix-legend data-mx-ramp className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-[var(--muted)]">
+    <div data-matrix-legend data-mx-ramp className="relative flex flex-wrap items-center gap-x-4 gap-y-2 text-[11px] text-[var(--muted)]">
       <RampStyle />
       <span className="inline-flex items-center gap-2 whitespace-nowrap">
         Time on page
@@ -167,6 +177,7 @@ export default function ReadingMatrix({
   now,
   onOpenPerson,
   onShowAll,
+  onShowRecent,
   loadingAll,
 }: ReadingMatrixProps) {
   const [caption, setCaption] = useState("");
@@ -322,9 +333,9 @@ export default function ReadingMatrix({
     const t = typicalDisplay(meta);
     const typical =
       t.kind === "ranked"
-        ? `typical ${formatDwell(t.ms)}`
+        ? `typical ${formatTypical(t.ms)}`
         : t.kind === "thin"
-          ? `typical ${formatDwell(t.ms)} (${t.readCount} stayed)`
+          ? `typical ${formatTypical(t.ms)} (${t.readCount} stayed)`
           : t.kind === "few"
             ? t.text
             : "typical —";
@@ -357,14 +368,18 @@ export default function ReadingMatrix({
 
   const showCellText = colW >= CELL_TEXT_MIN_PX;
   const gridStyle = { gridTemplateColumns: `var(--mx-first) repeat(${pageCount}, var(--mx-col)) var(--mx-time)` };
-  // A short document gives up a little of the name column on phones so the Time column fits too.
+  // A short document gives up a little of the name column on phones so the Time column fits too. Once
+  // it overflows anyway, the total moves beside the name, which needs the full width back. Widening
+  // keeps it overflowing, so this cannot flip back and forth.
   const colVars =
-    pageCount <= FILL_MAX_PAGES
-      ? "[--mx-col:minmax(28px,1fr)] [--mx-first:minmax(116px,132px)]"
-      : "[--mx-col:28px] [--mx-first:132px] sm:[--mx-col:minmax(28px,96px)]";
+    pageCount > FILL_MAX_PAGES
+      ? "[--mx-col:28px] [--mx-first:154px] sm:[--mx-col:minmax(28px,96px)]"
+      : view.overflow
+        ? "[--mx-col:minmax(28px,1fr)] [--mx-first:154px]"
+        : "[--mx-col:minmax(28px,1fr)] [--mx-first:minmax(122px,138px)]";
   // w-fit: the grid box is as wide as its tracks once they overflow (so the sticky name column can
   // travel the whole swipe) but still shrinks tracks to fit when they can.
-  const gridClass = `grid w-fit min-w-full items-center gap-x-[3px] gap-y-1 ${colVars} [--mx-time:44px] sm:[--mx-first:minmax(208px,280px)] sm:[--mx-time:72px] lg:[--mx-first:minmax(260px,280px)]`;
+  const gridClass = `grid w-fit min-w-full items-center gap-x-[3px] gap-y-1 ${colVars} [--mx-time:66px] sm:[--mx-first:minmax(208px,280px)] sm:[--mx-time:72px] lg:[--mx-first:minmax(260px,280px)]`;
   let hintSuffix = "";
   if (!view.atEnd) hintSuffix = view.last < pageCount ? " · swipe for more" : " · swipe for total time";
   const nameCell = `sticky left-0 z-[1] self-stretch ${stickyBg} ${nameShadow} pr-2`;
@@ -372,22 +387,22 @@ export default function ReadingMatrix({
   const footCell = "relative self-stretch text-center text-[11px] leading-tight tabular-nums";
   const mask = view.overflow && !view.atEnd ? "linear-gradient(to right, #000 calc(100% - 16px), transparent)" : undefined;
 
-  // On phones the repeated page-number row above the footer already draws the divider.
-  const firstFoot = "sm:border-t sm:border-[var(--border)] sm:pt-2";
-  const footerRow = (label: string, tipText: string, cell: (p: number) => React.ReactNode, first = false) => (
+  const footerRow = (label: string, tipText: string, cell: (p: number) => React.ReactNode) => (
     <div className="contents">
-      <div className={`${footLabel} ${first ? firstFoot : ""}`}>
+      <div className={footLabel}>
         <span>{label}</span>
         <InfoTip text={tipText} />
       </div>
       {pageNumbers.map((p) => (
-        <div key={p} className={`${footCell} ${first ? firstFoot : ""}`}>
+        <div key={p} className={footCell}>
           {cell(p)}
         </div>
       ))}
-      <div className={first ? "sm:border-t sm:border-[var(--border)]" : ""} />
+      <div />
     </div>
   );
+  const anyTypical = pages.some((pg) => pg.typicalMs !== null);
+  const anySkipped = pages.some((pg) => pg.passed + pg.jumped > 0);
 
   const pageHeadButton = (p: number) => (
     <button
@@ -398,14 +413,14 @@ export default function ReadingMatrix({
       onFocus={(e) => showPageTip(e.currentTarget, p)}
       onBlur={hideTip}
       onClick={(e) => showPageTip(e.currentTarget, p)}
-      className="h-6 w-full rounded-[4px] text-[11px] font-medium tabular-nums text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+      className="h-8 w-full rounded-[4px] sm:h-6 text-[11px] font-medium tabular-nums text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
     >
       {p}
     </button>
   );
 
   return (
-    <div ref={rootRef} data-mx-ramp onKeyDown={(e) => (e.key === "Escape" && tip ? setTip(null) : undefined)}>
+    <div ref={rootRef} data-mx-ramp className="relative" onKeyDown={(e) => (e.key === "Escape" && tip ? setTip(null) : undefined)}>
       <RampStyle />
       <div data-matrix-strip className={`sticky z-[4] ${stickyBg} pb-1 sm:hidden`} style={{ top: barH }}>
         {view.overflow ? (
@@ -461,10 +476,10 @@ export default function ReadingMatrix({
                   type="button"
                   data-matrix-row
                   onClick={() => onOpenPerson(row)}
-                  className="block w-full min-w-0 rounded-md px-1 py-0.5 text-left hover:bg-[var(--panel-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  className="block w-full min-w-0 rounded-md px-0.5 py-0.5 text-left hover:bg-[var(--panel-hover)] sm:px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-[13px] font-medium text-[var(--fg)]">
+                  <span className="flex min-w-0 items-center gap-1 sm:gap-1.5">
+                    <span title={row.name} className="min-w-0 truncate text-[13px] font-medium text-[var(--fg)] sm:max-w-full sm:shrink-0">
                       {isAnonymous(row) ? (
                         <>
                           <span className="sm:hidden">{displayName(row, true)}</span>
@@ -488,24 +503,29 @@ export default function ReadingMatrix({
                     {row.hot ? (
                       <span
                         title={hotReasonText(row.hot)}
-                        className="hidden min-w-[4.5rem] shrink-[10] truncate whitespace-nowrap rounded-full bg-emerald-500/15 px-1.5 text-[10px] font-semibold leading-4 text-emerald-700 sm:inline dark:text-emerald-300"
+                        className="hidden min-w-0 truncate whitespace-nowrap rounded-full bg-emerald-500/15 px-1.5 text-[10px] font-semibold leading-4 text-emerald-700 sm:inline dark:text-emerald-300"
                       >
                         {hotPillText(row.hot)}
+                      </span>
+                    ) : null}
+                    {view.overflow ? (
+                      <span className="ml-auto shrink-0 whitespace-nowrap text-[11px] tabular-nums text-[var(--fg)] sm:hidden">
+                        {formatDwell(row.totalMs)}
                       </span>
                     ) : null}
                   </span>
                   <span className="flex min-w-0 flex-nowrap items-center gap-x-1 text-[11px] leading-4 text-[var(--muted)] sm:hidden">
                     {row.hot ? (
-                      <span title={hotReasonText(row.hot)} className="min-w-0 truncate font-semibold text-emerald-700 dark:text-emerald-300">
-                        {hotPillText(row.hot, false)}
+                      <span title={hotReasonText(row.hot)} className="shrink-0 whitespace-nowrap font-semibold text-emerald-700 dark:text-emerald-300">
+                        {hotPillTextNarrow(row.hot)}
                       </span>
+                    ) : null}
+                    {row.hot ? <span aria-hidden="true" className="shrink-0">·</span> : null}
+                    {shareId ? (
+                      <span className={row.hot ? "min-w-0 truncate" : "shrink-0 whitespace-nowrap"}>{formatRelative(row.lastSeen, now)}</span>
                     ) : (
-                      <>
-                        {shareId ? null : <span className="min-w-0 truncate">{shortLinkLabel(row.linkLabel)}</span>}
-                        <span className="shrink-0 whitespace-nowrap">{`${shareId ? "" : "· "}${formatRelative(row.lastSeen, now)}`}</span>
-                      </>
+                      <span className="min-w-0 truncate">{shortLinkLabel(row.linkLabel)}</span>
                     )}
-                    <span className="ml-auto shrink-0 whitespace-nowrap pl-1 tabular-nums text-[var(--fg)]">{formatDwell(row.totalMs)}</span>
                   </span>
                   <span className="hidden min-w-0 items-center gap-1 text-[11px] text-[var(--muted)] sm:flex">
                     {shareId ? null : <span className="min-w-0 truncate">{row.linkLabel}</span>}
@@ -552,7 +572,13 @@ export default function ReadingMatrix({
                       </span>
                     ) : null}
                     {row.exitPage === p ? (
-                      <span aria-hidden="true" className="absolute inset-y-0 right-0 w-[3px] rounded-r-[4px] bg-[var(--fg)] opacity-70" />
+                      // On a stayed cell the step's text colour is the one that contrasts with every fill; it sits
+                      // inset so the fill frames it rather than the dark gap beside the cell swallowing it.
+                      <span
+                        aria-hidden="true"
+                        className={`absolute w-[3px] ${step > 0 ? "inset-y-[4px] right-[3px] rounded-full" : "inset-y-0 right-0 rounded-r-[4px] bg-[var(--fg)] opacity-70"}`}
+                        style={step > 0 ? { backgroundColor: `var(--mx-t-${step})` } : undefined}
+                      />
                     ) : null}
                     {cell?.revisit ? (
                       <span aria-hidden="true" className="absolute right-[4px] top-[1px] text-[9px] leading-none text-[var(--fg)]">
@@ -565,14 +591,13 @@ export default function ReadingMatrix({
               <div className="whitespace-nowrap text-right text-[11px] leading-4 tabular-nums text-[var(--fg)]">
                 {formatDwell(row.totalMs)}
                 <span data-matrix-stayed className="block text-[10px] text-[var(--muted)]">
-                  {`${row.readPages}/${pageCount}`}
-                  <span className="hidden sm:inline"> stayed</span>
+                  {`${row.readPages}/${pageCount} stayed`}
                 </span>
               </div>
             </div>
           ))}
 
-          <div className="contents sm:hidden" aria-hidden="true">
+          <div className="contents" aria-hidden="true">
             <div className={`${nameCell} border-t border-[var(--border)] pt-2 text-[11px] font-semibold text-[var(--muted-2)]`}>Page</div>
             {pageNumbers.map((p) => (
               <div key={p} className="self-stretch border-t border-[var(--border)] pt-2 text-center text-[11px] font-medium tabular-nums text-[var(--muted)]">
@@ -581,18 +606,18 @@ export default function ReadingMatrix({
             ))}
             <div className="self-stretch border-t border-[var(--border)]" />
           </div>
-          {footerRow("Reached", REACHED_TOOLTIP, (p) => footerValue(pages[p - 1]?.reached ?? 0, false), true)}
-          {footerRow("Typical time", TYPICAL_TOOLTIP, (p) => {
+          {footerRow("Reached", REACHED_TOOLTIP, (p) => footerValue(pages[p - 1]?.reached ?? 0, false))}
+          {anyTypical ? footerRow("Typical time", TYPICAL_TOOLTIP, (p) => {
             const t = typicalDisplay(pages[p - 1]);
             if (t.kind === "ranked") {
               return (
-                <span className={bold.typical.has(p) ? "font-semibold text-[var(--fg)]" : "text-[var(--fg)]"}>{formatCellDwell(t.ms)}</span>
+                <span className={bold.typical.has(p) ? "font-semibold text-[var(--fg)]" : "text-[var(--fg)]"}>{footerTypical(t.ms)}</span>
               );
             }
             if (t.kind === "thin") {
               return (
-                <span role="img" aria-label={`${formatDwell(t.ms)}; ${t.title}`} title={t.title} className="text-[var(--muted-2)]">
-                  {formatCellDwell(t.ms)}
+                <span role="img" aria-label={`${formatTypical(t.ms)}, ${t.readCount} stayed; ${t.title}`} title={t.title} className="text-[var(--muted-2)]">
+                  {footerTypical(t.ms)}
                 </span>
               );
             }
@@ -604,13 +629,17 @@ export default function ReadingMatrix({
               );
             }
             return <span className="text-[var(--muted-2)]">—</span>;
-          })}
-          {footerRow("Skipped", SKIPPED_TOOLTIP, (p) => {
-            const pg = pages[p - 1];
-            const detail = pg ? skippedBreakdown(pg.passed, pg.jumped) : null;
-            return footerValue(pg ? pg.passed + pg.jumped : 0, bold.skipped.has(p), detail ?? undefined);
-          })}
-          {footerRow("Left here", LEFT_TOOLTIP, (p) => footerValue(pages[p - 1]?.leftHere ?? 0, bold.left.has(p)))}
+          }) : null}
+          {anySkipped
+            ? footerRow("Skipped", SKIPPED_TOOLTIP, (p) => {
+                const pg = pages[p - 1];
+                const detail = pg ? skippedBreakdown(pg.passed, pg.jumped) : null;
+                return footerValue(pg ? pg.passed + pg.jumped : 0, bold.skipped.has(p), detail ?? undefined);
+              })
+            : null}
+          {footerRow("Left here", LEFT_TOOLTIP, (p) =>
+            footerValue(pages[p - 1]?.leftHere ?? 0, p !== pageCount && bold.left.has(p), p === pageCount ? "Left on the last page" : undefined),
+          )}
         </div>
       </div>
 
@@ -643,6 +672,15 @@ export default function ReadingMatrix({
             : total > MATRIX_ALL_LIMIT
               ? `Show the ${MATRIX_ALL_LIMIT} most recent people`
               : `Show all ${total} people`}
+        </button>
+      ) : limit >= MATRIX_ALL_LIMIT && rows.length > MATRIX_ROW_LIMIT ? (
+        <button
+          type="button"
+          data-matrix-show-recent
+          onClick={onShowRecent}
+          className="mt-3 inline-flex h-11 items-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] sm:h-9"
+        >
+          {`Show the ${MATRIX_ROW_LIMIT} most recent`}
         </button>
       ) : null}
     </div>

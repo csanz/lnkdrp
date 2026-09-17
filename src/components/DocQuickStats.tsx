@@ -9,10 +9,11 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { usePlan } from "@/lib/client/usePlan";
+import { awaitingFirstOpen } from "@/lib/analytics/reading";
 import { formatCountOf, formatDwell, formatRelative } from "@/lib/analytics/reading/format";
 import type { ReadingResponse } from "@/lib/analytics/reading/types";
 import { formatLocalDayKey } from "@/components/metrics/ActivityChart";
-import { chartTicks, valueLabelIndexes } from "@/components/docQuickStatsChart";
+import { chartTicks, peopleCluster, valueLabelIndexes } from "@/components/docQuickStatsChart";
 
 /**
  * Quick engagement stats for the owner's document page side panel.
@@ -90,7 +91,7 @@ type StatsResponse = {
 
 /** The slice of `/api/docs/:docId/pages` this card reads. `days`/`series`/`links` come on Free too; the rest is deep (Pro) only. */
 type ReadingLite = Partial<Pick<ReadingResponse, "days" | "series" | "links" | "totals" | "peopleWithDetail" | "pageCount">> & {
-  callouts?: { mostLeft: { page: number } | null } | null;
+  callouts?: { mostLeft: { page: number; leftHere: number; people: number; tiedPages?: number[] } | null } | null;
 };
 
 /** The metrics page's default range, so "Open full metrics →" lands on the same numbers. */
@@ -151,7 +152,9 @@ function LinkMiniList({
       {rows.length ? (
         <ul className="mt-1 space-y-1">
           {rows.map((r) => (
-            <li key={r.shareId} className="flex items-baseline justify-between gap-3 text-[11px]">
+            // Below @md the label gets the full row and the numbers drop to a second line: in the
+            // ~260px rail the numbers took most of the row and cut off the recipient's name.
+            <li key={r.shareId} className="flex flex-col text-[11px] @md:flex-row @md:items-baseline @md:justify-between @md:gap-3">
               {r.label ? (
                 <Link
                   href={`/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(r.shareId)}`}
@@ -165,7 +168,7 @@ function LinkMiniList({
                   Deleted link
                 </span>
               )}
-              <span className="shrink-0 text-[var(--muted)]">{right(r)}</span>
+              <span className="shrink-0 text-[10px] leading-[14px] text-[var(--muted)] @md:text-[11px] @md:leading-normal">{right(r)}</span>
             </li>
           ))}
           {moreCount > 0 ? (
@@ -186,9 +189,8 @@ function LinkMiniList({
   );
 }
 
-/** Recharts label renderer for the bars; `valueLabelIndexes` decides which bars get a number. */
-function barValueLabels(values: number[], slotPx: number) {
-  const shown = valueLabelIndexes(values, slotPx);
+/** Recharts label renderer for the bars; `shown` (from `valueLabelIndexes`) decides which bars get a number. */
+function barValueLabels(values: number[], shown: Set<number>) {
   return function BarValueLabel(raw: object) {
     const props = raw as { index?: number; viewBox?: { x?: number; y?: number; width?: number }; x?: number; y?: number; width?: number };
     const i = props.index ?? -1;
@@ -216,6 +218,15 @@ function DayTooltip({ active, payload }: { active?: boolean; payload?: Array<{ p
   );
 }
 
+/** "Sep 13–17", "Aug 30–Sep 2", or "Sep 13" for one day, from local day keys. */
+function dayRangeText(fromKey: string, toKey: string): string {
+  const from = formatLocalDayKey(fromKey);
+  if (fromKey === toKey) return from;
+  const to = formatLocalDayKey(toKey);
+  const sameMonth = fromKey.slice(0, 7) === toKey.slice(0, 7) && /^\d{4}-\d{2}-\d{2}$/.test(toKey);
+  return `${from}–${sameMonth ? to.replace(/^\D+/, "") : to}`;
+}
+
 /** Compact people-by-day bars, one bar per day like the metrics page chart. */
 function DailyBars({ data }: { data: Array<{ date: string; value: number }> }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -236,38 +247,51 @@ function DailyBars({ data }: { data: Array<{ date: string; value: number }> }) {
     return () => ro.disconnect();
   }, []);
 
-  const tickSpecs = size ? chartTicks(data.map((d) => d.value), data.map((d) => formatLocalDayKey(d.date)), size.w) : [];
+  const values = data.map((d) => d.value);
+  const tickSpecs = size ? chartTicks(values, data.map((d) => formatLocalDayKey(d.date)), size.w) : [];
   const ticks = tickSpecs.map((t) => data[t.index]!.date);
-  const anchorByDate = new Map(tickSpecs.map((t) => [data[t.index]!.date, t.anchor]));
+  const tickByDate = new Map(tickSpecs.map((t) => [data[t.index]!.date, t]));
+  const shownLabels = size ? valueLabelIndexes(values, (size.w - 4) / Math.max(1, data.length)) : null;
+  // Only the peak is labelled: say where nearly everyone is, so the visible numbers are not read as the total.
+  const cluster = shownLabels && shownLabels.size < values.filter((v) => v > 0).length ? peopleCluster(values) : null;
 
   return (
-    <div ref={wrapRef} className="h-28 w-full">
-      {size ? (
-        <BarChart width={size.w} height={size.h} data={data} margin={{ top: 16, right: 2, bottom: 0, left: 2 }} barCategoryGap="20%">
-          <YAxis hide domain={[0, "dataMax"]} />
-          <XAxis
-            dataKey="date"
-            ticks={ticks}
-            interval={0}
-            tickLine={false}
-            axisLine={false}
-            height={20}
-            // First and last labels anchor to their outer edge so the card never clips them.
-            tick={(props: { x: number; y: number; payload: { value: string } }) => {
-              return (
-                <text x={props.x} y={props.y + 10} textAnchor={anchorByDate.get(props.payload.value) ?? "middle"} fontSize={10} fill="var(--muted-2)">
-                  {formatLocalDayKey(props.payload.value)}
-                </text>
-              );
-            }}
-          />
-          <Tooltip cursor={{ fill: "var(--panel-hover)" }} content={<DayTooltip />} />
-          <Bar dataKey="value" fill={EMERALD} radius={[2, 2, 0, 0]} maxBarSize={24} isAnimationActive={false}>
-            <LabelList dataKey="value" content={barValueLabels(data.map((d) => d.value), (size.w - 4) / Math.max(1, data.length))} />
-          </Bar>
-        </BarChart>
+    <>
+      {cluster ? (
+        <div data-quickstats-cluster className="text-[11px] leading-4 text-[var(--muted)]">
+          {cluster.people === cluster.total ? "All " : `${cluster.people.toLocaleString()} of `}
+          {peopleText(cluster.total)} {dayRangeText(data[cluster.from]!.date, data[cluster.to]!.date)}
+        </div>
       ) : null}
-    </div>
+      <div ref={wrapRef} className="h-28 w-full">
+        {size ? (
+          <BarChart width={size.w} height={size.h} data={data} margin={{ top: 16, right: 2, bottom: 0, left: 2 }} barCategoryGap="20%">
+            <YAxis hide domain={[0, "dataMax"]} />
+            <XAxis
+              dataKey="date"
+              ticks={ticks}
+              interval={0}
+              tickLine={false}
+              axisLine={false}
+              height={20}
+              // First and last labels anchor to their outer edge so the card never clips them.
+              tick={(props: { x: number; y: number; payload: { value: string } }) => {
+                const spec = tickByDate.get(props.payload.value);
+                return (
+                  <text x={props.x + (spec?.dx ?? 0)} y={props.y + 10} textAnchor={spec?.anchor ?? "middle"} fontSize={10} fill="var(--muted-2)">
+                    {formatLocalDayKey(props.payload.value)}
+                  </text>
+                );
+              }}
+            />
+            <Tooltip cursor={{ fill: "var(--panel-hover)" }} content={<DayTooltip />} />
+            <Bar dataKey="value" fill={EMERALD} radius={[2, 2, 0, 0]} maxBarSize={24} isAnimationActive={false}>
+              <LabelList dataKey="value" content={barValueLabels(values, shownLabels ?? new Set())} />
+            </Bar>
+          </BarChart>
+        ) : null}
+      </div>
+    </>
   );
 }
 
@@ -508,8 +532,8 @@ export default function DocQuickStats({
   }, [live, reading]);
 
   const readingLinks = Array.isArray(reading?.links) ? reading.links : null;
-  // Default link included, like the Links page, which shows "Not opened yet" on every such row.
-  const notOpenedCount = readingLinks ? readingLinks.filter((l) => l.status === "active" && !l.everOpened).length : 0;
+  // Same rule as the metrics page's Needs attention card, so both show the same count.
+  const notOpenedCount = readingLinks ? readingLinks.filter((l) => awaitingFirstOpen(l, readingLinks)).length : 0;
   const activeLinkCount = readingLinks ? readingLinks.filter((l) => l.status === "active").length : coveredLinkCount;
   const hasAnyViews = chartData.some((d) => d.value > 0);
   // No "Live" label: these are 30-day aggregates, and the extra word wrapped the header in the rail.
@@ -568,8 +592,12 @@ export default function DocQuickStats({
     topLinks.length === recentLinks.length &&
     topLinks.every((r, i) => r.shareId === recentLinks[i]!.shareId);
   const listedRows = wide ? topLinks : combinedLinks;
-  // Never-opened links get their own row below, so "+N more" counts only opened links left unlisted.
-  const moreLinks = Math.max(0, coveredLinkCount - listedRows.length - notOpenedCount);
+  // "+N more" counts only opened links left unlisted; the never-opened ones have their own row, and an
+  // unused default link is in neither.
+  const moreLinks = Math.max(
+    0,
+    (readingLinks ? readingLinks.filter((l) => l.everOpened).length : coveredLinkCount) - listedRows.length,
+  );
   const relativeCell = (r: LinkMiniRow) =>
     r.lastViewedAt ? (
       <span className="whitespace-nowrap" title={new Date(r.lastViewedAt).toLocaleString()}>
@@ -616,15 +644,29 @@ export default function DocQuickStats({
   const deep = basicTier === false && reading ? reading : null;
   const medianTotalMs = typeof deep?.totals?.medianTotalMs === "number" ? deep.totals.medianTotalMs : null;
   const peopleWithDetail = num(deep?.peopleWithDetail);
-  const reachLine =
-    deep?.totals && peopleWithDetail > 0 ? (
-      <>
-        Reached the last page {formatCountOf(num(deep.totals.reachedEnd), peopleWithDetail)}
-        {deep.callouts?.mostLeft ? (
-          <span className="whitespace-nowrap"> · most left on page {deep.callouts.mostLeft.page}</span>
-        ) : null}
-      </>
-    ) : null;
+  /** `count` never wraps away from its "of N"; `text` may wrap in a very narrow card. */
+  type Clause = { text: string; count: string };
+  const reachClause: Clause | null =
+    deep?.totals && peopleWithDetail > 0
+      ? { text: "reached the last page", count: formatCountOf(num(deep.totals.reachedEnd), peopleWithDetail) }
+      : null;
+  const mostLeftClause = ((): Clause | null => {
+    const m = deep?.callouts?.mostLeft;
+    if (!m) return null;
+    const pages = Array.isArray(m.tiedPages) && m.tiedPages.length ? [...m.tiedPages].sort((a, b) => a - b) : [m.page];
+    const count = formatCountOf(num(m.leftHere), num(m.people));
+    // "Dropped off", the metrics page's callout term: the last page is excluded there too.
+    if (pages.length === 1) return { text: `most dropped off at page ${pages[0]}`, count: `(${count})` };
+    if (pages.length === 2) return { text: `most dropped off at pages ${pages[0]} and ${pages[1]}`, count: `(${count} each)` };
+    // Three or more pages tie: there is no one place people leave, so say nothing rather than pick one.
+    return null;
+  })();
+  const clauseText = (c: Clause, capital: boolean) => (
+    <>
+      {capital ? c.text.charAt(0).toUpperCase() + c.text.slice(1) : c.text}{" "}
+      <span className="whitespace-nowrap tabular-nums">{c.count}</span>
+    </>
+  );
 
   return (
     // Same frame and the same titled header as the links and snapshot sections of the panel: an
@@ -695,9 +737,9 @@ export default function DocQuickStats({
             {tile("People", stats.viewers, { sub: viewersSub })}
             {tile("Total time", stats.timeMs === null ? null : formatDwell(stats.timeMs), {
               title: `Time people spent with it open in the last ${shownDays} days`,
-              // With one person the typical time is the total again.
+              // With one or two people the typical time barely differs from the total.
               sub:
-                medianTotalMs !== null && (stats.viewers ?? 0) > 1 ? (
+                medianTotalMs !== null && peopleWithDetail >= 3 ? (
                   <span className="text-[var(--muted-2)]">typical {formatDwell(medianTotalMs)} per person</span>
                 ) : undefined,
             })}
@@ -708,13 +750,28 @@ export default function DocQuickStats({
             })}
             {showDownloads ? tile("Downloads", stats.downloads) : null}
           </div>
-          {reachLine ? (
+          {reachClause ? (
             <div
               data-quickstats-reach
               className="mt-2 text-[11px] text-[var(--muted)]"
               title={deep?.pageCount ? `People who got to page ${deep.pageCount}` : undefined}
             >
-              {reachLine}
+              {wide ? (
+                <>
+                  <span className="whitespace-nowrap">{clauseText(reachClause, true)}</span>
+                  {mostLeftClause ? (
+                    <>
+                      {" · "}
+                      <span className="whitespace-nowrap">{clauseText(mostLeftClause, false)}</span>
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <div>{clauseText(reachClause, true)}</div>
+                  {mostLeftClause ? <div>{clauseText(mostLeftClause, true)}</div> : null}
+                </>
+              )}
             </div>
           ) : null}
 

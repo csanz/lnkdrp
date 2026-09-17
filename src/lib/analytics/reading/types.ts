@@ -160,6 +160,13 @@ export type Callouts = {
     tiedPages: number[];
     tied: Array<{ page: number; typicalMs: number; readCount: number }>;
   } | null;
+  /**
+   * Why heldLongest is null, when at least 2 pages are eligible for it. Tied: `pages` are the tied
+   * pages, `typicalMs` their median typical time, `restTypicalMs` the other eligible pages' median (null
+   * when none). Low lift: `pages` are every eligible page, `typicalMs` their median, restTypicalMs null.
+   * Null whenever heldLongest is set.
+   */
+  heldFlat: { pages: number[]; typicalMs: number; restTypicalMs: number | null } | null;
   /** skipped = passed + jumped, of = stillReading; tiedPages includes page. */
   mostSkipped: { page: number; skipped: number; of: number; tiedPages: number[] } | null;
   mostLeft: { page: number; leftHere: number; people: number; tiedPages: number[] } | null;

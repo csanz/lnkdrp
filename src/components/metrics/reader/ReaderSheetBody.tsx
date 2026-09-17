@@ -19,7 +19,7 @@ export type ReaderSheetCallbacks = {
 };
 
 export const READER_FOOTER_TEXT =
-  "How we measure: time counts while this document is on screen and someone is using it, and stops after 5 minutes without input. Pages on screen for under 2 seconds count as passed.";
+  "How we measure: time counts while this document is on screen and someone is using it, and stops after 5 minutes without input. Pages on screen for under 2 seconds count as skipped.";
 
 const FOCUS_HIGHLIGHT_MS = 2000;
 
@@ -128,8 +128,8 @@ export default function ReaderSheetBody({
 
       <ReaderFacts data={data} now={now} />
 
-      <Section title="Page by page" aside={hasTypicalTick(data.pages) ? <PageBarsKey pages={data.pages} /> : null}>
-        <ReaderPageBars pages={data.pages} highlightPage={highlightPage} revealPage={focusPage} />
+      <Section title="Page by page" aside={hasTypicalTick(data.pages) ? <PageBarsKey pages={data.pages} visits={data.visits} /> : null}>
+        <ReaderPageBars pages={data.pages} visits={data.visits} highlightPage={highlightPage} revealPage={focusPage} />
       </Section>
 
       {data.visits.length > 0 ? (
