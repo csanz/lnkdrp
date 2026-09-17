@@ -153,11 +153,17 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         });
         const uploadId = upload.id;
         const version = upload.version ?? 1;
-        const withIds = (err: unknown) => (isToolError(err) ? err.withDetails({ ...ids, uploadId, version }) : err);
+        // Until the file is accepted the new version never goes live (a failed import puts the
+        // document back on its previous version), so an error then reports attemptedVersion, not
+        // a version the document is not on.
+        let imported = false;
+        const withIds = (err: unknown) =>
+          isToolError(err) ? err.withDetails({ ...ids, uploadId, ...(imported ? { version } : { attemptedVersion: version }) }) : err;
 
         try {
           if (source.kind === "url") await api.importUrl(uploadId, source.url);
           else await api.importBytes(uploadId, source.base64, source.fileName);
+          imported = true;
 
           for (let attempt = 0; ; attempt++) {
             try {
