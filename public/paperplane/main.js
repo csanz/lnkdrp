@@ -52,6 +52,12 @@ const CONFIG = {
   PLANE_VIEW_Y_PX: 430,
   // ...but never lower than this fraction of the frame, so a short laptop frame lifts it further.
   PLANE_VIEW_Y_MAX_FRAC: 0.55,
+  // ...and never *higher* than this fraction. The globe's horizon is placed as a fraction of the
+  // frame, so a pixel-fixed plane drifted away from it as frames got taller: 430px is 52% down an
+  // 819-tall laptop frame (plane ~110px above the rim, banked) but only 43% down a 1009-tall
+  // one (~240px above, and seen from above the camera's axis, so it read as flat). 0.525 is the
+  // laptop framing, kept at every height above it.
+  PLANE_VIEW_Y_MIN_FRAC: 0.525,
   // Fraction of the frame height the tuned PLANE_BASE_POS.y lands at on a desktop (16:10 / 16:9)
   // frame; the runtime offsets from this reference to reach PLANE_VIEW_Y_PX.
   PLANE_BASE_VIEW_Y_FRAC: 0.334,
@@ -1237,7 +1243,10 @@ function placePlane() {
   const yPx =
     PLACE.yfrac != null
       ? PLACE.yfrac * window.innerHeight
-      : Math.min(CONFIG.PLANE_VIEW_Y_PX, window.innerHeight * CONFIG.PLANE_VIEW_Y_MAX_FRAC);
+      : Math.max(
+          Math.min(CONFIG.PLANE_VIEW_Y_PX, window.innerHeight * CONFIG.PLANE_VIEW_Y_MAX_FRAC),
+          window.innerHeight * CONFIG.PLANE_VIEW_Y_MIN_FRAC,
+        );
   basePos.x = viewWidthAtPlane() * xFrac;
   // PLANE_BASE_POS.y was tuned to land PLANE_BASE_VIEW_Y_FRAC down a desktop frame, whose view
   // height is viewH / aspectComp() (narrow frames pull the camera back, which would otherwise
