@@ -29,9 +29,9 @@ Uploads use the “client upload” flow described in the Vercel docs ([Client U
 - Route: `/api/blob/upload` (uses `handleUpload()` to mint short-lived client tokens)
 - Requires `BLOB_READ_WRITE_TOKEN` in `.env.local`
 
-## Stripe subscriptions (Checkout + webhooks)
+## Stripe subscriptions and credit packs (Checkout + webhooks)
 
-This repo uses **Stripe Checkout** for subscriptions and **webhooks** as the source of truth for granting Pro access.
+This repo uses **Stripe Checkout** for the Pro subscription and for one-time credit packs (`/credits`), and **webhooks** as the source of truth for both: Pro access and purchased credits are granted only when the webhook arrives, never on the redirect back from Checkout.
 
 ### Local webhook testing
 
@@ -48,14 +48,24 @@ stripe login
 stripe listen --forward-to localhost:3001/api/stripe/webhook
 ```
 
-4. Copy the printed signing secret into `STRIPE_WEBHOOK_SECRET` in `.env.local`.
+4. Copy the printed signing secret (`whsec_…`) into `STRIPE_WEBHOOK_SECRET` in `.env.local`, then restart the dev server so it picks it up. Keep `stripe listen` running in its own terminal the whole time you test.
 5. Ensure `.env.local` also has:
    - `STRIPE_SECRET_KEY`
    - `STRIPE_PRICE_ID`
    - `NEXT_PUBLIC_APP_URL` (e.g. `http://localhost:3001`)
-6. Start the app and click **Upgrade** in `/dashboard?tab=overview`.
-7. Use test card `4242 4242 4242 4242` in Stripe Checkout.
-8. Confirm the user document updates in MongoDB and `/billing/success` flips to **Pro active** after the webhook runs.
+6. Start the app and either click **Upgrade** in `/dashboard?tab=overview`, or buy a pack on `/credits`.
+7. Pay with a Stripe test card (test keys only — nothing is charged):
+
+   | Card number | Result |
+   |---|---|
+   | `4242 4242 4242 4242` | Succeeds |
+   | `4000 0025 0000 3155` | Asks for 3D Secure authentication |
+   | `4000 0000 0000 9995` | Declined, insufficient funds |
+
+   Any future expiry (e.g. `12/34`), any 3-digit CVC, any ZIP.
+8. Confirm the result after the webhook runs: `/billing/success` flips to **Pro active** for an upgrade, and `/credits` shows **N credits added** for a pack.
+
+**If a payment succeeds but nothing changes**, the webhook is not reaching the app. Stripe cannot call `localhost` on its own, so without `stripe listen` forwarding (and a matching `STRIPE_WEBHOOK_SECRET`) the Checkout payment completes while Pro never activates and pack credits never arrive — `/credits` sits on "taking longer than usual" indefinitely. Check that `stripe listen` is still running and that the secret in `.env.local` is the one it printed this session.
 
 ## Learn More
 
