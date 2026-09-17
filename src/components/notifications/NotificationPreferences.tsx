@@ -1,7 +1,8 @@
 /**
  * Workspace member notification preferences UI.
  *
- * Used for configuring doc update email cadence (off/daily/immediate) for the active workspace.
+ * Configures the member's email cadence (off/daily/immediate) for the active workspace: link opens
+ * (view emails, listed first because it is the one people come for), doc updates and repo link requests.
  */
 "use client";
 
@@ -10,15 +11,17 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { ORGS_CACHE_UPDATED_EVENT } from "@/lib/orgsCache";
 
 type Mode = "off" | "daily" | "immediate";
-type PrefKey = "docUpdateEmailMode" | "repoLinkRequestEmailMode";
+type PrefKey = "viewEmailMode" | "docUpdateEmailMode" | "repoLinkRequestEmailMode";
 
 type PrefsResponse = {
   ok: true;
+  viewEmailMode?: Mode;
   docUpdateEmailMode?: Mode;
   repoLinkRequestEmailMode?: Mode;
 };
 
 export default function NotificationPreferences() {
+  const [viewMode, setViewMode] = useState<Mode>("daily");
   const [docMode, setDocMode] = useState<Mode>("daily");
   const [repoMode, setRepoMode] = useState<Mode>("daily");
   const [loading, setLoading] = useState(true);
@@ -35,10 +38,12 @@ export default function NotificationPreferences() {
         const res = await fetchWithTempUser("/api/orgs/active/notification-preferences", { cache: "no-store" });
         if (!res.ok) throw new Error("Failed to load notification preferences");
         const json = (await res.json()) as PrefsResponse | any;
+        const nextView = typeof json?.viewEmailMode === "string" ? (json.viewEmailMode as Mode) : "daily";
         const nextDoc = typeof json?.docUpdateEmailMode === "string" ? (json.docUpdateEmailMode as Mode) : "daily";
         const nextRepo =
           typeof json?.repoLinkRequestEmailMode === "string" ? (json.repoLinkRequestEmailMode as Mode) : "daily";
         if (!cancelled) {
+          setViewMode(nextView);
           setDocMode(nextDoc);
           setRepoMode(nextRepo);
         }
@@ -68,6 +73,7 @@ export default function NotificationPreferences() {
         body: JSON.stringify({ [key]: next }),
       });
       if (!res.ok) throw new Error("Failed to save");
+      if (key === "viewEmailMode") setViewMode(next);
       if (key === "docUpdateEmailMode") setDocMode(next);
       if (key === "repoLinkRequestEmailMode") setRepoMode(next);
       setSavedKey(key);
@@ -80,8 +86,35 @@ export default function NotificationPreferences() {
   }
 
   return (
-    <div>
+    // `email-preferences`: the anchor the view emails' "Change how often" link lands on.
+    <div id="email-preferences">
       <div className="grid gap-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-[13px] font-semibold text-[var(--fg)]">When someone opens a link</div>
+            <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
+              Get notified when a recipient opens one of this workspace&apos;s share links.
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <select
+              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--fg)]"
+              value={viewMode}
+              disabled={loading || savingKey !== null}
+              onChange={(e) => void save("viewEmailMode", e.target.value as Mode)}
+              aria-label="Link open email preference"
+            >
+              <option value="off">Off</option>
+              <option value="daily">Daily digest</option>
+              <option value="immediate">Immediately</option>
+            </select>
+            {savedKey === "viewEmailMode" ? (
+              <span className="text-[12px] font-medium text-emerald-600">Saved</span>
+            ) : null}
+          </div>
+        </div>
+
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-[var(--fg)]">Doc update emails</div>
@@ -138,8 +171,8 @@ export default function NotificationPreferences() {
       {error ? <div className="mt-3 text-[12px] font-medium text-red-700">{error}</div> : null}
       {!error ? (
         <div className="mt-3 text-[12px] text-[var(--muted-2)]">
-          Daily digests are sent at the end of the day (workspace timezone). Immediate emails are sent as soon as
-          processing completes.
+          Daily digests are sent once a day, at the end of the day (UTC). Immediate emails arrive within a few
+          minutes.
         </div>
       ) : null}
     </div>

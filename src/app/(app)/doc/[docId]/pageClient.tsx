@@ -1006,6 +1006,162 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return v !== null && v >= 3;
   }, [isTempUser, doc.currentUploadVersion]);
 
+  // --- View-email onboarding line (docs/prds/lnkdrp-view-notifications.md, Web app → Onboarding) ---
+  // Once the document has a share link, tell the member (one quiet, dismissible line under the
+  // links summary) that view emails exist and how often they arrive. The copy follows the member's
+  // `viewEmailMode` for the active workspace; `off` shows nothing. Both requests only succeed for a
+  // signed-in workspace member who can manage this document (the preferences route 401/404s
+  // otherwise, the links route refuses non-members), so no line renders for anyone else.
+  const [viewEmailPrefs, setViewEmailPrefs] = useState<
+    null | { orgId: string; userId: string; mode: "off" | "daily" | "immediate" }
+  >(null);
+  const [docLinkCount, setDocLinkCount] = useState<number | null>(null);
+  const [viewEmailHintDismissed, setViewEmailHintDismissed] = useState(true);
+  const [viewEmailPrefsRev, setViewEmailPrefsRev] = useState(0);
+  const [docLinkCountRev, setDocLinkCountRev] = useState(0);
+  const sessionUserKey = session?.user ? (session.user.email ?? "signed-in") : "";
+
+  useEffect(() => {
+    if (!sessionUserKey) {
+      setViewEmailPrefs(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        // Plain fetch, not `fetchJson`: a 401 here must stay silent rather than redirect home.
+        const res = await fetchWithTempUser("/api/orgs/active/notification-preferences", { cache: "no-store" });
+        const json = res.ok ? ((await res.json().catch(() => null)) as Record<string, unknown> | null) : null;
+        if (cancelled) return;
+        const orgId = typeof json?.orgId === "string" ? json.orgId : "";
+        const userId = typeof json?.userId === "string" ? json.userId : "";
+        if (!orgId || !userId) {
+          setViewEmailPrefs(null);
+          return;
+        }
+        const raw = json?.viewEmailMode;
+        // A missing value reads as the schema default, `daily` (contract C1).
+        const mode = raw === "off" || raw === "immediate" ? raw : raw === "immediately" ? "immediate" : "daily";
+        setViewEmailPrefs({ orgId, userId, mode });
+      } catch {
+        if (!cancelled) setViewEmailPrefs(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUserKey, viewEmailPrefsRev]);
+
+  useEffect(() => {
+    if (!sessionUserKey) return;
+    const bump = () => setViewEmailPrefsRev((r) => r + 1);
+    // Switching workspace changes both the mode and the dismiss key; coming back from Preferences
+    // in another tab should pick up the new mode.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") bump();
+    };
+    window.addEventListener(ACTIVE_ORG_CHANGED_EVENT, bump);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener(ACTIVE_ORG_CHANGED_EVENT, bump);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [sessionUserKey]);
+
+  useEffect(() => {
+    if (!sessionUserKey || !viewEmailPrefs || viewEmailPrefs.mode === "off") return;
+    if (doc.status !== "ready" || isReceivedViaRequest) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        // `limit=1`: only the true `total` is needed, not the rows.
+        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(doc.id)}/links?page=1&limit=1`, {
+          cache: "no-store",
+        });
+        const json = res.ok ? ((await res.json().catch(() => null)) as { total?: unknown } | null) : null;
+        if (cancelled) return;
+        setDocLinkCount(typeof json?.total === "number" ? json.total : null);
+      } catch {
+        if (!cancelled) setDocLinkCount(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionUserKey, viewEmailPrefs, doc.id, doc.status, isReceivedViaRequest, docLinkCountRev]);
+
+  // The first link is usually created from this page (or by an agent): refetch the count on
+  // `share_link.*` activity, the same frames the links manager refreshes on.
+  useEffect(
+    () =>
+      subscribeRealtime("activity", (f) => {
+        if (f.type !== "activity") return;
+        if (typeof f.event.type === "string" && f.event.type.startsWith("share_link.")) {
+          setDocLinkCountRev((r) => r + 1);
+        }
+      }),
+    [],
+  );
+
+  const viewEmailHintStorageKey = viewEmailPrefs
+    ? `lnkdrp:viewEmailHintDismissed:${viewEmailPrefs.userId}:${viewEmailPrefs.orgId}`
+    : "";
+
+  useEffect(() => {
+    if (!viewEmailHintStorageKey) return;
+    let dismissed = false;
+    try {
+      dismissed = window.localStorage.getItem(viewEmailHintStorageKey) === "1";
+    } catch {
+      // Storage unavailable (private window, blocked site data): the line just shows.
+    }
+    setViewEmailHintDismissed(dismissed);
+  }, [viewEmailHintStorageKey]);
+
+  /**
+   * Hide the view-email onboarding line and remember it per user + workspace.
+   */
+  function dismissViewEmailHint() {
+    setViewEmailHintDismissed(true);
+    if (!viewEmailHintStorageKey) return;
+    try {
+      window.localStorage.setItem(viewEmailHintStorageKey, "1");
+    } catch {
+      // Dismissal still holds for this page view.
+    }
+  }
+
+  const viewEmailHint =
+    viewEmailPrefs && viewEmailPrefs.mode !== "off" && !viewEmailHintDismissed && (docLinkCount ?? 0) > 0 ? (
+      <div className="flex items-start gap-2 px-1 text-[12px] leading-5 text-[var(--muted-2)]">
+        <span className="min-w-0 flex-1">
+          {viewEmailPrefs.mode === "immediate" ? (
+            "You’ll get an email when people open this."
+          ) : (
+            <>
+              You’ll get a daily email when people open this. Change to instant in{" "}
+              <Link
+                href="/dashboard?tab=account"
+                className="font-semibold text-[var(--fg)] underline underline-offset-2"
+              >
+                Preferences
+              </Link>
+              .
+            </>
+          )}
+        </span>
+        <button
+          type="button"
+          aria-label="Dismiss"
+          title="Dismiss"
+          className="shrink-0 rounded px-1 text-[var(--muted-2)] hover:text-[var(--fg)] focus:outline-none focus:ring-2 focus:ring-[var(--ring)]"
+          onClick={dismissViewEmailHint}
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+      </div>
+    ) : null;
+
   // We intentionally do not show summary/tags on the owner panel when AI Snapshot is present.
 
   async function loadDebugJson() {
@@ -2518,7 +2674,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             Upgrade
                           </button>
                         </div>
-                      ) : null
+                      ) : (
+                        // The plan-limit prompt above wins; otherwise the view-email onboarding line.
+                        viewEmailHint
+                      )
                     }
                     relevancyEnabled={Boolean(doc.receiverRelevanceChecklist)}
                     onToggleRelevancy={(next) => void setReceiverRelevanceChecklist(next)}
