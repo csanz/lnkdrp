@@ -8,6 +8,7 @@
  */
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import Panel from "@/components/ui/Panel";
@@ -22,6 +23,115 @@ import { clampNonNegInt, formatInt } from "@/lib/format/number";
 import { formatDateRange, formatMonthLabel, formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents, formatUsdOrNotAvailable } from "@/lib/format/money";
 import { openBillingPortal } from "@/lib/billing/clientActions";
+import { usePlan } from "@/lib/client/usePlan";
+
+/** The workspace this tab bills, from `/api/billing/status`. */
+type BilledWorkspace = {
+  name: string | null;
+  avatarUrl: string | null;
+  plan: "free" | "pro";
+  payg: boolean;
+  periodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+};
+
+/**
+ * Which workspace is being billed. Every workspace is its own Stripe customer with its own plan,
+ * credits and invoices, and a new team workspace starts on Free even when the personal one is on
+ * Pro; without this the tab read as the account's billing, and it was unclear what a new
+ * subscription would pay for.
+ */
+function BilledWorkspaceHeader({
+  workspace,
+  isPersonal,
+  manageBusy,
+  onManage,
+}: {
+  workspace: BilledWorkspace | null;
+  isPersonal: boolean;
+  manageBusy: boolean;
+  onManage: () => void;
+}) {
+  const name = workspace?.name ?? (isPersonal ? "Personal" : "This workspace");
+  const initial = name.trim().charAt(0).toUpperCase() || "W";
+  const isPro = workspace?.plan === "pro";
+  const hasSubscription = isPro || Boolean(workspace?.payg);
+  const planLabel = isPro ? "Pro" : workspace?.payg ? "Free, pay-as-you-go" : "Free";
+  const renewal =
+    isPro && workspace?.periodEnd
+      ? `${workspace.cancelAtPeriodEnd ? "Ends" : "Renews"} ${formatShortDate(workspace.periodEnd)}. `
+      : "";
+
+  return (
+    <Panel padding="lg">
+      <div className="flex flex-wrap items-center gap-4">
+        {workspace?.avatarUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={workspace.avatarUrl} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" />
+        ) : (
+          <div
+            aria-hidden="true"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--panel-hover)] text-base font-semibold text-[var(--fg)]"
+          >
+            {workspace ? initial : ""}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="text-[12px] text-[var(--muted-2)]">Billing for</div>
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
+            {workspace ? (
+              <>
+                <span className="truncate text-[18px] font-semibold tracking-tight text-[var(--fg)]">{name}</span>
+                <span
+                  className={
+                    isPro
+                      ? "rounded-full bg-[var(--fg)] px-2 py-0.5 text-[11px] font-semibold text-[var(--bg)]"
+                      : "rounded-full border border-[var(--border)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted-2)]"
+                  }
+                >
+                  {planLabel}
+                </span>
+              </>
+            ) : (
+              <SkeletonPill widthClassName="w-40" />
+            )}
+          </div>
+          <div className="mt-1 text-[12px] text-[var(--muted-2)]">
+            {renewal}
+            {isPersonal
+              ? "Your personal workspace is billed on its own. Each team workspace has a separate plan, credits and invoices."
+              : `${name} is billed on its own, with its own plan, credits and invoices. Your personal workspace and other workspaces are not affected.`}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/dashboard?tab=workspace"
+            className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+          >
+            Switch workspace
+          </Link>
+          {!workspace ? null : hasSubscription ? (
+            <button
+              type="button"
+              className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+              onClick={onManage}
+              disabled={manageBusy}
+            >
+              {manageBusy ? "Opening…" : "Manage subscription"}
+            </button>
+          ) : (
+            <Link
+              href="/pricing"
+              className="rounded-xl bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] hover:opacity-90"
+            >
+              Upgrade {name} to Pro
+            </Link>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
 
 type BillingSummary = {
   cycle: { start: string; end: string; key: string };
@@ -178,6 +288,8 @@ export default function BillingInvoicesTab() {
   const [cycleStartIso, setCycleStartIso] = useState<string | null>(() => cached?.summary?.cycle?.start ?? null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(() => cached?.invoicesByMonth?.["__default__"]?.selectedMonth ?? null);
   const [manageBusy, setManageBusy] = useState(false);
+  const [workspace, setWorkspace] = useState<BilledWorkspace | null>(null);
+  const { plan: planSnapshot } = usePlan();
   const [manageError, setManageError] = useState<string | null>(null);
   const [creditsInfoOpen, setCreditsInfoOpen] = useState(false);
   const [debugEnabled, setDebugEnabled] = useState(false);
@@ -206,6 +318,36 @@ export default function BillingInvoicesTab() {
     }
     return out;
   }, [summary?.cycle?.start, summary?.cycle?.end]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/billing/status", { cache: "no-store" });
+        const json = (await res.json().catch(() => null)) as {
+          org?: { name?: string | null; avatarUrl?: string | null };
+          plan?: string;
+          payg?: boolean;
+          stripeCurrentPeriodEnd?: string | null;
+          stripeCancelAtPeriodEnd?: boolean;
+        } | null;
+        if (!res.ok || !json || cancelled) return;
+        setWorkspace({
+          name: json.org?.name ?? null,
+          avatarUrl: json.org?.avatarUrl ?? null,
+          plan: json.plan === "pro" ? "pro" : "free",
+          payg: Boolean(json.payg),
+          periodEnd: json.stripeCurrentPeriodEnd ?? null,
+          cancelAtPeriodEnd: Boolean(json.stripeCancelAtPeriodEnd),
+        });
+      } catch {
+        // The header falls back to a generic name; the rest of the tab does not depend on it.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     // Show debug UI only when DEBUG_LEVEL>0 (injected into window.__DEBUG_LEVEL__ by RootLayout).
@@ -438,16 +580,15 @@ export default function BillingInvoicesTab() {
               Debug queries
             </button>
           ) : null}
-          <button
-            type="button"
-            className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-            onClick={openPortal}
-            disabled={manageBusy}
-          >
-            {manageBusy ? "Opening…" : "Manage subscription"}
-          </button>
         </div>
       </div>
+
+      <BilledWorkspaceHeader
+        workspace={workspace}
+        isPersonal={Boolean(planSnapshot?.isPersonalOrg)}
+        manageBusy={manageBusy}
+        onManage={openPortal}
+      />
 
       {manageError ? (
         <Alert variant="error" className="text-[12px]">
@@ -504,7 +645,19 @@ export default function BillingInvoicesTab() {
               {summaryLoaded ? cycleRange : <SkeletonPill widthClassName="w-56" />}
             </div>
             <div className="mt-2 text-[12px] text-[var(--muted-2)]">
-              Includes 300 credits a month, about 60 standard AI compares. Credits reset on your renewal date.
+              {workspace && workspace.plan !== "pro" ? (
+                <>
+                  Free workspaces get a one-time grant of starter credits
+                  {summaryLoaded ? (
+                    <>
+                      , and <span className="font-semibold text-[var(--fg)]">{formatInt(summary!.balances.trialRemaining)}</span> are left
+                    </>
+                  ) : null}
+                  . Pro includes 300 credits a month, about 60 standard AI compares.
+                </>
+              ) : (
+                "Includes 300 credits a month, about 60 standard AI compares. Credits reset on your renewal date."
+              )}
             </div>
             <button
               type="button"

@@ -16,8 +16,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { resolveActor } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { UserModel } from "@/lib/models/User";
-import { SubscriptionModel } from "@/lib/models/Subscription";
 import { CreditPurchaseModel } from "@/lib/models/CreditPurchase";
+import { ensureWorkspaceStripeCustomer } from "@/lib/billing/workspaceCustomer";
 import { CREDIT_PACK_CURRENCY, PURCHASED_CREDITS_EXPIRY_MONTHS, findCreditPack } from "@/lib/credits/packs";
 
 export const runtime = "nodejs";
@@ -52,22 +52,7 @@ export async function POST(request: Request) {
 
       // Same Stripe customer as the workspace's subscription, so every payment sits under one
       // customer in Stripe and the portal shows them together.
-      const sub = (await SubscriptionModel.findOne({ orgId, isDeleted: { $ne: true } }).select({ stripeCustomerId: 1 }).lean()) as {
-        stripeCustomerId?: string | null;
-      } | null;
-      let customerId = typeof sub?.stripeCustomerId === "string" ? sub.stripeCustomerId.trim() : "";
-      if (!customerId) {
-        const customer = await stripe.customers.create({
-          email: (user.email ?? "").trim() || undefined,
-          metadata: { userId: String(userId), orgId: String(orgId) },
-        });
-        customerId = customer.id;
-        await SubscriptionModel.updateOne(
-          { orgId },
-          { $setOnInsert: { orgId, isDeleted: false }, $set: { stripeCustomerId: customerId } },
-          { upsert: true },
-        );
-      }
+      const { customerId, workspaceName } = await ensureWorkspaceStripeCustomer({ stripe, orgId, userId, email: user.email });
 
       const appUrl = appUrlFromRequest(request);
       // `priceCents` records what this Checkout charges, so a price change deployed while someone is
@@ -92,7 +77,7 @@ export async function POST(request: Request) {
               unit_amount: pack.priceCents,
               product_data: {
                 name: `${pack.credits} AI credits`,
-                description: `LinkDrop AI credits for this workspace. Unused credits expire ${PURCHASED_CREDITS_EXPIRY_MONTHS} months after purchase.`,
+                description: `LinkDrop AI credits for ${workspaceName}. Unused credits expire ${PURCHASED_CREDITS_EXPIRY_MONTHS} months after purchase.`,
               },
             },
           },

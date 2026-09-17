@@ -31,6 +31,7 @@ import { SubscriptionModel } from "@/lib/models/Subscription";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
 import { isBillableSubscription } from "@/lib/billing/subscriptionState";
+import { ensureWorkspaceStripeCustomer } from "@/lib/billing/workspaceCustomer";
 
 export const runtime = "nodejs";
 
@@ -122,28 +123,12 @@ export async function POST(request: Request) {
         );
       }
 
-      let customerId =
-        typeof (existingSub as any)?.stripeCustomerId === "string"
-          ? String((existingSub as any).stripeCustomerId).trim()
-          : "";
-      if (!customerId) {
-        const email = typeof (user as any)?.email === "string" ? String((user as any).email).trim() : "";
-        const customer = await stripe.customers.create({
-          email: email || undefined,
-          metadata: { userId: String(userId), orgId: String(orgId) },
-        });
-        customerId = customer.id;
-
-        // Upsert the org subscription pointer row.
-        await SubscriptionModel.updateOne(
-          { orgId },
-          {
-            $setOnInsert: { orgId, isDeleted: false },
-            $set: { stripeCustomerId: customerId },
-          },
-          { upsert: true },
-        );
-      }
+      const { customerId, workspaceName } = await ensureWorkspaceStripeCustomer({
+        stripe,
+        orgId,
+        userId,
+        email: typeof (user as any)?.email === "string" ? String((user as any).email) : null,
+      });
 
       const { successUrl, cancelUrl } = checkoutRedirects(request);
       const lineItems =
@@ -163,6 +148,16 @@ export async function POST(request: Request) {
         // Use orgId here so Checkout completion can be mapped even if metadata is missing.
         client_reference_id: String(orgId),
         allow_promotion_codes: plan === "pro",
+        // Checkout otherwise shows only the product, and a second workspace's upgrade looks the same
+        // as the first's. Say which workspace this subscription is for.
+        custom_text: {
+          submit: {
+            message:
+              plan === "pro"
+                ? `This subscribes ${workspaceName} to Pro. Your other workspaces keep their own plans.`
+                : `This turns on pay-as-you-go credits for ${workspaceName} only.`,
+          },
+        },
         // Include userId, orgId AND kind so webhooks can update the correct workspace as the
         // right kind even before the subscription's own items are inspected.
         metadata: { userId: String(userId), orgId: String(orgId), kind: plan },

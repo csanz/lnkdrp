@@ -321,7 +321,7 @@ function WorkspacePanel({
     ? workspace.periodEnd
       ? `Every month · ${workspace.cancelAtPeriodEnd ? "ends" : "renews"} ${formatShortDate(workspace.periodEnd)}`
       : "Every month"
-    : "One time, when the account was created";
+    : "One time, when the workspace was created";
 
   return (
     <section
