@@ -14,13 +14,23 @@
  * If the import fails the empty draft doc is deleted again so a failed call leaves nothing behind;
  * failures after the file is stored keep the doc and report its ids in `details`.
  */
+import fs from "node:fs/promises";
+import path from "node:path";
+
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
+import {
+  UPLOAD_BASE64_SCHEMA_MAX_CHARS,
+  UPLOAD_MAX_BASE64_CHARS,
+  UPLOAD_MAX_BYTES,
+  UPLOAD_MAX_LABEL,
+} from "../../../src/lib/limits/uploads";
 import type { PlanWarning } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
+import { looksLikePdf, optimizePdf, type OptimizeReport } from "../optimize";
 import { waitForDocStatus } from "../realtime";
 import { readAiOutcome } from "./aiWarnings";
 import { SAFETY_TAIL } from "./shared";
@@ -29,49 +39,172 @@ const PROCESS_NOT_READY_RETRIES = 5;
 const PROCESS_NOT_READY_DELAY_MS = 1000;
 
 /**
- * Decoded-size ceiling for `fileBase64` — mt_bJwX4CtmhU. Small next to the 250MB Blob limit on
- * purpose: this travels as a JSON tool-call argument to the MCP server, then as a JSON request
- * body to the Next app, which is a Vercel Function and hard-caps a request body at 4.5MB
- * regardless of content type. Base64 alone costs ~4/3 of that before the JSON envelope is
- * counted, so 3MB decoded is comfortable margin, not a product choice to keep files small. A
- * file over this still needs sourceUrl.
+ * Why a local absolute path is refused when the server is not local, and what to do instead.
+ *
+ * `filePath` is read by the MCP **server** process. When that process runs on the caller's own
+ * machine (the usual stdio / localhost setup) "the file at this path" means the same file to both
+ * sides. When it runs somewhere else — a hosted mcp.lnkdrp.com — the same string either names
+ * nothing, or, worse, names a file belonging to that host. Neither is what the caller meant, so
+ * the input is refused outright rather than guessed at.
  */
-export const MAX_INLINE_PDF_BYTES = 3 * 1024 * 1024;
-/** `MAX_INLINE_PDF_BYTES` as base64 text length, for a fast local reject before any network call. */
-export const MAX_INLINE_PDF_BASE64_CHARS = Math.ceil(MAX_INLINE_PDF_BYTES / 3) * 4 + 4;
-/**
- * Zod's own `fileBase64` bound — deliberately looser than `MAX_INLINE_PDF_BASE64_CHARS`, and only a
- * backstop against a wildly oversized string, not the real size gate. A schema violation surfaces
- * as a raw MCP protocol error ("-32602: Input validation error"), not a `ToolError`, so a value near
- * the real ceiling (the case a caller will actually hit) must reach `resolvePdfSource` and get the
- * friendly `too_large` message instead of tripping this first. Measured live: setting this equal to
- * `MAX_INLINE_PDF_BASE64_CHARS` made every over-the-real-limit call fail with the terse protocol
- * error instead.
- */
-export const FILE_BASE64_SCHEMA_MAX_CHARS = MAX_INLINE_PDF_BASE64_CHARS * 3;
+export const LOCAL_FILE_REFUSED_MESSAGE =
+  "filePath is read from disk by the MCP server itself, and this server is not running on your machine " +
+  "(its lnkdrp API URL is not localhost). A path from your computer would mean nothing here, so it is refused " +
+  "rather than read. Use sourceUrl with an https link to the PDF, or fileBase64 for a small file. " +
+  "If the server really is local, set LNKDRP_ALLOW_LOCAL_FILES=1 in its environment.";
+
+/** True for an API URL that points at this same machine, which is how a local MCP server is spotted. */
+export function isLocalApiUrl(apiUrl: string): boolean {
+  let host: string;
+  try {
+    host = new URL(apiUrl).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host.endsWith(".localhost")) return true;
+  if (host === "::1" || host === "0.0.0.0") return true;
+  return /^127\./.test(host);
+}
 
 /**
- * Exactly one of `sourceUrl` / `fileBase64` must be given. Validates and normalizes whichever one
- * is present; throws `ToolError("validation", ...)` otherwise, before any upload row is created.
+ * Whether `filePath` may be used at all.
+ *
+ * Allowed when the configured lnkdrp API is on this machine (so the server is local too), or when
+ * the operator has said so explicitly with `LNKDRP_ALLOW_LOCAL_FILES=1` — the escape hatch for a
+ * local server pointed at a remote API, which is a real dev setup and cannot be detected any other
+ * way.
+ */
+export function isLocalFileAccessAllowed(input: { apiUrl: string; env?: NodeJS.ProcessEnv }): boolean {
+  const env = input.env ?? process.env;
+  const flag = (env.LNKDRP_ALLOW_LOCAL_FILES || "").trim().toLowerCase();
+  if (flag === "1" || flag === "true" || flag === "yes") return true;
+  return isLocalApiUrl(input.apiUrl);
+}
+
+/** Where the PDF's bytes are coming from, once the inputs have been checked against each other. */
+export type PdfSource =
+  | { kind: "url"; url: string }
+  | { kind: "bytes"; base64: string; fileName: string }
+  | { kind: "file"; filePath: string; fileName: string };
+
+/** The two sources whose bytes this process holds, and therefore can optimize before sending. */
+export type InlinePdfSource = Extract<PdfSource, { kind: "bytes" } | { kind: "file" }>;
+
+/**
+ * Exactly one of `sourceUrl` / `fileBase64` / `filePath` must be given. Validates and normalizes
+ * whichever one is present; throws `ToolError("validation", ...)` otherwise, before any upload row
+ * is created. Pure: `filePath` is checked for shape and permission here, but not touched on disk
+ * until `readLocalPdf`.
  */
 export function resolvePdfSource(
-  args: { sourceUrl?: string | undefined; fileBase64?: string | undefined; fileName?: string | undefined },
+  args: {
+    sourceUrl?: string | undefined;
+    fileBase64?: string | undefined;
+    filePath?: string | undefined;
+    fileName?: string | undefined;
+  },
   apiUrl: string,
-): { kind: "url"; url: string } | { kind: "bytes"; base64: string; fileName: string } {
+  env: NodeJS.ProcessEnv = process.env,
+): PdfSource {
   const hasUrl = typeof args.sourceUrl === "string" && args.sourceUrl.length > 0;
   const hasBytes = typeof args.fileBase64 === "string" && args.fileBase64.length > 0;
-  if (hasUrl === hasBytes) {
-    throw new ToolError("validation", "Pass exactly one of sourceUrl or fileBase64.");
+  const hasFile = typeof args.filePath === "string" && args.filePath.trim().length > 0;
+  if ([hasUrl, hasBytes, hasFile].filter(Boolean).length !== 1) {
+    throw new ToolError("validation", "Pass exactly one of sourceUrl, fileBase64 or filePath.");
   }
+
   if (hasUrl) return { kind: "url", url: validateSourceUrl(args.sourceUrl as string, apiUrl) };
+
+  if (hasFile) {
+    if (!isLocalFileAccessAllowed({ apiUrl, env })) throw new ToolError("validation", LOCAL_FILE_REFUSED_MESSAGE);
+    const filePath = (args.filePath as string).trim();
+    if (!path.isAbsolute(filePath)) {
+      throw new ToolError(
+        "validation",
+        "filePath must be an absolute path (it is resolved by the MCP server, which has its own working directory). " +
+          "Expand ~ yourself: /Users/you/Downloads/deck.pdf, not ~/Downloads/deck.pdf.",
+      );
+    }
+    const fileName = (args.fileName ?? "").trim() || path.basename(filePath) || "document.pdf";
+    return { kind: "file", filePath, fileName };
+  }
+
   const base64 = (args.fileBase64 as string).trim();
-  if (base64.length > MAX_INLINE_PDF_BASE64_CHARS) {
+  if (base64.length > UPLOAD_MAX_BASE64_CHARS) {
     throw new ToolError(
       "too_large",
-      `fileBase64 decodes to more than ${Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024))}MB. Use sourceUrl for a file this size.`,
+      `fileBase64 decodes to more than ${UPLOAD_MAX_LABEL}. Use sourceUrl for a file this size.`,
     );
   }
   return { kind: "bytes", base64, fileName: (args.fileName ?? "").trim() || "document.pdf" };
+}
+
+/**
+ * Read and vet a local PDF: it must be a regular file this process can read, non-empty, no larger
+ * than `UPLOAD_MAX_BYTES`, and a PDF by its `%PDF-` byte signature — the name is never trusted.
+ */
+export async function readLocalPdf(filePath: string): Promise<Buffer> {
+  let stat: Awaited<ReturnType<typeof fs.stat>>;
+  try {
+    stat = await fs.stat(filePath);
+  } catch {
+    throw new ToolError("source_not_found", `The MCP server found no file at ${filePath}.`);
+  }
+  if (!stat.isFile()) {
+    throw new ToolError("validation", `${filePath} is not a regular file (a directory, device or socket cannot be uploaded).`);
+  }
+  if (stat.size <= 0) throw new ToolError("validation", `${filePath} is empty.`);
+  if (stat.size > UPLOAD_MAX_BYTES) {
+    throw new ToolError(
+      "too_large",
+      `${filePath} is ${Math.round(stat.size / (1024 * 1024))}MB, over the ${UPLOAD_MAX_LABEL} limit. Use sourceUrl for a file this size.`,
+    );
+  }
+  let bytes: Buffer;
+  try {
+    bytes = await fs.readFile(filePath);
+  } catch (err) {
+    throw new ToolError("validation", `The MCP server could not read ${filePath}: ${err instanceof Error ? err.message : "unknown error"}.`);
+  }
+  if (!looksLikePdf(bytes)) {
+    throw new ToolError("unsupported_content_type", `${filePath} is not a PDF (its bytes do not start with "%PDF-"). lnkdrp shares PDFs only.`);
+  }
+  return bytes;
+}
+
+/** Bytes ready to POST to `import-bytes`, plus what optimization did on the way. */
+export type InlineUpload = {
+  base64: string;
+  fileName: string;
+  /** Set when a smaller file is being sent; `null` when the original is. */
+  optimized: OptimizeReport | null;
+  /** Always set when `optimized` is null: why the original is going as-is. */
+  optimizeNote: string | null;
+};
+
+/**
+ * Turn a local file or an inline base64 string into the payload actually sent, shrinking it first
+ * when that is safe (see `../optimize`). Optimization never fails the call: on any problem the
+ * original bytes go and `optimizeNote` says why.
+ */
+export async function prepareInlineUpload(source: InlinePdfSource, opts: { optimize: boolean }): Promise<InlineUpload> {
+  let bytes: Buffer;
+  if (source.kind === "file") {
+    bytes = await readLocalPdf(source.filePath);
+  } else {
+    bytes = Buffer.from(source.base64, "base64");
+    if (!looksLikePdf(bytes)) {
+      throw new ToolError("unsupported_content_type", 'fileBase64 did not decode to a PDF (the bytes do not start with "%PDF-").');
+    }
+  }
+
+  const outcome = await optimizePdf(bytes, { requested: opts.optimize });
+  if (outcome.bytes.byteLength > UPLOAD_MAX_BYTES) {
+    throw new ToolError("too_large", `The PDF is larger than ${UPLOAD_MAX_LABEL}. Use sourceUrl for a file this size.`);
+  }
+  // Nothing changed and the caller already handed us the encoded form: send exactly that.
+  const base64 = outcome.optimized === null && source.kind === "bytes" ? source.base64 : outcome.bytes.toString("base64");
+  return { base64, fileName: source.fileName, optimized: outcome.optimized, optimizeNote: outcome.note };
 }
 
 export const sharePdfInputShape = {
@@ -87,21 +220,47 @@ export const sharePdfInputShape = {
     .max(2048)
     .optional()
     .describe(
-      "Public https URL of the PDF. Google Drive links to a PDF file work when shared with anyone who has the link, as do " +
+      `Public https URL of the PDF, up to ${UPLOAD_MAX_LABEL}. Google Drive links to a PDF file work when shared with anyone who has the link, as do ` +
         "lnkdrp /s/ links. A Google Docs/Sheets/Slides editor link or a OneDrive/SharePoint link is refused: those serve a " +
-        "web page, not a file - download the PDF and pass it as fileBase64 instead. Exactly one of sourceUrl / fileBase64 is required.",
+        "web page, not a file - download the PDF and pass it as filePath instead. " +
+        "Exactly one of sourceUrl / fileBase64 / filePath is required.",
     ),
   fileBase64: z
     .string()
     .min(1)
-    .max(FILE_BASE64_SCHEMA_MAX_CHARS)
+    .max(UPLOAD_BASE64_SCHEMA_MAX_CHARS)
     .optional()
     .describe(
       `The PDF's bytes, base64-encoded, for a file with no public URL (locally generated, a private attachment). ` +
-        `Decoded size up to ${Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024))}MB; use sourceUrl instead for anything larger. ` +
-        "Exactly one of sourceUrl / fileBase64 is required.",
+        `Decoded size up to ${UPLOAD_MAX_LABEL}. Prefer filePath when the file is already on this machine: emitting a ` +
+        "multi-megabyte base64 string as a tool argument is slow and easy to garble. " +
+        "Exactly one of sourceUrl / fileBase64 / filePath is required.",
     ),
-  fileName: z.string().max(200).optional().describe("File name to record, only used with fileBase64 (default: document.pdf)."),
+  filePath: z
+    .string()
+    .min(1)
+    .max(4096)
+    .optional()
+    .describe(
+      "Absolute path to a PDF, read from disk BY THE MCP SERVER - so this only works when the server runs on the same " +
+        "machine as the file (a local stdio/localhost server; otherwise the call is refused with a validation error " +
+        "telling you to use sourceUrl). Expand ~ yourself: /Users/you/Downloads/deck.pdf. This is the right way to " +
+        `share a file the human has locally: no base64 to emit, and up to ${UPLOAD_MAX_LABEL}. ` +
+        "Exactly one of sourceUrl / fileBase64 / filePath is required.",
+    ),
+  optimize: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Shrink the PDF before uploading by downsampling its images (default true; needs Ghostscript on the MCP server). " +
+        "Skipped for files already under 1MB. The original is kept whenever the result is not smaller, not a valid PDF, " +
+        "or has a different page count, so this can never drop a page. The result's `optimized` field says what happened.",
+    ),
+  fileName: z
+    .string()
+    .max(200)
+    .optional()
+    .describe("File name to record, used with fileBase64 or to override filePath's own basename (default: document.pdf)."),
   allowDownload: z.boolean().default(false).describe("Let viewers download the PDF (default false)."),
   password: z
     .string()
@@ -143,6 +302,14 @@ export type SharePdfResult = {
   planWarning?: PlanWarning;
   /** Present when `waitForReady` gave up before a terminal status; poll `lnkdrp_get_share`. */
   timedOut?: true;
+  /**
+   * How much the PDF shrank before upload, on the `fileBase64` / `filePath` paths only. `null`
+   * means the original bytes were sent, and `optimizeNote` says why. Absent for `sourceUrl`, where
+   * the server fetches the file itself and this process never holds it.
+   */
+  optimized?: OptimizeReport | null;
+  /** Why the original was sent unchanged (no Ghostscript, already small, `optimize: false`, …). */
+  optimizeNote?: string;
   /** Skipped or failed AI steps (the link is still valid), e.g. "AI summary skipped: out of AI credits (needs 1). …". */
   warnings: string[];
   /** Workspace credits left after processing, when the snapshot was readable. */
@@ -170,15 +337,17 @@ function unsupportedSourceUrlReason(url: URL): string | null {
   if (isGoogleDocsHost && /^\/(document|spreadsheets|presentation|forms)\/d\//.test(path) && !path.includes("/export")) {
     return (
       "That is a Google Docs, Sheets or Slides editor link. It serves a web page, not a PDF, and a private one serves a " +
-      "sign-in page. Open it and choose File > Download > PDF Document, then pass the downloaded file as fileBase64 " +
-      "(up to 3MB). A Google Drive link to a PDF file does work, as long as it is shared with anyone who has the link."
+      `sign-in page. Open it and choose File > Download > PDF Document, then pass the downloaded file as filePath (its ` +
+      `absolute path, read by a local MCP server) or fileBase64 - up to ${UPLOAD_MAX_LABEL} either way. A Google Drive ` +
+      "link to a PDF file does work, as long as it is shared with anyone who has the link."
     );
   }
 
   if (host === "onedrive.live.com" || host === "1drv.ms" || host === "sharepoint.com" || host.endsWith(".sharepoint.com")) {
     return (
       "OneDrive and SharePoint links are not supported: they serve a viewer page behind a Microsoft sign-in, never the " +
-      "file itself. Download the PDF to your computer, then pass it as fileBase64 (up to 3MB)."
+      `file itself. Download the PDF to your computer, then pass its absolute path as filePath (or its bytes as ` +
+      `fileBase64) - up to ${UPLOAD_MAX_LABEL}.`
     );
   }
 
@@ -223,10 +392,14 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
     {
       title: "Share a PDF",
       description:
-        "Create a lnkdrp share link for a PDF. Pass exactly one of sourceUrl (an https URL the server fetches) or " +
-        "fileBase64 (the PDF's bytes, for a file with no public URL yet - locally generated, a private attachment; " +
-        "decoded size up to " + Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024)) + "MB, use sourceUrl for anything larger). " +
-        "Creates the document, imports the file, starts " +
+        "Create a lnkdrp share link for a PDF. Pass exactly one of sourceUrl (an https URL the server fetches), " +
+        "filePath (an absolute path READ BY THE MCP SERVER ITSELF, so only for a server running on the same machine " +
+        "as the file - the best way to share something the human has locally, with no base64 to emit) or fileBase64 " +
+        `(the PDF's bytes inline, for a file with no public URL and no local path). Up to ${UPLOAD_MAX_LABEL} either way; ` +
+        "note that a hosted deployment may cap request bodies far below that, so a large inline upload can still be " +
+        "refused by the platform - sourceUrl never has that problem. On the filePath and fileBase64 paths the PDF is " +
+        "shrunk first when that helps and is safe (optimize: false turns it off); the result's optimized field reports " +
+        "what happened. Creates the document, imports the file, starts " +
         "processing (preview, text, summary) and returns { docId, shareId, shareUrl, status, uploadId, warnings, creditsRemaining }. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. Optional: allowDownload, password. " +
         "Each upload's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them from the document). " +
@@ -249,6 +422,13 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
       const progressToken = extra._meta?.progressToken;
 
       const run = async (): Promise<SharePdfResult> => {
+        // Read (and shrink) local bytes before anything exists server-side: a missing file or a
+        // non-PDF then fails with nothing created, exactly like a bad sourceUrl.
+        const inline = source.kind === "url" ? null : await prepareInlineUpload(source, { optimize: args.optimize !== false });
+        const optimizeFields = inline
+          ? { optimized: inline.optimized, ...(inline.optimizeNote ? { optimizeNote: inline.optimizeNote } : {}) }
+          : {};
+
         const created = await api.createDoc({ title });
         const docId = created.doc.id;
         const shareId = created.doc.shareId;
@@ -261,14 +441,14 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         try {
           const upload = await api.createUpload({
             docId,
-            originalFileName: source.kind === "url" ? fileNameFromUrl(source.url) : source.fileName,
+            originalFileName: source.kind === "url" ? fileNameFromUrl(source.url) : (inline as InlineUpload).fileName,
             summary: args.summary,
             keyPoints: args.keyPoints,
           });
           uploadId = upload.id;
           version = upload.version ?? 1;
           if (source.kind === "url") await api.importUrl(uploadId, source.url);
-          else await api.importBytes(uploadId, source.base64, source.fileName);
+          else await api.importBytes(uploadId, (inline as InlineUpload).base64, (inline as InlineUpload).fileName);
         } catch (err) {
           await api.deleteDoc(docId).catch(() => undefined);
           throw err;
@@ -332,6 +512,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
             title,
             ...(created.planWarning ? { planWarning: created.planWarning } : {}),
             ...(timedOut ? { timedOut: true as const } : {}),
+            ...optimizeFields,
             warnings: outcome.warnings,
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };

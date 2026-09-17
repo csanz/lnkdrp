@@ -28,6 +28,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import express, { type Request, type Response } from "express";
 
+import { UPLOAD_MAX_BASE64_CHARS } from "../../src/lib/limits/uploads";
 import { agentHeaderFrom } from "./agent";
 import { ApiClient, type Whoami } from "./api";
 import { DEFAULT_AGENT_HEADER, MCP_SERVER_VERSION, SESSION_IDLE_MS, SESSION_SWEEP_MS, loadConfig, log, type Config } from "./config";
@@ -219,14 +220,14 @@ async function handleMcp(req: Request, res: Response): Promise<void> {
 function createApp() {
   const app = express();
   app.disable("x-powered-by");
-  // "6mb": headroom above lnkdrp_share_pdf/replace_pdf's own 3MB-decoded fileBase64 ceiling
-  // (mt_bJwX4CtmhU). Base64 alone costs ~4/3 of 3MB (~4MB), and the tool-call JSON adds its own
-  // envelope on top of that — a request right at the tools' own documented limit must clear this
-  // layer too, or a legitimate call gets Express's raw "request entity too large" HTML instead of
-  // the tool's clean `too_large` error. Measured live: a 4MB-decoded payload (over the 3MB ceiling
-  // on purpose, to test the too-large path) tripped the previous "4mb" limit here before the
-  // tool's own validation ran at all.
-  app.use(express.json({ limit: "6mb" }));
+  // Derived from the tools' own fileBase64 ceiling rather than written down again: base64 costs
+  // ~4/3 of the decoded size, and the tool-call JSON adds its own envelope on top. A request right
+  // at the documented limit must clear this layer too, or a legitimate call gets Express's raw
+  // "request entity too large" HTML instead of the tool's clean `too_large` error. Measured live
+  // at the old numbers: a payload just over the tools' ceiling tripped Express first and the
+  // tool's own validation never ran. Note this only bounds `fileBase64`; `filePath` sends a path,
+  // so a large local file never travels through here at all.
+  app.use(express.json({ limit: UPLOAD_MAX_BASE64_CHARS + 2 * 1024 * 1024 }));
 
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, sessions: sessions.size, version: MCP_SERVER_VERSION, apiUrl: config.apiUrl });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_INLINE_PDF_BYTES, resolvePdfSource } from "../../mcp/src/tools/sharePdf";
+import { isLocalApiUrl, isLocalFileAccessAllowed, resolvePdfSource } from "../../mcp/src/tools/sharePdf";
+import { UPLOAD_MAX_BYTES } from "../../src/lib/limits/uploads";
 import { ToolError } from "../../mcp/src/errors";
 
 /**
@@ -49,15 +50,15 @@ describe("resolvePdfSource", () => {
   });
 
   it("fileBase64 right at the decoded-size ceiling is accepted", () => {
-    // Base64 for exactly MAX_INLINE_PDF_BYTES of zero bytes: length is (n/3)*4 for n divisible by 3.
-    const n = MAX_INLINE_PDF_BYTES - (MAX_INLINE_PDF_BYTES % 3); // nearest multiple of 3, at or under the ceiling
+    // Base64 for exactly UPLOAD_MAX_BYTES of zero bytes: length is (n/3)*4 for n divisible by 3.
+    const n = UPLOAD_MAX_BYTES - (UPLOAD_MAX_BYTES % 3); // nearest multiple of 3, at or under the ceiling
     const base64 = "A".repeat((n / 3) * 4);
     const r = resolvePdfSource({ fileBase64: base64 }, API_URL);
     expect(r.kind).toBe("bytes");
   });
 
   it("fileBase64 over the decoded-size ceiling is a clean too_large ToolError, not a thrown protocol error", () => {
-    const overN = MAX_INLINE_PDF_BYTES + 3_000_000; // well over, unambiguous
+    const overN = UPLOAD_MAX_BYTES + 3_000; // over the ceiling, unambiguously
     const base64 = "A".repeat(Math.ceil(overN / 3) * 4);
     const err = expectToolError(() => resolvePdfSource({ fileBase64: base64 }, API_URL));
     expect(err.code).toBe("too_large");
@@ -98,5 +99,68 @@ describe("unsupported sources (mt: Google/OneDrive links that can never be a PDF
 
   it("names the way out, so the caller is not left guessing", () => {
     expect(() => resolvePdfSource({ sourceUrl: "https://docs.google.com/presentation/d/x/edit" }, API)).toThrow(/fileBase64/);
+  });
+});
+
+describe("filePath — the local-file gate", () => {
+  const LOCAL = "http://localhost:3001";
+  const REMOTE = "https://lnkdrp.com";
+  const env = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({ NODE_ENV: "test", ...extra });
+  const noFlag = env();
+  const withFlag = env({ LNKDRP_ALLOW_LOCAL_FILES: "1" });
+
+  it("recognises the loopback API URLs a local server uses", () => {
+    expect(isLocalApiUrl("http://localhost:3001")).toBe(true);
+    expect(isLocalApiUrl("http://127.0.0.1:3001")).toBe(true);
+    expect(isLocalApiUrl("http://127.1.2.3:3001")).toBe(true);
+    expect(isLocalApiUrl("http://app.localhost")).toBe(true);
+    expect(isLocalApiUrl("https://lnkdrp.com")).toBe(false);
+    expect(isLocalApiUrl("https://localhost.evil.com")).toBe(false);
+    expect(isLocalApiUrl("not a url")).toBe(false);
+  });
+
+  it("allows local files for a localhost API, or when the operator sets the flag", () => {
+    expect(isLocalFileAccessAllowed({ apiUrl: LOCAL, env: noFlag })).toBe(true);
+    expect(isLocalFileAccessAllowed({ apiUrl: REMOTE, env: noFlag })).toBe(false);
+    expect(isLocalFileAccessAllowed({ apiUrl: REMOTE, env: withFlag })).toBe(true);
+    expect(isLocalFileAccessAllowed({ apiUrl: REMOTE, env: env({ LNKDRP_ALLOW_LOCAL_FILES: "0" }) })).toBe(false);
+  });
+
+  it("resolves an absolute path against a local server, defaulting the name to its basename", () => {
+    const r = resolvePdfSource({ filePath: "/Users/me/Downloads/USAVX DECK.pdf" }, LOCAL, noFlag);
+    expect(r).toEqual({ kind: "file", filePath: "/Users/me/Downloads/USAVX DECK.pdf", fileName: "USAVX DECK.pdf" });
+  });
+
+  it("lets fileName override the basename", () => {
+    const r = resolvePdfSource({ filePath: "/tmp/x.pdf", fileName: "Deck.pdf" }, LOCAL, noFlag);
+    expect(r).toEqual({ kind: "file", filePath: "/tmp/x.pdf", fileName: "Deck.pdf" });
+  });
+
+  it("refuses a relative path, and says to expand ~ first", () => {
+    const err = expectToolError(() => resolvePdfSource({ filePath: "~/Downloads/deck.pdf" }, LOCAL, noFlag));
+    expect(err.code).toBe("validation");
+    expect(err.message).toContain("absolute");
+  });
+
+  it("refuses filePath entirely against a remote API, pointing at sourceUrl", () => {
+    const err = expectToolError(() => resolvePdfSource({ filePath: "/tmp/x.pdf" }, REMOTE, noFlag));
+    expect(err.code).toBe("validation");
+    expect(err.message).toContain("sourceUrl");
+    expect(err.message).toContain("LNKDRP_ALLOW_LOCAL_FILES");
+  });
+
+  it("accepts the same path once the flag is set", () => {
+    expect(resolvePdfSource({ filePath: "/tmp/x.pdf" }, REMOTE, withFlag)).toEqual({
+      kind: "file",
+      filePath: "/tmp/x.pdf",
+      fileName: "x.pdf",
+    });
+  });
+
+  it("still insists on exactly one source when filePath is combined with another", () => {
+    expect(expectToolError(() => resolvePdfSource({ filePath: "/tmp/x.pdf", fileBase64: "AAAA" }, LOCAL, noFlag)).code).toBe("validation");
+    expect(expectToolError(() => resolvePdfSource({ filePath: "/tmp/x.pdf", sourceUrl: "https://e.com/a.pdf" }, LOCAL, noFlag)).code).toBe(
+      "validation",
+    );
   });
 });

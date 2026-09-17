@@ -26,7 +26,9 @@ import type { ToolContext } from "../context";
 import { handleTool, isToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { waitForDocStatus } from "../realtime";
-import { fileNameFromUrl, FILE_BASE64_SCHEMA_MAX_CHARS, MAX_INLINE_PDF_BYTES, resolvePdfSource } from "./sharePdf";
+import { UPLOAD_BASE64_SCHEMA_MAX_CHARS, UPLOAD_MAX_LABEL } from "../../../src/lib/limits/uploads";
+import type { OptimizeReport } from "../optimize";
+import { fileNameFromUrl, type InlineUpload, prepareInlineUpload, resolvePdfSource } from "./sharePdf";
 import { readAiOutcome } from "./aiWarnings";
 import { docIdSchema, SAFETY_TAIL } from "./shared";
 
@@ -45,17 +47,43 @@ export const replacePdfInputShape = {
     .min(1)
     .max(2048)
     .optional()
-    .describe("Public https URL of the new PDF. Google Drive share links and lnkdrp /s/ links are accepted. Exactly one of sourceUrl / fileBase64 is required."),
+    .describe(
+      `Public https URL of the new PDF, up to ${UPLOAD_MAX_LABEL}. Google Drive share links and lnkdrp /s/ links are accepted. ` +
+        "Exactly one of sourceUrl / fileBase64 / filePath is required.",
+    ),
   fileBase64: z
     .string()
     .min(1)
-    .max(FILE_BASE64_SCHEMA_MAX_CHARS)
+    .max(UPLOAD_BASE64_SCHEMA_MAX_CHARS)
     .optional()
     .describe(
-      `The new PDF's bytes, base64-encoded, for a file with no public URL. Decoded size up to ${Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024))}MB; ` +
-        "use sourceUrl instead for anything larger. Exactly one of sourceUrl / fileBase64 is required.",
+      `The new PDF's bytes, base64-encoded, for a file with no public URL. Decoded size up to ${UPLOAD_MAX_LABEL}. ` +
+        "Prefer filePath when the file is already on this machine. Exactly one of sourceUrl / fileBase64 / filePath is required.",
     ),
-  fileName: z.string().max(200).optional().describe("File name to record, only used with fileBase64 (default: document.pdf)."),
+  filePath: z
+    .string()
+    .min(1)
+    .max(4096)
+    .optional()
+    .describe(
+      "Absolute path to the new PDF, read from disk BY THE MCP SERVER - so this only works when the server runs on the " +
+        "same machine as the file (otherwise the call is refused with a validation error telling you to use sourceUrl). " +
+        `Expand ~ yourself: /Users/you/Downloads/deck.pdf. Up to ${UPLOAD_MAX_LABEL}. ` +
+        "Exactly one of sourceUrl / fileBase64 / filePath is required.",
+    ),
+  optimize: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Shrink the PDF before uploading by downsampling its images (default true; needs Ghostscript on the MCP server). " +
+        "Skipped under 1MB; the original is kept whenever the result is not smaller, not a valid PDF, or has a different " +
+        "page count, so a page can never be lost. The result's `optimized` field says what happened.",
+    ),
+  fileName: z
+    .string()
+    .max(200)
+    .optional()
+    .describe("File name to record, used with fileBase64 or to override filePath's own basename (default: document.pdf)."),
   title: z.string().max(200).optional().describe("New title for the document (optional; leaves it unchanged if omitted)."),
   waitForReady: z.boolean().default(true).describe("Wait until processing finishes (status ready or failed) before returning."),
   timeoutSeconds: z.number().int().min(5).max(120).default(60).describe("Max seconds to wait for processing (5-120, default 60)."),
@@ -88,6 +116,10 @@ export type ReplacePdfResult = {
   planWarning?: PlanWarning;
   /** Present when `waitForReady` gave up before a terminal status; poll `lnkdrp_get_share`. */
   timedOut?: true;
+  /** How much the new PDF shrank before upload (`fileBase64` / `filePath` only); see `optimizeNote`. */
+  optimized?: OptimizeReport | null;
+  /** Why the original was sent unchanged (no Ghostscript, already small, `optimize: false`, …). */
+  optimizeNote?: string;
   warnings: string[];
   /** Workspace credits left after processing, when the snapshot was readable. */
   creditsRemaining?: number;
@@ -109,9 +141,13 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "history - recipients open the same URL and see the new file. This is how to update a document you have " +
         "already shared, including on a Free workspace at its document cap: replacing does not create a document, " +
         "so it is never blocked by plan_limit the way lnkdrp_share_pdf is. Pass exactly one of sourceUrl (an https URL " +
-        "the server fetches) or fileBase64 (the new PDF's bytes, for a file with no public URL yet; decoded size up to " +
-        Math.floor(MAX_INLINE_PDF_BYTES / (1024 * 1024)) + "MB, use sourceUrl for anything larger). Returns { docId, shareId, shareUrl, status, " +
-        "version, uploadId, warnings, creditsRemaining }. " +
+        "the server fetches), filePath (an absolute path READ BY THE MCP SERVER ITSELF, so only for a server running on " +
+        "the same machine as the file) or fileBase64 (the new PDF's bytes inline). " +
+        `Up to ${UPLOAD_MAX_LABEL} either way, though a hosted deployment may cap request bodies far below that, so a ` +
+        "large inline upload can still be refused by the platform - sourceUrl never has that problem. On the filePath " +
+        "and fileBase64 paths the PDF is shrunk first when that helps and is safe (optimize: false turns it off); the " +
+        "result's optimized field reports what happened. Returns { docId, shareId, shareUrl, status, " +
+        "version, uploadId, optimized, warnings, creditsRemaining }. " +
         "The document's status flips to preparing the moment this call starts, before the new file is even fetched - " +
         "recipients opening a link in that window see 'preparing', same as during the first upload. If import or " +
         "processing then fails, the document is left in that state rather than rolled back to the old file; call " +
@@ -137,6 +173,13 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         // Confirms the document exists (and is this workspace's) before anything is created, so a
         // bad docId fails with `not_found` and no upload row, rather than surfacing whatever
         // `POST /api/uploads`'s own doc lookup happens to say.
+        // Read (and shrink) local bytes first: a missing file or a non-PDF then fails before the
+        // document is flipped to "preparing", leaving the live one untouched.
+        const inline = source.kind === "url" ? null : await prepareInlineUpload(source, { optimize: args.optimize !== false });
+        const optimizeFields = inline
+          ? { optimized: inline.optimized, ...(inline.optimizeNote ? { optimizeNote: inline.optimizeNote } : {}) }
+          : {};
+
         const before = await api.getDoc(args.docId);
         const docId = before.id;
         const shareId = before.shareId;
@@ -149,7 +192,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         // recipients.
         const upload = await api.createUpload({
           docId,
-          originalFileName: source.kind === "url" ? fileNameFromUrl(source.url) : source.fileName,
+          originalFileName: source.kind === "url" ? fileNameFromUrl(source.url) : (inline as InlineUpload).fileName,
           summary: args.summary,
           keyPoints: args.keyPoints,
         });
@@ -164,7 +207,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
 
         try {
           if (source.kind === "url") await api.importUrl(uploadId, source.url);
-          else await api.importBytes(uploadId, source.base64, source.fileName);
+          else await api.importBytes(uploadId, (inline as InlineUpload).base64, (inline as InlineUpload).fileName);
           imported = true;
 
           for (let attempt = 0; ; attempt++) {
@@ -221,6 +264,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             uploadId,
             title: title ?? before.title,
             ...(timedOut ? { timedOut: true as const } : {}),
+            ...optimizeFields,
             warnings: outcome.warnings,
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };
