@@ -7,7 +7,7 @@
  * a document that never finished, the version counter had moved on, and `lnkdrp_delete_doc`
  * refused because the document was "still being processed". That is how a real deck got stuck.
  *
- * Abandoning marks the upload failed and, if it is still the document's current upload, points
+ * Abandoning marks the upload failed (and hidden, returning its version number when it can) and, if it is still the document's current upload, points
  * the document back at its newest completed upload (status `ready`), or at `failed` when it never
  * had one.
  */
@@ -32,7 +32,16 @@ export async function abandonUpload(input: { uploadId: string; userId: string; r
     .lean();
   if (!upload?.docId) return;
 
-  await UploadModel.updateOne({ _id: upload._id, status: "uploading" }, { $set: { status: "failed", error: { message: input.reason } } });
+  // The upload never had a file, so it is not a version anyone can see: hide it from version
+  // history and hand its number back when no later upload has taken one. Otherwise the next good
+  // replace jumped from v2 to v4.
+  await UploadModel.updateOne(
+    { _id: upload._id, status: "uploading" },
+    { $set: { status: "failed", isDeleted: true, error: { message: input.reason } } },
+  );
+  if (typeof upload.version === "number") {
+    await DocModel.updateOne({ _id: upload.docId, versionCounter: upload.version }, { $inc: { versionCounter: -1 } });
+  }
   const previous = await UploadModel.findOne({
     docId: upload.docId,
     _id: { $ne: upload._id },
