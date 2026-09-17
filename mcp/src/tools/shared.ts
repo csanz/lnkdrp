@@ -76,6 +76,8 @@ export type ShareView = {
   version: number | null;
   /** Pages in the current version, so an agent can tell which file is live after a replace. */
   pageCount: number | null;
+  /** Projects this document is in (ids for lnkdrp_get_project); empty when it is in none. */
+  projectIds: string[];
   isArchived: boolean;
 };
 
@@ -125,6 +127,7 @@ export function shareView(api: ApiClient, doc: ApiDoc): ShareView {
     keyPoints: doc.keyPoints.map((p) => untrustedOrNull(p, "document", UNTRUSTED_LIMITS.short)),
     version: doc.version,
     pageCount: doc.pageCount,
+    projectIds: doc.projectIds,
     isArchived: doc.isArchived,
   };
 }

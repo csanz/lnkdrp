@@ -91,6 +91,28 @@ function projectView(api: ApiClient, p: ApiProject, extra: { docCount?: number |
   };
 }
 
+/**
+ * Fill in what only `GET /api/projects` carries. The create, update and docs routes return a project
+ * without dates, and the docs route without a document count when searching, so get_project said
+ * createdDate null (and docCount null with a query) while list_projects had real values, and a
+ * create_project replay reported the docCount from creation time. One list call by name fixes all
+ * three; failures leave the project as it was.
+ */
+async function withListedMeta(api: ApiClient, p: ApiProject): Promise<ApiProject> {
+  if (p.createdDate && p.updatedDate && p.docCount !== null) return p;
+  const listed = await api
+    .listProjects({ q: p.name, limit: 50 })
+    .then((page) => page.projects.find((x) => x.id === p.id) ?? null)
+    .catch(() => null);
+  if (!listed) return p;
+  return {
+    ...p,
+    createdDate: p.createdDate ?? listed.createdDate,
+    updatedDate: listed.updatedDate ?? p.updatedDate,
+    docCount: listed.docCount ?? p.docCount,
+  };
+}
+
 /** Exactly one of projectId / projectSlug. */
 function requireOneProjectRef(ref: ProjectRef): void {
   const has = [ref.projectId, ref.projectSlug].filter((v) => typeof v === "string" && v.length > 0).length;
@@ -198,7 +220,9 @@ export function registerCreateProjectTool(server: McpServer, ctx: ToolContext): 
         fingerprint: fingerprintArgs(args),
       });
       // A new project's public page is on (the model default); the create route just does not echo it.
-      const project: ApiProject = { ...value.project, shareEnabled: value.project.shareEnabled ?? true };
+      const created: ApiProject = { ...value.project, shareEnabled: value.project.shareEnabled ?? true };
+      // A replay describes the project as it is now, not as it was when first created.
+      const project = await withListedMeta(ctx.api, replayed ? { ...created, docCount: null, updatedDate: null } : created);
       return {
         project: projectView(ctx.api, project),
         ...(value.planWarning ? { planWarning: value.planWarning } : {}),
@@ -265,7 +289,10 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
       const res = await loadProject(ctx.api, args, { q: args.query, page: args.page, limit: args.limit });
       return {
         // Without a query the route's total is the project's cached document count.
-        project: projectView(ctx.api, res.project, { docCount: args.query ? res.project.docCount : res.total }),
+        project: projectView(
+          ctx.api,
+          await withListedMeta(ctx.api, args.query ? res.project : { ...res.project, docCount: res.total }),
+        ),
         total: res.total,
         page: res.page,
         limit: res.limit,
@@ -439,7 +466,7 @@ export function registerUpdateProjectTool(server: McpServer, ctx: ToolContext): 
         }
         throw err;
       }
-      return { project: projectView(ctx.api, updated, { docCount: updated.docCount ?? total }) };
+      return { project: projectView(ctx.api, await withListedMeta(ctx.api, { ...updated, docCount: updated.docCount ?? total })) };
     }),
   );
 }
