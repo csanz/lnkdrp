@@ -4,6 +4,7 @@
  * Sends workspace-scoped emails based on `OrgMembership` preferences:
  * - doc update emails (replacement diffs)
  * - request repo ("repo link") notifications (new completed uploads into request repos)
+ * - view notifications (a recipient opened a document; see `viewNotifications.ts`)
  *
  * This is designed to be called from:
  * - a Vercel Cron route (`/api/cron/notification-emails`)
@@ -23,12 +24,26 @@ import {
 } from "@/lib/models/NotificationEmailCursor";
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
 import { debugError } from "@/lib/debug";
+import { resolveConfiguredSiteUrl } from "@/lib/urls";
+import {
+  emptyViewNotificationTotals,
+  normalizeViewEmailMode,
+  runViewNotificationsForOrg,
+  type ViewEmailMode,
+  type ViewNotificationTotals,
+} from "@/lib/notifications/viewNotifications";
 
 type Mode = "off" | "daily" | "immediate";
 
 // Requests (inbound document repositories) are hidden at launch; repo-link-request emails are skipped
 // unless NEXT_PUBLIC_FEATURE_REQUESTS=1. Doc-update emails are unaffected.
 const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
+
+/** Memberships fetched per query while scanning. */
+const MEMBERSHIP_PAGE_SIZE = 1000;
+/** Default and ceiling for `limitMembers` (total memberships per run). */
+const DEFAULT_LIMIT_MEMBERS = 50_000;
+const MAX_LIMIT_MEMBERS = 200_000;
 
 export type SendNotificationEmailsParams = {
   /** When true, don't send; just compute what would be sent. */
@@ -37,11 +52,18 @@ export type SendNotificationEmailsParams = {
   workspaceId?: string | null;
   /** Optional: restrict to a single user (membership.userId). */
   userId?: string | null;
-  /** Max memberships processed per run (safety bound). */
+  /**
+   * Max memberships processed per run (safety bound; default 50,000). Memberships are scanned in
+   * `_id` order in pages, so every member is reached below this bound; above it the run reports
+   * `membersTruncated: true`.
+   */
   limitMembers?: number;
   /** Max events sent per member per category per run. */
   limitEventsPerMember?: number;
-  /** Max source events fetched per org per category per run. */
+  /**
+   * Max source events fetched per org per category per run (doc updates and request uploads). View
+   * emails load their whole window in pages instead, with their own safety cap.
+   */
   limitEventsPerOrg?: number;
   /** Default lookback when a cursor is missing. */
   defaultLookbackDays?: number;
@@ -57,6 +79,8 @@ export type SendNotificationEmailsResult = {
   dryRun: boolean;
   workspacesProcessed: number;
   membersProcessed: number;
+  /** True when the membership scan stopped at `limitMembers`; later members got no email this run. */
+  membersTruncated: boolean;
   /**
    * Total recipient sends that threw. Each failure is logged and the affected
    * user's cursor is NOT advanced, so the events are retried on the next run.
@@ -70,6 +94,12 @@ export type SendNotificationEmailsResult = {
     immediate: { members: number; emails: number; events: number; failed: number };
     daily: { members: number; emails: number; events: number; failed: number; sentTodayUtc: boolean };
   };
+  /**
+   * View notifications (`share_views` cursor). `events` counts new viewers emailed, `daily.returns`
+   * returning readers in digests; `off.members` had their cursor moved to now; `cursorsInitialized`
+   * were seen for the first time (cursor created at now, nothing sent).
+   */
+  views: ViewNotificationTotals;
 };
 
 function utcDayKey(d: Date): string {
@@ -87,8 +117,22 @@ function isValidObjectIdString(id: string | null | undefined): id is string {
   return Boolean(id) && Types.ObjectId.isValid(String(id));
 }
 
-function publicBaseUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL ?? "").trim().replace(/\/+$/, "");
+/** Where email links point when no site URL is configured outside production (`next dev -p 3001`). */
+export const LOCAL_DEV_EMAIL_BASE_URL = "http://localhost:3001";
+
+/**
+ * Absolute base for every link in a notification email, without a trailing slash.
+ *
+ * `NEXT_PUBLIC_SITE_URL`, then `NEXT_PUBLIC_APP_URL`, `NEXTAUTH_URL` and `VERCEL_URL` (the same order
+ * as `resolveConfiguredSiteUrl`); outside production, the local dev server. Empty only in production
+ * with none of them set: a relative link does nothing in a mail client, so the view block refuses to
+ * send in that case (see `runViewNotificationsForOrg`) and the other blocks keep their old relative
+ * links.
+ */
+export function publicBaseUrl(): string {
+  const configured = resolveConfiguredSiteUrl();
+  if (configured) return configured.toString().replace(/\/+$/, "");
+  return process.env.NODE_ENV === "production" ? "" : LOCAL_DEV_EMAIL_BASE_URL;
 }
 
 function buildDocUrl(docId: string): string {
@@ -126,11 +170,16 @@ async function upsertCursor(params: {
   orgId: Types.ObjectId;
   userId: Types.ObjectId;
   key: NotificationEmailCursorKey;
-  lastNotifiedAt: Date | null;
+  /** Each field is set only when given; `returnsNotifiedAt` is used by `share_views` only. */
+  lastNotifiedAt?: Date | null;
+  returnsNotifiedAt?: Date | null;
   lastDigestDay?: string | null;
 }) {
-  const set: Record<string, unknown> = { lastNotifiedAt: params.lastNotifiedAt };
+  const set: Record<string, unknown> = {};
+  if (typeof params.lastNotifiedAt !== "undefined") set.lastNotifiedAt = params.lastNotifiedAt;
+  if (typeof params.returnsNotifiedAt !== "undefined") set.returnsNotifiedAt = params.returnsNotifiedAt;
   if (typeof params.lastDigestDay !== "undefined") set.lastDigestDay = params.lastDigestDay;
+  if (!Object.keys(set).length) return;
   await NotificationEmailCursorModel.updateOne(
     { orgId: params.orgId, userId: params.userId, key: params.key },
     { $set: set, $setOnInsert: { orgId: params.orgId, userId: params.userId, key: params.key } },
@@ -150,11 +199,20 @@ async function trySendEmail(params: {
   to: string;
   subject: string;
   text: string;
+  html?: string;
+  /** Extra mail headers, e.g. RFC 8058 one-click unsubscribe on view emails. */
+  headers?: Record<string, string>;
   context: { orgId: string; userId: string; key: NotificationEmailCursorKey; mode: Mode };
 }): Promise<boolean> {
   if (params.dryRun) return true;
   try {
-    await sendTextEmail({ to: params.to, subject: params.subject, text: params.text });
+    await sendTextEmail({
+      to: params.to,
+      subject: params.subject,
+      text: params.text,
+      ...(params.html ? { html: params.html } : {}),
+      ...(params.headers ? { headers: params.headers } : {}),
+    });
     return true;
   } catch (err) {
     debugError(1, "[notification-emails] send failed", {
@@ -170,7 +228,7 @@ export async function sendNotificationEmails(
 ): Promise<SendNotificationEmailsResult> {
   const now = params.now ?? new Date();
   const dryRun = Boolean(params.dryRun);
-  const limitMembers = Math.min(5_000, asPositiveInt(params.limitMembers) ?? 500);
+  const limitMembers = Math.min(MAX_LIMIT_MEMBERS, asPositiveInt(params.limitMembers) ?? DEFAULT_LIMIT_MEMBERS);
   const limitEventsPerMember = Math.min(200, asPositiveInt(params.limitEventsPerMember) ?? 20);
   const limitEventsPerOrg = Math.min(5_000, asPositiveInt(params.limitEventsPerOrg) ?? 500);
   const defaultLookbackDays = Math.min(90, asPositiveInt(params.defaultLookbackDays) ?? 7);
@@ -183,28 +241,60 @@ export async function sendNotificationEmails(
 
   await connectMongo();
 
+  // Every live membership is scanned, including ones with all three kinds off: a view-emails `off`
+  // member still needs its `share_views` cursor moved to now each run, or turning view emails back
+  // on would email everything since it was turned off. Each block filters by its own mode.
   const membershipFilter: Record<string, unknown> = {
     isDeleted: { $ne: true },
     ...(workspaceId ? { orgId: new Types.ObjectId(workspaceId) } : {}),
     ...(userId ? { userId: new Types.ObjectId(userId) } : {}),
-    $or: [{ docUpdateEmailMode: { $ne: "off" } }, { repoLinkRequestEmailMode: { $ne: "off" } }],
   };
 
-  const memberships = await OrgMembershipModel.find(membershipFilter)
-    .select({ orgId: 1, userId: 1, docUpdateEmailMode: 1, repoLinkRequestEmailMode: 1 })
-    .limit(limitMembers)
-    .lean();
+  // Paged by `_id` (the default index) so every live membership is reached on every run, not an
+  // arbitrary unsorted subset. `limitMembers` is a safety bound; hitting it is reported as
+  // `membersTruncated` and logged rather than silently skipping members.
+  const memberships: unknown[] = [];
+  let membersTruncated = false;
+  let lastMembershipId: unknown = null;
+  for (;;) {
+    const want = Math.min(MEMBERSHIP_PAGE_SIZE, limitMembers + 1 - memberships.length);
+    if (want <= 0) break;
+    const page = (await OrgMembershipModel.find({
+      ...membershipFilter,
+      ...(lastMembershipId ? { _id: { $gt: lastMembershipId } } : {}),
+    })
+      .sort({ _id: 1 })
+      .select({ _id: 1, orgId: 1, userId: 1, docUpdateEmailMode: 1, repoLinkRequestEmailMode: 1, viewEmailMode: 1 })
+      .limit(want)
+      .lean()) as Array<{ _id?: unknown }>;
+    memberships.push(...page);
+    if (page.length < want) break;
+    lastMembershipId = page[page.length - 1]?._id ?? null;
+    if (!lastMembershipId) break;
+  }
+  if (memberships.length > limitMembers) {
+    memberships.length = limitMembers;
+    membersTruncated = true;
+    debugError(1, "[notification-emails] membership scan hit limitMembers; later members were not processed", {
+      limitMembers,
+    });
+  }
 
   // Group memberships by org for efficient source-event queries.
-  const byOrg = new Map<string, Array<{ orgId: string; userId: string; docMode: Mode; repoMode: Mode }>>();
+  const byOrg = new Map<
+    string,
+    Array<{ membershipId: string; orgId: string; userId: string; docMode: Mode; repoMode: Mode; viewMode: ViewEmailMode }>
+  >();
   for (const m of memberships as any[]) {
     const orgIdStr = m?.orgId ? String(m.orgId) : "";
     const userIdStr = m?.userId ? String(m.userId) : "";
+    const membershipIdStr = m?._id ? String(m._id) : "";
     if (!Types.ObjectId.isValid(orgIdStr) || !Types.ObjectId.isValid(userIdStr)) continue;
     const docMode = (m?.docUpdateEmailMode ?? "daily") as Mode;
     const repoMode = (m?.repoLinkRequestEmailMode ?? "daily") as Mode;
+    const viewMode = normalizeViewEmailMode(m?.viewEmailMode);
     const arr = byOrg.get(orgIdStr) ?? [];
-    arr.push({ orgId: orgIdStr, userId: userIdStr, docMode, repoMode });
+    arr.push({ membershipId: membershipIdStr, orgId: orgIdStr, userId: userIdStr, docMode, repoMode, viewMode });
     byOrg.set(orgIdStr, arr);
   }
 
@@ -217,6 +307,7 @@ export async function sendNotificationEmails(
     dryRun,
     workspacesProcessed: 0,
     membersProcessed: 0,
+    membersTruncated,
     sendFailures: 0,
     docUpdate: {
       immediate: { members: 0, emails: 0, events: 0, failed: 0 },
@@ -226,6 +317,7 @@ export async function sendNotificationEmails(
       immediate: { members: 0, emails: 0, events: 0, failed: 0 },
       daily: { members: 0, emails: 0, events: 0, failed: 0, sentTodayUtc: allowDaily },
     },
+    views: emptyViewNotificationTotals(allowDaily),
   };
 
   const defaultLookbackMs = defaultLookbackDays * 24 * 60 * 60 * 1000;
@@ -348,13 +440,16 @@ export async function sendNotificationEmails(
           totals.docUpdate.daily.events += batch.length;
 
           const lastSentAt = new Date(batch[batch.length - 1].createdDate);
-          await upsertCursor({
-            orgId,
-            userId: new Types.ObjectId(m.userId),
-            key: "doc_updates",
-            lastNotifiedAt: lastSentAt,
-            lastDigestDay: todayUtc,
-          });
+          // A dry run computes and counts only; moving the cursor would swallow the real send.
+          if (!dryRun) {
+            await upsertCursor({
+              orgId,
+              userId: new Types.ObjectId(m.userId),
+              key: "doc_updates",
+              lastNotifiedAt: lastSentAt,
+              lastDigestDay: todayUtc,
+            });
+          }
         }
 
         if (sendImmediate) {
@@ -395,12 +490,15 @@ export async function sendNotificationEmails(
           totals.docUpdate.immediate.events += batch.length;
 
           const lastSentAt = new Date(batch[batch.length - 1].createdDate);
-          await upsertCursor({
-            orgId,
-            userId: new Types.ObjectId(m.userId),
-            key: "doc_updates",
-            lastNotifiedAt: lastSentAt,
-          });
+          // A dry run computes and counts only; moving the cursor would swallow the real send.
+          if (!dryRun) {
+            await upsertCursor({
+              orgId,
+              userId: new Types.ObjectId(m.userId),
+              key: "doc_updates",
+              lastNotifiedAt: lastSentAt,
+            });
+          }
         }
       }
     }
@@ -552,13 +650,16 @@ export async function sendNotificationEmails(
           totals.repoLinkRequests.daily.events += batch.length;
 
           const lastSentAt = batch[batch.length - 1].occurredAt;
-          await upsertCursor({
-            orgId,
-            userId: new Types.ObjectId(m.userId),
-            key: "repo_link_requests",
-            lastNotifiedAt: lastSentAt,
-            lastDigestDay: todayUtc,
-          });
+          // A dry run computes and counts only; moving the cursor would swallow the real send.
+          if (!dryRun) {
+            await upsertCursor({
+              orgId,
+              userId: new Types.ObjectId(m.userId),
+              key: "repo_link_requests",
+              lastNotifiedAt: lastSentAt,
+              lastDigestDay: todayUtc,
+            });
+          }
         }
 
         if (sendImmediate) {
@@ -593,13 +694,52 @@ export async function sendNotificationEmails(
           totals.repoLinkRequests.immediate.events += batch.length;
 
           const lastSentAt = batch[batch.length - 1].occurredAt;
-          await upsertCursor({
-            orgId,
-            userId: new Types.ObjectId(m.userId),
-            key: "repo_link_requests",
-            lastNotifiedAt: lastSentAt,
-          });
+          // A dry run computes and counts only; moving the cursor would swallow the real send.
+          if (!dryRun) {
+            await upsertCursor({
+              orgId,
+              userId: new Types.ObjectId(m.userId),
+              key: "repo_link_requests",
+              lastNotifiedAt: lastSentAt,
+            });
+          }
         }
+      }
+    }
+
+    // ---------- VIEWS (source: ShareView.createdDate, ShareVisit.createdDate for returns) ----------
+    const viewMembers = mems.filter((m) => Types.ObjectId.isValid(m.membershipId));
+    if (viewMembers.length) {
+      try {
+        const { sendFailures } = await runViewNotificationsForOrg(
+          {
+            orgId: orgIdStr,
+            members: viewMembers.map((m) => ({ membershipId: m.membershipId, userId: m.userId, mode: m.viewMode })),
+            recipients: userById,
+            now,
+            dryRun,
+            allowDaily,
+            todayUtc,
+            limitEventsPerMember,
+            defaultLookbackDays,
+            appUrl: publicBaseUrl(),
+          },
+          {
+            send: ({ to, subject, text, html, headers, context }) =>
+              trySendEmail({ dryRun, to, subject, text, html, headers, context: { ...context, key: "share_views" } }),
+            upsertCursor: ({ orgId: cursorOrgId, userId: cursorUserId, lastNotifiedAt, returnsNotifiedAt, lastDigestDay }) =>
+              upsertCursor({ orgId: cursorOrgId, userId: cursorUserId, key: "share_views", lastNotifiedAt, returnsNotifiedAt, lastDigestDay }),
+          },
+          totals.views,
+        );
+        totals.sendFailures += sendFailures;
+      } catch (err) {
+        // A failure here must not stop doc-update/request emails for the remaining workspaces.
+        totals.views.errors += 1;
+        debugError(1, "[notification-emails] view notifications failed", {
+          orgId: orgIdStr,
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   }

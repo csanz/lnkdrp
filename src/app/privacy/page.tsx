@@ -16,7 +16,7 @@ import Link from "next/link";
 import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
 
-const LAST_UPDATED = "September 12, 2026";
+const LAST_UPDATED = "September 16, 2026";
 
 /**
  * Render the PrivacyPolicyPage UI.
@@ -100,10 +100,15 @@ export default function PrivacyPolicyPage() {
               <li>Create and manage your account, workspaces, memberships, and settings</li>
               <li>Generate share links and enforce the access controls you set on them</li>
               <li>Meter credits, process payments, and manage subscriptions</li>
-              <li>Send service emails: workspace invitations, document activity notifications and digests you have opted into, and download-request and approval messages</li>
+              <li>Send service emails: workspace invitations; document activity notifications and digests, which are on by default and which you can turn off at any time in your settings (view notifications can also be turned off from the email itself); and download-request and approval messages</li>
               <li>Detect, prevent, and address technical issues, abuse, and security threats, including rate limiting</li>
               <li>Comply with legal obligations and enforce our Terms of Service</li>
             </ul>
+            <p className="mb-4 leading-7">
+              <strong>Notification change, effective September 16, 2026:</strong> document activity emails now include
+              view notifications, which tell workspace members that someone opened a shared document. They are on by
+              default, so this section no longer describes activity emails as ones you have opted into.
+            </p>
             <p className="leading-7">
               We do not use your information for advertising, and we do not sell it.
             </p>
@@ -161,6 +166,9 @@ export default function PrivacyPolicyPage() {
               <li>Your IP address, which we keep for security and abuse prevention. It is not shown to the document owner.</li>
               <li>Your name and email address, <strong>only if you choose to enter them</strong> when the viewer asks you to introduce yourself. You can decline. If you are signed in to LinkDrop, your account identity is used instead.</li>
             </ul>
+            <p className="mb-4 leading-7">
+              The document owner and members of their workspace may be emailed when you open it, and that email can include the details above that are shown to the owner.
+            </p>
             <p className="mb-4 leading-7">
               To tell repeat visits apart we store a random identifier in your browser's local storage. On our side we keep only a hash of it. It is not shared with anyone else and is not linked across different owners' documents. Clearing your browser storage removes it.
             </p>

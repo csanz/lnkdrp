@@ -65,6 +65,13 @@ export default function TermsOfServicePage() {
               <li>Email notifications about document activity, which you can turn off in your settings</li>
             </ul>
             <p className="mb-4 leading-7">
+              View notifications, which tell you that someone opened a document shared from your workspace, are sent to workspace members by default and can be turned off per member from any such email or from settings.
+            </p>
+            <p className="mb-4 leading-7">
+              <strong>Notification change, effective September 16, 2026:</strong> we now email workspace members when
+              someone opens a document shared from their workspace. These emails are on unless a member turns them off.
+            </p>
+            <p className="mb-4 leading-7">
               Programmatic access for AI agents and other software (for example over MCP, an API, or a CLI) is made available as we release it. When it is, the same Terms apply to anything an agent does on your behalf, and you are responsible for the agent's actions under your account.
             </p>
             <p className="leading-7">

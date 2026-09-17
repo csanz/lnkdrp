@@ -13,37 +13,19 @@
  * Notes:
  * - For safe local testing without sending emails, you can also set `EMAIL_TRANSPORT=console`.
  * - Requires Mongo config (`MONGODB_URI`), same as running the app.
+ * - Exits when the run ends: the Mongo connection is closed in `runNotificationEmailsCli`.
  */
+import mongoose from "mongoose";
 import { sendNotificationEmails } from "@/lib/notifications/sendNotificationEmails";
+import { runNotificationEmailsCli } from "@/lib/notifications/sendNotificationEmailsCli";
 
-function argValue(flag: string): string | null {
-  const idx = process.argv.indexOf(flag);
-  if (idx === -1) return null;
-  const v = process.argv[idx + 1];
-  return typeof v === "string" ? v : null;
-}
-
-async function main() {
-  const send = process.argv.includes("--send");
-  const dryRun = !send;
-  const workspaceId = argValue("--workspaceId");
-  const userId = argValue("--userId");
-  const forceDigest = process.argv.includes("--forceDigest");
-
-  const res = await sendNotificationEmails({
-    dryRun,
-    forceDigest,
-    workspaceId,
-    userId,
-  });
-
+void runNotificationEmailsCli(process.argv.slice(2), {
+  send: sendNotificationEmails,
+  disconnect: () => mongoose.disconnect(),
   // eslint-disable-next-line no-console
-  console.log(JSON.stringify(res, null, 2));
-}
-
-main().catch((err) => {
+  log: (line) => console.log(line),
   // eslint-disable-next-line no-console
-  console.error(err);
-  process.exitCode = 1;
+  logError: (err) => console.error(err),
+}).then((code) => {
+  process.exitCode = code;
 });
-
