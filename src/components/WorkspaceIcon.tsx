@@ -29,10 +29,10 @@ export default function WorkspaceIcon({
   if (avatarUrl) {
     return (
       <span className={cn("relative block shrink-0 overflow-hidden bg-black", className)} aria-hidden="true">
-        {/* Absolute percentages against the tile's fixed size: `h-full` inside a grid cell has no definite
-            height, so a large image rendered at its natural height and only its empty middle showed. */}
+        {/* A 6% inset: edge to edge clipped logos at the rounded corners, 12% read as heavy padding.
+            Absolute against the tile's fixed size: `h-full` inside a grid cell had no definite height. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={avatarUrl} alt="" className="absolute left-[4%] top-[4%] h-[92%] w-[92%] object-contain" onError={onError} />
+        <img src={avatarUrl} alt="" className="absolute left-[6%] top-[6%] h-[88%] w-[88%] object-contain" onError={onError} />
       </span>
     );
   }

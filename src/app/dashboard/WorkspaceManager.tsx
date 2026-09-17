@@ -31,6 +31,63 @@ async function readImageDims(file: File): Promise<{ width: number; height: numbe
   }
 }
 
+/**
+ * Crops transparent margins off a logo and squares it, so the mark fills its tile.
+ *
+ * Exported logos often carry a wide transparent border (USAVX's 400×400 PNG drew its mark in the
+ * middle 214px), which CSS cannot remove: the icon then looked heavily padded at every size.
+ * Returns the original file when there is nothing to trim (opaque images such as JPGs included).
+ */
+async function trimTransparentMargins(file: File): Promise<File> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("Failed to read image"));
+      img.src = url;
+    });
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(img, 0, 0);
+    const { data } = ctx.getImageData(0, 0, w, h);
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (data[(y * w + x) * 4 + 3] > 8) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) return file; // fully transparent; let the upload fail or show as-is
+    const bw = maxX - minX + 1;
+    const bh = maxY - minY + 1;
+    // Under 3% margin on every side is not worth re-encoding.
+    if (bw >= w * 0.94 && bh >= h * 0.94) return file;
+    const side = Math.max(bw, bh);
+    const out = document.createElement("canvas");
+    out.width = side;
+    out.height = side;
+    const octx = out.getContext("2d");
+    if (!octx) return file;
+    octx.drawImage(canvas, minX, minY, bw, bh, Math.round((side - bw) / 2), Math.round((side - bh) / 2), bw, bh);
+    const blob = await new Promise<Blob | null>((resolve) => out.toBlob(resolve, "image/png"));
+    if (!blob) return file;
+    const base = file.name.replace(/\.[a-z0-9]+$/i, "") || "icon";
+    return new File([blob], `${base}.png`, { type: "image/png" });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 export default function WorkspaceManager() {
   const { session, stableOrgs, activeOrgId, orgsBusy, orgsError } = useOrgsSnapshot();
   const navLocked = useNavigationLocked();
@@ -313,8 +370,9 @@ export default function WorkspaceManager() {
           throw new Error("Workspace icons must be at least 120×120.");
         }
 
-        const pathname = buildOrgAvatarPathname({ orgId: manageOrgId, fileName: file.name });
-        const blob = await blobUpload(pathname, file, {
+        const trimmed = await trimTransparentMargins(file);
+        const pathname = buildOrgAvatarPathname({ orgId: manageOrgId, fileName: trimmed.name });
+        const blob = await blobUpload(pathname, trimmed, {
           access: "public",
           handleUploadUrl: BLOB_HANDLE_UPLOAD_URL,
         });
@@ -633,7 +691,7 @@ export default function WorkspaceManager() {
                   Use a <span className="font-semibold text-[var(--fg)]">white logo</span> on a transparent background. It sits on a
                   black tile in light and dark themes.
                 </span>
-                <span className="mt-1 text-[11px] text-[var(--muted-2)]">Square, at least 120×120. PNG or WebP (JPG works without transparency), up to 2MB.</span>
+                <span className="mt-1 text-[11px] text-[var(--muted-2)]">Square, at least 120×120. PNG or WebP (JPG works without transparency), up to 2MB. Empty transparent edges are trimmed.</span>
               </label>
             </div>
             {manageAvatarError ? <div className="mt-2 text-[12px] text-red-500">{manageAvatarError}</div> : null}
