@@ -1,8 +1,7 @@
 # Fly.io app for the realtime WebSocket server.
-#   fly launch --no-deploy --copy-config --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile --name lnkdrp-realtime
-#   fly secrets set MONGODB_URI='mongodb+srv://…' REALTIME_SECRET='…' -a lnkdrp-realtime
-#   fly deploy --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile
-#   fly certs add realtime.lnkdrp.com -a lnkdrp-realtime   # then CNAME realtime → lnkdrp-realtime.fly.dev
+# Deploy steps: DEPLOY.md 6.2 (the only copy of the commands, including the egress IP step).
+# The first deploy must pass --ha=false, and the app must stay one machine:
+# a second one doubles the Mongo change streams.
 app = "lnkdrp-realtime"
 primary_region = "iad"
 
