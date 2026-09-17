@@ -95,12 +95,14 @@ export async function GET(request: Request) {
     const qRaw = url.searchParams.get("q") ?? "";
     const idsRaw = url.searchParams.get("ids") ?? "";
     const sidebar = url.searchParams.get("sidebar") === "1";
-    const limit = Math.max(
-      1,
-      Math.min(50, Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : 25),
-    );
+    // `Number(null)` is 0, which clamped to 1: a request without `limit` got one document, not 25.
+    const limitNum = limitRaw ? Number(limitRaw) : NaN;
+    const limit = Math.max(1, Math.min(50, Number.isFinite(limitNum) && limitNum > 0 ? Math.floor(limitNum) : 25));
     const page = Math.max(1, Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1);
     const q = qRaw.trim();
+    // `archived=1` lists archived documents instead of live ones (the Archive views, and the MCP's
+    // lnkdrp_list_docs archived: true). Deleted documents are never listed.
+    const archivedOnly = url.searchParams.get("archived") === "1";
     const idsList = idsRaw
       .split(",")
       .map((s) => s.trim())
@@ -126,7 +128,7 @@ export async function GET(request: Request) {
     // List most recently updated docs.
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
-      isArchived: { $ne: true },
+      isArchived: archivedOnly ? true : { $ne: true },
       ...(allowLegacyByUserId
         ? {
             $or: [
