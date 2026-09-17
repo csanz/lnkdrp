@@ -26,6 +26,7 @@ import DeleteProjectModal from "@/components/modals/DeleteProjectModal";
 import DeleteRequestRepoModal, { type RequestRepoDeleteMode } from "@/components/modals/DeleteRequestRepoModal";
 import CreateLinkRequestRepositoryModal from "@/components/modals/CreateLinkRequestRepositoryModal";
 import DeleteDocModal from "@/components/modals/DeleteDocModal";
+import DocActionsMenu from "@/components/DocActionsMenu";
 import ReviewPerspectiveModal from "@/components/modals/ReviewPerspectiveModal";
 import SidebarDocsModal from "@/components/modals/SidebarDocsModal";
 import SidebarProjectsModal from "@/components/modals/SidebarProjectsModal";
@@ -421,6 +422,8 @@ export default function LeftSidebar({
   const [deleteDocTarget, setDeleteDocTarget] = useState<DocListItem | null>(null);
   const [deleteDocFoldersBusy, setDeleteDocFoldersBusy] = useState(false);
   const [deleteDocFolders, setDeleteDocFolders] = useState<DocFolder[] | null>(null);
+  // Bumped when docs change elsewhere (archive, delete, move) so an open Docs modal refetches its page.
+  const [docsModalRefreshTick, setDocsModalRefreshTick] = useState(0);
   const [docsModal, setDocsModal] = useState<Paged<DocListItem>>({
     items: [],
     total: 0,
@@ -712,6 +715,7 @@ export default function LeftSidebar({
     function onDocsChanged() {
       // Shared-document counts feed the Free-plan meter; refetch it alongside the sidebar cache.
       refreshPlan();
+      setDocsModalRefreshTick((t) => t + 1);
       void refresh();
     }
 
@@ -1015,7 +1019,7 @@ export default function LeftSidebar({
     return () => {
       cancelled = true;
     };
-  }, [showDocsModal, docsModal.page, docsModal.limit, docsQuery]);
+  }, [showDocsModal, docsModal.page, docsModal.limit, docsQuery, docsModalRefreshTick]);
 
   useEffect(() => {
     if (!showProjectsModal) return;
@@ -1577,8 +1581,17 @@ export default function LeftSidebar({
       }
       setDeleteDocOpen(false);
       setDeleteDocTarget(null);
+      // Drop the row right away; the cache refresh below reconciles.
+      setDocs((s) => ({
+        ...s,
+        items: s.items.filter((x) => x.id !== docId),
+        total: s.items.some((x) => x.id === docId) ? Math.max(0, s.total - 1) : s.total,
+      }));
       notifyDocsChanged();
+      notifyProjectsChanged();
       void refreshSidebarCache({ reason: "doc-deleted", force: true });
+      // The open doc page would otherwise sit on a document that no longer exists.
+      if (activeDocId === docId) router.push("/");
     } catch {
       setDeleteDocError("Failed to delete document");
     } finally {
@@ -2360,11 +2373,34 @@ export default function LeftSidebar({
                           ].join(" ")}
                           title={when ? `Updated ${when}` : undefined}
                         >
-                          <div className="flex min-w-0 items-center gap-2 leading-normal text-[var(--fg)]">
+                          <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal text-[var(--fg)]">
                             <DocumentIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                             <span className="block min-w-0 max-w-[220px] flex-1 truncate">{title}</span>
                           </div>
                         </Link>
+                        <DocActionsMenu
+                          docId={d.id}
+                          variant="sidebar"
+                          // The link runs 36px into the nav's right padding (see above); sit 8px inside its edge.
+                          className="absolute -right-7 top-1/2 flex -translate-y-1/2"
+                          projectsLabel="Add to project"
+                          showArchive
+                          onRequestDelete={() => {
+                            setOpenProjectMenuId(null);
+                            setOpenRequestMenuId(null);
+                            setDeleteDocTarget(d);
+                            setDeleteDocError(null);
+                            setDeleteDocOpen(true);
+                          }}
+                          onDocPatched={(patch) => {
+                            if (patch.isArchived !== true) return;
+                            setDocs((s) => ({
+                              ...s,
+                              items: s.items.filter((x) => x.id !== d.id),
+                              total: Math.max(0, s.total - 1),
+                            }));
+                          }}
+                        />
                       </div>
                     </li>
                   );

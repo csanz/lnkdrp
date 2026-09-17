@@ -2,6 +2,7 @@
 
 import { ClipboardDocumentCheckIcon, InboxArrowDownIcon, Square2StackIcon } from "@heroicons/react/24/outline";
 import type { Dispatch, SetStateAction } from "react";
+import DocActionsMenu from "@/components/DocActionsMenu";
 import Modal from "@/components/modals/Modal";
 import { buildPublicShareUrl } from "@/lib/urls";
 
@@ -208,6 +209,23 @@ export default function SidebarDocsModal({
                           )}
                         </button>
                       ) : null}
+                      <DocActionsMenu
+                        docId={d.id}
+                        variant="ghost"
+                        className="flex"
+                        projectsLabel="Move to project"
+                        showArchive
+                        showDelete={false}
+                        onDocPatched={(patch) => {
+                          if (patch.isArchived !== true) return;
+                          // Archived docs leave this list; the docs-changed refetch reconciles the page.
+                          setDocsModal((s) => ({
+                            ...s,
+                            items: s.items.filter((x) => x.id !== d.id),
+                            total: Math.max(0, s.total - 1),
+                          }));
+                        }}
+                      />
                     </div>
                   </div>
                 </div>
