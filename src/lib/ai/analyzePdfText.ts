@@ -7,6 +7,7 @@
  */
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { z } from "zod";
 import { Types } from "mongoose";
 import { completeAiRun, failAiRun, startAiRun } from "@/lib/ai/aiRunRecorder";
@@ -602,6 +603,7 @@ export async function analyzePdfText(input: {
   try {
     const { object, usage } = await generateObject({
       model: openai(cfg.model),
+      providerOptions: OPENAI_PROVIDER_OPTIONS,
       schema: AiDocAnalysisGenerationSchema,
       temperature: typeof cfg.temperature === "number" ? cfg.temperature : 0,
       maxRetries:
@@ -629,6 +631,7 @@ export async function analyzePdfText(input: {
     try {
       const { object, usage } = await generateObject({
         model: openai(cfg.model),
+        providerOptions: OPENAI_PROVIDER_OPTIONS,
         schema: AiDocAnalysisGenerationSchema,
         temperature: 0,
         maxRetries: 0,

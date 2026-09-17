@@ -17,6 +17,7 @@ import path from "node:path";
 
 import { generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { z } from "zod";
 
 import { completeAiRun, failAiRun, startAiRun, type AiRunMeta } from "@/lib/ai/aiRunRecorder";
@@ -201,6 +202,7 @@ export async function runRequestReviewInvestorFocused(input: {
   try {
     const { text } = await generateText({
       model: openai(modelName),
+      providerOptions: OPENAI_PROVIDER_OPTIONS,
       system,
       prompt,
       temperature,

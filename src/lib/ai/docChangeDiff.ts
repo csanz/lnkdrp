@@ -7,6 +7,7 @@
  */
 import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -187,6 +188,7 @@ export async function runDocChangeDiff(input: {
 
   const { object } = await generateObject({
     model: openai("gpt-4o-mini"),
+    providerOptions: OPENAI_PROVIDER_OPTIONS,
     system,
     ...(messages ? { messages } : { prompt }),
     schema: DocChangeDiffSchema,

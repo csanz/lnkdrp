@@ -7,6 +7,7 @@
  */
 import { generateObject, generateText } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { z } from "zod";
 import { Types } from "mongoose";
 import { completeAiRun, failAiRun, startAiRun } from "@/lib/ai/aiRunRecorder";
@@ -264,6 +265,7 @@ export async function reviewDocText(input: {
   try {
     const { object } = await generateObject({
       model: openai(modelName),
+      providerOptions: OPENAI_PROVIDER_OPTIONS,
       system: systemPrompt,
       prompt,
       schema: IntelSchema,
@@ -342,6 +344,7 @@ export async function reviewDocText(input: {
     try {
       const { text } = await generateText({
         model: openai(modelName),
+        providerOptions: OPENAI_PROVIDER_OPTIONS,
         system: systemPrompt,
         prompt,
         temperature,
