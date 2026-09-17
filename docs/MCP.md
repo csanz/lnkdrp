@@ -137,7 +137,20 @@ claude mcp add --transport http lnkdrp https://mcp.lnkdrp.com/mcp \
 }
 ```
 
-Clients keep one server per name, so to change the key remove `lnkdrp` and add it again. To
+Clients keep one server per name, so to change the key remove `lnkdrp` and add it again.
+
+**More than one workspace.** A key belongs to one workspace, so each workspace is its own
+connection with its own name. `/connect` names it for you from the active workspace
+(`mcpServerName` in `clientSetups.ts`): `lnkdrp` for Personal, `lnkdrp-<workspace>` for any other
+(lowercase letters, digits and hyphens, up to 24 characters of the name). Adding a second workspace
+under `lnkdrp` would replace or collide with the first; under its own name both stay connected and
+`lnkdrp_whoami` on each reports which workspace it acts on:
+
+```bash
+claude mcp add --transport http lnkdrp-acme https://mcp.lnkdrp.com/mcp \
+  --header "Authorization: Bearer lnk_key_created_in_acme"
+```
+ To
 verify a key without a client: `curl -H "Authorization: Bearer lnk_…" https://lnkdrp.com/api/agent/whoami`.
 That counts as "verified" on `/connect`; only an MCP client connecting counts as "connected".
 

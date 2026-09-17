@@ -49,41 +49,74 @@ export type ClientSetup = {
   note: string;
   /** Vendor documentation for MCP setup, when it exists. */
   docsUrl?: string;
-  /** Compact install snippet for the tab view (homepage and `/connect`). */
-  lines: (key: string, mcpUrl?: string) => string[];
+  /** Compact install snippet for the tab view (homepage and `/connect`). `name` is the connection name, see `mcpServerName`. */
+  lines: (key: string, mcpUrl?: string, name?: string) => string[];
   /**
    * Client-specific steps for the public guide. The guide adds "Create a key" before these and
    * "Verify" after them, so these cover only adding the server to the client.
    */
-  steps: (key: string, mcpUrl?: string) => SetupStep[];
+  steps: (key: string, mcpUrl?: string, name?: string) => SetupStep[];
   /** For JSON-config clients: the object to paste when `mcpServers` already has other entries. */
-  mergeSnippet?: (key: string, mcpUrl?: string) => string[];
+  mergeSnippet?: (key: string, mcpUrl?: string, name?: string) => string[];
   /**
    * How to change the key or remove lnkdrp. Clients keep one server per name, so re-running the add
    * command with a new key fails ("lnkdrp already exists"); the fix is remove, then add again.
    */
-  remove: { body: string; code?: string[] };
+  remove: (name?: string) => { body: string; code?: string[] };
 };
 
-/** The `lnkdrp` entry inside an `mcpServers` object, at the given base indent. */
-function jsonEntry(key: string, indent: string, mcp: string = MCP_URL): string[] {
+/** The connection name for a personal workspace, and the prefix for every other one. */
+export const DEFAULT_SERVER_NAME = "lnkdrp";
+
+/**
+ * The name to register the MCP server under for a workspace.
+ *
+ * A key belongs to one workspace, and MCP clients keep one server per name, so two workspaces added
+ * under the same name replace or reject each other. Personal keeps `lnkdrp`; any other workspace
+ * gets `lnkdrp-<workspace>` (letters, digits and hyphens, which every supported client accepts), so
+ * the commands on `/connect` can be run for each workspace without touching the others.
+ */
+export function mcpServerName(workspace: { name?: string | null; isPersonal: boolean } | null | undefined): string {
+  if (!workspace || workspace.isPersonal) return DEFAULT_SERVER_NAME;
+  const slug = (workspace.name ?? "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24)
+    .replace(/-+$/g, "");
+  return `${DEFAULT_SERVER_NAME}-${slug || "workspace"}`;
+}
+
+/** One-paragraph explanation of connecting more than one workspace, shared by `/connect` and the guides. */
+export const MULTIPLE_WORKSPACES = {
+  title: "More than one workspace",
+  body:
+    "A key belongs to one workspace, and your client keeps one server per name. To connect another workspace, switch to it in lnkdrp, create a key there, and add it under its own name, such as lnkdrp-acme. Your existing lnkdrp connection keeps working, and your agent sees both; lnkdrp_whoami on each says which workspace it acts on.",
+};
+
+/** The server entry inside an `mcpServers` object, at the given base indent. */
+function jsonEntry(key: string, indent: string, mcp: string = MCP_URL, name: string = DEFAULT_SERVER_NAME): string[] {
   return [
-    `${indent}"lnkdrp": {`,
+    `${indent}"${name}": {`,
     `${indent}  "url": "${mcp}",`,
     `${indent}  "headers": { "Authorization": "Bearer ${key}" }`,
     `${indent}}`,
   ];
 }
 
-/** A complete `mcpServers` config containing only lnkdrp. */
-function jsonConfig(key: string, mcp: string = MCP_URL): string[] {
-  return ["{", '  "mcpServers": {', ...jsonEntry(key, "    ", mcp), "  }", "}"];
+/** A complete `mcpServers` config containing only this server. */
+function jsonConfig(key: string, mcp: string = MCP_URL, name: string = DEFAULT_SERVER_NAME): string[] {
+  return ["{", '  "mcpServers": {', ...jsonEntry(key, "    ", mcp, name), "  }", "}"];
 }
 
 /** UI-style "fill in these fields" lines used by clients without a CLI or config file. */
-function uiFields(key: string, mcp: string = MCP_URL): string[] {
-  return ["name   lnkdrp", `url    ${mcp}`, `auth   Bearer ${key}`];
+function uiFields(key: string, mcp: string = MCP_URL, name: string = DEFAULT_SERVER_NAME): string[] {
+  return [`name   ${name}`, `url    ${mcp}`, `auth   Bearer ${key}`];
 }
+
+const D = DEFAULT_SERVER_NAME;
 
 export const CLIENT_SETUPS: ClientSetup[] = [
   {
@@ -94,17 +127,20 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     blurb: "One command in a terminal. Claude Code talks to lnkdrp over HTTP with your key.",
     note: "Run this in a terminal. Add --scope user to make it available in every project.",
     docsUrl: "https://docs.claude.com/en/docs/claude-code/mcp",
-    remove: { body: "Claude Code keeps one server per name, so re-running the add command with a new key fails with \"lnkdrp already exists\". Remove it first, then add it again with the new key. Add -s user if you registered it with --scope user.", code: ["claude mcp remove lnkdrp"] },
-    lines: (key, mcp = MCP_URL) => [`claude mcp add --transport http lnkdrp ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
-    steps: (key, mcp = MCP_URL) => [
+    remove: (name = D) => ({
+      body: `Claude Code keeps one server per name, so re-running the add command with a new key fails with "${name} already exists". Remove it first, then add it again with the new key. Add -s user if you registered it with --scope user.`,
+      code: [`claude mcp remove ${name}`],
+    }),
+    lines: (key, mcp = MCP_URL, name = D) => [`claude mcp add --transport http ${name} ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+    steps: (key, mcp = MCP_URL, name = D) => [
       {
         title: "Add lnkdrp to Claude Code",
         body: "Run this in a terminal. By default it registers the server for the project you run it from; add --scope user to make it available everywhere.",
-        code: [`claude mcp add --transport http lnkdrp ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+        code: [`claude mcp add --transport http ${name} ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
       },
       {
         title: "Check it registered",
-        body: "Run claude mcp list and look for lnkdrp. Inside a session, /mcp shows the connection state.",
+        body: `Run claude mcp list and look for ${name}. Inside a session, /mcp shows the connection state.`,
         code: ["claude mcp list"],
       },
     ],
@@ -116,17 +152,19 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     kind: "ui",
     blurb: "Add lnkdrp as a connector from Cowork's settings. No terminal needed.",
     note: "Fill in these fields when Cowork asks for the server details.",
-    remove: { body: "Open Cowork › Settings › Connectors, pick lnkdrp, and either paste the new token into the auth field or remove the connector." },
-    lines: (key, mcp = MCP_URL) => ["Cowork › Settings › Connectors › Add MCP server", ...uiFields(key, mcp)],
-    steps: (key, mcp = MCP_URL) => [
+    remove: (name = D) => ({
+      body: `Open Cowork › Settings › Connectors, pick ${name}, and either paste the new token into the auth field or remove the connector.`,
+    }),
+    lines: (key, mcp = MCP_URL, name = D) => ["Cowork › Settings › Connectors › Add MCP server", ...uiFields(key, mcp, name)],
+    steps: (key, mcp = MCP_URL, name = D) => [
       {
         title: "Open Connectors",
         body: "In Cowork, open Settings, then Connectors, then Add MCP server.",
       },
       {
         title: "Enter the server details",
-        body: "Use lnkdrp as the name, the URL below as the server address, and your key as a bearer token.",
-        code: uiFields(key, mcp),
+        body: `Use ${name} as the name, the URL below as the server address, and your key as a bearer token.`,
+        code: uiFields(key, mcp, name),
       },
     ],
   },
@@ -138,20 +176,22 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     blurb: "A few lines in Cursor's mcp.json. Works globally or per project.",
     note: "Cursor stores servers in ~/.cursor/mcp.json (or .cursor/mcp.json inside a project).",
     docsUrl: "https://docs.cursor.com/context/mcp",
-    remove: { body: "Edit the same mcp.json: replace the value after \"Bearer \" with the new key, or delete the \"lnkdrp\" entry. Cursor reloads the file when you save." },
-    lines: (key, mcp = MCP_URL) => ["Settings › MCP › Add server", ...uiFields(key, mcp)],
-    steps: (key, mcp = MCP_URL) => [
+    remove: (name = D) => ({
+      body: `Edit the same mcp.json: replace the value after "Bearer " with the new key, or delete the "${name}" entry. Cursor reloads the file when you save.`,
+    }),
+    lines: (key, mcp = MCP_URL, name = D) => ["Settings › MCP › Add server", ...uiFields(key, mcp, name)],
+    steps: (key, mcp = MCP_URL, name = D) => [
       {
         title: "Open Cursor's MCP settings",
         body: "Open Cursor Settings, then MCP, then Add new global MCP server. This opens ~/.cursor/mcp.json. Use .cursor/mcp.json inside a project to scope the server to that project.",
       },
       {
         title: "Add the lnkdrp server",
-        body: "Paste this if the file is empty. Save, and Cursor shows a green dot next to lnkdrp once it connects.",
-        code: jsonConfig(key, mcp),
+        body: `Paste this if the file is empty. Save, and Cursor shows a green dot next to ${name} once it connects.`,
+        code: jsonConfig(key, mcp, name),
       },
     ],
-    mergeSnippet: (key, mcp = MCP_URL) => jsonEntry(key, "", mcp),
+    mergeSnippet: (key, mcp = MCP_URL, name = D) => jsonEntry(key, "", mcp, name),
   },
   {
     key: "codex",
@@ -161,17 +201,20 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     blurb: "One command in a terminal. Codex keeps the server in its config file.",
     note: "Run this in a terminal. Codex stores it in ~/.codex/config.toml.",
     docsUrl: "https://developers.openai.com/codex/mcp",
-    remove: { body: "Codex keeps one server per name. Remove lnkdrp, then add it again with the new key.", code: ["codex mcp remove lnkdrp"] },
-    lines: (key, mcp = MCP_URL) => [`codex mcp add lnkdrp --url ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
-    steps: (key, mcp = MCP_URL) => [
+    remove: (name = D) => ({
+      body: `Codex keeps one server per name. Remove ${name}, then add it again with the new key.`,
+      code: [`codex mcp remove ${name}`],
+    }),
+    lines: (key, mcp = MCP_URL, name = D) => [`codex mcp add ${name} --url ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+    steps: (key, mcp = MCP_URL, name = D) => [
       {
         title: "Add lnkdrp to Codex",
         body: "Run this in a terminal. Codex stores the server in ~/.codex/config.toml.",
-        code: [`codex mcp add lnkdrp --url ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+        code: [`codex mcp add ${name} --url ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
       },
       {
         title: "Check it registered",
-        body: "Run codex mcp list and look for lnkdrp.",
+        body: `Run codex mcp list and look for ${name}.`,
         code: ["codex mcp list"],
       },
     ],
@@ -184,17 +227,20 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     blurb: "One command in a terminal. Gemini CLI connects over HTTP with your key.",
     note: "Run this in a terminal. Gemini CLI stores it in ~/.gemini/settings.json.",
     docsUrl: "https://geminicli.com/docs/tools/mcp-server/",
-    remove: { body: "Gemini CLI keeps one server per name. Remove lnkdrp, then add it again with the new key.", code: ["gemini mcp remove lnkdrp"] },
-    lines: (key, mcp = MCP_URL) => [`gemini mcp add --transport http lnkdrp ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
-    steps: (key, mcp = MCP_URL) => [
+    remove: (name = D) => ({
+      body: `Gemini CLI keeps one server per name. Remove ${name}, then add it again with the new key.`,
+      code: [`gemini mcp remove ${name}`],
+    }),
+    lines: (key, mcp = MCP_URL, name = D) => [`gemini mcp add --transport http ${name} ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+    steps: (key, mcp = MCP_URL, name = D) => [
       {
         title: "Add lnkdrp to Gemini CLI",
         body: "Run this in a terminal. Gemini CLI stores the server in ~/.gemini/settings.json.",
-        code: [`gemini mcp add --transport http lnkdrp ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
+        code: [`gemini mcp add --transport http ${name} ${mcp} \\`, `  --header "Authorization: Bearer ${key}"`],
       },
       {
         title: "Check it registered",
-        body: "Run gemini mcp list, or /mcp inside a session, and look for lnkdrp.",
+        body: `Run gemini mcp list, or /mcp inside a session, and look for ${name}.`,
         code: ["gemini mcp list"],
       },
     ],
@@ -206,17 +252,17 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     kind: "ui",
     blurb: "Add lnkdrp as a tool from Grok's settings. No terminal needed.",
     note: "Fill in these fields when Grok asks for the server details.",
-    remove: { body: "Open Grok › Settings › Tools, pick lnkdrp, and either paste the new token or remove the tool." },
-    lines: (key, mcp = MCP_URL) => ["Grok › Settings › Tools › Add MCP server", ...uiFields(key, mcp)],
-    steps: (key, mcp = MCP_URL) => [
+    remove: (name = D) => ({ body: `Open Grok › Settings › Tools, pick ${name}, and either paste the new token or remove the tool.` }),
+    lines: (key, mcp = MCP_URL, name = D) => ["Grok › Settings › Tools › Add MCP server", ...uiFields(key, mcp, name)],
+    steps: (key, mcp = MCP_URL, name = D) => [
       {
         title: "Open Tools",
         body: "In Grok, open Settings, then Tools, then Add MCP server.",
       },
       {
         title: "Enter the server details",
-        body: "Use lnkdrp as the name, the URL below as the server address, and your key as a bearer token.",
-        code: uiFields(key, mcp),
+        body: `Use ${name} as the name, the URL below as the server address, and your key as a bearer token.`,
+        code: uiFields(key, mcp, name),
       },
     ],
   },
@@ -227,16 +273,18 @@ export const CLIENT_SETUPS: ClientSetup[] = [
     kind: "json",
     blurb: "Any MCP client that reads an mcpServers config. Streamable HTTP with a bearer token.",
     note: "lnkdrp is a remote server over streamable HTTP, so there is no local process to install.",
-    remove: { body: "Edit the \"lnkdrp\" entry in your client's config: replace the Bearer value with the new key, or delete the entry. Restart the client if it does not watch the file." },
-    lines: (key, mcp = MCP_URL) => jsonConfig(key, mcp),
-    steps: (key, mcp = MCP_URL) => [
+    remove: (name = D) => ({
+      body: `Edit the "${name}" entry in your client's config: replace the Bearer value with the new key, or delete the entry. Restart the client if it does not watch the file.`,
+    }),
+    lines: (key, mcp = MCP_URL, name = D) => jsonConfig(key, mcp, name),
+    steps: (key, mcp = MCP_URL, name = D) => [
       {
         title: "Add the server to your client's MCP config",
         body: "Most clients read an mcpServers object from a JSON file. lnkdrp is a remote server over streamable HTTP with a bearer token, so there is no local process to install. Check your client's docs for where the file lives.",
-        code: jsonConfig(key, mcp),
+        code: jsonConfig(key, mcp, name),
       },
     ],
-    mergeSnippet: (key, mcp = MCP_URL) => jsonEntry(key, "", mcp),
+    mergeSnippet: (key, mcp = MCP_URL, name = D) => jsonEntry(key, "", mcp, name),
   },
 ];
 
@@ -638,7 +686,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
 export const TROUBLESHOOTING: Array<{ q: string; a: string }> = [
   {
     q: "My client says lnkdrp already exists.",
-    a: "Each client keeps one server per name, so adding again with a new key is refused. Remove the old lnkdrp entry first (the command or setting is under \"Change the key or remove lnkdrp\" for your client), then add it again with the new key.",
+    a: "Each client keeps one server per name, so adding again with a new key is refused. If you are changing the key, remove the old entry first (the command or setting is under \"Change the key or remove lnkdrp\" for your client), then add it again. If this key is for a different workspace, don't remove anything: add it under that workspace's own name, such as lnkdrp-acme.",
   },
   {
     q: "I get 401 unauthorized.",
@@ -646,7 +694,7 @@ export const TROUBLESHOOTING: Array<{ q: string; a: string }> = [
   },
   {
     q: "The agent sees the wrong workspace.",
-    a: "A key belongs to one workspace. Switch to the workspace you want in lnkdrp, create a key there, and use that one in your client.",
+    a: "A key belongs to one workspace. Switch to the workspace you want in lnkdrp, create a key there, and add it under its own name (Connect shows it, such as lnkdrp-acme) so it sits next to your other connections instead of replacing one.",
   },
   {
     q: "How does lnkdrp know which client connected?",

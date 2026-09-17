@@ -15,8 +15,11 @@ import Troubleshooting from "@/components/connect/Troubleshooting";
 import {
   ASK_YOUR_AGENT,
   CLIENT_SETUPS,
+  DEFAULT_SERVER_NAME,
   GUIDES_LAST_UPDATED,
   KEY_PLACEHOLDER,
+  MCP_URL,
+  MULTIPLE_WORKSPACES,
   findClientSetup,
   whoamiCurl,
   type SetupStep,
@@ -79,6 +82,7 @@ export default async function McpClientGuidePage({ params }: { params: Promise<P
 
   const clientSteps: SetupStep[] = setup.steps(KEY_PLACEHOLDER);
   const merge = setup.mergeSnippet?.(KEY_PLACEHOLDER) ?? null;
+  const removal = setup.remove();
   const verifyIndex = clientSteps.length + 2;
 
   return (
@@ -152,8 +156,23 @@ export default async function McpClientGuidePage({ params }: { params: Promise<P
       <div className="mt-14">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Change the key or remove lnkdrp</h2>
         <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-          <p className="text-sm leading-6 text-white/70">{setup.remove.body}</p>
-          {setup.remove.code ? <CodeBlock lines={setup.remove.code} label={`Copy ${setup.label} remove command`} className="mt-3" /> : null}
+          <p className="text-sm leading-6 text-white/70">{removal.body}</p>
+          {removal.code ? <CodeBlock lines={removal.code} label={`Copy ${setup.label} remove command`} className="mt-3" /> : null}
+        </div>
+      </div>
+
+      <div className="mt-14">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">{MULTIPLE_WORKSPACES.title}</h2>
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+          <p className="text-sm leading-6 text-white/70">{MULTIPLE_WORKSPACES.body}</p>
+          <CodeBlock
+            lines={setup.lines(KEY_PLACEHOLDER, MCP_URL, `${DEFAULT_SERVER_NAME}-acme`)}
+            label={`Copy ${setup.label} setup for a second workspace`}
+            className="mt-3"
+          />
+          <p className="mt-2 text-[12px] text-white/40">
+            Replace <code className="font-mono">{KEY_PLACEHOLDER}</code> with a key created in that workspace. Connect shows the name to use.
+          </p>
         </div>
       </div>
 

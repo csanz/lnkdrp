@@ -7,7 +7,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import ToolCatalogTable from "@/components/connect/ToolCatalogTable";
-import { CLIENT_SETUPS, GUIDES_LAST_UPDATED, MCP_URL } from "@/lib/mcp/clientSetups";
+import { CLIENT_SETUPS, GUIDES_LAST_UPDATED, MCP_URL, MULTIPLE_WORKSPACES } from "@/lib/mcp/clientSetups";
 import PublicGuideShell from "@/components/connect/PublicGuideShell";
 
 export const metadata: Metadata = {
@@ -44,6 +44,11 @@ export default function McpOverviewPage() {
           </li>
         ))}
       </ul>
+
+      <h2 className="mt-12 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">{MULTIPLE_WORKSPACES.title}</h2>
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
+        <p className="max-w-2xl text-sm leading-6 text-white/70">{MULTIPLE_WORKSPACES.body}</p>
+      </div>
 
       <div className="mt-12 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">What your agent can do</h2>

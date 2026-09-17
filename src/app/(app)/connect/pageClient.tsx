@@ -12,7 +12,7 @@ import Link from "next/link";
  * sidebar also reads, so creating or revoking a key updates both.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { CpuChipIcon } from "@heroicons/react/24/outline";
 
 import { refreshAgentStatus, useAgentStatus, type AgentKeyRow } from "@/lib/client/useAgentStatus";
@@ -25,6 +25,7 @@ import ToolCatalogTable from "@/components/connect/ToolCatalogTable";
 import Troubleshooting from "@/components/connect/Troubleshooting";
 import VerifyPanel from "@/components/connect/VerifyPanel";
 import { formatRelative } from "@/components/connect/format";
+import { useOrgsSnapshot } from "@/lib/orgs/useOrgsSnapshot";
 
 /** Render the Connect page UI. */
 export default function ConnectPageClient() {
@@ -35,6 +36,12 @@ export default function ConnectPageClient() {
   // A saved key pasted back through "Use in commands" (memory only; the server never sees it).
   const [pasted, setPasted] = useState<string | null>(null);
   const plaintextKey = created?.plaintext ?? pasted;
+  // Keys and the connection name belong to the active workspace.
+  const { stableOrgs, activeOrgId } = useOrgsSnapshot();
+  const workspace = useMemo(() => {
+    const row = stableOrgs.find((o) => o.id === activeOrgId);
+    return row ? { name: row.name, isPersonal: row.type === "personal" } : null;
+  }, [stableOrgs, activeOrgId]);
 
   const activeKeys = status ? status.keys.filter((k) => !k.revoked).length : 0;
   const connected = Boolean(status?.connected);
@@ -98,7 +105,7 @@ export default function ConnectPageClient() {
             <KeysPanel status={status} loading={loading} plaintextKey={plaintextKey} onCreated={onCreated} onUse={onUse} onRevoked={onRevoked} />
 
             <Panel id="client" step={2} title="Add lnkdrp to your client" caption="Pick your client">
-              <ClientTabs plaintextKey={plaintextKey} />
+              <ClientTabs plaintextKey={plaintextKey} workspace={workspace} />
             </Panel>
 
             <Panel id="verify" step={3} title="Verify" caption="Works today">
