@@ -1025,10 +1025,19 @@ export async function PATCH(
     if (Object.keys(addToSetFields).length) updateDoc.$addToSet = addToSetFields;
     if (Object.keys(pullFields).length) updateDoc.$pull = pullFields;
 
+    // Joining or leaving a project does not change the document, so it must not bump updatedDate:
+    // the lists sort by it, and adding a document to a project moved it to the top of every list.
+    const PROJECT_FIELDS = new Set(["primaryProjectId", "projectId", "projectIds"]);
+    const onlyMembershipChange =
+      wantsProjectChange &&
+      Object.keys(setFields).every((k) => PROJECT_FIELDS.has(k)) &&
+      Object.keys(addToSetFields).every((k) => PROJECT_FIELDS.has(k)) &&
+      Object.keys(pullFields).every((k) => PROJECT_FIELDS.has(k));
+
     const doc = await DocModel.findOneAndUpdate(
       { ...docMatch },
       updateDoc,
-      { new: true },
+      { new: true, ...(onlyMembershipChange ? { timestamps: false } : {}) },
     ).lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
