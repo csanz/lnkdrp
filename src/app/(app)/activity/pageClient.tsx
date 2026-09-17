@@ -9,7 +9,7 @@
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import {
   AdjustmentsHorizontalIcon,
   ArchiveBoxIcon,
@@ -173,6 +173,46 @@ function ActorAvatar({ item }: { item: ActivityItem }) {
   );
 }
 
+/** How long a finished upload's row takes to fold away; matches the sidebar's leaving rows. */
+const UPLOAD_ROW_LEAVE_MS = 1200;
+
+/**
+ * Keep a row in the list while it folds away.
+ *
+ * A settled upload used to disappear between renders, so the section (and everything under it)
+ * jumped up by a row. The row that left is held at the index it left from, marked `leaving`, and
+ * collapses on the same curve and duration as the sidebar's archived/deleted rows.
+ */
+function useFoldingUploads(items: InFlightUpload[]): Array<{ item: InFlightUpload; leaving: boolean }> {
+  const [leaving, setLeaving] = useState<Array<{ item: InFlightUpload; index: number }>>([]);
+  const prevRef = useRef<InFlightUpload[]>([]);
+  const timersRef = useRef<number[]>([]);
+  useEffect(() => () => timersRef.current.forEach((t) => window.clearTimeout(t)), []);
+  // Layout effect: the ghost must be in place before the browser paints the list without the row,
+  // or the rows below jump for a frame and then back.
+  useLayoutEffect(() => {
+    const prev = prevRef.current;
+    prevRef.current = items;
+    const nextIds = new Set(items.map((u) => u.id));
+    // An upload that came back (a retry writing progress again) drops its ghost.
+    setLeaving((cur) => (cur.some((l) => nextIds.has(l.item.id)) ? cur.filter((l) => !nextIds.has(l.item.id)) : cur));
+    if (!prev.length) return;
+    const removed = prev.map((item, index) => ({ item, index })).filter(({ item }) => !nextIds.has(item.id));
+    if (!removed.length) return;
+    setLeaving((cur) => [...cur.filter((l) => !removed.some((r) => r.item.id === l.item.id)), ...removed]);
+    const ids = new Set(removed.map((r) => r.item.id));
+    const t = window.setTimeout(() => setLeaving((cur) => cur.filter((l) => !ids.has(l.item.id))), UPLOAD_ROW_LEAVE_MS + 50);
+    timersRef.current.push(t);
+  }, [items]);
+  return useMemo(() => {
+    const rows = items.map((item) => ({ item, leaving: false }));
+    for (const l of [...leaving].sort((a, b) => a.index - b.index)) {
+      rows.splice(Math.min(l.index, rows.length), 0, { item: l.item, leaving: true });
+    }
+    return rows;
+  }, [items, leaving]);
+}
+
 /**
  * One upload that is still happening.
  *
@@ -183,7 +223,7 @@ function ActorAvatar({ item }: { item: ActivityItem }) {
  * everything below it — icon tile, title, a small second line — so the section reads as part of
  * the feed and not a widget bolted above it.
  */
-function UploadProgressRow({ item }: { item: InFlightUpload }) {
+function UploadProgressRow({ item, leaving = false }: { item: InFlightUpload; leaving?: boolean }) {
   const failed = item.status === "failed";
   const done = item.status === "completed";
   const Icon = failed ? XCircleIcon : done ? CheckCircleIcon : ArrowUpTrayIcon;
@@ -194,54 +234,67 @@ function UploadProgressRow({ item }: { item: InFlightUpload }) {
   const version = typeof item.version === "number" && item.version > 1 ? `v${item.version}` : null;
 
   return (
-    <li className="flex items-start gap-3 px-4 py-3">
-      <div
-        className={[
-          "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg ring-1 ring-[var(--border)]",
-          failed ? "bg-[var(--panel-hover)] text-red-400" : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
-        ].join(" ")}
-      >
-        <Icon className="h-4 w-4" aria-hidden="true" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-x-2 text-[13px] leading-5 text-[var(--muted)]">
-          {href ? (
-            <Link href={href} className="min-w-0 truncate font-semibold text-[var(--fg)] hover:underline underline-offset-4">
-              {title}
-            </Link>
-          ) : (
-            <span className="min-w-0 truncate font-semibold text-[var(--fg)]">{title}</span>
-          )}
-          {version ? <span className="shrink-0 text-[11px] text-[var(--muted-2)]">{version}</span> : null}
-          <span
-            className={[
-              "ml-auto shrink-0 text-[12px] font-semibold tabular-nums",
-              failed ? "text-red-400" : "text-[var(--fg)]",
-            ].join(" ")}
-          >
-            {failed ? "Failed" : `${percent}%`}
-          </span>
-        </div>
-        {/* The bar. Width is the only thing that animates, so a frame arriving mid-transition
-            simply retargets it instead of restarting anything. */}
+    // A row that has settled folds away instead of vanishing: the <li> is a one-row grid so
+    // 1fr -> 0fr collapses it to its own height, the same curve the sidebar's leaving rows use.
+    <li
+      className={
+        leaving
+          ? "pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_1.2s_cubic-bezier(0.33,0,0.2,1)_forwards] motion-reduce:animate-[ldSidebarRowFade_1.2s_linear_forwards]"
+          : "grid"
+      }
+      aria-hidden={leaving ? "true" : undefined}
+    >
+      <div className="min-h-0 [overflow-y:clip]">
+        <div className="flex items-start gap-3 px-4 py-3">
         <div
-          className="mt-2 h-1 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={percent}
-          aria-label={`${title}: ${item.stage}`}
+          className={[
+            "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg ring-1 ring-[var(--border)]",
+            failed ? "bg-[var(--panel-hover)] text-red-400" : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
+          ].join(" ")}
         >
-          <div
-            className={[
-              "h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
-              failed ? "bg-red-500/70" : done ? "bg-[var(--chart-views)]" : "bg-[var(--fg)]",
-            ].join(" ")}
-            style={{ width: `${failed ? Math.max(percent, 4) : percent}%` }}
-          />
+          <Icon className="h-4 w-4" aria-hidden="true" />
         </div>
-        <div className="mt-1.5 text-[11px] text-[var(--muted-2)]" aria-live="polite">
-          {failed ? "Upload failed" : done ? "Ready" : item.stage}
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-x-2 text-[13px] leading-5 text-[var(--muted)]">
+            {href ? (
+              <Link href={href} className="min-w-0 truncate font-semibold text-[var(--fg)] hover:underline underline-offset-4">
+                {title}
+              </Link>
+            ) : (
+              <span className="min-w-0 truncate font-semibold text-[var(--fg)]">{title}</span>
+            )}
+            {version ? <span className="shrink-0 text-[11px] text-[var(--muted-2)]">{version}</span> : null}
+            <span
+              className={[
+                "ml-auto shrink-0 text-[12px] font-semibold tabular-nums",
+                failed ? "text-red-400" : "text-[var(--fg)]",
+              ].join(" ")}
+            >
+              {failed ? "Failed" : `${percent}%`}
+            </span>
+          </div>
+          {/* The bar. Width is the only thing that animates, so a frame arriving mid-transition
+              simply retargets it instead of restarting anything. */}
+          <div
+            className="mt-2 h-1 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            aria-label={`${title}: ${item.stage}`}
+          >
+            <div
+              className={[
+                "h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
+                failed ? "bg-red-500/70" : done ? "bg-[var(--chart-views)]" : "bg-[var(--fg)]",
+              ].join(" ")}
+              style={{ width: `${failed ? Math.max(percent, 4) : percent}%` }}
+            />
+          </div>
+          <div className="mt-1.5 text-[11px] text-[var(--muted-2)]" aria-live="polite">
+            {failed ? "Upload failed" : done ? "Ready" : item.stage}
+          </div>
+        </div>
         </div>
       </div>
     </li>
@@ -472,6 +525,8 @@ export default function ActivityPageClient() {
    * re-fetch the snapshot once to learn which document it is on.
    */
   const [inFlight, setInFlight] = useState<InFlightUpload[]>([]);
+  // Settled rows stay one beat longer so the section folds shut instead of jumping.
+  const inFlightRows = useFoldingUploads(inFlight);
   const inFlightIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     inFlightIdsRef.current = new Set(inFlight.map((u) => u.id));
@@ -762,15 +817,15 @@ export default function ActivityPageClient() {
             on this page that is happening now should not wait on a page of things that already
             happened, and an empty workspace whose first upload is mid-flight is the opposite of
             "no activity yet". */}
-        {inFlight.length ? (
+        {inFlightRows.length ? (
           <section aria-label="Uploads in progress" className="mb-6">
             <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
               In progress
             </div>
             <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
               <ul className="divide-y divide-[var(--border)]">
-                {inFlight.map((u) => (
-                  <UploadProgressRow key={u.id} item={u} />
+                {inFlightRows.map(({ item, leaving }) => (
+                  <UploadProgressRow key={leaving ? `leaving-${item.id}` : item.id} item={item} leaving={leaving} />
                 ))}
               </ul>
             </div>
@@ -795,7 +850,7 @@ export default function ActivityPageClient() {
             </div>
           </div>
         ) : !items.length ? (
-          inFlight.length ? null : (
+          inFlightRows.length ? null : (
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-4 py-10 text-center text-sm text-[var(--muted)]">
               No activity yet. Uploads, share changes and views will show up here.
             </div>
