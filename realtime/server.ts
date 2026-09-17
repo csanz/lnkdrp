@@ -185,9 +185,22 @@ async function main() {
   // page: a fifty-page deck is fifteen-odd frames, and a lookup on each would be a lookup per frame.
   const uploads = db
     .collection("uploads")
-    .watch([{ $match: { operationType: "update", "updateDescription.updatedFields.progress": { $exists: true } } }], {
-      fullDocument: "updateLookup",
-    });
+    .watch(
+      [
+        {
+          $match: {
+            operationType: "update",
+            // A whole-subdocument `$set` reports the path `progress`; a leaf write would report
+            // `progress.percent`. Match both so a future narrower write still reaches the room.
+            $or: [
+              { "updateDescription.updatedFields.progress": { $exists: true } },
+              { "updateDescription.updatedFields.progress.percent": { $exists: true } },
+            ],
+          },
+        },
+      ],
+      { fullDocument: "updateLookup" },
+    );
   uploads.on("change", (change) => {
     const doc = (change as {
       fullDocument?: {
