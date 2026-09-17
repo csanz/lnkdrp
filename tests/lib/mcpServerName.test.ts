@@ -8,9 +8,9 @@ import { CLIENT_SETUPS, mcpServerName } from "@/lib/mcp/clientSetups";
  * replaced (or collided with) the first.
  */
 describe("mcpServerName", () => {
-  test("personal (or unknown) workspace keeps lnkdrp", () => {
+  test("personal workspace is lnkdrp-personal; unknown workspace (public guides) stays lnkdrp", () => {
     expect(mcpServerName(null)).toBe("lnkdrp");
-    expect(mcpServerName({ name: "Personal", isPersonal: true })).toBe("lnkdrp");
+    expect(mcpServerName({ name: "Personal", isPersonal: true })).toBe("lnkdrp-personal");
   });
 
   test("any other workspace gets lnkdrp-<name>, in characters every client accepts", () => {

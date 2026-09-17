@@ -82,7 +82,7 @@ export function workspaceInstructions(who: Pick<Whoami, "orgName" | "isPersonalO
   return (
     `This connection acts on the lnkdrp workspace "${name}" (${kind}, ${plan} plan): everything these tools read, create, ` +
     "change or spend is in that workspace, and every result, errors included, carries workspace { id, name }. The person may have other lnkdrp " +
-    "connections, one per workspace, each named after it (lnkdrp for Personal, lnkdrp-<workspace> otherwise). When they name a " +
+    "connections, one per workspace, each named after it (lnkdrp-personal, lnkdrp-<workspace>; an older personal connection may be plain lnkdrp). When they name a " +
     "workspace, use the connection for it. When more than one lnkdrp connection is available and they have not said which " +
     "workspace, ask before creating, changing or deleting anything. "
   );

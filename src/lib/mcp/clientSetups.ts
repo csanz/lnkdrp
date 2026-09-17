@@ -72,12 +72,16 @@ export const DEFAULT_SERVER_NAME = "lnkdrp";
  * The name to register the MCP server under for a workspace.
  *
  * A key belongs to one workspace, and MCP clients keep one server per name, so two workspaces added
- * under the same name replace or reject each other. Personal keeps `lnkdrp`; any other workspace
- * gets `lnkdrp-<workspace>` (letters, digits and hyphens, which every supported client accepts), so
- * the commands on `/connect` can be run for each workspace without touching the others.
+ * under the same name replace or reject each other. Every workspace gets `lnkdrp-<workspace>`
+ * (letters, digits and hyphens, which every supported client accepts): `lnkdrp-personal` for the
+ * personal workspace, `lnkdrp-usavx` for USAVX. Personal used to keep plain `lnkdrp`, which did not say
+ * which workspace it was once a second one sat next to it. Plain `lnkdrp` remains only where no
+ * workspace is known (the public guides, before the page knows who is signed in); an existing
+ * `lnkdrp` connection keeps working.
  */
 export function mcpServerName(workspace: { name?: string | null; isPersonal: boolean } | null | undefined): string {
-  if (!workspace || workspace.isPersonal) return DEFAULT_SERVER_NAME;
+  if (!workspace) return DEFAULT_SERVER_NAME;
+  if (workspace.isPersonal) return `${DEFAULT_SERVER_NAME}-personal`;
   const slug = (workspace.name ?? "")
     .toLowerCase()
     .normalize("NFKD")
@@ -93,7 +97,7 @@ export function mcpServerName(workspace: { name?: string | null; isPersonal: boo
 export const MULTIPLE_WORKSPACES = {
   title: "More than one workspace",
   body:
-    "A key belongs to one workspace, and your client keeps one server per name. To connect another workspace, switch to it in lnkdrp, create a key there, and add it under its own name, such as lnkdrp-acme. Your existing lnkdrp connection keeps working, and your agent sees both; lnkdrp_whoami on each says which workspace it acts on.",
+    "A key belongs to one workspace, and your client keeps one server per name. To connect another workspace, switch to it in lnkdrp, create a key there, and add it under its own name, such as lnkdrp-acme (Connect names it for you: lnkdrp-personal for your personal workspace). Existing connections keep working, and your agent sees them all; lnkdrp_whoami on each says which workspace it acts on.",
 };
 
 /** The server entry inside an `mcpServers` object, at the given base indent. */
@@ -686,7 +690,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
 export const TROUBLESHOOTING: Array<{ q: string; a: string }> = [
   {
     q: "My client says lnkdrp already exists.",
-    a: "Each client keeps one server per name, so adding again with a new key is refused. If you are changing the key, remove the old entry first (the command or setting is under \"Change the key or remove lnkdrp\" for your client), then add it again. If this key is for a different workspace, don't remove anything: add it under that workspace's own name, such as lnkdrp-acme.",
+    a: "Each client keeps one server per name, so adding again with a new key is refused. If you are changing the key, remove the old entry first (the command or setting is under \"Change the key or remove lnkdrp\" for your client), then add it again. If this key is for a different workspace, don't remove anything: add it under that workspace's own name, such as lnkdrp-acme or lnkdrp-personal.",
   },
   {
     q: "I get 401 unauthorized.",

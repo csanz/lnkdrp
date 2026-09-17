@@ -20,8 +20,7 @@ import CodeBlock from "./CodeBlock";
  * snippet rendered with the freshly created key when there is one (else the placeholder), a short
  * per-client note, and a link to the public guide. The tab row wraps on narrow screens.
  *
- * The connection is named after the active workspace (`lnkdrp` for Personal, `lnkdrp-<name>`
- * otherwise). Every command used to say `lnkdrp`, so adding a second workspace's key replaced or
+ * The connection is named after the active workspace (`lnkdrp-personal`, `lnkdrp-<name>`). Every command used to say `lnkdrp`, so adding a second workspace's key replaced or
  * collided with the first connection.
  */
 export default function ClientTabs({
@@ -78,13 +77,14 @@ export default function ClientTabs({
               <>
                 This connects your <span className="font-semibold text-[var(--fg)]">Personal</span> workspace as{" "}
                 <code className="font-mono text-[var(--fg)]">{serverName}</code>. Other workspaces get their own name, such as{" "}
-                <code className="font-mono">{DEFAULT_SERVER_NAME}-acme</code>, so they sit next to this one.
+                <code className="font-mono">{DEFAULT_SERVER_NAME}-acme</code>, so they sit next to this one. Already added it as plain{" "}
+                <code className="font-mono">{DEFAULT_SERVER_NAME}</code>? That keeps working.
               </>
             ) : (
               <>
                 This connects <span className="font-semibold text-[var(--fg)]">{workspace.name}</span> as{" "}
                 <code className="font-mono text-[var(--fg)]">{serverName}</code>, next to any connection you already have, such as{" "}
-                <code className="font-mono">{DEFAULT_SERVER_NAME}</code> for Personal. Use a key created in this workspace.
+                <code className="font-mono">{DEFAULT_SERVER_NAME}-personal</code> for Personal. Use a key created in this workspace.
               </>
             )}
           </p>

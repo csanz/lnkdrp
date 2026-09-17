@@ -141,9 +141,11 @@ Clients keep one server per name, so to change the key remove `lnkdrp` and add i
 
 **More than one workspace.** A key belongs to one workspace, so each workspace is its own
 connection with its own name. `/connect` names it for you from the active workspace
-(`mcpServerName` in `clientSetups.ts`): `lnkdrp` for Personal, `lnkdrp-<workspace>` for any other
-(lowercase letters, digits and hyphens, up to 24 characters of the name). Adding a second workspace
-under `lnkdrp` would replace or collide with the first; under its own name both stay connected and
+(`mcpServerName` in `clientSetups.ts`): `lnkdrp-<workspace>` for every workspace, `lnkdrp-personal`
+for the personal one (lowercase letters, digits and hyphens, up to 24 characters of the name). Plain
+`lnkdrp` is only the public guides' placeholder, and an existing `lnkdrp` connection keeps working.
+Adding a second workspace under a name already in use would replace or collide with the first; under
+its own name both stay connected and
 `lnkdrp_whoami` on each reports which workspace it acts on:
 
 ```bash
