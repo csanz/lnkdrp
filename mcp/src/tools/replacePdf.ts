@@ -118,8 +118,10 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "lnkdrp_get_share to check, or run lnkdrp_replace_pdf again with a working sourceUrl or fileBase64 to finish the update. " +
         "Nothing is ever deleted - the previous version's file and analytics are not affected by a failed attempt. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. " +
-        "Each replacement's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them " +
-        "from the new content). A skipped AI step does not fail the call: the link is still valid and warnings says " +
+        "Each replacement's AI summary costs credits, or nothing when you pass summary and keyPoints (write them " +
+        "from the new content). The AI compare against the previous version (what changed, page by page) runs on " +
+        "every replacement and costs credits at the workspace's default tier whether or not you pass a summary - " +
+        "see costs.compare in lnkdrp_whoami; short of credits it is skipped, never blocking the replace. A skipped AI step does not fail the call: the link is still valid and warnings says " +
         "what was skipped. " +
         SAFETY_TAIL,
       inputSchema: replacePdfInputShape,

@@ -87,7 +87,8 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
         "MCP server version. plan: 'free' with onDemand: true means the workspace has added a card for pay-as-you-go - " +
         "it is not on Pro's limits, but it will not simply run out of credits once its one-time starter credits are " +
         "spent; do not read 'free' alone as 'will hit a wall'. capabilities answers 'what can I do here' in one call, " +
-        "before attempting anything: documents/projects (limit, used, remaining; limit null = unlimited), links " +
+        "before attempting anything: documents/projects (limit, used, remaining; limit null = unlimited - documents.used " +
+        "counts shared documents, those with a link on, so it can be lower than lnkdrp_list_docs's total), links " +
         "(never limited on any plan), collaborators, analyticsDaysLimit (the window lnkdrp_get_share_stats serves), " +
         "deepAnalytics and recipientsCanBrowseVersions (both Pro-only), and notMcpAccessible - real product features " +
         "(request repos, download-access requests) that have no MCP tool at all, so their absence " +
