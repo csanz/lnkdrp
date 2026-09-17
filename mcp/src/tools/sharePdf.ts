@@ -86,7 +86,11 @@ export const sharePdfInputShape = {
     .min(1)
     .max(2048)
     .optional()
-    .describe("Public https URL of the PDF. Google Drive share links and lnkdrp /s/ links are accepted. Exactly one of sourceUrl / fileBase64 is required."),
+    .describe(
+      "Public https URL of the PDF. Google Drive links to a PDF file work when shared with anyone who has the link, as do " +
+        "lnkdrp /s/ links. A Google Docs/Sheets/Slides editor link or a OneDrive/SharePoint link is refused: those serve a " +
+        "web page, not a file - download the PDF and pass it as fileBase64 instead. Exactly one of sourceUrl / fileBase64 is required.",
+    ),
   fileBase64: z
     .string()
     .min(1)
@@ -146,6 +150,41 @@ export type SharePdfResult = {
 };
 
 /** Validate the source URL: https anywhere, http only for the lnkdrp app itself (dev). */
+/**
+ * Sources that can never resolve to a PDF, and what the caller should do instead.
+ *
+ * These fail today with an unhelpful error from deep in the import: a Google Slides link comes back
+ * as an HTML sign-in page and is rejected as "not a PDF", which reads like a broken file rather than
+ * the wrong kind of link. Hit live on 2026-09-16 with a `/presentation/d/…/edit` URL.
+ *
+ * Deliberately narrow. `drive.google.com` file links are NOT rejected: the app has a real Drive
+ * download flow, interstitial confirm token and all, and they work whenever the file is shared with
+ * anyone who has the link. Only the two shapes with no path to a PDF are turned away, and a
+ * `/export` URL on a Docs host is left alone because that one does return a real file.
+ */
+function unsupportedSourceUrlReason(url: URL): string | null {
+  const host = url.hostname.toLowerCase();
+  const path = url.pathname;
+
+  const isGoogleDocsHost = host === "docs.google.com" || host.endsWith(".docs.google.com");
+  if (isGoogleDocsHost && /^\/(document|spreadsheets|presentation|forms)\/d\//.test(path) && !path.includes("/export")) {
+    return (
+      "That is a Google Docs, Sheets or Slides editor link. It serves a web page, not a PDF, and a private one serves a " +
+      "sign-in page. Open it and choose File > Download > PDF Document, then pass the downloaded file as fileBase64 " +
+      "(up to 3MB). A Google Drive link to a PDF file does work, as long as it is shared with anyone who has the link."
+    );
+  }
+
+  if (host === "onedrive.live.com" || host === "1drv.ms" || host === "sharepoint.com" || host.endsWith(".sharepoint.com")) {
+    return (
+      "OneDrive and SharePoint links are not supported: they serve a viewer page behind a Microsoft sign-in, never the " +
+      "file itself. Download the PDF to your computer, then pass it as fileBase64 (up to 3MB)."
+    );
+  }
+
+  return null;
+}
+
 export function validateSourceUrl(raw: string, apiUrl: string): string {
   let url: URL;
   try {
@@ -153,6 +192,8 @@ export function validateSourceUrl(raw: string, apiUrl: string): string {
   } catch {
     throw new ToolError("validation", "sourceUrl must be an absolute URL.");
   }
+  const unsupported = unsupportedSourceUrlReason(url);
+  if (unsupported) throw new ToolError("validation", unsupported);
   if (url.protocol === "https:") return url.toString();
   if (url.protocol === "http:" && url.origin === new URL(apiUrl).origin) return url.toString();
   throw new ToolError("validation", "sourceUrl must use https (http is only accepted for the lnkdrp app itself).");

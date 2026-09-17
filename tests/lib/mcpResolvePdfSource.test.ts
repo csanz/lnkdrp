@@ -69,3 +69,34 @@ describe("resolvePdfSource", () => {
     expect(err.code).toBe("validation");
   });
 });
+
+describe("unsupported sources (mt: Google/OneDrive links that can never be a PDF)", () => {
+  const API = "http://localhost:3001";
+  const reject = (url: string) => expect(() => resolvePdfSource({ sourceUrl: url }, API)).toThrow(/Download|download/);
+  const accept = (url: string) => expect(resolvePdfSource({ sourceUrl: url }, API)).toEqual({ kind: "url", url });
+
+  it("refuses Google Docs, Sheets and Slides editor links", () => {
+    reject("https://docs.google.com/presentation/d/1e3FoMsTnnQLpga9Hbjro1oOdrYHzPm437mRTLoz0zBU/edit?slide=id.p");
+    reject("https://docs.google.com/document/d/abc123/edit");
+    reject("https://docs.google.com/spreadsheets/d/abc123/edit#gid=0");
+  });
+
+  it("refuses OneDrive and SharePoint links", () => {
+    reject("https://onedrive.live.com/?id=root");
+    reject("https://1drv.ms/b/s!AabbCc");
+    reject("https://contoso-my.sharepoint.com/personal/x/Documents/deck.pdf");
+  });
+
+  it("still accepts a Google Drive file link, which the importer really does download", () => {
+    accept("https://drive.google.com/file/d/1AbCdEf/view?usp=sharing");
+    accept("https://drive.google.com/uc?export=download&id=1AbCdEf");
+  });
+
+  it("still accepts a Docs /export URL, which returns a real PDF", () => {
+    accept("https://docs.google.com/presentation/d/abc123/export/pdf");
+  });
+
+  it("names the way out, so the caller is not left guessing", () => {
+    expect(() => resolvePdfSource({ sourceUrl: "https://docs.google.com/presentation/d/x/edit" }, API)).toThrow(/fileBase64/);
+  });
+});

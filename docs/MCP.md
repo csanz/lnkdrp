@@ -229,8 +229,14 @@ download/password settings, then (by default) waits for processing to finish.
 - In:
   - `idempotencyKey` string, 1–128 chars, **required**. Reuse it on retries.
   - **Exactly one of:**
-    - `sourceUrl` https URL of a PDF. Google Drive share links are accepted (rewritten to a direct
-      download). Max 25 MB fetched server-side. Private-network and non-http(s) URLs are refused.
+    - `sourceUrl` https URL of a PDF. Google Drive links to a PDF file are accepted (rewritten to a
+      direct download) when shared with anyone who has the link. Max 25 MB fetched server-side.
+      Private-network and non-http(s) URLs are refused. **Refused up front with a `validation` error
+      that says to download the PDF and send `fileBase64`:** Google Docs/Sheets/Slides editor links
+      (`docs.google.com/{document,spreadsheets,presentation,forms}/d/…`, except `/export` URLs) and
+      OneDrive/SharePoint links (`onedrive.live.com`, `1drv.ms`, `*.sharepoint.com`). Those serve a web
+      page or a sign-in wall, never the file, and used to fail deep in the import as a baffling "not a
+      PDF" (hit live 2026-09-16 with a Slides `/edit` link).
     - `fileBase64` the PDF's bytes, base64-encoded — for a file with no public URL (mt_bJwX4CtmhU:
       locally generated, a private attachment). Decoded size up to 3 MB. Routed through
       `POST /api/uploads/:id/import-bytes` instead of `import-url`; kept well under Vercel's 4.5MB

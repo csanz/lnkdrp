@@ -336,7 +336,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     detail: {
       inputs: [
         "idempotencyKey — required; reuse it on retries and you get the same document back",
-        "sourceUrl — an https URL to a PDF, up to 25 MB; Google Drive share links are accepted. Exactly one of sourceUrl / fileBase64",
+        "sourceUrl — an https URL to a PDF, up to 25 MB; Google Drive links to a PDF file are accepted, but Google Docs/Slides editor links and OneDrive/SharePoint links are refused (download the PDF and use fileBase64). Exactly one of sourceUrl / fileBase64",
         "fileBase64 — the PDF's bytes, base64-encoded, for a file with no public URL (decoded size up to 3 MB)",
         "fileName — optional, only used with fileBase64",
         "title — optional, up to 200 characters",
@@ -363,7 +363,7 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
       inputs: [
         "idempotencyKey — required; reuse it on retries and you get the same result back",
         "docId — the existing document to update",
-        "sourceUrl — an https URL to the new PDF; Google Drive share links are accepted. Exactly one of sourceUrl / fileBase64",
+        "sourceUrl — an https URL to the new PDF; Google Drive links to a PDF file are accepted, but Google Docs/Slides editor links and OneDrive/SharePoint links are refused (download the PDF and use fileBase64). Exactly one of sourceUrl / fileBase64",
         "fileBase64 — the new PDF's bytes, base64-encoded, for a file with no public URL (decoded size up to 3 MB)",
         "fileName — optional, only used with fileBase64",
         "title — optional, up to 200 characters; leaves the title unchanged if omitted",

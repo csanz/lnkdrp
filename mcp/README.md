@@ -109,7 +109,9 @@ How an agent finds documents it was not handed, and reads what happened in the w
 ### `lnkdrp_share_pdf`
 In `{ idempotencyKey (1–128), title? (≤200), allowDownload? = false, password? (1–128), waitForReady? = true,
 timeoutSeconds? 5–120 = 60, summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus **exactly one of**
-`sourceUrl` (https; Google Drive share links and lnkdrp /s/ links accepted; max 25MB fetched server-side) or
+`sourceUrl` (https; Google Drive links to a PDF file and lnkdrp /s/ links accepted; max 25MB fetched server-side;
+Google Docs/Sheets/Slides editor links and OneDrive/SharePoint links are refused with a pointer to download the PDF
+and send `fileBase64`) or
 `fileBase64` + `fileName?` (the PDF's bytes, decoded size up to 3MB — mt_bJwX4CtmhU, for a file with no public URL;
 kept well under Vercel's 4.5MB request-body ceiling since base64 costs ~4/3 of the decoded size; bigger files need
 `sourceUrl`, there is no direct-to-Blob path for a JSON-only caller). `summary` and `keyPoints` go together (both or
