@@ -827,6 +827,23 @@ export async function PATCH(
       typeof body.addProjectId === "string" ||
       typeof body.removeProjectId === "string";
 
+    // A document may only join projects of its own workspace. The ids used to be stored unchecked,
+    // so any well-formed id — a nonexistent project, or another workspace's — went into projectIds.
+    const joiningProjectIds = [body.addProjectId, body.projectId, body.primaryProjectId].filter(
+      (id): id is string => typeof id === "string" && Types.ObjectId.isValid(id),
+    );
+    if (joiningProjectIds.length) {
+      const unique = [...new Set(joiningProjectIds)].map((id) => new Types.ObjectId(id));
+      const owned = await ProjectModel.countDocuments({
+        _id: { $in: unique },
+        isDeleted: { $ne: true },
+        $or: [{ orgId }, ...(allowLegacyByUserId ? [{ orgId: null, userId: legacyUserId }] : [])],
+      });
+      if (owned !== unique.length) {
+        return NextResponse.json({ error: "Project not found." }, { status: 404 });
+      }
+    }
+
     // Share-setting changes are recorded as activity; we need the prior values to diff against.
     const wantsShareChange = SHARE_ACTIVITY_FIELDS.some((k) => typeof body[k] === "boolean");
 
