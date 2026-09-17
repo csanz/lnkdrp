@@ -9,9 +9,11 @@
 #     lnkdrp-mcp
 #
 # The server is a thin translator to the REST API (no Mongo, no Next build), so the image installs
-# only its runtime packages instead of the whole app's node_modules. Keep the version ranges below
-# in sync with the root package.json.
-FROM node:22-alpine
+# only its runtime packages instead of the whole app's node_modules. The versions below are exact and
+# must match what the root package-lock.json resolves, so the image runs what the release gate tested.
+# There is no lockfile here, so transitive dependencies still float. The base image is pinned to an exact
+# Node 22 patch release; bump it deliberately, like a dependency.
+FROM node:22.23.2-alpine
 
 ENV NODE_ENV=production \
     MCP_PORT=8787
@@ -20,11 +22,11 @@ WORKDIR /app
 
 RUN printf '%s\n' \
       '{"name":"lnkdrp-mcp","private":true,"dependencies":{' \
-      '"@modelcontextprotocol/sdk":"^1.30.0",' \
-      '"express":"^5.2.1",' \
-      '"zod":"^4.1.5",' \
-      '"ws":"^8.21.3",' \
-      '"tsx":"^4.21.0"' \
+      '"@modelcontextprotocol/sdk":"1.30.0",' \
+      '"express":"5.2.1",' \
+      '"zod":"4.2.0",' \
+      '"ws":"8.21.3",' \
+      '"tsx":"4.21.0"' \
       '}}' > package.json \
  && npm install --omit=dev --no-audit --no-fund \
  && npm cache clean --force

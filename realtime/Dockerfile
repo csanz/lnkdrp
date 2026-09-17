@@ -9,7 +9,11 @@
 #
 # Needs a Mongo replica set (Atlas is one) because it uses change streams. Holds long-lived
 # sockets, so it runs on a host that allows that (Fly, Railway, a VM), never as a Vercel function.
-FROM node:22-alpine
+#
+# The versions below are exact and must match what the root package-lock.json resolves, so the image
+# runs what the release gate tested. There is no lockfile here, so transitive dependencies still
+# float. The base image is pinned to an exact Node 22 patch release; bump it deliberately.
+FROM node:22.23.2-alpine
 
 ENV NODE_ENV=production \
     REALTIME_PORT=8788
@@ -18,9 +22,9 @@ WORKDIR /app
 
 RUN printf '%s\n' \
       '{"name":"lnkdrp-realtime","private":true,"dependencies":{' \
-      '"mongoose":"^8.10.0",' \
-      '"ws":"^8.21.3",' \
-      '"tsx":"^4.21.0"' \
+      '"mongoose":"8.20.3",' \
+      '"ws":"8.21.3",' \
+      '"tsx":"4.21.0"' \
       '}}' > package.json \
  && npm install --omit=dev --no-audit --no-fund \
  && npm cache clean --force
