@@ -1198,6 +1198,8 @@ export default function LeftSidebar({
   // so it is the same whatever removed the doc: this sidebar's menu, the Docs modal, another tab,
   // or an agent over MCP (the realtime `doc.archived` / `doc.deleted` frame triggers the refetch
   // and names the reason). Workspace switches reload the page, so they never diff.
+  // Reduced motion keeps the signal (the labelled row, then a fade) and drops only the fold: hiding
+  // the row outright there meant archiving showed nothing at all.
   type LeavingDoc = { doc: DocListItem; index: number; reason: "archived" | "deleted" | null };
   const DOC_LEAVE_MS = 1800;
   const [leavingDocs, setLeavingDocs] = useState<LeavingDoc[]>([]);
@@ -2427,7 +2429,7 @@ export default function LeftSidebar({
                       <li
                         key={`leaving-${d.id}`}
                         aria-hidden="true"
-                        className="pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_1.8s_linear_forwards] motion-reduce:hidden"
+                        className="pointer-events-none grid motion-safe:animate-[ldSidebarRowOut_1.8s_linear_forwards] motion-reduce:animate-[ldSidebarRowFade_1.8s_linear_forwards]"
                       >
                         <div className="min-h-0 [overflow-y:clip]">
                           <div

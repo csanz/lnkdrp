@@ -280,6 +280,17 @@ body {
   }
 }
 
+/* Reduced-motion version of ldSidebarRowOut: no fold, the labelled row holds and then fades. */
+@keyframes ldSidebarRowFade {
+  0%,
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 @keyframes ldSidebarRowIn {
   0% {
     grid-template-rows: 0fr;
