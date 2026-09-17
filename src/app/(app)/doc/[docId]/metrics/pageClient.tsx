@@ -13,7 +13,7 @@ import Button from "@/components/ui/Button";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { usePlan } from "@/lib/client/usePlan";
-import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
 import { formatDayKey } from "@/lib/format/date";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
 
@@ -340,6 +340,89 @@ function MiniLineChartSingle({
       </div>
     </div>
   );
+}
+
+/**
+ * Time on each page for one viewer: a smooth area across page numbers with the seconds printed on the
+ * pages that matter, the same chart language as the Views chart. Unseen pages sit at zero.
+ */
+function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: Record<string, number> }) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const update = () => setWidth(Math.floor(el.getBoundingClientRect().width));
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const maxPage = Math.max(1, ...pages);
+  const data = Array.from({ length: maxPage }, (_, i) => {
+    const raw = msByPage[String(i + 1)];
+    return { page: i + 1, ms: typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0 };
+  });
+  const interval = Math.max(0, Math.ceil(data.length / 12) - 1);
+  return (
+    <div ref={wrapRef} className="h-36 w-full">
+      {width > 0 ? (
+        <AreaChart width={width} height={144} data={data} margin={{ top: 18, right: 10, bottom: 0, left: 10 }}>
+          <defs>
+            <linearGradient id="lnkdrpViewerPageTime" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor="rgb(16 185 129)" stopOpacity={0.24} />
+              <stop offset="100%" stopColor="rgb(16 185 129)" stopOpacity={0.02} />
+            </linearGradient>
+          </defs>
+          <YAxis hide domain={[0, "dataMax"]} />
+          <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
+          <XAxis
+            dataKey="page"
+            interval={interval}
+            tickLine={false}
+            axisLine={false}
+            height={18}
+            tick={{ fontSize: 10, fill: "var(--muted-2)" }}
+          />
+          <Tooltip
+            cursor={{ stroke: "var(--border)", strokeOpacity: 0.35 }}
+            contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 8px", fontSize: 12, color: "var(--fg)" }}
+            labelStyle={{ color: "var(--muted-2)" }}
+            labelFormatter={(label: unknown) => `Page ${String(label ?? "")}`}
+            formatter={(v: unknown) => [typeof v === "number" && v > 0 ? formatDurationShort(v) : "Not viewed", ""]}
+          />
+          <Area
+            type="monotone"
+            dataKey="ms"
+            stroke="rgb(16 185 129)"
+            strokeWidth={1.5}
+            fill="url(#lnkdrpViewerPageTime)"
+            fillOpacity={1}
+            dot={false}
+            activeDot={{ r: 3, strokeWidth: 1.5 }}
+            isAnimationActive={false}
+          >
+            <LabelList dataKey="ms" content={valueLabels({ values: data.map((d) => d.ms), format: (n) => formatDurationTiny(n) })} />
+          </Area>
+        </AreaChart>
+      ) : null}
+    </div>
+  );
+}
+
+/** "Viewed 9 pages in 29s over 2 sessions, most time on page 3." — the one-line read of a viewer. */
+function viewerSummary(pagesViewed: number, timeMs: number, sessions: number, msByPage: Record<string, number>): string {
+  const parts = [`Viewed ${pagesViewed} ${pagesViewed === 1 ? "page" : "pages"}`];
+  if (timeMs > 0) parts.push(`in ${formatDurationShort(timeMs)}`);
+  let text = parts.join(" ");
+  if (sessions > 1) text += ` over ${sessions} sessions`;
+  const entries = Object.entries(msByPage).filter(([, v]) => typeof v === "number" && v > 0) as Array<[string, number]>;
+  if (entries.length >= 2) {
+    const [topPage, topMs] = entries.reduce((a, b) => (b[1] > a[1] ? b : a));
+    const avg = entries.reduce((sum, [, v]) => sum + v, 0) / entries.length;
+    if (topMs >= avg * 1.5) text += `, most time on page ${topPage}`;
+  }
+  return `${text}.`;
 }
 
 function ChevronDown() {
@@ -859,6 +942,38 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
       return acc + (typeof c === "number" && Number.isFinite(c) && c >= 2 ? 1 : 0);
     }, 0);
   }
+
+  // The preview lists the viewer's recent sessions, so load them as soon as it opens (deep tier only;
+  // the endpoint answers 402 on Free).
+  const viewerKind = viewerDetail?.kind;
+  const viewerKey = viewerDetail?.key;
+  useEffect(() => {
+    if (!viewerKind || !viewerKey || !deepAnalytics) return;
+    let cancelled = false;
+    setVisits([]);
+    setVisitsError(null);
+    setVisitsLoading(true);
+    const params = new URLSearchParams({ kind: viewerKind, limit: "50" });
+    if (viewerKind === "authed") params.set("userId", viewerKey);
+    else params.set("botIdHash", viewerKey);
+    if (shareId) params.set("shareId", shareId);
+    void (async () => {
+      try {
+        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/shareviews/visits?${params.toString()}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`Request failed (${res.status})`);
+        const json = (await res.json().catch(() => null)) as ShareViewerVisitsResponse | null;
+        if (!json || json.ok !== true || !Array.isArray(json.visits)) throw new Error("Invalid response");
+        if (!cancelled) setVisits(json.visits);
+      } catch (e) {
+        if (!cancelled) setVisitsError(e instanceof Error ? e.message : "Failed to load sessions");
+      } finally {
+        if (!cancelled) setVisitsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [viewerKind, viewerKey, deepAnalytics, docId, shareId]);
 
   async function openVisitsForViewer() {
     if (!viewerDetail) return;
@@ -1707,102 +1822,115 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
         ) : null}
       </Modal>
 
-      <Modal open={Boolean(viewerDetail)} onClose={() => setViewerDetail(null)} ariaLabel="Viewer details">
+      <Modal open={Boolean(viewerDetail)} onClose={() => setViewerDetail(null)} ariaLabel="Viewer details" width={560}>
         {!viewerDetail ? null : (
-          <>
-            <div className="text-base font-semibold text-[var(--fg)]">{viewerDetail.title}</div>
-            {viewerDetail.subtitle ? <div className="mt-1 text-sm text-[var(--muted)]">{viewerDetail.subtitle}</div> : null}
-
-            <div className="mt-4 grid gap-4">
-              <div className="grid gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">ACTIVITY</div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-xs text-[var(--muted)]">
-                      {viewerDetail.kind === "authed" ? "Authenticated viewer" : "Anonymous viewer"}
+          (() => {
+            const sessions = visits.length || viewerDetail.views;
+            const recent = [...visits]
+              .sort((a, b) => (parseIsoMs(b.startedAt) ?? 0) - (parseIsoMs(a.startedAt) ?? 0))
+              .slice(0, 3);
+            const initial = (viewerDetail.kind === "anon" && viewerDetail.title === "Anonymous viewer" ? "" : viewerDetail.title.trim()[0] ?? "").toUpperCase();
+            const stat = (label: string, value: string) => (
+              <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
+                <div className="truncate text-[11px] font-medium text-[var(--muted-2)]">{label}</div>
+                <div className="mt-0.5 truncate text-base font-semibold tabular-nums text-[var(--fg)]">{value}</div>
+              </div>
+            );
+            return (
+              <>
+                {/* Who, and when they were last here — no device hash in the headline. */}
+                <div className="flex items-center gap-3 pr-10">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] text-sm font-semibold text-[var(--fg)]">
+                    {initial || <UserIcon className="h-5 w-5 text-[var(--muted)]" aria-hidden="true" />}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-base font-semibold text-[var(--fg)]">{viewerDetail.title}</div>
+                    <div className="truncate text-[13px] text-[var(--muted)]">
+                      {viewerDetail.subtitle && !viewerDetail.subtitle.startsWith("Device ") ? `${viewerDetail.subtitle} · ` : ""}
+                      Last seen {relativeAge(viewerDetail.lastSeen)}
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => void openVisitsForViewer()}>
-                      Visits
-                    </Button>
                   </div>
                 </div>
-                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                  <span className="tabular-nums text-[var(--fg)]">
-                    {viewerDetail.views} {viewerDetail.views === 1 ? "view" : "views"}
-                  </span>
-                  <span className="tabular-nums text-[var(--fg)]">
-                    {viewerDetail.pagesViewed} {viewerDetail.pagesViewed === 1 ? "page" : "pages"}
-                  </span>
-                  {viewerTimeTotalMs > 0 ? (
-                    <span className="tabular-nums text-[var(--fg)]">
-                      {viewerDetail.timeSpentMs > 0 ? (
-                        <>Time spent {formatDurationShort(viewerDetail.timeSpentMs)}</>
-                      ) : (
-                        <>Activity span ~{formatDurationShort(viewerDetail.timeOpenMs)}</>
-                      )}
-                    </span>
-                  ) : null}
-                  {viewerTrackedAvgPerViewMs > 0 ? (
-                    <span className="tabular-nums text-[var(--fg)]">
-                      Avg / view {formatDurationShort(viewerTrackedAvgPerViewMs)}
-                    </span>
-                  ) : null}
-                  {viewerTrackedAvgPerPageMs > 0 ? (
-                    <span className="tabular-nums text-[var(--fg)]">
-                      Avg / page {formatDurationShort(viewerTrackedAvgPerPageMs)}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="mt-2 text-xs text-[var(--muted)]">
-                  First seen {formatDateTime(viewerDetail.firstSeen)} · Last seen {formatDateTime(viewerDetail.lastSeen)}
-                </div>
-              </div>
 
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-                <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">PAGES SEEN</div>
-                {!viewerDetail.pagesSeen.length ? (
-                  <div className="mt-2 text-sm text-[var(--muted)]">No page-level data yet.</div>
-                ) : (
-                  <>
-                    <div className="mt-2 text-sm text-[var(--muted)]">{formatPageRanges(viewerDetail.pagesSeen)}</div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {viewerDetail.pagesSeen.slice(0, 60).map((p) => (
-                        (() => {
-                          const raw = viewerDetail.pageTimeMsByPage?.[String(p)];
-                          const actualMs = typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
-                          const ms = actualMs;
-                          const tiny = ms > 0 ? formatDurationTiny(ms) : "";
-                          return (
-                        <span
-                          key={`page:${viewerDetail.key}:${p}`}
-                            tabIndex={ms > 0 ? 0 : -1}
-                            className="group relative inline-flex flex-col items-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-1 text-[11px] font-semibold text-[var(--fg)] tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-                        >
-                            <span className="leading-4">{p}</span>
-                            {tiny ? <span className="mt-0.5 text-[10px] font-medium text-[var(--muted-2)]">{tiny}</span> : null}
-                            {ms > 0 ? (
-                              <span className="pointer-events-none absolute -top-2 left-1/2 z-10 hidden -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-medium text-[var(--fg)] shadow-xl group-hover:block group-focus-visible:block">
-                                Time on page: {formatDurationShort(ms)}
-                              </span>
-                            ) : null}
-                        </span>
-                          );
-                        })()
-                      ))}
-                      {viewerDetail.pagesSeen.length > 60 ? (
-                        <span className="text-xs text-[var(--muted)]">+{viewerDetail.pagesSeen.length - 60} more</span>
-                      ) : null}
+                <p className="mt-4 text-[14px] leading-6 text-[var(--fg)]">
+                  {viewerSummary(viewerDetail.pagesViewed || viewerDetail.pagesSeen.length, viewerTimeTotalMs, sessions, viewerDetail.pageTimeMsByPage)}
+                </p>
+
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {stat("Sessions", visitsLoading && !visits.length ? "…" : visits.length >= 50 ? "50+" : String(sessions))}
+                  {stat("Time spent", viewerTimeTotalMs > 0 ? `${viewerTimeApproxPrefix}${formatDurationShort(viewerTimeTotalMs)}` : "—")}
+                  {stat("Pages viewed", String(viewerDetail.pagesViewed || viewerDetail.pagesSeen.length))}
+                  {stat("Avg per page", viewerTrackedAvgPerPageMs > 0 ? formatDurationShort(viewerTrackedAvgPerPageMs) : "—")}
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+                  <div className="text-[13px] font-semibold text-[var(--fg)]">Time on each page</div>
+                  {viewerHasRealPerPageTime && viewerDetail.pagesSeen.length === 1 ? (
+                    // One page is a dot, not a chart.
+                    <div className="mt-2 text-[13px] text-[var(--muted)]">
+                      {`Spent ${formatDurationShort(viewerDetail.pageTimeMsByPage[String(viewerDetail.pagesSeen[0])] ?? 0)} on page ${viewerDetail.pagesSeen[0]}.`}
                     </div>
-                    {!viewerHasRealPerPageTime ? (
-                      <div className="mt-2 text-xs text-[var(--muted)]">
-                        Per-page time is best-effort and only appears after a viewer navigates with the updated share viewer.
-                      </div>
+                  ) : viewerHasRealPerPageTime ? (
+                    <div className="mt-2">
+                      <PageTimeChart pages={viewerDetail.pagesSeen} msByPage={viewerDetail.pageTimeMsByPage} />
+                    </div>
+                  ) : viewerDetail.pagesSeen.length ? (
+                    <div className="mt-2 text-[13px] text-[var(--muted)]">
+                      Opened pages {formatPageRanges(viewerDetail.pagesSeen)}. Time per page wasn&apos;t recorded for this viewer.
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-[13px] text-[var(--muted)]">No page activity recorded yet.</div>
+                  )}
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                  <div className="flex items-center justify-between gap-3 px-4 pt-3.5">
+                    <div className="text-[13px] font-semibold text-[var(--fg)]">Recent sessions</div>
+                    {visits.length > recent.length ? (
+                      <button
+                        type="button"
+                        onClick={() => void openVisitsForViewer()}
+                        className="text-[12px] font-medium text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
+                      >
+                        All {visits.length >= 50 ? "50+" : visits.length} sessions →
+                      </button>
                     ) : null}
-                  </>
-                )}
-              </div>
-            </div>
-          </>
+                  </div>
+                  {visitsLoading && !visits.length ? (
+                    <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">Loading…</div>
+                  ) : visitsError ? (
+                    <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">Couldn&apos;t load sessions.</div>
+                  ) : !recent.length ? (
+                    <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">No sessions recorded yet.</div>
+                  ) : (
+                    <ul className="mt-1.5 divide-y divide-[var(--border)]">
+                      {recent.map((v) => (
+                        <li key={v.visitId}>
+                          <button
+                            type="button"
+                            onClick={() => void openVisitDetail(v.visitId)}
+                            className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-[var(--panel-hover)]"
+                            title="See this session page by page"
+                          >
+                            <span className="min-w-0 truncate text-[13px] text-[var(--fg)]">{formatDateTime(v.startedAt)}</span>
+                            <span className="shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
+                              {v.timeSpentMs > 0 ? formatDurationShort(v.timeSpentMs) : "—"}
+                              {v.pagesSeen?.length ? ` · ${v.pagesSeen.length === 1 ? "page" : "pages"} ${formatPageRanges(v.pagesSeen)}` : ""}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="mt-3 text-[11px] text-[var(--muted-2)]">
+                  First seen {formatDateTime(viewerDetail.firstSeen)}
+                  {viewerDetail.kind === "anon" && viewerDetail.key !== "anon" ? ` · Device ${formatShortId(viewerDetail.key)}` : ""}
+                </div>
+              </>
+            );
+          })()
         )}
       </Modal>
 
