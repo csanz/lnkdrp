@@ -113,6 +113,9 @@ export default function SidebarDocsModal({
                   }}
                   onKeyDown={(e) => {
                     if (e.key !== "Enter" && e.key !== " ") return;
+                    // Only the row itself: Enter/Space on a button inside it (copy link, the "..."
+                    // menu) must press that button, not open the document.
+                    if (e.target !== e.currentTarget) return;
                     e.preventDefault();
                     onDismiss();
                     routerPush(href);
