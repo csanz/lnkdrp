@@ -9,7 +9,8 @@
 import { NextResponse } from "next/server";
 import { ApiKeyAuthError } from "@/lib/gating/apiKeyActor";
 import { actorRateLimitResponse } from "@/lib/gating/actorRateLimit";
-import { debugError } from "@/lib/debug";
+import { debugEnabled } from "@/lib/debug";
+import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent, redactLogText, sanitizeMeta } from "@/lib/errors/logger";
 
 export type ErrorJsonOptions = {
   /** HTTP status for the response. */
@@ -47,7 +48,29 @@ export function errorJson(err: unknown, opts: ErrorJsonOptions): NextResponse {
     return NextResponse.json({ error: err.code, message: err.message }, { status: err.status, headers: { "cache-control": "no-store" } });
   }
   const message = errorMessage(err);
-  debugError(1, opts.context ?? "[api] request failed", { status: opts.status, message, ...(opts.logMeta ?? {}) });
+  const context = opts.context ?? "[api] request failed";
+
+  // Always one redacted line, whatever DEBUG_LEVEL is: DEBUG_LEVEL must stay unset in production,
+  // and without this a caught 500 left nothing in Vercel Logs. No stack, body or logMeta unless debugging.
+  // eslint-disable-next-line no-console
+  console.error(context, {
+    status: opts.status,
+    name: err instanceof Error ? err.name : typeof err,
+    message: redactLogText(message),
+    ...(debugEnabled(1) && opts.logMeta ? { meta: sanitizeMeta(opts.logMeta) } : {}),
+  });
+  if (opts.status >= 500) {
+    // No-ops unless ERROR_LOGGING_ENABLED=true; never throws.
+    void logErrorEvent({
+      severity: "error",
+      category: "api",
+      code: ERROR_CODE_UNHANDLED_EXCEPTION,
+      err,
+      route: context,
+      statusCode: opts.status,
+      meta: opts.logMeta,
+    }).catch(() => {});
+  }
 
   const body: { error: string; detail?: string } = { error: opts.publicMessage };
   if (process.env.NODE_ENV !== "production") body.detail = message;

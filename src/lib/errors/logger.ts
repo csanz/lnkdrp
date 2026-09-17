@@ -220,6 +220,26 @@ function redactString(s: string): string {
   return s;
 }
 
+/**
+ * Redact secrets and personal data inside free text meant for console logs (Vercel Logs).
+ *
+ * Unlike `redactString`, which only replaces a value that is wholly a secret, this rewrites
+ * matches in place so the rest of the message (e.g. a Mongo `E11000 dup key` line) stays readable.
+ */
+export function redactLogText(input: string, maxChars = 500): string {
+  const s = String(input ?? "")
+    // Credentials in connection strings / URLs: scheme://user:pass@host
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1[REDACTED_CREDENTIALS]@")
+    .replace(/\bbearer\s+[A-Za-z0-9\-_.=]{8,}/gi, "Bearer [REDACTED]")
+    .replace(/\b[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\b/g, "[REDACTED_JWT]")
+    // Our API keys, and Stripe / Resend secrets.
+    .replace(/\b(?:lnk|sk|rk|whsec|re)_[A-Za-z0-9_]{12,}/g, "[REDACTED_KEY]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
+    .replace(/\s+/g, " ")
+    .trim();
+  return truncate(s, maxChars);
+}
+
 function isSensitiveKey(k: string): boolean {
   const key = (k ?? "").trim().toLowerCase();
   if (!key) return false;
