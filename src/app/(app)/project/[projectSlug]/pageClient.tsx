@@ -17,6 +17,7 @@ import {
 import { StarIcon as StarSolidIcon } from "@heroicons/react/24/solid";
 import { fetchWithTempUser, tempUserHeaders } from "@/lib/gating/tempUserClient";
 import { trackProjectClick, trackProjectView } from "@/lib/metrics/client";
+import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import ProjectSharePanel from "@/components/ProjectSharePanel";
 import { CopyButton } from "@/components/CopyButton";
@@ -780,88 +781,87 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
 
   return (
     <div className="flex h-full flex-col">
-      {/* Top bar */}
-      <div className="flex items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4 md:h-[68px] md:py-0">
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            {isRequestRepo ? (
-              <InboxArrowDownIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
-            ) : (
-              <FolderIcon className="h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
-            )}
-            {title ? (
-              <div className="min-w-0 flex-1 translate-y-[2px]">
-                {editingName ? (
-                  <div className="min-w-0">
-                    <input
-                      ref={nameInputRef}
-                      value={nameDraft}
-                      disabled={nameSaveBusy}
-                      onChange={(e) => {
-                        setNameDraft(e.target.value);
-                        if (nameSaveError) setNameSaveError(null);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void saveName(nameDraft);
-                        } else if (e.key === "Escape") {
-                          e.preventDefault();
-                          setNameDraft(title);
-                          setEditingName(false);
-                          setNameSaveError(null);
-                        }
-                      }}
-                      onBlur={() => {
-                        // Best-effort: save on blur if changed.
-                        void saveName(nameDraft);
-                      }}
-                      aria-label="Project name"
-                      className={[
-                        "w-full min-w-0 rounded-md border bg-[var(--panel)] px-2 py-1 text-sm font-semibold text-[var(--fg)]",
-                        "border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-black/10",
-                        nameSaveBusy ? "opacity-70" : "",
-                      ].join(" ")}
-                    />
-                    {nameSaveError ? (
-                      <div className="mt-1 text-xs font-medium text-red-700">{nameSaveError}</div>
-                    ) : null}
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={!project}
-                    aria-disabled={!project}
-                    aria-label="Rename project"
-                    title="Rename project"
-                    onClick={() => {
-                      if (!project) return;
+      <AppPageHeader
+        icon={isRequestRepo ? InboxArrowDownIcon : FolderIcon}
+        title={
+          title ? (
+            editingName ? (
+              <span className="block min-w-0">
+                <input
+                  ref={nameInputRef}
+                  value={nameDraft}
+                  disabled={nameSaveBusy}
+                  onChange={(e) => {
+                    setNameDraft(e.target.value);
+                    if (nameSaveError) setNameSaveError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void saveName(nameDraft);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
                       setNameDraft(title);
+                      setEditingName(false);
                       setNameSaveError(null);
-                      setEditingName(true);
-                    }}
-                    className="block w-full min-w-0 truncate text-left text-sm font-semibold text-[var(--fg)] hover:underline"
-                  >
-                    {title}
-                  </button>
-                )}
-              </div>
-            ) : notFound ? null : (
-              <div
-                className="h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)]"
-                aria-label="Loading project name"
-              />
-            )}
-            {isRequestRepo ? (
-              <span className="shrink-0 rounded-full bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]">
-                Request link
+                    }
+                  }}
+                  onBlur={() => {
+                    // Best-effort: save on blur if changed.
+                    void saveName(nameDraft);
+                  }}
+                  aria-label="Project name"
+                  className={[
+                    "w-full min-w-0 rounded-md border bg-[var(--panel)] px-2 py-0.5 text-lg font-semibold tracking-tight text-[var(--fg)]",
+                    "border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-black/10",
+                    nameSaveBusy ? "opacity-70" : "",
+                  ].join(" ")}
+                />
+                {nameSaveError ? <span className="mt-1 block text-xs font-medium text-red-700">{nameSaveError}</span> : null}
               </span>
-            ) : null}
-            {project ? (
+            ) : (
+              <button
+                type="button"
+                disabled={!project}
+                aria-disabled={!project}
+                aria-label="Rename project"
+                title="Rename project"
+                onClick={() => {
+                  if (!project) return;
+                  setNameDraft(title);
+                  setNameSaveError(null);
+                  setEditingName(true);
+                }}
+                className="block min-w-0 max-w-full truncate text-left hover:underline"
+              >
+                {title}
+              </button>
+            )
+          ) : notFound ? (
+            "Project"
+          ) : (
+            <span className="block h-5 w-40 animate-pulse rounded bg-[var(--panel-hover)]" aria-label="Loading project name" />
+          )
+        }
+        description={subtitle || undefined}
+        badge={
+          isRequestRepo ? (
+            <span className="shrink-0 rounded-full bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]">
+              Request link
+            </span>
+          ) : null
+        }
+        actions={
+          project ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[var(--muted-2)]">
+                {view === "archived" ? `${docs.total} archived` : `${docs.total} ${docs.total === 1 ? "doc" : "docs"}`}
+              </span>
               <button
                 type="button"
                 className="shrink-0 rounded-lg p-1 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
                 aria-label="Project settings"
+                title="Project settings"
                 onClick={() => {
                   if (!project) return;
                   setSaveError(null);
@@ -873,20 +873,13 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
               >
                 <Cog6ToothIcon className="h-4 w-4" />
               </button>
-            ) : null}
-          </div>
-        </div>
-        {project ? (
-          <div className="shrink-0 text-xs text-[var(--muted-2)]">
-            {view === "archived"
-              ? `${docs.total} archived`
-              : `${docs.total} ${docs.total === 1 ? "doc" : "docs"}`}
-          </div>
-        ) : null}
-      </div>
+            </div>
+          ) : null
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-hidden bg-[var(--bg)]">
-        <div className="h-full px-6 py-6">
+        <div className={`h-full py-6 ${APP_PAGE_GUTTER}`}>
           {notFound ? (
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6 text-sm text-[var(--muted)]">
               Project not found.
@@ -894,10 +887,8 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
           ) : (
             <div className="grid h-full min-h-0 gap-5 lg:grid-cols-[1.35fr_0.65fr]">
               <section className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-                {subtitle ? <div className="text-xs text-[var(--muted-2)]">{subtitle}</div> : null}
-
                 <div
-                  className={["flex flex-wrap items-center gap-2", subtitle ? "mt-5" : ""].join(" ")}
+                  className="flex flex-wrap items-center gap-2"
                   role="tablist"
                   aria-label="Project documents"
                 >
