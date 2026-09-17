@@ -161,7 +161,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         return applyTempUserHeaders(NextResponse.json({ error: "Invalid docId" }, { status: 400 }), actor);
       }
 
-      const requestedDays = Math.min(60, asPositiveInt(url.searchParams.get("days")) ?? 15);
+      const requestedDays = Math.min(365, asPositiveInt(url.searchParams.get("days")) ?? 15);
       /** `?byLink=1` adds the same window broken down per link, in the same response. */
       const wantsByLink = url.searchParams.get("byLink") === "1";
       /**
@@ -305,10 +305,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // only exist from the visit-upsert fix onwards. Traffic older than that has views and no
       // opens, so `opens < views` on historical data is missing rows, not a quiet document.
       const visitMatch: Record<string, unknown> = { ...scopeMatch, ...RECIPIENT_ONLY_MATCH };
-      const [windowOpens, allTimeOpens] = await Promise.all([
+      const [windowOpens, allTimeOpens, visitTimeAgg] = await Promise.all([
         ShareVisitModel.countDocuments({ ...visitMatch, lastEventAt: { $gte: start } }),
         ShareVisitModel.countDocuments(visitMatch),
+        ShareVisitModel.aggregate([
+          { $match: { ...visitMatch, lastEventAt: { $gte: start } } },
+          { $group: { _id: null, ms: { $sum: { $ifNull: ["$timeSpentMs", 0] } } } },
+        ]) as Promise<Array<{ ms?: number }>>,
       ]);
+      const visitTimeMs =
+        typeof visitTimeAgg[0]?.ms === "number" && Number.isFinite(visitTimeAgg[0].ms) ? Math.max(0, Math.floor(visitTimeAgg[0].ms)) : 0;
 
       // The counters are a floor for a document whose rows were swept by a cleanup script; they
       // are never allowed to *replace* the row count, which is the only recomputable number.
@@ -572,14 +578,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const [viewersAgg, anonymousAgg] = includeViewers
         ? await Promise.all([
             ShareViewModel.aggregate([
-              { $match: { ...scopeMatch, viewerUserId: { $ne: null } } },
+              // Same window as `viewerCount`: people active in `days`, last seen by real view activity.
+              { $match: { ...scopeMatch, viewerUserId: { $ne: null }, ...activityWindowMatch(start) } },
               // Ensure we pick the most recent denormalized viewerName/email snapshots.
               { $sort: { updatedDate: -1 } },
               {
                 $group: {
                   _id: "$viewerUserId",
                   firstSeen: { $min: "$createdDate" },
-                  lastSeen: { $max: "$updatedDate" },
+                  lastSeen: { $max: LAST_ACTIVITY_EXPR },
                   views: { $sum: 1 },
                   pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
                   timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
@@ -634,13 +641,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               }>
             >,
             ShareViewModel.aggregate([
-              { $match: { ...scopeMatch, $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] } },
+              {
+                $match: {
+                  ...scopeMatch,
+                  // `activityWindowMatch` is itself an `$or`, so the two conditions go through `$and`.
+                  $and: [{ $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] }, activityWindowMatch(start)],
+                },
+              },
               { $sort: { updatedDate: -1 } },
               {
                 $group: {
                   _id: "$botIdHash",
                   firstSeen: { $min: "$createdDate" },
-                  lastSeen: { $max: "$updatedDate" },
+                  lastSeen: { $max: LAST_ACTIVITY_EXPR },
                   views: { $sum: 1 },
                   pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
                   timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
@@ -850,6 +863,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           pagesViewed,
           /** Total time on the document within the window (ms), summed across all viewers. */
           timeSpentMs: Math.max(0, Math.floor(windowTimeSpentMs)),
+          /**
+           * Time spent in visits active in the window. `timeSpentMs` stays the lifetime time of
+           * viewers active in the window, for existing consumers.
+           */
+          visitTimeMs,
           authenticatedViewers: uniqueAuthedViewers,
           anonymousViewers: uniqueAnonymousViewers,
         },

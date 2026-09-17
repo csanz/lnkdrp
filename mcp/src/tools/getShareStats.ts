@@ -15,7 +15,10 @@ export const getShareStatsInputShape = {
   includeViewers: z
     .boolean()
     .default(false)
-    .describe("Include per-viewer rows, signed-in and anonymous, with per-page time (Pro only; Free returns none)."),
+    .describe(
+      "Include per-viewer rows, signed-in and anonymous, with per-page time (Pro only; Free returns none). " +
+        "Rows cover people active in the window (up to 100 of each kind, most recent first); lastSeen is their last view.",
+    ),
 };
 
 /** Register `lnkdrp_get_share_stats`. */
