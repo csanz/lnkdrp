@@ -38,7 +38,7 @@ export default async function BillingSuccessPage(props: { searchParams?: Promise
       />
       <div className="relative z-10 flex min-h-[100svh] w-full flex-col">
         <PublicHeader />
-        <section className="mx-auto w-full max-w-4xl flex-1 px-8 pb-20 pt-12 sm:px-10 md:pt-16">
+        <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center px-6 pb-16 pt-10 sm:px-10">
           <SuccessClient
             sessionId={sessionId}
             demo={demo}
