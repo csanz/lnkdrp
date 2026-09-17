@@ -42,7 +42,7 @@ export type ActivityItem = {
   createdDate: string;
   actor: { userId: string | null; name: string | null; email: string | null; kind: string };
   agent: { client: string; label: string; version: string | null } | null;
-  doc: { id: string; title: string | null; shareId: string | null } | null;
+  doc: { id: string; title: string | null; shareId: string | null; deleted?: boolean } | null;
   project: { id: string; name: string | null } | null;
   meta: Record<string, unknown>;
 };
@@ -172,7 +172,7 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "uploaded", object: docTitle, suffix: null };
     case "doc.processed": {
       const cost = creditsSuffix(item.meta);
-      return { subject: "Processing", verb: "finished for", object: docTitle, suffix: cost };
+      return { subject: "Processing", verb: "finished for", object: docTitle, suffix: cost ? `· ${cost}` : null };
     }
     case "doc.replaced": {
       const v = item.meta?.version;

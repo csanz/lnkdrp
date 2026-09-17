@@ -347,7 +347,7 @@ export default function UploadPageClient() {
                         setError(null);
                       }}
                     />
-                    <div className="text-xs text-[var(--muted)]">or drag & drop a PDF anywhere onto this page</div>
+                    <div className="hidden text-xs text-[var(--muted)] md:block">or drag & drop a PDF anywhere onto this page</div>
                   </div>
                   {error ? <div className="mt-4 text-sm font-medium text-red-600">{error}</div> : null}
                 </div>
@@ -382,35 +382,37 @@ export default function UploadPageClient() {
                 {busy ? "Uploading…" : "Upload & create link"}
               </button>
 
-              <div className="flex items-center justify-between gap-2">
-                <UploadButton
-                  label="Choose a different PDF"
-                  accept="pdf"
-                  variant="link"
-                  disabled={busy || atDocumentLimit}
-                  onFileRejected={setError}
-                  onFileSelected={(file) => {
-                    if (!isPdfFile(file)) {
-                      setError(PDF_ONLY_MESSAGE);
-                      return;
-                    }
-                    setPreviewLoading(true);
-                    setSelectedFile(file);
-                    setError(null);
-                  }}
-                />
-                <button
-                  type="button"
-                  disabled={busy}
-                  className="rounded-lg px-2 py-1.5 text-[13px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                  onClick={() => {
-                    setSelectedFile(null);
-                    setError(null);
-                  }}
-                >
-                  Clear
-                </button>
-              </div>
+              {selectedFile ? (
+                <div className="flex items-center justify-between gap-2">
+                  <UploadButton
+                    label="Choose a different PDF"
+                    accept="pdf"
+                    variant="link"
+                    disabled={busy || atDocumentLimit}
+                    onFileRejected={setError}
+                    onFileSelected={(file) => {
+                      if (!isPdfFile(file)) {
+                        setError(PDF_ONLY_MESSAGE);
+                        return;
+                      }
+                      setPreviewLoading(true);
+                      setSelectedFile(file);
+                      setError(null);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="rounded-lg px-2 py-1.5 text-[13px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                    onClick={() => {
+                      setSelectedFile(null);
+                      setError(null);
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             {error ? <div className="mt-4 text-sm font-medium text-red-600">{error}</div> : null}
@@ -421,7 +423,7 @@ export default function UploadPageClient() {
                 <li className="flex gap-2"><span aria-hidden="true" className="text-[var(--muted-2)]">·</span>The AI summary and key points are generated after upload.</li>
               </ul>
             ) : null}
-            <div className="mt-4 text-[11px] leading-5 text-[var(--muted)]">
+            <div className="mt-4 hidden text-[11px] leading-5 text-[var(--muted)] md:block">
               Tip: drag & drop a PDF anywhere onto this page to replace the selection.
             </div>
           </div>

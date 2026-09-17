@@ -43,7 +43,7 @@ const ROW_ENTER_CLASS = "motion-safe:animate-[ldFeedRowIn_360ms_cubic-bezier(0.2
 const ROW_LINK_CLASS =
   "group flex items-start gap-3 px-4 py-3 outline-none transition-colors hover:bg-[var(--panel-hover)] focus-visible:bg-[var(--panel-hover)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--ring)]";
 
-/** Compact relative time ("just now", "5m ago", "2h ago", "3d ago", else a short date). */
+/** Compact relative time ("just now", "5 mins ago", "2 hrs ago", "3 days ago", else a short date). */
 export function formatRelativeShort(iso: string | null): string {
   if (!iso) return "";
   const t = Date.parse(iso);
@@ -51,11 +51,11 @@ export function formatRelativeShort(iso: string | null): string {
   const diff = Math.max(0, Date.now() - t);
   const mins = Math.round(diff / 60000);
   if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return `${mins} ${mins === 1 ? "min" : "mins"} ago`;
   const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
+  if (hrs < 24) return `${hrs} ${hrs === 1 ? "hr" : "hrs"} ago`;
   const days = Math.round(hrs / 24);
-  if (days < 30) return `${days}d ago`;
+  if (days < 30) return `${days} ${days === 1 ? "day" : "days"} ago`;
   return new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
@@ -171,7 +171,7 @@ export function ProjectResultRow({
   return (
     <li style={{ animationDelay: `${Math.min(index, STAGGER_CAP) * 28}ms` }} className={ROW_ENTER_CLASS}>
       <Link
-        href={`/project/${encodeURIComponent(project.slug || project.id)}`}
+        href={`/project/${encodeURIComponent(project.id)}`}
         className={ROW_LINK_CLASS}
         data-result-index={resultIndex}
         tabIndex={tabIndex}

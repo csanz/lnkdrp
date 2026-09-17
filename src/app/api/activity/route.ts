@@ -156,7 +156,7 @@ export async function GET(request: Request) {
         : Promise.resolve([]),
       docIds.size
         ? DocModel.find({ _id: { $in: Array.from(docIds.values()) } })
-            .select({ _id: 1, title: 1, shareId: 1 })
+            .select({ _id: 1, title: 1, shareId: 1, isDeleted: 1 })
             .lean()
         : Promise.resolve([]),
       projectIds.size
@@ -187,11 +187,12 @@ export async function GET(request: Request) {
         isTemp: Boolean((u as { isTemp?: unknown }).isTemp),
       });
     }
-    const docById = new Map<string, { title: string | null; shareId: string | null }>();
+    const docById = new Map<string, { title: string | null; shareId: string | null; deleted: boolean }>();
     for (const d of docs) {
       docById.set(String(d._id), {
         title: typeof d.title === "string" && d.title.trim() ? d.title.trim() : null,
         shareId: typeof d.shareId === "string" && d.shareId ? d.shareId : null,
+        deleted: Boolean((d as { isDeleted?: unknown }).isDeleted),
       });
     }
     const projectById = new Map<string, { name: string | null }>();
@@ -239,6 +240,7 @@ export async function GET(request: Request) {
               // Prefer the denormalized title (survives renames/deletes); fall back to the live doc.
               title: (isProjectEvent ? null : r.title) ?? d?.title ?? null,
               shareId: d?.shareId ?? null,
+              deleted: !d || d.deleted,
             }
           : null,
         project: pid ? { id: pid, name: p?.name ?? (isProjectEvent ? r.title ?? null : null) } : null,

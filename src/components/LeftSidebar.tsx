@@ -1783,7 +1783,11 @@ export default function LeftSidebar({
               disabled={navLocked}
               className={[
                 "group relative w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
-                navLocked ? "cursor-not-allowed opacity-50" : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
+                navLocked
+                  ? "cursor-not-allowed opacity-50"
+                  : pathname === "/" || pathname.startsWith("/upload")
+                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
                 isAddNewDropActive ? "bg-[var(--sidebar-hover)] text-[var(--fg)]" : "",
               ].join(" ")}
               onClick={() => openAddNewPicker()}
@@ -1818,6 +1822,7 @@ export default function LeftSidebar({
                 onAddNewFile(file);
               }}
               aria-label="Upload"
+              aria-current={pathname === "/" || pathname.startsWith("/upload") ? "page" : undefined}
               title={navLocked ? "Disabled while uploading" : "Upload"}
             >
               <div className={["flex items-center gap-2", isAddNewDropActive ? "opacity-25" : "opacity-100"].join(" ")}>

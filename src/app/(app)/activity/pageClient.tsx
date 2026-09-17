@@ -24,6 +24,7 @@ import {
   EyeIcon,
   GlobeAltIcon,
   InboxArrowDownIcon,
+  KeyIcon,
   LinkIcon,
   LinkSlashIcon,
   LockClosedIcon,
@@ -66,6 +67,7 @@ const ICON_BY_TYPE: Record<string, HeroIcon> = {
   "share_link.created": LinkIcon,
   "share_link.updated": AdjustmentsHorizontalIcon,
   "share_link.revoked": LinkSlashIcon,
+  "share_link.password_revealed": KeyIcon,
   "share.updated": LinkIcon,
   "share.password_set": LockClosedIcon,
   "share.password_cleared": LockOpenIcon,
@@ -116,7 +118,7 @@ function dayLabel(key: string): string {
 
 /** Where a row should link: the doc (unless deleted), else the project, else nowhere. */
 function hrefFor(item: ActivityItem): string | null {
-  if (item.doc?.id && item.type !== "doc.deleted") return `/doc/${encodeURIComponent(item.doc.id)}`;
+  if (item.doc?.id && item.type !== "doc.deleted" && !item.doc?.deleted) return `/doc/${encodeURIComponent(item.doc.id)}`;
   if (item.project?.id) return `/project/${encodeURIComponent(item.project.id)}`;
   return null;
 }
@@ -167,7 +169,8 @@ function ActorAvatar({ item }: { item: ActivityItem }) {
 type RowEnter = "fresh" | "none";
 
 function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: RowEnter }) {
-  const Icon = ICON_BY_TYPE[item.type] ?? ClockIcon;
+  const docGone = item.type === "doc.deleted" || Boolean(item.doc?.deleted);
+  const Icon = item.type === "doc.imported_url" && item.meta?.via === "bytes" ? ArrowUpTrayIcon : ICON_BY_TYPE[item.type] ?? ClockIcon;
   // Open the link the event came through (meta.shareId), not always the document's default link.
   const eventShareId = typeof item.meta?.shareId === "string" && item.meta.shareId ? item.meta.shareId : null;
   const shareId = eventShareId ?? item.doc?.shareId ?? null;
@@ -182,7 +185,7 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
    * picking the row. Gone once the document is deleted: there is nothing left to scope to.
    */
   const linkMetricsHref =
-    shareId && item.doc?.id && item.type !== "doc.deleted"
+    shareId && item.doc?.id && !docGone
       ? `/doc/${encodeURIComponent(item.doc.id)}/metrics?shareId=${encodeURIComponent(shareId)}`
       : null;
   const s = describeActivity(item);
@@ -194,7 +197,7 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
   // document it is on — lead to the same page, and left no way to reach the link itself.
   const isLinkRow = item.type.startsWith("share_link.");
   const href = (isLinkRow ? linkMetricsHref : null) ?? hrefFor(item);
-  const docHref = item.doc?.id && item.type !== "doc.deleted" ? `/doc/${encodeURIComponent(item.doc.id)}` : null;
+  const docHref = item.doc?.id && !docGone ? `/doc/${encodeURIComponent(item.doc.id)}` : null;
 
   const linkClass = "font-semibold text-[var(--fg)] hover:underline underline-offset-4";
   const objectNode = s.object ? (
@@ -213,14 +216,19 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
   const docTitle = item.doc?.title?.trim() || "Untitled document";
   const suffixNode = (() => {
     if (!s.suffix) return null;
-    if (!docHref || s.object === docTitle || !s.suffix.endsWith(docTitle)) return <span>{s.suffix}</span>;
+    if (s.object === docTitle || !s.suffix.endsWith(docTitle)) return <span>{s.suffix}</span>;
     const lead = s.suffix.slice(0, s.suffix.length - docTitle.length);
     return (
       <>
         {lead ? <span>{lead.trimEnd()}</span> : null}
-        <Link href={docHref} className={linkClass}>
-          {docTitle}
-        </Link>
+        {docHref ? (
+          <Link href={docHref} className={linkClass}>
+            {docTitle}
+          </Link>
+        ) : (
+          // A deleted document keeps the same bold object styling, just without the link.
+          <span className="font-semibold text-[var(--fg)]">{docTitle}</span>
+        )}
       </>
     );
   })();
@@ -254,7 +262,7 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
           <time dateTime={item.createdDate} title={exact}>
             {when}
           </time>
-          {shareHref && item.type !== "doc.deleted" && item.type !== "share_link.revoked" && item.type !== "doc.archived" ? (
+          {shareHref && !docGone && item.type !== "share_link.revoked" && item.type !== "doc.archived" ? (
             <>
               <span aria-hidden="true">·</span>
               <Link

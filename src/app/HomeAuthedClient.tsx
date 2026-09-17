@@ -399,7 +399,7 @@ export default function HomeAuthedClient() {
                   placeholder="https://example.com/deck.pdf"
                   inputMode="url"
                   aria-label="PDF link"
-                  className="min-w-0 flex-1 bg-transparent py-1.5 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted)] focus:outline-none"
+                  className="min-w-0 flex-1 bg-transparent py-1.5 text-[13px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none"
                   disabled={urlBusy}
                 />
                 <button

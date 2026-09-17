@@ -303,7 +303,7 @@ export default function SearchPageClient() {
             placeholder="Search documents and projects…"
             aria-label="Search documents and projects"
             data-lnkdrp-search-input=""
-            className="h-12 w-full rounded-2xl border border-[var(--border)] bg-[var(--bg)] pl-11 pr-28 text-[15px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+            className="h-12 w-full rounded-2xl border border-[var(--border)] bg-[var(--bg)] pl-11 pr-12 sm:pr-28 text-[15px] text-[var(--fg)] placeholder:text-[var(--muted-2)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
           />
           <div className="absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5">
             {input ? (
