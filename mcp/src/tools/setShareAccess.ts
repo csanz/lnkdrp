@@ -14,8 +14,14 @@ import { docIdSchema, SAFETY_TAIL, shareView } from "./shared";
 export const setShareAccessInputShape = {
   idempotencyKey: z.string().min(1).max(128).describe("Caller-chosen key (1-128 chars); a retry with the same key returns the stored result."),
   docId: docIdSchema,
-  shareEnabled: z.boolean().optional().describe("Turn the public share link on or off."),
-  allowDownload: z.boolean().optional().describe("Let viewers download the PDF."),
+  shareEnabled: z
+    .boolean()
+    .optional()
+    .describe(
+      "The document-wide switch: false turns off every share link on the document at once; true turns back on the links " +
+        "that switch turned off (a link disabled on its own with lnkdrp_update_share_link stays off).",
+    ),
+  allowDownload: z.boolean().optional().describe("Let viewers of the default link download the PDF (other links keep their own setting)."),
   password: z
     .string()
     .min(1)
@@ -23,7 +29,7 @@ export const setShareAccessInputShape = {
     .nullable()
     .optional()
     .describe(
-      "Set a share password (1-128 chars) or null to remove it. " +
+      "Set the default link's password (1-128 chars) or null to remove it. " +
         "Use exactly the password the human gave you, whatever its length - a one-character password is allowed. Never substitute a longer one of your own: they will type theirs at the gate and be locked out. Tell them the password you set; the owner can also reveal it later in the link's settings.",
     ),
   allowRevisionHistory: z.boolean().optional().describe("Let viewers see earlier versions (Pro feature)."),
@@ -36,7 +42,9 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
     {
       title: "Set share access",
       description:
-        "Update a share link: shareEnabled, allowDownload, password (string to set, null to remove), allowRevisionHistory. " +
+        "Update a document's sharing: shareEnabled switches every link on the document off or back on, while allowDownload, " +
+        "password (string to set, null to remove) and allowRevisionHistory apply to the default link only - use " +
+        "lnkdrp_update_share_link for any other link. " +
         "At least one setting is required. Returns the same shape as lnkdrp_get_share. Turning sharing on at the Free plan's " +
         "shared-document cap, or enabling revision history on Free, fails with code plan_limit carrying an upgrade link and " +
         "a list of what is still possible on the current plan. " +
