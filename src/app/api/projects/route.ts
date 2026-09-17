@@ -307,6 +307,16 @@ export async function POST(request: Request) {
       autoAddFiles,
     });
     const p = (Array.isArray(created) ? created[0] : created) as typeof created;
+    void recordActivity({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      actorKind: actor.kind,
+      type: "project.created",
+      projectId: (p as unknown as { _id: Types.ObjectId })._id,
+      title: name,
+      meta: { projectName: name },
+      request,
+    });
 
     return applyTempUserHeaders(
       NextResponse.json(

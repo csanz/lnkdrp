@@ -1098,6 +1098,36 @@ export async function PATCH(
 
     // Project.docCount is maintained at the model level (Doc middleware).
 
+    // Membership changes are activity too: agents add documents to projects, and without a row the
+    // feed never showed it. Only real transitions are logged (adding a doc already there is silent).
+    if (typeof body.addProjectId === "string" || typeof body.removeProjectId === "string") {
+      const beforeIds = new Set(
+        Array.isArray((before as { projectIds?: unknown } | null)?.projectIds)
+          ? ((before as { projectIds: unknown[] }).projectIds).map((x) => String(x))
+          : [],
+      );
+      const transitions = [
+        ...(typeof body.addProjectId === "string" && !beforeIds.has(body.addProjectId)
+          ? [{ type: "doc.added_to_project" as const, projectId: body.addProjectId }]
+          : []),
+        ...(typeof body.removeProjectId === "string" && beforeIds.has(body.removeProjectId)
+          ? [{ type: "doc.removed_from_project" as const, projectId: body.removeProjectId }]
+          : []),
+      ];
+      for (const t of transitions) {
+        void recordActivity({
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: t.type,
+          docId: doc._id,
+          projectId: t.projectId,
+          title: doc.title ?? null,
+          request,
+        });
+      }
+    }
+
     const docProjectIdsRaw = (doc as unknown as { projectIds?: unknown }).projectIds;
     const docProjectIds = Array.isArray(docProjectIdsRaw)
       ? docProjectIdsRaw

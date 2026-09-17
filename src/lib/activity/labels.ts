@@ -30,6 +30,11 @@ export const ACTIVITY_FILTERS = [
     ],
   },
   { id: "documents", label: "Documents", types: ["doc.created", "doc.deleted", "doc.archived", "doc.unarchived", "request_repo.created"] },
+  {
+    id: "projects",
+    label: "Projects",
+    types: ["project.created", "project.updated", "project.deleted", "doc.added_to_project", "doc.removed_from_project"],
+  },
   { id: "views", label: "Views", types: ["share.viewed", "share.downloaded"] },
 ] as const;
 
@@ -154,6 +159,12 @@ const DEFAULT_LINK_LABEL = "Default link";
  * Subject: when an agent acted for a known user the two are co-credited, GitHub style
  * ("Christian Sanz and Claude Code"); otherwise agent label > user name > "Someone".
  */
+
+/** A project's name for a sentence: the live name, else the name recorded when the event was logged (deleted projects). */
+function projectLabel(item: ActivityItem): string {
+  return item.project?.name?.trim() || metaString(item.meta, "projectName") || "a project";
+}
+
 export function describeActivity(item: ActivityItem): ActivitySentence {
   const docTitle = item.doc?.title?.trim() || "Untitled document";
   const projectName = item.project?.name?.trim() || metaString(item.meta, "projectName") || "a request inbox";
@@ -229,6 +240,16 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "set a password on", object: docTitle, suffix: null };
     case "share.password_cleared":
       return { subject, verb: "removed the password from", object: docTitle, suffix: null };
+    case "project.created":
+      return { subject, verb: "created project", object: projectLabel(item), suffix: null };
+    case "project.updated":
+      return { subject, verb: "updated project", object: projectLabel(item), suffix: null };
+    case "project.deleted":
+      return { subject, verb: "deleted project", object: projectLabel(item), suffix: "(its documents were kept)" };
+    case "doc.added_to_project":
+      return { subject, verb: "added", object: docTitle, suffix: `to ${projectLabel(item)}` };
+    case "doc.removed_from_project":
+      return { subject, verb: "removed", object: docTitle, suffix: `from ${projectLabel(item)}` };
     case "request_repo.created":
       return { subject, verb: "created request inbox", object: item.project?.name?.trim() || docTitle, suffix: null };
     case "request.upload_received":

@@ -190,7 +190,22 @@ export async function PATCH(
           requestRequireAuthToUploadRaw;
       }
     }
+    const changedFields = shareOnly
+      ? []
+      : (["name", "description", "autoAddFiles"] as const).filter((f) => project.isModified(f));
     await project.save();
+    if (changedFields.length) {
+      void recordActivity({
+        orgId: actor.orgId,
+        userId: actor.userId,
+        actorKind: actor.kind,
+        type: "project.updated",
+        projectId: project._id,
+        title: project.name ?? null,
+        meta: { projectName: project.name ?? null, changed: changedFields },
+        request,
+      });
+    }
     if (typeof body.shareEnabled === "boolean") {
       void recordActivity({
         orgId: actor.orgId,
@@ -489,6 +504,16 @@ export async function DELETE(
     }
 
     await ProjectModel.deleteOne({ _id: projectId, ...docTenant });
+    void recordActivity({
+      orgId: actor.orgId,
+      userId: actor.userId,
+      actorKind: actor.kind,
+      type: "project.deleted",
+      projectId,
+      title: project.name ?? null,
+      meta: { projectName: project.name ?? null, ...(isRequest ? { requestRepo: true } : {}) },
+      request,
+    });
 
     return applyTempUserHeaders(NextResponse.json({ ok: true }), actor);
   } catch (err) {
