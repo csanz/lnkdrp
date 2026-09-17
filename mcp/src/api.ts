@@ -126,6 +126,9 @@ export type ApiShareLinkSearchHit = {
   label: string;
   audience: string | null;
   isDefault: boolean;
+  enabled: boolean;
+  expiresAt: string | null;
+  status: string;
 };
 
 /** Settings accepted when creating or updating a share link. */
@@ -591,6 +594,9 @@ export class ApiClient {
         label: strOrNull(r.label) ?? "",
         audience: strOrNull(r.audience),
         isDefault: Boolean(r.isDefault),
+        enabled: r.enabled !== false,
+        expiresAt: strOrNull(r.expiresAt),
+        status: strOrNull(r.status) ?? (r.enabled === false ? "disabled" : "active"),
       };
     });
   }

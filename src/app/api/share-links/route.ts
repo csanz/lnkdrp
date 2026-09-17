@@ -26,7 +26,7 @@ export const dynamic = "force-dynamic";
  * see the index for why). `limit` 1-50, default 20. Readable by any member (viewers included),
  * same as every other read here.
  * Out: `{ query, links: [{ docId, docTitle, docShareId, linkId, shareId, label, audience,
- * isDefault }] }`, deleted and archived documents' links excluded.
+ * isDefault, enabled, expiresAt, status }] }`, deleted and archived documents' links excluded.
  */
 export async function GET(request: Request) {
   try {

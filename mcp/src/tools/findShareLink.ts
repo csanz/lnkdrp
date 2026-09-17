@@ -43,7 +43,8 @@ export function registerFindShareLinkTool(server: McpServer, ctx: ToolContext): 
         "searched here). Use this when you know the link's name but not which document it is on; once you know the " +
         "document, lnkdrp_list_share_links's own query parameter does the same search scoped to it. Backed by a MongoDB " +
         "text index: ranked by relevance, matches whole words only - searching \"a16z\" or \"Inesto\" matches, a partial " +
-        "word like \"nest\" does not. Archived and deleted documents' links are excluded. Returns [] when nothing matches, " +
+        "word like \"nest\" does not. Archived and deleted documents' links are excluded. Each hit carries status " +
+        "(active|disabled|expired), enabled and expiresAt, so you can say whether a found link still opens. Returns [] when nothing matches, " +
         "never an error. " +
         SAFETY_TAIL,
       inputSchema: findShareLinkInputShape,
@@ -63,6 +64,9 @@ export function registerFindShareLinkTool(server: McpServer, ctx: ToolContext): 
           label: h.label,
           audience: h.audience,
           isDefault: h.isDefault,
+          enabled: h.enabled,
+          expiresAt: h.expiresAt,
+          status: h.status,
         })),
       };
     }),

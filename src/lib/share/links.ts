@@ -342,6 +342,10 @@ export type ShareLinkSearchHit = {
   label: string;
   audience: string | null;
   isDefault: boolean;
+  enabled: boolean;
+  expiresAt: string | null;
+  /** Same derivation as the link list, so a found link says whether it still opens. */
+  status: "active" | "disabled" | "expired";
 };
 
 /**
@@ -382,6 +386,8 @@ export async function searchShareLinks(input: {
         label: 1,
         audience: 1,
         isDefault: 1,
+        enabled: 1,
+        expiresAt: 1,
         docId: "$doc._id",
         docTitle: "$doc.title",
         docShareId: "$doc.shareId",
@@ -393,6 +399,8 @@ export async function searchShareLinks(input: {
     label: string;
     audience?: string | null;
     isDefault?: boolean;
+    enabled?: boolean;
+    expiresAt?: Date | null;
     docId: Types.ObjectId;
     docTitle?: string | null;
     docShareId?: string | null;
@@ -407,6 +415,9 @@ export async function searchShareLinks(input: {
     label: r.label,
     audience: r.audience ?? null,
     isDefault: Boolean(r.isDefault),
+    enabled: Boolean(r.enabled),
+    expiresAt: r.expiresAt ? new Date(r.expiresAt).toISOString() : null,
+    status: !r.enabled ? "disabled" : isExpired({ expiresAt: r.expiresAt ?? null }) ? "expired" : "active",
   }));
 }
 
