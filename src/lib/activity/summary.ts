@@ -200,3 +200,36 @@ export function summarizeActivityRows(rows: readonly ActivityGroupRow[]): Activi
   }
   return { counts, actors: groupActorSlices(work) };
 }
+
+/** One day of work in the window: how many actions, split by who did them. */
+export type ActivityDayPoint = { day: string; total: number; people: number; agents: number };
+
+/** A row of the per-day aggregation: a day key, whether an agent did it, and how many. */
+export type ActivityDayRow = { day: string; agent: boolean; count: number };
+
+/**
+ * Fill the window day by day, oldest first.
+ *
+ * Mongo only returns days that had activity; a chart needs every day or the line lies about the
+ * gaps. `since` is the first day shown and `days` the width, both as the endpoint computed them.
+ */
+export function buildActivitySeries(rows: readonly ActivityDayRow[], input: { since: Date; days: number }): ActivityDayPoint[] {
+  const byDay = new Map<string, { people: number; agents: number }>();
+  for (const row of rows) {
+    if (!row?.day) continue;
+    const count = Number.isFinite(row.count) ? Math.max(0, Math.trunc(row.count)) : 0;
+    const cur = byDay.get(row.day) ?? { people: 0, agents: 0 };
+    if (row.agent) cur.agents += count;
+    else cur.people += count;
+    byDay.set(row.day, cur);
+  }
+  const out: ActivityDayPoint[] = [];
+  const start = new Date(Date.UTC(input.since.getUTCFullYear(), input.since.getUTCMonth(), input.since.getUTCDate()));
+  for (let i = 0; i < input.days; i++) {
+    const d = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
+    const day = d.toISOString().slice(0, 10);
+    const hit = byDay.get(day) ?? { people: 0, agents: 0 };
+    out.push({ day, people: hit.people, agents: hit.agents, total: hit.people + hit.agents });
+  }
+  return out;
+}

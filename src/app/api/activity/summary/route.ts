@@ -21,8 +21,10 @@ import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { agentLabel } from "@/lib/activity/log";
 import {
   ACTIVITY_WORK_TYPES,
+  buildActivitySeries,
   emptyCounts,
   summarizeActivityRows,
+  type ActivityDayRow,
   type ActivityGroupRow,
 } from "@/lib/activity/summary";
 
@@ -40,6 +42,7 @@ function emptySummary(days: number, since: Date) {
     since: since.toISOString(),
     counts: emptyCounts(),
     actors: { total: 0, people: 0, agents: 0, slices: [] as [] },
+    series: buildActivitySeries([], { since, days }),
   };
 }
 
@@ -48,7 +51,8 @@ function emptySummary(days: number, since: Date) {
  *
  * Query: `days` (1–365, default 30). Response:
  * `{ days, since, counts: { docsAdded, docsReplaced, linksCreated, docsRemoved, projectsCreated },
- *    actors: { total, people, agents, slices: [{ key, kind, client, label, count }] } }`.
+ *    actors: { total, people, agents, slices: [{ key, kind, client, label, count }] },
+ *    series: [{ day, total, people, agents }] }` - one point per day in the window, gaps filled.
  * Errors: 403 when the caller is not a workspace member; 400 for unexpected failures.
  */
 export async function GET(request: Request) {
@@ -79,10 +83,31 @@ export async function GET(request: Request) {
 
     // `{ orgId, type, createdDate }` is an existing index; the group's cardinality is bounded by
     // the work-type list times the number of agent clients, so a page of rows never reaches Node.
-    const grouped = await ActivityEventModel.aggregate<{ _id: { type?: string; client?: string | null }; count?: number }>([
-      { $match: { orgId, createdDate: { $gte: since }, type: { $in: ACTIVITY_WORK_TYPES } } },
-      { $group: { _id: { type: "$type", client: "$agent.client" }, count: { $sum: 1 } } },
+    // Two groups over the same match: totals by type and client for the counts and the legend, and
+    // one row per day and actor kind for the chart. Both stay small (types x clients, days x 2).
+    const [grouped, byDay] = await Promise.all([
+      ActivityEventModel.aggregate<{ _id: { type?: string; client?: string | null }; count?: number }>([
+        { $match: { orgId, createdDate: { $gte: since }, type: { $in: ACTIVITY_WORK_TYPES } } },
+        { $group: { _id: { type: "$type", client: "$agent.client" }, count: { $sum: 1 } } },
+      ]),
+      ActivityEventModel.aggregate<{ _id: { day?: string; agent?: boolean }; count?: number }>([
+        { $match: { orgId, createdDate: { $gte: since }, type: { $in: ACTIVITY_WORK_TYPES } } },
+        {
+          $group: {
+            _id: {
+              day: { $dateToString: { format: "%Y-%m-%d", date: "$createdDate", timezone: "UTC" } },
+              agent: { $gt: [{ $strLenCP: { $ifNull: ["$agent.client", ""] } }, 0] },
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
     ]);
+    const dayRows: ActivityDayRow[] = byDay.map((g) => ({
+      day: typeof g._id?.day === "string" ? g._id.day : "",
+      agent: g._id?.agent === true,
+      count: typeof g.count === "number" ? g.count : 0,
+    }));
 
     const rows: ActivityGroupRow[] = grouped.map((g) => {
       const client = typeof g._id?.client === "string" && g._id.client.trim() ? g._id.client.trim() : null;
@@ -97,7 +122,13 @@ export async function GET(request: Request) {
 
     const summary = summarizeActivityRows(rows);
     return NextResponse.json(
-      { days, since: since.toISOString(), counts: summary.counts, actors: summary.actors },
+      {
+        days,
+        since: since.toISOString(),
+        counts: summary.counts,
+        actors: summary.actors,
+        series: buildActivitySeries(dayRows, { since, days }),
+      },
       { headers: { "cache-control": "no-store" } },
     );
   } catch (err) {

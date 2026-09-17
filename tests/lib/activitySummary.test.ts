@@ -5,6 +5,7 @@ import {
   ACTIVITY_WORK_TYPES,
   bucketForType,
   groupActorSlices,
+  buildActivitySeries,
   summarizeActivityRows,
   type ActivityGroupRow,
 } from "@/lib/activity/summary";
@@ -144,5 +145,37 @@ describe("actor grouping", () => {
   test("a client with no label falls back to its id rather than an empty legend row", () => {
     const actors = groupActorSlices([row("doc.created", 1, "some-tool", null)]);
     expect(actors.slices[0]?.label).toBe("some-tool");
+  });
+});
+
+describe("buildActivitySeries", () => {
+  const since = new Date("2026-09-01T00:00:00.000Z");
+
+  test("fills every day of the window, oldest first", () => {
+    const out = buildActivitySeries([{ day: "2026-09-02", agent: true, count: 3 }], { since, days: 4 });
+    expect(out.map((p) => p.day)).toEqual(["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"]);
+    expect(out.map((p) => p.total)).toEqual([0, 3, 0, 0]);
+  });
+
+  test("splits agents from people and totals them", () => {
+    const out = buildActivitySeries(
+      [
+        { day: "2026-09-01", agent: true, count: 2 },
+        { day: "2026-09-01", agent: false, count: 5 },
+      ],
+      { since, days: 1 },
+    );
+    expect(out[0]).toEqual({ day: "2026-09-01", agents: 2, people: 5, total: 7 });
+  });
+
+  test("ignores junk rows and negative counts", () => {
+    const out = buildActivitySeries(
+      [
+        { day: "", agent: true, count: 9 },
+        { day: "2026-09-01", agent: false, count: -4 },
+      ],
+      { since, days: 1 },
+    );
+    expect(out[0]?.total).toBe(0);
   });
 });
