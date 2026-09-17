@@ -1940,6 +1940,12 @@ export async function POST(
                 if (!diff) {
                   await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
                   aiState.compare = "failed";
+                  // Say why: "AI compare failed: an error occurred." gave an agent nothing to act on.
+                  warningDetails.historyDiff = "the compare returned no result (credits refunded)";
+                  if (!aiState.code) {
+                    aiState.code = "error";
+                    aiState.reason = "the compare model returned no result; credits were refunded";
+                  }
                   diff = null;
                 } else {
                   await markLedgerCharged({
@@ -1950,9 +1956,16 @@ export async function POST(
                   creditsUsedThisRun += historyCredits;
                   aiState.compare = "done";
                 }
-              } catch {
+              } catch (e) {
                 await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: historyLedgerId });
                 aiState.compare = "failed";
+                const message = e instanceof Error ? e.message : String(e);
+                warningDetails.historyDiff = message;
+                debugError(1, "[process] history compare failed", { uploadId, docId: String(docId), message });
+                if (!aiState.code) {
+                  aiState.code = "error";
+                  aiState.reason = `the compare failed (${message.slice(0, 160)}); credits were refunded`;
+                }
                 diff = null;
               }
             }
@@ -2088,6 +2101,8 @@ export async function POST(
                   if (summaryLedgerId) await failAndRefundLedger({ workspaceId: String(existingDocOrgId), ledgerId: summaryLedgerId });
                   debugLog(1, "[process] AI analysis skipped (returned null)", { uploadId });
                   aiState.summary = "failed";
+                  aiState.code = aiState.code ?? "error";
+                  aiState.reason = aiState.reason ?? "the summary model returned no result; credits were refunded";
                   aiOutput = null;
                 } else if (isFallbackAnalysis(analyzed)) {
                   // Both model attempts failed and the analyzer returned an empty snapshot so the
@@ -2134,6 +2149,8 @@ export async function POST(
                 aiState.summary = "failed";
                 const message = e instanceof Error ? e.message : String(e);
                 warningDetails.ai = warningDetails.ai ?? message;
+                aiState.code = aiState.code ?? "error";
+                aiState.reason = aiState.reason ?? `the summary failed (${message.slice(0, 160)}); credits were refunded`;
                 jobError = jobError ?? new Error(`AI analysis failed: ${message}`);
                 debugError(1, "[process] AI analysis failed (will continue without aiOutput)", {
                   uploadId,
