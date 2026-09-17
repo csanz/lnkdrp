@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, useCallback } from "react";
 import { useTheme } from "next-themes";
 import {
   ClipboardDocumentCheckIcon,
@@ -314,37 +314,65 @@ function useDocLeaveReasons(): { reasonFor: (id: string) => LeaveReason | null }
 function useLeavingRows<T extends { id: string; title: string }>(
   items: T[],
   reasons: { reasonFor: (id: string) => LeaveReason | null },
-  opts: { requireReason: boolean },
-): Array<{ item: T; leaving: { reason: LeaveReason | null } | null }> {
+  opts: { requireReason: boolean; onBackfill?: (ids: string[]) => void },
+): Array<{ item: T; leaving: { reason: LeaveReason | null } | null; backfill: boolean }> {
   type Leaving = { item: T; index: number; reason: LeaveReason | null };
   const [leaving, setLeaving] = useState<Leaving[]>([]);
+  // Rows that entered the list because another one left (the next doc past the sidebar limit). They
+  // open on the same curve and timing as the fold, so the section keeps its height and nothing below
+  // it moves. Shown at full height at once, a new Starred row pushed the whole Docs list down; held
+  // back until the fold ended, it snapped the list down afterwards instead.
+  const [backfilling, setBackfilling] = useState<Set<string>>(() => new Set());
   const prevRef = useRef<T[] | null>(null);
   const timersRef = useRef<number[]>([]);
   useEffect(() => () => timersRef.current.forEach((t) => window.clearTimeout(t)), []);
-  const { requireReason } = opts;
-  useEffect(() => {
+  const { requireReason, onBackfill } = opts;
+  // Layout effect, not effect: the ghost must be in place before the browser paints the list without
+  // the removed row, or the rows below jump up for a frame and then back down.
+  useLayoutEffect(() => {
     const prev = prevRef.current;
     prevRef.current = items;
     const nextIds = new Set(items.map((d) => d.id));
     // A row that came back (unarchived, re-starred) drops its ghost.
     setLeaving((cur) => (cur.some((l) => nextIds.has(l.item.id)) ? cur.filter((l) => !nextIds.has(l.item.id)) : cur));
     if (!prev || !prev.length) return;
+    const prevIds = new Set(prev.map((d) => d.id));
     const removed = prev
       .map((item, index) => ({ item, index, reason: reasons.reasonFor(item.id) }))
       .filter(({ item, reason }) => !nextIds.has(item.id) && (!requireReason || reason !== null));
     if (!removed.length || removed.length > 3) return;
+    // Only as many newcomers as rows left, taken from the end: those are the limit backfill, not
+    // genuinely new rows (an upload lands at the top and still grows in on its own).
+    const backfill = items.filter((d) => !prevIds.has(d.id)).slice(-removed.length).map((d) => d.id);
     setLeaving((cur) => [...cur.filter((l) => !removed.some((a) => a.item.id === l.item.id)), ...removed]);
+    if (backfill.length) {
+      onBackfill?.(backfill);
+      setBackfilling((cur) => new Set([...cur, ...backfill]));
+    }
     const ids = new Set(removed.map((a) => a.item.id));
-    const t = window.setTimeout(() => setLeaving((cur) => cur.filter((l) => !ids.has(l.item.id))), ROW_LEAVE_MS + 50);
+    const t = window.setTimeout(() => {
+      setLeaving((cur) => cur.filter((l) => !ids.has(l.item.id)));
+      if (backfill.length) {
+        setBackfilling((cur) => {
+          const out = new Set(cur);
+          backfill.forEach((id) => out.delete(id));
+          return out;
+        });
+      }
+    }, ROW_LEAVE_MS + 50);
     timersRef.current.push(t);
-  }, [items, reasons, requireReason]);
+  }, [items, reasons, requireReason, onBackfill]);
   return useMemo(() => {
-    const rows: Array<{ item: T; leaving: { reason: LeaveReason | null } | null }> = items.map((item) => ({ item, leaving: null }));
+    const rows: Array<{ item: T; leaving: { reason: LeaveReason | null } | null; backfill: boolean }> = items.map((item) => ({
+      item,
+      leaving: null,
+      backfill: backfilling.has(item.id),
+    }));
     for (const l of [...leaving].sort((a, b) => a.index - b.index)) {
-      rows.splice(Math.min(l.index, rows.length), 0, { item: l.item, leaving: { reason: l.reason } });
+      rows.splice(Math.min(l.index, rows.length), 0, { item: l.item, leaving: { reason: l.reason }, backfill: false });
     }
     return rows;
-  }, [items, leaving]);
+  }, [items, leaving, backfilling]);
 }
 
 /**
@@ -1263,17 +1291,31 @@ export default function LeftSidebar({
 
   const starredForSidebar = useMemo(() => starredValid.slice(0, STARRED_SIDEBAR_LIMIT), [starredValid]);
 
+
+  // Docs (and starred docs) that leave the sidebar fold out instead of vanishing; see `useLeavingRows`.
+  const leaveReasons = useDocLeaveReasons();
+  const seenRowIdsRef = useRef<Set<string> | null>(null);
+  const markRowsSeen = useCallback((ids: string[]) => ids.forEach((id) => seenRowIdsRef.current?.add(id)), []);
+  const docRowsForSidebar = useLeavingRows(docsForSidebar, leaveReasons, { requireReason: false, onBackfill: markRowsSeen });
+  // Starred rows only fold for a known archive/delete: they also drop stale localStorage entries on
+  // load and on unstar, which should not read as "Archived".
+  const starredRowsForSidebar = useLeavingRows(starredForSidebar, leaveReasons, { requireReason: true, onBackfill: markRowsSeen });
   // Rows that appeared after the first load (an agent's upload, a teammate's project) grow in
   // instead of popping. Ids seen on the first non-empty render are treated as already there.
-  const seenRowIdsRef = useRef<Set<string> | null>(null);
   const [newRowIds, setNewRowIds] = useState<Set<string>>(() => new Set());
   const newRowTimersRef = useRef<number[]>([]);
   useEffect(() => () => newRowTimersRef.current.forEach((t) => window.clearTimeout(t)), []);
+  // A backfill row (marked seen by `onBackfill`) opens with the fold instead of the new-row tint.
   const visibleRowIds = useMemo(
-    () => [...docsForSidebar.map((d) => d.id), ...starredForSidebar.map((d) => d.id), ...projectsForSidebar.map((p) => p.id)],
-    [docsForSidebar, starredForSidebar, projectsForSidebar],
+    () => [
+      ...docRowsForSidebar.filter((r) => !r.leaving).map((r) => r.item.id),
+      ...starredRowsForSidebar.filter((r) => !r.leaving).map((r) => r.item.id),
+      ...projectsForSidebar.map((p) => p.id),
+    ],
+    [docRowsForSidebar, starredRowsForSidebar, projectsForSidebar],
   );
-  useEffect(() => {
+  // Layout effect so a new row gets its grow-in class before its first paint (no full-height flash).
+  useLayoutEffect(() => {
     if (!visibleRowIds.length) return;
     if (seenRowIdsRef.current === null) {
       seenRowIdsRef.current = new Set(visibleRowIds);
@@ -1295,19 +1337,14 @@ export default function LeftSidebar({
   }, [visibleRowIds]);
   /** Classes for a list row and its direct child while it grows in (empty once settled). */
   const rowEnter = useCallback(
-    (id: string) =>
-      newRowIds.has(id)
+    (id: string, backfill = false) =>
+      backfill
+        ? { li: "grid motion-safe:animate-[ldSidebarRowOpen_1.2s_cubic-bezier(0.33,0,0.2,1)_both]", child: "min-h-0 [overflow-y:clip]" }
+        : newRowIds.has(id)
         ? { li: "grid rounded-xl motion-safe:animate-[ldSidebarRowIn_3.2s_cubic-bezier(0.22,0.61,0.36,1)_both]", child: "min-h-0 [overflow-y:clip]" }
         : { li: "", child: "" },
     [newRowIds],
   );
-
-  // Docs (and starred docs) that leave the sidebar fold out instead of vanishing; see `useLeavingRows`.
-  const leaveReasons = useDocLeaveReasons();
-  const docRowsForSidebar = useLeavingRows(docsForSidebar, leaveReasons, { requireReason: false });
-  // Starred rows only fold for a known archive/delete: they also drop stale localStorage entries on
-  // load and on unstar, which should not read as "Archived".
-  const starredRowsForSidebar = useLeavingRows(starredForSidebar, leaveReasons, { requireReason: true });
   // Hide an archived/deleted doc from Starred the moment it is announced, so its Starred copy folds
   // together with its Docs row instead of ~0.7s later when the starred details refetch lands. That
   // refetch recomputes the invalid set wholesale, so a failed archive brings the row back.
@@ -2183,18 +2220,20 @@ export default function LeftSidebar({
                 </div>
               ) : (
                 <ul className="mt-2 space-y-1">
-                  {starredRowsForSidebar.map(({ item: d, leaving }) => {
+                  {starredRowsForSidebar.map(({ item: d, leaving, backfill }) => {
                     if (leaving) return <LeavingSidebarRow key={`leaving-${d.id}`} title={d.title} reason={leaving.reason} />;
                     const href = `/doc/${d.id}`;
                     const details = starredDetailsById[d.id] ?? null;
                     const sidebarMeta = sidebarDocMetaById.get(d.id) ?? null;
                     const title = truncateEnd(d.title, 36);
                     return (
-                      <li key={d.id} className={rowEnter(d.id).li}>
+                      <li key={d.id} className={rowEnter(d.id, backfill).li}>
+                        {/* The clip wrapper sits outside the link: on the padded link itself, a grow or fold
+                            could not go below its 12px of vertical padding. */}
+                        <div className={rowEnter(d.id, backfill).child}>
                         <Link
                           href={href}
                           className={[
-                            rowEnter(d.id).child,
                             // Expand highlight into the sidebar's right padding so left/right gutters match.
                             // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
@@ -2209,6 +2248,7 @@ export default function LeftSidebar({
                             </span>
                           </div>
                         </Link>
+                        </div>
                       </li>
                     );
                   })}
@@ -2484,7 +2524,7 @@ export default function LeftSidebar({
                 )
               ) : (
                 <ul className="mt-2 space-y-1">
-                  {docRowsForSidebar.map(({ item: d, leaving }) => {
+                  {docRowsForSidebar.map(({ item: d, leaving, backfill }) => {
                   if (leaving) return <LeavingSidebarRow key={`leaving-${d.id}`} title={d.title} reason={leaving.reason} />;
                   // App navigation should always go to the internal doc page.
                   // The public `/share/:shareId` page is for external recipients.
@@ -2494,8 +2534,8 @@ export default function LeftSidebar({
                   // Keep this conservative since we also show version pills + hover actions on the right.
                   const title = truncateEnd(d.title, 36);
                   return (
-                    <li key={d.id} className={rowEnter(d.id).li}>
-                      <div className={["group relative", rowEnter(d.id).child].join(" ")}>
+                    <li key={d.id} className={rowEnter(d.id, backfill).li}>
+                      <div className={["group relative", rowEnter(d.id, backfill).child].join(" ")}>
                         <Link
                           href={href}
                           className={[
