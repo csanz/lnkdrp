@@ -211,6 +211,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   // Track project "view" (deduped server-side per session).
   useEffect(() => {
     if (typeof window === "undefined") return;
+    if (!/^[a-f0-9]{24}$/i.test(projectSlug)) return;
     trackProjectView({ projectId: projectSlug, path: window.location.pathname + window.location.search });
   }, [projectSlug]);
 
@@ -822,7 +823,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                   </button>
                 )}
               </div>
-            ) : (
+            ) : notFound ? null : (
               <div
                 className="h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)]"
                 aria-label="Loading project name"
@@ -852,7 +853,11 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
             ) : null}
           </div>
         </div>
-        <div className="shrink-0 text-xs text-[var(--muted-2)]">{docs.total} docs</div>
+        {project ? (
+          <div className="shrink-0 text-xs text-[var(--muted-2)]">
+            {docs.total} {docs.total === 1 ? "doc" : "docs"}
+          </div>
+        ) : null}
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden bg-[var(--bg)]">
