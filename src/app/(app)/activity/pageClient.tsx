@@ -186,19 +186,44 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
       ? `/doc/${encodeURIComponent(item.doc.id)}/metrics?shareId=${encodeURIComponent(shareId)}`
       : null;
   const s = describeActivity(item);
-  const href = hrefFor(item);
   const when = formatRelative(item.createdDate);
   const exact = new Date(item.createdDate).toLocaleString();
 
+  // On a `share_link.*` row the bold name is the LINK, so it goes to that link's own numbers.
+  // It used to go to the document, which made the two halves of the sentence — the link and the
+  // document it is on — lead to the same page, and left no way to reach the link itself.
+  const isLinkRow = item.type.startsWith("share_link.");
+  const href = (isLinkRow ? linkMetricsHref : null) ?? hrefFor(item);
+  const docHref = item.doc?.id && item.type !== "doc.deleted" ? `/doc/${encodeURIComponent(item.doc.id)}` : null;
+
+  const linkClass = "font-semibold text-[var(--fg)] hover:underline underline-offset-4";
   const objectNode = s.object ? (
     href ? (
-      <Link href={href} className="font-semibold text-[var(--fg)] hover:underline underline-offset-4">
+      <Link href={href} className={linkClass}>
         {s.object}
       </Link>
     ) : (
       <span className="font-semibold text-[var(--fg)]">{s.object}</span>
     )
   ) : null;
+
+  // The document's title is the tail of the suffix ("for USAVX MEMO", "on Meridian Robotics"), and
+  // `describeActivity` builds it from this same title, so the split is exact rather than a guess.
+  // Only the title becomes a link; the preposition in front of it stays plain text.
+  const docTitle = item.doc?.title?.trim() || "Untitled document";
+  const suffixNode = (() => {
+    if (!s.suffix) return null;
+    if (!docHref || s.object === docTitle || !s.suffix.endsWith(docTitle)) return <span>{s.suffix}</span>;
+    const lead = s.suffix.slice(0, s.suffix.length - docTitle.length);
+    return (
+      <>
+        {lead ? <span>{lead.trimEnd()}</span> : null}
+        <Link href={docHref} className={linkClass}>
+          {docTitle}
+        </Link>
+      </>
+    );
+  })();
 
   return (
     <li
@@ -223,7 +248,7 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
           <span className="font-medium text-[var(--fg)]">{s.subject}</span>
           <span>{s.verb}</span>
           {objectNode}
-          {s.suffix ? <span>{s.suffix}</span> : null}
+          {suffixNode}
         </div>
         <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[var(--muted-2)]">
           <time dateTime={item.createdDate} title={exact}>
