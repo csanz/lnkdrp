@@ -9,8 +9,7 @@
 
 import { useEffect, useState } from "react";
 import Alert from "@/components/ui/Alert";
-import CreditCostsModal from "@/components/modals/CreditCostsModal";
-import type { ActionType } from "@/lib/credits/types";
+import Link from "next/link";
 import { cn } from "@/lib/cn";
 import { formatUsdFromCents } from "@/lib/format/money";
 import { CREDITS_SNAPSHOT_REFRESH_EVENT } from "@/lib/client/creditsSnapshotRefresh";
@@ -66,9 +65,6 @@ export default function UsageTable({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // "What actions cost": opened from the header, or from a row's action (that row's entry is marked).
-  const [costsOpen, setCostsOpen] = useState(false);
-  const [costsAction, setCostsAction] = useState<ActionType | null>(null);
   const [rows, setRows] = useState<UsageRow[]>(() => {
     const key = `${days}|0|1`;
     const cached = usageTableCache?.get?.(key);
@@ -160,16 +156,15 @@ export default function UsageTable({
       <div className="flex items-center justify-between gap-3">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <span className="text-[13px] font-semibold text-[var(--fg)]">Usage</span>
-          <button
-            type="button"
+          {/* The full table lives at /costs (a page, not a modal: it is five rows with notes). */}
+          <Link
+            href="/costs"
+            target="_blank"
+            rel="noreferrer"
             className="text-[12px] font-semibold text-[var(--muted-2)] underline-offset-2 hover:text-[var(--fg)] hover:underline"
-            onClick={() => {
-              setCostsAction(null);
-              setCostsOpen(true);
-            }}
           >
-            What actions cost
-          </button>
+            What actions cost →
+          </Link>
         </div>
         <div className="flex items-center gap-2">
           {canViewSpend ? (
@@ -238,18 +233,16 @@ export default function UsageTable({
                         {r.action === "unknown" ? (
                           "Unknown"
                         ) : (
-                          // The charge explains itself: the action opens the cost table on its own row.
-                          <button
-                            type="button"
+                          // The charge explains itself: the action links to its own row on /costs.
+                          <Link
+                            href={`/costs#${r.action}`}
+                            target="_blank"
+                            rel="noreferrer"
                             className="underline decoration-dotted underline-offset-2 hover:text-[var(--fg)]"
                             title="What this action costs"
-                            onClick={() => {
-                              setCostsAction(r.action);
-                              setCostsOpen(true);
-                            }}
                           >
                             {r.action === "summary" ? "Summary" : r.action === "review" ? "AI review" : "AI compare"}
-                          </button>
+                          </Link>
                         )}
                       </td>
                       <td className="px-4 py-3 text-[var(--muted-2)]">
@@ -312,7 +305,6 @@ export default function UsageTable({
           </div>
         </div>
       ) : null}
-    <CreditCostsModal open={costsOpen} onClose={() => setCostsOpen(false)} highlightAction={costsAction} />
     </div>
   );
 }

@@ -2405,7 +2405,7 @@ export function PdfJsViewer({
           setIntroError(null);
         }}
         ariaLabel="Introduce yourself"
-        panelClassName="w-[min(560px,calc(100vw-32px))] border-white/15 bg-black/95 text-white ring-white/15"
+        panelClassName="w-[min(680px,calc(100vw-32px))] border-white/15 bg-black/95 text-white ring-white/15"
         contentClassName="px-6 pb-6 pt-5"
       >
         {/*
@@ -2450,6 +2450,7 @@ export function PdfJsViewer({
         ) : null}
 
         <div className="mt-5 grid gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-white/70" htmlFor="share-intro-name">
               Name (optional)
@@ -2480,6 +2481,15 @@ export function PdfJsViewer({
               autoComplete="email"
               disabled={introBusy}
             />
+          </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3">
+            <div className="text-[13px] font-semibold text-white">Or register with lnkdrp</div>
+            <div className="mt-1 text-xs leading-5 text-white/60">
+              Sign in once and every document you open recognises you, here and on any other lnkdrp link, with no typing. You can
+              share your own PDFs from the same account.
+            </div>
           </div>
 
           <ul className="grid gap-1.5 text-xs leading-5 text-white/60">

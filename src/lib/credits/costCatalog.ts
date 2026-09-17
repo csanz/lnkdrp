@@ -107,6 +107,11 @@ export const FREE_ACTIONS: readonly string[] = [
   "Summaries for files recipients upload through a request or replace link",
 ];
 
+/** Anchor for a row on `/costs`, so a usage charge can link to its own line. */
+export function costAnchorId(entry: Pick<CostCatalogEntry, "action" | "label">): string {
+  return entry.action ?? entry.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 /** The catalog entry for a ledger action, when it has one. */
 export function costEntryForAction(action: ActionType): CostCatalogEntry | null {
   return COST_CATALOG.find((e) => e.action === action) ?? null;
