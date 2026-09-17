@@ -443,6 +443,9 @@ export function PdfJsViewer({
   const [introEmail, setIntroEmail] = useState("");
   const [introBusy, setIntroBusy] = useState(false);
   const [introError, setIntroError] = useState<string | null>(null);
+  // How this visit will read in the owner's analytics, live while the fields are typed.
+  const introPreviewName = normalizeShareViewerName(introName) ?? "";
+  const introPreviewEmail = normalizeShareViewerEmail(introEmail) ?? "";
   const askText = useMemo(() => {
     const raw = (aiData?.ask ?? "").trim();
     if (!raw) return "";
@@ -2402,13 +2405,42 @@ export function PdfJsViewer({
           setIntroError(null);
         }}
         ariaLabel="Introduce yourself"
-        panelClassName="border-white/15 bg-black/95 text-white ring-white/15"
+        panelClassName="w-[min(560px,calc(100vw-32px))] border-white/15 bg-black/95 text-white ring-white/15"
         contentClassName="px-6 pb-6 pt-5"
       >
-        <div className="text-base font-semibold text-white">Introduce yourself</div>
-        <div className="mt-2 text-sm text-white/70">
-          Your visit will show up as <span className="font-semibold text-white/90">anonymous</span> unless you add a name/email.
-          Adding one helps the owner interpret your view.
+        {/*
+          Why a viewer would bother: the owner sees who each visit belongs to, and an anonymous visit
+          is only a number in their analytics — there is nobody to reply to. The preview below shows
+          exactly how this visit will read to them, live as the fields are filled in.
+        */}
+        <div className="pr-10">
+          <div className="text-base font-semibold text-white">Introduce yourself</div>
+          <div className="mt-2 text-sm leading-6 text-white/70">
+            The owner of this document sees who opened it. Right now your visit reads as{" "}
+            <span className="font-semibold text-white/90">anonymous</span>: a count on a chart, with nobody to reply to.
+            Add your name and they know who was here.
+          </div>
+        </div>
+
+        <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">What the owner sees</div>
+          <div className="mt-2.5 flex items-center gap-3">
+            <span
+              aria-hidden="true"
+              className={[
+                "grid h-9 w-9 shrink-0 place-items-center rounded-full text-[13px] font-semibold",
+                introPreviewName ? "bg-white text-black" : "border border-dashed border-white/25 text-white/40",
+              ].join(" ")}
+            >
+              {introPreviewName ? introPreviewName.trim().charAt(0).toUpperCase() : "?"}
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-white">{introPreviewName || "Anonymous viewer"}</div>
+              <div className="truncate text-xs text-white/50">
+                {introPreviewEmail || "No name, no email — just another view on the chart"}
+              </div>
+            </div>
+          </div>
         </div>
 
         {introError ? (
@@ -2450,9 +2482,20 @@ export function PdfJsViewer({
             />
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/70">
-            This will be shown to the document owner (and may appear in their viewer metrics).
-          </div>
+          <ul className="grid gap-1.5 text-xs leading-5 text-white/60">
+            <li className="flex gap-2">
+              <span aria-hidden="true" className="text-white/35">·</span>
+              <span>Goes to this document&apos;s owner only, with the pages you read. It is never published on the page.</span>
+            </li>
+            <li className="flex gap-2">
+              <span aria-hidden="true" className="text-white/35">·</span>
+              <span>They can reply to you about this document, and send you a newer version when it changes.</span>
+            </li>
+            <li className="flex gap-2">
+              <span aria-hidden="true" className="text-white/35">·</span>
+              <span>Change it or clear it any time from &ldquo;Viewing as&rdquo; in the toolbar.</span>
+            </li>
+          </ul>
         </div>
 
         <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
@@ -2473,7 +2516,19 @@ export function PdfJsViewer({
               >
                 Clear
               </button>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                className="rounded-xl px-2 py-2.5 text-sm font-medium text-white/50 hover:text-white/80 disabled:opacity-60"
+                disabled={introBusy}
+                onClick={() => {
+                  setIntroOpen(false);
+                  setIntroError(null);
+                }}
+              >
+                Stay anonymous
+              </button>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
