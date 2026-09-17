@@ -108,7 +108,8 @@ export function registerDeleteDocTool(server: McpServer, ctx: ToolContext): void
         "DESTRUCTIVE: this tool confirms with the human before acting. If the client supports it, the user is shown the " +
         "document, its links and traffic, and a yes/no prompt directly. If not, the call fails with requiresConfirmation and a " +
         "preview in details - show that preview to the user, ask them, and call again with confirm: true only if they say yes. " +
-        "A preview with severity 'high' means recipients have opened this document; do not confirm that on your own judgement. " +
+        "A preview with severity 'high' means recipients have opened this document or more than one of its links is live " +
+        "(several people may lose access at once); do not confirm that on your own judgement. " +
         SAFETY_TAIL,
       inputSchema: { docId: docIdSchema, confirm: confirmSchema },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },

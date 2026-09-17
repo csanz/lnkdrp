@@ -130,8 +130,8 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
         "They are also how the human finds this link again months later, so they have to be the human's own words. If the " +
         "request did not say who the link is for, ask them that one question before calling - a made-up label is worse than " +
         "a moment's pause. " +
-        "Links are never plan-capped: a document may carry one per investor or counterparty on any plan, and this call " +
-        "always creates the link enabled. planWarning only appears when the workspace is near its separate cap on shared " +
+        "Links are never plan-capped: a document may carry one per investor or counterparty on any plan, so a plan never " +
+        "forces a new link off; it is enabled unless you pass enabled: false. planWarning only appears when the workspace is near its separate cap on shared " +
         "documents. " +
         SAFETY_TAIL,
       inputSchema: createShareLinkInputShape,
