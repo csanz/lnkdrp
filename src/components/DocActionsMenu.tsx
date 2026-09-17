@@ -832,7 +832,9 @@ export default function DocActionsMenu({
             // Same as the "..." on left-sidebar project rows (`IconButton` ghost, xs).
             "inline-flex items-center justify-center rounded-md p-1 text-[var(--muted-2)] transition-opacity hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
             "focus:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
-            open ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+            // Faint but always there: hover-only made it undiscoverable, and on a trackpad it was easy
+            // to lose the row before reaching the button.
+            open ? "opacity-100" : "opacity-45 group-hover:opacity-100",
           ].join(" ")
         : [
             "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",

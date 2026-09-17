@@ -809,6 +809,19 @@ export default function LeftSidebar({
       }, 400);
     });
 
+    // Projects have no status flips to ride on (a document reaches the sidebar through its own
+    // `doc` frames), so the realtime server broadcasts project changes separately. Without this a
+    // project created over MCP stayed missing from the left menu until a reload.
+    let projectTimer: number | null = null;
+    const unsubscribeProjects = subscribeRealtime("project", (f) => {
+      if (f.type !== "project") return;
+      if (projectTimer !== null) return;
+      projectTimer = window.setTimeout(() => {
+        projectTimer = null;
+        onProjectsChanged();
+      }, 400);
+    });
+
     window.addEventListener(PROJECTS_CHANGED_EVENT, onProjectsChanged);
     window.addEventListener(DOCS_CHANGED_EVENT, onDocsChanged);
     return () => {
@@ -816,7 +829,9 @@ export default function LeftSidebar({
       window.removeEventListener(PROJECTS_CHANGED_EVENT, onProjectsChanged);
       window.removeEventListener(DOCS_CHANGED_EVENT, onDocsChanged);
       unsubscribeRealtime();
+      unsubscribeProjects();
       if (realtimeTimer !== null) window.clearTimeout(realtimeTimer);
+      if (projectTimer !== null) window.clearTimeout(projectTimer);
     };
   }, [
     projectsModal.limit,
@@ -2637,7 +2652,20 @@ export default function LeftSidebar({
                         >
                           <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal text-[var(--fg)]">
                             <DocumentIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                            <span className="block min-w-0 max-w-[220px] flex-1 truncate">{title}</span>
+                            <span className="block min-w-0 flex-1 truncate">{title}</span>
+                            {/* Which version a row is on, quietly: v2 and up always (that is the useful
+                                signal — this document has been replaced), v1 only on hover. */}
+                            {typeof d.version === "number" && Number.isFinite(d.version) && d.version > 0 ? (
+                              <span
+                                className={[
+                                  "shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-2)]",
+                                  d.version > 1 ? "opacity-70" : "opacity-0 transition-opacity group-hover:opacity-70",
+                                ].join(" ")}
+                                title={`Version ${d.version}`}
+                              >
+                                v{d.version}
+                              </span>
+                            ) : null}
                           </div>
                         </Link>
                         <DocActionsMenu
