@@ -527,6 +527,8 @@ export default function ActivityPageClient() {
   const [inFlight, setInFlight] = useState<InFlightUpload[]>([]);
   // Settled rows stay one beat longer so the section folds shut instead of jumping.
   const inFlightRows = useFoldingUploads(inFlight);
+  // Every row left: the block itself is what folds, not each row inside it.
+  const sectionLeaving = inFlightRows.length > 0 && inFlightRows.every((r) => r.leaving);
   const inFlightIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     inFlightIdsRef.current = new Set(inFlight.map((u) => u.id));
@@ -818,16 +820,35 @@ export default function ActivityPageClient() {
             happened, and an empty workspace whose first upload is mid-flight is the opposite of
             "no activity yet". */}
         {inFlightRows.length ? (
-          <section aria-label="Uploads in progress" className="mb-6">
-            <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
-              In progress
-            </div>
-            <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-              <ul className="divide-y divide-[var(--border)]">
-                {inFlightRows.map(({ item, leaving }) => (
-                  <UploadProgressRow key={leaving ? `leaving-${item.id}` : item.id} item={item} leaving={leaving} />
-                ))}
-              </ul>
+          // When the last upload settles the whole block goes, heading included: folding only the
+          // row left the "In progress" label and the panel border to blink out at the end. With
+          // nothing left to keep, the section folds as one and the rows inside hold still.
+          <section
+            aria-label="Uploads in progress"
+            aria-hidden={sectionLeaving ? "true" : undefined}
+            className={
+              sectionLeaving
+                ? "grid motion-safe:animate-[ldSidebarRowOut_1.2s_cubic-bezier(0.33,0,0.2,1)_forwards] motion-reduce:animate-[ldSidebarRowFade_1.2s_linear_forwards] pointer-events-none"
+                : "mb-6"
+            }
+          >
+            <div className={sectionLeaving ? "min-h-0 [overflow-y:clip]" : undefined}>
+              <div className={sectionLeaving ? "mb-6" : undefined}>
+                <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">
+                  In progress
+                </div>
+                <div className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                  <ul className="divide-y divide-[var(--border)]">
+                    {inFlightRows.map(({ item, leaving }) => (
+                      <UploadProgressRow
+                        key={leaving ? `leaving-${item.id}` : item.id}
+                        item={item}
+                        leaving={leaving && !sectionLeaving}
+                      />
+                    ))}
+                  </ul>
+                </div>
+              </div>
             </div>
           </section>
         ) : null}
