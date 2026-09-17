@@ -346,15 +346,21 @@ export async function DELETE(
       debugLog(1, "[api/projects/:id] DELETE request repo mode", { projectId: projectIdParam, requestDeleteMode });
 
       // All docs that were uploaded into this request repo (durable pointer) and any attached guide doc.
+      // `$and`, not a spread: docTenant carries its own `$or` (legacy personal scope), and a second
+      // `$or` key in the same object replaced it, dropping the workspace filter entirely.
       const requestDocs = await DocModel.find({
-        ...docTenant,
-        isDeleted: { $ne: true },
-        $or: [
-          { receivedViaRequestProjectId: projectId },
-          { guideForRequestProjectId: projectId },
-          { primaryProjectId: projectId },
-          { projectId },
-          { projectIds: projectId },
+        $and: [
+          docTenant,
+          { isDeleted: { $ne: true } },
+          {
+            $or: [
+              { receivedViaRequestProjectId: projectId },
+              { guideForRequestProjectId: projectId },
+              { primaryProjectId: projectId },
+              { projectId },
+              { projectIds: projectId },
+            ],
+          },
         ],
       })
         .select({ _id: 1, primaryProjectId: 1, projectId: 1 })
@@ -458,7 +464,7 @@ export async function DELETE(
 
     // Remove project membership from docs (best-effort).
     await DocModel.updateMany(
-      { ...docTenant, $or: [{ projectId }, { primaryProjectId: projectId }] },
+      { $and: [docTenant, { $or: [{ projectId }, { primaryProjectId: projectId }] }] },
       { $set: { primaryProjectId: null, projectId: null } },
     );
     await DocModel.updateMany(
