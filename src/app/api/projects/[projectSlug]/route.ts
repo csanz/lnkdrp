@@ -19,9 +19,28 @@ export const runtime = "nodejs";
 
 const MAX_PROJECT_NAME_LENGTH = 80;
 
+/**
+ * True when another live project in the workspace has this name, ignoring letter case. The unique
+ * index is case-sensitive, so "Press kit" and "press KIT" both went in and could not be told apart
+ * in any list.
+ */
+async function projectNameTaken(orgId: Types.ObjectId, name: string, exceptId?: unknown): Promise<boolean> {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const hit = await ProjectModel.exists({
+    orgId,
+    name: { $regex: `^${escaped}$`, $options: "i" },
+    isDeleted: { $ne: true },
+    ...(exceptId ? { _id: { $ne: exceptId } } : {}),
+  });
+  return Boolean(hit);
+}
+
 function slugify(input: string) {
   return input
     .trim()
+    // Fold accents to their base letter ("Série" -> "serie") instead of cutting the word in two.
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/['"]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
@@ -168,6 +187,11 @@ export async function PATCH(
 
     if (typeof body.shareEnabled === "boolean") {
       (project as unknown as { shareEnabled?: boolean }).shareEnabled = body.shareEnabled;
+    }
+    if (!shareOnly && project.orgId && name.toLowerCase() !== String(project.name ?? "").toLowerCase()) {
+      if (await projectNameTaken(project.orgId as Types.ObjectId, name, project._id)) {
+        return NextResponse.json({ error: "A project with that name already exists" }, { status: 409 });
+      }
     }
     if (!shareOnly) {
       project.name = name;
