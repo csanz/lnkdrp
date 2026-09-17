@@ -11,6 +11,7 @@ import { resolveShareLink } from "@/lib/share/links";
 import { UserModel } from "@/lib/models/User";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { downloadRequestOwnerEmail, downloadRequestReceivedEmail } from "@/lib/email/templates";
 import { getPublicSiteBase } from "@/lib/urls";
 import { debugLog, debugWarn } from "@/lib/debug";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
@@ -174,19 +175,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const base = getPublicSiteBase();
       const title = docTitle ?? "Shared document";
       const shareUrl = base ? new URL(`/s/${encodeURIComponent(shareId)}`, base).toString() : "";
-      const subject = `Request received: ${title || "Shared document"}`;
-      const text = [
-        "We sent your request to the owner to allow downloading this PDF.",
-        "",
-        `Document: ${title || "Shared document"}`,
-        shareUrl ? `Link: ${shareUrl}` : null,
-        "",
-        "If approved, you’ll receive another email with a link to download or save it to your LinkDrop account (sign-in required).",
-        "",
-        "- LinkDrop",
-      ]
-        .filter(Boolean)
-        .join("\n");
+      const { subject, text } = downloadRequestReceivedEmail({ title, shareUrl });
       await sendTextEmail({ to: email, subject, text });
       emailedRequester = true;
       await ShareDownloadRequestModel.updateOne(
@@ -227,23 +216,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     let emailedOwner = false;
     if (ownerEmail) {
       try {
-        const subject = `Download request: ${title || "Shared document"}`;
-        const text = [
-          "A receiver requested a PDF download.",
-          "",
-          `Document: ${title || "Shared document"}`,
-          shareUrl ? `Share link: ${shareUrl}` : null,
-          "",
-          `Requester email: ${email}`,
-          "",
-          approveUrl ? `Approve: ${approveUrl}` : "Approve: (missing NEXT_PUBLIC_SITE_URL)",
-          denyUrl ? `Deny: ${denyUrl}` : "Deny: (missing NEXT_PUBLIC_SITE_URL)",
-          "",
-          "- LinkDrop",
-        ]
-          .filter(Boolean)
-          .join("\n");
-
+        const { subject, text } = downloadRequestOwnerEmail({ title, shareUrl, requesterEmail: email, approveUrl, denyUrl });
         await sendTextEmail({ to: ownerEmail, subject, text });
         emailedOwner = true;
         await ShareDownloadRequestModel.updateOne(

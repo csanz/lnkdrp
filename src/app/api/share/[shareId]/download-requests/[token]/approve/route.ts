@@ -10,6 +10,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { downloadRequestApprovedEmail } from "@/lib/email/templates";
 import { getPublicSiteBase } from "@/lib/urls";
 import { recordActivity } from "@/lib/activity/log";
 
@@ -130,21 +131,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
   if (to) {
     try {
-      const subject = `Download approved: ${title || "Shared document"}`;
-      const text = [
-        "Your download request was approved.",
-        "",
-        `Document: ${title || "Shared document"}`,
-        "",
-        claimUrl ? `Open to download or save: ${claimUrl}` : "Open to download or save: (missing NEXT_PUBLIC_SITE_URL)",
-        "",
-        "You’ll need to sign in to LinkDrop to continue.",
-        "",
-        "- LinkDrop",
-      ]
-        .filter(Boolean)
-        .join("\n");
-
+      const { subject, text } = downloadRequestApprovedEmail({ title, claimUrl });
       await sendTextEmail({ to, subject, text });
       await ShareDownloadRequestModel.updateOne(
         { _id: (reqDoc as { _id: unknown })._id },

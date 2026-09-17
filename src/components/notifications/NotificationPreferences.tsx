@@ -10,6 +10,9 @@ import { useEffect, useState } from "react";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { ORGS_CACHE_UPDATED_EVENT } from "@/lib/orgsCache";
 
+/** Request repos ship behind a flag; the same build-time flag the sidebar and /requests read. */
+const FEATURE_REQUESTS_ENABLED = process.env.NEXT_PUBLIC_FEATURE_REQUESTS === "1";
+
 type Mode = "off" | "daily" | "immediate";
 type PrefKey = "viewEmailMode" | "docUpdateEmailMode" | "repoLinkRequestEmailMode";
 
@@ -141,6 +144,9 @@ export default function NotificationPreferences() {
           </div>
         </div>
 
+        {/* Request repos are behind NEXT_PUBLIC_FEATURE_REQUESTS; without them there is nothing to
+            be notified about, so the row is hidden rather than offering a dead preference. */}
+        {FEATURE_REQUESTS_ENABLED ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold text-[var(--fg)]">Repo link requests</div>
@@ -166,6 +172,7 @@ export default function NotificationPreferences() {
             ) : null}
           </div>
         </div>
+        ) : null}
       </div>
 
       {error ? <div className="mt-3 text-[12px] font-medium text-red-700">{error}</div> : null}
