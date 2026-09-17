@@ -216,9 +216,15 @@ function Body({
       {signedIn && workspace ? (
         <WorkspacePanel workspace={workspace} accountEmail={accountEmail} proCredits={proCredits} />
       ) : !signedIn && !sessionLoading && authEnabled ? (
-        <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-5 text-sm text-white/65">
-          Sign in to see your workspace’s balance and buy credits for it.
-        </div>
+        <Link
+          href="/login?next=%2Fcredits"
+          className="group mt-10 flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-6 py-5 text-sm text-white/65 transition hover:border-white/20 hover:bg-white/[0.06] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/60"
+        >
+          <span>Sign in to see your workspace’s balance and buy credits for it.</span>
+          <span className="shrink-0 font-semibold text-white group-hover:underline group-hover:underline-offset-4">
+            Sign in →
+          </span>
+        </Link>
       ) : (
         <div className="mt-10 h-[196px] rounded-2xl border border-white/10 bg-white/[0.02]" aria-hidden="true" />
       )}
