@@ -8,6 +8,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgModel, ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { UserModel } from "@/lib/models/User";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
@@ -110,15 +111,24 @@ export async function GET(request: Request) {
         ? String(orgs.find((o) => Boolean((o as unknown as { personalForUserId?: unknown }).personalForUserId))!._id)
         : "") ||
       "";
-    // Source-of-truth priority without extra DB reads:
+    // Source-of-truth priority, the same order the API actor resolvers use:
     // 1) server-issued active-org cookie (but only if the user has a membership for it)
     // 2) JWT claim activeOrgId (but only if the user has a membership for it)
-    // 3) personal org
-    const activeOrgId =
+    // 3) User.metadata.activeOrgId, read only when 1 and 2 are missing
+    // 4) personal org
+    // Step 3 used to be skipped: with no cookie (a new device, a cleared cookie) the switcher said
+    // "Personal" while billing, credits and uploads acted on the saved workspace.
+    let activeOrgId =
       (cookieActiveOrgId && membershipByOrgId.has(cookieActiveOrgId) ? cookieActiveOrgId : "") ||
-      (claimActiveOrgId && membershipByOrgId.has(claimActiveOrgId) ? claimActiveOrgId : "") ||
-      personalOrgId ||
-      (orgs[0]?._id ? String(orgs[0]._id) : "");
+      (claimActiveOrgId && membershipByOrgId.has(claimActiveOrgId) ? claimActiveOrgId : "");
+    if (!activeOrgId) {
+      const u = (await UserModel.findOne({ _id: userId }).select({ "metadata.activeOrgId": 1 }).lean()) as {
+        metadata?: { activeOrgId?: unknown };
+      } | null;
+      const saved = typeof u?.metadata?.activeOrgId === "string" ? u.metadata.activeOrgId.trim() : "";
+      if (saved && membershipByOrgId.has(saved)) activeOrgId = saved;
+    }
+    if (!activeOrgId) activeOrgId = personalOrgId || (orgs[0]?._id ? String(orgs[0]._id) : "");
 
     // Guardrail: if there are multiple personal orgs for this user (shouldn't happen),
     // return only one to avoid confusing duplicate "Personal" entries in the UI.
