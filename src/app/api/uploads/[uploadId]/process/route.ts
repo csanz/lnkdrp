@@ -2370,6 +2370,11 @@ export async function POST(
           ...aiState,
           summary: aiState.summary === "pending" ? "skipped" : aiState.summary,
           compare: aiState.compare === "pending" ? "skipped" : aiState.compare,
+          // A compare still pending here never ran: one of the two versions had no text (usually
+          // the previous version had not finished processing). Say so instead of "an error occurred".
+          ...(aiState.compare === "pending" && isReplacement && !aiState.reason
+            ? { reason: "there was no text to compare against (the previous version may not have finished processing)" }
+            : {}),
           creditsUsed: creditsUsedThisRun,
         },
         error: jobError
