@@ -36,6 +36,7 @@ import { actorRateLimitResponse } from "@/lib/gating/actorRateLimit";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
+import { abandonUploadIfImportFailed } from "@/lib/uploads/abandonUpload";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -58,11 +59,12 @@ function asString(v: unknown): string | null {
  *
  * Body: `{ contentBase64: string, fileName?: string }`.
  */
-export async function POST(request: Request, ctx: { params: Promise<{ uploadId: string }> }) {
+async function importBytes(request: Request, ctx: { params: Promise<{ uploadId: string }> }, seen: { actor: Actor | null }) {
   let actor: Actor | null = null;
   try {
     const { uploadId } = await ctx.params;
     actor = await resolveActor(request);
+    seen.actor = actor;
     // Viewers must not import files (creates uploads + owner-billed processing) — same rule as import-url.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
@@ -181,4 +183,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ uploadId: 
     const res = NextResponse.json({ error: message }, { status: 400 });
     return actor ? applyTempUserHeaders(res, actor) : res;
   }
+}
+
+/**
+ * `POST` — imports the file, and when the import fails abandons the upload so its document goes
+ * back to its last good version instead of sitting in `preparing` forever (see abandonUpload).
+ */
+export async function POST(request: Request, ctx: { params: Promise<{ uploadId: string }> }) {
+  const seen: { actor: Actor | null } = { actor: null };
+  const res = await importBytes(request, ctx, seen);
+  if (!res.ok) await abandonUploadIfImportFailed(res, (await ctx.params).uploadId, seen.actor);
+  return res;
 }

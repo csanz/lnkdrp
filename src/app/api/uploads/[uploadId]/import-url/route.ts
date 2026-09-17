@@ -17,6 +17,7 @@ import { safeFetchUrl, SafeFetchError } from "@/lib/http/safeFetchUrl";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { PDF_ONLY_ERROR_MESSAGE, UNSUPPORTED_FILE_TYPE_CODE, looksLikePdfBytes, sanitizeFileName } from "@/lib/blob/serverClientUploadRoute";
 import { recordActivity } from "@/lib/activity/log";
+import { abandonUploadIfImportFailed } from "@/lib/uploads/abandonUpload";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -203,14 +204,16 @@ function asString(v: unknown): string | null {
  *
  * Body: { url: string }
  */
-export async function POST(
+async function importUrl(
   request: Request,
   ctx: { params: Promise<{ uploadId: string }> },
+  seen: { actor: Actor | null },
 ) {
   let actor: Actor | null = null;
   try {
     const { uploadId } = await ctx.params;
     actor = await resolveActor(request);
+    seen.actor = actor;
     // Viewers must not import files (creates uploads + owner-billed processing).
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
@@ -439,5 +442,13 @@ export async function POST(
   }
 }
 
-
-
+/**
+ * `POST` — imports the file, and when the import fails abandons the upload so its document goes
+ * back to its last good version instead of sitting in `preparing` forever (see abandonUpload).
+ */
+export async function POST(request: Request, ctx: { params: Promise<{ uploadId: string }> }) {
+  const seen: { actor: Actor | null } = { actor: null };
+  const res = await importUrl(request, ctx, seen);
+  if (!res.ok) await abandonUploadIfImportFailed(res, (await ctx.params).uploadId, seen.actor);
+  return res;
+}
