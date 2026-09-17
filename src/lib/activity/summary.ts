@@ -213,12 +213,17 @@ export type ActivityDayPoint = { day: string; total: number; people: number; age
 export type ActivityDayRow = { day: string; type: string; agent: boolean; count: number };
 
 /**
- * Fill the window day by day, oldest first.
+ * Fill the window day by day, oldest first, ending today.
  *
  * Mongo only returns days that had activity; a chart needs every day or the line lies about the
- * gaps. `since` is the first day shown and `days` the width, both as the endpoint computed them.
+ * gaps. The window is anchored on the LAST day, not the first: `since` is a timestamp `days` * 24h
+ * ago, so counting forward from its calendar day ended the series yesterday and dropped everything
+ * that happened today - which, in a workspace someone is using right now, is the whole line.
  */
-export function buildActivitySeries(rows: readonly ActivityDayRow[], input: { since: Date; days: number }): ActivityDayPoint[] {
+export function buildActivitySeries(
+  rows: readonly ActivityDayRow[],
+  input: { since: Date; days: number; now?: Date },
+): ActivityDayPoint[] {
   const blank = () => ({ people: 0, agents: 0, ...emptyCounts() });
   const byDay = new Map<string, ReturnType<typeof blank>>();
   for (const row of rows) {
@@ -232,7 +237,9 @@ export function buildActivitySeries(rows: readonly ActivityDayRow[], input: { si
     byDay.set(row.day, cur);
   }
   const out: ActivityDayPoint[] = [];
-  const start = new Date(Date.UTC(input.since.getUTCFullYear(), input.since.getUTCMonth(), input.since.getUTCDate()));
+  const now = input.now ?? new Date();
+  const lastDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const start = new Date(lastDay - (input.days - 1) * 24 * 60 * 60 * 1000);
   for (let i = 0; i < input.days; i++) {
     const d = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
     const day = d.toISOString().slice(0, 10);
