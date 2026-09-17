@@ -16,14 +16,14 @@ export const metadata: Metadata = {
     default: "LinkDrop - Trackable share links for AI agents",
     template: "%s - LinkDrop",
   },
-  description: "Easy, trackable share links for PDFs, built for AI agents. Every link opens with a summary and key points.",
+  description: "Trackable share links for PDFs, built for AI agents. Every link opens with a summary and key points.",
   // Absolute base for relative OG/Twitter image URLs. Resolved from
   // NEXT_PUBLIC_SITE_URL / NEXT_PUBLIC_APP_URL / NEXTAUTH_URL / VERCEL_URL,
   // falling back to the local dev origin (never throws on a malformed value).
   metadataBase: getMetadataBaseUrl(),
   openGraph: {
     title: "LinkDrop - Trackable share links for AI agents",
-    description: "Easy, trackable share links for PDFs, built for AI agents. Every link opens with a summary and key points.",
+    description: "Trackable share links for PDFs, built for AI agents. Every link opens with a summary and key points.",
     type: "website",
     images: [
       {
@@ -37,7 +37,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary",
     title: "LinkDrop - Trackable share links for AI agents",
-    description: "Easy, trackable share links for PDFs, built for AI agents. Every link opens with a summary and key points.",
+    description: "Trackable share links for PDFs, built for AI agents. Every link opens with a summary and key points.",
     images: [
       {
         url: "/images/og.png",

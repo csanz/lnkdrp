@@ -6,12 +6,10 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { signIn } from "next-auth/react";
 import PublicFooter from "@/components/PublicFooter";
-import { CREDITS_COPY } from "@/lib/client/planLimit";
 import PublicHeader from "@/components/PublicHeader";
 import McpInstallExample from "@/components/McpInstallExample";
 import Spinner from "@/components/ui/Spinner";
@@ -201,7 +199,8 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
           <div className="w-full md:w-[min(560px,54%)]">
             <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">MCP · API · CLI</p>
             <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[56px] lg:text-[64px]">
-              Easy, trackable share links built for AI agents
+              {/* Non-breaking space: never leave "agents" alone on the last line. */}
+              Trackable share links, built for AI&nbsp;agents
             </h1>
 
             <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
@@ -232,25 +231,15 @@ export default function HomeUnauthedClient({ authTransitionHint }: { authTransit
                   ) : null}
                 </button>
               ) : null}
+              {/* One reassurance beside the one action. Credit amounts live on /pricing, which the header
+                  already links to; spelling them out here made the CTA row read like fine print. */}
               {authEnabled ? (
-                <span className="text-[13px] leading-5 text-white/55">
-                  Free to start — {CREDITS_COPY.freeStarter} AI credits included, no card needed.{" "}
-                  <Link href="/pricing" className="underline underline-offset-4 hover:text-white/75">
-                    See pricing
-                  </Link>
-                  .
-                </span>
+                <span className="text-[13px] leading-5 text-white/55">Free to start · no card needed</span>
               ) : (
                 <div className="text-sm text-white/60">Login isn’t available (auth is disabled).</div>
               )}
             </div>
 
-            {/* Was "Built for thousands of links a minute…" — an unverified throughput number.
-                Kept the distinctive half of the claim (agents, not people) and swapped the number
-                for a property that's true regardless of scale. */}
-            <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
-              High-volume, high-performance link creation — by agents, not people
-            </p>
 
             <McpInstallExample />
           </div>

@@ -89,7 +89,14 @@ export default function PublicHeader({ containerClassName }: { containerClassNam
             {/* Says what the page is for rather than naming the protocol; the short form keeps all four
                 links on one row on a phone. Same words as the home page's "Connect your agent" section,
                 which links to the same guide. */}
-            <Link href="/mcp" className={NAV_LINK_CLASS} aria-label="Connect your agent">
+            {/* A quiet outlined pill: the one nav item that is about the product itself, so it shouldn't
+                read as part of a sentence with About / Pricing / Log In. Not filled, so it never competes
+                with the hero's white Get Started button. */}
+            <Link
+              href="/mcp"
+              aria-label="Connect your agent"
+              className="rounded-full border border-white/20 px-2.5 py-1 text-sm font-medium text-white transition hover:border-white/35 hover:bg-white/5 sm:px-3.5"
+            >
               <span className="sm:hidden">Connect</span>
               <span className="hidden sm:inline">Connect your agent</span>
             </Link>
