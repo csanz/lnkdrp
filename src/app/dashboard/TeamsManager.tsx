@@ -471,7 +471,7 @@ export default function TeamsManager() {
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Shared"}</Pill> : null}
-            {currentOrg?.role ? <Pill>{currentOrg.role}</Pill> : null}
+            {currentOrg?.role ? <Pill><span className="capitalize">{currentOrg.role}</span></Pill> : null}
           </div>
         </div>
 
@@ -521,7 +521,7 @@ export default function TeamsManager() {
             <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
               <div className="flex items-center justify-between gap-3 px-3 py-2 sm:px-4">
                 <div className="text-[12px] font-semibold text-[var(--muted-2)]">
-                  {(currentOrg?.name ?? "").trim() ? `${String(currentOrg?.name).trim()} Members` : "Members"}
+                  Members
                 </div>
               </div>
               <div className="h-px bg-[var(--border)]" />
@@ -539,7 +539,7 @@ export default function TeamsManager() {
                             <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{label}</div>
                             <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[var(--muted-2)]">
                               <span>{m.email ?? "—"}</span>
-                              <span>{m.memberRole ?? "owner"}</span>
+                              <span className="capitalize">{m.memberRole ?? "owner"}</span>
                             </div>
                           </div>
                         </div>

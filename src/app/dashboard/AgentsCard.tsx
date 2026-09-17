@@ -74,7 +74,7 @@ function Stat({ label, value, hint }: { label: string; value: string; hint: stri
     <div className="rounded-xl bg-[var(--panel-2)] p-4">
       <div className="text-[12px] font-semibold text-[var(--muted-2)]">{label}</div>
       <div className="mt-2 text-[26px] font-semibold tracking-tight text-[var(--fg)] tabular-nums">{value}</div>
-      <div className="mt-1 text-[11px] text-[var(--muted-2)]">{hint}</div>
+      <div className="mt-1 text-[12px] text-[var(--muted-2)]">{hint}</div>
     </div>
   );
 }

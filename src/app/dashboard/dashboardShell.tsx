@@ -382,22 +382,21 @@ export default function DashboardShell({ children }: { children: React.ReactNode
             />
             <Link
               href="/"
-              className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ring)]"
               aria-label="Back to app"
               title="Back to app"
             >
               <ArrowLeftIcon className="h-4 w-4" aria-hidden="true" />
               <span className="hidden sm:inline">Back to app</span>
-              <span className="sm:hidden">Back</span>
             </Link>
           </div>
 
-          <div className="min-w-0">
+          <div className="shrink-0">
             <div className="flex min-w-0 items-center justify-end gap-2">
               {FEATURE_CREDITS_ENABLED ? (
                 <Link
                   href="/dashboard?tab=usage"
-                  className={`inline-flex h-[34px] min-w-0 max-w-[52vw] items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] sm:max-w-none truncate ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
+                  className={`inline-flex h-[34px] shrink-0 items-center rounded-2xl border border-[color-mix(in_srgb,var(--border)_30%,transparent)] bg-[var(--panel)] px-[12px] py-0 text-[11px] font-semibold hover:bg-[var(--panel-hover)] ${creditsUnlimited ? "text-emerald-700 dark:text-emerald-300" : "text-[var(--fg)]"}`}
                   title="View usage"
                   onMouseEnter={() => {
                     if (credits || creditsBusyRef.current) return;

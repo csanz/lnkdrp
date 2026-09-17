@@ -152,14 +152,14 @@ function PreferencesPageInner() {
               <button
                 type="button"
                 disabled
-                className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[13px] font-semibold text-red-700 opacity-60"
+                className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[13px] font-semibold text-red-700 dark:text-red-300 opacity-60 cursor-not-allowed"
                 title="Not implemented yet"
               >
                 Delete account
               </button>
             </div>
             <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] text-[var(--muted-2)]">
-              Coming soon. We’ll add a secure deletion flow once the backend endpoint is in place.
+              Account deletion isn’t available yet. Email hi@lnkdrp.com and we’ll take care of it.
             </div>
           </Section>
         ) : null}

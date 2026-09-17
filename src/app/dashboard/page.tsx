@@ -364,8 +364,8 @@ function DashboardPageInner() {
             </div>
           ))}
         </nav>
-        <div className="mt-6 h-px bg-[var(--border)]" />
-        <div className="mt-3 px-1">
+        <div className="my-3 h-px bg-[var(--border)]" />
+        <div className="mt-2">
           <div className="grid gap-2">
             <button
               type="button"
@@ -396,7 +396,7 @@ function DashboardPageInner() {
       <div className="min-w-0 space-y-10 pt-4 pb-2">
         {tab === "overview" ? (
           <Section title="Overview" description="A quick snapshot of your workspace.">
-            <div className="grid gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <SubscriptionCard />
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -422,9 +422,9 @@ function DashboardPageInner() {
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                   <div>
-                    <div className="text-[13px] font-semibold text-[var(--fg)]">This month</div>
+                    <div className="text-[13px] font-semibold text-[var(--fg)]">Last 30 days</div>
                     <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">
-                      Upload activity and sharing performance (last 30 days).
+                      Upload activity and sharing performance.
                     </div>
                   </div>
                   {statsBusy ? <div className="text-[12px] text-[var(--muted-2)]">Loading…</div> : null}
@@ -492,7 +492,7 @@ function DashboardPageInner() {
 
         {tab === "account" ? (
           <Section title="Account" description="Account-level settings and actions.">
-            <div className="grid gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="text-[13px] font-semibold text-[var(--fg)]">Email preferences</div>
                 <div className="mt-0.5 text-[12px] text-[var(--muted-2)]">Applies to the currently selected workspace.</div>
@@ -512,7 +512,7 @@ function DashboardPageInner() {
                   <button
                     type="button"
                     disabled
-                    className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[13px] font-semibold text-red-700 opacity-60"
+                    className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[13px] font-semibold text-red-700 dark:text-red-300 opacity-60 cursor-not-allowed"
                     title="Not implemented yet"
                   >
                     Delete account
@@ -520,8 +520,8 @@ function DashboardPageInner() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4 text-[12px] text-[var(--muted-2)]">
-                Coming soon. We’ll add a secure deletion flow once the backend endpoint is in place.
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-4 sm:px-6 text-[12px] text-[var(--muted-2)]">
+                Account deletion isn’t available yet. Email hi@lnkdrp.com and we’ll take care of it.
               </div>
             </div>
           </Section>
@@ -541,14 +541,14 @@ function DashboardPageInner() {
 
         {tab === "usage" ? (
           <Section title="Usage" description="Credits and quality breakdown.">
-            <div className="grid gap-3">
+            <div className="grid grid-cols-1 gap-3">
               <SubscriptionCard />
               <DailyUsageChart days={usageDays} />
               <CreditsSummaryCard />
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex flex-wrap items-center gap-2">
-                    <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[12px] font-semibold text-[var(--muted-2)]">
+                    <div className="px-1 text-[12px] font-semibold text-[var(--muted-2)]">
                       Date range
                     </div>
                     <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--panel)] p-1">
@@ -584,9 +584,6 @@ function DashboardPageInner() {
           <Section
             title="Limits"
             description="On-demand controls and credit caps."
-            helper={
-              "On-demand limits are Pro-only."
-            }
           >
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <OnDemandUsageCard />

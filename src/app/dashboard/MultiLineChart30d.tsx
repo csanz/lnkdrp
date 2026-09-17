@@ -70,7 +70,7 @@ export default function MultiLineChart30d({
 
       <div ref={wrapRef} className="h-56 w-full">
         {!size ? null : (
-          <LineChart width={size.w} height={size.h} data={data} margin={{ top: 18, right: 10, bottom: 6, left: 6 }}>
+          <LineChart width={size.w} height={size.h} data={data} margin={{ top: 18, right: 30, bottom: 6, left: 30 }}>
             <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
             <XAxis
               dataKey="day"

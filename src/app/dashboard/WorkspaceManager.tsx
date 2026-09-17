@@ -384,7 +384,7 @@ export default function WorkspaceManager() {
           </div>
           <div className="mt-2 flex flex-wrap gap-2">
             {currentOrg?.type ? <Pill>{currentOrg.type === "personal" ? "Personal" : "Shared"}</Pill> : null}
-            {currentOrg?.role ? <Pill>{currentOrg.role}</Pill> : null}
+            {currentOrg?.role ? <Pill><span className="capitalize">{currentOrg.role}</span></Pill> : null}
           </div>
         </div>
 
@@ -407,7 +407,7 @@ export default function WorkspaceManager() {
       <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
         <div className="overflow-x-auto">
           <div className="min-w-[520px]">
-            <div className="grid grid-cols-[1fr_110px_140px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
+            <div className="grid grid-cols-[1fr_110px_180px] gap-3 px-3 py-2 text-[11px] font-semibold text-[var(--muted-2)] sm:px-4">
               <div>Workspace</div>
               <div>Role</div>
               <div className="text-right">Actions</div>
@@ -425,7 +425,7 @@ export default function WorkspaceManager() {
                       Active
                     </div>
                     <div className="px-3 pb-3 sm:px-4">
-                      <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+                      <div className="grid grid-cols-[1fr_110px_180px] items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
                         <div className="flex min-w-0 items-center gap-3">
                           {activeRow.avatarUrl ? (
                             // eslint-disable-next-line @next/next/no-img-element
@@ -447,9 +447,9 @@ export default function WorkspaceManager() {
                           </div>
                         </div>
 
-                        <div className="w-[110px] text-[12px] text-[var(--muted-2)]">{activeRow.role}</div>
+                        <div className="capitalize text-[12px] text-[var(--muted-2)]">{activeRow.role}</div>
 
-                        <div className="flex w-[140px] justify-end gap-2">
+                        <div className="flex justify-end gap-2">
                           {activeRow.role === "owner" || activeRow.role === "admin" ? (
                             <button
                               type="button"
@@ -483,7 +483,7 @@ export default function WorkspaceManager() {
                       const isActive = false;
                       const avatarLabel = (o.name ?? "").trim() || "Workspace";
                       return (
-                        <div key={o.id} className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
+                        <div key={o.id} className="grid grid-cols-[1fr_110px_180px] items-center gap-3 px-3 py-3 sm:px-4">
                           <div className="flex min-w-0 items-center gap-3">
                             {o.avatarUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
@@ -505,9 +505,9 @@ export default function WorkspaceManager() {
                             </div>
                           </div>
 
-                          <div className="w-[110px] text-[12px] text-[var(--muted-2)]">{o.role}</div>
+                          <div className="capitalize text-[12px] text-[var(--muted-2)]">{o.role}</div>
 
-                          <div className="flex w-[140px] justify-end gap-2">
+                          <div className="flex justify-end gap-2">
                             {o.role === "owner" || o.role === "admin" ? (
                               <button
                                 type="button"
