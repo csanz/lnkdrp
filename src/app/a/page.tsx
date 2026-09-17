@@ -11,6 +11,7 @@ import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
 import Panel from "@/components/ui/Panel";
 import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type CronHealthItem = {
@@ -103,7 +104,7 @@ export default function AdminHomePage() {
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
-      <div className="mx-auto w-full max-w-5xl px-6 py-8">
+      <div className={ADMIN_PAGE_CONTAINER}>
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin</h1>
           <p className="mt-1 text-sm text-[var(--muted)]">Choose an admin tool.</p>

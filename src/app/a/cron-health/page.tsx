@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from "react";
 import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
 import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type CronHealthItem = {
@@ -157,7 +158,7 @@ export default function CronHealthAdminPage() {
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
-      <div className="mx-auto w-full max-w-5xl px-6 py-8">
+      <div className={ADMIN_PAGE_CONTAINER}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Cron health</h1>

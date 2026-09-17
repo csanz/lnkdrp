@@ -13,6 +13,7 @@ import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
 import CopyTextButton from "@/components/ui/CopyTextButton";
 import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type DetailDoc = {
@@ -302,7 +303,7 @@ export default function AdminDataRequestDetailPage() {
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
-      <div className="mx-auto w-full max-w-6xl px-6 py-8">
+      <div className={ADMIN_PAGE_CONTAINER}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -681,7 +682,7 @@ export default function AdminDataRequestDetailPage() {
             ) : null}
           </div>
         ) : tab === "ai" ? (
-          <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] 2xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <div className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
               <div className="flex items-center justify-between gap-3">
                 <div>

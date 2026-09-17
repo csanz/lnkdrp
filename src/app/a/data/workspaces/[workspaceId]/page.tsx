@@ -18,6 +18,7 @@ import DataTable from "@/components/ui/DataTable";
 import Panel from "@/components/ui/Panel";
 import Pill from "@/components/ui/Pill";
 import { fmtDate } from "@/lib/admin/format";
+import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import {
   billableLabel,
   cancelText,
@@ -173,7 +174,7 @@ export default function AdminWorkspaceDetailPage() {
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
-      <div className="mx-auto w-full max-w-6xl px-6 py-8">
+      <div className={ADMIN_PAGE_CONTAINER}>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">

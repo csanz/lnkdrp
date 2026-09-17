@@ -15,6 +15,7 @@ import Input from "@/components/ui/Input";
 import Select from "@/components/ui/Select";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 
 type AiRunRow = {
   id: string;
@@ -177,7 +178,7 @@ export default function AdminAiRunsPage() {
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
-      <div className="mx-auto w-full max-w-7xl px-6 py-8">
+      <div className={ADMIN_PAGE_CONTAINER}>
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-xl font-semibold tracking-tight text-[var(--fg)]">AI runs</div>
@@ -191,7 +192,7 @@ export default function AdminAiRunsPage() {
           </Link>
         </div>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] 2xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
           <Panel className="min-w-0">
             <div className="flex flex-wrap items-end gap-3">
               <div className="min-w-[180px]">

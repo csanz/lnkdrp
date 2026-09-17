@@ -25,6 +25,7 @@ import type {
   PlanLimitsRunSummary,
   SendOutcome,
 } from "@/lib/admin/emailsAdmin";
+import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type SnapshotRow = {
@@ -294,7 +295,7 @@ export default function AdminEmailsPage() {
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
-      <div className="mx-auto w-full max-w-6xl px-6 py-8">
+      <div className={ADMIN_PAGE_CONTAINER}>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">{PAGE_TITLE}</h1>
