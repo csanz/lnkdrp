@@ -286,6 +286,20 @@ export function notifyDocsChanged(): void {
   window.dispatchEvent(new Event(DOCS_CHANGED_EVENT));
 }
 
+/** Fired just before a doc leaves the lists because it was archived or deleted in this tab. */
+export const DOC_LEAVING_EVENT = "lnkdrp-doc-leaving";
+export type DocLeavingDetail = { docId: string; reason: "archived" | "deleted" };
+
+/**
+ * Say why a doc is about to disappear, so the sidebar folds its row out in the matching tint
+ * (archived or deleted). Call before `notifyDocsChanged`. Changes made elsewhere (an agent, another
+ * tab) get their reason from the realtime activity frame instead.
+ */
+export function notifyDocLeaving(detail: DocLeavingDetail): void {
+  if (!isBrowser()) return;
+  window.dispatchEvent(new CustomEvent<DocLeavingDetail>(DOC_LEAVING_EVENT, { detail }));
+}
+
 /**
  * Optimistically add a newly-created project to the cached sidebar snapshot.
  *

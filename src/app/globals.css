@@ -20,6 +20,11 @@
   /* Activity feed: tint + edge bar for a row that just arrived live (neutral, not a status colour). */
   --feed-new-bg: rgba(37, 99, 235, 0.06);
   --feed-new-bar: rgba(37, 99, 235, 0.5);
+  /* Sidebar row leaving the list: held in a clear status tint while it collapses (archived amber, deleted red). */
+  --row-archived-bg: rgba(217, 119, 6, 0.16);
+  --row-archived-fg: #b45309;
+  --row-deleted-bg: rgba(220, 38, 38, 0.12);
+  --row-deleted-fg: #b91c1c;
   --panel-2: #fafafa;
   --panel-hover: #f4f4f5;
 
@@ -74,6 +79,10 @@
   --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
+  --row-archived-bg: rgba(245, 158, 11, 0.2);
+  --row-archived-fg: #fbbf24;
+  --row-deleted-bg: rgba(248, 113, 113, 0.18);
+  --row-deleted-fg: #fca5a5;
   --panel-2: #151518;
   --panel-hover: #1b1b1f;
 
@@ -125,6 +134,10 @@
     --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
+  --row-archived-bg: rgba(245, 158, 11, 0.2);
+  --row-archived-fg: #fbbf24;
+  --row-deleted-bg: rgba(248, 113, 113, 0.18);
+  --row-deleted-fg: #fca5a5;
     --panel-2: #151518;
     --panel-hover: #1b1b1f;
 
@@ -243,6 +256,24 @@ body {
 }
 
 /* Sidebar list row that appeared after first load: grow into place with a tint, then settle. */
+/* A sidebar row leaving (archived or deleted, here or by an agent): it holds its tint long enough to
+   read, then folds shut. The <li> is a one-row grid so 1fr -> 0fr collapses to its real height. */
+@keyframes ldSidebarRowOut {
+  0% {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  45% {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+  100% {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    margin-top: 0;
+  }
+}
+
 @keyframes ldSidebarRowIn {
   0% {
     grid-template-rows: 0fr;

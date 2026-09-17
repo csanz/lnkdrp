@@ -20,7 +20,7 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
 import { upsellKeyForLimit } from "@/lib/client/upsellCopy";
 import { refreshPlan } from "@/lib/client/usePlan";
-import { notifyDocsChanged, notifyProjectsChanged, optimisticallyAddProjectToSidebarCache } from "@/lib/sidebarCache";
+import { notifyDocLeaving, notifyDocsChanged, notifyProjectsChanged, optimisticallyAddProjectToSidebarCache } from "@/lib/sidebarCache";
 
 type ProjectDTO = { id: string; name: string; slug?: string };
 
@@ -454,6 +454,7 @@ export default function DocActionsMenu({
         }
         throw new Error(typeof json?.error === "string" && json.error ? json.error : `Request failed (${res.status})`);
       }
+      if (next) notifyDocLeaving({ docId, reason: "archived" });
       onDocPatched?.({ isArchived: next });
       notifyDocsChanged();
       // Archiving affects project doc counts (active docs only).
@@ -506,6 +507,7 @@ export default function DocActionsMenu({
       setShowDeleteConfirm(false);
       setOpen(false);
       setProjectsOpen(false);
+      notifyDocLeaving({ docId, reason: "deleted" });
       notifyDocsChanged();
       // Deleting affects project doc counts (active docs only).
       notifyProjectsChanged();
