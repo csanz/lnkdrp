@@ -10,11 +10,8 @@ import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 
 type NavItem = { label: string; href: string; exact?: boolean };
 type NavSection = { label: string; items: NavItem[] };
-/**
- * Render the AdminLeftSidebar UI (uses memoized values).
- */
 
-
+/** The admin area's own sidebar: the sections of /a, with the current one marked. */
 export default function AdminLeftSidebar() {
   const pathname = usePathname() ?? "";
   const { resolvedTheme } = useTheme();
@@ -42,12 +39,19 @@ export default function AdminLeftSidebar() {
           { label: "Workspaces", href: "/a/data/workspaces", exact: true },
           { label: "Users", href: "/a/data/users", exact: true },
           { label: "Docs", href: "/a/data/docs", exact: true },
+          { label: "Links", href: "/a/data/links", exact: true },
           { label: "Projects", href: "/a/data/projects", exact: true },
           { label: "Requests", href: "/a/data/requests", exact: true },
           { label: "Uploads", href: "/a/data/uploads", exact: true },
         ],
       },
-      { label: "System", items: [{ label: "Cron health", href: "/a/cron-health", exact: true }] },
+      {
+        label: "System",
+        items: [
+          { label: "Cron health", href: "/a/cron-health", exact: true },
+          { label: "Emails", href: "/a/emails", exact: true },
+        ],
+      },
       {
         label: "Tools",
         items: [
@@ -58,11 +62,8 @@ export default function AdminLeftSidebar() {
     ],
     [],
   );
-/**
-   * Return whether active.
-   */
 
-
+  /** Whether this item is the page being viewed; non-exact items also match their subpages. */
   function isActive(item: NavItem) {
     if (item.exact) return pathname === item.href;
     return pathname === item.href || pathname.startsWith(`${item.href}/`);
