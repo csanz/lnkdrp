@@ -24,6 +24,7 @@ import { formatDateRange, formatMonthLabel, formatShortDate } from "@/lib/format
 import { formatUsdFromCents, formatUsdOrNotAvailable } from "@/lib/format/money";
 import { openBillingPortal } from "@/lib/billing/clientActions";
 import { usePlan } from "@/lib/client/usePlan";
+import WorkspaceIcon from "@/components/WorkspaceIcon";
 
 /** The workspace this tab bills, from `/api/billing/status`. */
 type BilledWorkspace = {
@@ -65,17 +66,12 @@ function BilledWorkspaceHeader({
   return (
     <Panel padding="lg">
       <div className="flex flex-wrap items-center gap-4">
-        {workspace?.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={workspace.avatarUrl} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover" />
-        ) : (
-          <div
-            aria-hidden="true"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[var(--panel-hover)] text-base font-semibold text-[var(--fg)]"
-          >
-            {workspace ? initial : ""}
-          </div>
-        )}
+        <WorkspaceIcon
+          avatarUrl={workspace?.avatarUrl}
+          fallback={workspace ? initial : ""}
+          className="h-11 w-11 rounded-xl"
+          fallbackClassName="bg-[var(--panel-hover)] text-base text-[var(--fg)]"
+        />
         <div className="min-w-0 flex-1">
           <div className="text-[12px] text-[var(--muted-2)]">Billing for</div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">

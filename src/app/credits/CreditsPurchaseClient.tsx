@@ -19,6 +19,7 @@ import PricingCta from "@/app/pricing/PricingCta";
 import { type CreditPack, formatPackPrice, formatPerCredit } from "@/lib/credits/packs";
 import { formatShortDate } from "@/lib/format/date";
 import { cn } from "@/lib/cn";
+import WorkspaceIcon from "@/components/WorkspaceIcon";
 
 type Props = { packs: CreditPack[]; proPriceLabel: string | null; proCredits: number; freeCredits: number };
 
@@ -329,17 +330,12 @@ function WorkspacePanel({
       className="mt-10 overflow-hidden rounded-2xl border border-white/20 bg-white/[0.05] shadow-[0_24px_60px_-30px_rgba(0,0,0,0.8)]"
     >
       <div className="flex flex-wrap items-center gap-4 px-6 py-5">
-        {workspace.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={workspace.avatarUrl} alt="" className="h-11 w-11 shrink-0 rounded-xl object-cover ring-1 ring-white/15" />
-        ) : (
-          <div
-            aria-hidden="true"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white/10 text-base font-semibold text-white ring-1 ring-white/15"
-          >
-            {initial}
-          </div>
-        )}
+        <WorkspaceIcon
+          avatarUrl={workspace.avatarUrl}
+          fallback={initial}
+          className="h-11 w-11 rounded-xl ring-1 ring-white/15"
+          fallbackClassName="bg-white/10 text-base text-white"
+        />
         <div className="min-w-0 flex-1">
           <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/45">Buying credits for</div>
           <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">

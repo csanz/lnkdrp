@@ -26,6 +26,7 @@ import {
   refreshOrgsCache,
 } from "@/lib/orgsCache";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
+import WorkspaceIcon from "@/components/WorkspaceIcon";
 
 type MenuItem =
   | { type: "link"; label: string; href: string; icon?: React.ReactNode }
@@ -39,14 +40,7 @@ const initials = initialsFromNameOrEmail;
 function OrgAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
   const fallback = initials(name || "Org");
   return (
-    <div className="grid h-6 w-6 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-[11px] font-semibold text-[var(--fg)]">
-      {avatarUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={avatarUrl} alt="" className="h-6 w-6 object-cover" />
-      ) : (
-        <span aria-hidden="true">{fallback}</span>
-      )}
-    </div>
+    <WorkspaceIcon avatarUrl={avatarUrl} fallback={fallback} className="h-6 w-6 rounded-md" fallbackClassName="bg-[var(--panel-hover)] text-[11px] text-[var(--fg)]" />
   );
 }
 

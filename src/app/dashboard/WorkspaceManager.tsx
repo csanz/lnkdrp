@@ -11,6 +11,7 @@ import Modal from "@/components/modals/Modal";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildOrgAvatarPathname } from "@/lib/blob/clientUpload";
+import WorkspaceIcon from "@/components/WorkspaceIcon";
 import Pill from "@/components/ui/Pill";
 import { initials } from "@/lib/orgs/orgsClient";
 import { useOrgsSnapshot } from "@/lib/orgs/useOrgsSnapshot";
@@ -57,6 +58,8 @@ export default function WorkspaceManager() {
   const [savingName, setSavingName] = useState(false);
   const [savingAvatar, setSavingAvatar] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarDragOver, setAvatarDragOver] = useState(false);
+  const [avatarUrlOpen, setAvatarUrlOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState<string>("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -176,6 +179,8 @@ export default function WorkspaceManager() {
       setSavingName(false);
       setSavingAvatar(false);
       setUploadingAvatar(false);
+      setAvatarDragOver(false);
+      setAvatarUrlOpen(false);
       // Instant render: seed from cached org list; avoid network on open.
       const cachedRow = stableOrgs.find((o) => o.id === orgId) ?? null;
       if (cachedRow) {
@@ -243,12 +248,13 @@ export default function WorkspaceManager() {
     }
   }, [session?.user, manageOrgId, navLocked, orgActionBusy, manageOrgName]);
 
-  const saveAvatarUrl = useCallback(async () => {
+  /** Saves the URL field, or `override` when given ("" removes the icon; the field's state is not yet updated then). */
+  const saveAvatarUrl = useCallback(async (override?: string) => {
     if (!session?.user) return;
     if (!manageOrgId) return;
     if (navLocked) return;
     if (orgActionBusy) return;
-    const raw = manageOrgAvatarUrl.trim();
+    const raw = (override ?? manageOrgAvatarUrl).trim();
     const avatarUrl = raw ? raw : null;
     if (avatarUrl && !avatarUrl.startsWith("https://")) {
       setManageAvatarError("Avatar URL must start with https://");
@@ -427,18 +433,12 @@ export default function WorkspaceManager() {
                     <div className="px-3 pb-3 sm:px-4">
                       <div className="grid grid-cols-[1fr_110px_180px] items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
                         <div className="flex min-w-0 items-center gap-3">
-                          {activeRow.avatarUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={activeRow.avatarUrl}
-                              alt=""
-                              className="h-9 w-9 shrink-0 rounded-lg border border-[var(--border)] object-cover"
-                            />
-                          ) : (
-                            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--panel-2)] text-[11px] font-semibold text-[var(--fg)]">
-                              {initials((activeRow.name ?? "").trim() || "Workspace")}
-                            </div>
-                          )}
+                          <WorkspaceIcon
+                            avatarUrl={activeRow.avatarUrl}
+                            fallback={initials((activeRow.name ?? "").trim() || "Workspace")}
+                            className="h-9 w-9 rounded-lg"
+                            fallbackClassName="bg-[var(--panel-2)] text-[11px] text-[var(--fg)]"
+                          />
                           <div className="min-w-0">
                             <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{activeRow.name}</div>
                             <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
@@ -485,18 +485,12 @@ export default function WorkspaceManager() {
                       return (
                         <div key={o.id} className="grid grid-cols-[1fr_110px_180px] items-center gap-3 px-3 py-3 sm:px-4">
                           <div className="flex min-w-0 items-center gap-3">
-                            {o.avatarUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={o.avatarUrl}
-                                alt=""
-                                className="h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] object-cover"
-                              />
-                            ) : (
-                              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--panel-2)] text-[11px] font-semibold text-[var(--fg)]">
-                                {initials(avatarLabel)}
-                              </div>
-                            )}
+                            <WorkspaceIcon
+                              avatarUrl={o.avatarUrl}
+                              fallback={initials(avatarLabel)}
+                              className="h-8 w-8 rounded-lg"
+                              fallbackClassName="bg-[var(--panel-2)] text-[11px] text-[var(--fg)]"
+                            />
                             <div className="min-w-0">
                               <div className="truncate text-[13px] font-semibold text-[var(--fg)]">{o.name}</div>
                               <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
@@ -587,67 +581,108 @@ export default function WorkspaceManager() {
                       </div>
 
           <div>
-            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Avatar</div>
-            <div className="mt-2">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="text-[12px] font-semibold text-[var(--muted-2)]">Icon</div>
+            {/*
+              Drop zone + preview. This was a URL field with a bare browser file input under it
+              ("Choose File No file chosen"), which read as a text line rather than a way to upload,
+              and took no drops. The preview shows the icon on the black tile it gets everywhere.
+            */}
+            <div className="mt-2 flex items-stretch gap-3">
+              <WorkspaceIcon
+                avatarUrl={baselineOrgAvatarUrl || null}
+                fallback={initials(manageOrgName.trim() || "Workspace")}
+                className="h-[88px] w-[88px] rounded-2xl"
+                fallbackClassName="bg-[var(--panel-2)] text-[20px] text-[var(--fg)]"
+              />
+              <label
+                className={[
+                  "flex min-w-0 flex-1 cursor-pointer flex-col justify-center rounded-xl border border-dashed px-4 py-3 transition-colors",
+                  "focus-within:ring-2 focus-within:ring-[var(--muted-2)]",
+                  avatarDragOver
+                    ? "border-[var(--fg)] bg-[var(--panel-hover)]"
+                    : "border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)]",
+                  orgActionBusy || uploadingAvatar ? "pointer-events-none opacity-60" : "",
+                ].join(" ")}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  if (!avatarDragOver) setAvatarDragOver(true);
+                }}
+                onDragLeave={() => setAvatarDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setAvatarDragOver(false);
+                  const f = e.dataTransfer.files?.[0];
+                  if (f) void uploadAvatarFile(f);
+                }}
+              >
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="sr-only"
+                  disabled={orgActionBusy || uploadingAvatar}
+                  onChange={(e) => {
+                    const f = e.currentTarget.files?.[0];
+                    if (f) void uploadAvatarFile(f);
+                    e.currentTarget.value = "";
+                  }}
+                />
+                <span className="text-[13px] font-semibold text-[var(--fg)]">
+                  {uploadingAvatar ? "Uploading…" : avatarDragOver ? "Drop to upload" : "Drop your logo here, or choose a file"}
+                </span>
+                <span className="mt-1 text-[12px] leading-snug text-[var(--muted-2)]">
+                  Use a <span className="font-semibold text-[var(--fg)]">white logo</span> on a transparent background. It sits on a
+                  black tile in light and dark themes.
+                </span>
+                <span className="mt-1 text-[11px] text-[var(--muted-2)]">Square, at least 120×120. PNG or WebP (JPG works without transparency), up to 2MB.</span>
+              </label>
+            </div>
+            {manageAvatarError ? <div className="mt-2 text-[12px] text-red-500">{manageAvatarError}</div> : null}
+
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+              {baselineOrgAvatarUrl ? (
+                <button
+                  type="button"
+                  className="text-[12px] font-semibold text-[var(--muted-2)] underline-offset-2 hover:text-[var(--fg)] hover:underline disabled:opacity-60"
+                  disabled={orgActionBusy || savingAvatar || uploadingAvatar}
+                  onClick={() => {
+                    setManageOrgAvatarUrl("");
+                    void saveAvatarUrl("");
+                  }}
+                >
+                  Remove icon
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="text-[12px] font-semibold text-[var(--muted-2)] underline-offset-2 hover:text-[var(--fg)] hover:underline"
+                aria-expanded={avatarUrlOpen}
+                onClick={() => setAvatarUrlOpen((v) => !v)}
+              >
+                {avatarUrlOpen ? "Hide image URL" : "Use an image URL instead"}
+              </button>
+            </div>
+
+            {avatarUrlOpen ? (
+              <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center">
                 <input
                   className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)] sm:flex-1"
                   value={manageOrgAvatarUrl}
                   onChange={(e) => setManageOrgAvatarUrl(e.target.value)}
                   placeholder="https://…"
+                  aria-label="Icon image URL"
                   disabled={orgActionBusy || savingAvatar || uploadingAvatar}
                 />
-                <div className="flex shrink-0 justify-end gap-2">
-                  <button
-                    type="button"
-                    className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                    disabled={orgActionBusy || savingAvatar || uploadingAvatar}
-                    onClick={() => {
-                      setManageOrgAvatarUrl("");
-                      void saveAvatarUrl();
-                    }}
-                  >
-                    Clear
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
-                    disabled={
-                      orgActionBusy ||
-                      savingAvatar ||
-                      uploadingAvatar ||
-                      !avatarDirty ||
-                      !avatarUrlOk
-                    }
-                    onClick={() => void saveAvatarUrl()}
-                    title={!avatarDirty ? "No changes" : !avatarUrlOk ? "URL must start with https://" : undefined}
-                  >
-                    {savingAvatar ? "Saving…" : "Save"}
-                  </button>
-                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-lg bg-[var(--fg)] px-3 py-2 text-[13px] font-semibold text-[var(--bg)] disabled:opacity-60"
+                  disabled={orgActionBusy || savingAvatar || uploadingAvatar || !avatarDirty || !avatarUrlOk}
+                  onClick={() => void saveAvatarUrl()}
+                  title={!avatarDirty ? "No changes" : !avatarUrlOk ? "URL must start with https://" : undefined}
+                >
+                  {savingAvatar ? "Saving…" : "Save"}
+                </button>
               </div>
-              <div className="mt-1 text-[11px] text-[var(--muted-2)]">
-                Workspace icon: square (1:1), at least <span className="font-semibold">120×120</span>, PNG/JPG/WebP, ≤ 2MB.
-              </div>
-            </div>
-            <div className="mt-2">
-              <label className="block text-[12px] font-semibold text-[var(--muted-2)]">Upload image</label>
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className="mt-1 block w-full text-[12px] text-[var(--muted-2)]"
-                disabled={orgActionBusy || uploadingAvatar}
-                onChange={(e) => {
-                  const f = e.currentTarget.files?.[0];
-                  if (f) void uploadAvatarFile(f);
-                  e.currentTarget.value = "";
-                }}
-              />
-              <div className="mt-1 text-[11px] text-[var(--muted-2)]">
-                {uploadingAvatar ? "Uploading… (updates automatically)" : "Uploads update the workspace icon automatically."}
-              </div>
-            </div>
-            {manageAvatarError ? <div className="mt-2 text-[12px] text-red-500">{manageAvatarError}</div> : null}
+            ) : null}
           </div>
 
           <div className="rounded-xl border border-red-500/25 bg-red-500/5 p-5">

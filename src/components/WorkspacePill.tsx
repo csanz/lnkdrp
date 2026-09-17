@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/cn";
+import WorkspaceIcon from "@/components/WorkspaceIcon";
 
 /**
  * Presentational workspace pill used across app + dashboard headers.
@@ -54,22 +55,13 @@ export default function WorkspacePill({
   const content = (
     <>
       <div className="flex min-w-0 items-center px-[10px] py-[6px]">
-        <span
-          className="mr-1.5 grid h-[15px] w-[15px] shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--panel-hover)] text-[8px] font-semibold text-[var(--fg)]"
-          aria-hidden="true"
-        >
-          {avatarUrl && !avatarErrored ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={avatarUrl}
-              alt=""
-              className="h-[15px] w-[15px] object-cover"
-              onError={onAvatarError}
-            />
-          ) : (
-            <span aria-hidden="true">{avatarFallbackText}</span>
-          )}
-        </span>
+        <WorkspaceIcon
+          avatarUrl={avatarUrl && !avatarErrored ? avatarUrl : null}
+          fallback={avatarFallbackText}
+          onError={onAvatarError}
+          className="mr-2 h-5 w-5 rounded-[6px]"
+          fallbackClassName="bg-[var(--panel-hover)] text-[8px] text-[var(--fg)]"
+        />
         <span className="min-w-0 truncate">{name}</span>
       </div>
 
