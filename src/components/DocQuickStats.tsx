@@ -17,9 +17,9 @@ import { valueLabels } from "@/components/charts/ChartValueLabel";
  *
  * Renders instantly from the denormalized `Doc.metricsSnapshot` (rolled up by the doc-metrics
  * cron), then refreshes from `/api/docs/:docId/shareviews?lite=1` for live totals and the
- * views-by-day series that feeds the chart. Single series, so no legend; the title names it.
+ * people-by-day series that feeds the chart. Single series, so no legend; the title names it.
  *
- * Free workspaces get the basic tier: the Viewers tile still shows how many people opened the
+ * Free workspaces get the basic tier: the People tile still shows how many people opened the
  * document (`viewerCount`) with a small "see who · Pro" link, and the footer names the 7-day
  * window; both open the `analytics_history` upsell.
  */
@@ -51,18 +51,16 @@ type StatsResponse = {
   /** Unique viewers (signed-in + anonymous) in the window. */
   viewerCount?: number;
   totals?: {
-    views?: number;
-    /** Tab sessions in the window: the count of *opens*, where `views` counts recipients. */
-    opens?: number;
-    /** `opens` is missing rows (traffic older than visit tracking); show it as unknown, not as a count. */
-    opensPartial?: boolean;
     downloads?: number;
-    pagesViewed?: number;
-    /** Total time on the document within the window (ms), summed across every viewer. */
+    /** Lifetime time of viewers active in the window; only a fallback for servers without `visitTimeMs`. */
     timeSpentMs?: number;
+    /** Time spent in visits active in the window (ms). */
+    visitTimeMs?: number;
     authenticatedViewers?: number;
     anonymousViewers?: number;
   };
+  /** Most recent recorded activity in scope, all time. */
+  lastViewedAt?: string | null;
   series?: Array<{ date: string; views: number; opens?: number; downloads: number }>;
   /** Whether downloads are allowed on any live link of the document (a label, not a filter). */
   downloadsEnabled?: boolean;
@@ -144,8 +142,15 @@ function LinkMiniList({
   right: (row: LinkMiniRow) => React.ReactNode;
 }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">{title}</div>
+    <div data-linklist className="min-w-0">
+      {/* Fixed one-line height, so side-by-side lists start their first rows on the same line. */}
+      <div
+        data-linklist-title
+        className="h-[14px] truncate whitespace-nowrap text-[10px] font-semibold uppercase leading-[14px] tracking-wide text-[var(--muted-2)]"
+        title={title}
+      >
+        {title}
+      </div>
       {rows.length ? (
         <ul className="mt-1 space-y-1">
           {rows.map((r) => (
@@ -179,7 +184,7 @@ function LinkMiniList({
  * shape reads at a glance and the values don't need a hover. The date axis is drawn by the chart
  * so the first, middle and last labels sit under their points.
  */
-function DailyArea({ data, unit }: { data: Array<{ date: string; value: number }>; unit: string }) {
+function DailyArea({ data, unit }: { data: Array<{ date: string; value: number }>; unit: [singular: string, plural: string] }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -242,7 +247,7 @@ function DailyArea({ data, unit }: { data: Array<{ date: string; value: number }
               color: "var(--fg)",
             }}
             labelStyle={{ color: "var(--muted-2)" }}
-            formatter={(v: unknown) => [typeof v === "number" ? `${v.toLocaleString()} ${v === 1 ? unit : `${unit}s`}` : String(v), ""]}
+            formatter={(v: unknown) => [typeof v === "number" ? `${v.toLocaleString()} ${v === 1 ? unit[0] : unit[1]}` : String(v), ""]}
             labelFormatter={(label: unknown) => formatDayKey(String(label ?? ""))}
           />
           <Area
@@ -264,7 +269,7 @@ function DailyArea({ data, unit }: { data: Array<{ date: string; value: number }
   );
 }
 
-/** Quick stats card for the owner doc page: four tiles, a views sparkline, and the plan footer. */
+/** Quick stats card for the owner doc page: up to four tiles, link lists, a people-by-day chart and the metrics link. */
 export default function DocQuickStats({
   docId,
   snapshot,
@@ -334,8 +339,6 @@ export default function DocQuickStats({
     return Math.max(total, rankedSlugs.size);
   }, [links, live]);
 
-  // Ranked by the windowed per-link viewers from the same response as the tiles, so the number on
-  // this line and the Viewers tile are the same kind of thing and can be compared.
   /**
    * The per-link rows behind the two lists below. The server already ranked and labelled them
    * (`topLinks=N` on the analytics request) — this only reshapes the response, it does not sort or
@@ -364,8 +367,8 @@ export default function DocQuickStats({
    * to print a single "most viewed" name, which says nothing about whether second place is close
    * behind or has never been opened.
    *
-   * Ranked on viewers, the same quantity as the Viewers tile, so the column adds up to the number
-   * three lines above it instead of inviting a comparison between two different kinds of thing.
+   * Ranked on people per link, the same quantity as the People tile, so the column adds up to the
+   * number above it instead of inviting a comparison between two different kinds of thing.
    */
   const topLinks = useMemo(
     () =>
@@ -410,33 +413,25 @@ export default function DocQuickStats({
     const t = live?.totals;
     // `viewerCount` is the unique-people figure every tier receives; older responses only carry the split.
     const viewers = typeof live?.viewerCount === "number" ? num(live.viewerCount) : t ? num(t.authenticatedViewers) + num(t.anonymousViewers) : null;
-    // Both the snapshot and the live response now speak the same language — the window, not
-    // lifetime — so the first paint and the second show the same kind of number instead of the
-    // tile jumping from "3 this week" to "41 ever" when the fetch lands.
-    const views = t ? num(t.views) : snapshot ? num(snapshot.lastDaysViews) : null;
+    // Both the snapshot and the live response speak the window, not lifetime, so the first paint
+    // and the second show the same kind of number.
     const downloads = t ? num(t.downloads) : snapshot ? num(snapshot.lastDaysDownloads) : null;
-    const pages = t ? num(t.pagesViewed) : null;
-    const timeSpentMs = t && typeof t.timeSpentMs === "number" ? num(t.timeSpentMs) : null;
-    // `opens` is absent on a response from before it existed; `null` keeps the tile reserved
-    // rather than asserting zero opens on a document that has plainly been read.
-    // Withheld when the server says the figure is missing rows: every viewer had at least one
-    // sitting, so an `opens` below `views` is not a smaller number, it is an unknown one, and
-    // printing it invites the reader to conclude the deck was opened fewer times than it was read.
-    const opens = t && typeof t.opens === "number" && t.opensPartial !== true ? num(t.opens) : null;
-    const opensPartial = Boolean(t?.opensPartial);
-    return { viewers, views, downloads, pages, timeSpentMs, opens, opensPartial };
+    // In-range visit time, the same basis as the metrics page Total time; the lifetime
+    // `timeSpentMs` fallback only covers a server that predates `visitTimeMs`.
+    const timeMs = t
+      ? typeof t.visitTimeMs === "number"
+        ? num(t.visitTimeMs)
+        : typeof t.timeSpentMs === "number"
+          ? num(t.timeSpentMs)
+          : null
+      : null;
+    return { viewers, downloads, timeMs };
   }, [live, snapshot]);
 
-  const series = useMemo(
-    () => (Array.isArray(live?.series) ? live!.series.map((s) => ({ date: s.date, views: num(s.views) })) : []),
+  const chartData = useMemo(
+    () => (Array.isArray(live?.series) ? live!.series.map((s) => ({ date: s.date, value: num(s.views) })) : []),
     [live],
   );
-  // Chart opens per day, the same visits the Opens tile counts, so the bars add up to it. Traffic
-  // from before visit tracking has no opens; then the chart falls back to viewers and says so,
-  // matching the Viewers tile instead.
-  const chartOpens = !stats.opensPartial && series.length > 0 && (live?.series ?? []).every((s) => typeof s.opens === "number");
-  const chartData = (live?.series ?? []).map((s) => ({ date: s.date, value: num(chartOpens ? s.opens : s.views) }));
-  const chartUnit = chartOpens ? "open" : "viewer";
   const hasAnyViews = chartData.some((d) => d.value > 0);
   const freshness = live ? "Live" : snapshot?.updatedAt ? `Updated ${relativeAge(snapshot.updatedAt) ?? ""}`.trim() : null;
   // Free workspaces get a clamped window; the server reports both the limit and the days it served.
@@ -447,38 +442,33 @@ export default function DocQuickStats({
   const clamped = analyticsDaysLimit !== null && analyticsDaysLimit < DAYS;
   const shownDays = clamped ? Math.min(analyticsDaysLimit, num(live?.days) || analyticsDaysLimit) : DAYS;
 
-  // `truncate` on every line, not just the value: a label is one word ("Downloads", "Viewers")
-  // that CSS never wraps, so without it a narrow column (five tiles in three columns on mobile —
-  // see the grid below) doesn't push the overflow onto a second line, it paints straight past the
-  // column edge into the next tile's label with no gap, and "Downloads" + "Pages" read as one word,
-  // "DownloadsPages". `min-w-0` on the wrapper lets the grid actually shrink the column that far;
-  // `truncate` (which is itself `overflow-hidden`) is what stops the bleed once it does.
-  const tile = (label: string, value: number | null | string, sub?: React.ReactNode) => (
-    <div className="min-w-0">
+  // `truncate` on every line and `min-w-0` on the wrapper: a one-word label never wraps, so in a
+  // narrow column it would otherwise paint past the column edge into the next tile.
+  const tile = (
+    label: string,
+    value: number | null | string,
+    opts?: { sub?: React.ReactNode; title?: string; className?: string },
+  ) => (
+    <div data-quickstats-tile className={`min-w-0 ${opts?.className ?? ""}`} title={opts?.title}>
       <div className="truncate text-[11px] font-medium text-[var(--muted)]">{label}</div>
       <div className="mt-0.5 truncate text-lg font-semibold tabular-nums text-[var(--fg)]">
         {value === null ? "–" : typeof value === "number" ? value.toLocaleString() : value}
       </div>
-      {sub ? <div className="mt-0.5 min-h-[14px] truncate text-[10px] leading-[14px]">{sub}</div> : null}
+      {opts?.sub ? <div className="mt-0.5 min-h-[14px] truncate text-[10px] leading-[14px]">{opts.sub}</div> : null}
     </div>
   );
 
   /** The one link's label, when a document has exactly one, so the header can name what it counts. */
   const soleLinkLabel = coveredLinkCount === 1 && links?.links.length === 1 ? links.links[0]!.label : null;
 
-  /**
-   * How many of those opens were somebody coming back. Only shown when it is a real fact: equal
-   * numbers mean nobody returned, and "0 returns" under every tile is noise.
-   */
-  const opensSub = stats.opensPartial ? (
-    <span className="text-[var(--muted-2)]" title="Some of this traffic predates per-session tracking, so opens cannot be counted for it">
-      not tracked yet
-    </span>
-  ) : stats.opens !== null && stats.viewers !== null && stats.opens > stats.viewers ? (
-    <span className="text-[var(--muted-2)]">
-      {(stats.opens - stats.viewers).toLocaleString()} return{stats.opens - stats.viewers === 1 ? "" : "s"}
-    </span>
-  ) : undefined;
+  // The prop is the legacy document-level flag, which only mirrors the DEFAULT link; the response's
+  // `downloadsEnabled` is "any live link allows it", and a real count always earns the tile.
+  const showDownloads =
+    (live?.downloadsEnabled ?? downloadsEnabled) || (typeof stats.downloads === "number" && stats.downloads > 0);
+
+  const lastOpenedIso = typeof live?.lastViewedAt === "string" ? live.lastViewedAt : null;
+  const lastOpenedMs = lastOpenedIso ? Date.parse(lastOpenedIso) : NaN;
+  const lastOpenedTitle = Number.isFinite(lastOpenedMs) ? new Date(lastOpenedMs).toLocaleString() : undefined;
 
   // Free: the count stays, the identities are Pro. Reserve the line while the plan is unknown.
   const viewersSub =
@@ -501,7 +491,7 @@ export default function DocQuickStats({
     // Same frame and the same titled header as the links and snapshot sections of the panel: an
     // uppercase section name with an icon, the window as secondary text, freshness on the right.
     // Before this it opened with "Last 7 days" and no title, so it read as an unlabelled block.
-    <section aria-label="Analytics" className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
+    <section aria-label="Analytics" className="@container rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-5 py-4">
       {/* Header rule: same on all three panel cards (links, analytics, summary), so each card's
           title reads as a title and not as the first row of its content. */}
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-[var(--divider)] pb-3">
@@ -527,41 +517,26 @@ export default function DocQuickStats({
         <div className="text-[11px] text-[var(--muted-2)]">{failed ? "Live stats unavailable" : (freshness ?? "")}</div>
       </div>
 
-      {/* Four tiles, four different facts. "Views" used to sit beside "Viewers" and print the
-          same number: a `ShareView` row is unique per (link, viewer) for life, so counting rows
-          in the window and counting link-recipients in the window are the same arithmetic, and on
-          all-anonymous traffic the card read "Viewers 18 / Views 18" forever. Time on document is
-          the fact that was missing — it comes from the same windowed `totals` object. */}
-      <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-5">
-        {tile("Viewers", stats.viewers, viewersSub)}
-        {/* The one count of events on this card. `Viewers` answers how many people, `Opens` how
-            many times they came — and the gap between them is a returning reader, which no other
-            figure here can show. A `ShareView` row is per (link, browser) for life, so a person who
-            read the deck every morning for a week was one viewer, one view, and nothing else. */}
-        {tile("Opens", stats.opens, opensSub)}
-        {tile("Time", stats.timeSpentMs === null ? null : formatDurationMs(stats.timeSpentMs))}
-        {/* The prop is the legacy document-level flag, which only mirrors the DEFAULT link, so it
-            said "Off" on a document whose second link was being downloaded daily. The response's
-            `downloadsEnabled` is "any live link allows it"; and a real count still always wins, so
-            "Off" is only the honest answer when nothing allows it and nothing was ever downloaded. */}
-        {tile(
-          "Downloads",
-          (live?.downloadsEnabled ?? downloadsEnabled) || (typeof stats.downloads === "number" && stats.downloads > 0)
-            ? stats.downloads
-            : "Off",
-        )}
-        {tile("Pages", stats.pages)}
+      {/* Sized by the card, not the viewport: on a wide screen the card sits in a ~260px rail, so
+          a viewport breakpoint squeezed four columns into it and truncated the labels. */}
+      <div data-quickstats-tiles className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 @md:grid-cols-4">
+        {tile("People", stats.viewers, { sub: viewersSub })}
+        {tile("Time", stats.timeMs === null ? null : formatDurationMs(stats.timeMs), {
+          title: `Time people spent with it open in the last ${shownDays} days`,
+        })}
+        {tile("Last opened", relativeAge(lastOpenedIso) ?? "—", {
+          title: lastOpenedTitle,
+          className: showDownloads ? undefined : "col-span-2",
+        })}
+        {showDownloads ? tile("Downloads", stats.downloads) : null}
       </div>
 
       {/* Only once there is more than one link: on a single-link document both lists would be the
           same one row, restating the tiles above. */}
       {coveredLinkCount > 1 && (topLinks.length || recentLinks.length) ? (
-        <div className="mt-3 grid gap-x-6 gap-y-3 border-t border-[var(--divider)] pt-3 sm:grid-cols-2">
+        <div data-linklists className="mt-3 grid gap-x-6 gap-y-3 border-t border-[var(--divider)] pt-3 @md:grid-cols-2">
           <LinkMiniList
-            // Name what the number is. "Top links" over a bare column invites the reader to guess
-            // views, and views and viewers are the same figure on all-anonymous traffic, so the
-            // guess is right often enough to never be corrected and wrong as soon as it matters.
-            title="Top links · by viewers"
+            title="Links by people"
             docId={docId}
             rows={topLinks}
             empty="No link opened yet"
@@ -580,13 +555,13 @@ export default function DocQuickStats({
       {/* Its own section, divided like the link lists above, with the caption on top naming what the
           bars count (it used to sit under the chart, beside the metrics link). */}
       <div className="mt-3 border-t border-[var(--divider)] pt-3">
-        <div className="mb-1 text-[11px] font-medium text-[var(--muted)]">{chartOpens ? "Opens by day" : "Viewers by day"}</div>
-        {series.length ? (
+        <div className="mb-1 text-[11px] font-medium text-[var(--muted)]">People by day</div>
+        {chartData.length ? (
           hasAnyViews ? (
-            <DailyArea data={chartData} unit={chartUnit} />
+            <DailyArea data={chartData} unit={["person", "people"]} />
           ) : (
             <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-center text-[12px] text-[var(--muted)]">
-              No views yet in the last {shownDays} days. Share the link to start tracking.
+              No one opened it in the last {shownDays} days.
             </div>
           )
         ) : (
@@ -595,7 +570,7 @@ export default function DocQuickStats({
       </div>
 
       {/* One footer row. Free used to get a second upsell line here on top of "see who · Pro" under
-          Viewers; the tile is where the missing identities are felt, so the upsell lives there only.
+          People; the tile is where the missing identities are felt, so the upsell lives there only.
           The limited window is already in the header ("last 7 days"). */}
       <div className="mt-3 flex justify-end text-[11px]">
         <Link

@@ -765,10 +765,10 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
               <Link
                 href={metricsHref(defaultLink.shareId)}
                 className="inline-flex items-center gap-1 font-semibold text-[var(--fg)] underline-offset-4 hover:underline"
-                title={panelViewers?.days ? `Viewers of this link in the last ${panelViewers.days} days` : "Analytics for this link"}
+                title={panelViewers?.days ? `People on this link in the last ${panelViewers.days} days` : "Analytics for this link"}
               >
                 <ChartBarIcon className="h-3.5 w-3.5 text-[var(--muted)]" aria-hidden="true" />
-                {panelViewers ? `${panelViewers.viewers} ${panelViewers.viewers === 1 ? "viewer" : "viewers"}` : "Analytics"}
+                {panelViewers ? `${panelViewers.viewers} ${panelViewers.viewers === 1 ? "person" : "people"}` : "Analytics"}
               </Link>
               {canManage ? (
                 <button
@@ -822,7 +822,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                   viewer) for life, so the per-link view count and the per-link viewer count are
                   the same number by construction, and printing both invited the reader to compare
                   them. */}
-              <th scope="col" className="px-3 py-2.5 text-right font-semibold">Viewers{statsWindowLabel}</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold">People{statsWindowLabel}</th>
               <th scope="col" className="px-3 py-2.5 text-right font-semibold">Downloads{statsWindowLabel}</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Last viewed</th>
               <th scope="col" className="px-4 py-2.5 text-right font-semibold">

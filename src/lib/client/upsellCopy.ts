@@ -26,6 +26,9 @@ export type UpsellCopy = {
   secondaryLabel?: string;
 };
 
+/** Short labels for upsell entries that sit inside other controls (e.g. the Free range picker). */
+export const UPSELL_INLINE_LABELS = { analytics_more_history: "More history on Pro" } as const;
+
 /** Shown in the modal price line when `/api/billing/status` has no `proPriceLabel` (or is unavailable). */
 export const PRO_PRICE_FALLBACK = "$29/mo";
 
@@ -83,10 +86,11 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
   },
   analytics_history: {
     title: "Deep analytics are a Pro feature",
-    reason: "Free shows how many people opened a document in the last 7 days. Pro shows who they were and what they did.",
+    reason:
+      "Free shows how many people opened a document in the last 7 days. Pro shows who they were, how far each person got and which pages mattered.",
     bullets: [
-      "Who opened it, with names and emails",
-      "Time on each page and return visits",
+      "Who opened it and how far each person got",
+      "Time on each page, what was passed over and where people left",
       "The full history, not just 7 days",
     ],
     secondaryLabel: "Compare plans",
