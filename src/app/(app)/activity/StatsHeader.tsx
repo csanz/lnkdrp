@@ -24,9 +24,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
-import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Cell, Label, Line, LineChart, Pie, PieChart, Tooltip, XAxis, YAxis } from "recharts";
 
-import { valueLabels } from "@/components/charts/ChartValueLabel";
 import { formatDayKey } from "@/lib/format/date";
 import { formatShare } from "@/lib/charts/donut";
 import {
@@ -45,6 +44,20 @@ const REFRESH_MIN_MS = 15_000;
 /** At most this many dates under the chart, evenly picked, so 30 days stays readable. */
 const TICK_COUNT = 5;
 
+/** Outer size and ring thickness of the actor donut, in px. */
+const DONUT_SIZE = 104;
+const DONUT_THICKNESS = 14;
+
+/** The tooltip surface every chart in the app uses. */
+const TOOLTIP_STYLE = {
+  background: "var(--panel)",
+  border: "1px solid var(--border)",
+  borderRadius: 10,
+  padding: "6px 8px",
+  fontSize: 12,
+  color: "var(--fg)",
+} as const;
+
 /**
  * Slice colours, in the order the API returns slices (people first, then agent clients by volume).
  *
@@ -52,6 +65,15 @@ const TICK_COUNT = 5;
  * past the third slot take the de-emphasis grey rather than a generated hue.
  */
 const SLICE_COLORS = ["var(--chart-actor-1)", "var(--chart-actor-2)", "var(--chart-actor-3)"] as const;
+
+/** One colour per counted kind of work, in the order the tiles are shown. */
+const BUCKET_COLORS: Record<ActivitySummaryCountKey, string> = {
+  docsAdded: "var(--chart-views)",
+  docsReplaced: "var(--chart-work-2)",
+  linksCreated: "var(--chart-work-3)",
+  docsRemoved: "var(--chart-work-4)",
+  projectsCreated: "var(--chart-work-5)",
+};
 const REST_COLOR = "var(--chart-actor-rest)";
 
 /** Colour for the slice at `index`: its hue while the hues last, the de-emphasis grey after that. */
@@ -166,10 +188,10 @@ export default function ActivityStatsHeader() {
             ))}
           </dl>
 
-          {slices.length ? <ActorLegend slices={slices} total={total} /> : null}
+          {showActors ? <ActorDonut slices={slices} total={total} days={data.days} /> : null}
         </div>
 
-        {data.series.length ? <ActionsChart series={data.series} days={data.days} /> : null}
+        {data.series.length ? <WorkChart series={data.series} counts={counts} days={data.days} /> : null}
 
         <p className="mt-3 text-[11px] leading-4 text-[var(--muted-2)]">
           {showActors
@@ -182,36 +204,99 @@ export default function ActivityStatsHeader() {
 }
 
 /**
- * Who did the work, as a compact list.
+ * Who did the work: a recharts donut and its legend, the same library the metrics charts use.
  *
- * The chart below carries the shape of the window; this carries the names. Colour never stands
- * alone: every row has its label, its count and its share.
+ * The legend is not decoration - it carries every slice's name and count, so identity never rests
+ * on colour alone, and the total sits inside the ring for the shares to add up to.
  */
-function ActorLegend({ slices, total }: { slices: ActorSlice[]; total: number }) {
+function ActorDonut({ slices, total, days }: { slices: ActorSlice[]; total: number; days: number }) {
+  const data = slices.map((s, i) => ({ key: s.key, label: s.label, value: s.count, fill: sliceColor(s, i) }));
+  if (!data.length) return null;
+  const summary = slices.map((s) => `${s.label} ${formatShare(s.count / total)}`).join(", ");
+
   return (
-    <ul className="min-w-0 shrink-0 space-y-1.5 sm:w-52">
-      {slices.map((s, i) => (
-        <li key={s.key} className="flex items-center gap-2 text-[12px] leading-4">
-          <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: sliceColor(s, i) }} />
-          <span className="min-w-0 truncate text-[var(--muted)]">{s.label}</span>
-          <span className="ml-auto shrink-0 pl-2 tabular-nums font-medium text-[var(--fg)]">{s.count.toLocaleString()}</span>
-          <span className="w-9 shrink-0 text-right tabular-nums text-[var(--muted-2)]">{formatShare(s.count / total)}</span>
-        </li>
-      ))}
-    </ul>
+    <div className="flex shrink-0 items-center gap-4">
+      <div
+        className="shrink-0"
+        style={{ width: DONUT_SIZE, height: DONUT_SIZE }}
+        role="img"
+        aria-label={`Who did the work in the last ${days} days: ${summary}`}
+      >
+        <PieChart width={DONUT_SIZE} height={DONUT_SIZE}>
+          <Pie
+            data={data}
+            dataKey="value"
+            nameKey="label"
+            cx="50%"
+            cy="50%"
+            innerRadius={DONUT_SIZE / 2 - DONUT_THICKNESS}
+            outerRadius={DONUT_SIZE / 2}
+            paddingAngle={data.length > 1 ? 2 : 0}
+            stroke="none"
+            isAnimationActive={false}
+          >
+            {data.map((d) => (
+              <Cell key={d.key} fill={d.fill} />
+            ))}
+            <Label
+              position="center"
+              content={({ viewBox }) => {
+                const box = viewBox as { cx?: number; cy?: number } | undefined;
+                if (typeof box?.cx !== "number" || typeof box?.cy !== "number") return null;
+                return (
+                  <g>
+                    <text x={box.cx} y={box.cy - 2} textAnchor="middle" dominantBaseline="middle" className="fill-[var(--fg)] text-[15px] font-semibold tabular-nums">
+                      {total.toLocaleString()}
+                    </text>
+                    <text x={box.cx} y={box.cy + 12} textAnchor="middle" dominantBaseline="middle" className="fill-[var(--muted-2)] text-[9px] uppercase tracking-[0.08em]">
+                      actions
+                    </text>
+                  </g>
+                );
+              }}
+            />
+          </Pie>
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            itemStyle={{ color: "var(--fg)" }}
+            formatter={(value: unknown, name: unknown) => [
+              `${typeof value === "number" ? value.toLocaleString() : String(value)} (${formatShare((typeof value === "number" ? value : 0) / total)})`,
+              String(name ?? ""),
+            ]}
+          />
+        </PieChart>
+      </div>
+      <ul className="min-w-0 space-y-1.5">
+        {slices.map((s, i) => (
+          <li key={s.key} className="flex items-center gap-2 text-[12px] leading-4">
+            <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full" style={{ background: sliceColor(s, i) }} />
+            <span className="min-w-0 truncate text-[var(--muted)]">{s.label}</span>
+            <span className="ml-auto shrink-0 pl-2 tabular-nums font-medium text-[var(--fg)]">{s.count.toLocaleString()}</span>
+            <span className="w-9 shrink-0 text-right tabular-nums text-[var(--muted-2)]">{formatShare(s.count / total)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
 /**
- * Actions per day across the window: the same smooth emerald area the metrics charts use, with
- * count labels and the dates as a row underneath rather than an axis tick per day.
+ * Each kind of work by day, one line per tile in the tile's colour.
  *
- * Agents and people are one line, not two: the question this page answers first is "how much
- * happened here", and the split by hands is the legend beside it (and the tooltip, which names
- * both). The wrapper is measured with a ResizeObserver, like the metrics hero, so the card is the
- * same height before and after the numbers land.
+ * Lines rather than one stacked shape: the reader's question here is "which of these is happening",
+ * and five kinds on one axis only separate if each keeps its own line. A kind with nothing in the
+ * window is left out entirely rather than drawn flat along the floor. The wrapper is measured with
+ * a ResizeObserver, like the metrics hero, so the card keeps its height while the data loads.
  */
-function ActionsChart({ series, days }: { series: ActivityDayPoint[]; days: number }) {
+function WorkChart({
+  series,
+  counts,
+  days,
+}: {
+  series: ActivityDayPoint[];
+  counts: Record<ActivitySummaryCountKey, number>;
+  days: number;
+}) {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const roRef = useRef<ResizeObserver | null>(null);
   const setWrap = useCallback((el: HTMLDivElement | null) => {
@@ -231,59 +316,40 @@ function ActionsChart({ series, days }: { series: ActivityDayPoint[]; days: numb
   }, []);
   useEffect(() => () => roRef.current?.disconnect(), []);
 
-  const values = series.map((p) => p.total);
-  const busiest = values.reduce((a, b) => Math.max(a, b), 0);
-  // A flat empty window would draw a line along the floor and say nothing.
-  if (!busiest) return null;
+  const shown = ACTIVITY_SUMMARY_BUCKETS.filter((b) => counts[b.id] > 0);
+  if (!shown.length) return null;
   const ticks = pickTicks(series, TICK_COUNT);
 
   return (
     <div className="mt-4">
-      <div ref={setWrap} className="h-28 w-full">
+      <div ref={setWrap} className="h-32 w-full">
         {size ? (
-          <AreaChart width={size.w} height={size.h} data={series} margin={{ top: 16, right: 6, bottom: 2, left: 6 }}>
-            <defs>
-              <linearGradient id="lnkdrpActivityActionsFill" x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor="var(--chart-views)" stopOpacity={0.26} />
-                <stop offset="100%" stopColor="var(--chart-views)" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <YAxis hide domain={[0, "dataMax"]} />
+          <LineChart width={size.w} height={size.h} data={series} margin={{ top: 10, right: 6, bottom: 2, left: 6 }}>
+            <YAxis hide domain={[0, "dataMax"]} allowDecimals={false} />
             <XAxis dataKey="day" hide />
             <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
             <Tooltip
               cursor={{ stroke: "var(--border)", strokeOpacity: 0.35 }}
-              contentStyle={{
-                background: "var(--panel)",
-                border: "1px solid var(--border)",
-                borderRadius: 10,
-                padding: "6px 8px",
-                fontSize: 12,
-                color: "var(--fg)",
-              }}
+              contentStyle={TOOLTIP_STYLE}
               labelStyle={{ color: "var(--muted-2)" }}
+              itemStyle={{ color: "var(--fg)" }}
               labelFormatter={(label: unknown) => formatDayKey(String(label ?? ""))}
-              formatter={(value: unknown, _name: unknown, entry: unknown) => {
-                const point = (entry as { payload?: ActivityDayPoint } | undefined)?.payload;
-                const n = typeof value === "number" ? value : 0;
-                const split = point ? ` (${point.agents.toLocaleString()} by agents, ${point.people.toLocaleString()} in the app)` : "";
-                return [`${n.toLocaleString()}${split}`, "Actions"];
-              }}
+              formatter={(value: unknown, name: unknown) => [typeof value === "number" ? value.toLocaleString() : String(value), String(name ?? "")]}
             />
-            <Area
-              type="monotone"
-              dataKey="total"
-              stroke="var(--chart-views)"
-              strokeWidth={1.5}
-              fill="url(#lnkdrpActivityActionsFill)"
-              fillOpacity={1}
-              dot={false}
-              activeDot={{ r: 3, strokeWidth: 1.5 }}
-              isAnimationActive={false}
-            >
-              <LabelList dataKey="total" content={valueLabels({ values })} />
-            </Area>
-          </AreaChart>
+            {shown.map((b) => (
+              <Line
+                key={b.id}
+                type="monotone"
+                dataKey={b.id}
+                name={b.label}
+                stroke={BUCKET_COLORS[b.id]}
+                strokeWidth={1.5}
+                dot={false}
+                activeDot={{ r: 3, strokeWidth: 1.5 }}
+                isAnimationActive={false}
+              />
+            ))}
+          </LineChart>
         ) : null}
       </div>
       <div aria-hidden="true" className="mt-1 flex justify-between px-1 text-[10px] tabular-nums text-[var(--muted-2)]">
@@ -291,7 +357,15 @@ function ActionsChart({ series, days }: { series: ActivityDayPoint[]; days: numb
           <span key={t}>{formatDayKey(t)}</span>
         ))}
       </div>
-      <span className="sr-only">{`Actions per day over the last ${days} days; busiest day ${busiest}.`}</span>
+      <ul className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+        {shown.map((b) => (
+          <li key={b.id} className="flex items-center gap-1.5 text-[11px] leading-4 text-[var(--muted-2)]">
+            <span aria-hidden="true" className="h-[3px] w-4 shrink-0 rounded-full" style={{ background: BUCKET_COLORS[b.id] }} />
+            {b.label}
+          </li>
+        ))}
+      </ul>
+      <span className="sr-only">{`Each kind of work by day over the last ${days} days.`}</span>
     </div>
   );
 }

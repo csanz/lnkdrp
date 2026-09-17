@@ -152,7 +152,7 @@ describe("buildActivitySeries", () => {
   const since = new Date("2026-09-01T00:00:00.000Z");
 
   test("fills every day of the window, oldest first", () => {
-    const out = buildActivitySeries([{ day: "2026-09-02", agent: true, count: 3 }], { since, days: 4 });
+    const out = buildActivitySeries([{ day: "2026-09-02", type: "doc.replaced", agent: true, count: 3 }], { since, days: 4 });
     expect(out.map((p) => p.day)).toEqual(["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04"]);
     expect(out.map((p) => p.total)).toEqual([0, 3, 0, 0]);
   });
@@ -160,19 +160,19 @@ describe("buildActivitySeries", () => {
   test("splits agents from people and totals them", () => {
     const out = buildActivitySeries(
       [
-        { day: "2026-09-01", agent: true, count: 2 },
-        { day: "2026-09-01", agent: false, count: 5 },
+        { day: "2026-09-01", type: "doc.created", agent: true, count: 2 },
+        { day: "2026-09-01", type: "share_link.created", agent: false, count: 5 },
       ],
       { since, days: 1 },
     );
-    expect(out[0]).toEqual({ day: "2026-09-01", agents: 2, people: 5, total: 7 });
+    expect(out[0]).toMatchObject({ day: "2026-09-01", agents: 2, people: 5, total: 7, docsAdded: 2, linksCreated: 5 });
   });
 
   test("ignores junk rows and negative counts", () => {
     const out = buildActivitySeries(
       [
-        { day: "", agent: true, count: 9 },
-        { day: "2026-09-01", agent: false, count: -4 },
+        { day: "", type: "doc.created", agent: true, count: 9 },
+        { day: "2026-09-01", type: "doc.created", agent: false, count: -4 },
       ],
       { since, days: 1 },
     );

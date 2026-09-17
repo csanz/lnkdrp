@@ -27,6 +27,12 @@
   --chart-actor-2: #059669;
   --chart-actor-3: #34b98a;
   --chart-actor-rest: #cbd0d6;
+  /* Activity's work lines: one per tile, emerald first (the app's chart colour), then hues that
+     stay apart on the dark panel without turning the card into a rainbow. */
+  --chart-work-2: #7c8cf8;
+  --chart-work-3: #d99a2b;
+  --chart-work-4: #c2596b;
+  --chart-work-5: #4aa3c7;
   /* Activity feed: tint + edge bar for a row that just arrived live (neutral, not a status colour). */
   --feed-new-bg: rgba(37, 99, 235, 0.06);
   --feed-new-bar: rgba(37, 99, 235, 0.5);
@@ -93,6 +99,10 @@
   --chart-actor-2: #0f9f6e;
   --chart-actor-3: #45c79a;
   --chart-actor-rest: #3f434b;
+  --chart-work-2: #8f9cff;
+  --chart-work-3: #e0a53c;
+  --chart-work-4: #d4707f;
+  --chart-work-5: #5cb3d6;
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
   --row-leaving-bg: rgba(255, 255, 255, 0.14);
@@ -153,6 +163,10 @@
     --chart-actor-2: #0f9f6e;
     --chart-actor-3: #45c79a;
     --chart-actor-rest: #3f434b;
+    --chart-work-2: #8f9cff;
+    --chart-work-3: #e0a53c;
+    --chart-work-4: #d4707f;
+    --chart-work-5: #5cb3d6;
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
   --row-leaving-bg: rgba(255, 255, 255, 0.14);

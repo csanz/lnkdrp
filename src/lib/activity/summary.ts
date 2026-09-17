@@ -201,11 +201,16 @@ export function summarizeActivityRows(rows: readonly ActivityGroupRow[]): Activi
   return { counts, actors: groupActorSlices(work) };
 }
 
-/** One day of work in the window: how many actions, split by who did them. */
-export type ActivityDayPoint = { day: string; total: number; people: number; agents: number };
+/**
+ * One day of work in the window: the total, who did it, and each counted kind of work.
+ *
+ * The chart draws one line per bucket, so every bucket is a key on the point even on a day when it
+ * is zero - a missing key would break the line rather than flatten it.
+ */
+export type ActivityDayPoint = { day: string; total: number; people: number; agents: number } & Record<ActivitySummaryCountKey, number>;
 
-/** A row of the per-day aggregation: a day key, whether an agent did it, and how many. */
-export type ActivityDayRow = { day: string; agent: boolean; count: number };
+/** A row of the per-day aggregation: a day key, the event type, whether an agent did it, how many. */
+export type ActivityDayRow = { day: string; type: string; agent: boolean; count: number };
 
 /**
  * Fill the window day by day, oldest first.
@@ -214,13 +219,16 @@ export type ActivityDayRow = { day: string; agent: boolean; count: number };
  * gaps. `since` is the first day shown and `days` the width, both as the endpoint computed them.
  */
 export function buildActivitySeries(rows: readonly ActivityDayRow[], input: { since: Date; days: number }): ActivityDayPoint[] {
-  const byDay = new Map<string, { people: number; agents: number }>();
+  const blank = () => ({ people: 0, agents: 0, ...emptyCounts() });
+  const byDay = new Map<string, ReturnType<typeof blank>>();
   for (const row of rows) {
     if (!row?.day) continue;
     const count = Number.isFinite(row.count) ? Math.max(0, Math.trunc(row.count)) : 0;
-    const cur = byDay.get(row.day) ?? { people: 0, agents: 0 };
+    const cur = byDay.get(row.day) ?? blank();
     if (row.agent) cur.agents += count;
     else cur.people += count;
+    const bucket = bucketForType(row.type);
+    if (bucket) cur[bucket] += count;
     byDay.set(row.day, cur);
   }
   const out: ActivityDayPoint[] = [];
@@ -228,8 +236,9 @@ export function buildActivitySeries(rows: readonly ActivityDayRow[], input: { si
   for (let i = 0; i < input.days; i++) {
     const d = new Date(start.getTime() + i * 24 * 60 * 60 * 1000);
     const day = d.toISOString().slice(0, 10);
-    const hit = byDay.get(day) ?? { people: 0, agents: 0 };
-    out.push({ day, people: hit.people, agents: hit.agents, total: hit.people + hit.agents });
+    const hit = byDay.get(day) ?? blank();
+    const { people, agents, ...counts } = hit;
+    out.push({ day, people, agents, total: people + agents, ...counts });
   }
   return out;
 }

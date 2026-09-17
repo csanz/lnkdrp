@@ -52,7 +52,7 @@ function emptySummary(days: number, since: Date) {
  * Query: `days` (1–365, default 30). Response:
  * `{ days, since, counts: { docsAdded, docsReplaced, linksCreated, docsRemoved, projectsCreated },
  *    actors: { total, people, agents, slices: [{ key, kind, client, label, count }] },
- *    series: [{ day, total, people, agents }] }` - one point per day in the window, gaps filled.
+ *    series: [{ day, total, people, agents, ...counts }] }` - one point per day, gaps filled.
  * Errors: 403 when the caller is not a workspace member; 400 for unexpected failures.
  */
 export async function GET(request: Request) {
@@ -90,12 +90,13 @@ export async function GET(request: Request) {
         { $match: { orgId, createdDate: { $gte: since }, type: { $in: ACTIVITY_WORK_TYPES } } },
         { $group: { _id: { type: "$type", client: "$agent.client" }, count: { $sum: 1 } } },
       ]),
-      ActivityEventModel.aggregate<{ _id: { day?: string; agent?: boolean }; count?: number }>([
+      ActivityEventModel.aggregate<{ _id: { day?: string; type?: string; agent?: boolean }; count?: number }>([
         { $match: { orgId, createdDate: { $gte: since }, type: { $in: ACTIVITY_WORK_TYPES } } },
         {
           $group: {
             _id: {
               day: { $dateToString: { format: "%Y-%m-%d", date: "$createdDate", timezone: "UTC" } },
+              type: "$type",
               agent: { $gt: [{ $strLenCP: { $ifNull: ["$agent.client", ""] } }, 0] },
             },
             count: { $sum: 1 },
@@ -105,6 +106,7 @@ export async function GET(request: Request) {
     ]);
     const dayRows: ActivityDayRow[] = byDay.map((g) => ({
       day: typeof g._id?.day === "string" ? g._id.day : "",
+      type: typeof g._id?.type === "string" ? g._id.type : "",
       agent: g._id?.agent === true,
       count: typeof g.count === "number" ? g.count : 0,
     }));
