@@ -40,6 +40,9 @@ import { verifyRealtimeTicket } from "../src/lib/realtime/ticket";
 const PORT = Number(process.env.REALTIME_PORT || 8788);
 const MONGODB_URI = (process.env.MONGODB_URI || "").trim();
 const PING_MS = 25_000;
+// Longer than serverSelectionTimeoutMS below, the most a driver resume waits before giving up.
+const STREAM_RESUME_GRACE_MS = 30_000;
+const STREAM_EXIT_DELAY_MS = 5_000;
 
 if (!MONGODB_URI) {
   console.error("[realtime] MONGODB_URI is required");
@@ -87,6 +90,31 @@ async function main() {
   log("mongo connected");
 
   // --- change streams -------------------------------------------------------------------------
+  // The driver resumes transient errors itself, and both events fire on a stream that lives on: a
+  // throw in a 'change' handler emits 'error' with the stream open, and a resume closes the old
+  // cursor, which emits 'close'. So after either, wait out the resume and only then trust `closed`.
+  // A dead stream turns /healthz 503 and exits the process: Fly http checks only pull the one
+  // machine out of routing, and only an exit gets it restarted with fresh streams.
+  const streamHealth: Record<"activity" | "apikeys" | "docs", boolean> = { activity: true, apikeys: true, docs: true };
+  let shuttingDown = false;
+  let exiting = false;
+  const watchHealth = (name: keyof typeof streamHealth, stream: mongoose.mongo.ChangeStream) => {
+    const check = () => {
+      setTimeout(() => {
+        if (shuttingDown || exiting || !stream.closed) return;
+        streamHealth[name] = false;
+        exiting = true;
+        log(`${name} stream closed for good; /healthz now 503, exiting in ${STREAM_EXIT_DELAY_MS / 1000}s so the machine restarts`);
+        setTimeout(() => process.exit(1), STREAM_EXIT_DELAY_MS);
+      }, STREAM_RESUME_GRACE_MS);
+    };
+    stream.on("error", (err) => {
+      if (!shuttingDown) log(`${name} stream error`, err);
+      check();
+    });
+    stream.on("close", check);
+  };
+
   const activity = db.collection("activityevents").watch([{ $match: { operationType: "insert" } }], { fullDocument: "updateLookup" });
   activity.on("change", (change) => {
     if (change.operationType !== "insert") return;
@@ -101,7 +129,7 @@ async function main() {
       },
     });
   });
-  activity.on("error", (err) => log("activity stream error", err));
+  watchHealth("activity", activity);
 
   const keys = db
     .collection("apikeys")
@@ -111,7 +139,7 @@ async function main() {
     if (!doc?.orgId) return;
     broadcast(String(doc.orgId), { type: "agent", at: new Date().toISOString() });
   });
-  keys.on("error", (err) => log("apikeys stream error", err));
+  watchHealth("apikeys", keys);
 
   // Document processing status (preparing → ready/failed) — the doc page, the sidebar and the MCP
   // server's share_pdf all want to know the moment it flips.
@@ -128,13 +156,16 @@ async function main() {
       doc: { id: String(doc._id), status: typeof doc.status === "string" ? doc.status : null, shareId: typeof doc.shareId === "string" ? doc.shareId : null },
     });
   });
-  docs.on("error", (err) => log("docs stream error", err));
+  watchHealth("docs", docs);
 
   // --- http + ws ---------------------------------------------------------------------------------
   const server = http.createServer((req, res) => {
     if (req.url === "/healthz") {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, rooms: rooms.size, sockets: Array.from(rooms.values()).reduce((n, r) => n + r.size, 0) }));
+      const ok = Object.values(streamHealth).every(Boolean);
+      res.writeHead(ok ? 200 : 503, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({ ok, streams: streamHealth, rooms: rooms.size, sockets: Array.from(rooms.values()).reduce((n, r) => n + r.size, 0) }),
+      );
       return;
     }
     res.writeHead(404);
@@ -200,6 +231,7 @@ async function main() {
   server.listen(PORT, () => log(`listening on :${PORT}`));
 
   const shutdown = async () => {
+    shuttingDown = true;
     clearInterval(heartbeat);
     for (const room of rooms.values()) for (const c of room) c.close(1001, "server shutting down");
     await Promise.allSettled([activity.close(), keys.close(), docs.close()]);
