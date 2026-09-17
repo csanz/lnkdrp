@@ -45,18 +45,33 @@ export const LATE_AFTER_INTERVALS = 2;
  */
 export const RUNNING_STUCK_AFTER_MS = 10 * MINUTE;
 
+/** Slack past one interval before a frequent job's `running` row counts as dead. */
+export const STUCK_MARGIN_MS = 1 * MINUTE;
+
+/**
+ * How long a run may say `running` before it is `stuck`. For a job that fires every five minutes,
+ * ten minutes is never reached: the tick after the six-minute lease expires restarts the row first,
+ * so a job killed every run would never show stuck. One interval plus a minute is still past the
+ * 300 s function limit, and it is crossed before the next run can take the lease.
+ */
+export function stuckAfterMs(job: CronJobSpec): number {
+  return Math.min(RUNNING_STUCK_AFTER_MS, job.intervalMs + STUCK_MARGIN_MS);
+}
+
 export type CronJobHealth = {
   jobKey: string;
   schedule: string;
   /**
    * - `ok` — ran within its window and reported success
    * - `error` — its last run reported an error
-   * - `late` — no run for more than {@link LATE_AFTER_INTERVALS} intervals
+   * - `late` — no run for more than {@link LATE_AFTER_INTERVALS} intervals (for a row at `running`,
+   *   no *finished* run for that long plus {@link stuckAfterMs})
    * - `stuck` — left at `running`, so the function died mid-run
    * - `never-run` — no `CronHealth` row at all
    */
   state: "ok" | "error" | "late" | "stuck" | "never-run";
   lastRunAt: string | null;
+  lastFinishedAt: string | null;
   /** Whole seconds since `lastRunAt`, or null when it has never run. */
   ageSeconds: number | null;
   lastDurationMs: number | null;
@@ -69,6 +84,7 @@ export type CronHealthRowLike = {
   status?: unknown;
   lastRunAt?: unknown;
   lastStartedAt?: unknown;
+  lastFinishedAt?: unknown;
   lastDurationMs?: unknown;
   lastError?: unknown;
 };
@@ -106,6 +122,7 @@ export function judgeCronHealth(params: {
   const results = jobs.map((job): CronJobHealth => {
     const row = byKey.get(job.jobKey);
     const lastRunAt = asDate(row?.lastRunAt);
+    const lastFinishedAt = asDate(row?.lastFinishedAt);
     const ageMs = lastRunAt ? params.now - lastRunAt.getTime() : null;
     const lastError = typeof row?.lastError === "string" && row.lastError ? row.lastError : null;
     const lastDurationMs =
@@ -115,6 +132,7 @@ export function judgeCronHealth(params: {
       jobKey: job.jobKey,
       schedule: job.schedule,
       lastRunAt: lastRunAt ? lastRunAt.toISOString() : null,
+      lastFinishedAt: lastFinishedAt ? lastFinishedAt.toISOString() : null,
       ageSeconds: ageMs === null ? null : Math.max(0, Math.floor(ageMs / 1000)),
       lastDurationMs,
       lastError,
@@ -127,7 +145,15 @@ export function judgeCronHealth(params: {
     if (row.status === "running") {
       const startedAt = asDate(row.lastStartedAt);
       const runningMs = startedAt ? params.now - startedAt.getTime() : null;
-      if (runningMs !== null && runningMs > RUNNING_STUCK_AFTER_MS) return { ...base, state: "stuck" };
+      if (runningMs !== null && runningMs > stuckAfterMs(job)) return { ...base, state: "stuck" };
+
+      // `lastRunAt` moves when a run starts, so a job killed mid-run every time keeps it fresh.
+      // Judge a running row by its last finished run instead; the extra stuck window covers a
+      // legitimate run in progress.
+      const finishedRef = lastFinishedAt ?? lastRunAt;
+      if (finishedRef && params.now - finishedRef.getTime() > job.intervalMs * LATE_AFTER_INTERVALS + stuckAfterMs(job)) {
+        return { ...base, state: "late" };
+      }
     }
 
     if (row.status === "error") return { ...base, state: "error" };

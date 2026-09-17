@@ -188,12 +188,24 @@ Auth is handled by `src/lib/cron/auth.ts` (`requireCronAuth`). Set **one** of th
 
 **Vercel Cron** invokes each route with `GET` and the header `Authorization: Bearer $CRON_SECRET`. No extra configuration is needed beyond setting `CRON_SECRET` on the project.
 
-For manual/dev invocations the helper also accepts:
-- Header `authorization: Bearer <secret>`
+The helper accepts:
+- Header `Authorization: Bearer <secret>` (use this everywhere)
 - Header `x-cron-secret: <secret>` (legacy)
-- Query `?secret=<secret>`
+- Query `?secret=<secret>` — **dev only**. It is ignored when `NODE_ENV` or `VERCEL_ENV` is `production`, because a secret in a URL lands in request logs, log drains and monitor configs.
 
 Comparison is constant-time (`crypto.timingSafeEqual`).
+
+### Cron monitor (`GET /api/monitor/crons`)
+
+Returns 200 while every job is healthy and 503 when any is `late`, `stuck`, `error` or `never-run`. Point an uptime monitor at it with the header form:
+
+```bash
+curl -H "Authorization: Bearer $CRON_MONITOR_SECRET" https://<host>/api/monitor/crons
+```
+
+Set `CRON_MONITOR_SECRET` for the monitor. It is read-only: it opens this route and cannot trigger any job, so the monitor vendor never holds a secret that runs billing or email crons. When it is unset, the route falls back to `CRON_SECRET`; `CRON_SECRET` is accepted either way. Use a monitor that can send a header; the `?secret=` form is refused in production.
+
+A run left at `running` is `stuck` after one interval plus a minute, capped at 10 minutes. A row at `running` is also `late` when its last *finished* run (`lastFinishedAt`) is older than two intervals plus that stuck window, so a job killed mid-run every time (for example `notification-emails` every 5 minutes) goes red even though each new run resets `lastRunAt`.
 
 **Fail closed**: if **no** secret is configured, requests are allowed only when `VERCEL_ENV !== "production"` **and** `NODE_ENV !== "production"`. In production with no secret every cron route returns `401`, so `CRON_SECRET` (or `LNKDRP_CRON_SECRET`) **must** be set in production.
 

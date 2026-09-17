@@ -836,22 +836,24 @@ curl -X POST http://localhost:3001/api/cron/notification-emails
 
 ### Cron Authentication
 
-If `LNKDRP_CRON_SECRET` is set, include it in requests:
+If `CRON_SECRET` (or the legacy `LNKDRP_CRON_SECRET`) is set, include it in requests:
 
 ```bash
-# Via header (recommended)
+# Via Authorization header (recommended; what Vercel Cron sends)
 curl -X POST \
-  -H "x-cron-secret: $LNKDRP_CRON_SECRET" \
+  -H "Authorization: Bearer $CRON_SECRET" \
   http://localhost:3001/api/cron/doc-metrics
 
-# Or via Authorization header
+# Or via the legacy header
 curl -X POST \
-  -H "Authorization: Bearer $LNKDRP_CRON_SECRET" \
+  -H "x-cron-secret: $CRON_SECRET" \
   http://localhost:3001/api/cron/doc-metrics
 
-# Or via query param
-curl -X POST "http://localhost:3001/api/cron/doc-metrics?secret=$LNKDRP_CRON_SECRET"
+# Or via query param (dev only; ignored in production, where URLs land in request logs)
+curl -X POST "http://localhost:3001/api/cron/doc-metrics?secret=$CRON_SECRET"
 ```
+
+The cron monitor (`GET /api/monitor/crons`) also accepts the read-only `CRON_MONITOR_SECRET`, which cannot trigger jobs. See `docs/CRON.md`.
 
 ### Cron Job Details
 

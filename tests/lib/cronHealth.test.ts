@@ -76,6 +76,45 @@ describe("judgeCronHealth", () => {
     expect(state([row("hourly", 20, { status: "running" }), row("daily", 60)], "hourly")).toBe("stuck");
   });
 
+  describe("a frequent job killed mid-run every time", () => {
+    // Every five minutes; killed at 300 s. The six-minute lease makes the next tick skip, and the
+    // one after restarts the row, so `lastRunAt` and `lastStartedAt` never get old.
+    const FIVE = [{ jobKey: "five", schedule: "*/5 * * * *", intervalMs: 5 * 60_000 }];
+    const judgeFive = (r: ReturnType<typeof row>) => judgeCronHealth({ rows: [r], now: NOW, jobs: FIVE }).jobs[0];
+
+    /** A row at `running`, started `startedAgo` minutes ago, last finished `finishedAgo` minutes ago. */
+    const running = (startedAgo: number, finishedAgo: number | null) =>
+      row("five", startedAgo, {
+        status: "running",
+        lastFinishedAt: finishedAgo === null ? null : new Date(NOW - finishedAgo * 60_000),
+      });
+
+    test("is stuck once a run outlives one interval plus the margin, before the lease lets a new run in", () => {
+      expect(judgeFive(running(7, 12)).state).toBe("stuck");
+    });
+
+    test("is late from its last finished run even while a fresh run is starting", () => {
+      // Restarted a minute ago, so neither lastRunAt nor lastStartedAt looks old.
+      expect(judgeFive(running(1, 25))).toMatchObject({ state: "late", ageSeconds: 60 });
+    });
+
+    test("a legitimate run in progress stays ok", () => {
+      // Previous run finished just before this one started 4 minutes ago.
+      expect(judgeFive(running(4, 4.5)).state).toBe("ok");
+      // Late tick plus a slow run: still inside two intervals plus the stuck window.
+      expect(judgeFive(running(5, 14)).state).toBe("ok");
+    });
+
+    test("reports lastFinishedAt so the alert reader sees why", () => {
+      expect(judgeFive(running(1, 25)).lastFinishedAt).toBe(new Date(NOW - 25 * 60_000).toISOString());
+    });
+  });
+
+  test("hourly jobs keep the ten-minute stuck threshold", () => {
+    expect(state([row("hourly", 9, { status: "running" }), row("daily", 60)], "hourly")).toBe("ok");
+    expect(state([row("hourly", 11, { status: "running" }), row("daily", 60)], "hourly")).toBe("stuck");
+  });
+
   test("a job with no row at all is never-run, not silently healthy", () => {
     const result = judge([row("hourly", 10)]);
 

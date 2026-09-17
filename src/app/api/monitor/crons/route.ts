@@ -7,9 +7,10 @@
  * job is healthy, 503 when any is not**, which is the one thing every uptime monitor already knows
  * how to alert on. The JSON body says which job and why, for whoever reads the alert.
  *
- * Auth is `Authorization: Bearer $CRON_SECRET` (`requireCronAuth`, the same secret and the same
- * header the schedules already use), not an admin session — the operator configuring the monitor
- * has that secret in hand. It is not public: `lastError` can carry internal detail.
+ * Auth is `Authorization: Bearer $CRON_MONITOR_SECRET` (`requireCronMonitorAuth`), not an admin
+ * session. That secret is read-only: it cannot trigger any job, so the monitor vendor never holds
+ * one that runs billing or email crons. `CRON_SECRET` is still accepted, so a monitor set up before
+ * the monitor secret existed keeps working. It is not public: `lastError` can carry internal detail.
  *
  * Expect red for the first hour of a new deployment: a job that has never run is `never-run`, which
  * is deliberate, because the alternative is a monitor that stays green for a cron that never fired.
@@ -20,7 +21,7 @@
 import { NextResponse } from "next/server";
 
 import { connectMongo } from "@/lib/mongodb";
-import { requireCronAuth } from "@/lib/cron/auth";
+import { requireCronMonitorAuth } from "@/lib/cron/auth";
 import { CronHealthModel } from "@/lib/models/CronHealth";
 import { judgeCronHealth } from "@/lib/cron/jobs";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -30,13 +31,13 @@ export const dynamic = "force-dynamic";
 
 /** Handle GET requests: 200 while every cron is healthy, 503 when any is not. */
 export async function GET(request: Request) {
-  const unauthorized = requireCronAuth(request);
+  const unauthorized = requireCronMonitorAuth(request);
   if (unauthorized) return unauthorized;
 
   try {
     await connectMongo();
     const rows = await CronHealthModel.find({})
-      .select({ jobKey: 1, status: 1, lastRunAt: 1, lastStartedAt: 1, lastDurationMs: 1, lastError: 1 })
+      .select({ jobKey: 1, status: 1, lastRunAt: 1, lastStartedAt: 1, lastFinishedAt: 1, lastDurationMs: 1, lastError: 1 })
       .lean();
 
     const { healthy, jobs } = judgeCronHealth({ rows, now: Date.now() });
