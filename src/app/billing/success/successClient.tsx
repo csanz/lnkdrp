@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CheckIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import Spinner from "@/components/ui/Spinner";
+import { usePlan } from "@/lib/client/usePlan";
 import { PAYG_DEFAULT_SPEND_LIMIT_CENTS } from "@/lib/billing/subscriptionState";
 import { CREDITS_COPY } from "@/lib/client/planLimit";
 import { formatUsdFromCents } from "@/lib/format/money";
@@ -76,6 +77,7 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
   // Bumped by "Check again" to restart polling after a timeout or an error.
   const [run, setRun] = useState(0);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const { plan: planSnapshot } = usePlan();
 
   useEffect(() => {
     // Demo mode previews every state without auth or Stripe; it never touches access control.
@@ -167,6 +169,10 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
   const proActive = phase === "active" && isPro;
   const periodEnd = formatLongDate(status?.stripeCurrentPeriodEnd);
   const canceling = Boolean(status?.stripeCancelAtPeriodEnd);
+  // A personal workspace is only ever its owner: it cannot have members, and plans belong to each
+  // workspace, so a team workspace created later starts on its own plan. The page must not suggest
+  // inviting someone into Personal. The demo previews the personal case.
+  const isPersonal = demo ? true : planSnapshot?.isPersonalOrg ?? false;
 
   // The payment behind the change, so the page confirms what was charged and links the receipt.
   // Read from the newest paid invoice; if Stripe has not listed it yet the line simply omits it.
@@ -199,7 +205,7 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
     headline = `Your workspace ${workspaceName} is now on Pro.`;
     lede = canceling
       ? `Heads up: this subscription is set to cancel. Pro stays on${periodEnd ? ` until ${periodEnd}` : " until the end of this billing period"}, then the workspace goes back to Free.`
-      : "Your plan changed from Free to Pro, for everyone in this workspace. You can cancel any time from Billing, and Pro stays on until the end of the period you paid for.";
+      : `Your plan changed from Free to Pro${isPersonal ? "" : ", for everyone in this workspace"}. You can cancel any time from Billing, and Pro stays on until the end of the period you paid for.`;
   } else if (paygActive) {
     headline = `Pay-as-you-go is on for ${workspaceName}.`;
     lede = `Your card is on file. Once your credits run out, AI features keep working at ${CREDITS_COPY.perCreditUsd} per credit, billed monthly for what you use, up to ${formatUsdFromCents(PAYG_DEFAULT_SPEND_LIMIT_CENTS)} a month. Change that limit any time in Limits.`;
@@ -295,10 +301,14 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
                 <li>Unlimited documents and projects, with no cap on what you share</li>
                 <li>See who opened each link and how long they spent on every page</li>
                 <li>Recipients can browse every version and see what changed</li>
-                <li>
-                  {proCollaborators} {proCollaborators === 1 ? "collaborator" : "collaborators"} included, and agents never
-                  take a seat
-                </li>
+                {isPersonal ? (
+                  <li>Agents never take a seat, so connect as many as you like</li>
+                ) : (
+                  <li>
+                    {proCollaborators} {proCollaborators === 1 ? "collaborator" : "collaborators"} included, and agents never
+                    take a seat
+                  </li>
+                )}
               </ul>
             </div>
           </div>
@@ -309,8 +319,14 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
               {[
                 { href: "/upload", title: "Share a document", body: "There is no document cap on Pro, so share the ones you were holding back." },
                 { href: "/activity", title: "See who’s reading", body: "Every open is recorded, by name when the reader signs in." },
-                { href: "/mcp", title: "Connect your agent", body: "Share and track documents from Claude Code, Cursor, or any MCP client." },
-                { href: "/dashboard?tab=teams", title: "Invite a collaborator", body: "Work on this workspace’s documents together." },
+                { href: "/connect", title: "Connect your agent", body: "Share and track documents from Claude Code, Cursor, or any MCP client." },
+                isPersonal
+                  ? {
+                      href: "/dashboard?tab=workspace",
+                      title: "Working with others? Create a team workspace",
+                      body: "Personal is only ever you, so it can’t have collaborators. Create a team workspace and invite people there; it has its own plan.",
+                    }
+                  : { href: "/dashboard?tab=teams", title: "Invite a collaborator", body: "Work on this workspace’s documents together." },
               ].map((row) => (
                 <li key={row.href}>
                   <Link
