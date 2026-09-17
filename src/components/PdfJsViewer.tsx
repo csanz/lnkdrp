@@ -2558,7 +2558,7 @@ export function PdfJsViewer({
                   });
                 }}
               >
-                Continue with Google
+                Sign in with Google
               </button>
             ) : null}
 

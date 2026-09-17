@@ -270,7 +270,7 @@ function CreditsSummaryCardInner({
           <div className="text-[12px] font-semibold text-[var(--fg)]">Out of credits</div>
           <div className="mt-1 text-[12px] text-[var(--muted-2)]">
             {isFree
-              ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Buy a credit pack from ${CHEAPEST_PACK_PRICE}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included and AI compare on every replacement.`
+              ? `You’re out of credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Buy a credit pack from ${CHEAPEST_PACK_PRICE}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} credits a month and AI compare on every replacement.`
               : onDemandEnabled
                 ? "Your included credits are used up and on-demand usage is running, billed per credit up to your limit."
                 : "You’ve used this month’s included credits. Uploads and links still work; the AI summary is skipped and you can write it later from the document page. Turn on on-demand usage to keep AI running now, or wait for credits to reset."}

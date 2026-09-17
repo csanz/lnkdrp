@@ -40,7 +40,7 @@ export default function TempUserGateModal({
             disabled={isSigningIn}
             aria-busy={isSigningIn}
           >
-            {isSigningIn ? "Opening Google…" : "Continue with Google"}
+            {isSigningIn ? "Opening Google…" : "Sign up or log in with Google"}
           </button>
         ) : (
           <div className="text-sm text-zinc-600">Login isn’t available (auth is disabled).</div>

@@ -7,7 +7,15 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftIcon, LockClosedIcon, UserIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowLeftIcon,
+  ClipboardDocumentCheckIcon,
+  DocumentTextIcon,
+  LinkIcon,
+  LockClosedIcon,
+  Square2StackIcon,
+  UserIcon,
+} from "@heroicons/react/24/outline";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
@@ -16,6 +24,7 @@ import { usePlan } from "@/lib/client/usePlan";
 import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
 import { formatDayKey } from "@/lib/format/date";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
+import { buildPublicShareUrl } from "@/lib/urls";
 
 /** Free = basic (totals, chart, unique viewer count); Pro = deep (identities, per-page time, visits). */
 type AnalyticsTier = "basic" | "deep";
@@ -576,6 +585,10 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
   }
   /** Set when a filtered request 404s because the link was deleted elsewhere; the scope then resets. */
   const [filterDroppedNotice, setFilterDroppedNotice] = useState(false);
+  /** The scoped link's public URL: what the recipient was actually sent. */
+  const publicUrl = useMemo(() => (shareId ? buildPublicShareUrl(shareId) : ""), [shareId]);
+  const [urlCopied, setUrlCopied] = useState(false);
+
   /** `&shareId=…` for the selected link, or "" for "All links". */
   const linkFilterParam = shareId ? `&shareId=${encodeURIComponent(shareId)}` : "";
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
@@ -1072,6 +1085,15 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
           <ArrowLeftIcon className="h-5 w-5" />
         </Link>
 
+        {/* Whose numbers these are, as a glyph: a link page and a document page otherwise open
+            identically, and the breadcrumb is the only other thing that says which one this is. */}
+        <div
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--panel-hover)] text-[var(--muted-2)]"
+          aria-hidden="true"
+        >
+          {shareId ? <LinkIcon className="h-[18px] w-[18px]" /> : <DocumentTextIcon className="h-[18px] w-[18px]" />}
+        </div>
+
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-[var(--fg)]">{docTitle || "Document"}</div>
           <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
@@ -1136,6 +1158,46 @@ export default function MetricsPageClient({ docId }: { docId: string }) {
                     once it owns more than one link). Without this, a link's metrics page was
                     indistinguishable from the document's except for a name in the breadcrumb: the
                     same four tiles, the same chart, just narrower numbers. */}
+                {/* The address the recipient was actually sent. A link's page is otherwise named
+                    only by a private label, which is not what anyone pasted into an email. */}
+                {shareId && publicUrl ? (
+                  <div className="mt-2 flex min-w-0 items-center gap-1.5">
+                    <a
+                      href={publicUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Open ${publicUrl}`}
+                      className="inline-flex min-w-0 items-center gap-1.5 rounded-lg bg-[var(--panel-hover)] px-2.5 py-1 text-[12px] text-[var(--muted)] ring-1 ring-inset ring-[var(--border)] hover:text-[var(--fg)]"
+                    >
+                      <LinkIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <span className="truncate font-mono text-[12px]">{publicUrl.replace(/^https?:\/\//, "")}</span>
+                    </a>
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-lg p-1.5 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                      aria-label={urlCopied ? "Link copied" : "Copy link"}
+                      title={urlCopied ? "Copied" : "Copy link"}
+                      onClick={() => {
+                        void (async () => {
+                          try {
+                            await navigator.clipboard.writeText(publicUrl);
+                            setUrlCopied(true);
+                            window.setTimeout(() => setUrlCopied(false), 1600);
+                          } catch {
+                            // Clipboard can be refused (permissions, insecure origin); the link is
+                            // still selectable in the anchor above.
+                          }
+                        })();
+                      }}
+                    >
+                      {urlCopied ? (
+                        <ClipboardDocumentCheckIcon className="h-4 w-4" />
+                      ) : (
+                        <Square2StackIcon className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                ) : null}
                 {selectedLinkLabel && data?.link ? (
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[var(--muted)]">
                     {data.link.audience ? <SettingItem label="Audience" value={data.link.audience} /> : null}

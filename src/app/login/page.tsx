@@ -44,7 +44,7 @@ export default function LoginPage() {
 }
 
 /**
- * Render the login page (single "Continue with Google" entrypoint).
+ * Render the login page (single Google entrypoint that both registers and signs in).
  */
 function LoginPageInner() {
   const authEnabled = useAuthEnabled();
@@ -132,7 +132,7 @@ function LoginPageInner() {
                 void signIn("google", { callbackUrl: next });
               }}
             >
-              <span className={busy ? "invisible" : ""}>Continue with Google</span>
+              <span className={busy ? "invisible" : ""}>Sign up or log in with Google</span>
               {busy ? (
                 <span className="absolute inset-0 grid place-items-center">
                   <Spinner className="h-4 w-4" label="Signing in" />
