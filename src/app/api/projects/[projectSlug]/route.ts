@@ -215,9 +215,11 @@ export async function PATCH(
           requestRequireAuthToUploadRaw;
       }
     }
+    // A public page switched in the same save as a rename belongs in this row too; a switch on its
+    // own is the share.updated row below.
     const changedFields = shareOnly
       ? []
-      : (["name", "description", "autoAddFiles"] as const).filter((f) => project.isModified(f));
+      : (["name", "description", "autoAddFiles", "shareEnabled"] as const).filter((f) => project.isModified(f));
     await project.save();
     if (changedFields.length) {
       void recordActivity({

@@ -503,7 +503,7 @@ export function registerDeleteProjectTool(server: McpServer, ctx: ToolContext): 
           headline: `Delete the project "${project.name || "Untitled project"}"`,
           facts: [
             total > 0
-              ? `${total} document${total === 1 ? "" : "s"} leave the project; the documents, their links and analytics are kept`
+              ? `${total} document${total === 1 ? " leaves" : "s leave"} the project; the documents, their links and analytics are kept`
               : "The project has no documents",
             publicLive && publicUrl ? `Its public page ${publicUrl} stops resolving` : "Its public page is already off",
             "The project itself cannot be restored from the app",

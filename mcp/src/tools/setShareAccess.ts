@@ -67,7 +67,17 @@ export function registerSetShareAccessTool(server: McpServer, ctx: ToolContext):
         if (Object.keys(patch).length > 0) await ctx.api.patchDoc(args.docId, patch);
         if (wantsPassword) await ctx.api.setSharePassword(args.docId, args.password ?? null);
         const doc = await ctx.api.getDoc(args.docId);
-        return withDefaultLinkState(ctx.api, doc, shareView(ctx.api, doc));
+        const view = await withDefaultLinkState(ctx.api, doc, shareView(ctx.api, doc));
+        // Switching sharing on leaves links disabled on their own switched off, including the
+        // default link, so the response can say shareEnabled false right after asking for true.
+        const warnings =
+          args.shareEnabled === true && !view.shareEnabled
+            ? [
+                "Sharing is on, but the default link stays disabled because it was turned off on its own. " +
+                  "Turn it on with lnkdrp_update_share_link if the human wants that link to open again.",
+              ]
+            : [];
+        return { ...view, warnings };
       }, { fingerprint: fingerprintArgs(args) });
       return value;
     }),
