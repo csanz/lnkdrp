@@ -201,7 +201,7 @@ export default function SidebarProjectsSection({
                       routerPush(`/project/${p.id}`);
                     }}
                   >
-                    <div className="flex min-w-0 items-center gap-2 pr-8">
+                    <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal">
                       {p.isRequest ? (
                         <InboxArrowDownIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                       ) : (
@@ -214,6 +214,18 @@ export default function SidebarProjectsSection({
                         </span>
                       )}
                       <span className="block min-w-0 flex-1 truncate text-[var(--fg)]">{title}</span>
+                      {/* How many documents are in it, in the column where a Docs row prints its
+                          version: the two lists then end the same way, and "Data room 4" answers
+                          the question a folder raises without opening it. `docCount` is maintained
+                          on the project row, so this costs nothing to read. */}
+                      {typeof p.docCount === "number" && Number.isFinite(p.docCount) && p.docCount > 0 ? (
+                        <span
+                          className="shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-2)] opacity-70"
+                          title={`${p.docCount} ${p.docCount === 1 ? "document" : "documents"}`}
+                        >
+                          {p.docCount}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
 
