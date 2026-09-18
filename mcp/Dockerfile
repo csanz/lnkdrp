@@ -36,6 +36,9 @@ COPY src/lib/realtime/ticket.ts ./src/lib/realtime/ticket.ts
 # lnkdrp_whoami derives its cost table from the app credit schedule (pure module, no server deps).
 COPY src/lib/credits/schedule.ts ./src/lib/credits/schedule.ts
 COPY src/lib/credits/types.ts ./src/lib/credits/types.ts
+# share_pdf/replace_pdf and the Express body limit read the upload ceilings from the app's single
+# definition; without this the image builds and then dies at boot on a missing module.
+COPY src/lib/limits/uploads.ts ./src/lib/limits/uploads.ts
 COPY mcp ./mcp
 
 USER node
