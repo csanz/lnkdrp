@@ -25,6 +25,7 @@ import {
 } from "@/lib/orgsCache";
 import { switchWorkspaceWithOverlay } from "@/components/SwitchingOverlay";
 import WorkspaceIcon from "@/components/WorkspaceIcon";
+import { forgetSignedIn } from "@/lib/client/sessionMemory";
 
 type MenuItem =
   | { type: "link"; label: string; href: string; icon?: React.ReactNode }
@@ -506,7 +507,12 @@ function AccountMenuEnabled({ variant }: { variant?: "sidebar" | "topbar" }) {
         type: "button",
         label: "Log out",
         icon: <ArrowRightOnRectangleIcon className="h-4 w-4" />,
-        onClick: () => void signOut({ callbackUrl: "/" }),
+        onClick: () => {
+          // A deliberate log out is not "you were signed out": clear the bit so a later visit to a
+          // gated URL gets the plain sign-in page (src/lib/client/sessionMemory.ts).
+          forgetSignedIn();
+          void signOut({ callbackUrl: "/" });
+        },
       },
     ];
   }, [session?.user, loginBusy]);

@@ -10,7 +10,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { getSession, useSession } from "next-auth/react";
+import { useSession } from "next-auth/react";
 import { useTheme } from "next-themes";
 import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import LeftSidebar from "@/components/LeftSidebar";
@@ -19,6 +19,7 @@ import IconButton from "@/components/ui/IconButton";
 import Spinner from "@/components/ui/Spinner";
 import { useAuthEnabled } from "@/app/providers";
 import { usePendingUpload } from "@/lib/pendingUpload";
+import { hadSession, rememberSignedIn } from "@/lib/client/sessionMemory";
 
 /**
  * Gate for the authenticated app shell: reveals `children` only once a session is confirmed.
@@ -33,6 +34,11 @@ import { usePendingUpload } from "@/lib/pendingUpload";
  * bounced from a gated route reads as "nothing happened", not as an explanation, and `/login`
  * already says plainly that signing in is what's needed. Carrying `next` returns the user to the
  * page they wanted once they do.
+ *
+ * When this browser had a session and no longer does, `signedOut=1` rides along and `/login` leads
+ * with "You've been signed out" instead of a sign-up pitch — the difference between an explanation
+ * and an unexplained bounce. A browser that was never signed in gets the plain page; see
+ * `src/lib/client/sessionMemory.ts`.
  */
 function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -40,48 +46,117 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const { status } = useSession();
 
   /**
-   * Confirm before bouncing.
+   * Confirm before bouncing — and never bounce on an answer we did not get.
    *
    * `useSession` reports `"unauthenticated"` for a *failed* session request as readily as for a
-   * real signed-out visit, and that request fails whenever the server is briefly unreachable — a
-   * dev restart, a deploy, a dropped connection, a laptop waking up. The first version redirected
-   * on that status alone, so a blip logged people out of a page they were reading and sent them to
-   * /login with a valid session still in the cookie. One re-check (a direct `getSession()`, not the
-   * cached hook state) is enough to tell the two apart: a real signed-out visit answers `null`
-   * again, a blip answers with the session and the reader stays where they were.
+   * real signed-out visit. The first version redirected on that status alone, so a blip logged
+   * people out of a page they were reading. The second re-checked with `getSession()` — which
+   * does not help, and is why this kept happening: next-auth's fetch helper catches every network
+   * error, logs `CLIENT_FETCH_ERROR` and returns `null` (node_modules/next-auth/src/client/_utils.ts),
+   * and it also returns `null` for a 200 with an empty body. One value, three meanings: signed
+   * out, request failed, server unreachable. The re-check answered `null` on a blip and the reader
+   * was sent to /login exactly as before.
+   *
+   * So the session endpoint is read directly, where the HTTP status is visible:
+   *
+   * - **200 with a user** — the hook is holding a stale "unauthenticated"; re-render, stay put.
+   * - **200 with `{}`** — a real signed-out visit, the only case that redirects.
+   * - **anything else, or a thrown fetch** — we do not know. Retry, and keep waiting.
+   *
+   * "We do not know" never redirects. A signed-out visitor to a gated page gets their answer on
+   * the first request that completes; a signed-in one whose network dropped keeps their page.
    */
+  const [unreachable, setUnreachable] = useState(false);
+
   useEffect(() => {
     if (status !== "unauthenticated") return;
     let cancelled = false;
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const confirmed = await getSession();
-          if (cancelled) return;
-          if (confirmed?.user) {
-            // The blip is over and the hook is holding a stale "unauthenticated": re-render with
-            // fresh data rather than sending a signed-in reader to /login.
-            router.refresh();
-            return;
-          }
-        } catch {
-          // Still unreachable — treat as signed out, the same as before.
-        }
+    let timer: number | undefined;
+    let attempt = 0;
+
+    const goToLogin = () => {
+      const query = new URLSearchParams();
+      if (pathname && pathname !== "/") query.set("next", pathname);
+      // Only claim they were signed out when they actually were.
+      if (hadSession()) query.set("signedOut", "1");
+      const suffix = query.toString();
+      router.replace(`/login${suffix ? `?${suffix}` : ""}`);
+    };
+
+    const check = async () => {
+      if (cancelled) return;
+      // A laptop waking up, or a dropped connection: the answer is knowable later, never now.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        setUnreachable(true);
+        schedule();
+        return;
+      }
+      try {
+        const res = await fetch("/api/auth/session", { cache: "no-store", credentials: "same-origin" });
+        if (!res.ok) throw new Error(`session ${res.status}`);
+        const json = (await res.json().catch(() => null)) as { user?: unknown } | null;
         if (cancelled) return;
-        const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
-        router.replace(`/login${next}`);
-      })();
-    }, 1200);
+        if (json && typeof json === "object" && json.user) {
+          setUnreachable(false);
+          router.refresh();
+          return;
+        }
+        // A clean answer: nobody is signed in here.
+        goToLogin();
+        return;
+      } catch {
+        if (cancelled) return;
+        // No answer. Say so quietly and try again; do not assert anything about the session.
+        setUnreachable(true);
+        schedule();
+      }
+    };
+
+    /** 1.2s, then backing off to 10s — long enough to outlast a deploy or a sleeping laptop. */
+    const schedule = () => {
+      const delay = Math.min(10_000, 1_200 * 2 ** attempt);
+      attempt += 1;
+      timer = window.setTimeout(() => void check(), delay);
+    };
+
+    // The first wait is what distinguishes a blip from a sign-out; it was always here.
+    timer = window.setTimeout(() => void check(), 1_200);
+
+    // Waking up or coming back online is the moment the answer becomes knowable — take it rather
+    // than sitting out the current backoff.
+    const retryNow = () => {
+      if (cancelled) return;
+      window.clearTimeout(timer);
+      attempt = 0;
+      void check();
+    };
+    window.addEventListener("online", retryNow);
+    document.addEventListener("visibilitychange", retryNow);
+
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      window.removeEventListener("online", retryNow);
+      document.removeEventListener("visibilitychange", retryNow);
     };
   }, [router, pathname, status]);
 
+  // One bit, written while the session is known good, read only when it is gone.
+  useEffect(() => {
+    if (status === "authenticated") rememberSignedIn();
+  }, [status]);
+
   if (status !== "authenticated") {
     return (
-      <div className="grid h-[100svh] w-full place-items-center bg-[var(--bg)]">
+      <div className="grid h-[100svh] w-full place-items-center gap-3 bg-[var(--bg)]">
         <Spinner className="h-6 w-6 text-[var(--muted)]" />
+        {/* Only once a request has actually failed: a spinner that explains itself after a few
+            seconds is reassuring, one that explains itself immediately is alarming. */}
+        {unreachable ? (
+          <div className="text-center text-[13px] text-[var(--muted)]">
+            Can&apos;t reach the server. Retrying&hellip;
+          </div>
+        ) : null}
       </div>
     );
   }

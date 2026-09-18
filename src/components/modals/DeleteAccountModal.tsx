@@ -13,6 +13,7 @@ import { signOut } from "next-auth/react";
 import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
 import { DELETION_CONFIRM_PHRASE, DELETION_GRACE_DAYS, DELETION_REASONS, confirmPhraseMatches } from "@/lib/accounts/deletion";
+import { forgetSignedIn } from "@/lib/client/sessionMemory";
 
 export default function DeleteAccountModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [reasonCode, setReasonCode] = useState("");
@@ -37,6 +38,7 @@ export default function DeleteAccountModal({ open, onClose }: { open: boolean; o
       if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
       // The account is already disabled server-side; end the session so the app does not sit on a
       // token that every request now refuses.
+      forgetSignedIn();
       await signOut({ callbackUrl: "/?deleted=1" });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to delete the account");
