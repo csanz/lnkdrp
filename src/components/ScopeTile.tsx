@@ -38,10 +38,13 @@ const LABEL: Record<ScopeKind, string> = {
 export default function ScopeTile({
   kind,
   parent,
+  size = "md",
   className,
 }: {
   kind: ScopeKind;
   parent?: Exclude<ScopeKind, "link">;
+  /** `sm` (32px) sits inside a header's 32px title row without changing the band's height. */
+  size?: "sm" | "md";
   className?: string;
 }) {
   const Icon = ICON[kind];
@@ -49,12 +52,22 @@ export default function ScopeTile({
   const label = kind === "link" && parent ? `${LABEL.link} to a ${parent === "project" ? "project" : "document"}` : LABEL[kind];
   return (
     <div className={["relative shrink-0", className ?? ""].join(" ")} role="img" aria-label={label} title={label}>
-      <div className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--fg)] text-[var(--bg)]">
-        <Icon className="h-[18px] w-[18px]" strokeWidth={1.9} aria-hidden="true" />
+      <div
+        className={[
+          "inline-flex items-center justify-center rounded-lg bg-[var(--fg)] text-[var(--bg)]",
+          size === "sm" ? "h-8 w-8" : "h-9 w-9",
+        ].join(" ")}
+      >
+        <Icon className={size === "sm" ? "h-4 w-4" : "h-[18px] w-[18px]"} strokeWidth={1.9} aria-hidden="true" />
       </div>
       {BadgeIcon ? (
-        <span className="absolute -bottom-1 -right-1 inline-flex h-[17px] w-[17px] items-center justify-center rounded-md bg-[var(--panel)] text-[var(--fg)] ring-1 ring-[var(--border)]">
-          <BadgeIcon className="h-[11px] w-[11px]" strokeWidth={2} aria-hidden="true" />
+        <span
+          className={[
+            "absolute -bottom-1 -right-1 inline-flex items-center justify-center rounded-md bg-[var(--panel)] text-[var(--fg)] ring-1 ring-[var(--border)]",
+            size === "sm" ? "h-4 w-4" : "h-[17px] w-[17px]",
+          ].join(" ")}
+        >
+          <BadgeIcon className={size === "sm" ? "h-[10px] w-[10px]" : "h-[11px] w-[11px]"} strokeWidth={2} aria-hidden="true" />
         </span>
       ) : null}
     </div>
