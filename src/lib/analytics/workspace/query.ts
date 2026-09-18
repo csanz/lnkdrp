@@ -27,6 +27,7 @@
  */
 import { Types, type PipelineStage } from "mongoose";
 
+import { projectLinkSlugsForOrg } from "@/lib/analytics/docScope";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   activityWindowMatch,
@@ -36,6 +37,7 @@ import {
 import type { PlanId } from "@/lib/billing/planLimits";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { ProjectModel } from "@/lib/models/Project";
 import { ShareLinkModel } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
@@ -43,6 +45,7 @@ import { UploadModel } from "@/lib/models/Upload";
 
 import {
   LAST_SEEN_MAX_EXPR,
+  linkReaderKeyExpr,
   liveShareLinkExpr,
   presenceBetweenMatch,
   VISIT_DAY_KEY_EXPR,
@@ -58,15 +61,16 @@ import { resolveWorkspaceRange, utcDayKey, workspacePlanInfo, type ResolvedWorks
 import {
   avgReadingTimeMs,
   buildSeries,
+  buildTopLinks,
   delta,
   docMetricsHref,
-  linkMetricsHref,
   rankPeople,
   rankTopDocs,
-  rankTopLinks,
   safeCount,
   selectQuietDocs,
   toIsoOrNull,
+  type WorkspaceLinkCandidate,
+  type WorkspaceLinkIdentity,
 } from "./shape";
 import {
   WORKSPACE_PEOPLE_LIMIT,
@@ -100,14 +104,40 @@ type DocRow = {
   createdDate?: unknown;
 };
 
-type ByDocRow = { _id?: Types.ObjectId | null; views?: number; viewers?: number; lastSeen?: Date | null };
-type VisitByDocRow = { _id?: Types.ObjectId | null; opens?: number; readingTimeMs?: number };
-type VisitByDayRow = { _id?: string | null; opens?: number; readingTimeMs?: number };
-type VisitTotalsRow = { opens?: number; readingTimeMs?: number };
-type ByLinkRow = {
-  _id?: { shareId?: string | null; docId?: Types.ObjectId | null } | null;
+/**
+ * One document's window, counted twice over the same buckets — see the `byDoc` facet.
+ *
+ * `views` / `viewers` / `lastSeen` are every read the workspace saw (the headline's basis);
+ * `ownViews` / `ownViewers` / `ownLastSeen` are the document's own, with project-link reads left
+ * out, and are what the ranked row prints beside a link to the document's metrics page.
+ */
+type ByDocRow = {
+  _id?: Types.ObjectId | null;
   views?: number;
   viewers?: number;
+  lastSeen?: Date | null;
+  ownViews?: number;
+  ownViewers?: number;
+  ownLastSeen?: Date | null;
+};
+type VisitByDocRow = {
+  _id?: Types.ObjectId | null;
+  opens?: number;
+  readingTimeMs?: number;
+  ownOpens?: number;
+  ownReadingTimeMs?: number;
+};
+type VisitByDayRow = { _id?: string | null; opens?: number; readingTimeMs?: number };
+type VisitTotalsRow = { opens?: number; readingTimeMs?: number };
+/** One link's window, already collapsed to a single row per `shareId` — see the `byLink` facet. */
+type ByLinkRow = {
+  _id?: string | null;
+  /** `ShareView` rows — (viewer × document opened) under a project link. */
+  rows?: number;
+  /** Distinct readers of the link, with a project link's document stripped out of the viewer key. */
+  readers?: number;
+  /** Every live document the link was opened on: one for a document link, several for a project one. */
+  docIds?: Array<Types.ObjectId | string> | null;
   lastSeen?: Date | null;
 };
 type ByDayRow = { _id?: string | null; views?: number };
@@ -180,9 +210,17 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
 
   // The workspace's live documents, read once and reused as the scope of every aggregate below and
   // as the source of every title on the page (no `$lookup` anywhere).
-  const docs = (await DocModel.find({ orgId, isDeleted: { $ne: true } })
-    .select({ _id: 1, title: 1, isArchived: 1, shareEnabled: 1, createdDate: 1 })
-    .lean()) as unknown as DocRow[];
+  //
+  // Beside it, the workspace's project-link slugs (`@/lib/analytics/docScope`), which are what makes
+  // a *document-scoped* figure on this page mean the same thing as the document's own page: a read
+  // through a data room is the project's view, never the document's. They are fetched here, in
+  // parallel with the documents, because the facet below has to be built with them in hand.
+  const [docs, projectShareIds] = (await Promise.all([
+    DocModel.find({ orgId, isDeleted: { $ne: true } })
+      .select({ _id: 1, title: 1, isArchived: 1, shareEnabled: 1, createdDate: 1 })
+      .lean(),
+    projectLinkSlugsForOrg(orgId),
+  ])) as unknown as [DocRow[], string[]];
 
   if (!docs.length) return emptyResponse(resolved, input.plan, isPro);
 
@@ -221,6 +259,23 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   };
 
   /**
+   * "This value, but only when the row is the document's own read" — the in-pipeline form of
+   * `docOnlyShareIdMatch`'s `$nin`.
+   *
+   * A `$cond` rather than a second `$match`, because the same rows have to be counted *both* ways in
+   * one scan: the workspace headline counts every reading exactly once (a data-room read is a read
+   * the workspace had), while a per-document row must equal the document page it links to, which
+   * does not count it. Splitting the pipeline instead would scan the window twice and let the two
+   * answers drift.
+   *
+   * `slugField` is `$_id.shareId` after the viewer grouping and `$shareId` on a raw row. With no
+   * project links in the workspace the expression collapses to the plain value, so nothing is paid
+   * for a feature a workspace does not use.
+   */
+  const ownOnly = (slugField: string, value: unknown, otherwise: unknown) =>
+    projectShareIds.length ? { $cond: [{ $in: [slugField, projectShareIds] }, otherwise, value] } : value;
+
+  /**
    * Everything that comes from `shareviews` in the window, in one index scan.
    *
    * `$facet` because the branches need different groupings of the *same* rows: views by day are
@@ -231,6 +286,12 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
    */
   const facetStage: Record<string, PipelineStage.FacetPipelineStage[]> = {
     byDay: [{ $group: { _id: ACTIVITY_DAY_KEY_EXPR, views: { $sum: 1 } } }],
+    // Two counts per document, from one grouping — see `ownOnly`. The plain trio feeds the
+    // headline and `docsOpened` (workspace scope: the reading happened, and this page is the
+    // workspace's); the `own*` trio feeds the ranked row, which prints a per-document figure beside
+    // a link to `/doc/:docId/metrics` and must therefore equal it. Before this split the card said
+    // "USAVX Deck · 13 views" and opened a page reading 7, and listed a one-pager whose own page
+    // says nobody has ever opened it.
     byDoc: [
       viewerGroupStage,
       {
@@ -239,20 +300,42 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           views: { $sum: "$views" },
           viewers: { $sum: 1 },
           lastSeen: { $max: "$lastSeen" },
+          ownViews: { $sum: ownOnly("$_id.shareId", "$views", 0) },
+          ownViewers: { $sum: ownOnly("$_id.shareId", 1, 0) },
+          ownLastSeen: { $max: ownOnly("$_id.shareId", "$lastSeen", null) },
         },
       },
     ],
+    // One row per **link**, not per (link, document).
+    //
+    // A project link is one `shareId` spanning every document opened through it, so grouping on
+    // `{ shareId, docId }` printed it once per document, each row holding a slice of its traffic
+    // under a document's title and pointing at a document metrics page that refuses it. Collapsing
+    // to `shareId` here changes nothing for a document link — all of its views carry the one
+    // `docId` — and makes the duplicate rows impossible rather than de-duplicated downstream.
+    //
+    // Two counts, because a project link is the one case where they differ. `rows` is `ShareView`
+    // rows — (viewer × document opened) under a project link. `readers` is distinct readers of the
+    // *link*: the buckets below are (document, link, reader) and a project link spells the document
+    // into the reader's own key, so one person who opened three documents in a data room arrives as
+    // three buckets under three different keys. `linkReaderKeyExpr` strips that composite back to
+    // the person; a document link's key has nothing to strip, so its two counts stay equal and its
+    // row is exactly what it was. Which one becomes the row's `views` is `buildTopLink`'s call.
     byLink: [
       viewerGroupStage,
       {
         $group: {
-          _id: { shareId: "$_id.shareId", docId: "$_id.docId" },
-          views: { $sum: "$views" },
-          viewers: { $sum: 1 },
+          _id: "$_id.shareId",
+          rows: { $sum: "$views" },
+          readerKeys: { $addToSet: linkReaderKeyExpr("$_id.viewer") },
+          docIds: { $addToSet: "$_id.docId" },
           lastSeen: { $max: "$lastSeen" },
         },
       },
-      { $sort: { views: -1, lastSeen: -1 } },
+      { $project: { rows: 1, docIds: 1, lastSeen: 1, readers: { $size: "$readerKeys" } } },
+      // A generous pre-cut so the `$facet` branch stays page-sized; the order that reaches the card
+      // is settled in Node, once each row's kind says which of the two counts it prints.
+      { $sort: { rows: -1, lastSeen: -1 } },
       { $limit: LINK_RANK_CANDIDATES },
     ],
     // Distinct named people, on both plans: a `$group` key is not a projection, so nothing
@@ -330,7 +413,20 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
    */
   const visitFacetStage: Record<string, PipelineStage.FacetPipelineStage[]> = {
     byDay: [{ $group: { _id: VISIT_DAY_KEY_EXPR, opens: { $sum: 1 }, readingTimeMs: VISIT_TIME_SUM_EXPR } }],
-    byDoc: [{ $group: { _id: "$docId", opens: { $sum: 1 }, readingTimeMs: VISIT_TIME_SUM_EXPR } }],
+    // Same split as the view facet's `byDoc`, and for the same reason: the ranked row's opens and
+    // reading time have to come from the document's own links, or a row reconciles on views and
+    // disagrees on everything beside them.
+    byDoc: [
+      {
+        $group: {
+          _id: "$docId",
+          opens: { $sum: 1 },
+          readingTimeMs: VISIT_TIME_SUM_EXPR,
+          ownOpens: { $sum: ownOnly("$shareId", 1, 0) },
+          ownReadingTimeMs: { $sum: ownOnly("$shareId", { $ifNull: ["$timeSpentMs", 0] }, 0) },
+        },
+      },
+    ],
     returning: [
       { $group: { _id: LINK_VIEWER_KEY_EXPR, opens: { $sum: 1 } } },
       { $match: { opens: { $gt: 1 } } },
@@ -474,15 +570,24 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   for (const row of byDoc) {
     const docId = row?._id ? String(row._id) : "";
     if (!docId || !docById.has(docId)) continue;
-    const rowViews = safeCount(row.views);
-    const rowViewers = safeCount(row.viewers);
+    // The headline and "documents opened" are the workspace's own question — "did anyone read this,
+    // anywhere" — so they count every read, a data room's included. `openedDocIds` also governs the
+    // quiet list, and a nudge that says "shared three weeks ago, still unopened" about a file a
+    // recipient read in a data room yesterday is the one wrong answer that makes an owner act.
+    views += safeCount(row.views);
+    openedDocIds.add(docId);
+    // The ranked row is document-scoped: it prints a per-document figure and opens that document's
+    // metrics page, which excludes project-link reads (`@/lib/analytics/docScope`). A document whose
+    // only traffic in the window came through a data room therefore has nothing to show here — its
+    // reading is ranked under the project link on the card beside this one.
+    const rowViews = safeCount(row.ownViews);
+    if (!rowViews) continue;
+    const rowViewers = safeCount(row.ownViewers);
     // Opens and reading time are the visit row's, joined by document id. A document with views and
     // no visit row is traffic older than visits — that is what `opensPartial` below reports.
     const visit = opensByDocId.get(docId);
-    const rowOpens = safeCount(visit?.opens);
-    const rowMs = safeCount(visit?.readingTimeMs);
-    views += rowViews;
-    openedDocIds.add(docId);
+    const rowOpens = safeCount(visit?.ownOpens);
+    const rowMs = safeCount(visit?.ownReadingTimeMs);
     topDocCandidates.push({
       docId,
       title: titleOf(docId),
@@ -491,7 +596,7 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
       opens: rowOpens,
       readingTimeMs: rowMs,
       avgReadingTimeMs: avgReadingTimeMs(rowMs, rowViewers),
-      lastOpenedAt: toIsoOrNull(row.lastSeen),
+      lastOpenedAt: toIsoOrNull(row.ownLastSeen),
       href: docMetricsHref(docId),
     });
   }
@@ -529,55 +634,83 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
     downloads: new Map(downloadsRows.map((r) => [String(r._id ?? ""), safeCount(r.downloads)])),
   });
 
-  // Link labels for the rows that survived the ranking only: private-to-sender text, fetched for at
-  // most a page's worth of links rather than for every link with traffic.
-  const rankedLinks = rankTopLinks(
-    byLink
-      .map((row): WorkspaceTopLink | null => {
-        const shareId = typeof row?._id?.shareId === "string" ? row._id.shareId : "";
-        const docId = row?._id?.docId ? String(row._id.docId) : "";
-        if (!shareId || !docId || !docById.has(docId)) return null;
-        return {
-          shareId,
-          shareLinkId: null,
-          label: "",
-          audience: null,
-          isDefault: false,
-          docId,
-          docTitle: titleOf(docId),
-          views: safeCount(row.views),
-          viewers: safeCount(row.viewers),
-          lastOpenedAt: toIsoOrNull(row.lastSeen),
-          href: linkMetricsHref(docId, shareId),
-        };
-      })
-      .filter((r): r is WorkspaceTopLink => r !== null),
-    WORKSPACE_TOP_LINKS_LIMIT,
-  );
+  // Named first, ranked second. The aggregation's `$limit` has already cut this to a page-sized
+  // candidate pool, and the order inside it cannot be settled until each row's kind is known: a
+  // project link's views are its recipients, not its rows, and only its `ShareLink` says so.
+  const linkCandidates = byLink
+    .map((row): WorkspaceLinkCandidate | null => {
+      const shareId = typeof row?._id === "string" ? row._id : "";
+      // Live documents only — the same bound every other figure on this page carries. `viewScope`
+      // already restricts the scan to them, so this drops nothing in practice and keeps the row
+      // honest if that ever changes.
+      const docIds = (row.docIds ?? []).map((d) => String(d)).filter((d) => docById.has(d));
+      if (!shareId || !docIds.length) return null;
+      // Sorted, so the document a deleted link falls back to is the same one on every request.
+      docIds.sort();
+      return {
+        shareId,
+        docIds,
+        rows: safeCount(row.rows),
+        readers: safeCount(row.readers),
+        lastOpenedAt: toIsoOrNull(row.lastSeen),
+      };
+    })
+    .filter((r): r is WorkspaceLinkCandidate => r !== null);
 
-  if (rankedLinks.length) {
-    const linkDocs = (await ShareLinkModel.find({ orgId, shareId: { $in: rankedLinks.map((l) => l.shareId) } })
-      .select({ _id: 1, shareId: 1, label: 1, audience: 1, isDefault: 1 })
+  const linkIdentityByShareId = new Map<string, WorkspaceLinkIdentity>();
+  if (linkCandidates.length) {
+    const linkDocs = (await ShareLinkModel.find({ orgId, shareId: { $in: linkCandidates.map((l) => l.shareId) } })
+      .select({ _id: 1, shareId: 1, label: 1, audience: 1, isDefault: 1, kind: 1, docId: 1, projectId: 1 })
       .lean()) as unknown as Array<{
       _id?: Types.ObjectId;
       shareId?: string;
       label?: unknown;
       audience?: unknown;
       isDefault?: unknown;
+      kind?: unknown;
+      docId?: Types.ObjectId | null;
+      projectId?: Types.ObjectId | null;
     }>;
-    const linkByShareId = new Map(linkDocs.map((l) => [String(l.shareId ?? ""), l]));
-    for (const row of rankedLinks) {
-      const link = linkByShareId.get(row.shareId);
-      // A link row can be gone (hard-deleted) while its views remain; the document's title is then
-      // the only honest name for it, which is also what a default link would show.
-      row.shareLinkId = link?._id ? String(link._id) : null;
-      const label = typeof link?.label === "string" ? link.label.trim() : "";
-      row.label = label || row.docTitle;
-      const audience = typeof link?.audience === "string" ? link.audience.trim() : "";
-      row.audience = audience || null;
-      row.isDefault = link?.isDefault === true;
+
+    // Project names for the project links among them only — one read, and only when there are any.
+    const projectIds = linkDocs
+      .filter((l) => l.kind === "project" && l.projectId)
+      .map((l) => l.projectId as Types.ObjectId);
+    const projectNameById = new Map<string, string>();
+    if (projectIds.length) {
+      const projects = (await ProjectModel.find({ orgId, _id: { $in: projectIds } })
+        .select({ _id: 1, name: 1 })
+        .lean()) as unknown as Array<{ _id?: Types.ObjectId; name?: unknown }>;
+      for (const p of projects) {
+        if (!p?._id) continue;
+        const name = typeof p.name === "string" ? p.name.trim() : "";
+        if (name) projectNameById.set(String(p._id), name);
+      }
+    }
+
+    for (const link of linkDocs) {
+      const shareId = String(link.shareId ?? "");
+      if (!shareId) continue;
+      const projectId = link.projectId ? String(link.projectId) : null;
+      linkIdentityByShareId.set(shareId, {
+        shareLinkId: link._id ? String(link._id) : null,
+        kind: typeof link.kind === "string" ? link.kind : null,
+        label: typeof link.label === "string" ? link.label : null,
+        audience: typeof link.audience === "string" ? link.audience : null,
+        isDefault: link.isDefault === true,
+        docId: link.docId ? String(link.docId) : null,
+        projectId,
+        projectName: projectId ? (projectNameById.get(projectId) ?? null) : null,
+      });
     }
   }
+
+  const rankedLinks: WorkspaceTopLink[] = buildTopLinks(
+    linkCandidates,
+    (shareId) => linkIdentityByShareId.get(shareId),
+    titleOf,
+    WORKSPACE_TOP_LINKS_LIMIT,
+  );
 
   /**
    * One row per person, from the two pools.

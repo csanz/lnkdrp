@@ -1,0 +1,263 @@
+/**
+ * The recipient-facing half of project links: what `/p/:shareId` and `/p/:shareId/:docId` are
+ * allowed to show, and how a visit behind a project link is keyed in the analytics collections
+ * (docs/prds/lnkdrp-project-links.md, milestone M2).
+ *
+ * Kept apart from `./projectLinks.ts` (the owner-facing CRUD service) for the same reason that file
+ * is kept apart from `./links.ts`: everything here runs on a **public, unauthenticated** request, so
+ * "which rows can a recipient reach" is a question you answer by reading one file. Nothing in here
+ * takes an `orgId` from a caller; tenancy is always derived from the slug.
+ *
+ * Two rules live here and nowhere else:
+ *
+ * 1. **A document is reachable through a project link only if it is in that project right now.**
+ *    Membership is re-checked on every request — the page render, the viewer render, the PDF proxy
+ *    and the stats ingest all call {@link findProjectDocument} — rather than trusted from a URL or
+ *    a request body. `/api/metrics/events` learned this the expensive way: resolving an
+ *    attacker-supplied slug and then writing against whatever it named performed writes in a
+ *    foreign workspace. It also settles the PRD's open question about removal: contents are
+ *    resolved per request, so a document taken out of the project disappears immediately.
+ *
+ * 2. **How a project-link visit is keyed.** See {@link projectViewerKey}.
+ */
+import { Types } from "mongoose";
+
+import { connectMongo } from "@/lib/mongodb";
+import { DocModel } from "@/lib/models/Doc";
+import { isExpired } from "./links";
+import { resolveProjectLink, type ProjectLike, type ResolvedProjectLink } from "./projectLinks";
+
+/**
+ * Separator between the viewer key and the document id in a project-link analytics row.
+ *
+ * `.` is not produced by either half (a sha256 hex digest and an ObjectId hex string), so the
+ * composite splits unambiguously.
+ */
+export const PROJECT_VIEW_KEY_SEP = ".";
+
+/**
+ * The `botIdHash` a project-link `ShareView` / `ShareVisit` row is written under.
+ *
+ * A project link has one `shareId` and N documents, and a recipient reading three of them must
+ * produce three rows — one per document — or their pages and their reading time merge into a single
+ * page-number namespace (page 3 of the term sheet adding time to page 3 of the deck). The natural
+ * fix is a `docId` in the unique keys, `{shareId, botIdHash, docId}`. Those indexes live in
+ * `ShareView.ts` / `ShareVisit.ts`, which this milestone does not own, so the same compound is
+ * expressed inside the field the key already has:
+ *
+ *     botIdHash = "<sha256(botId)>" + "." + "<docId>"
+ *
+ * It is a composite, not a hash of a composite, on purpose: the viewer is still recoverable from
+ * the stored value (`splitProjectViewerKey`, or a `^<botIdHash>\.` prefix match), so "how many
+ * people came through this link" stays answerable without a second collection, and the activity
+ * feed's `viewerKey` join keeps finding the row it names.
+ *
+ * Consequences, written down here and in docs/METRICS.md because M4 depends on them:
+ * - Under a project link, `ShareView` rows count **(viewer × document opened)**, not viewers.
+ *   Views for a project link are `ProjectLinkView` row count, or `distinct` on the key prefix —
+ *   never `countDocuments({ shareId })`.
+ * - Under a project link, `ShareVisit` rows count (tab session × document). The `visitId` is stored
+ *   per `shareId` in `sessionStorage`, so one tab reading two documents shares a `visitIdHash`
+ *   across both rows: "one session in the data room, one row per document in it".
+ * - Per-**document** figures are unaffected: for a given `docId` a viewer still has exactly one row
+ *   per link, which is what the document metrics page already assumes.
+ *
+ * Document links are untouched: their rows keep a bare 64-character digest.
+ */
+export function projectViewerKey(botIdHash: string, docId: string | Types.ObjectId): string {
+  return `${botIdHash}${PROJECT_VIEW_KEY_SEP}${String(docId)}`;
+}
+
+/**
+ * Split a stored key back into its viewer and its document.
+ *
+ * `docId` is null for a document link's row (a bare digest), which is how a caller tells the two
+ * apart without consulting the link.
+ */
+export function splitProjectViewerKey(key: string): { botIdHash: string; docId: string | null } {
+  const at = key.indexOf(PROJECT_VIEW_KEY_SEP);
+  if (at < 0) return { botIdHash: key, docId: null };
+  return { botIdHash: key.slice(0, at), docId: key.slice(at + PROJECT_VIEW_KEY_SEP.length) || null };
+}
+
+/** The fields the public project page and the document cards on it render. */
+export const PROJECT_DOC_LIST_FIELDS = {
+  _id: 1,
+  shareId: 1,
+  title: 1,
+  docName: 1,
+  fileName: 1,
+  previewImageUrl: 1,
+  firstPagePngUrl: 1,
+  "aiOutput.one_liner": 1,
+  "aiOutput.summary": 1,
+  "aiOutput.meta_description": 1,
+  "aiOutput.openGraph.description": 1,
+  updatedDate: 1,
+  createdDate: 1,
+} as const;
+
+/**
+ * The membership filter — the single definition of "in this project, right now".
+ *
+ * `projectId` **or** `projectIds`: a document can belong to several projects at once, which is the
+ * reason the product calls these Projects and not Folders (PRD, "Naming").
+ *
+ * `shareEnabled: { $ne: false }` stays. PRD decision 3 hands the project link authority over
+ * password, expiry and download — the settings that describe *this audience* — but the document's
+ * own share switch answers a different question ("is this document shared at all"), and an owner
+ * who switched a document off did not ask for it to keep going out inside a data room. Legacy rows
+ * without the field are on, as everywhere else.
+ */
+function projectDocFilter(project: ProjectLike): Record<string, unknown> {
+  return {
+    ...(project.orgId ? { orgId: project.orgId } : null),
+    isDeleted: { $ne: true },
+    isArchived: { $ne: true },
+    shareEnabled: { $ne: false },
+    $or: [{ projectId: project._id }, { projectIds: project._id }],
+  };
+}
+
+export type PublicProjectDoc = {
+  _id: Types.ObjectId;
+  shareId?: string | null;
+  title?: string | null;
+  docName?: string | null;
+  fileName?: string | null;
+  previewImageUrl?: string | null;
+  firstPagePngUrl?: string | null;
+  aiOutput?: unknown;
+} & Record<string, unknown>;
+
+/** The project's current, non-archived documents, newest activity first. */
+export async function listProjectDocuments(project: ProjectLike, opts: { select?: Record<string, 1> } = {}): Promise<PublicProjectDoc[]> {
+  await connectMongo();
+  return (await DocModel.find(projectDocFilter(project))
+    .select({ ...PROJECT_DOC_LIST_FIELDS, ...(opts.select ?? {}) })
+    .sort({ updatedDate: -1, createdDate: -1 })
+    .lean()) as unknown as PublicProjectDoc[];
+}
+
+/**
+ * One document of a project, by id — or null when it is not (or is no longer) in the project.
+ *
+ * The same filter as the list above, so "visible on the project page" and "openable through the
+ * project link" can never disagree. A malformed id is a miss rather than a cast error, because this
+ * runs on a public route where the id comes straight out of the URL.
+ */
+export async function findProjectDocument(
+  project: ProjectLike,
+  docId: string | Types.ObjectId,
+  opts: { select?: Record<string, 1> } = {},
+): Promise<PublicProjectDoc | null> {
+  const id = String(docId).trim();
+  if (!id || !Types.ObjectId.isValid(id)) return null;
+  await connectMongo();
+  return (await DocModel.findOne({ _id: new Types.ObjectId(id), ...projectDocFilter(project) })
+    .select({ ...PROJECT_DOC_LIST_FIELDS, ...(opts.select ?? {}) })
+    .lean()) as unknown as PublicProjectDoc | null;
+}
+
+export type ResolvedProjectDocument = ResolvedProjectLink & {
+  /** The document being read, already proven to be a live member of the link's project. */
+  doc: PublicProjectDoc;
+};
+
+/**
+ * Resolve `/p/:shareId/:docId` in one call: the project link, its refusal state, and the document —
+ * or null when the slug is not a project link's, or the document is not in that project.
+ *
+ * Returning null for a non-member document rather than a refusal is deliberate: a recipient must
+ * not be able to learn that a document id exists somewhere else in the workspace by watching the
+ * shape of the answer.
+ */
+export async function resolveProjectDocument(
+  shareId: string,
+  docId: string,
+  opts: { select?: Record<string, 1>; projectSelect?: Record<string, 1> } = {},
+): Promise<ResolvedProjectDocument | null> {
+  const resolved = await resolveProjectLink(shareId, { select: opts.projectSelect });
+  if (!resolved) return null;
+  // A refused link still resolves its document: the caller renders the refusal, and it must do so
+  // identically whether the document exists or not.
+  if (resolved.refusal) {
+    const doc = await findProjectDocument(resolved.project, docId, { select: opts.select });
+    return doc ? { ...resolved, doc } : null;
+  }
+  const doc = await findProjectDocument(resolved.project, docId, { select: opts.select });
+  if (!doc) return null;
+  return { ...resolved, doc };
+}
+
+/**
+ * Recover the document a project-link analytics POST is about, from the page that sent it.
+ *
+ * The share viewer posts to `/api/share/:shareId/stats` and names no document — it never had to,
+ * because a document link's slug *is* the document. A project link's slug is not, so the pair has
+ * to be reassembled somewhere. The body would be the obvious place, except that filling it in means
+ * a new prop through `PdfJsViewer`, a component this milestone does not own; so the route derives
+ * it instead, from the one thing the browser already sends for free: the `Referer`, which for a
+ * same-origin request is the full path under this app's
+ * `Referrer-Policy: strict-origin-when-cross-origin`.
+ *
+ * Trusting a header would be indefensible if it decided *access*. It does not. The value is only a
+ * claim about which of this link's documents is being read, and `findProjectDocument` re-proves
+ * membership before anything is written, so the worst a forged referer can do is attribute a view
+ * to another document the same recipient can already open through the same link. The `shareId`
+ * guard below rejects a referer from a different link outright.
+ *
+ * Returns null for anything that is not a `/p/:shareId/:docId` page, which is how a document link's
+ * POST — and a stray probe — falls through to the document path untouched.
+ */
+export function projectDocIdFromReferer(referer: string | null | undefined, shareId: string): string | null {
+  if (!referer) return null;
+  let pathname: string;
+  try {
+    pathname = new URL(referer).pathname;
+  } catch {
+    return null;
+  }
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length < 3 || parts[0] !== "p") return null;
+  const safe = (s: string) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  };
+  if (safe(parts[1]) !== shareId) return null;
+  const docId = safe(parts[2]).trim();
+  return docId && Types.ObjectId.isValid(docId) ? docId : null;
+}
+
+/**
+ * The project-link half of the stats/overlay ingest: which link, which project, which document.
+ *
+ * Takes the document id the caller put in the body when it has one (a viewer that learns to send it
+ * later needs no server change) and falls back to {@link projectDocIdFromReferer}. Null when the
+ * slug is not a project link's, or no document can be named, or the named one is not in the project.
+ */
+export async function resolveProjectStatsTarget(input: {
+  shareId: string;
+  request: Request;
+  bodyDocId?: unknown;
+  select?: Record<string, 1>;
+}): Promise<ResolvedProjectDocument | null> {
+  const fromBody = typeof input.bodyDocId === "string" && input.bodyDocId.trim() ? input.bodyDocId.trim() : null;
+  const docId = fromBody ?? projectDocIdFromReferer(input.request.headers.get("referer"), input.shareId);
+  if (!docId) return null;
+  return resolveProjectDocument(input.shareId, docId, { select: input.select });
+}
+
+/** Whether a project link is password protected (both halves of the material present). */
+export function projectLinkPasswordEnabled(link: { passwordHash?: string | null; passwordSalt?: string | null }): boolean {
+  return typeof link.passwordHash === "string" && Boolean(link.passwordHash) && typeof link.passwordSalt === "string" && Boolean(link.passwordSalt);
+}
+
+/**
+ * Re-export so `/p/**` never has to reach into `./links.ts` for the expiry rule and risk growing a
+ * second, subtly different one.
+ */
+export { isExpired };

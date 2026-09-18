@@ -39,6 +39,28 @@ function buildLastNDaysKeys(n: number): { start: Date; keys: string[] } {
   return { start, keys };
 }
 
+/**
+ * Scope note for the two `sharing` view counters below.
+ *
+ * `viewsTotal` / `views30d` / `pagesViewedTotal` / `pagesViewed30d` are sums of `Doc.numberOfViews`
+ * and `Doc.numberOfPagesViewed` — per-document legacy counters, and therefore **document-scoped**:
+ * a read through a project link is the data room's view and moves neither of them
+ * (`@/lib/analytics/docScope`, docs/METRICS.md). The four tiles agree with each other and with the
+ * document pages they summarise, and under-count a workspace that shares through data rooms.
+ *
+ * That agreement holds from the ingest guard forwards and *not* over history: a data-room read
+ * taken before the guard is inside the stored counter for good, and no later traffic subtracts it.
+ * A workspace in that state showed 14 here against 7 on both of its documents' own pages. The
+ * repair is `scripts/doc-view-counters-recount.ts`, which rewrites both counters from the analytics
+ * rows under the same rule; run it once per environment (and after any pass that reclassifies
+ * rows). Until it has run on an environment, treat these four tiles there as contaminated by
+ * pre-guard project-link traffic rather than as the document-scoped figures they now are.
+ *
+ * The `series30d` chart beside them is built from `ShareView` rows, which carry every read, so the
+ * chart can legitimately run above the tiles on such a workspace. `/api/metrics/workspace` is the
+ * surface that answers the workspace-scoped question properly; this one is the Overview tab's
+ * cheap summary and is not worth a full-collection scan to re-derive.
+ */
 export async function GET(request: Request) {
   return withMongoRequestLogging(request, async () => {
     const actor = await resolveActorForStats(request);

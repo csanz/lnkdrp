@@ -2,9 +2,9 @@
  * End-to-end harness for the lnkdrp MCP server (`mcp/`, see docs/MCP.md).
  *
  * Drives the real stack over the wire: mints a temporary API key straight in Mongo, connects an
- * MCP client to the running server, exercises the fifteen tools in the order an agent would use
- * them (including the share-link lifecycle: create a second link, fetch it, disable it, delete
- * it), checks that a bad key is rejected at `initialize`, and revokes the key again.
+ * MCP client to the running server, exercises every tool in the order an agent would use
+ * them (including both link lifecycles: a second link on a document, and a project link on a
+ * throwaway project — create, list, update, refuse an unconfirmed delete, delete), checks that a bad key is rejected at `initialize`, and revokes the key again.
  *
  * Prerequisites (three terminals):
  *   npm run dev        # Next app on :3001 (the MCP server calls its REST API)
@@ -88,6 +88,10 @@ const EXPECTED_TOOLS = [
   "lnkdrp_remove_doc_from_project",
   "lnkdrp_update_project",
   "lnkdrp_delete_project",
+  "lnkdrp_create_project_link",
+  "lnkdrp_list_project_links",
+  "lnkdrp_update_project_link",
+  "lnkdrp_delete_project_link",
   "lnkdrp_star_docs",
   "lnkdrp_list_starred",
 ] as const;
@@ -228,6 +232,29 @@ type ShareLinkDTO = {
   downloadCount: number;
 };
 type CreateShareLinkResult = { link: ShareLinkDTO; shareUrl: string; planWarning?: unknown; planNote?: string };
+/** One project link: the document DTO minus docId and allowRevisionHistory, resolving at /p/. */
+type ProjectLinkDTO = {
+  id: string;
+  projectId: string;
+  shareId: string;
+  shareUrl: string;
+  label: string;
+  audience: string | null;
+  isDefault: boolean;
+  enabled: boolean;
+  allowDownload: boolean;
+  passwordEnabled: boolean;
+  expiresAt: string | null;
+  active: boolean;
+  status: string;
+  createdVia: string;
+  viewCount: number;
+  downloadCount: number;
+};
+type ProjectRefResult = { projectId: string; slug: string; name: unknown };
+type CreateProjectLinkResult = { project: ProjectRefResult; link: ProjectLinkDTO; shareUrl: string; warnings?: string[] };
+type ListProjectLinksResult = { project: ProjectRefResult; publicPageEnabled: boolean | null; links: ProjectLinkDTO[] };
+type CreateProjectResult = { project: { projectId: string; slug: string; name: unknown; publicUrl?: string | null } };
 type ListShareLinksResult = { docId: string; links: ShareLinkDTO[] };
 type FindShareLinkHit = { docId: string; docTitle: string | null; docShareId: string | null; linkId: string; shareId: string; shareUrl: string; label: string; audience: string | null; isDefault: boolean };
 type FindShareLinkResult = { query: string; links: FindShareLinkHit[] };
@@ -235,6 +262,7 @@ type FindShareLinkResult = { query: string; links: FindShareLinkHit[] };
 /** Credit/AI fields added to whoami and share_pdf (agent-written summaries, warnings). */
 type Capabilities = {
   links?: { limited?: boolean };
+  projectLinks?: { proOnly?: boolean; available?: boolean };
   documents?: { limit: number | null; used: number; remaining: number | null } | null;
   projects?: { limit: number | null; used: number; remaining: number | null } | null;
   collaborators?: { limit: number | null; used: number } | null;
@@ -248,6 +276,8 @@ type SharePdfAiFields = { warnings?: unknown; creditsRemaining?: number };
 type ReplacePdfResult = { docId: string; shareId: string; shareUrl: string; status: string; version: number; uploadId: string; title: string | null };
 /** Documents this run created; deleted in `finally` so the Free active-link cap is not consumed. */
 const createdDocs: Array<{ docId: string; origin: string }> = [];
+/** Throwaway projects the project-link steps create, deleted in `finally` even after a failure. */
+const createdProjects: Array<{ projectId: string; origin: string }> = [];
 /** Set E2E_KEEP_DOCS=1 to keep the created documents (e.g. to inspect attribution on /activity). */
 const KEEP_DOCS = process.env.E2E_KEEP_DOCS === "1";
 
@@ -378,7 +408,7 @@ async function main(): Promise<void> {
     });
 
     // 4. Tool catalogue.
-    await step("listTools exposes the fifteen lnkdrp tools", async () => {
+    await step(`listTools exposes the ${EXPECTED_TOOLS.length} lnkdrp tools`, async () => {
       const { tools } = await live.listTools();
       const names = tools.map((t) => t.name);
       for (const expected of EXPECTED_TOOLS) assert(names.includes(expected), `missing tool ${expected}; got ${names.join(", ")}`);
@@ -421,6 +451,10 @@ async function main(): Promise<void> {
       const caps = me.capabilities;
       assert(caps && typeof caps === "object", "whoami.capabilities missing");
       assert(caps!.links?.limited === false, "capabilities.links.limited must be false — links are never capped");
+      // Project links are the one link-create a plan can refuse, so the agent must be able to learn
+      // that before it tries: a missing key is indistinguishable from "not gated".
+      assert(caps!.projectLinks?.proOnly === true, "capabilities.projectLinks.proOnly must be true — project links are Pro only");
+      assert(typeof caps!.projectLinks?.available === "boolean", "capabilities.projectLinks.available is not a boolean");
       for (const key of ["documents", "projects"] as const) {
         const c = caps![key];
         assert(c === null || (c && typeof c.used === "number" && (c.limit === null || typeof c.limit === "number")), `capabilities.${key} malformed: ${JSON.stringify(c)}`);
@@ -859,6 +893,167 @@ async function main(): Promise<void> {
       assert(list.links[0]?.isDefault === true, "the surviving link is not the default one");
     });
 
+    // 17c-17h. The project-link lifecycle (docs/prds/lnkdrp-project-links.md, M5). Same shape as the
+    // document-link steps above, on a throwaway project holding the document this run created, so
+    // the delete preview has real contents to describe. Everything asserted here was observed
+    // against the live dev API on 2026-09-17 before the steps were written.
+    //
+    // This is also the first live exercise of *any* project tool in this harness: the seven project
+    // tools have been in EXPECTED_TOOLS (and so asserted present) since they shipped, with nothing
+    // ever calling one.
+    const proj = await step("lnkdrp_create_project + add the document (a throwaway data room)", async () => {
+      const res = await callTool<CreateProjectResult>(live, "lnkdrp_create_project", {
+        idempotencyKey: `e2e-project-${randomUUID()}`,
+        name: `MCP e2e data room ${new Date().toISOString()}`,
+        description: "Created by the MCP e2e run; deleted again at the end.",
+      });
+      assert(typeof res.project?.projectId === "string", "create_project returned no projectId");
+      createdProjects.push({ projectId: res.project.projectId, origin: new URL(shared.shareUrl).origin });
+      const added = await callTool<{ added: string[] }>(live, "lnkdrp_add_docs_to_project", {
+        projectId: res.project.projectId,
+        docIds: [shared.docId],
+      });
+      assert(added.added.includes(shared.docId), `the document was not added to the project: ${JSON.stringify(added)}`);
+      info("project", `${res.project.projectId} (${res.project.slug})`);
+      return res.project;
+    });
+
+    await step("lnkdrp_list_project_links shows the default link, materialised from the project's own shareId", async () => {
+      const res = await callTool<ListProjectLinksResult>(live, "lnkdrp_list_project_links", { projectId: proj.projectId });
+      assert(res.links.length === 1, `a new project should have exactly its default link, got ${res.links.length}`);
+      const def = res.links[0] as ProjectLinkDTO;
+      assert(def.isDefault === true, "the only link on a new project is not marked default");
+      // A project link opens the project page, not a document: /p/, never /s/.
+      assert(def.shareUrl.endsWith(`/p/${def.shareId}`), `project link shareUrl "${def.shareUrl}" does not end with /p/${def.shareId}`);
+      assert(res.publicPageEnabled === true, "a new project's public page should be on");
+      info("default link", `${def.id} ${def.shareId} status=${def.status}`);
+    });
+
+    const projLink = await step('lnkdrp_create_project_link { label: "Sequoia", allowDownload: true, password }', async () => {
+      const res = await callTool<CreateProjectLinkResult>(live, "lnkdrp_create_project_link", {
+        projectId: proj.projectId,
+        label: "Sequoia",
+        audience: "Sequoia · Roelof",
+        allowDownload: true,
+        password: "x",
+      });
+      assert(res.link && typeof res.link.id === "string", "create_project_link returned no link");
+      assert(res.link.isDefault === false, "create_project_link marked the new link as the default one");
+      assert(res.link.allowDownload === true, "create_project_link ignored allowDownload");
+      // A one-character password is the owner's call and must be used verbatim (share-password-no-minimum).
+      assert(res.link.passwordEnabled === true, "create_project_link did not set the password");
+      assert(res.link.createdVia === "mcp", `createdVia is "${res.link.createdVia}", expected "mcp"`);
+      assert(res.shareUrl.endsWith(`/p/${res.link.shareId}`), `create_project_link.shareUrl "${res.shareUrl}" is not the project page`);
+      assert(!("allowRevisionHistory" in res.link), "a project link must not carry allowRevisionHistory: it has no single document");
+      info("link", `${res.link.id} ${res.link.shareId} status=${res.link.status}`);
+      return res.link;
+    });
+
+    await step("a duplicate label warns instead of refusing, and projectSlug resolves the same project", async () => {
+      const res = await callTool<CreateProjectLinkResult>(live, "lnkdrp_create_project_link", {
+        projectSlug: proj.slug,
+        label: "Sequoia",
+      });
+      assert(res.project.projectId === proj.projectId, "projectSlug resolved to a different project than projectId did");
+      assert(res.link.shareId !== projLink.shareId, "the second link reused the first one's shareId");
+      assert(
+        Array.isArray(res.warnings) && res.warnings.some((w) => w.includes("already has")),
+        `a duplicate label should warn: ${JSON.stringify(res.warnings)}`,
+      );
+      // Tidy up straight away: the rest of the block reasons about a known link count.
+      await callTool(live, "lnkdrp_delete_project_link", { projectId: proj.projectId, linkId: res.link.id, confirm: true });
+      info("warnings", res.warnings);
+    });
+
+    await step("lnkdrp_update_project_link renames, clears the password and disables one link", async () => {
+      const res = await callTool<CreateProjectLinkResult>(live, "lnkdrp_update_project_link", {
+        projectId: proj.projectId,
+        linkId: projLink.id,
+        label: "Sequoia · diligence",
+        password: null,
+        enabled: false,
+      });
+      assert(res.link.label === "Sequoia · diligence", `update_project_link.label is "${res.link.label}"`);
+      assert(res.link.passwordEnabled === false, "password: null did not clear the password");
+      assert(res.link.status === "disabled", `update_project_link.status is "${res.link.status}", expected "disabled"`);
+      // The project's other links are untouched: the default link still resolves.
+      const list = await callTool<ListProjectLinksResult>(live, "lnkdrp_list_project_links", { projectId: proj.projectId });
+      assert(list.links.find((l) => l.isDefault)?.status === "active", "disabling one link took the default link down with it");
+
+      let refused: ToolCallError | null = null;
+      try {
+        await callTool(live, "lnkdrp_update_project_link", { projectId: proj.projectId, linkId: projLink.id });
+      } catch (e) {
+        if (!(e instanceof ToolCallError)) throw e;
+        refused = e;
+      }
+      assert(refused?.code === "validation", "an update with no settings should be a validation error");
+    });
+
+    await step("the project's default link cannot be deleted, even with confirm: true", async () => {
+      const list = await callTool<ListProjectLinksResult>(live, "lnkdrp_list_project_links", { projectId: proj.projectId });
+      const def = list.links.find((l) => l.isDefault);
+      assert(def, "the project has no default link");
+      let refused: ToolCallError | null = null;
+      try {
+        await callTool(live, "lnkdrp_delete_project_link", { projectId: proj.projectId, linkId: def.id, confirm: true });
+      } catch (e) {
+        if (!(e instanceof ToolCallError)) throw e;
+        refused = e;
+      }
+      // /p/<shareId> is the URL every earlier recipient already holds: it is disabled, never deleted.
+      assert(refused?.code === "validation", `deleting the default project link should be refused, got ${String(refused?.code)}`);
+      const still = await callTool<ListProjectLinksResult>(live, "lnkdrp_list_project_links", { projectId: proj.projectId });
+      assert(still.links.some((l) => l.isDefault), "the refused delete removed the default link anyway");
+    });
+
+    await step("lnkdrp_delete_project_link without confirm is refused with a preview, then proceeds with it", async () => {
+      let refused: ToolCallError | null = null;
+      try {
+        await callTool(live, "lnkdrp_delete_project_link", { projectId: proj.projectId, linkId: projLink.id });
+      } catch (e) {
+        if (!(e instanceof ToolCallError)) throw e;
+        refused = e;
+      }
+      assert(refused, "an unconfirmed project-link delete went through — the confirmation gate is not enforced");
+      const d = (refused.details ?? {}) as { requiresConfirmation?: unknown; preview?: { headline?: unknown; facts?: unknown; severity?: unknown }; reversible?: unknown };
+      assert(d.requiresConfirmation === true, "refusal did not carry requiresConfirmation: true");
+      assert(typeof d.preview?.headline === "string" && d.preview.headline.includes("Sequoia · diligence"), "preview does not name the link");
+      // The preview has to say the recipient loses the *project*, not one document.
+      assert(
+        Array.isArray(d.preview?.facts) && d.preview.facts.some((f) => typeof f === "string" && f.includes("the whole project")),
+        `preview does not say the holder loses the whole project: ${JSON.stringify(d.preview?.facts)}`,
+      );
+      assert(d.reversible === false, "delete must be reported as irreversible");
+      const still = await callTool<ListProjectLinksResult>(live, "lnkdrp_list_project_links", { projectId: proj.projectId });
+      assert(still.links.length === 2, `the refused delete removed something: ${still.links.length} links remain`);
+
+      const done = await callTool<{ ok: boolean; deleted?: { label?: string }; severity?: string }>(live, "lnkdrp_delete_project_link", {
+        projectId: proj.projectId,
+        linkId: projLink.id,
+        confirm: true,
+      });
+      assert(done.ok === true, "delete_project_link did not return ok");
+      assert(done.deleted?.label === "Sequoia · diligence", "response does not echo what was deleted");
+      const after = await callTool<ListProjectLinksResult>(live, "lnkdrp_list_project_links", { projectId: proj.projectId });
+      assert(after.links.length === 1 && after.links[0]?.isDefault === true, `expected only the default link left, got ${after.links.length}`);
+      info("preview", `${d.preview?.headline} · severity ${String(d.preview?.severity)}`);
+    });
+
+    await step("lnkdrp_delete_project removes the throwaway project and leaves the document alone", async () => {
+      const res = await callTool<{ ok: boolean; deleted?: { documentsDetached?: number } }>(live, "lnkdrp_delete_project", {
+        projectId: proj.projectId,
+        confirm: true,
+      });
+      assert(res.ok === true, "delete_project did not return ok");
+      assert(res.deleted?.documentsDetached === 1, `expected 1 document to leave the project, got ${String(res.deleted?.documentsDetached)}`);
+      const idx = createdProjects.findIndex((p) => p.projectId === proj.projectId);
+      if (idx >= 0) createdProjects.splice(idx, 1);
+      // The document itself survives: the next steps still use it.
+      const doc = await callTool<GetShareResult>(live, "lnkdrp_get_share", { docId: shared.docId });
+      assert(doc.docId === shared.docId, "deleting the project took the document with it");
+    });
+
     // Free the first document's slot before creating the second. The Free cap counts *shared
     // documents*, and this run needs two — so on a workspace with one slot free it used to sail
     // through nineteen steps and fail on the last one with a plan_limit that looked like a bug in
@@ -923,6 +1118,16 @@ async function main(): Promise<void> {
           signal: AbortSignal.timeout(15_000),
         }).catch(() => null);
         console.log(`[--] delete doc ${id} ${res?.ok ? "ok" : `FAILED (${res ? `HTTP ${res.status}` : "network"})`}`);
+      }
+      // Projects are cleaned up whatever happened: a leaked one holds a slot on Free and leaves a
+      // stray public page behind. Deleting a project never touches its documents.
+      for (const { projectId: id, origin } of createdProjects) {
+        const res = await fetch(`${origin}/api/projects/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${plaintext}` },
+          signal: AbortSignal.timeout(15_000),
+        }).catch(() => null);
+        console.log(`[--] delete project ${id} ${res?.ok ? "ok" : `FAILED (${res ? `HTTP ${res.status}` : "network"})`}`);
       }
     }
     if (keyId) {

@@ -49,6 +49,21 @@ type Props = {
   /** Free workspaces: show the `Pro` pill on the revision-history switch. */
   showProPill?: boolean;
   onProPillClick?: () => void;
+  /**
+   * Whether the "Let recipients browse versions" switch applies at all. `false` on a project link:
+   * a project has no single document whose versions a recipient could browse, so the field does
+   * not exist on the row and the server would ignore it.
+   *
+   * Additive — defaults to the document behaviour, so no document call site changes.
+   */
+  showRevisionHistory?: boolean;
+  /** The thing the link opens, for the two sentences that name it. Defaults to "document". */
+  resourceNoun?: string;
+  /**
+   * Where `Show` reads the stored password from, given the link's id. Defaults to the document
+   * route derived from `link.docId`, which is all this modal could do before project links existed.
+   */
+  passwordUrl?: (linkId: string) => string;
   onClose: () => void;
   onSubmit: (values: ShareLinkFormValues) => void;
 };
@@ -146,6 +161,9 @@ export default function ShareLinkModal({
   error = null,
   showProPill = false,
   onProPillClick,
+  showRevisionHistory = true,
+  resourceNoun = "document",
+  passwordUrl,
   onClose,
   onSubmit,
 }: Props) {
@@ -211,13 +229,26 @@ export default function ShareLinkModal({
     setExpires(iso && Date.parse(iso) > Date.now() ? toDateInputValue(iso) : "");
   }
 
+  /**
+   * Where `Show` reads from. The caller passes it (`LinksManager` derives it from its scope); the
+   * fallback is the document route, which is what this modal did before project links existed and
+   * keeps any other call site working. `null` when neither is available — the button is not shown.
+   */
+  const revealUrl = link
+    ? passwordUrl
+      ? passwordUrl(link.id)
+      : link.docId
+        ? `/api/docs/${encodeURIComponent(link.docId)}/links/${encodeURIComponent(link.id)}/password`
+        : null
+    : null;
+
   /** Fetch and show the stored password for the link being edited. */
   async function revealPassword() {
-    if (!link || revealing) return;
+    if (!revealUrl || revealing) return;
     setRevealing(true);
     setRevealError(null);
     try {
-      const res = await fetch(`/api/docs/${encodeURIComponent(link.docId)}/links/${encodeURIComponent(link.id)}/password`, { cache: "no-store" });
+      const res = await fetch(revealUrl, { cache: "no-store" });
       const body = (await res.json().catch(() => ({}))) as { password?: unknown; error?: unknown };
       // The reveal is admin/owner only, one step above the `member` who can edit a link — so a
       // member reaches this button and gets a bare "Forbidden" from the role gate. Say what the
@@ -359,20 +390,26 @@ export default function ShareLinkModal({
         <div className="grid gap-2">
           <SwitchRow
             label="Link enabled"
-            hint={enabled ? "Anyone with this link can view the document." : "Recipients see “This document is no longer shared.”"}
+            hint={
+              enabled
+                ? `Anyone with this link can view the ${resourceNoun}.`
+                : `Recipients see “This ${resourceNoun} is no longer shared.”`
+            }
             checked={enabled}
             disabled={saving}
             onChange={setEnabled}
           />
           <SwitchRow label="Allow download" checked={allowDownload} disabled={saving} onChange={setAllowDownload} />
-          <SwitchRow
-            label="Let recipients browse versions"
-            hint="They see each version with its date and what changed. Owner-side version history and AI compare are separate."
-            checked={allowRevisionHistory}
-            disabled={saving}
-            onChange={setAllowRevisionHistory}
-            trailing={showProPill ? <ProPill onClick={onProPillClick} /> : null}
-          />
+          {showRevisionHistory ? (
+            <SwitchRow
+              label="Let recipients browse versions"
+              hint="They see each version with its date and what changed. Owner-side version history and AI compare are separate."
+              checked={allowRevisionHistory}
+              disabled={saving}
+              onChange={setAllowRevisionHistory}
+              trailing={showProPill ? <ProPill onClick={onProPillClick} /> : null}
+            />
+          ) : null}
         </div>
 
         <div>
@@ -418,7 +455,7 @@ export default function ShareLinkModal({
                 <span className="text-[12px] text-[var(--fg)]">Password protected</span>
               )}
               <span className="flex-1" />
-              {!canRevealPassword ? null : revealed ? (
+              {!canRevealPassword || !revealUrl ? null : revealed ? (
                 <button type="button" onClick={() => void copyRevealed()} className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-1.5 text-[12px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-50">
                   {copied ? "Copied" : "Copy"}
                 </button>

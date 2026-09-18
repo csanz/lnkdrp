@@ -11,10 +11,17 @@ import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 
 /**
  * Which Free-plan limit was hit. Mirrors `LimitKey` in `src/lib/billing/planLimits.ts`.
- * `version_history` and `analytics_history` (deep analytics: viewer identities, per-page time,
- * visit timelines) are Pro feature gates (no count; `used`/`max` are 0).
+ * `version_history`, `analytics_history` (deep analytics: viewer identities, per-page time,
+ * visit timelines) and `project_links` (a second share link on a project) are Pro feature gates
+ * (no count; `used`/`max` are 0).
  */
-export type PlanLimitKey = "documents" | "projects" | "collaborators" | "version_history" | "analytics_history";
+export type PlanLimitKey =
+  | "documents"
+  | "projects"
+  | "collaborators"
+  | "version_history"
+  | "analytics_history"
+  | "project_links";
 
 /** Grace window for workspaces that were over the limits at launch (ISO strings). */
 export type PlanLimitGrace = { startedAt: string; endsAt: string; blockedAt: string | null } | null;
@@ -61,7 +68,7 @@ export const CREDITS_COPY = {
  * surrounding copy rather than a pasted disclaimer.
  */
 export function whatHappensAfterFreeCredits(): string {
-  return `buy a credit pack from ${formatPackPrice(CHEAPEST_PACK.priceCents)}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} a month included`;
+  return `buy a credit pack from ${formatPackPrice(CHEAPEST_PACK.priceCents)}, or upgrade to Pro for ${CREDITS_COPY.proPerMonth} credits a month`;
 }
 
 /** The smallest pack, for "from $5" copy. */
@@ -85,6 +92,7 @@ const LIMIT_KEYS: ReadonlySet<string> = new Set([
   "collaborators",
   "version_history",
   "analytics_history",
+  "project_links",
 ]);
 
 /** Coerce an unknown value to a non-negative integer, or `null` when it is not a finite number. */

@@ -13,11 +13,11 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
-import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
+import { RECIPIENT_ONLY_MATCH, shareIdClause } from "@/lib/analytics/shareViewAggregates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -103,8 +103,21 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     //
     // `RECIPIENT_ONLY_MATCH`: the owner's own sessions are recorded but never listed here, so this
     // timeline shows exactly the sessions the counts beside it are built from.
+    //
+    // A project link (docs/prds/lnkdrp-project-links.md) writes `ShareVisit` rows carrying the
+    // `docId` of each document opened inside the data room, so the unfiltered branch has to drop
+    // the slugs that are not this document's links — the same bound `/shareviews` applies, for the
+    // same reason: those sessions belong to the project's timeline, not the document's.
+    const foreignShareIds: string[] = link
+      ? []
+      : ((await ShareLinkModel.find({
+          shareId: { $in: (await ShareVisitModel.distinct("shareId", { docId: docObjectId })) as unknown as string[] },
+          ...PROJECT_LINK_FILTER,
+        }).distinct("shareId")) as unknown as string[]);
     const query: Record<string, unknown> = {
-      ...(link ? { docId: docObjectId, shareId: link.shareId } : { docId: docObjectId }),
+      ...(link
+        ? { docId: docObjectId, shareId: link.shareId }
+        : { docId: docObjectId, ...shareIdClause({ except: foreignShareIds }) }),
       ...RECIPIENT_ONLY_MATCH,
     };
     if (kind === "authed") query.viewerUserId = new Types.ObjectId(userId!);

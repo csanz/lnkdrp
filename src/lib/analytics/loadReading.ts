@@ -8,6 +8,7 @@ import { ShareLinkModel } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { UploadModel } from "@/lib/models/Upload";
+import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
 import {
   LAST_ACTIVITY_EXPR,
   LINK_VIEWER_KEY_EXPR,
@@ -67,11 +68,21 @@ export async function loadReadingCore(a: {
   const docId = typeof a.docId === "string" ? new Types.ObjectId(a.docId) : a.docId;
   const start = windowStartUtc(a.days, new Date(a.now));
 
+  // The document scope, not `{ docId }` alone: a read through a project link carries the opened
+  // document's `docId` under the *project's* slug, and the link list below comes from
+  // `ShareLinkModel.find({ docId })`, which by construction cannot contain a project link (its
+  // `docId` is null). Without the exclusion every live data-room link arrived on this page as a
+  // "Deleted link" row — the exact failure `@/lib/analytics/docScope` was written to end — and the
+  // people behind those rows were counted here while the document's own metrics page, which already
+  // obeys the rule, showed none of them.
+  const { match: docOnlyMatch } = await docOnlyShareIdMatch([docId]);
+  const docScope = { docId, ...docOnlyMatch };
+
   const [linkDocs, rowDocs, visitDocs, lastOpenedAgg, completedUploads] = await Promise.all([
     ShareLinkModel.find({ docId })
       .select({ shareId: 1, label: 1, isDefault: 1, enabled: 1, expiresAt: 1, archivedAt: 1, createdDate: 1 })
       .lean<Array<Record<string, unknown>>>(),
-    ShareViewModel.find({ docId, ...RECIPIENT_ONLY_MATCH, ...activityWindowMatch(start) })
+    ShareViewModel.find({ ...docScope, ...RECIPIENT_ONLY_MATCH, ...activityWindowMatch(start) })
       .select({
         shareId: 1,
         botIdHash: 1,
@@ -85,7 +96,7 @@ export async function loadReadingCore(a: {
         downloads: 1,
       })
       .lean<Array<Record<string, unknown>>>(),
-    ShareVisitModel.find({ docId, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start } })
+    ShareVisitModel.find({ ...docScope, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start } })
       .select({
         shareId: 1,
         botIdHash: 1,
@@ -102,7 +113,7 @@ export async function loadReadingCore(a: {
     // One all-time pass per person key: link last-opened is the max over its keys, and anonymous
     // numbering ranks keys by first seen so it never depends on the range or link filter.
     ShareViewModel.aggregate([
-      { $match: { docId, ...RECIPIENT_ONLY_MATCH } },
+      { $match: { ...docScope, ...RECIPIENT_ONLY_MATCH } },
       {
         $group: {
           _id: LINK_VIEWER_KEY_EXPR,

@@ -71,14 +71,20 @@ export type PlanLimits = {
 };
 
 /**
- * What `checkLimit` can enforce. The first three are counts against a cap; `version_history` and
- * `analytics_history` are Pro feature gates (blocked on Free regardless of usage, never subject to
- * grace).
+ * What `checkLimit` can enforce. The first three are counts against a cap; `version_history`,
+ * `analytics_history` and `project_links` are Pro feature gates (blocked on Free regardless of
+ * usage, never subject to grace).
  */
-export type LimitKey = "documents" | "projects" | "collaborators" | "version_history" | "analytics_history";
+export type LimitKey =
+  | "documents"
+  | "projects"
+  | "collaborators"
+  | "version_history"
+  | "analytics_history"
+  | "project_links";
 
 /** Limits that gate a Pro feature rather than count usage. */
-export type FeatureGateKey = Extract<LimitKey, "version_history" | "analytics_history">;
+export type FeatureGateKey = Extract<LimitKey, "version_history" | "analytics_history" | "project_links">;
 
 /** Limits that count usage against a cap. */
 export type CountedLimitKey = Exclude<LimitKey, FeatureGateKey>;
@@ -88,7 +94,7 @@ export type AnalyticsTier = "basic" | "deep";
 
 /** True for limits that gate a Pro feature rather than count usage. */
 function isFeatureGate(limit: LimitKey): limit is FeatureGateKey {
-  return limit === "version_history" || limit === "analytics_history";
+  return limit === "version_history" || limit === "analytics_history" || limit === "project_links";
 }
 
 /** Grace window for a workspace over a Free limit (ISO strings), or `null` when none. */
@@ -243,6 +249,11 @@ function limitMessage(limit: LimitKey, max: number, plan: PlanId = "free"): stri
       return "Letting recipients browse versions is a Pro feature.";
     case "analytics_history":
       return "Deep analytics are a Pro feature.";
+    case "project_links":
+      // A gate, not a cap: Free keeps the project's own default link (materialised from
+      // `Project.shareId`, so every `/p/:shareId` in the wild keeps resolving) and is refused only
+      // when it tries to add a *second* one. Hence "another link" rather than a number.
+      return "Sending a project to more than one audience is a Pro feature.";
   }
 }
 

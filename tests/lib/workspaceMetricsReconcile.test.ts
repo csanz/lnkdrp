@@ -10,6 +10,12 @@
  * — rather than read back from `query.ts`, so a wrong grouping there cannot pass by agreeing with
  * itself.
  *
+ * "Document-scoped" means through `docOnlyShareIdMatch`, exactly as `/api/docs/:docId/shareviews`
+ * builds it, and that is load-bearing rather than incidental: recomputing from a raw `{ docId }`
+ * match made this suite pass against a workspace whose two live pages disagreed by six views,
+ * because a raw match counts the data-room reads the workspace card was wrongly counting too. A
+ * guard that models the page has to subtract the project slugs the page subtracts.
+ *
  * Run it against the dev database with:
  *   MONGODB_URI="mongodb://127.0.0.1:27018/lnkdrp_dev?directConnection=true&replicaSet=rs0" \
  *   WORKSPACE_METRICS_TEST_ORG_ID=<orgId> \
@@ -46,6 +52,7 @@ describe("workspace metrics reconcile with document metrics", () => {
     async () => {
       const { Types } = await import("mongoose");
       const { loadWorkspaceMetrics } = await import("@/lib/analytics/workspace/query");
+      const { docOnlyShareIdMatch } = await import("@/lib/analytics/docScope");
       const { ShareViewModel } = await import("@/lib/models/ShareView");
       const { ShareVisitModel } = await import("@/lib/models/ShareVisit");
 
@@ -59,14 +66,17 @@ describe("workspace metrics reconcile with document metrics", () => {
 
       for (const row of docs) {
         const docId = new Types.ObjectId(row.docId);
-        // The document scope, exactly as `/api/docs/:docId/shareviews` builds it.
-        const scopeMatch = { docId, ...RECIPIENT_ONLY_MATCH };
+        // The document scope, exactly as `/api/docs/:docId/shareviews` builds it: `{ docId }`
+        // *minus the project slugs this document has traffic on*, because a read through a data
+        // room is the project's view and the document's own page never shows it.
+        const { match: docOnlyMatch } = await docOnlyShareIdMatch([docId]);
+        const scopeMatch = { docId, ...docOnlyMatch, ...RECIPIENT_ONLY_MATCH };
         const windowMatch = { ...scopeMatch, ...activityWindowMatch(start) };
 
         // The document route's `totals.opens` and `totals.visitTimeMs`: one row per tab session,
         // bounded by `lastEventAt`. Reading time is a range figure and must never come from the
         // lifetime `shareviews.timeSpentMs` counter, which is what this assertion pins.
-        const visitMatch = { docId, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start } };
+        const visitMatch = { docId, ...docOnlyMatch, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start } };
 
         const [views, viewerRows, downloadRows, opens, visitRows] = await Promise.all([
           ShareViewModel.countDocuments(windowMatch),

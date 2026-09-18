@@ -17,7 +17,7 @@ import { randomBase62, newShareId } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { ensureDefaultLink } from "@/lib/share/links";
-import { ShareLinkModel } from "@/lib/models/ShareLink";
+import { DOC_LINK_FILTER, ShareLinkModel } from "@/lib/models/ShareLink";
 import { createdViaFor } from "@/lib/share/createdVia";
 
 export const runtime = "nodejs";
@@ -147,7 +147,13 @@ export async function GET(request: Request) {
       // slug has to match *any* of the document's links, or an agent handed the Sequoia link — the
       // whole point of per-audience links — asks `get_share` about it and is told it does not
       // exist. One indexed lookup on `sharelinks.shareId` (unique), then the doc ids join the `$or`.
-      const linkHits = await ShareLinkModel.find({ shareId: rx, orgId }).select({ docId: 1 }).limit(50).lean<Array<{ docId: Types.ObjectId }>>();
+      // `DOC_LINK_FILTER`: `sharelinks` also holds project links, whose `docId` is null. A project
+      // slug matching the regex would burn one of the 50 slots on a row that can never join to a
+      // document — document search must only ever see document links.
+      const linkHits = await ShareLinkModel.find({ shareId: rx, orgId, ...DOC_LINK_FILTER })
+        .select({ docId: 1 })
+        .limit(50)
+        .lean<Array<{ docId: Types.ObjectId }>>();
       const linkDocIds = linkHits.map((l) => l.docId).filter(Boolean);
       filter.$or = [{ title: rx }, { shareId: rx }, ...(linkDocIds.length ? [{ _id: { $in: linkDocIds } }] : [])];
     }

@@ -2,7 +2,7 @@
  * Route: `/s/:shareId` — recipient-facing public share page (optionally password gated).
  */
 import type { Metadata } from "next";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { resolveShareLink } from "@/lib/share/links";
 import type { AiOutput } from "@/components/PdfJsViewer";
@@ -10,7 +10,7 @@ import ShareViewerClient from "./ShareViewerClient";
 import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "./PasswordGate";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
-import { getMetadataBaseUrl } from "@/lib/urls";
+import { buildShareMetadata } from "@/lib/share/shareMetadata";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -118,23 +118,8 @@ export async function generateMetadata(props: {
     meta.title || og.title || (typeof doc?.title === "string" ? doc.title : "") || "Shared document";
   const description = meta.description || og.description || "Shared with LinkDrop.";
 
-  // Prefer the request origin (correct for preview deployments / custom domains); a malformed
-  // host header must not 500 the share page, so fall back to the configured site URL.
-  const h = await headers();
-  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "";
-  const proto = h.get("x-forwarded-proto") ?? "https";
-  const metadataBase = (() => {
-    if (host) {
-      try {
-        return new URL(`${proto}://${host}`);
-      } catch {
-        // fall through to configured site URL
-      }
-    }
-    return getMetadataBaseUrl();
-  })();
-
-  // Prefer the doc preview thumbnail (if it's a real URL). Fall back to the site default OG image.
+  // Prefer the doc preview thumbnail (if it's a real URL). `buildShareMetadata` falls back to the
+  // site default OG image for anything it cannot use.
   const previewCandidate =
     (typeof (doc as { previewImageUrl?: unknown })?.previewImageUrl === "string" &&
       (doc as { previewImageUrl: string }).previewImageUrl) ||
@@ -142,42 +127,7 @@ export async function generateMetadata(props: {
       (doc as { firstPagePngUrl: string }).firstPagePngUrl) ||
     null;
 
-  const ogImageMeta: NonNullable<Metadata["openGraph"]>["images"] = (() => {
-    if (typeof previewCandidate === "string" && previewCandidate) {
-      if (/^https?:\/\//i.test(previewCandidate)) {
-        return [{ url: new URL(previewCandidate), alt: title }];
-      }
-      if (previewCandidate.startsWith("/")) {
-        return [{ url: new URL(previewCandidate, metadataBase), alt: title }];
-      }
-    }
-    return [
-      {
-        url: new URL("/images/og.png", metadataBase),
-        width: 840,
-        height: 491,
-        alt: title,
-      },
-    ];
-  })();
-
-  return {
-    title,
-    description,
-    metadataBase,
-    twitter: {
-      card: "summary_large_image",
-      title,
-      description,
-      images: ogImageMeta,
-    },
-    openGraph: {
-      type: "website",
-      title,
-      description,
-      images: ogImageMeta,
-    },
-  };
+  return buildShareMetadata({ title, description, previewUrl: previewCandidate });
 }
 
 /**

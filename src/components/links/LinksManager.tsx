@@ -1,12 +1,21 @@
 /**
- * DocLinksManager — the one place that owns a document's share links (docs/prds/lnkdrp-multi-links.md).
+ * LinksManager — the one place that owns a resource's share links
+ * (docs/prds/lnkdrp-multi-links.md, docs/prds/lnkdrp-project-links.md).
  *
- * Moved out of `DocSharePanel` so link management has a home of its own: the doc side panel keeps a
- * compact summary (`variant="panel"`), the dedicated `/doc/:docId/links` page renders the full list
- * (`variant="page"`). Both share the same data and the same mutations — the fetch of
- * `GET /api/docs/:docId/links`, per-link unique-viewer counts, create/edit through `ShareLinkModal`,
- * enable/disable, delete behind an inline confirm, copy, the `share_link.*` realtime refetch and the
- * `planWarning` upgrade prompt.
+ * Moved out of `DocSharePanel` so link management has a home of its own: a side panel keeps a
+ * compact summary (`variant="panel"`), the dedicated links page renders the full list
+ * (`variant="page"`). Both share the same data and the same mutations — the list fetch, per-link
+ * unique-viewer counts, create/edit through `ShareLinkModal`, enable/disable, make-default, delete
+ * behind an inline confirm, copy, the `share_link.*` realtime refetch and the upgrade prompt.
+ *
+ * **One component, two resources.** It began as `DocLinksManager`; a project owns links with the
+ * same settings, the same statuses and the same actions, and the project page had grown a parallel
+ * 800-line copy that drifted on every one of them (no page variant, no analytics, no "Make
+ * default", a different menu order, a different delete confirm). The scope is now a parameter:
+ * `{ kind: "doc" | "project", id }` decides four URLs (list, item, stats, metrics), the public
+ * address prefix (`/s/` vs `/p/`) and one field — a project link has no `allowRevisionHistory`,
+ * because a project has no single document whose versions a recipient could browse. Everything
+ * else is identical by construction rather than by inspection.
  */
 "use client";
 
@@ -37,8 +46,11 @@ import ShareLinkModal, { type ShareLinkFormValues } from "@/components/modals/Sh
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
+import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { fetchJson } from "@/lib/http/fetchJson";
-import { buildPublicShareUrl } from "@/lib/urls";
+import { parsePlanLimitError, planLimitGraceHint, type PlanLimitError } from "@/lib/client/planLimit";
+import { upsellKeyForLimit } from "@/lib/client/upsellCopy";
+import { buildPublicProjectUrl, buildPublicShareUrl } from "@/lib/urls";
 import type { ShareLinkDTO } from "@/lib/share/links";
 
 /** `planWarning` from the links API: the Free-cap state behind the upgrade prompt. */
@@ -46,19 +58,117 @@ type LinkPlanWarning = { limit?: string; used?: number; max?: number } | null;
 type LinkMutationResponse = { link: ShareLinkDTO; planWarning?: LinkPlanWarning };
 
 /** Lets a page header's "New link" button open the create modal this component owns. */
-export type DocLinksManagerHandle = { openCreate: () => void };
+export type LinksManagerHandle = { openCreate: () => void };
+
+/**
+ * Which resource's links these are. `id` is a document id or a project id; everything else this
+ * component needs is derived from the pair (see `scopeConfig`), so a caller cannot pass a URL that
+ * disagrees with the noun in the copy.
+ */
+export type LinksScope = { kind: "doc" | "project"; id: string };
 
 type Props = {
-  docId: string;
-  /** `panel` = compact summary for the doc side rail; `page` = the full list. */
+  scope: LinksScope;
+  /** `panel` = compact summary for the side rail; `page` = the full list. */
   variant: "panel" | "page";
   /**
-   * Override for "may edit links". Normally left unset: the role comes from the workspace plan
-   * snapshot, so no call site can forget it and hand a viewer controls the server will refuse
-   * (mt_j7nN3wG65Q — both call sites used to omit it, and the default was `true`).
+   * Override for "may edit links". Left unset for documents: the role comes from the workspace
+   * plan snapshot, so no call site can forget it and hand a viewer controls the server will refuse
+   * (mt_j7nN3wG65Q — both call sites used to omit it, and the default was `true`). Project links
+   * take `admin`, one rank above the `member` who may edit a document link, so the project call
+   * sites pass it explicitly.
    */
   canManage?: boolean;
 };
+
+/**
+ * Everything that differs between a document's links and a project's: four API/route shapes, the
+ * public address prefix, and the two places the copy has to name the thing. Collected in one object
+ * so the 900 lines below never branch on `scope.kind` again.
+ */
+type ScopeConfig = {
+  /** "document" / "project", lower case, for mid-sentence copy. */
+  noun: string;
+  listUrl: string;
+  itemUrl: (linkId: string) => string;
+  statsUrl: (shareIds: string, days: number) => string;
+  linksHref: string;
+  metricsHref: (shareId: string) => string;
+  /** The absolute URL a recipient is sent. */
+  publicUrl: (shareId: string) => string;
+  /** The short form printed in the Address column. */
+  addressPath: (shareId: string) => string;
+  /** Project links carry no `allowRevisionHistory`; the settings icon and the pill are dropped. */
+  showRevisionHistory: boolean;
+  makeDefaultHint: string;
+  /** What a second link buys you, in the one-link nudge under the table. */
+  nudgeBody: string;
+};
+
+function scopeConfig(scope: LinksScope): ScopeConfig {
+  const id = encodeURIComponent(scope.id);
+  if (scope.kind === "project") {
+    return {
+      noun: "project",
+      listUrl: `/api/projects/${id}/links`,
+      itemUrl: (linkId) => `/api/projects/${id}/links/${encodeURIComponent(linkId)}`,
+      statsUrl: (shareIds, days) =>
+        `/api/projects/${id}/shareviews?days=${days}&byLink=1&shareIds=${encodeURIComponent(shareIds)}`,
+      linksHref: `/project/${id}/links`,
+      metricsHref: (shareId) => `/project/${id}/metrics?shareId=${encodeURIComponent(shareId)}`,
+      publicUrl: buildPublicProjectUrl,
+      addressPath: (shareId) => `/p/${shareId}`,
+      showRevisionHistory: false,
+      makeDefaultHint: "Shown in the side panel as the project's primary link",
+      nudgeBody:
+        "The same documents, a separate link for each person or firm — see which one opened them, revoke one without touching the rest, give one a password or an expiry.",
+    };
+  }
+  return {
+    noun: "document",
+    listUrl: `/api/docs/${id}/links`,
+    itemUrl: (linkId) => `/api/docs/${id}/links/${encodeURIComponent(linkId)}`,
+    statsUrl: (shareIds, days) =>
+      `/api/docs/${id}/shareviews?days=${days}&lite=1&byLink=1&shareIds=${encodeURIComponent(shareIds)}`,
+    linksHref: `/doc/${id}/links`,
+    metricsHref: (shareId) => `/doc/${id}/metrics?shareId=${encodeURIComponent(shareId)}`,
+    publicUrl: buildPublicShareUrl,
+    addressPath: (shareId) => `/s/${shareId}`,
+    showRevisionHistory: true,
+    makeDefaultHint: "Shown in the side panel as the document's primary link",
+    nudgeBody:
+      "The same document, a separate link for each person or firm — see which one opened it, revoke one without touching the rest, give one a password or an expiry.",
+  };
+}
+
+/**
+ * A `402 plan_limit` carried out of a mutation with its body intact.
+ *
+ * `fetchJson` reduces every failure to a message, which is right for the ten error paths here and
+ * wrong for the one that is not an error: creating a second link on a project is refused by the
+ * plan, and that refusal is the blocking moment the upgrade modal exists for. Nothing was written,
+ * so it must not land in the form's red error line.
+ */
+class PlanLimitRefusal extends Error {
+  constructor(readonly detail: PlanLimitError) {
+    super(detail.message);
+    this.name = "PlanLimitRefusal";
+  }
+}
+
+/** `fetchJson` for writes, plus the one distinction it cannot make (see `PlanLimitRefusal`). */
+async function mutateJson<T>(input: string, init: RequestInit): Promise<T> {
+  const res = await fetchWithTempUser(input, init);
+  if (res.status === 204) return null as T;
+  const data = (await res.json().catch(() => null)) as unknown;
+  if (res.ok) return data as T;
+  const limit = res.status === 402 ? parsePlanLimitError(data) : null;
+  if (limit) throw new PlanLimitRefusal(limit);
+  const message = (data && typeof data === "object" && typeof (data as { error?: unknown }).error === "string"
+    ? (data as { error: string }).error
+    : "") || `Request failed (${res.status})`;
+  throw new Error(message);
+}
 
 /** "3h ago" / "12 Sep" for a link's last view; empty when it has never been viewed. */
 function relativeWhen(iso: string | null): string {
@@ -279,8 +389,8 @@ const LINK_STATS_DAYS = 30;
  */
 const LINKS_PAGE_SIZE = 25;
 
-const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLinksManager(
-  { docId, variant, canManage: canManageProp },
+const LinksManager = forwardRef<LinksManagerHandle, Props>(function LinksManager(
+  { scope, variant, canManage: canManageProp },
   ref,
 ) {
   const { openUpgrade } = useUpgradeModal();
@@ -290,15 +400,16 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   // is memoised across components, so a warm cache means no flash for the owner.
   const canManage = canManageProp ?? plan?.canManageLinks ?? false;
   const canRevealPassword = plan?.canRevealPassword ?? false;
+  const scopeKind = scope.kind;
+  const scopeId = scope.id;
+  const cfg = useMemo(() => scopeConfig({ kind: scopeKind, id: scopeId }), [scopeKind, scopeId]);
 
   /**
    * The metrics page, already scoped to one link. `?shareId=` is the metrics page's own filter, so
-   * the destination opens showing this link's numbers rather than the document's, and the address
-   * can be bookmarked or sent to someone.
+   * the destination opens showing this link's numbers rather than the whole resource's, and the
+   * address can be bookmarked or sent to someone.
    */
-  function metricsHref(shareId: string): string {
-    return `/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(shareId)}`;
-  }
+  const metricsHref = cfg.metricsHref;
 
   const [links, setLinks] = useState<ShareLinkDTO[] | null>(null);
   const [linksError, setLinksError] = useState<string | null>(null);
@@ -338,16 +449,16 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
 
   useImperativeHandle(ref, () => ({ openCreate }), [openCreate]);
 
-  // The doc changed out from under this instance (a different document's manager reusing the
-  // component): start back at page 1 rather than asking for a page that may not exist there.
-  useEffect(() => setLinksPage(1), [docId]);
+  // The resource changed out from under this instance (a different document's or project's manager
+  // reusing the component): start back at page 1 rather than asking for a page that may not exist.
+  useEffect(() => setLinksPage(1), [scopeId]);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
         const res = await fetchJson<{ total: number; page: number; limit: number; links: ShareLinkDTO[] }>(
-          `/api/docs/${encodeURIComponent(docId)}/links?page=${linksPage}&limit=${LINKS_PAGE_SIZE}`,
+          `${cfg.listUrl}?page=${linksPage}&limit=${LINKS_PAGE_SIZE}`,
           { cache: "no-store" },
         );
         if (cancelled) return;
@@ -366,7 +477,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     return () => {
       cancelled = true;
     };
-  }, [docId, linksRev, linksPage]);
+  }, [cfg, linksRev, linksPage]);
 
   // Agents and other sessions create links too: `share_link.*` activity frames refetch the list.
   useEffect(
@@ -404,10 +515,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
           days?: number;
           byLink?: Array<{ shareId?: string; views?: number; viewers?: number; downloads?: number; lastViewedAt?: string | null }>;
           deletedLinkResidual?: { count: number; viewers: number; downloads: number } | null;
-        }>(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${LINK_STATS_DAYS}&lite=1&byLink=1&shareIds=${encodeURIComponent(shareIds)}`,
-          { cache: "no-store" },
-        );
+        }>(cfg.statsUrl(shareIds, LINK_STATS_DAYS), { cache: "no-store" });
         if (cancelled) return;
         const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0);
         const bySlug = new Map((res.byLink ?? []).map((r) => [String(r.shareId ?? ""), r]));
@@ -433,7 +541,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     return () => {
       cancelled = true;
     };
-  }, [docId, links, variant]);
+  }, [cfg, links, variant]);
 
   // Panel: the same analytics source as the table, for the default link alone, so the number next
   // to "Analytics" agrees with the Links page and the metrics page it opens.
@@ -444,7 +552,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     void (async () => {
       try {
         const res = await fetchJson<{ days?: number; byLink?: Array<{ shareId?: string; viewers?: number }> }>(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${LINK_STATS_DAYS}&lite=1&byLink=1&shareIds=${encodeURIComponent(panelShareId)}`,
+          cfg.statsUrl(panelShareId, LINK_STATS_DAYS),
           { cache: "no-store" },
         );
         if (cancelled) return;
@@ -458,7 +566,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     return () => {
       cancelled = true;
     };
-  }, [docId, panelShareId]);
+  }, [cfg, panelShareId]);
 
   /** `" (7d)"` once the server has told us its window; blank until then, never a guess. */
   const statsWindowLabel = statsDays ? ` (${statsDays}d)` : "";
@@ -484,9 +592,25 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     openUpgrade("documents", { used: warning.used, max: warning.max });
   }
 
+  /**
+   * A `402` from a write: nothing was saved and this is the blocking moment, not an error. Returns
+   * true when it handled the failure, so each caller's `catch` can fall through to its red line.
+   */
+  function handlePlanRefusal(e: unknown): boolean {
+    if (!(e instanceof PlanLimitRefusal)) return false;
+    setLinkModal(null);
+    setLinkModalError(null);
+    openUpgrade(upsellKeyForLimit(e.detail.limit), {
+      used: e.detail.used,
+      max: e.detail.max,
+      graceHint: planLimitGraceHint(e.detail),
+    });
+    return true;
+  }
+
   /** Copy one link's public URL and flash the check icon on that row. */
   async function copyLinkUrl(link: ShareLinkDTO) {
-    const url = buildPublicShareUrl(link.shareId);
+    const url = cfg.publicUrl(link.shareId);
     if (!url) return;
     try {
       await navigator.clipboard.writeText(url);
@@ -502,14 +626,16 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     setRowBusyId(link.id);
     setLinksError(null);
     try {
-      const res = await fetchJson<LinkMutationResponse>(
-        `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(link.id)}`,
-        { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) },
-      );
+      const res = await mutateJson<LinkMutationResponse>(cfg.itemUrl(link.id), {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
       handlePlanWarning(res?.planWarning);
       refreshLinks();
       refreshPlan();
     } catch (e) {
+      if (handlePlanRefusal(e)) return;
       setLinksError(e instanceof Error ? e.message : "Failed to update the link");
     } finally {
       setRowBusyId(null);
@@ -524,7 +650,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     setRowBusyId(link.id);
     setLinksError(null);
     try {
-      await fetchJson<LinkMutationResponse>(`/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(link.id)}`, {
+      await mutateJson<LinkMutationResponse>(cfg.itemUrl(link.id), {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ isDefault: true }),
@@ -543,9 +669,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     setRowBusyId(link.id);
     setLinksError(null);
     try {
-      await fetchJson<null>(`/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(link.id)}`, {
-        method: "DELETE",
-      });
+      await mutateJson<null>(cfg.itemUrl(link.id), { method: "DELETE" });
       setConfirmDeleteId(null);
       refreshLinks();
       refreshPlan();
@@ -563,16 +687,11 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
     setLinkModalError(null);
     try {
       const editing = linkModal.mode === "edit" ? linkModal.link : null;
-      const res = await fetchJson<LinkMutationResponse>(
-        editing
-          ? `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(editing.id)}`
-          : `/api/docs/${encodeURIComponent(docId)}/links`,
-        {
-          method: editing ? "PATCH" : "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(values),
-        },
-      );
+      const res = await mutateJson<LinkMutationResponse>(editing ? cfg.itemUrl(editing.id) : cfg.listUrl, {
+        method: editing ? "PATCH" : "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(values),
+      });
       setLinkModal(null);
       handlePlanWarning(res?.planWarning);
       // A new link lands right after the default on page 1 (default-first, then newest); an edit
@@ -581,6 +700,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       refreshLinks();
       refreshPlan();
     } catch (e) {
+      if (handlePlanRefusal(e)) return;
       setLinkModalError(e instanceof Error ? e.message : "Failed to save the link");
     } finally {
       setLinkSaving(false);
@@ -596,7 +716,10 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       links={links ?? []}
       saving={linkSaving}
       error={linkModalError}
-      showProPill={isFreePlan}
+      resourceNoun={cfg.noun}
+      showRevisionHistory={cfg.showRevisionHistory}
+      passwordUrl={(linkId) => `${cfg.itemUrl(linkId)}/password`}
+      showProPill={isFreePlan && cfg.showRevisionHistory}
       onProPillClick={() => openUpgrade("version_history")}
       onClose={() => {
         setLinkModal(null);
@@ -608,7 +731,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
 
   // --- Panel: the default link, the count, and a way out to the page -------------------------
   if (variant === "panel") {
-    const defaultUrl = defaultLink ? buildPublicShareUrl(defaultLink.shareId) : "";
+    const defaultUrl = defaultLink ? cfg.publicUrl(defaultLink.shareId) : "";
     // The true count, not `links.length`: this fetch is capped at `LINKS_PAGE_SIZE` like every
     // other, so `links.length` alone under-counts a document with more links than that.
     const count = linksTotal ?? links?.length ?? 0;
@@ -630,7 +753,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                 "1 other link", "View all links"); the count is the link. */}
             {count > 1 ? (
               <Link
-                href={`/doc/${encodeURIComponent(docId)}/links`}
+                href={cfg.linksHref}
                 className="inline-flex h-8 items-center rounded-lg px-2 text-[12px] font-semibold text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
               >
                 {count} links →
@@ -738,8 +861,9 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                   </LinkStatePart>,
                 ];
                 // Version history is only worth a word when it is on; off is the default and
-                // restricts nothing a recipient would notice.
-                if (defaultLink.allowRevisionHistory) {
+                // restricts nothing a recipient would notice. A project link has no such field —
+                // there is no single document whose versions a recipient could browse.
+                if (cfg.showRevisionHistory && defaultLink.allowRevisionHistory) {
                   parts.push(
                     <LinkStatePart key="history" changed title="Recipients can browse earlier versions.">
                       <ClockIcon className="h-3 w-3" aria-hidden="true" />
@@ -810,7 +934,11 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       <div className="relative overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--panel)]">
         <table className="w-full min-w-[980px] border-collapse text-[13px]">
           <thead>
-            <tr className="border-b border-[var(--border)] text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+            {/* `whitespace-nowrap`: the columns share `min-w-[980px]`, so a table whose rows carry
+                long labels and audiences squeezed the headings until "Viewers (30d)" and "Last
+                viewed" broke onto two lines and the header band was a row taller than the same
+                table elsewhere. A heading is never the thing that should wrap. */}
+            <tr className="whitespace-nowrap border-b border-[var(--border)] text-left text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
               <th scope="col" className="px-4 py-2.5 font-semibold">Link</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Address</th>
               <th scope="col" className="px-3 py-2.5 font-semibold">Status</th>
@@ -860,7 +988,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                 const stats = linkStats[link.id];
                 const busy = rowBusyId === link.id;
                 const confirming = confirmDeleteId === link.id;
-                const url = buildPublicShareUrl(link.shareId) || `/s/${link.shareId}`;
+                const url = cfg.publicUrl(link.shareId) || cfg.addressPath(link.shareId);
                 const expires = formatDate(link.expiresAt);
 
                 return (
@@ -886,7 +1014,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                     <td className="max-w-[280px] px-3 py-2.5">
                       <div className="flex min-w-0 items-center gap-1.5">
                         <span className="truncate font-mono text-[12px] text-[var(--muted)]" title={url}>
-                          /s/{link.shareId}
+                          {cfg.addressPath(link.shareId)}
                         </span>
                         <CopyButton
                           copyDone={copiedLinkId === link.id}
@@ -912,11 +1040,18 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                     {/* Icons, not words: four settings spelled out would push the row onto two lines. */}
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1.5 text-[var(--muted)]">
-                        {link.allowDownload ? <ArrowDownTrayIcon className="h-4 w-4" title="Downloads allowed" /> : null}
+                        {link.allowDownload ? (
+                          <ArrowDownTrayIcon
+                            className="h-4 w-4"
+                            title={cfg.noun === "project" ? "Each document can be downloaded" : "Downloads allowed"}
+                          />
+                        ) : null}
                         {link.passwordEnabled ? <LockClosedIcon className="h-4 w-4" title="Password protected" /> : null}
-                        {link.allowRevisionHistory ? <ClockIcon className="h-4 w-4" title="Recipients can browse versions" /> : null}
+                        {cfg.showRevisionHistory && link.allowRevisionHistory ? (
+                          <ClockIcon className="h-4 w-4" title="Recipients can browse versions" />
+                        ) : null}
                         {expires ? <CalendarDaysIcon className="h-4 w-4" title={`Expires ${expires}`} /> : null}
-                        {!link.allowDownload && !link.passwordEnabled && !link.allowRevisionHistory && !expires ? (
+                        {!link.allowDownload && !link.passwordEnabled && !(cfg.showRevisionHistory && link.allowRevisionHistory) && !expires ? (
                           <span className="text-[12px] text-[var(--muted-2)]">—</span>
                         ) : null}
                       </div>
@@ -1030,7 +1165,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                                   : [
                                       {
                                         label: "Make default",
-                                        hint: "Shown in the side panel as the document's primary link",
+                                        hint: cfg.makeDefaultHint,
                                         onSelect: () => void makeDefault(link),
                                       },
                                       {
@@ -1061,7 +1196,9 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
                   <span className="font-medium">
                     {deletedLinkResidual.count === 1 ? "1 deleted link" : `${deletedLinkResidual.count} deleted links`}
                   </span>
-                  <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">Still counted in the document&apos;s totals; nothing left to open.</div>
+                  <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
+                    Still counted in the {cfg.noun}&apos;s totals; nothing left to open.
+                  </div>
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{deletedLinkResidual.viewers.toLocaleString()}</td>
                 <td className="px-3 py-2.5 text-right tabular-nums">{deletedLinkResidual.downloads.toLocaleString()}</td>
@@ -1113,9 +1250,7 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
       {canManage && linksTotal === 1 ? (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-xl border border-dashed border-[var(--border)] px-4 py-3">
           <div className="min-w-0 text-[13px] leading-6 text-[var(--muted)]">
-            <span className="font-semibold text-[var(--fg)]">Add a link per audience.</span> The same document, a separate
-            link for each person or firm — see which one opened it, revoke one without touching the rest, give one a
-            password or an expiry.
+            <span className="font-semibold text-[var(--fg)]">Add a link per audience.</span> {cfg.nudgeBody}
           </div>
           <button type="button" onClick={openCreate} className={`${NEW_LINK_CLASS} shrink-0`}>
             <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1134,4 +1269,4 @@ const DocLinksManager = forwardRef<DocLinksManagerHandle, Props>(function DocLin
   );
 });
 
-export default DocLinksManager;
+export default LinksManager;

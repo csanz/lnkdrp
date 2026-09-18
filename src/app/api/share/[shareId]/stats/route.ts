@@ -15,6 +15,8 @@ import net from "node:net";
 import { Types } from "mongoose";
 import { DocModel } from "@/lib/models/Doc";
 import { resolveShareLink, touchShareLink } from "@/lib/share/links";
+import { projectLinkPasswordEnabled, projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
+import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
@@ -29,8 +31,10 @@ import {
   parseTimingVersion,
   visitTimeIncrement,
 } from "@/lib/analytics/shareTiming";
+import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
+import { cookies } from "next/headers";
 import { UserModel } from "@/lib/models/User";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -183,10 +187,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       const resolved = await resolveShareLink(shareId, {
         select: { title: 1 } as Record<string, 1>,
       });
-      if (!resolved || resolved.refusal) {
+      // A project link's slug resolves to no document (`resolveShareLink` refuses it by design), so
+      // the overlay has to name the document being read. Scoping the counts by it matters: without
+      // the `docId` clause every document in a data room would report the whole link's traffic.
+      const projectTarget = resolved
+        ? null
+        : await resolveProjectStatsTarget({ shareId, request, select: { userId: 1, orgId: 1 } as Record<string, 1> });
+      if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
-      const doc = resolved.doc as { userId?: unknown };
+      const doc = (resolved ? resolved.doc : projectTarget!.doc) as { _id?: unknown; userId?: unknown };
+      const docScope = projectTarget ? { docId: projectTarget.doc._id } : {};
 
       const isOwner = Boolean(session?.userId) && String(doc.userId) === String(session?.userId);
       if (!isOwner) {
@@ -201,9 +212,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       // they are looking at their own share page, which is the single most reliable way to
       // manufacture the owner-preview rows it must not count.
       const [views, pagesAgg] = await Promise.all([
-        ShareViewModel.countDocuments({ shareId, ...RECIPIENT_ONLY_MATCH }),
+        ShareViewModel.countDocuments({ shareId, ...docScope, ...RECIPIENT_ONLY_MATCH }),
         ShareViewModel.aggregate([
-          { $match: { shareId, ...RECIPIENT_ONLY_MATCH } },
+          { $match: { shareId, ...docScope, ...RECIPIENT_ONLY_MATCH } },
           { $group: { _id: null, pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } } } },
           {
             $project: {
@@ -284,11 +295,40 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
       // Views are recorded against the link that was opened; a refused link records nothing.
       const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
-      if (!resolved || resolved.refusal) {
+      /**
+       * The project-link path (PRD decision 5). `resolveShareLink` returns null for a project
+       * slug by design, so only then do we ask which document of that project is being read — from
+       * the body if a client sends it, otherwise from the `/p/:shareId/:docId` page that made the
+       * request (`resolveProjectStatsTarget`, which re-proves the document is in the project).
+       * Everything below this point is the same code the document path runs; that is the whole
+       * bargain of decision 5 — reading time, sessions and page sequences with no new timing code.
+       */
+      const projectTarget = resolved
+        ? null
+        : await resolveProjectStatsTarget({ shareId, request, bodyDocId: (body as { docId?: unknown })?.docId, select: { title: 1, userId: 1, orgId: 1 } as Record<string, 1> });
+      if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
-      const doc = resolved.doc;
-      const shareLinkId = resolved.link._id;
+      const link = resolved ? resolved.link : projectTarget!.link;
+      // A locked project link ingests nothing until the password has been given. The viewer at
+      // `/p/:shareId/:docId` only renders behind that gate, so this costs a real recipient nothing
+      // — but the route is public, and `resolveProjectStatsTarget` proves only that the document is
+      // *in* the project, never that this caller was allowed to open it. Same guard, same reasoning
+      // and same quiet 200 as `POST /api/share/:shareId/landing`.
+      //
+      // Project branch only, deliberately: the document ingest has always accepted a view on a
+      // locked `/s/:shareId` and changing that here would alter document behaviour, which this
+      // change must not do. Flagged in the report instead.
+      if (projectTarget && projectLinkPasswordEnabled(link as { passwordHash?: string | null; passwordSalt?: string | null })) {
+        const jar = await cookies();
+        const presented = jar.get(shareAuthCookieName(shareId))?.value ?? "";
+        const expected = shareAuthCookieValue({ shareId, sharePasswordHash: String((link as { passwordHash?: unknown }).passwordHash ?? "") });
+        if (!presented || presented !== expected) {
+          return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
+        }
+      }
+      const doc = (resolved ? resolved.doc : projectTarget!.doc) as Record<string, unknown> & { _id: unknown; orgId?: unknown };
+      const shareLinkId = link._id;
       // Denormalized tenancy on the analytics rows (see `ShareView.orgId`).
       const shareOrgId = doc.orgId ? new Types.ObjectId(String(doc.orgId)) : null;
 
@@ -298,7 +338,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const session = await tryResolveAuthUserId(request);
       const viewerUserId =
         session?.userId && Types.ObjectId.isValid(session.userId) ? new Types.ObjectId(session.userId) : null;
-      const botIdHash = crypto.createHash("sha256").update(botId).digest("hex");
+      /** The person. Used for the `ProjectLinkView` row, which is about who came, not what they read. */
+      const viewerBotIdHash = crypto.createHash("sha256").update(botId).digest("hex");
+      /**
+       * The analytics key the `ShareView` / `ShareVisit` rows are written under. On a document link
+       * it is the bare digest, as it always was. On a project link it carries the document too, so
+       * one recipient reading three documents behind one slug produces three rows instead of
+       * colliding on the unique `{shareId, botIdHash}` index and merging their page numbers — see
+       * `projectViewerKey` for the full reasoning and what it costs.
+       */
+      const botIdHash = projectTarget ? projectViewerKey(viewerBotIdHash, String(docId)) : viewerBotIdHash;
       const visitIdHash = visitId ? crypto.createHash("sha256").update(visitId).digest("hex") : null;
 
       after(async () => {
@@ -354,9 +403,65 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           // recipient who comes back daily used to leave the links table reading "Never". An owner
           // preview moves nothing: "Last viewed 2 minutes ago" on a link nobody has received yet is
           // the same lie as counting the view.
-          if (!ownerPreview) void touchShareLink(shareId, "view", { countView: created });
+          //
+          // On a document link `created` *is* "a new recipient", because a row is one viewer. On a
+          // project link a row is one (viewer, document), so `created` fires again for the second
+          // file the same investor opens and the stored counter climbed past the recipient count
+          // every read path reports. The project answer comes from the `ProjectLinkView` upsert
+          // below — that collection is keyed on (link, viewer) and is the only place that knows
+          // whether this landing is a new person — so the touch is deferred to after it.
+          if (!ownerPreview && !projectTarget) void touchShareLink(shareId, "view", { countView: created });
+
+          // "Which documents did this person open through this link" (PRD decision 6) is recorded
+          // here, from the rendered viewer, rather than from a click handler on the project page: a
+          // click can be lost to the navigation it causes, and a deep link into `/p/:shareId/:docId`
+          // never passes through the page at all. The row is upserted rather than updated for
+          // exactly that second case — a recipient can arrive at a document without ever landing.
+          if (projectTarget) {
+            /** Whether this landing created the (link, viewer) row, i.e. a recipient not seen before. */
+            let newProjectViewer = false;
+            try {
+              const res = await ProjectLinkViewModel.updateOne(
+                { shareId, botIdHash: viewerBotIdHash },
+                {
+                  $setOnInsert: {
+                    shareId,
+                    projectId: projectTarget.project._id,
+                    botIdHash: viewerBotIdHash,
+                    firstViewedAt: new Date(),
+                  },
+                  $set: {
+                    shareLinkId,
+                    ...(projectTarget.project.orgId ? { orgId: projectTarget.project.orgId } : {}),
+                    ...(viewerIp ? { viewerIp } : {}),
+                    ...(viewerUserId ? { viewerUserId } : {}),
+                    isOwnerPreview: ownerPreview,
+                    lastViewedAt: new Date(),
+                  },
+                  $addToSet: { docsOpened: new Types.ObjectId(String(docId)) },
+                },
+                { upsert: true },
+              );
+              newProjectViewer = Boolean((res as { upsertedCount?: number } | null)?.upsertedCount);
+            } catch (e) {
+              const msg = e instanceof Error ? e.message : String(e);
+              // A duplicate key means the row was already there, so this is not a new recipient.
+              if (!/E11000|duplicate key/i.test(msg)) throw e;
+            }
+            // Same contract as the document branch above: the timestamp moves on every recipient
+            // read, the counter only on a new recipient.
+            if (!ownerPreview) void touchShareLink(shareId, "view", { countView: newProjectViewer });
+          }
+
           if (created && !ownerPreview) {
-            await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
+            // A read through a project link is the **project's** view, not the document's
+            // (docs/METRICS.md, `@/lib/analytics/docScope`): the document's own figures exclude it
+            // on every surface, so its counter must not be bumped either. Incrementing it here was
+            // the last place the old rule survived — the metrics route subtracted the project's
+            // slugs while this kept adding them, and `Doc.numberOfViews` ended up above the number
+            // the document's own page could ever show. The activity feed below still records the
+            // view: the read happened, it is just the data room's.
+            if (!projectTarget) await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
             // Activity feed: one "viewed" event per new viewer of this share (not per page/visit).
             void (async () => {
               try {
@@ -384,8 +489,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                     shareId,
                     // Which link they came through: the feed renders "via Sequoia" and skips the
                     // suffix for the default link (see `linkSuffix` in src/lib/activity/labels.ts).
-                    linkLabel: resolved.link.label ?? null,
-                    isDefaultLink: Boolean(resolved.link.isDefault),
+                    linkLabel: link.label ?? null,
+                    isDefaultLink: Boolean(link.isDefault),
+                    // Project links only: which data room the document was opened inside.
+                    ...(projectTarget
+                      ? {
+                          projectId: String(projectTarget.project._id),
+                          projectName: typeof projectTarget.project.name === "string" ? projectTarget.project.name : null,
+                        }
+                      : null),
                   },
                   request,
                 });
@@ -435,10 +547,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               },
             );
             const added = Boolean((add as any)?.modifiedCount);
-            // The same rule as `numberOfViews`: an owner-side open is recorded on the row and
-            // counted nowhere. This counter feeds the dashboard's "Pages viewed" tile, which read
-            // 13 against 11 real pages because the owner's own paging through the deck landed in it.
-            if (added && !ownerPreview) {
+            // The same two rules as `numberOfViews`, and it needs both.
+            //
+            // An owner-side open is recorded on the row and counted nowhere: this counter feeds the
+            // dashboard's "Pages viewed" tile, which read 13 against 11 real pages because the
+            // owner's own paging through the deck landed in it.
+            //
+            // A page read through a project link is the data room's, not the document's
+            // (`@/lib/analytics/docScope`), so it does not move the document's counter either.
+            // Without the `projectTarget` half, the dashboard's two sharing tiles — fed by these two
+            // counters and nothing else — disagreed with each other about the same reading: one
+            // data-room read moved "Pages viewed" and left "Share views" where it was.
+            if (added && !ownerPreview && !projectTarget) {
               await DocModel.updateOne({ _id: docId }, { $inc: { numberOfPagesViewed: 1 } });
             }
           }

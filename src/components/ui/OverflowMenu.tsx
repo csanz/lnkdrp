@@ -4,7 +4,7 @@
  * OverflowMenu — a trigger button that opens a portal-positioned panel holding whatever a toolbar
  * had no room for.
  *
- * Built out of the row-menu pattern in `DocLinksManager.tsx` (portal + fixed positioning + a
+ * Built out of the row-menu pattern in `LinksManager.tsx` (portal + fixed positioning + a
  * click-away/Escape lifecycle), generalized: that one renders a fixed list of `{label, onSelect}`
  * rows, this one renders the caller's own `children` — a toggle group, a row of zoom buttons,
  * whatever the toolbar's mobile menu needs to hold, sharing state and handlers with the desktop

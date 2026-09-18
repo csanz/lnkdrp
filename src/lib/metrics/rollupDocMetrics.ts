@@ -2,7 +2,8 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
-import { RECIPIENT_ONLY_MATCH, activityWindowMatch } from "@/lib/analytics/shareViewAggregates";
+import { RECIPIENT_ONLY_MATCH, activityWindowMatch, shareIdClause } from "@/lib/analytics/shareViewAggregates";
+import { projectLinkSlugsForDocs } from "@/lib/analytics/docScope";
 
 /**
  * Server-side metrics rollups.
@@ -78,6 +79,22 @@ export async function rollupDocMetrics(opts?: {
   const startKey = utcDayKey(start);
   const now = new Date();
 
+  /**
+   * The project-link slugs these documents have traffic on, excluded from every figure below.
+   *
+   * A read through a project link is the *project's* view, not the document's (docs/METRICS.md,
+   * `@/lib/analytics/docScope`), and the live route `/api/docs/:docId/shareviews` has always said
+   * so. This snapshot did not, so `metricsSnapshot.lastDaysViews` exceeded what the metrics page
+   * reported for the same document and the same window: QuickStats rendered the snapshot, flashed
+   * the larger number, then swapped to the smaller one when the route answered, and the dashboard
+   * card — which never calls the route — disagreed permanently.
+   *
+   * Computed once for the whole batch, not per document: a project slug is a project slug for
+   * every document in it, so one pair of queries answers for all of them.
+   */
+  const foreignShareIds = await projectLinkSlugsForDocs(docs.map((d) => String(d._id)));
+  const docOnlyMatch = shareIdClause({ except: foreignShareIds });
+
   const processedIds: string[] = [];
   let viewsLastDaysTotal = 0;
   let downloadsLastDaysTotal = 0;
@@ -90,12 +107,13 @@ export async function rollupDocMetrics(opts?: {
     // with the page it links to: recipients only, bounded by last activity rather than first sighting.
     const lastDaysViews = await ShareViewModel.countDocuments({
       docId,
+      ...docOnlyMatch,
       ...RECIPIENT_ONLY_MATCH,
       ...activityWindowMatch(start),
     });
 
     const downloadsLastAgg = (await ShareViewModel.aggregate([
-      { $match: { docId, ...RECIPIENT_ONLY_MATCH } },
+      { $match: { docId, ...docOnlyMatch, ...RECIPIENT_ONLY_MATCH } },
       { $project: { items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } } } },
       { $unwind: "$items" },
       { $match: { "items.k": { $gte: startKey } } },
@@ -107,7 +125,7 @@ export async function rollupDocMetrics(opts?: {
         : 0;
 
     const downloadsTotalAgg = (await ShareViewModel.aggregate([
-      { $match: { docId, ...RECIPIENT_ONLY_MATCH } },
+      { $match: { docId, ...docOnlyMatch, ...RECIPIENT_ONLY_MATCH } },
       { $group: { _id: null, downloads: { $sum: { $ifNull: ["$downloads", 0] } } } },
     ])) as Array<{ downloads?: number }>;
     const downloadsTotal =

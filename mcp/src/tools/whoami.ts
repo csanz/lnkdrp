@@ -58,6 +58,11 @@ function buildCapabilities(
     // Links are never capped on any plan — stated here, not just in tool descriptions, so a plan
     // read alone answers "can I add another link" without needing to try one and see.
     links: { limited: false },
+    // Project links are the one link-create a plan can refuse (docs/prds/lnkdrp-project-links.md
+    // decision 7). Stated here so an agent learns the gate before it tries, rather than from the
+    // plan_limit a create happens to throw: `available: false` means the project's single default
+    // link is all this workspace gets.
+    projectLinks: { proOnly: true, available: isPro },
     documents: plan ? { limit: limits.documents, used: usage.documents, remaining: remaining(limits.documents, usage.documents) } : null,
     projects: plan ? { limit: limits.projects, used: usage.projects, remaining: remaining(limits.projects, usage.projects) } : null,
     collaborators: plan ? { limit: limits.collaborators, used: usage.members } : null,
@@ -90,7 +95,8 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
         "buying packs, which only a person can do. capabilities answers 'what can I do here' in one call, " +
         "before attempting anything: documents/projects (limit, used, remaining; limit null = unlimited - documents.used " +
         "counts shared documents, those with a link on, so it can be lower than lnkdrp_list_docs's total), links " +
-        "(never limited on any plan), collaborators, analyticsDaysLimit (the window lnkdrp_get_share_stats serves), " +
+        "(never limited on any plan), projectLinks (Pro only - on Free a project keeps its one default link and " +
+        "lnkdrp_create_project_link fails with plan_limit), collaborators, analyticsDaysLimit (the window lnkdrp_get_share_stats serves), " +
         "deepAnalytics and recipientsCanBrowseVersions (both Pro-only), and notMcpAccessible - real product features " +
         "(request repos, download-access requests) that have no MCP tool at all, so their absence " +
         "from the tool list reads as 'not built yet', not 'this workspace lacks it' or a silently unsupported request. " +

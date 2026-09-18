@@ -70,6 +70,12 @@ function planLimitAlternatives(limit: string): string[] {
         "rename or repurpose an existing project with lnkdrp_update_project instead of creating another",
         "delete a project that is no longer needed with lnkdrp_delete_project (its documents stay in the workspace) to free the slot",
       ];
+    case "project_links":
+      return [
+        "send the project's existing default link instead (lnkdrp_list_project_links shows it) — it works on every plan, it just cannot be labelled per audience",
+        "send each document on its own labelled link with lnkdrp_create_share_link — document links are never capped, so one recipient can still get their own set",
+        "give the second audience its own project (lnkdrp_create_project, then lnkdrp_add_docs_to_project — a document can be in several): each project's default link is a separate URL with separate analytics, within the Free project cap",
+      ];
     case "collaborators":
       return ["share a link with them instead of adding them to the workspace — recipients never need an account"];
     case "version_history":
@@ -171,6 +177,17 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
 
   switch (status) {
     case 404:
+      // Order matters: `/api/projects/:id/links/:linkId` matches both tests below, and the link is
+      // the more specific answer. Told "no such project" for a bad linkId, an agent goes looking
+      // for a project problem that is not there — the same trap the document link branch fixed.
+      if (/^\/api\/projects\/[^/]+\/links\/[^/]+/.test(path)) {
+        return new ToolError(
+          "not_found",
+          "No such link on this project. The link may belong to a different project, be a document link rather than a " +
+            "project link, or have been deleted; lnkdrp_list_project_links lists this project's links.",
+          { status },
+        );
+      }
       if (/^\/api\/projects\//.test(path)) {
         return new ToolError("not_found", "No such project in this workspace. lnkdrp_list_projects lists the projects you can use.", { status });
       }

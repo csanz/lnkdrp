@@ -165,6 +165,16 @@ function projectLabel(item: ActivityItem): string {
   return item.project?.name?.trim() || metaString(item.meta, "projectName") || "a project";
 }
 
+/**
+ * What a share link hangs off: the document, or the project when the row has no document
+ * (a project link — docs/prds/lnkdrp-project-links.md). Keeps the three `share_link.*` sentences
+ * from announcing every project link as belonging to "Untitled document".
+ */
+function linkOwnerLabel(item: ActivityItem, docTitle: string): string {
+  if (!item.doc && (item.project?.name || metaString(item.meta, "projectName"))) return `project ${projectLabel(item)}`;
+  return docTitle;
+}
+
 export function describeActivity(item: ActivityItem): ActivitySentence {
   const docTitle = item.doc?.title?.trim() || "Untitled document";
   const projectName = item.project?.name?.trim() || metaString(item.meta, "projectName") || "a request inbox";
@@ -222,15 +232,18 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     }
     case "share_link.created": {
       const label = metaString(item.meta, "linkLabel") || "a link";
-      return { subject, verb: "created a link", object: `“${label}”`, suffix: `for ${docTitle}` };
+      // A project link carries a project and no doc (docs/prds/lnkdrp-project-links.md); without
+      // this branch every one of them reads "for Untitled document", the same way the project share
+      // toggle above would.
+      return { subject, verb: "created a link", object: `“${label}”`, suffix: `for ${linkOwnerLabel(item, docTitle)}` };
     }
     case "share_link.updated": {
       const label = metaString(item.meta, "linkLabel") || "a link";
-      return { subject, verb: linkUpdateVerb(item.meta), object: `“${label}”`, suffix: `on ${docTitle}` };
+      return { subject, verb: linkUpdateVerb(item.meta), object: `“${label}”`, suffix: `on ${linkOwnerLabel(item, docTitle)}` };
     }
     case "share_link.revoked": {
       const label = metaString(item.meta, "linkLabel") || "a link";
-      return { subject, verb: "removed link", object: `“${label}”`, suffix: `from ${docTitle}` };
+      return { subject, verb: "removed link", object: `“${label}”`, suffix: `from ${linkOwnerLabel(item, docTitle)}` };
     }
     case "share_link.password_revealed": {
       const label = metaString(item.meta, "linkLabel") || "a link";

@@ -89,7 +89,8 @@ Server behavior:
 ### Metrics page UI
 
 - Page: `/doc/:docId/metrics`
-- Client UI: `src/app/(app)/doc/[docId]/metrics/pageClient.tsx`
+- Client UI: `src/components/metrics/MetricsView.tsx` (the page files under
+  `src/app/(app)/doc/[docId]/metrics/` are a shell that picks the scope)
 
 The UI shows:
 
@@ -247,22 +248,170 @@ Three consequences, which M4's queries must honour:
 
 - **Views for a project link are not `countDocuments({ shareId })`.** That counts (viewer ×
   document opened). "People who came through this link" is `ProjectLinkView` rows for that `shareId`;
-  "documents opened" is the same rows' `docsOpened`. The `ShareLink.viewCount` counter a project link
-  carries follows the row count, so it reads as *documents opened by recipients* — not landings.
+  "documents opened" is the same rows' `docsOpened`. `ShareLink.viewCount` on a project link is
+  **recipients**, the same quantity the field means on a document link: `projectLinkStatsByShareId`
+  groups on `PROJECT_LINK_VIEWER_KEY_EXPR` before counting, the ingest bumps the stored counter only
+  when the `ProjectLinkView` upsert inserts, and `reconcileShareLinkCounters` recomputes project
+  links through that same function instead of its row-count pipeline. (It did read as the row count
+  once: `/links` said 4 for a link whose metrics page, workspace card and MCP stats all said 3.)
 - **`ShareVisit` counts (tab session × document), not tab sessions.** The `visitId` is stored per
   `shareId` in `sessionStorage`, and a project link is one `shareId` for the whole data room, so one
   tab reading two documents writes two rows sharing a `visitIdHash`: *one session in the data room,
   one row per document in it*. Session counts must be `distinct visitIdHash`.
-- **Per-document figures are unaffected.** Scoped by `docId`, a viewer still has exactly one row per
-  link, which is what the document metrics page already assumes. Its `?byLink=1` breakdown will grow
-  project-link slugs beside document-link slugs once a document is shared both ways; they still sum
-  to the document total.
+- **A read through a project link is the PROJECT's view, not the document's.** This is the locked
+  rule, and it holds on *every* document-scoped surface — see "Project-link rows are not
+  document-link rows" below for the list. Scoped by `docId`, a viewer still has exactly one row per
+  link, so the arithmetic a document page does is unchanged; what changed is which rows are in
+  scope. (This bullet used to read "per-document figures are unaffected", and that was true only of
+  the live metrics route: the snapshot rollup and the ingest counters kept counting the data room's
+  reading as the document's, and the same document reported three different numbers on three
+  surfaces.)
 
 Everything else behaves as it does for a document link, deliberately: `isOwnerPreview` is recorded
 and never counted, `lastViewedAt` is written only by an ingest, and per-page time comes from the same
 `shareTiming` helpers. Verified live on 2026-09-17 — one recipient reading two documents behind one
 project link produced two `ShareView` rows, two `ShareVisit` rows with a shared visit id, one
 `ProjectLinkView` with both documents, and **nothing at all under either document's own link**.
+
+## Owner metrics API (project metrics page)
+
+The same page, the same component, a different scope.
+
+- Page: `/project/:projectId/metrics` (`?shareId=` scopes it to one link, like the document one)
+- Client UI: `src/components/metrics/MetricsView.tsx` — **shared with the document page**. The scope
+  (`projectMetricsScope`) decides the API base, the breadcrumb noun, and two capabilities a project
+  does not have: per-page time / per-visit timelines, and the version-history link setting.
+- Route: `GET /api/projects/:projectId/shareviews`
+- File: `src/app/api/projects/[projectSlug]/shareviews/route.ts`
+
+It returns the **same envelope** as the document endpoint (`days`, `analyticsDaysLimit`,
+`analyticsTier`, `viewerCount`, `totals`, `totalsAllTime`, `series`, `byLink`, `linksTotal`,
+`deletedLinkResidual`, `link`, `downloadsEnabled`, `viewers`, `anonymousViewers`) — that is the
+condition for one component rendering both. What differs all follows from a project link spanning
+many documents:
+
+- **`totals.pagesViewed` is replaced by `totals.docsOpened`** — distinct documents recipients opened
+  through the project's links. "How much of the deck was reached" has no project-scale meaning; "how
+  many of the documents did they open" does. Viewer rows carry `docsOpened` in place of `pagesViewed`.
+- **No per-page maps and no visit timeline.** `pageTimeMsByPage` / `pagesSeen` are per-document
+  facts, and a "session" here spans documents, so its page sequence has no project meaning. The
+  project scope therefore has no `/shareviews/visits` sibling and the drawer shows **`viewers[].docs`**
+  instead: which documents that person opened and how long each held them, longest first, with
+  `viewers[].sessions` (distinct `visitIdHash`, deduplicated across the documents in one tab) for the
+  Sessions tile. The rows stay clickable; only the card inside the drawer changes.
+  - **The "Recent sessions" card is deliberately absent on a project**, not missing. The document
+    drawer lists each session as *timestamp · duration · page sequence*, and the page sequence is
+    the reason the list is worth a row — on a project it does not exist (page 3 of the term sheet
+    and page 3 of the deck are not the same axis), and there is nothing behind a row to open.
+    `viewers[].sessions` is a **count**, not a list: the timestamps would need their own aggregate
+    over `ShareVisit`, grouped by `visitIdHash` and rolled up across the documents in each tab.
+    Worth adding the day a project session has somewhere to lead; today "Documents opened" carries
+    the part of the story that has a project meaning.
+- **Two figures exist only here** (`src/lib/analytics/project/pipelines.ts`, milestone M4):
+  - **`totals.landings` / `totals.landedWithoutOpening`** — a project link has a *landing page*, so
+    arriving and opening are different events. Someone can open `/p/:shareId`, read the file list and
+    leave; `ShareView` never hears about them and `ProjectLinkView` is the only record they exist. On
+    a data room they are frequently the majority, which is why the VIEWS tile names them.
+    `landings` sums `ProjectLinkView.landingsByDay` over the window's UTC day keys — *not* the row's
+    `visits` counter, which is cumulative: because the window selects rows by last activity, summing
+    it reported a recipient's whole history inside whatever window was asked for (forty landings
+    over six months all landing in a `days=3` answer). Rows written before the per-day map existed
+    contribute 1, since they are in the window and did land in it. `landedWithoutOpening` counts
+    rows whose landing falls in the window and whose `docsOpened` is still **empty** — lifetime, not
+    windowed, so it means "has never opened anything through this link", which is what the UI claims.
+    `ProjectLinkView.visitIdHashes` (the tab sessions already counted) is capped at the most recent
+    `VISIT_ID_HASH_CAP`: the public landing route is rate-limited per IP but not per device, and an
+    uncapped `$addToSet` could walk one row into the 16MB BSON ceiling, past which that link stops
+    counting landings entirely.
+  - **`byDoc` / `docsTotal`** (`?byDoc=1&topDocs=n`) — the project's documents ranked by recipients,
+    the analogue of a document's per-page story. Unlike `byLink` it **follows `?shareId=`**: "which
+    files did *this* recipient group open" is precisely the per-link question, where ranking the link
+    the page is about against its siblings is not. `byDoc[].viewers` counts (document, link, viewer)
+    buckets, so it can exceed `totals.views` — one person who opened two files appears under both,
+    and the card ranks documents rather than partitioning recipients. The UI says so rather than
+    leaving the reader to discover it: the DOCUMENTS rows read "opened by N", never "N viewers"
+    (the LINKS card's unit), and the card carries the same kind of one-line footnote the
+    deleted-link residual has.
+  - **`docsTotal` counts what a recipient could actually open**: `shareEnabled: { $ne: false }`, the
+    same filter `projectDocFilter` applies to `/p/:shareId`. A project with ten documents, seven of
+    them unshared, must not report that nobody opened seven files that were never on offer. The
+    "N of them opened" sentence clamps to it, because `docsOpened` counts documents in the analytics
+    rows and those include documents since removed from the project.
+- **Downloads have one source, not two.** The project's download figures come from
+  `ShareView.downloadsByDay` over the project's `shareId`s — identical arithmetic to the document
+  page. `ProjectLinkView.downloadsByDay` records the same intent at landing level and is **not**
+  added to it; adding the two would double every download.
+
+**The views-by-day series buckets a (link, viewer) once**, by its *last* activity — the same rule
+`ACTIVITY_DAY_KEY_EXPR` gives a document, where a row already carries one activity date. It has to be
+done in two stages here (group to the viewer with `$max` of the activity date, *then* to the day),
+because one (link, viewer) owns one row per document opened: grouping on `{day, viewer}` put a
+recipient who read the deck on Monday and the term sheet on Wednesday into two buckets, and the area
+under the chart then exceeded the VIEWS tile it is supposed to equal.
+
+**Project-link rows are not document-link rows.** A `ShareView`/`ShareVisit` written through a
+project link carries the opened document's `docId`, so `/api/docs/:docId/shareviews` (and its
+`/visits` sibling) bound their `{ docId }` match with a `$nin` of the project slugs that document has
+traffic on — otherwise a data room's reading entered the document's own totals and, since the label
+join is `{docId, shareId}` and a project link's `docId` is null, came back labelled "Deleted link"
+for a link the owner can see live on `/project/:id/links`. The set is derived from the rows
+themselves, not from current project membership, so a document removed from a project stays clean.
+
+That exclusion is **one rule on every document-scoped surface**, and the rule is the heading above:
+a read through a project link is the project's view, and the document's own figures never count it.
+`src/lib/analytics/docScope.ts` owns it (`projectLinkSlugsForDocs` / `docOnlyShareIdMatch`) and the
+surfaces are:
+
+| surface | how it obeys |
+|---|---|
+| `GET /api/docs/:docId/shareviews` (+ `/visits`) | `docOnlyShareIdMatch` on every aggregate |
+| `rollupDocMetrics` → `Doc.metricsSnapshot` (dashboard card, QuickStats) | the same `$nin` on views, windowed downloads and lifetime downloads, computed once per batch |
+| `Doc.numberOfViews` ingest (`POST /api/share/:shareId/stats`) | not incremented when the slug is a project link (`projectTarget`) |
+| `Doc.numberOfViews` ingest (`GET /p/:shareId/:docId/pdf`) | never incremented; every row on that route is a project link's |
+| `Doc.numberOfPagesViewed` ingest (`POST /api/share/:shareId/stats`) | same `projectTarget` guard as `numberOfViews`, so the dashboard's two sharing tiles cannot disagree about one reading |
+| `totalsAllTime`'s legacy floor | skipped for a document that has project-link traffic, since the counter predates the rule and is contaminated |
+| `GET /api/docs/:docId/pages` (the reading page + its people/visits siblings) | `docOnlyShareIdMatch` in `loadReadingCore`, on the rows, the visits and the all-time pass |
+| Workspace **Top documents** (`src/lib/analytics/workspace/query.ts`, `byDoc`) | the `own*` half of the facet — see the workspace section below |
+
+The traffic is not lost: it is reported on `/project/:id/metrics`, which is the scope that owns it.
+Before this, `Doc.metricsSnapshot.lastDaysViews` and `Doc.numberOfViews` exceeded what
+`/doc/:id/metrics` showed for the same document and window — QuickStats flashed the larger figure
+and swapped to the smaller one, and the dashboard card disagreed permanently. Pinned by
+tests/lib/docMetricsScope.test.ts.
+
+The `ShareView` rows themselves are untouched, so a workspace-level aggregate *built from the rows*
+still counts the reading exactly once: `/api/metrics/workspace`'s headline, its day series and its
+`docsOpened` sentence all include data-room reads, and only its per-document rows subtract them (see
+"Workspace metrics" below). The exception is `/api/dashboard/stats`, whose four `sharing` figures are
+sums of the legacy per-document counters and are therefore document-scoped like the counters
+themselves — its tiles exclude data-room reads while the chart above them, which is row-derived,
+includes them. That is stated on the route and is the price of not re-deriving an all-time figure
+from a full scan; the workspace metrics page is where the workspace-scoped question is answered.
+
+The counters obey the rule **from the ingest guard forwards only**. Data-room reads taken before it
+are still inside `Doc.numberOfViews` / `Doc.numberOfPagesViewed`, and nothing later subtracts them:
+one workspace's dashboard read 14 views against 7 on both of its documents' own pages. The one-time
+repair is `scripts/doc-view-counters-recount.ts` (recomputes both counters from `ShareView`,
+recipients only, project slugs excluded — the same query the metrics route answers from). An
+environment where it has not run has contaminated tiles, not agreeing ones.
+The **workspace** Top Links card (`src/lib/analytics/workspace/query.ts`) obeys the heading too, in
+the one way a workspace-scoped list can: it ranks **one row per `shareId`**, and a row carries a
+`kind`. A project link is labelled with its own label over the *project's* name (a folder glyph
+beside it), and opens `/project/:projectId/metrics?shareId=` — never `/doc/:docId/metrics?shareId=`,
+which 404s for a link the document does not own. Its `views` are its recipients, per the dedup rule
+below, so the row equals the project page it opens; `linkReaderKeyExpr` in
+`src/lib/analytics/workspace/match.ts` strips the composite for that count. Document links are
+untouched. Before this the card grouped on `{ shareId, docId }`: one project link printed once per
+document opened through it, each row holding a slice of its traffic under a document's title, and
+the duplicate rows collided on their React key.
+
+**Every count is deduplicated by the composite key**, per the section above: the anonymous identity
+is the first 64 characters of `botIdHash`, `views` is the count of distinct (link, viewer) buckets
+rather than of rows, and `opens` is the count of distinct `visitIdHash` rather than of `ShareVisit`
+rows. `src/lib/analytics/project/viewerKey.ts` holds those expressions; the document route's
+`LINK_VIEWER_KEY_EXPR` stays as it is and must not learn about the composite. Before the dedup, a
+data room with two documents reported a single recipient who opened both as two viewers and two
+opens.
 
 ## Best-effort caveats / interpretation notes
 
@@ -304,6 +453,21 @@ instead of `docId` (recipients only, bounded by *last activity* in the window, b
 **A document's row here must equal its own metrics page for the same range; if they disagree, the
 document page is right and this one has a bug** (`tests/lib/workspaceMetricsReconcile.test.ts`
 checks exactly that against the seed corpus).
+
+#### Which figures on this page are workspace-scoped and which are document-scoped
+
+A data-room read is the workspace's read and the *project's* view. Both facts are on this page at
+once, so the `byDoc` facets count the same buckets twice in one scan (`ownOnly` in `query.ts`):
+
+| Figure | Scope | Why |
+| --- | --- | --- |
+| Headline **Views / Opens / Reading time / Downloads**, the day series | workspace — every read | The reading happened in this workspace; dropping it here would make this page disagree with its own chart and hide traffic that exists |
+| **Top documents** rows (`views`, `viewers`, `opens`, reading time, last opened) | document — project-link reads excluded | The row prints a per-document figure and opens `/doc/:docId/metrics`. A document whose only traffic in the window came through a data room has no row at all; its reading is on the Top links card, under the project link |
+| **Top links** rows | per `shareId`, no exclusion | A project link is a row in its own right and opens `/project/:projectId/metrics` |
+| **"opened N of M shared documents"**, **Quiet documents** | workspace — every read | These answer "did anyone read this file, anywhere". Excluding data-room reads would put a document a recipient read yesterday into a list headed "shared three weeks ago, nobody has opened it", which is the one wrong answer that makes an owner act |
+
+The visible consequence, and it is intended: the header sentence can say two documents were opened
+while Top documents lists one. The missing one is in the data room's row beside it.
 
 #### The four headline figures, and which collection each comes from
 

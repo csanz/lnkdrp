@@ -85,6 +85,18 @@ export function linkMetricsHref(docId: string, shareId: string): string {
   return `/doc/${docId}/metrics?shareId=${encodeURIComponent(shareId)}`;
 }
 
+/**
+ * The **project** metrics page, filtered to one project link.
+ *
+ * A project link's `shareId` is not a link of any one document, and `/doc/:docId/metrics` refuses
+ * it (that route scopes itself to the document's own links, so `?shareId=<project link>` answers
+ * 404). `/project/:projectId/metrics` is the page that owns this traffic; it reads `?shareId=` the
+ * same way.
+ */
+export function projectLinkMetricsHref(projectId: string, shareId: string): string {
+  return `/project/${projectId}/metrics?shareId=${encodeURIComponent(shareId)}`;
+}
+
 /** Descending by `a`, then `b`, then most recent, then id — so equal rows never reorder between calls. */
 function byViewsThenRecency<T extends { views: number; viewers?: number; lastOpenedAt: string | null }>(
   a: T,
@@ -106,9 +118,155 @@ export function rankTopDocs(rows: WorkspaceTopDoc[], limit: number): WorkspaceTo
   return [...rows].sort((a, b) => byViewsThenRecency(a, b, (r) => r.docId)).slice(0, Math.max(0, limit));
 }
 
-/** Top links by views, bounded. */
-export function rankTopLinks(rows: WorkspaceTopLink[], limit: number): WorkspaceTopLink[] {
+/**
+ * One link's traffic in the window, as the aggregation produces it: already collapsed to one row
+ * per `shareId`, whether it is a document link or a project link.
+ *
+ * `docIds` is every live document the link was opened on — one for a document link, one per
+ * document opened for a project link.
+ *
+ * The two counts are **different questions**, and only a project link can tell them apart:
+ * - `rows` is `ShareView` rows, which for a project link is (viewer × document opened).
+ * - `readers` is distinct readers of the *link*, with the `docId` a project link spells into its
+ *   viewer key stripped back off (`linkReaderKeyExpr`).
+ *
+ * On a document link they are the same number — a row already is one (link, viewer).
+ */
+export type WorkspaceLinkCandidate = {
+  shareId: string;
+  docIds: string[];
+  rows: number;
+  readers: number;
+  lastOpenedAt: string | null;
+};
+
+/**
+ * What the `ShareLink` row (and, for a project link, its project) says about a ranked candidate.
+ *
+ * Every field is optional and loosely typed because this is the join of a lean Mongo read: a link
+ * can have been hard-deleted since its views were recorded, and a project can have been deleted out
+ * from under its link.
+ */
+export type WorkspaceLinkIdentity = {
+  shareLinkId?: string | null;
+  /** `ShareLink.kind`. Anything other than `"project"` — including missing — is a document link. */
+  kind?: string | null;
+  label?: string | null;
+  audience?: string | null;
+  isDefault?: boolean;
+  docId?: string | null;
+  projectId?: string | null;
+  projectName?: string | null;
+};
+
+/** The name a project link falls back to when its project row is gone. */
+const UNNAMED_PROJECT = "Project";
+
+/** A trimmed string, or `""` — the lean Mongo rows these helpers join can hold anything. */
+function cleanText(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** Top links by views, bounded. Kind-blind on purpose: a row ranks on its traffic, not its type. */
+export function rankTopLinks<T extends { shareId: string; views: number; viewers: number; lastOpenedAt: string | null }>(
+  rows: T[],
+  limit: number,
+): T[] {
   return [...rows].sort((a, b) => byViewsThenRecency(a, b, (r) => r.shareId)).slice(0, Math.max(0, limit));
+}
+
+/**
+ * Turn one ranked candidate into the row the page renders, using whatever its `ShareLink` says.
+ *
+ * Three cases, and the difference between them is the whole point of this helper:
+ *
+ * - **A project link** (`kind: "project"` with a `projectId`) is named by its own label, sits under
+ *   the *project*, and opens the project's metrics page filtered to it. It never carries a `docId`:
+ *   its traffic spans several documents, so naming one of them would be a coin toss, and
+ *   `/doc/:docId/metrics?shareId=` answers 404 for a link the document does not own.
+ * - **A document link** keeps exactly the old behaviour: the link's document, the document's title
+ *   underneath, the document's metrics page filtered to the link.
+ * - **A link whose row is gone** (hard-deleted) has no label and no kind to read, so it is treated
+ *   as a document link on the document its views were recorded against — the document title is then
+ *   the only honest name left for it. A deleted *project* link lands here too and still produces
+ *   exactly one row, which is what keeps the list free of duplicate `shareId`s.
+ *
+ * **A project link's `views` are its recipients, never its rows.** That is the locked rule
+ * (docs/METRICS.md, "Views for a project link are not `countDocuments({ shareId })`"), and it is
+ * also the only value that agrees with the page this row opens: `GET /api/projects/:id/shareviews`
+ * groups on `PROJECT_LINK_VIEWER_KEY_EXPR` before counting, so one investor who read a deck and a
+ * term sheet through one data-room link is one view there and must be one view here. Summing the
+ * rows instead reports a two-document data room as twice the traffic it had. Document links are
+ * unaffected: a row already is one (link, viewer), so `rows` and `readers` agree.
+ */
+export function buildTopLink(
+  row: WorkspaceLinkCandidate,
+  identity: WorkspaceLinkIdentity | null | undefined,
+  docTitle: (docId: string) => string,
+): WorkspaceTopLink {
+  const shareLinkId = cleanText(identity?.shareLinkId) || null;
+  const audience = cleanText(identity?.audience) || null;
+  const isDefault = identity?.isDefault === true;
+  const label = cleanText(identity?.label);
+  const projectId = cleanText(identity?.projectId);
+
+  if (cleanText(identity?.kind) === "project" && projectId) {
+    const parentName = cleanText(identity?.projectName) || UNNAMED_PROJECT;
+    return {
+      shareId: row.shareId,
+      shareLinkId,
+      kind: "project",
+      label: label || parentName,
+      audience,
+      isDefault,
+      docId: null,
+      projectId,
+      parentName,
+      views: safeCount(row.readers),
+      viewers: safeCount(row.readers),
+      lastOpenedAt: row.lastOpenedAt,
+      href: projectLinkMetricsHref(projectId, row.shareId),
+    };
+  }
+
+  // `identity.docId` first — the link's own document — falling back to the document its views were
+  // recorded against, which is all a deleted link leaves behind.
+  const docId = cleanText(identity?.docId) || cleanText(row.docIds[0]);
+  const parentName = docTitle(docId);
+  return {
+    shareId: row.shareId,
+    shareLinkId,
+    kind: "doc",
+    label: label || parentName,
+    audience,
+    isDefault,
+    docId,
+    projectId: null,
+    parentName,
+    views: safeCount(row.rows),
+    viewers: safeCount(row.readers),
+    lastOpenedAt: row.lastOpenedAt,
+    href: linkMetricsHref(docId, row.shareId),
+  };
+}
+
+/**
+ * {@link buildTopLink} over every candidate, then ranked and bounded.
+ *
+ * Named **before** ranked, not after, which is the order the first cut used: a project link's views
+ * are its recipients rather than its rows, and only its `ShareLink` says it is one, so ranking the
+ * raw candidates would order the card by a figure two of its rows do not print.
+ */
+export function buildTopLinks(
+  rows: WorkspaceLinkCandidate[],
+  identityOf: (shareId: string) => WorkspaceLinkIdentity | null | undefined,
+  docTitle: (docId: string) => string,
+  limit: number,
+): WorkspaceTopLink[] {
+  return rankTopLinks(
+    rows.map((row) => buildTopLink(row, identityOf(row.shareId), docTitle)),
+    limit,
+  );
 }
 
 /**

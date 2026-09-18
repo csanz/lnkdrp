@@ -13,20 +13,75 @@ import { formatDayKey } from "@/lib/format/date";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
 
 /**
- * Quick engagement stats for the owner's document page side panel.
+ * Quick engagement stats for an owner side panel — the document page's rail and the project's.
  *
  * Renders instantly from the denormalized `Doc.metricsSnapshot` (rolled up by the doc-metrics
- * cron), then refreshes from `/api/docs/:docId/shareviews?lite=1` for live totals and the
- * views-by-day series that feeds the chart. Single series, so no legend; the title names it.
+ * cron) when the caller has one, then refreshes from the scope's `shareviews` endpoint for live
+ * totals and the views-by-day series that feeds the chart. Single series, so no legend; the title
+ * names it.
  *
- * Free workspaces get the basic tier: the Viewers tile still shows how many people opened the
- * document (`viewerCount`) with a small "see who · Pro" link, and the footer names the 7-day
- * window; both open the `analytics_history` upsell.
+ * **One component, two resources** — the same move `LinksManager` made, and for the same reason:
+ * the project rail had no engagement glimpse at all, and a second copy of this card would have
+ * drifted on the next change to either. Everything doc-shaped about it (two API bases, the metrics
+ * href, the fifth tile's noun) is derived from `scope` in `scopeConfig` below; nothing else in the
+ * file branches on the kind. It was `DocQuickStats` at `src/components/DocQuickStats.tsx` —
+ * additive rename only, the document rendering is unchanged.
+ *
+ * Free workspaces get the basic tier: the Viewers tile still shows how many people opened it
+ * (`viewerCount`) with a small "see who · Pro" link, and the footer names the 7-day window; both
+ * open the `analytics_history` upsell.
  */
 
 /**
- * The one field this component still needs straight from `GET /api/docs/:docId/links`: the label
- * of a document's *sole* link, for the one-link header line. Everything else — the ranking, the
+ * Which resource these stats are for. `id` is a document id or a project id, exactly as
+ * `LinksManager`'s `LinksScope` — everything else is derived, so no call site can pass a URL that
+ * disagrees with the noun in the copy.
+ */
+export type QuickStatsScope = { kind: "doc" | "project"; id: string };
+
+type ScopeConfig = {
+  linksUrl: string;
+  statsUrl: (days: number, topLinks: number) => string;
+  metricsHref: string;
+  linkMetricsHref: (shareId: string) => string;
+  /**
+   * The fifth tile. A document's "how much was reached" is distinct pages; a project's is distinct
+   * documents opened through its links (`totals.docsOpened`), which is the same question asked of
+   * the thing the reader actually navigates.
+   */
+  reachLabel: string;
+  reachOf: (totals: StatsTotals | undefined) => number | null;
+  /** What one link of this resource is called in the sole-link header line. */
+  emptyChartHint: string;
+};
+
+function scopeConfig(scope: QuickStatsScope): ScopeConfig {
+  const id = encodeURIComponent(scope.id);
+  if (scope.kind === "project") {
+    return {
+      linksUrl: `/api/projects/${id}/links?limit=1`,
+      statsUrl: (days, topLinks) => `/api/projects/${id}/shareviews?days=${days}&byLink=1&topLinks=${topLinks}`,
+      metricsHref: `/project/${id}/metrics`,
+      linkMetricsHref: (shareId) => `/project/${id}/metrics?shareId=${encodeURIComponent(shareId)}`,
+      reachLabel: "Docs",
+      reachOf: (t) => (t && typeof t.docsOpened === "number" ? num(t.docsOpened) : null),
+      emptyChartHint: "Share the link to start tracking.",
+    };
+  }
+  return {
+    linksUrl: `/api/docs/${id}/links?limit=1`,
+    statsUrl: (days, topLinks) => `/api/docs/${id}/shareviews?days=${days}&lite=1&byLink=1&topLinks=${topLinks}`,
+    metricsHref: `/doc/${id}/metrics`,
+    linkMetricsHref: (shareId) => `/doc/${id}/metrics?shareId=${encodeURIComponent(shareId)}`,
+    reachLabel: "Pages",
+    reachOf: (t) => (t ? num(t.pagesViewed) : null),
+    emptyChartHint: "Share the link to start tracking.",
+  };
+}
+
+/**
+ * The one field this component still needs straight from the scope's links endpoint: the label
+ * of a *sole* link, for the one-link header line. Everything else — the ranking, the
  * labels of the links in that ranking — comes bounded from the analytics response's `byLink` now,
  * so this is fetched with `?limit=1`: enough to read `total` and (when there is exactly one link)
  * that link's label, never enough to render a list.
@@ -41,6 +96,24 @@ type Snapshot = {
   downloadsTotal: number;
 } | null;
 
+/** The windowed figures both scopes return under the same names. */
+type StatsTotals = {
+  views?: number;
+  /** Tab sessions in the window: the count of *opens*, where `views` counts recipients. */
+  opens?: number;
+  /** `opens` is missing rows (traffic older than visit tracking); show it as unknown, not as a count. */
+  opensPartial?: boolean;
+  downloads?: number;
+  /** Document scope: distinct pages reached. */
+  pagesViewed?: number;
+  /** Project scope: distinct documents recipients opened through the project's links. */
+  docsOpened?: number;
+  /** Total time within the window (ms), summed across every viewer. */
+  timeSpentMs?: number;
+  authenticatedViewers?: number;
+  anonymousViewers?: number;
+};
+
 type StatsResponse = {
   ok?: boolean;
   days?: number;
@@ -50,19 +123,7 @@ type StatsResponse = {
   analyticsTier?: "basic" | "deep";
   /** Unique viewers (signed-in + anonymous) in the window. */
   viewerCount?: number;
-  totals?: {
-    views?: number;
-    /** Tab sessions in the window: the count of *opens*, where `views` counts recipients. */
-    opens?: number;
-    /** `opens` is missing rows (traffic older than visit tracking); show it as unknown, not as a count. */
-    opensPartial?: boolean;
-    downloads?: number;
-    pagesViewed?: number;
-    /** Total time on the document within the window (ms), summed across every viewer. */
-    timeSpentMs?: number;
-    authenticatedViewers?: number;
-    anonymousViewers?: number;
-  };
+  totals?: StatsTotals;
   series?: Array<{ date: string; views: number; opens?: number; downloads: number }>;
   /** Whether downloads are allowed on any live link of the document (a label, not a filter). */
   downloadsEnabled?: boolean;
@@ -132,13 +193,14 @@ type LinkMiniRow = { shareId: string; label: string | null; viewers: number; vie
  */
 function LinkMiniList({
   title,
-  docId,
+  href,
   rows,
   empty,
   right,
 }: {
   title: string;
-  docId: string;
+  /** Where a row's label points: the scope's metrics page, already filtered to that link. */
+  href: (shareId: string) => string;
   rows: LinkMiniRow[];
   empty: string;
   right: (row: LinkMiniRow) => React.ReactNode;
@@ -152,7 +214,7 @@ function LinkMiniList({
             <li key={r.shareId} className="flex items-baseline justify-between gap-3 text-[11px]">
               {r.label ? (
                 <Link
-                  href={`/doc/${encodeURIComponent(docId)}/metrics?shareId=${encodeURIComponent(r.shareId)}`}
+                  href={href(r.shareId)}
                   className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
                   title={`${r.label} — see who opened it`}
                 >
@@ -264,16 +326,25 @@ function DailyArea({ data, unit }: { data: Array<{ date: string; value: number }
   );
 }
 
-/** Quick stats card for the owner doc page: four tiles, a views sparkline, and the plan footer. */
-export default function DocQuickStats({
-  docId,
-  snapshot,
-  downloadsEnabled,
+/** Quick stats card for an owner side panel: five tiles, a sparkline, and the plan footer. */
+export default function QuickStats({
+  scope,
+  snapshot = null,
+  downloadsEnabled = false,
 }: {
-  docId: string;
-  snapshot: Snapshot;
-  downloadsEnabled: boolean;
+  scope: QuickStatsScope;
+  /**
+   * The denormalized first paint. Document scope only — `Doc.metricsSnapshot` is written by the
+   * doc-metrics cron and a project has no counterpart, so the project card simply starts from the
+   * reserved tiles and fills in when the fetch lands.
+   */
+  snapshot?: Snapshot;
+  /** The legacy document-level download flag; the response's own `downloadsEnabled` wins over it. */
+  downloadsEnabled?: boolean;
 }) {
+  const scopeKind = scope.kind;
+  const scopeId = scope.id;
+  const cfg = useMemo(() => scopeConfig({ kind: scopeKind, id: scopeId }), [scopeKind, scopeId]);
   const [live, setLive] = useState<StatsResponse | null>(null);
   const [failed, setFailed] = useState(false);
   const { openUpgrade } = useUpgradeModal();
@@ -306,7 +377,7 @@ export default function DocQuickStats({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}/links?limit=1`, { cache: "no-store" });
+        const res = await fetchWithTempUser(cfg.linksUrl, { cache: "no-store" });
         if (!res.ok) return;
         const json = (await res.json()) as { total?: number; links?: LinkSummary[] };
         if (!cancelled) setLinks({ total: typeof json.total === "number" ? json.total : 0, links: Array.isArray(json.links) ? json.links : [] });
@@ -317,13 +388,13 @@ export default function DocQuickStats({
     return () => {
       cancelled = true;
     };
-  }, [docId, rev]);
+  }, [cfg, rev]);
 
   /**
    * How many links these tiles actually cover.
    *
    * `linksTotal` (from the same analytics response as the tiles) counts live links; `byLink` can
-   * additionally carry a deleted link's traffic — the tiles are `{ docId }`-scoped and include a
+   * additionally carry a deleted link's traffic — the tiles are resource-scoped and include a
    * deleted link's rows by design, so a document whose second link was deleted printed "all 1
    * links" over totals that counted two. Taking the larger of the two keeps that case honest, at
    * the cost of only seeing a deleted link's slug when it made the bounded top-N ranking.
@@ -390,10 +461,7 @@ export default function DocQuickStats({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetchWithTempUser(
-          `/api/docs/${encodeURIComponent(docId)}/shareviews?days=${DAYS}&lite=1&byLink=1&topLinks=${TOP_LINKS_LIMIT}`,
-          { cache: "no-store" },
-        );
+        const res = await fetchWithTempUser(cfg.statsUrl(DAYS, TOP_LINKS_LIMIT), { cache: "no-store" });
         if (!res.ok) throw new Error(String(res.status));
         const json = (await res.json()) as StatsResponse;
         if (!cancelled) setLive(json);
@@ -404,7 +472,7 @@ export default function DocQuickStats({
     return () => {
       cancelled = true;
     };
-  }, [docId, rev]);
+  }, [cfg, rev]);
 
   const stats = useMemo(() => {
     const t = live?.totals;
@@ -415,7 +483,7 @@ export default function DocQuickStats({
     // tile jumping from "3 this week" to "41 ever" when the fetch lands.
     const views = t ? num(t.views) : snapshot ? num(snapshot.lastDaysViews) : null;
     const downloads = t ? num(t.downloads) : snapshot ? num(snapshot.lastDaysDownloads) : null;
-    const pages = t ? num(t.pagesViewed) : null;
+    const pages = cfg.reachOf(t);
     const timeSpentMs = t && typeof t.timeSpentMs === "number" ? num(t.timeSpentMs) : null;
     // `opens` is absent on a response from before it existed; `null` keeps the tile reserved
     // rather than asserting zero opens on a document that has plainly been read.
@@ -425,7 +493,7 @@ export default function DocQuickStats({
     const opens = t && typeof t.opens === "number" && t.opensPartial !== true ? num(t.opens) : null;
     const opensPartial = Boolean(t?.opensPartial);
     return { viewers, views, downloads, pages, timeSpentMs, opens, opensPartial };
-  }, [live, snapshot]);
+  }, [cfg, live, snapshot]);
 
   const series = useMemo(
     () => (Array.isArray(live?.series) ? live!.series.map((s) => ({ date: s.date, views: num(s.views) })) : []),
@@ -550,7 +618,7 @@ export default function DocQuickStats({
             ? stats.downloads
             : "Off",
         )}
-        {tile("Pages", stats.pages)}
+        {tile(cfg.reachLabel, stats.pages)}
       </div>
 
       {/* Only once there is more than one link: on a single-link document both lists would be the
@@ -562,14 +630,14 @@ export default function DocQuickStats({
             // views, and views and viewers are the same figure on all-anonymous traffic, so the
             // guess is right often enough to never be corrected and wrong as soon as it matters.
             title="Top links · by viewers"
-            docId={docId}
+            href={cfg.linkMetricsHref}
             rows={topLinks}
             empty="No link opened yet"
             right={(r) => <span className="tabular-nums">{r.viewers.toLocaleString()}</span>}
           />
           <LinkMiniList
             title="Recently opened"
-            docId={docId}
+            href={cfg.linkMetricsHref}
             rows={recentLinks}
             empty="Nothing opened yet"
             right={(r) => <span className="whitespace-nowrap">{relativeAge(r.lastViewedAt) ?? "—"}</span>}
@@ -586,7 +654,7 @@ export default function DocQuickStats({
             <DailyArea data={chartData} unit={chartUnit} />
           ) : (
             <div className="rounded-lg border border-dashed border-[var(--border)] px-3 py-4 text-center text-[12px] text-[var(--muted)]">
-              No views yet in the last {shownDays} days. Share the link to start tracking.
+              No views yet in the last {shownDays} days. {cfg.emptyChartHint}
             </div>
           )
         ) : (
@@ -599,7 +667,7 @@ export default function DocQuickStats({
           The limited window is already in the header ("last 7 days"). */}
       <div className="mt-3 flex justify-end text-[11px]">
         <Link
-          href={`/doc/${encodeURIComponent(docId)}/metrics`}
+          href={cfg.metricsHref}
           className="font-medium text-[var(--fg)] underline-offset-2 hover:underline"
         >
           Open full metrics →

@@ -21,8 +21,9 @@
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
-import { ShareLinkModel } from "@/lib/models/ShareLink";
+import { PROJECT_LINK_FILTER, ShareLinkModel } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { projectLinkStatsByShareId } from "@/lib/share/projectLinks";
 
 /**
  * How far a link's stored `lastViewedAt` may sit from the rows before it counts as drift.
@@ -67,10 +68,18 @@ export async function reconcileShareLinkCounters(
   const sampleLimit = Math.max(0, opts.driftSampleLimit ?? 25);
   const orgFilter = opts.orgId ? { orgId: new Types.ObjectId(String(opts.orgId)) } : {};
 
+  // Project links are counted by a different rule and are recomputed separately below: their rows
+  // are one per (viewer, document), so the row count this pipeline produces is not the recipient
+  // count `viewCount` means everywhere else. Without the split this job faithfully wrote the wrong
+  // quantity back onto every project link on every nightly run, undoing the read paths' agreement.
+  const projectSlugs = (await ShareLinkModel.find({ ...orgFilter, ...PROJECT_LINK_FILTER }).distinct(
+    "shareId",
+  )) as unknown as string[];
+
   // Recipients only, and `lastViewedAt` before `updatedDate` — the same two rules every read path
   // applies, so this job and the metrics page cannot disagree about what a link's traffic is.
   const rows = (await ShareViewModel.aggregate([
-    { $match: { ...orgFilter, isOwnerPreview: { $ne: true } } },
+    { $match: { ...orgFilter, isOwnerPreview: { $ne: true }, ...(projectSlugs.length ? { shareId: { $nin: projectSlugs } } : {}) } },
     {
       $group: {
         _id: "$shareId",
@@ -89,6 +98,19 @@ export async function reconcileShareLinkCounters(
       downloadCount: typeof r.downloadCount === "number" && Number.isFinite(r.downloadCount) ? r.downloadCount : 0,
       lastViewedAt: r.lastViewedAt ? new Date(r.lastViewedAt) : null,
     });
+  }
+
+  // The project half, from the one function the project read paths already share, so "what a
+  // project link's viewCount is" has exactly one definition in the codebase.
+  if (projectSlugs.length) {
+    const projectTruth = await projectLinkStatsByShareId(projectSlugs);
+    for (const [shareId, stats] of projectTruth) {
+      bySlug.set(shareId, {
+        viewCount: stats.viewCount,
+        downloadCount: stats.downloadCount,
+        lastViewedAt: stats.lastViewedAt,
+      });
+    }
   }
 
   const links = (await ShareLinkModel.find(orgFilter)

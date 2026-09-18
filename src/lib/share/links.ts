@@ -5,6 +5,10 @@
  * Rules enforced here, so routes, the MCP and scripts cannot disagree:
  * - `resolveShareLink(shareId)` is the only way a public share route turns a slug into a
  *   document, and it materialises the default link for pre-model documents on first touch.
+ * - Everything here is about **document** links. `ShareLink` also stores project links
+ *   (`src/lib/share/projectLinks.ts`, docs/prds/lnkdrp-project-links.md), which have no `docId`;
+ *   every query below either pins an ObjectId `docId` (which excludes them on its own, since
+ *   theirs is null) or carries `DOC_LINK_FILTER`. Nothing in this file may return a project link.
  * - The Free cap counts shared *documents*, never links: a document may own any number of links,
  *   workspace. Links themselves are never plan-capped — see `createShareLink`.
  * - `Doc.shareEnabled` is kept equal to "the document has at least one enabled link", and the
@@ -15,7 +19,7 @@ import { Types, type ProjectionType } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
-import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { DOC_LINK_FILTER, ShareLinkModel, type ShareLink, type ShareLinkKind } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
@@ -30,7 +34,11 @@ export const DEFAULT_LINK_LABEL = "Default link";
 
 export type ShareLinkDTO = {
   id: string;
-  docId: string;
+  /** Null on a project link. Document routes only ever hand back rows where this is set. */
+  docId: string | null;
+  /** Set only on a project link (`src/lib/share/projectLinks.ts`). */
+  projectId: string | null;
+  kind: ShareLinkKind;
   shareId: string;
   label: string;
   audience: string | null;
@@ -89,7 +97,8 @@ function oid(v: string | Types.ObjectId): Types.ObjectId {
   return v instanceof Types.ObjectId ? v : new Types.ObjectId(v);
 }
 
-function isExpired(link: Pick<ShareLink, "expiresAt">, now = Date.now()): boolean {
+/** Past its `expiresAt` instant. Exported for `./projectLinks.ts`, which applies the same rule. */
+export function isExpired(link: Pick<ShareLink, "expiresAt">, now = Date.now()): boolean {
   return Boolean(link.expiresAt && link.expiresAt.getTime() <= now);
 }
 
@@ -152,7 +161,11 @@ export function toShareLinkDTO(link: ShareLink, stats?: ShareLinkStats | null): 
   const status: ShareLinkDTO["status"] = link.archivedAt ? "archived" : !link.enabled ? "disabled" : isExpired(link) ? "expired" : "active";
   return {
     id: String(link._id),
-    docId: String(link.docId),
+    // `String(undefined)` is the string "undefined", which a client cannot tell from an id — hence
+    // the explicit null for a link that has no document.
+    docId: link.docId ? String(link.docId) : null,
+    projectId: link.projectId ? String(link.projectId) : null,
+    kind: link.projectId ? "project" : "doc",
     shareId: link.shareId,
     label: link.label,
     audience: link.audience ?? null,
@@ -182,9 +195,14 @@ export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web"
   await connectMongo();
   const existing = await ShareLinkModel.findOne({ docId: doc._id, isDefault: true }).lean<ShareLink>();
   if (existing) return existing;
-  const shareId = (doc.shareId && String(doc.shareId).trim()) || newShareId();
+  let shareId = (doc.shareId && String(doc.shareId).trim()) || newShareId();
   const byShareId = await ShareLinkModel.findOne({ shareId }).lean<ShareLink>();
-  if (byShareId) return byShareId;
+  // `Doc.shareId` and `Project.shareId` are unique in their own collections but not against each
+  // other, so a legacy `Doc.shareId` can collide with a project link's slug. Taking a fresh slug is
+  // the only safe answer: the unique index would refuse the insert, and adopting the project's row
+  // as this document's default link would point `/s/` at the wrong thing.
+  if (byShareId && byShareId.projectId) shareId = newShareId();
+  else if (byShareId) return byShareId;
   try {
     const created = await ShareLinkModel.create({
       orgId: doc.orgId ?? undefined,
@@ -206,7 +224,8 @@ export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web"
       // Only the document create route knows who made it; every lazy backfill is a migration.
       createdVia: opts.createdVia ?? "migration",
     });
-    if (!doc.shareId) await DocModel.updateOne({ _id: doc._id }, { $set: { shareId } });
+    // Backfill (or, after the slug collision above, re-point) `Doc.shareId` at its default link.
+    if (doc.shareId !== shareId) await DocModel.updateOne({ _id: doc._id }, { $set: { shareId } });
     return created.toObject() as ShareLink;
   } catch (e) {
     // Lost a race on the unique index: return whichever row won.
@@ -233,6 +252,12 @@ export async function resolveShareLink(shareId: string, opts: { select?: Record<
   if (!slug) return null;
   await connectMongo();
   let link = await ShareLinkModel.findOne({ shareId: slug }).lean<ShareLink>();
+  // A project link lives in the same slug namespace but has no document: `/s/:shareId` and every
+  // caller below it must refuse it outright. Without this the `DocModel.findOne({ _id: null })`
+  // underneath returns nothing and the slug reports `refusal: "doc_gone"` — a 404 either way, but
+  // one that reads as "the document was deleted" in logs and in the download-token paths.
+  // `/p/:shareId` resolves these, via `resolveProjectLink()` in `src/lib/share/projectLinks.ts`.
+  if (link?.projectId) return null;
   let doc: (DocLike & Record<string, unknown>) | null = null;
   if (link) {
     doc = (await DocModel.findOne({ _id: link.docId })
@@ -332,11 +357,15 @@ export async function listShareLinksPage(input: {
   return { total, page, limit, links: rows };
 }
 
-/** One workspace-wide search hit: enough to identify the link and the document it belongs to. */
+/** One workspace-wide search hit: enough to identify the link and what it belongs to. */
 export type ShareLinkSearchHit = {
-  docId: string;
+  /** `"doc"` → `docId`/`docTitle` are set; `"project"` → `projectId`/`projectName` are. */
+  kind: ShareLinkKind;
+  docId: string | null;
   docTitle: string | null;
   docShareId: string | null;
+  projectId: string | null;
+  projectName: string | null;
   linkId: string;
   shareId: string;
   label: string;
@@ -359,6 +388,13 @@ export type ShareLinkSearchHit = {
  * filter by the doc, then rank, then limit — costs a touch more than limiting first, but it means
  * `limit` results really are the top `limit` *visible* matches, not `limit` candidates that might
  * mostly get thrown away afterward.
+ *
+ * Both kinds of link are searchable here — a project link's label ("Series A · Sequoia") is exactly
+ * the kind of thing someone asks for by name. Each join is `preserveNullAndEmptyArrays`: the
+ * document join produces nothing for a project link and vice versa, and an unguarded `$unwind`
+ * would drop every project link from workspace search (a collection carries one text index, so
+ * both kinds share this one). The `$match` after them keeps a hit only when *its own* owner is
+ * live, which also drops a row whose owner was hard-deleted out from under it.
  */
 export async function searchShareLinks(input: {
   orgId: string | Types.ObjectId;
@@ -374,8 +410,17 @@ export async function searchShareLinks(input: {
   const rows = (await ShareLinkModel.aggregate([
     { $match: { orgId, archivedAt: null, $text: { $search: query } } },
     { $lookup: { from: "docs", localField: "docId", foreignField: "_id", as: "doc" } },
-    { $unwind: "$doc" },
-    { $match: { "doc.isDeleted": { $ne: true }, "doc.isArchived": { $ne: true } } },
+    { $unwind: { path: "$doc", preserveNullAndEmptyArrays: true } },
+    { $lookup: { from: "projects", localField: "projectId", foreignField: "_id", as: "project" } },
+    { $unwind: { path: "$project", preserveNullAndEmptyArrays: true } },
+    {
+      $match: {
+        $or: [
+          { "doc.isDeleted": { $ne: true }, "doc.isArchived": { $ne: true }, "doc._id": { $ne: null } },
+          { "project.isDeleted": { $ne: true }, "project._id": { $ne: null } },
+        ],
+      },
+    },
     { $sort: { score: { $meta: "textScore" } } },
     { $limit: limit },
     {
@@ -391,6 +436,8 @@ export async function searchShareLinks(input: {
         docId: "$doc._id",
         docTitle: "$doc.title",
         docShareId: "$doc.shareId",
+        projectId: "$project._id",
+        projectName: "$project.name",
       },
     },
   ])) as Array<{
@@ -401,15 +448,20 @@ export async function searchShareLinks(input: {
     isDefault?: boolean;
     enabled?: boolean;
     expiresAt?: Date | null;
-    docId: Types.ObjectId;
+    docId?: Types.ObjectId | null;
     docTitle?: string | null;
     docShareId?: string | null;
+    projectId?: Types.ObjectId | null;
+    projectName?: string | null;
   }>;
 
   return rows.map((r) => ({
-    docId: String(r.docId),
+    kind: (r.projectId ? "project" : "doc") as ShareLinkKind,
+    docId: r.docId ? String(r.docId) : null,
     docTitle: typeof r.docTitle === "string" ? r.docTitle : null,
     docShareId: typeof r.docShareId === "string" ? r.docShareId : null,
+    projectId: r.projectId ? String(r.projectId) : null,
+    projectName: typeof r.projectName === "string" ? r.projectName : null,
     linkId: String(r.linkId),
     shareId: r.shareId,
     label: r.label,
@@ -444,14 +496,16 @@ export class ShareLinkError extends Error {
   }
 }
 
-function validateLabel(label: unknown): string {
+/** A required, trimmed label of at most {@link SHARE_LINK_LABEL_MAX} characters. Shared with project links. */
+export function validateLabel(label: unknown): string {
   const s = typeof label === "string" ? label.trim() : "";
   if (!s) throw new ShareLinkError("validation", "A label is required.");
   if (s.length > SHARE_LINK_LABEL_MAX) throw new ShareLinkError("validation", `Label must be ${SHARE_LINK_LABEL_MAX} characters or fewer.`);
   return s;
 }
 
-function validateAudience(v: unknown): string | null {
+/** An optional, trimmed audience note; empty reads as null. Shared with project links. */
+export function validateAudience(v: unknown): string | null {
   if (v === null || v === undefined) return null;
   const s = typeof v === "string" ? v.trim() : "";
   if (!s) return null;
@@ -459,7 +513,8 @@ function validateAudience(v: unknown): string | null {
   return s;
 }
 
-function validateExpiry(v: unknown): Date | null {
+/** A real, future ISO date, or null. Shared with project links so both kinds reject the same dates. */
+export function validateExpiry(v: unknown): Date | null {
   if (v === null || v === undefined || v === "") return null;
   const raw = String(v).trim();
   // `new Date` rolls impossible days forward ("2030-02-30" became March 2) and accepts expanded
@@ -477,7 +532,12 @@ function validateExpiry(v: unknown): Date | null {
   return d;
 }
 
-function passwordFields(password: string | null | undefined): Record<string, unknown> {
+/**
+ * The five stored password fields for a settings update: `undefined` leaves them alone, `null`/`""`
+ * clears them, a string sets a fresh scrypt hash plus the AES copy the owner can reveal. Shared
+ * with project links, so a project link's password is the same material a document link's is.
+ */
+export function passwordFields(password: string | null | undefined): Record<string, unknown> {
   if (password === undefined) return {};
   if (password === null || password === "") {
     return { passwordSalt: null, passwordHash: null, passwordEnc: null, passwordEncIv: null, passwordEncTag: null };
@@ -595,7 +655,10 @@ export async function updateShareLink(input: {
   viaDocSwitch?: boolean;
 }): Promise<UpdateShareLinkResult> {
   await connectMongo();
-  const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null }).lean<ShareLink>();
+  // `DOC_LINK_FILTER`: a link id addressed through a document route must be a document link, or a
+  // caller holding a project link's id could patch it here — where `syncDocShareState(link.docId)`
+  // below would then run with no document. Project links are patched by `updateProjectLink()`.
+  const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null, ...DOC_LINK_FILTER }).lean<ShareLink>();
   if (!link) throw new ShareLinkError("not_found", "Link not found.");
   const set: Record<string, unknown> = {};
   const s = input.settings;
@@ -621,7 +684,8 @@ export async function updateShareLink(input: {
   }
   if (Object.keys(set).length === 0) return { link, limit };
   const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true }).lean<ShareLink>();
-  await syncDocShareState(link.docId);
+  // `DOC_LINK_FILTER` on the lookup above guarantees a document link, so `docId` is set.
+  await syncDocShareState(link.docId as Types.ObjectId);
   return { link: updated ?? link, limit };
 }
 
@@ -640,10 +704,13 @@ export async function setDefaultShareLink(input: {
   await connectMongo();
   const orgId = oid(input.orgId);
   const docId = oid(input.docId);
-  const next = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId, docId, archivedAt: null }).lean<ShareLink>();
+  const next = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId, docId, archivedAt: null, ...DOC_LINK_FILTER }).lean<ShareLink>();
   if (!next) throw new ShareLinkError("not_found", "Link not found.");
   if (next.isDefault) return next;
-  await ShareLinkModel.updateMany({ docId, isDefault: true }, { $set: { isDefault: false } });
+  // Scoped to this document, and explicitly to document links: an `{ isDefault: true }` filter that
+  // ever loses its owner clause would clear the default on every link in the database, project
+  // links included. `syncProjectShareState` in projectLinks.ts carries the mirror-image comment.
+  await ShareLinkModel.updateMany({ docId, ...DOC_LINK_FILTER, isDefault: true }, { $set: { isDefault: false } });
   const updated = await ShareLinkModel.findOneAndUpdate({ _id: next._id }, { $set: { isDefault: true } }, { new: true }).lean<ShareLink>();
   // Moves `Doc.shareId` and mirrors the new default's settings onto the legacy document fields.
   await syncDocShareState(docId);
@@ -653,11 +720,12 @@ export async function setDefaultShareLink(input: {
 /** Soft-delete a link: it stops resolving; its analytics stay. The default link cannot be archived (disable it instead). */
 export async function archiveShareLink(input: { orgId: string | Types.ObjectId; linkId: string | Types.ObjectId }): Promise<ShareLink> {
   await connectMongo();
-  const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null }).lean<ShareLink>();
+  const link = await ShareLinkModel.findOne({ _id: oid(input.linkId), orgId: oid(input.orgId), archivedAt: null, ...DOC_LINK_FILTER }).lean<ShareLink>();
   if (!link) throw new ShareLinkError("not_found", "Link not found.");
   if (link.isDefault) throw new ShareLinkError("validation", "The default link cannot be deleted; disable it instead.");
   const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: { archivedAt: new Date(), enabled: false } }, { new: true }).lean<ShareLink>();
-  await syncDocShareState(link.docId);
+  // `DOC_LINK_FILTER` on the lookup above guarantees a document link, so `docId` is set.
+  await syncDocShareState(link.docId as Types.ObjectId);
   return updated ?? link;
 }
 

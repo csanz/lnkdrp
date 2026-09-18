@@ -15,6 +15,7 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import crypto from "node:crypto";
 import { randomBase62 } from "@/lib/crypto/randomBase62";
 import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
+import { ensureDefaultProjectLink } from "@/lib/share/projectLinks";
 
 export const runtime = "nodejs";
 /**
@@ -153,6 +154,18 @@ export async function GET(
       } catch {
         // ignore; collision/other failure will just keep link empty
       }
+    }
+
+    // The one read that materialises the project's default `ShareLink`, on purpose and in exactly
+    // one place: this route is what both `/project/:id` and `/project/:id/links` fetch on load (the
+    // links page asks it for the title with `?limit=1`), and it already backfills the project's
+    // slug two lines above. Every other link *read* — the links list, a link's detail route, the
+    // metrics route — is read-only now, so a project that predates the link model still gets its
+    // default without a dozen GETs racing to create it.
+    try {
+      await ensureDefaultProjectLink(project as unknown as Parameters<typeof ensureDefaultProjectLink>[0]);
+    } catch {
+      // Best-effort: a project with no default link renders fine, it just has nothing to copy yet.
     }
 
     // Request-project settings (best-effort enrich, used by client UIs).

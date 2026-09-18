@@ -133,7 +133,38 @@ export function TopDocsSection({
   );
 }
 
-/** Links ranked by views, each row opening its document's metrics filtered to the link. */
+/**
+ * The folder a project link's row is marked with.
+ *
+ * A project link and a document link look identical otherwise — a label over a name — but they lead
+ * to different pages and count different things (a project link's figures cover every document
+ * opened through it), so the glyph is what tells a reader which kind of row they are about to open.
+ */
+function ProjectGlyph() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M1.75 4.25a1 1 0 0 1 1-1h3.1a1 1 0 0 1 .8.4l.7.95a1 1 0 0 0 .8.4h4.1a1 1 0 0 1 1 1v5.6a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" />
+    </svg>
+  );
+}
+
+/**
+ * Links ranked by views — one row per link, of either kind.
+ *
+ * A document link opens its document's metrics filtered to the link; a project link opens its
+ * *project's* metrics filtered to the link, and carries the project's name (and a folder) under its
+ * label rather than a document title. The payload's `kind` is the only thing this file branches on:
+ * which page a row belongs to is the server's decision, not a guess from the shape of the href.
+ */
 export function TopLinksSection({ links, now }: { links: WorkspaceTopLink[]; now: number }) {
   return (
     <Section title="Top links" hint={links.length ? "by views" : undefined}>
@@ -142,14 +173,22 @@ export function TopLinksSection({ links, now }: { links: WorkspaceTopLink[]; now
           {links.map((l) => {
             const name = linkDisplayName(l);
             const opened = lastOpened(l.lastOpenedAt, now);
+            const isProject = l.kind === "project";
             return (
-              // Rows are grouped by link AND document, so one shareId can appear twice (views
-              // recorded against two doc ids). The pair is what makes a row unique.
-              <li key={`${l.docId}:${l.shareId}`}>
-                <Link href={l.href} className={ROW_LINK_CLASS} title={`${name} — ${l.docTitle}`}>
+              // One row per shareId — a project link's documents are summed into it upstream — so
+              // the shareId alone is unique and no two rows can share a key.
+              <li key={l.shareId}>
+                <Link
+                  href={l.href}
+                  className={ROW_LINK_CLASS}
+                  title={`${name} — ${isProject ? `${l.parentName} (project)` : l.parentName}`}
+                >
                   <div className="min-w-0 flex-1">
                     <div className={TITLE_CLASS}>{name}</div>
-                    <div className="truncate text-[12px] leading-4 text-[var(--muted)]">{l.docTitle}</div>
+                    <div className="flex min-w-0 items-start gap-1 text-[12px] leading-4 text-[var(--muted)]">
+                      {isProject ? <ProjectGlyph /> : null}
+                      <span className="truncate">{l.parentName}</span>
+                    </div>
                     {/* Same duplication as the document row above: viewers == views per link. */}
                     <div className={META_CLASS}>
                       {opened ? (

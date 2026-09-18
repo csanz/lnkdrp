@@ -9,6 +9,7 @@
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import ChangePreviewModal from "@/components/activity/ChangePreviewModal";
+import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import {
@@ -320,7 +321,24 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
   // Open the link the event came through (meta.shareId), not always the document's default link.
   const eventShareId = typeof item.meta?.shareId === "string" && item.meta.shareId ? item.meta.shareId : null;
   const shareId = eventShareId ?? item.doc?.shareId ?? null;
-  const shareHref = shareId ? `/s/${encodeURIComponent(shareId)}` : null;
+  /**
+   * A project link is one slug for a whole data room: it lives at `/p/:shareId`, and its numbers
+   * live on the project's metrics page. The event says which it is — a read through a project link
+   * records `meta.projectId` alongside the document it opened, and a project `share_link.*` row
+   * carries `meta.scope: "project"` with no document at all. Without this branch both controls on
+   * such a row were built as if the slug were a document link: `/s/:slug` 404s, and the document
+   * metrics page renders 0 views for traffic that exists on the project page.
+   */
+  const eventProjectId =
+    typeof item.meta?.projectId === "string" && item.meta.projectId
+      ? item.meta.projectId
+      : item.meta?.scope === "project"
+        ? item.project?.id ?? null
+        : null;
+  const isProjectLinkRow = Boolean(eventShareId && eventProjectId);
+  const shareHref = shareId
+    ? `${isProjectLinkRow ? "/p/" : "/s/"}${encodeURIComponent(shareId)}`
+    : null;
   /**
    * That link's own numbers, not the document's.
    *
@@ -331,9 +349,11 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
    * picking the row. Gone once the document is deleted: there is nothing left to scope to.
    */
   const linkMetricsHref =
-    shareId && item.doc?.id && !docGone
-      ? `/doc/${encodeURIComponent(item.doc.id)}/metrics?shareId=${encodeURIComponent(shareId)}`
-      : null;
+    isProjectLinkRow && shareId && eventProjectId
+      ? projectLinkMetricsHref(encodeURIComponent(eventProjectId), shareId)
+      : shareId && item.doc?.id && !docGone
+        ? `/doc/${encodeURIComponent(item.doc.id)}/metrics?shareId=${encodeURIComponent(shareId)}`
+        : null;
   const s = describeActivity(item);
   const when = formatRelative(item.createdDate);
   const exact = new Date(item.createdDate).toLocaleString();

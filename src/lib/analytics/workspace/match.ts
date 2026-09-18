@@ -8,6 +8,7 @@
  * workspace figures cannot drift from the document ones.
  */
 import { LAST_ACTIVITY_EXPR, LINK_VIEWER_KEY_EXPR } from "@/lib/analytics/shareViewAggregates";
+import { PROJECT_VIEW_KEY_SEP } from "@/lib/share/projectPublic";
 
 /**
  * "Last activity inside `[start, end)`" — {@link activityWindowMatch} with an upper bound.
@@ -103,6 +104,29 @@ export const VISIT_TIME_SUM_EXPR = { $sum: { $ifNull: ["$timeSpentMs", 0] } } as
  * documents is a different number and is reported separately, as `people.count`.
  */
 export const WORKSPACE_VIEWER_KEY_EXPR = { docId: "$docId", ...LINK_VIEWER_KEY_EXPR } as const;
+
+/**
+ * The same reader, counted once per **link** rather than once per (link, document).
+ *
+ * Only a project link needs this, and it needs it badly. A project link writes one `ShareView` per
+ * (viewer, document) and expresses the document inside the identity itself —
+ * `botIdHash = "<sha256(botId)>.<docId>"` ({@link projectViewerKey}, which explains why the
+ * compound lives in the field rather than in the index) — so one person who opened three documents
+ * in a data room carries three *different* viewer keys. Counting the buckets of
+ * {@link WORKSPACE_VIEWER_KEY_EXPR} therefore said "3 viewers" about one reader, and no amount of
+ * `$addToSet` over the raw key would have caught it: the keys genuinely differ.
+ *
+ * Taking the part before the separator undoes exactly that composite and nothing else. Neither half
+ * of a document link's key can contain it — a bare sha256 digest, or `"u:"` and an ObjectId — so a
+ * document link's reader key passes through untouched and its viewer count is unchanged.
+ *
+ * `viewerField` names a field from an **earlier** stage (the `_id.viewer` of the viewer grouping),
+ * not a raw `shareviews` field: the stripping happens when the per-document buckets are rolled up
+ * into their link, never in the bucket key itself, which the per-document figures depend on.
+ */
+export function linkReaderKeyExpr(viewerField: string): Record<string, unknown> {
+  return { $arrayElemAt: [{ $split: [viewerField, PROJECT_VIEW_KEY_SEP] }, 0] };
+}
 
 /**
  * Who a `ShareView` row belongs to *across* documents: the viewer's email if it has one, else the

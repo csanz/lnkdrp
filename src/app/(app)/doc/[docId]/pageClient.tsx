@@ -9,7 +9,7 @@ import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbI
 import { useSession } from "next-auth/react";
 import UploadButton from "@/components/UploadButton";
 import DocSharePanel from "@/components/DocSharePanel";
-import DocQuickStats from "@/components/DocQuickStats";
+import QuickStats from "@/components/metrics/QuickStats";
 import TempUserGateModal from "@/components/modals/TempUserGateModal";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import DocProjectsModal, { type DocProjectListItem } from "@/components/modals/DocProjectsModal";
@@ -2702,8 +2702,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     summaryMissing={summaryMissingNotice}
                     quickStats={
                       hasHydratedFromServer && doc.status === "ready" ? (
-                        <DocQuickStats
-                          docId={doc.id}
+                        <QuickStats
+                          scope={{ kind: "doc", id: doc.id }}
                           snapshot={doc.metricsSnapshot ?? null}
                           downloadsEnabled={Boolean(doc.shareAllowPdfDownload)}
                         />

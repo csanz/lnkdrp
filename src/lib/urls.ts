@@ -115,6 +115,31 @@ export function buildPublicShareUrl(shareId: string | null): string {
 }
 
 /**
+ * Build a public **project** share URL for a shareId — `/p/:shareId`, the address a recipient of a
+ * project link is actually sent (docs/prds/lnkdrp-project-links.md).
+ *
+ * The `/s/` twin above, kept beside it rather than inlined in the components that need it: document
+ * and project links share one slug namespace and each tree refuses the other's slugs, so getting
+ * the prefix wrong produces a 404 rather than a visible error.
+ *
+ * Returns an empty string when we cannot build a stable absolute URL.
+ */
+export function buildPublicProjectUrl(shareId: string | null): string {
+  if (!shareId) return "";
+  const normalized = shareId.trim().replace(/^\|+/, "");
+  if (!normalized) return "";
+
+  const base = getPublicSiteBase();
+  if (!base) return "";
+
+  try {
+    return new URL(`/p/${normalized}`, base).toString();
+  } catch {
+    return "";
+  }
+}
+
+/**
  * Build a public request-upload URL for a request token.
  *
  * Returns an empty string when we cannot build a stable absolute URL.

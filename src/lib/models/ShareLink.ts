@@ -1,28 +1,64 @@
 /**
- * ShareLink — one public link to a document. A document owns any number of links
- * (docs/prds/lnkdrp-multi-links.md); each has its own label, audience, settings and analytics
- * (ShareView/ShareVisit are keyed by `shareId`, so per-link stats come for free).
+ * ShareLink — one public link to a document **or** to a project
+ * (docs/prds/lnkdrp-multi-links.md, docs/prds/lnkdrp-project-links.md).
+ *
+ * A document owns any number of links; so does a project. Each has its own label, audience,
+ * settings and analytics (ShareView/ShareVisit are keyed by `shareId`, so per-link stats come for
+ * free). One row is a document link (`docId` set, `/s/:shareId`) or a project link (`projectId`
+ * set, `/p/:shareId`) and never both — `kind` says which, and the pre-validate hook below enforces
+ * the exclusivity rather than trusting every caller to.
+ *
+ * `kind` is stored rather than derived from `docId != null` on purpose: it is one indexed field
+ * every audited query can filter on, it survives a projection that omits `docId`, and it lets the
+ * exclusivity invariant be checked in one place. Rows written before project links exist have no
+ * `kind` at all, so "document links" is always expressed as `kind: { $ne: "project" }`
+ * ({@link DOC_LINK_FILTER}) — never `kind: "doc"`, which would silently drop every legacy row.
  *
  * The document's original `Doc.shareId` becomes the `isDefault` link; `ensureDefaultLink()` in
  * `src/lib/share/links.ts` materialises that row lazily for documents created before this model,
- * so `/s/:shareId` keeps resolving with no migration day.
+ * so `/s/:shareId` keeps resolving with no migration day. `ensureDefaultProjectLink()` in
+ * `src/lib/share/projectLinks.ts` does the same for `Project.shareId` and `/p/:shareId`.
  *
  * Password material mirrors the Doc fields (scrypt hash + salt, plus an encrypted copy so the
  * owner can reveal it), so `verifySharePassword` and `shareAuthCookieValue` work unchanged.
  */
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 
+/** What a link points at. Stored on every new row; absent on rows written before project links. */
+export type ShareLinkKind = "doc" | "project";
+
+/**
+ * Filter fragment for "document links only".
+ *
+ * `$ne: "project"` rather than `kind: "doc"` because every link created before this field existed
+ * has no `kind`, and those are all document links. Use it on any query that does not already pin an
+ * ObjectId `docId` (a `docId` match excludes project rows on its own, since theirs is null).
+ */
+export const DOC_LINK_FILTER = { kind: { $ne: "project" } } as const;
+
+/** Filter fragment for "project links only". Every project link is written with `kind` set. */
+export const PROJECT_LINK_FILTER = { kind: "project" } as const;
+
 const ShareLinkSchema = new Schema(
   {
     orgId: { type: Schema.Types.ObjectId, ref: "Org", required: true, index: true },
-    docId: { type: Schema.Types.ObjectId, ref: "Doc", required: true, index: true },
-    /** Public slug used in `/s/:shareId`; same generator as `Doc.shareId`. */
+    /** Set on document links, null on project links. Exactly one of `docId`/`projectId` is set. */
+    docId: { type: Schema.Types.ObjectId, ref: "Doc", required: false, default: null, index: true },
+    /** Set on project links, null on document links. `/p/:shareId` resolves through this. */
+    projectId: { type: Schema.Types.ObjectId, ref: "Project", required: false, default: null, index: true },
+    /** Discriminator; see the module header for why it is stored and not derived. */
+    kind: { type: String, enum: ["doc", "project"], default: "doc", index: true },
+    /** Public slug used in `/s/:shareId` (doc) or `/p/:shareId` (project); same generator as `Doc.shareId`. */
     shareId: { type: String, required: true, trim: true, unique: true },
     /** Private to the sender: "Sequoia · Roelof", "Board deck — Q3". Never shown to viewers. */
     label: { type: String, required: true, trim: true, maxlength: 80 },
     /** Optional free-text audience note (a name, a firm, an email). Private to the sender. */
     audience: { type: String, default: null, trim: true, maxlength: 120 },
-    /** The document's original link; listed first and used by `share_pdf` / legacy PATCH. */
+    /**
+     * The document's (or project's) original link; listed first and used by `share_pdf` / legacy
+     * PATCH. Scoped per owner: promoting or clearing a default must filter by `docId` **or**
+     * `projectId`, never by `isDefault` alone.
+     */
     isDefault: { type: Boolean, default: false, index: true },
 
     enabled: { type: Boolean, default: true },
@@ -33,6 +69,7 @@ const ShareLinkSchema = new Schema(
      */
     disabledByDocSwitch: { type: Boolean, default: false },
     allowDownload: { type: Boolean, default: false },
+    /** Document links only; a project link has no single document whose versions it could list. */
     allowRevisionHistory: { type: Boolean, default: false },
     /** Refuse the link after this instant (null = never). */
     expiresAt: { type: Date, default: null },
@@ -58,7 +95,41 @@ const ShareLinkSchema = new Schema(
   { collection: "sharelinks", timestamps: { createdAt: "createdDate", updatedAt: "updatedDate" } },
 );
 
+/**
+ * Exactly one owner, and `kind` always agrees with it.
+ *
+ * Both fields default to null, so a caller that forgets `docId` would otherwise write an orphan row
+ * with a live public slug pointing at nothing. Mongoose's `required` cannot express "one of these
+ * two", hence the hook — the same shape `Project` uses for its `isRequest` invariant.
+ */
+ShareLinkSchema.pre("validate", function () {
+  const self = this as unknown as {
+    get?: (path: string) => unknown;
+    set?: (path: string, value: unknown) => void;
+    invalidate?: (path: string, message: string) => void;
+  };
+  const read = (path: string) => (typeof self.get === "function" ? self.get(path) : (self as Record<string, unknown>)[path]);
+  const hasDoc = Boolean(read("docId"));
+  const hasProject = Boolean(read("projectId"));
+
+  if (hasDoc === hasProject) {
+    const message = hasDoc
+      ? "A share link cannot belong to both a document and a project"
+      : "A share link must belong to a document or a project";
+    if (typeof self.invalidate === "function") self.invalidate("docId", message);
+    return;
+  }
+
+  const kind: ShareLinkKind = hasProject ? "project" : "doc";
+  if (typeof self.set === "function") self.set("kind", kind);
+  else (self as Record<string, unknown>).kind = kind;
+});
+
 ShareLinkSchema.index({ orgId: 1, docId: 1, createdDate: 1 });
+/** The project counterpart of the index above: "this project's links, oldest first". */
+ShareLinkSchema.index({ orgId: 1, projectId: 1, createdDate: 1 });
+/** Listing/counting one project's live links (the per-project cap and the links panel). */
+ShareLinkSchema.index({ projectId: 1, archivedAt: 1 });
 /** The Free-plan cap counts enabled, unexpired, unarchived links across the workspace. */
 ShareLinkSchema.index({ orgId: 1, enabled: 1, archivedAt: 1, expiresAt: 1 });
 /**

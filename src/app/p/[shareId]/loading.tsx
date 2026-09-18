@@ -6,23 +6,13 @@
 
 import Image from "next/image";
 
+import { PROJECT_SHARE_THEME } from "./shareTheme";
+
 export default function Loading() {
   return (
     <main
       className="min-h-screen bg-[var(--bg)] text-[var(--fg)]"
-      style={
-        {
-          colorScheme: "dark",
-          ["--bg" as any]: "#0b0b0c",
-          ["--fg" as any]: "#e7e7ea",
-          ["--panel" as any]: "#111113",
-          ["--panel-2" as any]: "#151518",
-          ["--panel-hover" as any]: "#1b1b1f",
-          ["--border" as any]: "#2a2a31",
-          ["--muted" as any]: "#b3b3bb",
-          ["--muted-2" as any]: "#8b8b96",
-        } as React.CSSProperties
-      }
+      style={PROJECT_SHARE_THEME}
     >
       <header className="sticky top-0 z-20 w-full border-b border-white/10 bg-black/85 text-white/90 backdrop-blur-sm">
         <div className="px-4 py-3 sm:px-6">

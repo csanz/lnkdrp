@@ -10,6 +10,7 @@ import { describe, expect, test } from "vitest";
 import { FREE_ANALYTICS_DAYS } from "@/lib/billing/planLimits";
 import {
   activityBetweenMatch,
+  linkReaderKeyExpr,
   liveShareLinkExpr,
   presenceBetweenMatch,
   VISIT_DAY_KEY_EXPR,
@@ -21,15 +22,19 @@ import {
   WORKSPACE_PERSON_KEY_EXPR,
   WORKSPACE_VIEWER_KEY_EXPR,
 } from "@/lib/analytics/workspace/match";
+import { PROJECT_VIEW_KEY_SEP } from "@/lib/share/projectPublic";
 import {
   avgReadingTimeMs,
   buildSeries,
+  buildTopLink,
+  buildTopLinks,
   changePct,
   delta,
   dayKeysFrom,
   docMetricsHref,
   linkMetricsHref,
   parseWorkspaceRangeKey,
+  projectLinkMetricsHref,
   rankPeople,
   rankTopDocs,
   rankTopLinks,
@@ -38,9 +43,10 @@ import {
   selectQuietDocs,
   WORKSPACE_DEFAULT_RANGE,
   workspacePlanInfo,
+  type WorkspaceLinkCandidate,
+  type WorkspaceLinkIdentity,
   type WorkspacePerson,
   type WorkspaceTopDoc,
-  type WorkspaceTopLink,
 } from "@/lib/analytics/workspace";
 
 /** A fixed "now" inside a day, so the window's UTC-midnight snapping is visible. */
@@ -161,6 +167,149 @@ describe("averages and hrefs", () => {
       "/doc/6aabaeda4b86405f0713e6b7/metrics?shareId=a%20b%2Fc",
     );
   });
+
+  test("a project link leads to the project's metrics page, not a document's", () => {
+    expect(projectLinkMetricsHref("6aac2ad2484f54dffdb9e0be", "a b/c")).toBe(
+      "/project/6aac2ad2484f54dffdb9e0be/metrics?shareId=a%20b%2Fc",
+    );
+  });
+});
+
+/**
+ * Labelling a ranked link row.
+ *
+ * The bug this pins: a project link is one `shareId` over several documents, and naming it after
+ * one of them sent the row to `/doc/:docId/metrics?shareId=`, which 404s for a link the document
+ * does not own — while the duplicate rows it produced collided on their React key.
+ */
+describe("top link rows", () => {
+  const titles: Record<string, string> = { doc1: "Series A deck", doc2: "Cap table" };
+  const docTitle = (docId: string) => titles[docId] ?? "Untitled";
+
+  const candidate = (over: Partial<WorkspaceLinkCandidate> = {}): WorkspaceLinkCandidate => ({
+    shareId: "sh1",
+    docIds: ["doc1"],
+    rows: 7,
+    readers: 7,
+    lastOpenedAt: "2026-09-17T19:31:50.558Z",
+    ...over,
+  });
+
+  test("a document link keeps its document, its title and its document metrics href", () => {
+    const row = buildTopLink(
+      candidate(),
+      { shareLinkId: "lnk1", kind: "doc", label: "Sequoia", audience: "Roelof", isDefault: false, docId: "doc1" },
+      docTitle,
+    );
+    expect(row).toMatchObject({
+      shareId: "sh1",
+      shareLinkId: "lnk1",
+      kind: "doc",
+      label: "Sequoia",
+      audience: "Roelof",
+      docId: "doc1",
+      projectId: null,
+      parentName: "Series A deck",
+      views: 7,
+      viewers: 7,
+      href: "/doc/doc1/metrics?shareId=sh1",
+    });
+  });
+
+  test("an unlabelled document link still reads as its document, as it always did", () => {
+    const row = buildTopLink(candidate(), { kind: "doc", label: "   ", isDefault: true, docId: "doc1" }, docTitle);
+    expect(row.label).toBe("Series A deck");
+    expect(row.isDefault).toBe(true);
+    expect(row.shareLinkId).toBeNull();
+    expect(row.audience).toBeNull();
+  });
+
+  test("a project link is one row: its own label, the project underneath, the project's metrics page", () => {
+    const row = buildTopLink(
+      candidate({ docIds: ["doc1", "doc2"], rows: 9, readers: 5 }),
+      { shareLinkId: "lnk2", kind: "project", label: "Sequoia · diligence", projectId: "prj1", projectName: "Data room" },
+      docTitle,
+    );
+    expect(row).toMatchObject({
+      kind: "project",
+      label: "Sequoia · diligence",
+      docId: null,
+      projectId: "prj1",
+      parentName: "Data room",
+      // Recipients, never the 9 (viewer x document) rows: the locked rule, and the only figure the
+      // project metrics page this row opens will agree with.
+      views: 5,
+      viewers: 5,
+      href: "/project/prj1/metrics?shareId=sh1",
+    });
+    // Never a document: the row spans two, and the document page refuses this shareId.
+    expect(row.href).not.toContain("/doc/");
+  });
+
+  test("an unlabelled project link falls back to the project, and a deleted project to a generic name", () => {
+    const named = buildTopLink(
+      candidate({ docIds: ["doc1", "doc2"] }),
+      { kind: "project", label: "", projectId: "prj1", projectName: "Data room" },
+      docTitle,
+    );
+    expect(named.label).toBe("Data room");
+
+    const orphan = buildTopLink(
+      candidate({ docIds: ["doc1", "doc2"] }),
+      { kind: "project", label: "", projectId: "prj1", projectName: null },
+      docTitle,
+    );
+    expect(orphan.parentName).toBe("Project");
+    expect(orphan.label).toBe("Project");
+    expect(orphan.href).toBe("/project/prj1/metrics?shareId=sh1");
+  });
+
+  test("a hard-deleted link is still exactly one row, named by the document its views landed on", () => {
+    const row = buildTopLink(candidate({ docIds: ["doc1", "doc2"] }), null, docTitle);
+    expect(row.kind).toBe("doc");
+    expect(row.shareLinkId).toBeNull();
+    expect(row.label).toBe("Series A deck");
+    expect(row.docId).toBe("doc1");
+    expect(row.href).toBe("/doc/doc1/metrics?shareId=sh1");
+  });
+
+  test("a project link with no project to point at degrades to its document rather than a broken href", () => {
+    const row = buildTopLink(candidate(), { kind: "project", label: "Orphan", projectId: null }, docTitle);
+    expect(row.kind).toBe("doc");
+    expect(row.href).toBe("/doc/doc1/metrics?shareId=sh1");
+  });
+
+  test("a mixed list has one row per shareId, in rank order, and no duplicate keys", () => {
+    const identities: Record<string, WorkspaceLinkIdentity> = {
+      project: { kind: "project", label: "Sequoia · diligence", projectId: "prj1", projectName: "Data room" },
+      docLink: { kind: "doc", label: "Accel", docId: "doc2" },
+    };
+    const rows = buildTopLinks(
+      [
+        candidate({ shareId: "docLink", docIds: ["doc2"], rows: 4, readers: 4 }),
+        // 9 rows but only 3 recipients: the raw row count would put this first, the figure the card
+        // actually prints puts it second. Ranking has to follow what the reader sees.
+        candidate({ shareId: "project", docIds: ["doc1", "doc2"], rows: 9, readers: 3 }),
+      ],
+      (shareId) => identities[shareId],
+      docTitle,
+      8,
+    );
+    expect(rows.map((r) => r.shareId)).toEqual(["docLink", "project"]);
+    expect(rows.map((r) => r.kind)).toEqual(["doc", "project"]);
+    expect(rows.map((r) => r.views)).toEqual([4, 3]);
+    expect(new Set(rows.map((r) => r.shareId)).size).toBe(rows.length);
+  });
+
+  test("the list is bounded", () => {
+    const rows = buildTopLinks(
+      ["a", "b", "c"].map((shareId, i) => candidate({ shareId, rows: 10 - i, readers: 10 - i })),
+      () => ({ kind: "doc", docId: "doc1" }),
+      docTitle,
+      2,
+    );
+    expect(rows.map((r) => r.shareId)).toEqual(["a", "b"]);
+  });
 });
 
 /** A top-document row with only the fields ranking looks at. */
@@ -194,20 +343,17 @@ describe("ranking", () => {
   });
 
   test("links rank the same way and the list is bounded", () => {
-    const link = (shareId: string, views: number): WorkspaceTopLink => ({
+    const link = (shareId: string, views: number): WorkspaceLinkCandidate => ({
       shareId,
-      shareLinkId: null,
-      label: shareId,
-      audience: null,
-      isDefault: false,
-      docId: "doc1",
-      docTitle: "Doc",
-      views,
-      viewers: views,
+      docIds: ["doc1"],
+      rows: views,
+      readers: views,
       lastOpenedAt: null,
-      href: linkMetricsHref("doc1", shareId),
     });
-    const ranked = rankTopLinks([link("x", 1), link("y", 9), link("z", 5)], 2);
+    const ranked = rankTopLinks(
+      [link("x", 1), link("y", 9), link("z", 5)].map((c) => buildTopLink(c, { docId: "doc1" }, () => "Doc")),
+      2,
+    );
     expect(ranked.map((r) => r.shareId)).toEqual(["y", "z"]);
   });
 
@@ -321,6 +467,26 @@ describe("mongo fragments", () => {
     expect(Object.keys(WORKSPACE_VIEWER_KEY_EXPR)).toEqual(["docId", "shareId", "viewer"]);
     expect(WORKSPACE_VIEWER_KEY_EXPR.docId).toBe("$docId");
     expect(WORKSPACE_VIEWER_KEY_EXPR.shareId).toBe("$shareId");
+  });
+
+  test("the per-link reader key strips the document a project link spells into the viewer", () => {
+    const expr = linkReaderKeyExpr("$_id.viewer") as unknown as {
+      $arrayElemAt: [{ $split: [string, string] }, number];
+    };
+    // Element 0 of a split on the separator `projectViewerKey` joins with: everything before the
+    // document id, which is the person. Anything else counts a data-room reader once per document.
+    expect(expr.$arrayElemAt[1]).toBe(0);
+    expect(expr.$arrayElemAt[0].$split[0]).toBe("$_id.viewer");
+    expect(expr.$arrayElemAt[0].$split[1]).toBe(PROJECT_VIEW_KEY_SEP);
+
+    // The reference implementation of what Mongo then does, on both kinds of key.
+    const strip = (key: string) => key.split(PROJECT_VIEW_KEY_SEP)[0];
+    const reader = "a:".concat("f".repeat(64));
+    expect(strip(`${reader}${PROJECT_VIEW_KEY_SEP}6aac2f78fcd98bf3ed0442b5`)).toBe(reader);
+    expect(strip(`${reader}${PROJECT_VIEW_KEY_SEP}6aac2b58484f54dffdb9e1b8`)).toBe(reader);
+    // A document link's key has no document in it and must come through untouched.
+    expect(strip(reader)).toBe(reader);
+    expect(strip("u:6aa4a3a4b0b9b3a1a769660a")).toBe("u:6aa4a3a4b0b9b3a1a769660a");
   });
 
   test("the person key prefers email, falls back to the user id and is otherwise null", () => {

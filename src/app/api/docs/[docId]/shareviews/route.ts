@@ -65,10 +65,12 @@ import { UserModel } from "@/lib/models/User";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPlan } from "@/lib/billing/planLimits";
-import { ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { toShareLinkDTO } from "@/lib/share/links";
+import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
 import {
   ACTIVITY_DAY_KEY_EXPR,
+  shareIdClause,
   LAST_ACTIVITY_EXPR,
   LINK_VIEWER_KEY_EXPR,
   OWNER_PREVIEW_MATCH,
@@ -246,15 +248,36 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }
       /**
+       * The slugs `{ docId }` matches that are **not** this document's links.
+       *
+       * A project link (docs/prds/lnkdrp-project-links.md) is one `shareId` for a whole data room,
+       * and a recipient opening a document through it writes a `ShareView`/`ShareVisit` row that
+       * carries that document's `docId` — so `{ docId }` alone stopped meaning "this document's
+       * links" the day project links shipped. Left unbounded, that traffic entered the document's
+       * totals and, because the label join below is `{ docId, shareId }` and a project link's
+       * `docId` is null, came back with `label: null` and rendered as "Deleted link" — a link the
+       * owner can see, live, on `/project/:id/links`.
+       *
+       * Derived from the rows themselves rather than from the document's current project
+       * membership: a document removed from a project keeps the rows it earned inside it, and
+       * those must be excluded too.
+       *
+       * The rule lives in `@/lib/analytics/docScope` because this route was not the only surface
+       * that had to learn it: `rollupDocMetrics` (the dashboard card's snapshot) and the
+       * `Doc.numberOfViews` ingest counter apply the same exclusion, or the same document reports
+       * three different numbers on three surfaces (docs/METRICS.md).
+       */
+      const { foreignShareIds, match: docOnlyMatch } = await docOnlyShareIdMatch([docObjectId]);
+      /**
        * What every `ShareView` aggregate matches on: one link, or the whole document — and never
        * the owner's own opens (`RECIPIENT_ONLY_MATCH`), on any figure, on either scope.
        */
       const scopeMatch: Record<string, unknown> = {
-        ...(link ? { shareId: link.shareId } : { docId: docObjectId }),
+        ...(link ? { shareId: link.shareId } : { docId: docObjectId, ...docOnlyMatch }),
         ...RECIPIENT_ONLY_MATCH,
       };
       /** The document scope of the per-link breakdown, which never follows `?shareId=`. */
-      const docScopeMatch: Record<string, unknown> = { docId: docObjectId, ...RECIPIENT_ONLY_MATCH };
+      const docScopeMatch: Record<string, unknown> = { docId: docObjectId, ...docOnlyMatch, ...RECIPIENT_ONLY_MATCH };
 
       const start = windowStartUtc(days);
       const startKey = utcDayKey(start);
@@ -284,7 +307,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // The owner-side rows this response is deliberately not counting. Same scope, opposite
       // flag, so a reader can see that the exclusion happened and how large it was.
       const ownerScopeMatch: Record<string, unknown> = {
-        ...(link ? { shareId: link.shareId } : { docId: docObjectId }),
+        ...(link ? { shareId: link.shareId } : { docId: docObjectId, ...docOnlyMatch }),
         ...OWNER_PREVIEW_MATCH,
       };
       const [windowTotals, allTimeTotals, windowOwnerPreviews, allTimeOwnerPreviews] = await Promise.all([
@@ -322,7 +345,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // Document scope only. `Doc.numberOfViews` is the sum over every link, so applying it in the
       // filtered branch reported the whole document's lifetime traffic as the traffic of one link
       // — a link nobody had ever opened answered `totalsAllTime.views: 20`.
-      const legacyViews = link ? 0 : typeof (doc as any).numberOfViews === "number" ? (doc as any).numberOfViews : 0;
+      //
+      // And never for a document that has project-link traffic: the counter was incremented by
+      // project-link reads before that stopped (see `docScope`), so on a document whose only rows
+      // are a data room's it is exactly the figure this scope exists to exclude — it would put the
+      // project's traffic back on the document page through the side door.
+      const legacyViews =
+        link || foreignShareIds.length ? 0 : typeof (doc as any).numberOfViews === "number" ? (doc as any).numberOfViews : 0;
       const allTimeViews = allTimeTotals.views > 0 ? allTimeTotals.views : legacyViews;
       const totalViews = windowTotals.views;
       const pagesViewed = windowTotals.pagesViewed;
@@ -482,7 +511,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           // `lastViewedAt`); the window is applied inside the accumulators, so the counts still
           // cover `days`. Narrowed to `shareIdsParam` when the caller already knows which links it
           // wants (a paginated table asking only about the links on its current page).
-          const linkMatch = shareIdsParam.length ? { ...docScopeMatch, shareId: { $in: shareIdsParam } } : docScopeMatch;
+          // Both bounds on **one** `shareId` clause: spreading `docScopeMatch` and then adding a
+          // second `shareId` key drops the project-link exclusion it carries, and the caller's
+          // slugs are unvalidated input, so the aggregate would answer for links of other
+          // documents (and other workspaces) that the caller happened to name.
+          const linkMatch = shareIdsParam.length
+            ? { ...docScopeMatch, ...shareIdClause({ only: shareIdsParam, except: foreignShareIds }) }
+            : docScopeMatch;
           perLinkAgg = (await ShareViewModel.aggregate([{ $match: linkMatch }, ...perLinkGroupStages])) as PerLinkRow[];
         }
 
@@ -506,7 +541,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           skipJoins
             ? Promise.resolve([])
             : (ShareVisitModel.aggregate([
-                { $match: { docId: docObjectId, ...RECIPIENT_ONLY_MATCH, lastEventAt: { $gte: start }, ...boundedShareIdMatch } },
+                {
+                  $match: {
+                    docId: docObjectId,
+                    ...RECIPIENT_ONLY_MATCH,
+                    lastEventAt: { $gte: start },
+                    // One `shareId` clause carrying both bounds — see `linkMatch` above. `ShareVisit`
+                    // rows written through a project link carry this `docId` too.
+                    ...shareIdClause({ only: bounded ? keptShareIds : null, except: foreignShareIds }),
+                  },
+                },
                 { $group: { _id: "$shareId", opens: { $sum: 1 } } },
               ]) as Promise<Array<{ _id: string; opens: number }>>),
           // Labels are private-to-sender text the client can't otherwise resolve from an aggregate;
@@ -527,23 +571,27 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         linksTotal = await ShareLinkModel.countDocuments({ docId: docObjectId, archivedAt: null });
 
         // Traffic this response's `byLink` cannot otherwise explain: a slug that has views but no
-        // live link owns it (its link was archived after the fact). `DocLinksManager`'s page table
+        // live link owns it (its link was archived after the fact). `LinksManager`'s page table
         // used to detect this by diffing the *whole* unbounded `byLink` against its links list —
         // exactly the unbounded shape this endpoint now refuses to hand back. So the server does
         // the diff instead and returns only the sum: one row, whatever the real orphan count is.
         // Skipped in `topLinks` mode (the quick-stats card, which never rendered this row) to keep
         // that request to the two aggregates it actually needs.
         if (topLinksParam === 0) {
-          const liveShareIds = await ShareLinkModel.find({ docId: docObjectId, archivedAt: null }).distinct("shareId");
+          const liveShareIds = (await ShareLinkModel.find({ docId: docObjectId, archivedAt: null }).distinct("shareId")) as unknown as string[];
+          // `docScopeMatch` already carries a `$nin` of the project slugs, and a second `shareId`
+          // key would replace it — which is exactly how a live project link ended up reported as a
+          // deleted link of this document. Both exclusions go on one clause.
+          const orphanMatch = { ...docScopeMatch, ...shareIdClause({ except: [...liveShareIds, ...foreignShareIds] }) };
           const [orphanViewersAgg, orphanDownloadsAgg] = await Promise.all([
             ShareViewModel.aggregate([
-              { $match: { ...docScopeMatch, shareId: { $nin: liveShareIds } } },
+              { $match: orphanMatch },
               { $group: { _id: LINK_VIEWER_KEY_EXPR, views: { $sum: { $cond: [activityInWindowExpr(start), 1, 0] } } } },
               { $group: { _id: null, viewers: { $sum: { $cond: [{ $gt: ["$views", 0] }, 1, 0] } }, shareIds: { $addToSet: "$_id.shareId" } } },
               { $project: { _id: 0, viewers: 1, count: { $size: "$shareIds" } } },
             ]) as Promise<Array<{ viewers: number; count: number }>>,
             ShareViewModel.aggregate([
-              { $match: { ...docScopeMatch, shareId: { $nin: liveShareIds } } },
+              { $match: orphanMatch },
               { $project: { items: { $objectToArray: { $ifNull: ["$downloadsByDay", {}] } } } },
               { $unwind: "$items" },
               { $match: { "items.k": { $gte: startKey } } },

@@ -118,16 +118,43 @@ export type WorkspaceTopDoc = {
   href: string;
 };
 
-/** A link row. `href` opens its document's metrics page filtered to this link. */
+/**
+ * What a ranked link row points at: one document, or a whole project.
+ *
+ * The two are different objects with different metrics pages, and the row has to say which it is —
+ * a project link's traffic is spread over every document opened through it, so labelling it with a
+ * document (and sending it to that document's metrics page) both double-counts it and lands on a
+ * page that refuses project-link traffic.
+ */
+export type WorkspaceTopLinkKind = "doc" | "project";
+
+/**
+ * A link row, ranked by views.
+ *
+ * **One row per `shareId`**, whatever its kind. A project link is a single link that spans several
+ * documents, so its views and viewers are summed across the documents opened through it and a
+ * reader is counted once for the link rather than once per (link, document) — the first cut grouped
+ * on `{ shareId, docId }` and printed the same project link once per document, each row carrying a
+ * slice of its traffic under a document's title.
+ *
+ * `href` opens the metrics page of whatever the link belongs to, filtered to the link: the
+ * document's for `kind: "doc"`, the project's for `kind: "project"`.
+ */
 export type WorkspaceTopLink = {
   shareId: string;
   /** The `ShareLink` id, `null` for a link whose row has been deleted since the views were recorded. */
   shareLinkId: string | null;
+  /** Which page this row belongs to; the UI marks a project link with a folder glyph. */
+  kind: WorkspaceTopLinkKind;
   label: string;
   audience: string | null;
   isDefault: boolean;
-  docId: string;
-  docTitle: string;
+  /** The document a document link points at; `null` on a project link. */
+  docId: string | null;
+  /** The project a project link points at; `null` on a document link. */
+  projectId: string | null;
+  /** What the row is under: the document's title, or the project's name. */
+  parentName: string;
   views: number;
   viewers: number;
   lastOpenedAt: string | null;

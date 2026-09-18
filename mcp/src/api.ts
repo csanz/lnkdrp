@@ -44,6 +44,15 @@
  * - `DELETE /api/projects/:id`                 -> `{ ok: true }` (hard delete; documents stay and lose the membership)
  * - `PATCH /api/docs/:id` `{ addProjectId }` / `{ removeProjectId }` -> `{ doc: { …, projectIds } }`. The route does not
  *                                                  check the project exists in the workspace, so the tools verify it first.
+ *
+ * Project share links, verified against the route handlers on 2026-09-17 (docs/prds/lnkdrp-project-links.md):
+ * - `GET  /api/projects/:id/links?q=&page=&limit=&includeArchived=1` -> `{ total, page, limit, links: ProjectLinkDTO[] }` (default link first, then newest)
+ * - `POST /api/projects/:id/links` `{ label, … }` -> 201 `{ link }`; **402 `{ code: "plan_limit", limit: "project_links" }` on Free**
+ *                                                  (nothing written — no `planWarning` half-state, unlike the document link route); 409 past 50 links
+ * - `PATCH /api/projects/:id/links/:linkId`    -> `{ link }`
+ * - `DELETE /api/projects/:id/links/:linkId`   -> 204 (soft archive; 400 on the project's default link)
+ *   Writes are owner/admin; reads are open to any member. A `ProjectLinkDTO` has no `docId` and no
+ *   `allowRevisionHistory`, and its `shareId` resolves at `/p/:shareId`, not `/s/:shareId`.
  */
 import { API_TIMEOUT_MS } from "./config";
 import { mapApiError, ToolError } from "./errors";
@@ -160,6 +169,44 @@ export type ShareLinkPatch = Partial<{
   enabled: boolean;
   allowDownload: boolean;
   allowRevisionHistory: boolean;
+  expiresAt: string | null;
+  password: string | null;
+}>;
+
+/**
+ * One share link of a *project* (`ProjectLinkDTO` from `src/lib/share/projectLinks.ts`).
+ *
+ * Deliberately not `ApiShareLink`: a project link has no `docId` and no `allowRevisionHistory` (it
+ * has no single document whose versions a recipient could browse), and the server does not send
+ * either field. Carrying them as permanent nulls would invite a caller to offer a
+ * revision-history switch that can never be turned on.
+ */
+export type ApiProjectLink = {
+  id: string;
+  projectId: string;
+  shareId: string;
+  label: string;
+  audience: string | null;
+  isDefault: boolean;
+  enabled: boolean;
+  allowDownload: boolean;
+  passwordEnabled: boolean;
+  expiresAt: string | null;
+  active: boolean;
+  status: "active" | "disabled" | "expired" | "archived" | string;
+  createdVia: string;
+  createdAt: string | null;
+  lastViewedAt: string | null;
+  viewCount: number;
+  downloadCount: number;
+};
+
+/** Settings accepted when creating or updating a project link (no `allowRevisionHistory`). */
+export type ProjectLinkPatch = Partial<{
+  label: string;
+  audience: string | null;
+  enabled: boolean;
+  allowDownload: boolean;
   expiresAt: string | null;
   password: string | null;
 }>;
@@ -397,6 +444,33 @@ function asShareLink(raw: unknown): ApiShareLink {
     enabled: Boolean(l.enabled),
     allowDownload: Boolean(l.allowDownload),
     allowRevisionHistory: Boolean(l.allowRevisionHistory),
+    passwordEnabled: Boolean(l.passwordEnabled),
+    expiresAt: strOrNull(l.expiresAt),
+    active: Boolean(l.active),
+    status: strOrNull(l.status) ?? "active",
+    createdVia: strOrNull(l.createdVia) ?? "api",
+    createdAt: strOrNull(l.createdAt),
+    lastViewedAt: strOrNull(l.lastViewedAt),
+    viewCount: num(l.viewCount),
+    downloadCount: num(l.downloadCount),
+  };
+}
+
+/** Normalise one project link from `/api/projects/:id/links` (`{ link }` / `{ links }` unwrapped). */
+function asProjectLink(raw: unknown): ApiProjectLink {
+  const l = rec(raw);
+  const id = strOrNull(l.id);
+  const shareId = strOrNull(l.shareId);
+  if (!id || !shareId) throw new ToolError("upstream", "lnkdrp API returned a project link without an id.");
+  return {
+    id,
+    projectId: strOrNull(l.projectId) ?? "",
+    shareId,
+    label: strOrNull(l.label) ?? "",
+    audience: strOrNull(l.audience),
+    isDefault: Boolean(l.isDefault),
+    enabled: Boolean(l.enabled),
+    allowDownload: Boolean(l.allowDownload),
     passwordEnabled: Boolean(l.passwordEnabled),
     expiresAt: strOrNull(l.expiresAt),
     active: Boolean(l.active),
@@ -846,6 +920,44 @@ export class ApiClient {
   /** `DELETE /api/docs/:id/links/:linkId` — soft-archive a link (204; analytics are kept). */
   async deleteShareLink(docId: string, linkId: string): Promise<void> {
     await this.request("DELETE", `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(linkId)}`);
+  }
+
+  /**
+   * `GET /api/projects/:id/links` — every link of a project, default first then newest, or (with
+   * `query`) only those matching it by label/audience.
+   *
+   * The route is page-based where the document one is not, so this asks for 100 in one go: a
+   * project is capped at 50 live links (`SHARE_LINKS_PER_PROJECT_MAX`), which makes one page always
+   * the whole set and spares every caller a paging loop it would get wrong once.
+   */
+  async listProjectLinks(projectId: string, query?: string | undefined): Promise<ApiProjectLink[]> {
+    const body = rec(
+      await this.request("GET", `/api/projects/${encodeURIComponent(projectId)}/links`, { query: { q: query || undefined, limit: 100 } }),
+    );
+    return Array.isArray(body.links) ? body.links.map(asProjectLink) : [];
+  }
+
+  /**
+   * `POST /api/projects/:id/links` — create a link on a project. **Pro only**, unlike document
+   * links: on Free the route answers `402 { code: "plan_limit", limit: "project_links" }` and
+   * writes nothing, so there is no `planWarning` half-state to report here.
+   */
+  async createProjectLink(projectId: string, settings: ProjectLinkPatch & { label: string }): Promise<ApiProjectLink> {
+    const body = rec(await this.request("POST", `/api/projects/${encodeURIComponent(projectId)}/links`, { body: settings }));
+    return asProjectLink(body.link);
+  }
+
+  /** `PATCH /api/projects/:id/links/:linkId` — change one project link's settings. */
+  async updateProjectLink(projectId: string, linkId: string, patch: ProjectLinkPatch): Promise<ApiProjectLink> {
+    const body = rec(
+      await this.request("PATCH", `/api/projects/${encodeURIComponent(projectId)}/links/${encodeURIComponent(linkId)}`, { body: patch }),
+    );
+    return asProjectLink(body.link);
+  }
+
+  /** `DELETE /api/projects/:id/links/:linkId` — soft-archive a project link (204; analytics kept). */
+  async deleteProjectLink(projectId: string, linkId: string): Promise<void> {
+    await this.request("DELETE", `/api/projects/${encodeURIComponent(projectId)}/links/${encodeURIComponent(linkId)}`);
   }
 
   async createUpload(input: { docId: string; originalFileName: string; summary?: string | undefined; keyPoints?: string[] | undefined }): Promise<ApiUpload> {

@@ -36,12 +36,12 @@ const SLUG_SCAN_MAX_PAGES = 50;
 /** Membership writes run a few at a time: 50 documents is two API calls each. */
 const ADD_CONCURRENCY = 4;
 
-const projectIdSchema = z
+export const projectIdSchema = z
   .string()
   .regex(OBJECT_ID_RE, "projectId must be a 24-character hex id")
   .optional()
   .describe("Project id (24 hex chars), from lnkdrp_list_projects or lnkdrp_create_project. Pass this or projectSlug.");
-const projectSlugSchema = z
+export const projectSlugSchema = z
   .string()
   .trim()
   .min(1)
@@ -68,7 +68,7 @@ const confirmSchema = z
     "Only for clients that cannot show the user a confirmation prompt. Set to true ONLY after you have shown the user what will happen and they have explicitly said yes in conversation. Never set it pre-emptively.",
   );
 
-type ProjectRef = { projectId?: string | undefined; projectSlug?: string | undefined };
+export type ProjectRef = { projectId?: string | undefined; projectSlug?: string | undefined };
 
 /** The project fields every tool returns. Names and descriptions are the workspace's own text. */
 function projectView(api: ApiClient, p: ApiProject, extra: { docCount?: number | null } = {}) {
@@ -114,7 +114,7 @@ async function withListedMeta(api: ApiClient, p: ApiProject): Promise<ApiProject
 }
 
 /** Exactly one of projectId / projectSlug. */
-function requireOneProjectRef(ref: ProjectRef): void {
+export function requireOneProjectRef(ref: ProjectRef): void {
   const has = [ref.projectId, ref.projectSlug].filter((v) => typeof v === "string" && v.length > 0).length;
   if (has !== 1) throw new ToolError("validation", "Pass exactly one of projectId or projectSlug.");
 }
@@ -142,7 +142,7 @@ async function projectIdForSlug(api: ApiClient, slug: string): Promise<string> {
  * Resolve a project reference to a verified, workspace-scoped, non-request project, and read one
  * page of its documents on the way (the same call is the existence check).
  */
-async function loadProject(
+export async function loadProject(
   api: ApiClient,
   ref: ProjectRef,
   docs: { page?: number | undefined; limit: number; q?: string | undefined; archived?: boolean | undefined } = { limit: 1 },

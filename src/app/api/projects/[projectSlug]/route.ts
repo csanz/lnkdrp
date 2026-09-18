@@ -14,6 +14,7 @@ import { newShareId } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
 import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
+import { setAllProjectLinksEnabled } from "@/lib/share/projectLinks";
 
 export const runtime = "nodejs";
 
@@ -221,6 +222,22 @@ export async function PATCH(
       ? []
       : (["name", "description", "autoAddFiles", "shareEnabled"] as const).filter((f) => project.isModified(f));
     await project.save();
+    // The project share switch is a switch over the project's *links* now that a project can have
+    // several (docs/prds/lnkdrp-project-links.md): `Project.shareEnabled` alone would leave
+    // `/p/:shareId` resolving through a link row that still says enabled. Marks what it disables,
+    // so switching back on does not resurrect a link the sender revoked on its own. Best-effort —
+    // a project whose links cannot be reached still saves, and `syncProjectShareState` repairs the
+    // flag on the next link edit.
+    if (typeof body.shareEnabled === "boolean" && project.orgId) {
+      try {
+        await setAllProjectLinksEnabled({ orgId: project.orgId as Types.ObjectId, projectId: project._id, enabled: body.shareEnabled });
+      } catch (err) {
+        debugError(1, "[api/projects/:id] PATCH could not apply shareEnabled to project links", {
+          projectId: projectIdParam,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     if (changedFields.length) {
       void recordActivity({
         orgId: actor.orgId,

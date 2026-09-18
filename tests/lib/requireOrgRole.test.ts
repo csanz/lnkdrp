@@ -32,7 +32,7 @@ describe("orgs/requireOrgRole.roleAtLeast", () => {
 });
 
 describe("link permissions derived from a role (mt_j7nN3wG65Q)", () => {
-  // What GET /api/plan puts in the snapshot, and what DocLinksManager gates its controls on.
+  // What GET /api/plan puts in the snapshot, and what LinksManager gates its controls on.
   // Editing a link takes `member`; reading its password back takes `admin`. Both call sites used
   // to pass nothing and the component defaulted to "can manage", so every viewer saw New link,
   // Edit and the Password pill and found out otherwise from a 403.

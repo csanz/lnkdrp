@@ -181,3 +181,40 @@ export function activityInWindowExpr(start: Date): Record<string, unknown> {
 export const ACTIVITY_DAY_KEY_EXPR = {
   $dateToString: { date: LAST_ACTIVITY_EXPR, format: "%Y-%m-%d", timezone: "UTC" },
 } as const;
+
+/**
+ * One `shareId` clause carrying every bound at once.
+ *
+ * Exists because the same mistake has now been made on three surfaces and cost two real bugs: a
+ * `$match` is built by spreading a scope object that already pins `shareId`, and then a second
+ * `shareId` key is added beside it. The later key silently **replaces** the earlier one — so the
+ * project route's `?shareIds=` dropped its only tenancy bound and answered for another workspace's
+ * links, and the document route's deleted-link diff dropped its project-link exclusion and reported
+ * a live project link as one of this document's deleted ones.
+ *
+ * `only` narrows (an allow-list, already intersected by the caller where it comes from input);
+ * `except` removes. Returns `{}` when there is nothing to bound, so it can always be spread.
+ *
+ * ```ts
+ * { ...docScopeMatch, ...shareIdClause({ except: projectSlugs }) }        // one clause, both bounds
+ * ```
+ */
+export function shareIdClause(bounds: { only?: readonly string[] | null; except?: readonly string[] | null }): Record<string, unknown> {
+  const only = bounds.only ?? null;
+  const except = bounds.except ?? null;
+  const clause: Record<string, unknown> = {};
+  if (only) clause.$in = [...only];
+  if (except && except.length) clause.$nin = [...except];
+  return Object.keys(clause).length ? { shareId: clause } : {};
+}
+
+/**
+ * The slugs a caller asked for, intersected with the slugs it is allowed to see.
+ *
+ * Never the caller's list on its own: `?shareIds=` is unvalidated input, and on a route whose only
+ * tenancy bound *is* the slug list, handing it straight to `$in` is a cross-workspace read.
+ */
+export function intersectShareIds(allowed: readonly string[], requested: readonly string[]): string[] {
+  const wanted = new Set(requested);
+  return allowed.filter((s) => wanted.has(s));
+}

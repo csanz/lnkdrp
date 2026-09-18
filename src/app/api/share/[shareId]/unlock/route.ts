@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveShareLink } from "@/lib/share/links";
+import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { shareAuthCookieName, shareAuthCookieValue, verifySharePassword } from "@/lib/sharePassword";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -40,7 +41,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
     // The password lives on the link, so each recipient's link unlocks independently
     // (docs/prds/lnkdrp-multi-links.md). A refused link is a 404, like an unknown slug.
-    const resolved = await resolveShareLink(shareId);
+    //
+    // A project link's slug unlocks here too, and through the same gate component: the cookie is
+    // named for the slug and scoped to `path: "/"`, so one unlock covers `/p/:shareId` and every
+    // `/p/:shareId/:docId` behind it. `resolveShareLink` refuses project slugs by design
+    // (docs/prds/lnkdrp-project-links.md), hence the second lookup rather than a widened first one.
+    const resolved = (await resolveShareLink(shareId)) ?? (await resolveProjectLink(shareId));
     if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const hash = resolved.link.passwordHash;

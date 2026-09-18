@@ -10,9 +10,10 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeftIcon, ChartBarIcon, PlusIcon } from "@heroicons/react/24/outline";
+import { ArrowLeftIcon, ChartBarIcon, LinkIcon, PlusIcon } from "@heroicons/react/24/outline";
 
-import DocLinksManager, { type DocLinksManagerHandle } from "@/components/links/DocLinksManager";
+import LinksManager, { type LinksManagerHandle } from "@/components/links/LinksManager";
+import ScopeTile from "@/components/ScopeTile";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 
 /**
@@ -20,7 +21,7 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
  */
 export default function LinksPageClient({ docId }: { docId: string }) {
   const [docTitle, setDocTitle] = useState<string>("");
-  const managerRef = useRef<DocLinksManagerHandle | null>(null);
+  const managerRef = useRef<LinksManagerHandle | null>(null);
 
   // The header shows the document title; `lite=1` keeps the read cheap (no extracted text).
   useEffect(() => {
@@ -52,6 +53,9 @@ export default function LinksPageClient({ docId }: { docId: string }) {
         >
           <ArrowLeftIcon className="h-5 w-5" />
         </Link>
+
+        {/* The tile says what you are inside; the "Links" heading below says what this page shows. */}
+        <ScopeTile kind="doc" />
 
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-[var(--fg)]">{docTitle || "Document"}</div>
@@ -90,14 +94,17 @@ export default function LinksPageClient({ docId }: { docId: string }) {
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
         <div className="w-full px-4 py-6 sm:px-6">
           <div className="mb-5">
-            <div className="text-base font-semibold text-[var(--fg)]">Links</div>
+            <div className="flex items-center gap-2 text-base font-semibold text-[var(--fg)]">
+              <LinkIcon className="h-[18px] w-[18px] text-[var(--muted-2)]" aria-hidden="true" />
+              <span>Links</span>
+            </div>
             <div className="mt-1 text-sm text-[var(--muted)]">
               One link per audience, each with its own settings and its own stats. Labels are private
               to you — recipients never see them.
             </div>
           </div>
 
-          <DocLinksManager ref={managerRef} docId={docId} variant="page" />
+          <LinksManager ref={managerRef} scope={{ kind: "doc", id: docId }} variant="page" />
         </div>
       </div>
     </div>

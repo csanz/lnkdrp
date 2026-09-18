@@ -6,9 +6,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
+  ChartBarIcon,
   Cog6ToothIcon,
   FolderIcon,
+  LinkIcon,
   InboxArrowDownIcon,
   SparklesIcon,
   StarIcon as StarOutlineIcon,
@@ -16,6 +19,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { StarIcon as StarSolidIcon } from "@heroicons/react/24/solid";
 import { fetchWithTempUser, tempUserHeaders } from "@/lib/gating/tempUserClient";
+import { usePlan } from "@/lib/client/usePlan";
 import { trackProjectClick, trackProjectView } from "@/lib/metrics/client";
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import DocActionsMenu from "@/components/DocActionsMenu";
@@ -213,6 +217,13 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   const [nameSaveBusy, setNameSaveBusy] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+  /**
+   * Writes on project links take `admin` (the project routes' gate), one rank above the `member`
+   * who may edit a document link — so `plan.canManageLinks` is the wrong test here. Fails closed
+   * while the snapshot loads; it is memoised across components, so an owner sees no flash.
+   */
+  const { plan } = usePlan();
+  const canManageLinks = plan ? plan.role === "owner" || plan.role === "admin" : false;
   const [nameSaveError, setNameSaveError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const [docs, setDocs] = useState<Paged<DocListItem>>({ items: [], total: 0, page: 1, limit: 25 });
@@ -843,7 +854,15 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
             <span className="block h-5 w-40 animate-pulse rounded bg-[var(--panel-hover)]" aria-label="Loading project name" />
           )
         }
-        description={subtitle || undefined}
+        /* Every other top-level page (Search, Upload, Activity, Metrics) always has a description,
+           so a project without one made the header band shorter and the whole page jumped up a
+           line when you navigated into it. A project always says what it is instead. */
+        description={
+          subtitle ||
+          (isRequestRepo
+            ? "Files other people send you through this request link."
+            : "Documents grouped together, shared with one link per audience.")
+        }
         badge={
           isRequestRepo ? (
             <span className="shrink-0 rounded-full bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-semibold text-[var(--muted)] ring-1 ring-[var(--border)]">
@@ -857,6 +876,37 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
               <span className="text-xs text-[var(--muted-2)]">
                 {view === "archived" ? `${docs.total} archived` : `${docs.total} ${docs.total === 1 ? "doc" : "docs"}`}
               </span>
+              {/* The two sub-pages of a project, beside its document count — the way a document
+                  header carries its metrics button. Without them the only route to either was the
+                  side panel's link count, which is hidden on a project with a single link: a
+                  project's analytics were unreachable from the project ("metrics link from
+                  projects page is not existent"). Not shown on a request repository, which shares
+                  through an upload token rather than through project links. */}
+              {!isRequestRepo ? (
+                <>
+                  {/* The document header's metrics action, class for class
+                      (`src/app/(app)/doc/[docId]/pageClient.tsx`): a bordered 8×8 icon button, not
+                      a bare glyph. Side by side the unbordered version read as decoration beside
+                      "2 docs" while the document's read as a control, which is the whole reason a
+                      reader found one and not the other. */}
+                  <Link
+                    href={`/project/${encodeURIComponent(projectSlug)}/links`}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                    aria-label="Open links"
+                    title="Links"
+                  >
+                    <LinkIcon className="h-4 w-4" aria-hidden="true" />
+                  </Link>
+                  <Link
+                    href={`/project/${encodeURIComponent(projectSlug)}/metrics`}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                    aria-label="Open metrics"
+                    title="Metrics"
+                  >
+                    <ChartBarIcon className="h-4 w-4" aria-hidden="true" />
+                  </Link>
+                </>
+              ) : null}
               <button
                 type="button"
                 className="shrink-0 rounded-lg p-1 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
@@ -878,15 +928,20 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         }
       />
 
-      <div className="min-h-0 flex-1 overflow-hidden bg-[var(--bg)]">
-        <div className={`h-full py-6 ${APP_PAGE_GUTTER}`}>
+      {/* Two independently-scrolling columns at `lg`, one scrolling page below it. The columns used
+          to be pinned to the viewport at every width: with the share rail now a list of links
+          rather than a single URL, a phone split the screen between a tall rail and a document
+          list squeezed to about one row. Below `lg` the sections take their natural height and the
+          page scrolls, which is what a stacked layout wants anyway. */}
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-[var(--bg)] lg:overflow-hidden">
+        <div className={`py-6 lg:h-full ${APP_PAGE_GUTTER}`}>
           {notFound ? (
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6 text-sm text-[var(--muted)]">
               Project not found.
             </div>
           ) : (
-            <div className="grid h-full min-h-0 gap-5 lg:grid-cols-[1.35fr_0.65fr]">
-              <section className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+            <div className="grid gap-5 lg:h-full lg:min-h-0 lg:grid-cols-[1.35fr_0.65fr]">
+              <section className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 lg:min-h-0 lg:overflow-auto">
                 <div
                   className="flex flex-wrap items-center gap-2"
                   role="tablist"
@@ -1300,20 +1355,19 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                   ) : null}
                 </div>
               ) : (
-                <div className="grid gap-2">
-                  <ProjectSharePanel
-                    projectShareId={(project as unknown as { shareId?: string | null })?.shareId ?? null}
-                    projectName={title}
-                    shareEnabled={project?.shareEnabled !== false}
-                    shareBusy={shareBusy}
-                    onShareEnabledChange={(next) => void setProjectShareEnabled(next)}
-                  />
-                  {shareError ? (
-                    <div className="text-[12px] text-red-600 dark:text-red-400" role="alert">
-                      {shareError}
-                    </div>
-                  ) : null}
-                </div>
+                /* The compact summary, exactly the shape the document page's side panel has:
+                   the default link, its address, what it does, its viewers, and the count as the
+                   way through to /project/:id/links. Management lives on that page now. */
+                <ProjectSharePanel
+                  projectId={projectSlug}
+                  projectName={title}
+                  shareId={project?.shareId ?? null}
+                  shareEnabled={project?.shareEnabled !== false}
+                  shareBusy={shareBusy}
+                  canManage={canManageLinks}
+                  error={shareError}
+                  onShareEnabledChange={(next) => void setProjectShareEnabled(next)}
+                />
               )}
             </div>
           )}

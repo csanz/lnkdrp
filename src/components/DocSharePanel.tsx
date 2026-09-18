@@ -4,14 +4,14 @@ import { SparklesIcon } from "@heroicons/react/24/outline";
 import { useState, type RefObject, type ReactNode } from "react";
 import Modal from "@/components/modals/Modal";
 import Markdown from "@/components/Markdown";
-import DocLinksManager from "@/components/links/DocLinksManager";
+import LinksManager from "@/components/links/LinksManager";
 
 /**
  * Doc side panel: the links summary, the quick stats and the AI snapshot.
  *
  * The document-level share controls (share URL, "Share enabled", "Allow download", "Show version
  * history", the password lock) used to live here. Every one of them is now a per-link setting, so
- * they moved to `/doc/:docId/links`; the panel keeps `DocLinksManager variant="panel"`.
+ * they moved to `/doc/:docId/links`; the panel keeps `LinksManager variant="panel"`.
  *
  * The props they used are still accepted (the doc page passes them unchanged) — they are simply no
  * longer rendered.
@@ -84,7 +84,7 @@ export default function DocSharePanel({
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
 
   // --- Links ------------------------------------------------------------------------------
-  // Link management moved to `DocLinksManager` (and to `/doc/:docId/links`); the panel keeps only
+  // Link management moved to `LinksManager` (and to `/doc/:docId/links`); the panel keeps only
   // the compact summary (docs/prds/lnkdrp-multi-links.md). The document-level share controls it
   // replaced were per-document duplicates of per-link settings, so they are gone — but the doc
   // page still passes their props, and they stay in `Props` so nothing there has to change.
@@ -159,7 +159,7 @@ export default function DocSharePanel({
   return (
     <div className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
       {/* 1) Links — the default link, the count, and the way through to /doc/:docId/links */}
-      <DocLinksManager docId={docId} variant="panel" />
+      <LinksManager scope={{ kind: "doc", id: docId }} variant="panel" />
 
       {shareNotice ? <div className="mt-2">{shareNotice}</div> : null}
 

@@ -12,7 +12,15 @@
 import type { PlanLimitKey } from "@/lib/client/planLimit";
 
 /** Which upsell to show. `pro` is the generic pitch (sidebar link, no wall hit); the next five mirror API limit keys; `credits` is passive. */
-export type UpsellKey = "pro" | "version_history" | "documents" | "projects" | "collaborators" | "analytics_history" | "credits";
+export type UpsellKey =
+  | "pro"
+  | "version_history"
+  | "documents"
+  | "projects"
+  | "collaborators"
+  | "analytics_history"
+  | "project_links"
+  | "credits";
 
 /** Copy for one upsell: title, one-sentence reason, and three concrete Pro benefits. */
 export type UpsellCopy = {
@@ -91,6 +99,17 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     ],
     secondaryLabel: "Compare plans",
   },
+  project_links: {
+    title: "A second link on a project is a Pro feature",
+    reason:
+      "Free gives every project one public link. Pro lets you give each audience its own — with its own password, expiry and analytics — so revoking one fund does not revoke the other.",
+    bullets: [
+      "A separate link per audience, each with its own password and expiry",
+      "See who came, what they opened and how long they read, per link",
+      "Unlimited projects, documents and links across the workspace",
+    ],
+    secondaryLabel: "Compare plans",
+  },
   credits: {
     title: "More credits on Pro",
     reason: "Credits pay for AI runs: the summary on each upload and AI compare. Links, uploads and stats never need credits.",
@@ -115,6 +134,7 @@ export function upsellKeyForLimit(limit: string): UpsellKey {
     case "collaborators":
     case "version_history":
     case "analytics_history":
+    case "project_links":
       return limit as UpsellKey;
     default:
       return "documents";
