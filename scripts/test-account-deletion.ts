@@ -110,6 +110,9 @@ async function main() {
   say("after the purge", checks);
   say("tombstone left behind", tomb);
 
+  // A real deletion keeps its tombstone; a test should not leave one lying in the users table.
+  await UserModel.deleteOne({ _id: user._id });
+
   const failed = Object.entries(checks).filter(([, ok]) => !ok);
   // The tombstone must carry no identity: disabled, stamped, and the address replaced.
   const tombOk =
@@ -136,5 +139,17 @@ void main().catch(async (err) => {
   // eslint-disable-next-line no-console
   console.error(err);
   process.exitCode = 1;
+  // Leave nothing behind when a step throws: a half-built test account was still an account, and it
+  // showed up in the admin home's signup count until someone noticed.
+  try {
+    const stray = (await UserModel.find({ email: EMAIL }).select({ _id: 1 }).lean()) as Array<{ _id: unknown }>;
+    for (const u of stray) await purgeAccount(String(u._id));
+    await UserModel.deleteMany({ email: EMAIL });
+    // eslint-disable-next-line no-console
+    if (stray.length) console.error(`cleaned up the throwaway account (${EMAIL})`);
+  } catch {
+    // eslint-disable-next-line no-console
+    console.error(`could not clean up ${EMAIL}; remove it by hand`);
+  }
   await mongoose.disconnect().catch(() => undefined);
 });

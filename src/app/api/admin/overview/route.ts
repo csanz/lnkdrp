@@ -82,9 +82,11 @@ export async function GET(request: Request) {
     jobs,
     pendingDeletions,
   ] = await Promise.all([
-    UserModel.countDocuments({ isActive: { $ne: false } }),
-    UserModel.countDocuments({ createdAt: { $gte: since } }),
-    UserModel.countDocuments({ createdAt: { $gte: prevSince, $lt: since } }),
+    // A purged account leaves an anonymised tombstone row. It is not an account any more and it is
+    // not a signup: counting it put five of my own test accounts in "signups" on this page.
+    UserModel.countDocuments({ isActive: { $ne: false }, deletionPurgedAt: null }),
+    UserModel.countDocuments({ createdAt: { $gte: since }, deletionPurgedAt: null }),
+    UserModel.countDocuments({ createdAt: { $gte: prevSince, $lt: since }, deletionPurgedAt: null }),
     OrgModel.countDocuments({ isDeleted: { $ne: true } }),
     DocModel.countDocuments({ isDeleted: { $ne: true }, isArchived: { $ne: true } }),
     DocModel.countDocuments({ createdDate: { $gte: since } }),
@@ -100,7 +102,7 @@ export async function GET(request: Request) {
     ]),
     ShareViewModel.aggregate<DayRow>([{ $match: { createdDate: { $gte: since }, isOwnerPreview: { $ne: true } } }, ...byDay("createdDate")]),
     DocModel.aggregate<DayRow>([{ $match: { createdDate: { $gte: since } } }, ...byDay("createdDate")]),
-    UserModel.aggregate<DayRow>([{ $match: { createdAt: { $gte: since } } }, ...byDay("createdAt")]),
+    UserModel.aggregate<DayRow>([{ $match: { createdAt: { $gte: since }, deletionPurgedAt: null } }, ...byDay("createdAt")]),
     AiRunModel.aggregate<DayRow>([{ $match: { createdDate: { $gte: since } } }, ...byDay("createdDate")]),
     CronHealthModel.find({}).select({ jobKey: 1, status: 1, lastRunAt: 1, lastError: 1 }).limit(50).lean(),
     UserModel.countDocuments({ deletionRequestedAt: { $ne: null }, deletionPurgedAt: null }),
