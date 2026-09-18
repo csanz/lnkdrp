@@ -143,7 +143,9 @@ export function TopLinksSection({ links, now }: { links: WorkspaceTopLink[]; now
             const name = linkDisplayName(l);
             const opened = lastOpened(l.lastOpenedAt, now);
             return (
-              <li key={l.shareId}>
+              // Rows are grouped by link AND document, so one shareId can appear twice (views
+              // recorded against two doc ids). The pair is what makes a row unique.
+              <li key={`${l.docId}:${l.shareId}`}>
                 <Link href={l.href} className={ROW_LINK_CLASS} title={`${name} — ${l.docTitle}`}>
                   <div className="min-w-0 flex-1">
                     <div className={TITLE_CLASS}>{name}</div>
