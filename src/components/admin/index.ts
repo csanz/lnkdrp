@@ -57,3 +57,5 @@ export type {
   StatTileProps,
   JsonBlockProps,
 } from "./AdminDetail";
+
+export { default as RevenueChart } from "./RevenueChart";

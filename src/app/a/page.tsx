@@ -16,10 +16,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import Button from "@/components/ui/Button";
-import { AdminAlert, AdminPageHeader, AdminSection, StatTile } from "@/components/admin";
+import { AdminAlert, AdminPageHeader, AdminSection, RevenueChart, StatTile } from "@/components/admin";
 import { type CronHealthItem } from "@/lib/admin/cronHealth";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { ADMIN_DASH, ADMIN_ROW_ACTION_LINK, ADMIN_TILE, fmtAdminDateTime } from "@/lib/admin/ui";
+import { fmtMoney, type RevenueDay } from "@/lib/admin/revenue";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type Tile = {
@@ -111,9 +112,51 @@ function SectionTile({ tile }: { tile: Tile }) {
 }
 
 /** The admin landing page: the area's sections, then the cron board. */
+type RevenueResponse = {
+  days: number;
+  subscriptions: { proActive: number; proEnding: number; payg: number; otherBillable: number; free: number };
+  price: { proPriceLabel: string | null; proPriceCents: number | null };
+  summary: {
+    mrrCents: number | null;
+    endingCents: number | null;
+    packCents: number;
+    onDemandCents: number;
+    chargedCents: number;
+    trendPct: number | null;
+    packCount: number;
+  };
+  series: RevenueDay[];
+};
+
+/** The window switcher beside the Revenue title: the same 26px control as a row action. */
+const ADMIN_RANGE_IDLE = ADMIN_ROW_ACTION_LINK;
+const ADMIN_RANGE_ACTIVE = ADMIN_ROW_ACTION_LINK + " bg-[var(--panel-hover)] text-[var(--fg)]";
+
 export default function AdminHomePage() {
   const [health, setHealth] = useState<CronHealthItem[]>([]);
   const [healthLoading, setHealthLoading] = useState(false);
+  // Revenue: run-rate from subscriptions plus what packs and on-demand actually charged.
+  const [revenueDays, setRevenueDays] = useState<7 | 30 | 90>(30);
+  const [revenue, setRevenue] = useState<RevenueResponse | null>(null);
+  const [revenueError, setRevenueError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const json = (await fetchJson(`/api/admin/revenue?days=${revenueDays}`)) as RevenueResponse;
+        if (!cancelled) {
+          setRevenue(json);
+          setRevenueError(null);
+        }
+      } catch (e) {
+        if (!cancelled) setRevenueError(e instanceof Error ? e.message : "Failed to load revenue");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [revenueDays]);
+
   const [healthError, setHealthError] = useState<string | null>(null);
 
   const normalized = useMemo(() => (Array.isArray(health) ? health : []), [health]);
@@ -173,6 +216,77 @@ export default function AdminHomePage() {
             </section>
           ))}
         </div>
+
+        <AdminSection
+          title="Revenue"
+          description="Run-rate from subscriptions, and what credit packs and on-demand usage charged in the window."
+          actions={
+            <>
+              {([7, 30, 90] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className={revenueDays === d ? ADMIN_RANGE_ACTIVE : ADMIN_RANGE_IDLE}
+                  aria-pressed={revenueDays === d}
+                  onClick={() => setRevenueDays(d)}
+                >
+                  {d}d
+                </button>
+              ))}
+            </>
+          }
+        >
+          {revenueError ? <AdminAlert>{revenueError}</AdminAlert> : null}
+
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <StatTile
+              label="Monthly run-rate"
+              value={fmtMoney(revenue?.summary.mrrCents ?? null)}
+              hint={
+                revenue?.price.proPriceCents == null
+                  ? "Pro price unknown: set it from Tools › Billing"
+                  : `${revenue.subscriptions.proActive} Pro × ${revenue.price.proPriceLabel ?? fmtMoney(revenue.price.proPriceCents)}`
+              }
+            />
+            <StatTile
+              label="Ending"
+              value={fmtMoney(revenue?.summary.endingCents ?? null)}
+              hint={
+                revenue?.subscriptions.proEnding
+                  ? `${revenue.subscriptions.proEnding} cancelled, still inside the paid period`
+                  : "No cancellations pending"
+              }
+            />
+            <StatTile
+              label={`Charged, ${revenueDays}d`}
+              value={fmtMoney(revenue?.summary.chargedCents ?? null)}
+              hint={
+                revenue?.summary.trendPct == null
+                  ? "Credit packs + on-demand usage"
+                  : `${revenue.summary.trendPct >= 0 ? "+" : ""}${revenue.summary.trendPct}% vs the ${revenueDays} days before`
+              }
+            />
+            <StatTile
+              label="Workspaces"
+              value={revenue ? String(revenue.subscriptions.proActive + revenue.subscriptions.payg + revenue.subscriptions.free) : "—"}
+              hint={
+                revenue
+                  ? `${revenue.subscriptions.proActive} Pro · ${revenue.subscriptions.payg} pay-as-you-go · ${revenue.subscriptions.free} free`
+                  : "Loading…"
+              }
+            />
+          </div>
+
+          <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
+            <RevenueChart series={revenue?.series ?? []} />
+            <p className="mt-2 text-[11px] leading-4 text-[var(--muted-2)]">
+              Credit packs are charges Stripe confirmed ({revenue?.summary.packCount ?? 0} in this window,{" "}
+              {fmtMoney(revenue?.summary.packCents ?? 0)}). On-demand ({fmtMoney(revenue?.summary.onDemandCents ?? 0)}) is metered
+              usage priced at 10¢ a credit and reported to Stripe by a job, so it is what will be invoiced, not an invoice. Stripe
+              invoices are not stored here, so none of this is money received.
+            </p>
+          </div>
+        </AdminSection>
 
         {/* A summary, not a second copy of the board: the page it belongs to is one click away,
             and re-rendering it here gave the page a second header and a second Refresh. */}
