@@ -1,245 +1,215 @@
 /**
  * Admin home page: `/a`
  *
- * The map of the admin area. The tiles are the sidebar's own sections, in the sidebar's order,
- * and each one says what is behind it rather than repeating its name — a tile that only links
- * is worth less than the sidebar entry beside it. Below them, the cron summary, because "did the
- * jobs run" is the question this page gets opened for.
+ * A dashboard, not a link farm. This page used to be a wall of tiles repeating the sidebar — every
+ * destination already one click away on the left — which pushed the only real information below the
+ * fold. It now opens with how the deployment is doing: headline figures, a chart of whichever one
+ * you pick, then money, then the two things that need attention (failing jobs, pending deletions).
  *
- * Two things this page used to get wrong: the tiles sat in a three-column grid, so a section with
- * one destination read as a row with two tiles missing; and the whole of `/a/cron-health` was
- * re-rendered underneath, second page header and all. The tiles now flow at a fixed width, and
- * the cron block is three figures that link to the board.
+ * Everything comes from two endpoints (`/api/admin/overview`, `/api/admin/revenue`) so the page
+ * paints once instead of showing four spinners.
  */
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import Button from "@/components/ui/Button";
-import { AdminAlert, AdminPageHeader, AdminSection, RevenueChart, StatTile } from "@/components/admin";
-import { type CronHealthItem } from "@/lib/admin/cronHealth";
+import { useEffect, useState } from "react";
+
+import {
+  AdminAlert,
+  AdminPageHeader,
+  AdminSection,
+  AdminTrendChart,
+  RevenueChart,
+  StatusPill,
+  type TrendMetric,
+  type TrendPoint,
+} from "@/components/admin";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
-import { ADMIN_DASH, ADMIN_ROW_ACTION_LINK, ADMIN_TILE, fmtAdminDateTime } from "@/lib/admin/ui";
+import { ADMIN_FOCUS_RING, ADMIN_ROW_ACTION_LINK } from "@/lib/admin/ui";
 import { fmtMoney, type RevenueDay } from "@/lib/admin/revenue";
 import { fetchJson } from "@/lib/http/fetchJson";
+import { cn } from "@/lib/cn";
 
-type Tile = {
-  href: string;
-  label: string;
-  /** What is behind the link. One line, lowercase prose, no "view the …". */
-  blurb: string;
+type Overview = {
+  days: number;
+  totals: { users: number; orgs: number; docs: number; liveLinks: number; views: number; aiRuns: number; creditsCharged: number; newUsers: number; newDocs: number };
+  trend: Record<"users" | "docs" | "views", { current: number; previous: number }>;
+  health: { jobs: number; failing: string[]; pendingDeletions: number };
+  series: TrendPoint[];
 };
 
-type TileSection = { label: string; tiles: Tile[] };
-
-/**
- * The sidebar's sections, with a sentence each. Kept in the sidebar's order so the two read as
- * one map of the same place; a route added to the sidebar belongs here too.
- */
-const SECTIONS: TileSection[] = [
-  {
-    label: "Metrics",
-    tiles: [
-      {
-        href: "/a/shareviews",
-        label: "Share views",
-        blurb: "Who opened a share, how far they read, and what they downloaded.",
-      },
-    ],
-  },
-  {
-    label: "AI",
-    tiles: [
-      {
-        href: "/a/ai-runs",
-        label: "Runs",
-        blurb: "Every prompt the product sent a model, with the output it got back.",
-      },
-    ],
-  },
-  {
-    label: "Billing",
-    tiles: [
-      {
-        href: "/a/credits",
-        label: "Credits",
-        blurb: "Balances, ledger and on-demand spend, with anomalies called out first.",
-      },
-    ],
-  },
-  {
-    label: "Data",
-    tiles: [
-      { href: "/a/data/workspaces", label: "Workspaces", blurb: "Every workspace, its plan and its members." },
-      { href: "/a/data/users", label: "Users", blurb: "Every account. Override a plan or deactivate one in place." },
-      { href: "/a/data/docs", label: "Docs", blurb: "Every document across all users, newest first." },
-      { href: "/a/data/links", label: "Links", blurb: "Every share link, its state and the traffic it has drawn." },
-      { href: "/a/data/projects", label: "Projects", blurb: "Project pages and the links that point at them." },
-      { href: "/a/data/requests", label: "Requests", blurb: "Download requests and how their owners answered." },
-      { href: "/a/data/uploads", label: "Uploads", blurb: "Files that reached storage, and what became of them." },
-    ],
-  },
-  {
-    label: "System",
-    tiles: [
-      { href: "/a/cron-health", label: "Cron health", blurb: "The last heartbeat from every background job." },
-      { href: "/a/emails", label: "Emails", blurb: "Every email the product can send, and what proof a send leaves." },
-    ],
-  },
-  {
-    label: "Tools",
-    tiles: [
-      { href: "/a/tools/cache", label: "Cache", blurb: "Inspect and clear this browser's local caches." },
-      { href: "/a/tools/billing", label: "Billing", blurb: "Refresh the Pro price label from Stripe." },
-    ],
-  },
-];
-
-/**
- * One destination: its name, and a line saying what is behind it.
- *
- * Fixed width rather than a grid track: a section with a single destination is then one card,
- * not one card and two empty columns. Every card is the same two lines — a status line on one
- * of them and not the rest made the card anatomy unreadable.
- */
-function SectionTile({ tile }: { tile: Tile }) {
-  return (
-    <Link href={tile.href} className={`${ADMIN_TILE} w-full sm:w-[calc(50%-0.25rem)] xl:w-[302px]`}>
-      <div className="text-[13px] font-semibold leading-5 text-[var(--fg)]">{tile.label}</div>
-      <div className="mt-0.5 text-[12px] leading-5 text-[var(--muted-2)]">{tile.blurb}</div>
-    </Link>
-  );
-}
-
-/** The admin landing page: the area's sections, then the cron board. */
-type RevenueResponse = {
-  days: number;
-  subscriptions: { proActive: number; proEnding: number; payg: number; otherBillable: number; free: number };
+type Revenue = {
+  subscriptions: { proActive: number; proEnding: number; payg: number; free: number };
   price: { proPriceLabel: string | null; proPriceCents: number | null };
-  summary: {
-    mrrCents: number | null;
-    endingCents: number | null;
-    packCents: number;
-    onDemandCents: number;
-    chargedCents: number;
-    trendPct: number | null;
-    packCount: number;
-  };
+  summary: { mrrCents: number | null; endingCents: number | null; packCents: number; onDemandCents: number; chargedCents: number; trendPct: number | null; packCount: number };
   series: RevenueDay[];
 };
 
-/** The window switcher beside the Revenue title: the same 26px control as a row action. */
-const ADMIN_RANGE_IDLE = ADMIN_ROW_ACTION_LINK;
-const ADMIN_RANGE_ACTIVE = ADMIN_ROW_ACTION_LINK + " bg-[var(--panel-hover)] text-[var(--fg)]";
+const RANGES = [7, 30, 90] as const;
+
+/** A headline figure that also selects the chart's series. */
+function MetricTile({
+  label,
+  value,
+  hint,
+  active,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const body = (
+    <>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] leading-4 text-[var(--muted-2)]">{label}</div>
+      <div className="mt-1 text-[24px] font-semibold leading-8 tabular-nums text-[var(--fg)]">{value}</div>
+      {hint ? <div className="mt-0.5 text-[12px] leading-4 text-[var(--muted-2)]">{hint}</div> : null}
+    </>
+  );
+  if (!onClick) {
+    return <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "rounded-xl border px-4 py-3 text-left transition-colors",
+        active
+          ? "border-[var(--fg)] bg-[var(--panel-hover)]"
+          : "border-[var(--border)] bg-[var(--panel-2)] hover:bg-[var(--panel-hover)]",
+        ADMIN_FOCUS_RING,
+      )}
+    >
+      {body}
+    </button>
+  );
+}
+
+/** "+12% vs the 30 days before", or nothing when there is no previous window to compare to. */
+function trendHint(current: number, previous: number, days: number): string {
+  if (previous <= 0) return `in the last ${days} days`;
+  const pct = Math.round(((current - previous) / previous) * 100);
+  return `${pct >= 0 ? "+" : ""}${pct}% vs the ${days} before`;
+}
 
 export default function AdminHomePage() {
-  const [health, setHealth] = useState<CronHealthItem[]>([]);
-  const [healthLoading, setHealthLoading] = useState(false);
-  // Revenue: run-rate from subscriptions plus what packs and on-demand actually charged.
-  const [revenueDays, setRevenueDays] = useState<7 | 30 | 90>(30);
-  const [revenue, setRevenue] = useState<RevenueResponse | null>(null);
-  const [revenueError, setRevenueError] = useState<string | null>(null);
+  const [days, setDays] = useState<(typeof RANGES)[number]>(30);
+  const [metric, setMetric] = useState<TrendMetric>("views");
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [revenue, setRevenue] = useState<Revenue | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     void (async () => {
       try {
-        const json = (await fetchJson(`/api/admin/revenue?days=${revenueDays}`)) as RevenueResponse;
-        if (!cancelled) {
-          setRevenue(json);
-          setRevenueError(null);
-        }
+        const [o, r] = await Promise.all([
+          fetchJson<Overview>(`/api/admin/overview?days=${days}`),
+          fetchJson<Revenue>(`/api/admin/revenue?days=${days}`),
+        ]);
+        if (cancelled) return;
+        setOverview(o);
+        setRevenue(r);
+        setError(null);
       } catch (e) {
-        if (!cancelled) setRevenueError(e instanceof Error ? e.message : "Failed to load revenue");
+        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load the overview");
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [revenueDays]);
+  }, [days]);
 
-  const [healthError, setHealthError] = useState<string | null>(null);
-
-  const normalized = useMemo(() => (Array.isArray(health) ? health : []), [health]);
-  const failing = useMemo(() => normalized.filter((i) => i.status === "error"), [normalized]);
-
-  /** Read the current cron snapshots. */
-  async function load() {
-    setHealthLoading(true);
-    setHealthError(null);
-    try {
-      const data = await fetchJson<{ items?: unknown }>("/api/admin/cron-health?limit=20", { method: "GET" });
-      setHealth(Array.isArray(data.items) ? (data.items as CronHealthItem[]) : []);
-    } catch (e) {
-      setHealthError(e instanceof Error ? e.message : "Failed to load cron health");
-      setHealth([]);
-    } finally {
-      setHealthLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    void load();
-  }, []);
-
-  /** The oldest heartbeat on the board: the one that says a job has stopped reporting. */
-  const oldestHeartbeat = useMemo(() => {
-    let oldest: number | null = null;
-    for (const item of normalized) {
-      const t = item.lastRunAt ? new Date(item.lastRunAt).valueOf() : NaN;
-      if (!Number.isFinite(t)) continue;
-      if (oldest === null || t < oldest) oldest = t;
-    }
-    return oldest;
-  }, [normalized]);
+  const t = overview?.totals;
+  const num = (n: number | undefined) => (typeof n === "number" ? n.toLocaleString() : "—");
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
         <AdminPageHeader
           title="Admin"
-          description="Every part of the admin area, and the background jobs that keep it fed."
-        />
-
-        {/* The section name sits in a gutter beside its destinations, so a section with one
-            destination reads as one card next to its label rather than a row missing two. */}
-        <div className="mt-6 grid gap-4">
-          {SECTIONS.map((section) => (
-            <section key={section.label} className="grid gap-2 sm:grid-cols-[92px_minmax(0,1fr)] sm:items-start">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.06em] leading-4 text-[var(--muted-2)] sm:pt-3">
-                {section.label}
-              </h2>
-              <div className="flex flex-wrap gap-2">
-                {section.tiles.map((tile) => (
-                  <SectionTile key={tile.href} tile={tile} />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-
-        <AdminSection
-          title="Revenue"
-          description="Run-rate from subscriptions, and what credit packs and on-demand usage charged in the window."
+          description="How the deployment is doing. Every section of the admin area is in the sidebar."
           actions={
             <>
-              {([7, 30, 90] as const).map((d) => (
+              {RANGES.map((d) => (
                 <button
                   key={d}
                   type="button"
-                  className={revenueDays === d ? ADMIN_RANGE_ACTIVE : ADMIN_RANGE_IDLE}
-                  aria-pressed={revenueDays === d}
-                  onClick={() => setRevenueDays(d)}
+                  aria-pressed={days === d}
+                  onClick={() => setDays(d)}
+                  className={cn(ADMIN_ROW_ACTION_LINK, days === d && "bg-[var(--panel-hover)] text-[var(--fg)]")}
                 >
                   {d}d
                 </button>
               ))}
             </>
           }
-        >
-          {revenueError ? <AdminAlert>{revenueError}</AdminAlert> : null}
+        />
 
+        {error ? <AdminAlert className="mt-3">{error}</AdminAlert> : null}
+
+        {/* The four tiles pick the chart's series: the number and its shape in one place. */}
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricTile
+            label="Views"
+            value={num(t?.views)}
+            hint={overview ? trendHint(overview.trend.views.current, overview.trend.views.previous, days) : "Recipient opens"}
+            active={metric === "views"}
+            onClick={() => setMetric("views")}
+          />
+          <MetricTile
+            label="Documents"
+            value={num(t?.newDocs)}
+            hint={overview ? trendHint(overview.trend.docs.current, overview.trend.docs.previous, days) : "Created in the window"}
+            active={metric === "docs"}
+            onClick={() => setMetric("docs")}
+          />
+          <MetricTile
+            label="Signups"
+            value={num(t?.newUsers)}
+            hint={overview ? trendHint(overview.trend.users.current, overview.trend.users.previous, days) : "New accounts"}
+            active={metric === "users"}
+            onClick={() => setMetric("users")}
+          />
+          <MetricTile
+            label="AI runs"
+            value={num(t?.aiRuns)}
+            hint={t ? `${num(t.creditsCharged)} credits charged` : "Summaries and compares"}
+            active={metric === "aiRuns"}
+            onClick={() => setMetric("aiRuns")}
+          />
+        </div>
+
+        <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
+          {loading && !overview ? (
+            <div className="flex h-[220px] items-center justify-center text-[12px] text-[var(--muted-2)]">Loading…</div>
+          ) : (
+            <AdminTrendChart series={overview?.series ?? []} metric={metric} />
+          )}
+        </div>
+
+        {/* What is standing right now, rather than what happened in the window. */}
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <MetricTile label="Workspaces" value={num(t?.orgs)} hint={revenue ? `${revenue.subscriptions.proActive} on Pro` : undefined} />
+          <MetricTile label="Accounts" value={num(t?.users)} hint="Active, not deleted" />
+          <MetricTile label="Documents" value={num(t?.docs)} hint="Live, not archived" />
+          <MetricTile label="Share links" value={num(t?.liveLinks)} hint="Enabled and not archived" />
+        </div>
+
+        <AdminSection
+          title="Revenue"
+          description="Run-rate from subscriptions, and what credit packs and on-demand usage charged in the window."
+        >
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-            <StatTile
+            <MetricTile
               label="Monthly run-rate"
               value={fmtMoney(revenue?.summary.mrrCents ?? null)}
               hint={
@@ -248,77 +218,80 @@ export default function AdminHomePage() {
                   : `${revenue.subscriptions.proActive} Pro × ${revenue.price.proPriceLabel ?? fmtMoney(revenue.price.proPriceCents)}`
               }
             />
-            <StatTile
+            <MetricTile
               label="Ending"
               value={fmtMoney(revenue?.summary.endingCents ?? null)}
-              hint={
-                revenue?.subscriptions.proEnding
-                  ? `${revenue.subscriptions.proEnding} cancelled, still inside the paid period`
-                  : "No cancellations pending"
-              }
+              hint={revenue?.subscriptions.proEnding ? `${revenue.subscriptions.proEnding} cancelled, still paid` : "No cancellations pending"}
             />
-            <StatTile
-              label={`Charged, ${revenueDays}d`}
+            <MetricTile
+              label={`Charged, ${days}d`}
               value={fmtMoney(revenue?.summary.chargedCents ?? null)}
               hint={
                 revenue?.summary.trendPct == null
-                  ? "Credit packs + on-demand usage"
-                  : `${revenue.summary.trendPct >= 0 ? "+" : ""}${revenue.summary.trendPct}% vs the ${revenueDays} days before`
+                  ? "Credit packs + on-demand"
+                  : `${revenue.summary.trendPct >= 0 ? "+" : ""}${revenue.summary.trendPct}% vs the ${days} before`
               }
             />
-            <StatTile
-              label="Workspaces"
-              value={revenue ? String(revenue.subscriptions.proActive + revenue.subscriptions.payg + revenue.subscriptions.free) : "—"}
-              hint={
-                revenue
-                  ? `${revenue.subscriptions.proActive} Pro · ${revenue.subscriptions.payg} pay-as-you-go · ${revenue.subscriptions.free} free`
-                  : "Loading…"
-              }
+            <MetricTile
+              label="Credit packs"
+              value={String(revenue?.summary.packCount ?? 0)}
+              hint={`${fmtMoney(revenue?.summary.packCents ?? 0)} of ${fmtMoney(revenue?.summary.chargedCents ?? 0)}`}
             />
           </div>
-
           <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
             <RevenueChart series={revenue?.series ?? []} />
             <p className="mt-2 text-[11px] leading-4 text-[var(--muted-2)]">
-              Credit packs are charges Stripe confirmed ({revenue?.summary.packCount ?? 0} in this window,{" "}
-              {fmtMoney(revenue?.summary.packCents ?? 0)}). On-demand ({fmtMoney(revenue?.summary.onDemandCents ?? 0)}) is metered
-              usage priced at 10¢ a credit and reported to Stripe by a job, so it is what will be invoiced, not an invoice. Stripe
-              invoices are not stored here, so none of this is money received.
+              Packs are charges Stripe confirmed; on-demand is metered usage priced at 10¢ a credit and reported to Stripe by a
+              job. Stripe invoices are not stored here, so none of this is money received.
             </p>
           </div>
         </AdminSection>
 
-        {/* A summary, not a second copy of the board: the page it belongs to is one click away,
-            and re-rendering it here gave the page a second header and a second Refresh. */}
-        <AdminSection
-          title="Cron health"
-          description="The last heartbeat from every background job. One snapshot per job, overwritten each tick."
-          actions={
-            <>
-              <Button variant="outline" onClick={() => void load()} disabled={healthLoading}>
-                {healthLoading ? "Loading…" : "Refresh"}
-              </Button>
-              <Link href="/a/cron-health" className={ADMIN_ROW_ACTION_LINK}>
-                Open the board
-              </Link>
-            </>
-          }
-        >
-          {healthError ? <AdminAlert>{healthError}</AdminAlert> : null}
+        <AdminSection title="Needs attention" description="The two questions this page gets opened for.">
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[13px] font-semibold text-[var(--fg)]">Background jobs</div>
+                <Link href="/a/cron-health" className={ADMIN_ROW_ACTION_LINK}>
+                  Open the board
+                </Link>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--muted-2)]">
+                {overview?.health.failing.length ? (
+                  <>
+                    <StatusPill tone="danger">{overview.health.failing.length} failing</StatusPill>
+                    <span>{overview.health.failing.join(", ")}</span>
+                  </>
+                ) : (
+                  <>
+                    <StatusPill tone="quiet">All ok</StatusPill>
+                    <span>{overview?.health.jobs ?? 0} jobs reporting</span>
+                  </>
+                )}
+              </div>
+            </div>
 
-          <div className="grid gap-2 sm:grid-cols-3">
-            <StatTile label="Jobs reporting" value={normalized.length.toLocaleString()} hint="Snapshots on the board" />
-            <StatTile
-              label="Failing"
-              value={failing.length.toLocaleString()}
-              hint={failing.length ? failing.map((f) => f.jobKey).join(", ") : "Every job wrote an ok"}
-              tone={failing.length ? "danger" : undefined}
-            />
-            <StatTile
-              label="Oldest heartbeat"
-              value={oldestHeartbeat ? fmtAdminDateTime(oldestHeartbeat) : ADMIN_DASH}
-              hint="The job that reported least recently"
-            />
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[13px] font-semibold text-[var(--fg)]">Account deletions</div>
+                <Link href="/a/deletions" className={ADMIN_ROW_ACTION_LINK}>
+                  See who left
+                </Link>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--muted-2)]">
+                {overview?.health.pendingDeletions ? (
+                  <>
+                    <StatusPill tone="warning">{overview.health.pendingDeletions} waiting</StatusPill>
+                    <span>Inside the 30-day window, data not yet removed</span>
+                  </>
+                ) : (
+                  <>
+                    <StatusPill tone="quiet">None</StatusPill>
+                    <span>No account is waiting to be purged</span>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         </AdminSection>
       </div>

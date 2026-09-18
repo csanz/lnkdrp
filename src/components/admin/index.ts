@@ -59,3 +59,5 @@ export type {
 } from "./AdminDetail";
 
 export { default as RevenueChart } from "./RevenueChart";
+export { default as AdminTrendChart } from "./AdminTrendChart";
+export type { TrendPoint, TrendMetric } from "./AdminTrendChart";
