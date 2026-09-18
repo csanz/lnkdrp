@@ -732,6 +732,8 @@ function DashboardPageInner() {
           .
         </div>
       </Modal>
+
+      <DeleteAccountModal open={deleteAccountOpen} onClose={() => setDeleteAccountOpen(false)} />
     </div>
   );
 }
