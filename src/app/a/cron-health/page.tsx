@@ -153,8 +153,15 @@ export default function CronHealthAdminPage() {
               const figures = item ? cronStatsFigures(item) : [];
               return (
                 <AdminTr key={row.jobKey}>
-                  <AdminTd primary mono truncate="max-w-[200px]">
-                    <span title={row.jobKey}>{row.jobKey}</span>
+                  {/* Two lines here on purpose: a job key alone says nothing about what stopping it
+                      would break, and that is the question this board is opened with. */}
+                  <AdminTd primary truncate="max-w-[300px]">
+                    <span className="font-mono" title={row.jobKey}>
+                      {row.jobKey}
+                    </span>
+                    <span className="block truncate text-[12px] font-normal leading-4 text-[var(--muted-2)]" title={`${row.what} ${row.why}`}>
+                      {row.what}
+                    </span>
                   </AdminTd>
                   <AdminTd>
                     {/* The dot pulses only while a run is in flight: a board of static dots says

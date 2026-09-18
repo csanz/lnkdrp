@@ -21,6 +21,9 @@ export type CronRow = {
   jobKey: string;
   schedule: string;
   scheduleLabel: string;
+  /** What the job does, and why it exists (from the registry). */
+  what: string;
+  why: string;
   intervalMs: number;
   state: CronState;
   /** Why the state is what it is, in one line. */
@@ -183,6 +186,8 @@ export function buildCronRows(heartbeats: HeartbeatLike[], now: Date = new Date(
       jobKey: spec.jobKey,
       schedule: spec.schedule,
       scheduleLabel: describeSchedule(spec.schedule),
+      what: spec.what,
+      why: spec.why,
       intervalMs: spec.intervalMs,
       state,
       detail,

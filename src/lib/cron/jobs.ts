@@ -18,22 +18,56 @@ export type CronJobSpec = {
   schedule: string;
   /** How often the schedule fires, in milliseconds. */
   intervalMs: number;
+  /** What the job does, in one line, for the admin board. */
+  what: string;
+  /** Why it exists: what breaks, or goes unnoticed, without it. */
+  why: string;
 };
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
 export const CRON_JOBS: readonly CronJobSpec[] = [
-  { jobKey: "doc-metrics", schedule: "0 */6 * * *", intervalMs: 6 * HOUR },
-  { jobKey: "stripe-credits-reconcile", schedule: "15 */6 * * *", intervalMs: 6 * HOUR },
-  { jobKey: "stripe-credits-report", schedule: "30 * * * *", intervalMs: 1 * HOUR },
-  { jobKey: "credits-cycle-reconcile", schedule: "10 * * * *", intervalMs: 1 * HOUR },
-  { jobKey: "usage-agg-reconcile", schedule: "20 * * * *", intervalMs: 1 * HOUR },
-  { jobKey: "notification-emails", schedule: "*/5 * * * *", intervalMs: 5 * MINUTE },
-  { jobKey: "plan-limits", schedule: "40 * * * *", intervalMs: 1 * HOUR },
-  { jobKey: "analytics-reconcile", schedule: "50 3 * * *", intervalMs: 24 * HOUR },
-  { jobKey: "credits-purchase-expiry", schedule: "5 4 * * *", intervalMs: 24 * HOUR },
-  { jobKey: "account-purge", schedule: "30 4 * * *", intervalMs: 24 * HOUR },
+  { jobKey: "doc-metrics", schedule: "0 */6 * * *", intervalMs: 6 * HOUR ,
+    what: "Rolls up each document's views, readers and reading time into its stored snapshot.",
+    why: "The document page and quick stats read the snapshot rather than scanning every view row, so without this the numbers on a document freeze at their last rollup.",
+  },
+  { jobKey: "stripe-credits-reconcile", schedule: "15 */6 * * *", intervalMs: 6 * HOUR ,
+    what: "Re-reads active subscriptions from Stripe, syncs their billing period, and grants the cycle's included credits if the webhook did not.",
+    why: "Stripe webhooks can be missed or arrive out of order; this is the backstop that keeps a Pro workspace's period dates and monthly credits correct.",
+  },
+  { jobKey: "stripe-credits-report", schedule: "30 * * * *", intervalMs: 1 * HOUR ,
+    what: "Reports metered on-demand credit usage to Stripe Billing so it appears on the invoice.",
+    why: "Usage that is never reported is never charged: this is the job that turns on-demand credits into revenue.",
+  },
+  { jobKey: "credits-cycle-reconcile", schedule: "10 * * * *", intervalMs: 1 * HOUR ,
+    what: "Scans paid workspaces and makes sure this cycle's included credits were granted.",
+    why: "A second backstop for the same missed-webhook case as stripe-credits-reconcile, which does this and more.",
+  },
+  { jobKey: "usage-agg-reconcile", schedule: "20 * * * *", intervalMs: 1 * HOUR ,
+    what: "Recomputes the usage aggregates that the billing pages read, from the credit ledger.",
+    why: "The ledger is the source of truth; the aggregates are a cache the spend and summary endpoints read, and they drift when a write fails midway.",
+  },
+  { jobKey: "notification-emails", schedule: "*/5 * * * *", intervalMs: 5 * MINUTE ,
+    what: "Sends view alerts, document-update emails and the daily digests people asked for.",
+    why: "Every notification preference in the product is delivered by this job; if it stops, nobody hears about anything.",
+  },
+  { jobKey: "plan-limits", schedule: "40 * * * *", intervalMs: 1 * HOUR ,
+    what: "Advances the grace period for Free workspaces over a limit, and emails the owner at each step.",
+    why: "Being over a limit has to lead somewhere: this is what starts the grace window, sends the reminders, and finally blocks.",
+  },
+  { jobKey: "analytics-reconcile", schedule: "50 3 * * *", intervalMs: 24 * HOUR ,
+    what: "Repairs share-link counters that drifted from the analytics rows, and reports what it cannot repair.",
+    why: "Counter drift was previously only found when a person noticed two numbers on one screen that could not both be true.",
+  },
+  { jobKey: "credits-purchase-expiry", schedule: "5 4 * * *", intervalMs: 24 * HOUR ,
+    what: "Takes back the unspent credits of packs bought twelve months ago.",
+    why: "Purchased credits are sold with a twelve-month life; without this they never expire and the balance is wrong.",
+  },
+  { jobKey: "account-purge", schedule: "30 4 * * *", intervalMs: 24 * HOUR ,
+    what: "Deletes the data of accounts whose 30-day deletion grace period has run out, files included.",
+    why: "Deletion is a promise with a deadline: this is the job that keeps it.",
+  },
 ] as const;
 
 /** How many whole intervals a job may miss before the monitor calls it late. */

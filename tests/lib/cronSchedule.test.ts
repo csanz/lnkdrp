@@ -26,7 +26,7 @@ describe("cron schedules", () => {
 
 describe("cron state", () => {
   const now = new Date("2026-09-18T10:00:00Z");
-  const jobs = [{ jobKey: "hourly", schedule: "30 * * * *", intervalMs: 60 * 60_000 }] as const;
+  const jobs = [{ jobKey: "hourly", schedule: "30 * * * *", intervalMs: 60 * 60_000, what: "test job", why: "test" }] as const;
 
   it("an hourly job that last ran five days ago is late, not ok", () => {
     const [row] = buildCronRows([{ jobKey: "hourly", status: "ok", lastRunAt: "2026-09-13T10:00:00Z" }], now, jobs);
