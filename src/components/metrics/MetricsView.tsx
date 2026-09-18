@@ -45,6 +45,7 @@ import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from
 import { formatDayKey } from "@/lib/format/date";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
 import { buildPublicProjectUrl, buildPublicShareUrl } from "@/lib/urls";
+import { subscribeRealtime } from "@/lib/client/realtime";
 
 /** Free = basic (totals, chart, unique viewer count); Pro = deep (identities, per-page time, visits). */
 type AnalyticsTier = "basic" | "deep";
@@ -157,6 +158,39 @@ type MetricsResponse = {
   }>;
   /** Traffic on links no live row owns (one summary, never a list) — see `deletedLinkResidual` on the route. */
   deletedLinkResidual?: { count: number; viewers: number; downloads: number } | null;
+  /**
+   * Document scope: readings that came in through a project link — the data room's front door,
+   * which has one slug for every document inside it. Deliberately *not* part of `totals`: a
+   * project link belongs to the project, and folding its traffic into the document's own figures
+   * would make this page, the workspace rollup and `Doc.numberOfViews` disagree. It gets its own
+   * card instead, so "who read this?" is never answered with silence.
+   *
+   * `viewerRows` carry names only on the deep tier; on Basic the server never asks for them.
+   */
+  projectLinkTraffic?: {
+    views: number;
+    viewers: number;
+    links: Array<{
+      shareId: string;
+      label: string | null;
+      projectId: string | null;
+      projectName: string | null;
+      href: string | null;
+      views: number;
+      viewers: number;
+      lastViewedAt: string | null;
+    }>;
+    viewerRows: Array<{
+      shareId: string;
+      projectId: string | null;
+      projectName: string | null;
+      views: number;
+      timeSpentMs?: number;
+      lastViewedAt: string | null;
+      viewerName?: string | null;
+      viewerEmail?: string | null;
+    }>;
+  } | null;
   /**
    * Project scope only: the documents inside the project, ranked by recipients who opened them —
    * the project's analogue of the per-page story a document tells. Bounded server-side
@@ -728,16 +762,45 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
   const isProject = kind === "project";
   const [resourceTitle, setResourceTitle] = useState<string>("");
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [liveLoading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<MetricsResponse | null>(null);
-  const [viewersLoading, setViewersLoading] = useState(false);
-  const [viewersLoaded, setViewersLoaded] = useState(false);
+  const [liveData, setData] = useState<MetricsResponse | null>(null);
+  const [liveViewersLoading, setViewersLoading] = useState(false);
+  const [liveViewersLoaded, setViewersLoaded] = useState(false);
+  /**
+   * True only after the first client render.
+   *
+   * This page renders inside a `Suspense` boundary, so its effects can run *before* React hydrates
+   * this subtree. A fetch that resolves in that window flips `loading` or `data` and the first
+   * client render stops matching the server's — intermittently, since it depends on whether the
+   * response beat hydration, which is why it showed on a warm cache and not a cold one.
+   *
+   * Every render-time read of the fetched state goes through the gates below, so the first client
+   * render is identical to the server's by construction and the real content arrives one paint
+   * later. Read `loading`/`data`/`viewers*` directly only inside effects and handlers.
+   */
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
+
+  /** Fetched state as the render may read it: server-shaped until the client has taken over. */
+  const data = hydrated ? liveData : null;
+  const loading = hydrated ? liveLoading : false;
+  const viewersLoading = hydrated ? liveViewersLoading : false;
+  const viewersLoaded = hydrated ? liveViewersLoaded : false;
+
   const [authedViewersModalOpen, setAuthedViewersModalOpen] = useState(false);
   const [anonViewersModalOpen, setAnonViewersModalOpen] = useState(false);
   const [authedViewersModalPage, setAuthedViewersModalPage] = useState(0);
   const [anonViewersModalPage, setAnonViewersModalPage] = useState(0);
   const [days, setDays] = useState(15);
+  /**
+   * Bumped when a recipient's volunteered identity changes under this page (see the realtime
+   * effect below). It is a dependency of the loader, so a bump refetches both payloads — the
+   * cheapest correct answer, given that a rename moves names, counts and groupings at once.
+   */
+  const [identityNonce, setIdentityNonce] = useState(0);
   const [rangeOpen, setRangeOpen] = useState(false);
   // Choosing a link happens on the Links page, which is the full per-link table; this page shows
   // one link (`?shareId=`) or the document. A picker and a comparison table lived here once and
@@ -934,7 +997,32 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
     return () => {
       cancelled = true;
     };
-  }, [apiBase, basePath, days, isProject, linkFilterParam, router]);
+  }, [apiBase, basePath, days, isProject, linkFilterParam, router, identityNonce]);
+
+  /**
+   * A reader who re-answers "introduce yourself" renames themselves on a page someone may be
+   * watching right now. The app writes the new name through to that person's rows, the realtime
+   * server sees those two fields change and sends a `viewer` frame, and this is where the page
+   * acts on it — so the owner sees "Michael J" become "Michael Jay" without reloading.
+   *
+   * One rename touches every row this person owns here, so the frames arrive in a burst; the
+   * timer collapses them into a single refetch. On the project scope the frame's document is not
+   * enough to tell whether it is inside this project, so any identity change in the workspace
+   * refetches — a rare event, and a stale name is the thing this exists to prevent.
+   */
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = subscribeRealtime("viewer", (frame) => {
+      if (frame.type !== "viewer") return;
+      if (!isProject && frame.viewer.docId && frame.viewer.docId !== scope.id) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setIdentityNonce((n) => n + 1), 400);
+    });
+    return () => {
+      if (timer) clearTimeout(timer);
+      off();
+    };
+  }, [isProject, scope.id]);
 
   // Auto-load the viewers list after the lightweight payload returns (no button). Basic tier gets
   // no identities back, so the request is skipped entirely there.
@@ -969,6 +1057,9 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
           };
           next.viewers = Array.isArray(json.viewers) ? json.viewers : [];
           next.anonymousViewers = Array.isArray(json.anonymousViewers) ? json.anonymousViewers : [];
+          // This response is the one that asked for identities, so its project-link rows carry
+          // names where the first (lite) payload's could not. Take it whenever it is present.
+          if (json.projectLinkTraffic) next.projectLinkTraffic = json.projectLinkTraffic;
           return next as MetricsResponse;
         });
         setViewersLoaded(true);
@@ -1068,6 +1159,13 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
   const series = Array.isArray(data?.series) ? data!.series : [];
   const hasData = Boolean(data && data.ok);
   const anonymousViewersList = Array.isArray(data?.anonymousViewers) ? data!.anonymousViewers : [];
+  /**
+   * Readings that arrived through a project link. Kept out of every total on this page on purpose
+   * (see the field's comment on `MetricsResponse`) — which is exactly why it has to be *said*
+   * somewhere, or a named person reading this document through a data room shows up in the
+   * activity feed and nowhere here.
+   */
+  const projectLinkTraffic = data?.projectLinkTraffic ?? null;
   const chartSeries = series.map((s) => ({ date: s.date }));
   const viewsSeries = series.map((s) => (typeof s.views === "number" && Number.isFinite(s.views) ? s.views : 0));
   const downloadsSeries = series.map((s) =>
@@ -1615,6 +1713,16 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                       </>
                     )}
                   </div>
+
+                  {/* The big number above counts this document's own links only. When the document
+                      also sits in a data room, saying so here is the difference between a reader
+                      trusting the number and thinking views went missing. */}
+                  {!loading && projectLinkTraffic ? (
+                    <div className="mt-1 text-sm text-[var(--muted)]">
+                      <span className="tabular-nums">+{projectLinkTraffic.views.toLocaleString()}</span> view
+                      {projectLinkTraffic.views === 1 ? "" : "s"} came through project links, counted with the project
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -1801,6 +1909,103 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                     viewer{data.deletedLinkResidual.viewers === 1 ? "" : "s"} in the totals above.
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+
+            {/* Readings that came in through a project link.
+
+                A document in a data room is opened through the *project's* slug, not its own, so
+                those rows carry no `docId`-owned link and are excluded from every figure above —
+                deliberately, so this page, the workspace rollup and `Doc.numberOfViews` keep
+                agreeing. The cost of that decision is that an owner could see "Michael J read
+                USAVX Deck" in the activity feed and then find nobody on the document's own metrics
+                page. This card is where those readings are reported: their own numbers, their own
+                heading, never folded into the tiles.
+
+                Identity follows the same gate as the rest of the page — on Basic the server never
+                sends names, so the counts and the "via <project>" grouping are all this shows. */}
+            {!isProject && projectLinkTraffic ? (
+              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">THROUGH PROJECT LINKS</div>
+                  <div className="mt-1 text-3xl font-semibold tabular-nums text-[var(--fg)]">
+                    {projectLinkTraffic.views.toLocaleString()}
+                  </div>
+                  <div className="mt-2 text-sm text-[var(--muted)]">
+                    Read by <span className="tabular-nums">{projectLinkTraffic.viewers.toLocaleString()}</span>{" "}
+                    {projectLinkTraffic.viewers === 1 ? "person" : "people"} who opened a project this document is in.
+                    These are counted on the project, not in the numbers above.
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-x-6 gap-y-3 border-t border-[var(--border)] pt-4 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                      Which project link
+                    </div>
+                    <ul className="mt-2 space-y-2">
+                      {projectLinkTraffic.links.map((l) => (
+                        <li key={l.shareId} className="flex items-baseline justify-between gap-3 text-[13px]">
+                          {l.href ? (
+                            <Link
+                              href={l.href}
+                              className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
+                            >
+                              {l.projectName ?? l.label ?? "Project link"}
+                            </Link>
+                          ) : (
+                            <span className="min-w-0 truncate text-[var(--muted)]">
+                              {l.projectName ?? l.label ?? "Project link"}
+                            </span>
+                          )}
+                          <span className="shrink-0 whitespace-nowrap tabular-nums text-[var(--muted)]">
+                            {l.views.toLocaleString()} view{l.views === 1 ? "" : "s"} · {relativeAge(l.lastViewedAt)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* Who they were. Empty on Basic — the server sent no names — so the column is
+                      simply absent there rather than a row of blanks. */}
+                  {deepAnalytics && projectLinkTraffic.viewerRows.some((v) => v.viewerName || v.viewerEmail) ? (
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                        Who read it there
+                      </div>
+                      <ul className="mt-2 space-y-2">
+                        {projectLinkTraffic.viewerRows
+                          .filter((v) => v.viewerName || v.viewerEmail)
+                          .slice(0, 5)
+                          .map((v, i) => (
+                            <li key={`${v.shareId}:${v.viewerEmail ?? v.viewerName ?? i}`} className="text-[13px]">
+                              <div className="flex items-baseline justify-between gap-3">
+                                <span className="min-w-0 truncate font-medium text-[var(--fg)]">
+                                  {v.viewerName || v.viewerEmail}
+                                </span>
+                                <span className="shrink-0 whitespace-nowrap text-[var(--muted)]">
+                                  {relativeAge(v.lastViewedAt)}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 flex items-baseline gap-2 text-[12px] text-[var(--muted)]">
+                                {v.projectName ? (
+                                  <span className="min-w-0 truncate rounded-full border border-[var(--border)] px-2 py-0.5">
+                                    via {v.projectName}
+                                  </span>
+                                ) : null}
+                                <span className="shrink-0 tabular-nums">
+                                  {v.views.toLocaleString()} view{v.views === 1 ? "" : "s"}
+                                </span>
+                                {v.timeSpentMs ? (
+                                  <span className="shrink-0 tabular-nums">{formatDurationShort(v.timeSpentMs)}</span>
+                                ) : null}
+                              </div>
+                            </li>
+                          ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             ) : null}
 
