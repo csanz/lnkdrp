@@ -68,6 +68,13 @@ export async function GET(
           status: upload.status ?? null,
           version: typeof (upload as any).version === "number" ? (upload as any).version : null,
           ai: (upload as { ai?: unknown }).ai ?? null,
+          // Why a failed upload failed. Without it a caller (the MCP's share_pdf, the upload UI)
+          // could only say "failed" and leave the person guessing whether to retry.
+          error: (function () {
+            const e = (upload as { error?: unknown }).error;
+            const msg = e && typeof e === "object" ? (e as { message?: unknown }).message : null;
+            return typeof msg === "string" && msg.trim() ? msg.trim().slice(0, 300) : null;
+          })(),
         },
         doc: {
           id: upload.docId ? String(upload.docId) : null,
@@ -102,6 +109,13 @@ export async function GET(
           status: upload.status ?? null,
           version: typeof (upload as any).version === "number" ? (upload as any).version : null,
           ai: (upload as { ai?: unknown }).ai ?? null,
+          // Why a failed upload failed. Without it a caller (the MCP's share_pdf, the upload UI)
+          // could only say "failed" and leave the person guessing whether to retry.
+          error: (function () {
+            const e = (upload as { error?: unknown }).error;
+            const msg = e && typeof e === "object" ? (e as { message?: unknown }).message : null;
+            return typeof msg === "string" && msg.trim() ? msg.trim().slice(0, 300) : null;
+          })(),
         },
         doc: {
           id: upload.docId ? String(upload.docId) : null,

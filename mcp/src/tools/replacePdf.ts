@@ -255,7 +255,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
           const outcome =
             args.waitForReady && !timedOut
               ? await readAiOutcome(api, uploadId, { credits: true })
-              : { warnings: [] as string[], creditsRemaining: null };
+              : { warnings: [] as string[], creditsRemaining: null, failureReason: null as string | null };
 
           return {
             ...ids,
@@ -265,6 +265,9 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             title: title ?? before.title,
             ...(timedOut ? { timedOut: true as const } : {}),
             ...optimizeFields,
+            // A failed version says why here, not only inside warnings: an agent that reads status
+            // "failed" needs the reason in the same breath to tell the human what to do next.
+            ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
             warnings: outcome.warnings,
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };
