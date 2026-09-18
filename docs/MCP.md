@@ -287,7 +287,7 @@ download/password settings, then (by default) waits for processing to finish.
       below matters: it routinely takes a 3.5 MB deck to ~0.7 MB, which does fit.
   - `optimize?` boolean, default `true`. On the `filePath` / `fileBase64` paths only, the MCP server
     shrinks the PDF before uploading: Ghostscript (`-dPDFSETTINGS=/prepress`, colour and grey images
-    downsampled to 270 dpi, tunable with `LNKDRP_PDF_OPTIMIZE_DPI`) into a temp file. Skipped silently when the file is under 1 MB, when
+    downsampled to 220 dpi, tunable with `LNKDRP_PDF_OPTIMIZE_DPI`) into a temp file. Skipped silently when the file is under 1 MB, when
     Ghostscript is not installed, or when the run fails. **The original is kept** unless the result
     is a valid PDF, at least 5% smaller, *and* has exactly the same page count (pdfjs counts both) —
     Ghostscript can emit a truncated document and still exit 0, and a deck quietly missing its last
