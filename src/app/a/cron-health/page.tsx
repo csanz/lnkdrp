@@ -15,7 +15,6 @@ import {
   AdminFilterBar,
   AdminPageHeader,
   AdminTable,
-  AdminTableEmpty,
   AdminTableMessage,
   AdminTd,
   AdminTh,
@@ -25,12 +24,13 @@ import {
   useAdminAccess,
 } from "@/components/admin";
 import { ADMIN_DASH, toneTextStyle } from "@/lib/admin/ui";
-import { cronStatsFigures, cronTone, formatCronStatsLine, type CronHealthItem } from "@/lib/admin/cronHealth";
+import { cronStatsFigures, formatCronStatsLine, type CronHealthItem } from "@/lib/admin/cronHealth";
+import { buildCronRows, cronStateLabel, cronStateTone, since, type CronRow } from "@/lib/admin/cronSchedule";
 import { fmtDuration } from "@/lib/admin/format";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
-const COLUMN_COUNT = 5;
+const COLUMN_COUNT = 7;
 
 /** The cron health board: one row per job, failures called out above the table. */
 export default function CronHealthAdminPage() {
@@ -42,7 +42,12 @@ export default function CronHealthAdminPage() {
   const [error, setError] = useState<string | null>(null);
 
   const normalized = useMemo(() => (Array.isArray(health) ? health : []), [health]);
-  const failing = useMemo(() => normalized.filter((i) => i.status === "error"), [normalized]);
+  // Rows come from the job registry, not the heartbeats: a job that has never run has no snapshot,
+  // and leaving it out is how five of the ten scheduled jobs were invisible on this board.
+  const rows: CronRow[] = useMemo(() => buildCronRows(normalized), [normalized]);
+  const byKey = useMemo(() => new Map(normalized.map((i) => [i.jobKey, i])), [normalized]);
+  const failing = useMemo(() => rows.filter((r) => r.state === "error" || r.state === "stuck"), [rows]);
+  const late = useMemo(() => rows.filter((r) => r.state === "late"), [rows]);
 
   /** Read the current snapshots. */
   async function load() {
@@ -65,7 +70,7 @@ export default function CronHealthAdminPage() {
   }, [canUseAdmin]);
 
   if (!canUseAdmin) {
-    return <AdminAccessState access={access} title="Cron health" description="The last heartbeat from every background job. One snapshot per job, overwritten each tick." callbackUrl="/a/cron-health" />;
+    return <AdminAccessState access={access} title="Cron health" description="Every scheduled job, its state against its own schedule, and the last heartbeat it wrote." callbackUrl="/a/cron-health" />;
   }
 
   return (
@@ -73,7 +78,7 @@ export default function CronHealthAdminPage() {
       <div className={ADMIN_PAGE_CONTAINER}>
         <AdminPageHeader
           title="Cron health"
-          description="The last heartbeat from every background job. One snapshot per job, overwritten each tick."
+          description="Every scheduled job, its state against its own schedule, and the last heartbeat it wrote."
         />
 
         {/* The band has no filters to carry, but it still reads the count the way every other
@@ -81,8 +86,8 @@ export default function CronHealthAdminPage() {
         <AdminFilterBar
           className="mt-4"
           page={1}
-          pageSize={Math.max(1, normalized.length)}
-          total={normalized.length}
+          pageSize={Math.max(1, rows.length)}
+          total={rows.length}
           noun="jobs"
           loading={loading}
           actions={
@@ -104,14 +109,24 @@ export default function CronHealthAdminPage() {
               {failing.length} {failing.length === 1 ? "job is" : "jobs are"} failing
             </div>
             <div className="mt-1 grid gap-1">
-              {failing.map((item) => (
-                <div key={item.jobKey}>
-                  <span className="font-mono text-[12px]">{item.jobKey}</span>
-                  {item.lastError ? <> — {item.lastError}</> : null}
+              {failing.map((row) => (
+                <div key={row.jobKey}>
+                  <span className="font-mono text-[12px]">{row.jobKey}</span>
+                  {row.detail ? <> — {row.detail}</> : null}
                 </div>
               ))}
             </div>
           </AdminAlert>
+        ) : null}
+
+        {late.length ? (
+          <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3 text-[12px] leading-5 text-[var(--muted-2)]">
+            <span className="font-semibold text-[var(--fg)]">
+              {late.length} {late.length === 1 ? "job is" : "jobs are"} late
+            </span>{" "}
+            — they last ran longer ago than two of their own intervals. On a local machine that is normal: Vercel Cron only
+            fires against a deployment, so nothing here runs on its own until it is deployed.
+          </div>
         ) : null}
 
         <AdminTable
@@ -120,48 +135,62 @@ export default function CronHealthAdminPage() {
           head={
             <>
               <AdminTh>Job</AdminTh>
-              <AdminTh>Status</AdminTh>
+              <AdminTh>State</AdminTh>
+              <AdminTh>Schedule</AdminTh>
               <AdminTh align="right">Last run</AdminTh>
+              <AdminTh align="right">Next run</AdminTh>
               <AdminTh align="right">Duration</AdminTh>
               <AdminTh>Last result</AdminTh>
             </>
           }
         >
-          {loading && normalized.length === 0 ? (
+          {loading && rows.length === 0 ? (
             <AdminTableMessage colSpan={COLUMN_COUNT}>Loading cron health…</AdminTableMessage>
-          ) : normalized.length === 0 ? (
-            <AdminTableEmpty
-              colSpan={COLUMN_COUNT}
-              title="No health snapshots yet"
-              hint="Cron writes a snapshot on its first run; none has run on this deployment."
-            />
           ) : (
-            normalized.map((item) => {
-              const stats = formatCronStatsLine(item);
-              const figures = cronStatsFigures(item);
-              const errored = item.status === "error";
+            rows.map((row) => {
+              const item = byKey.get(row.jobKey);
+              const stats = item ? formatCronStatsLine(item) : null;
+              const figures = item ? cronStatsFigures(item) : [];
               return (
-                <AdminTr key={item.jobKey}>
-                  <AdminTd primary mono truncate="max-w-[220px]">
-                    <span title={item.jobKey}>{item.jobKey}</span>
+                <AdminTr key={row.jobKey}>
+                  <AdminTd primary mono truncate="max-w-[200px]">
+                    <span title={row.jobKey}>{row.jobKey}</span>
                   </AdminTd>
                   <AdminTd>
-                    <StatusPill tone={cronTone(item.status)} dot={item.status !== "error"}>
-                      {item.status ?? "ok"}
+                    {/* The dot pulses only while a run is in flight: a board of static dots says
+                        nothing, and a moving one is how you see the job is actually working. */}
+                    <StatusPill tone={cronStateTone(row.state)} dot={row.state !== "error" && row.state !== "stuck"}>
+                      <span className={row.state === "running" ? "motion-safe:animate-pulse" : undefined}>
+                        {cronStateLabel(row.state)}
+                      </span>
                     </StatusPill>
                   </AdminTd>
-                  <AdminTd align="right" numeric>
-                    <TimeCell value={item.lastRunAt ?? null} />
+                  <AdminTd truncate="max-w-[200px]">
+                    <span title={row.schedule}>{row.scheduleLabel}</span>
                   </AdminTd>
                   <AdminTd align="right" numeric>
-                    {fmtDuration(item.lastDurationMs) || ADMIN_DASH}
+                    {row.lastRunAt ? <TimeCell value={row.lastRunAt} /> : ADMIN_DASH}
                   </AdminTd>
-                  {/* Three labelled figures, the ones that are not zero first; the whole line
-                      stays in the title so nothing a job wrote is lost. */}
-                  <AdminTd truncate="max-w-[460px]">
-                    {errored && item.lastError ? (
-                      <span style={toneTextStyle("danger")} title={item.lastError}>
-                        {item.lastError}
+                  <AdminTd align="right" numeric>
+                    {row.nextRunAt ? (
+                      <span title={new Date(row.nextRunAt).toLocaleString()}>
+                        in {since(new Date(row.nextRunAt).getTime() - Date.now())}
+                      </span>
+                    ) : (
+                      ADMIN_DASH
+                    )}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {fmtDuration(row.lastDurationMs) || ADMIN_DASH}
+                  </AdminTd>
+                  <AdminTd truncate="max-w-[420px]">
+                    {row.state === "error" || row.state === "stuck" || row.state === "late" || row.state === "never" ? (
+                      <span
+                        style={row.state === "error" || row.state === "stuck" ? toneTextStyle("danger") : undefined}
+                        className={row.state === "late" || row.state === "never" ? "text-[var(--muted-2)]" : undefined}
+                        title={row.detail}
+                      >
+                        {row.detail}
                       </span>
                     ) : figures.length ? (
                       <span className="inline-flex items-baseline gap-3" title={stats ?? undefined}>
@@ -171,12 +200,10 @@ export default function CronHealthAdminPage() {
                             <span className="tabular-nums text-[var(--fg)]">{f.value}</span>
                           </span>
                         ))}
-                        {figures.length > 3 ? (
-                          <span className="text-[var(--muted-2)]">+{figures.length - 3} more</span>
-                        ) : null}
+                        {figures.length > 3 ? <span className="text-[var(--muted-2)]">+{figures.length - 3} more</span> : null}
                       </span>
                     ) : (
-                      ADMIN_DASH
+                      <span className="text-[var(--muted-2)]">{row.detail}</span>
                     )}
                   </AdminTd>
                 </AdminTr>
