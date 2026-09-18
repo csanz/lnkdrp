@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import IconButton from "@/components/ui/IconButton";
 
 type Props = {
@@ -54,9 +55,17 @@ export default function Modal({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open, onClose]);
 
-  if (!open) return null;
+  // Mounted flag, so the portal only happens in the browser (there is no document on the server).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-  return (
+  if (!open || !mounted) return null;
+
+  // Through a portal to <body>, not in place: `position: fixed` is relative to the nearest ancestor
+  // with a transform, filter or containment, and this modal is opened from rows deep inside
+  // animated, clipped lists (the Activity feed's "What changed"). Rendered in place there, the
+  // overlay covered the list instead of the viewport and the panel never appeared.
+  return createPortal(
     <div className="fixed inset-0 z-[200]" role="dialog" aria-modal="true" aria-label={ariaLabel}>
       <button
         type="button"
@@ -95,7 +104,8 @@ export default function Modal({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 /**
