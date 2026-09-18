@@ -1966,7 +1966,11 @@ export async function POST(
             if (nothingChanged) {
               debugLog(1, "[process] history compare skipped: identical text", { uploadId, docId: String(docId), version: uploadVersion });
             }
-            if (!historyAllowed) {
+            // Two different reasons land here, and they must not borrow each other's words: a
+            // recipient upload never spends the owner's credits, while an identical re-upload has
+            // nothing to compare. Saying "recipient upload" for the second one put a recipient in
+            // the owner's activity feed who never existed.
+            if (!historyAllowed && viaUploadSecret) {
               aiState.compare = "skipped";
               warningDetails.historyPlan = "recipient upload; AI compare is not run on the owner's credits";
               debugLog(1, "[process] history compare skipped (recipient upload)", { uploadId, docId: String(docId), version: uploadVersion });
