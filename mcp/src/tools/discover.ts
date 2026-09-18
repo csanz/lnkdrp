@@ -24,6 +24,8 @@ import type { ActivityType } from "../../../src/lib/activity/log";
 /** Every activity type the route records. Kept as a list so the schema rejects typos loudly. */
 const ACTIVITY_TYPES = [
   "doc.created",
+  // Also the type for bytes and local-file uploads: the event is "a file landed on this upload",
+  // and meta.via ("url" | "bytes") says which transport it came through.
   "doc.imported_url",
   "upload.completed",
   "doc.processed",
@@ -128,7 +130,8 @@ export function registerGetActivityTool(server: McpServer, ctx: ToolContext): vo
       title: "Get workspace activity",
       description:
         "The workspace's activity feed, newest first: uploads, shares, link changes, views, downloads, archives, deletes, " +
-        "plan events and agent connections. Filter by event types, by one document (docId), or by who acted: who='agents' is " +
+        "plan events and agent connections. doc.imported_url is every file arrival, including bytes and filePath " +
+        "uploads - meta.via says which transport. Filter by event types, by one document (docId), or by who acted: who='agents' is " +
         "everything done by any MCP or API client - the right filter for 'what did agents do here' and for checking your own " +
         "earlier actions; 'me' is the key owner's own actions in the app; 'team' is other members. Cursor-paginated: pass " +
         "nextCursor back as cursor for the next page. For share.viewed and share.downloaded rows, viewer names and emails " +
