@@ -14,6 +14,7 @@ import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
 import IconButton from "@/components/ui/IconButton";
 import HelpTooltip from "@/components/ui/HelpTooltip";
+import DeleteAccountModal from "@/components/modals/DeleteAccountModal";
 import { cn } from "@/lib/cn";
 import {
   BanknotesIcon,
@@ -153,6 +154,7 @@ function DashboardPageInner() {
   const urlTab = useMemo(() => tabFromSearchParams(searchParams), [searchParams]);
   // Optimistic tab state so UI switches immediately on click; URL sync follows.
   const [tab, setTab] = useState<DashTab>(urlTab);
+  const [deleteAccountOpen, setDeleteAccountOpen] = useState(false);
   const { data: session, update: updateSession } = useSession();
   const [limitsAttention, setLimitsAttention] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -511,9 +513,8 @@ function DashboardPageInner() {
                   </div>
                   <button
                     type="button"
-                    disabled
-                    className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[13px] font-semibold text-red-700 dark:text-red-300 opacity-60 cursor-not-allowed"
-                    title="Not implemented yet"
+                    className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-[13px] font-semibold text-red-700 hover:bg-red-500/15 dark:text-red-300"
+                    onClick={() => setDeleteAccountOpen(true)}
                   >
                     Delete account
                   </button>
@@ -521,7 +522,9 @@ function DashboardPageInner() {
               </div>
 
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-4 sm:px-6 text-[12px] text-[var(--muted-2)]">
-                Account deletion isn’t available yet. Email hi@lnkdrp.com and we’ll take care of it.
+                Deleting signs you out and stops your agent keys and share links straight away. Your data is kept for 30
+                days in case you change your mind, then removed for good. Workspaces you share with other people carry on
+                without you.
               </div>
             </div>
           </Section>

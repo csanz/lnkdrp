@@ -53,7 +53,9 @@ export type ActivityType =
   | "agent.key_created"
   | "agent.key_revoked"
   | "agent.connected"
-  | "agent.key_verified";
+  | "agent.key_verified"
+  | "account.deletion_requested"
+  | "account.purged";
 
 export type ActivityAgent = { client: string; version: string | null } | null;
 

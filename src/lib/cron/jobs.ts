@@ -33,6 +33,7 @@ export const CRON_JOBS: readonly CronJobSpec[] = [
   { jobKey: "plan-limits", schedule: "40 * * * *", intervalMs: 1 * HOUR },
   { jobKey: "analytics-reconcile", schedule: "50 3 * * *", intervalMs: 24 * HOUR },
   { jobKey: "credits-purchase-expiry", schedule: "5 4 * * *", intervalMs: 24 * HOUR },
+  { jobKey: "account-purge", schedule: "30 4 * * *", intervalMs: 24 * HOUR },
 ] as const;
 
 /** How many whole intervals a job may miss before the monitor calls it late. */

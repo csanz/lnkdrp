@@ -170,6 +170,49 @@ function isAuthConfigured(): boolean {
 }
 
 /**
+ * Disabled accounts, cached briefly.
+ *
+ * Read on every signed-in request, so it is a `_id`-and-two-fields lookup behind a short TTL: long
+ * enough that a busy page costs one read, short enough that "delete my account" takes effect while
+ * the person is still looking at the confirmation. `accountDisabledChanged()` drops the entry so the
+ * request that disables an account does not have to wait out the TTL.
+ */
+const ACCOUNT_DISABLED_TTL_MS = 15_000;
+let accountDisabledCache: Map<string, { at: number; disabled: boolean }> | null = null;
+
+async function isAccountDisabled(userId: string): Promise<boolean> {
+  if (!Types.ObjectId.isValid(userId)) return false;
+  accountDisabledCache = accountDisabledCache ?? new Map();
+  const hit = accountDisabledCache.get(userId);
+  const now = Date.now();
+  if (hit && now - hit.at < ACCOUNT_DISABLED_TTL_MS) return hit.disabled;
+  try {
+    await connectMongo();
+    const u = (await UserModel.findOne({ _id: new Types.ObjectId(userId) })
+      .select({ isActive: 1, deletionRequestedAt: 1 })
+      .lean()) as { isActive?: unknown; deletionRequestedAt?: unknown } | null;
+    // Only explicit state disables: a row this query cannot see (a test double, a replica that has
+    // not caught up) must not sign a real person out. The purge leaves an anonymised tombstone
+    // carrying these flags rather than deleting the row, so a purged account still lands here.
+    const disabled = Boolean(u) && (u!.isActive === false || Boolean(u!.deletionRequestedAt));
+    accountDisabledCache.set(userId, { at: now, disabled });
+    if (accountDisabledCache.size > 500) {
+      const oldest = [...accountDisabledCache.entries()].sort((a, b) => a[1].at - b[1].at)[0]?.[0];
+      if (oldest) accountDisabledCache.delete(oldest);
+    }
+    return disabled;
+  } catch {
+    // A database blip must not sign everybody out.
+    return false;
+  }
+}
+
+/** Forget the cached state for one account (called when it is disabled or restored). */
+export function accountDisabledChanged(userId: string): void {
+  accountDisabledCache?.delete(userId);
+}
+
+/**
  * Try to resolve the signed-in user id from the incoming request cookies.
  *
  * We read the NextAuth JWT via `next-auth/jwt#getToken` because, in route handlers,
@@ -205,6 +248,10 @@ async function tryGetSessionClaims(
     const resolvedUserId =
       typeof id === "string" && id ? id : typeof fallbackSub === "string" && fallbackSub ? fallbackSub : null;
     if (!resolvedUserId) return null;
+    // A disabled or deleted account must stop working everywhere at once. Sign-in already refuses
+    // it, but a JWT session issued earlier stays valid until it expires, so the token alone cannot
+    // be trusted: every signed-in path goes through here, so this is where the session ends.
+    if (await isAccountDisabled(resolvedUserId)) return null;
     const activeOrgId = typeof t?.activeOrgId === "string" && t.activeOrgId.trim() ? t.activeOrgId.trim() : null;
     return { userId: resolvedUserId, activeOrgId };
   } catch {

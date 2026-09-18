@@ -56,6 +56,24 @@ const userSchema = new Schema(
     lastLoginAt: { type: Date, required: true, default: () => new Date() },
 
     isActive: { type: Boolean, default: true, index: true },
+
+    /**
+     * Account deletion, in two steps.
+     *
+     * Asking to delete sets `deletionRequestedAt` and `isActive: false` at once: the account stops
+     * working immediately (sign-in refused, live sessions dropped at the next request) while the
+     * data is still here. `deletionPurgeAfter` is when the purge job may remove it for real, 30 days
+     * later, which leaves room to undo a mistake or answer a support question. `deletionPurgedAt` is
+     * set by that job once the blobs and rows are gone.
+     *
+     * The reason is what the person chose from the list, plus anything they typed. Both are optional:
+     * nobody has to explain themselves to leave.
+     */
+    deletionRequestedAt: { type: Date, default: null, index: true },
+    deletionReasonCode: { type: String, trim: true, default: null },
+    deletionReasonText: { type: String, trim: true, default: null },
+    deletionPurgeAfter: { type: Date, default: null, index: true },
+    deletionPurgedAt: { type: Date, default: null, index: true },
     role: { type: String, default: "user", trim: true, index: true },
 
     /**

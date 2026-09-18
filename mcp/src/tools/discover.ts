@@ -63,6 +63,8 @@ const ACTIVITY_TYPES = [
   "agent.key_revoked",
   "agent.connected",
   "agent.key_verified",
+  "account.deletion_requested",
+  "account.purged",
 ] as const;
 
 // Compile-time guard: an event type the app logs but this list lacks cannot be filtered on, which
