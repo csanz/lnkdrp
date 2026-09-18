@@ -2295,7 +2295,7 @@ export default function LeftSidebar({
                       <li key={d.id} className={rowEnter(d.id, backfill).li}>
                         {/* The clip wrapper sits outside the link: on the padded link itself, a grow or fold
                             could not go below its 12px of vertical padding. */}
-                        <div className={rowEnter(d.id, backfill).child}>
+                        <div className={["group relative", rowEnter(d.id, backfill).child].join(" ")}>
                         <Link
                           href={href}
                           className={[
@@ -2306,7 +2306,9 @@ export default function LeftSidebar({
                             activeDocId === d.id ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                         >
-                          <div className="flex min-w-0 items-center gap-2">
+                          {/* `pr-6` reserves the row menu's column, exactly as the Docs rows do, so
+                              the version chip lands in the same place in both lists. */}
+                          <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal">
                             <StarIcon className="h-3.5 w-3.5 shrink-0 text-amber-400 opacity-70" />
                             <span className="block min-w-0 max-w-[220px] flex-1 truncate text-[var(--fg)]">
                               {title}
@@ -2337,6 +2339,32 @@ export default function LeftSidebar({
                             })()}
                           </div>
                         </Link>
+                        {/* The same row menu the Docs rows carry. Starred rows are those documents,
+                            so a row that ends in a version chip where its twin ends in a menu reads
+                            as two different lists — and the chip lands in a different column. */}
+                        <DocActionsMenu
+                          docId={d.id}
+                          variant="sidebar"
+                          className="absolute -right-7 top-1/2 flex -translate-y-1/2"
+                          projectsLabel="Add to project"
+                          showArchive
+                          onRequestDelete={() => {
+                            setOpenProjectMenuId(null);
+                            setOpenRequestMenuId(null);
+                            // A starred row carries only id/title; the delete modal reads those two.
+                            setDeleteDocTarget({
+                              id: d.id,
+                              title: d.title,
+                              shareId: null,
+                              status: sidebarMeta?.status ?? null,
+                              version: sidebarMeta?.version ?? details?.version ?? null,
+                              updatedDate: null,
+                              createdDate: null,
+                            });
+                            setDeleteDocError(null);
+                            setDeleteDocOpen(true);
+                          }}
+                        />
                         </div>
                       </li>
                     );
