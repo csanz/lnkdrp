@@ -174,7 +174,10 @@ export default function SidebarProjectsSection({
                     role="link"
                     tabIndex={0}
                     className={[
-                      "w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
+                      // Same highlight geometry as the Docs and Starred rows: the nav is padded
+                      // `pl-3 pr-12`, so a row that stops at 100% leaves a 36px strip of unhighlighted
+                      // gutter on the right and reads as a narrower row than its neighbours.
+                      "block box-border w-[calc(100%+36px)] -mr-9 cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
                       isActive ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                     ].join(" ")}
                     onClick={() => {
@@ -220,7 +223,10 @@ export default function SidebarProjectsSection({
                     size="xs"
                     className={[
                       // IMPORTANT: keep this out of layout so it doesn't affect row height.
-                      "absolute right-2 top-1/2 -translate-y-1/2 rounded-md text-[var(--muted-2)]",
+                      // `-right-7` for the same reason the Docs rows use it: the row now runs 36px
+                      // into the nav's right padding, and the menu sits 8px inside that edge, so
+                      // both lists' menus line up in one column.
+                      "absolute -right-7 top-1/2 -translate-y-1/2 rounded-md text-[var(--muted-2)]",
                       "opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100",
                     ].join(" ")}
                     onPointerDown={(e) => e.stopPropagation()}
@@ -236,7 +242,7 @@ export default function SidebarProjectsSection({
 
                   {openProjectMenuId === p.id ? (
                     <div
-                      className="absolute right-2 top-[calc(100%+6px)] z-50 w-[170px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+                      className="absolute -right-7 top-[calc(100%+6px)] z-50 w-[170px] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-lg"
                       onPointerDown={(e) => e.stopPropagation()}
                     >
                       <button
