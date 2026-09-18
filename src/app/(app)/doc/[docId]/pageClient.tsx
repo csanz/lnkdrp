@@ -18,6 +18,7 @@ import { fetchJson } from "@/lib/http/fetchJson";
 import { apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
 import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { formatBytes, formatPageCount } from "@/lib/format/bytes";
 import { debugLog } from "@/lib/debug";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { parsePlanLimitError, planLimitGraceHint } from "@/lib/client/planLimit";
@@ -50,6 +51,10 @@ type DocDTO = {
   isArchived?: boolean;
   currentUploadId: string | null;
   currentUploadVersion?: number | null;
+  /** Pages in the current version; null for uploads processed before it was recorded. */
+  currentUploadPages?: number | null;
+  /** Size of the stored PDF in bytes; null where the upload row never recorded one. */
+  currentUploadSizeBytes?: number | null;
   blobUrl: string | null;
   previewImageUrl: string | null;
   extractedText: string | null;
@@ -1289,6 +1294,20 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return typeof v === "number" && Number.isFinite(v) ? v : null;
   }, [doc.currentUploadVersion]);
 
+  /**
+   * The PDF's own facts — how heavy it is and how many pages — for the "Last updated" line, which
+   * already carries when it landed and who put it there (the version is the `vN` badge above it).
+   * Optimization can halve a deck, and nothing in the app said so.
+   *
+   * Parts that were never recorded are simply absent; an upload row with no size shows no size.
+   */
+  const fileFactsLabel = useMemo(() => {
+    const parts = [formatBytes(doc.currentUploadSizeBytes ?? null), formatPageCount(doc.currentUploadPages ?? null)].filter(
+      (p): p is string => Boolean(p),
+    );
+    return parts.length ? parts.join(" · ") : null;
+  }, [doc.currentUploadSizeBytes, doc.currentUploadPages]);
+
   useEffect(() => {
     // Keep draft in sync with server state when not actively editing.
     if (editingTitle) return;
@@ -2241,45 +2260,54 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       </div>
                     </div>
                   )}
-                  {doc.lastUpdate?.uploadedAt ? (
-                    <div className="mt-1.5 flex items-center gap-2 pl-[30px] text-[12px] text-[var(--muted)]">
-                      <span>
-                        {(() => {
-                          const iso = doc.lastUpdate?.uploadedAt ?? "";
-                          const relative = iso ? formatRelativeAge(iso) : null;
-                          const absolute = (() => {
-                            try {
-                              return new Date(iso).toLocaleString();
-                            } catch {
-                              return iso;
-                            }
-                          })();
-                          return (
+                  {doc.lastUpdate?.uploadedAt || fileFactsLabel ? (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-[30px] text-[12px] text-[var(--muted)]">
+                      {doc.lastUpdate?.uploadedAt ? (
+                        <span>
+                          {(() => {
+                            const iso = doc.lastUpdate?.uploadedAt ?? "";
+                            const relative = iso ? formatRelativeAge(iso) : null;
+                            const absolute = (() => {
+                              try {
+                                return new Date(iso).toLocaleString();
+                              } catch {
+                                return iso;
+                              }
+                            })();
+                            return (
+                              <>
+                                Last updated{" "}
+                                {relative ? (
+                                  <span className="font-medium text-[var(--fg)]" title={absolute}>
+                                    {relative}
+                                  </span>
+                                ) : (
+                                  <span className="font-medium text-[var(--fg)]">{absolute}</span>
+                                )}
+                              </>
+                            );
+                          })()}
+                          {doc.lastUpdate?.uploadedBy &&
+                          (doc.lastUpdate.uploadedBy.email ?? "").trim().toLowerCase() !== viewerEmail ? (
                             <>
-                              Last updated{" "}
-                              {relative ? (
-                                <span className="font-medium text-[var(--fg)]" title={absolute}>
-                                  {relative}
-                                </span>
-                              ) : (
-                                <span className="font-medium text-[var(--fg)]">{absolute}</span>
-                              )}
+                              {" "}
+                              by{" "}
+                              <span className="font-medium text-[var(--fg)]">
+                                {doc.lastUpdate.uploadedBy.name ??
+                                  doc.lastUpdate.uploadedBy.email ??
+                                  "Unknown"}
+                              </span>
                             </>
-                          );
-                        })()}
-                        {doc.lastUpdate?.uploadedBy &&
-                        (doc.lastUpdate.uploadedBy.email ?? "").trim().toLowerCase() !== viewerEmail ? (
-                          <>
-                            {" "}
-                            by{" "}
-                            <span className="font-medium text-[var(--fg)]">
-                              {doc.lastUpdate.uploadedBy.name ??
-                                doc.lastUpdate.uploadedBy.email ??
-                                "Unknown"}
-                            </span>
-                          </>
-                        ) : null}
-                      </span>
+                          ) : null}
+                        </span>
+                      ) : null}
+                      {/* The file's own facts. The version they belong to is the `vN` badge above. */}
+                      {fileFactsLabel ? (
+                        <span className="tabular-nums" title="This version of the PDF">
+                          {doc.lastUpdate?.uploadedAt ? <span aria-hidden="true" className="mr-1.5 text-[var(--muted-2)]">·</span> : null}
+                          {fileFactsLabel}
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
                   {isReceivedViaRequest ? (

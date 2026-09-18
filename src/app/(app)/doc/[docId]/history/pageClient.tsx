@@ -14,6 +14,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { formatSizeChangeLine } from "@/lib/format/bytes";
 import Modal from "@/components/modals/Modal";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
@@ -40,6 +41,12 @@ type DocChangeItem = {
   impact: { label: "None" | "Minor" | "Medium" | "Major"; tone: "muted" | "ok" | "warn" };
   tags: string[];
   timeLabel: string | null;
+  /**
+   * The file's own change: its size now and how far it moved. `null` where the upload row never
+   * recorded a size (the first version, or a row older than the field), and the row then shows the
+   * size alone or nothing at all rather than "0 B".
+   */
+  fileLabel: string | null;
 };
 
 type RecipientRow = { userId: string; name: string | null; email: string | null; opened: boolean };
@@ -212,6 +219,12 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
         const impact = inferImpactLevel({ summary, changes });
         const tags = inferTags({ summary, changes });
         const timeLabel = createdDate ? formatRelativeAge(createdDate) : null;
+        const fileLabel = (function () {
+          const size = formatSizeChangeLine(c?.fromSizeBytes ?? null, c?.toSizeBytes ?? null);
+          if (!size) return null;
+          const pages = typeof c?.toPages === "number" && Number.isFinite(c.toPages) && c.toPages > 0 ? Math.floor(c.toPages) : null;
+          return pages ? `${size} \u00b7 ${pages} page${pages === 1 ? "" : "s"}` : size;
+        })();
         return {
           id,
           fromVersion: typeof c?.fromVersion === "number" && Number.isFinite(c.fromVersion) ? c.fromVersion : null,
@@ -232,6 +245,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
           impact,
           tags,
           timeLabel,
+          fileLabel,
         } satisfies DocChangeItem;
       })
       .filter((c) => Boolean(c.id));
@@ -670,7 +684,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                   <span className="text-[var(--muted)]">Not compared yet. Expand to run AI compare on this version.</span>
                                 )}
                               </div>
-                              {(uploaderLabel || timeLabel) ? (
+                              {(uploaderLabel || timeLabel || it.fileLabel) ? (
                                 <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--muted)]">
                                   {uploaderLabel ? (
                                     <span>
@@ -680,6 +694,12 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                   {timeLabel ? (
                                     <span title={absoluteLabel ?? undefined}>
                                       updated <span className="font-medium text-[var(--fg)]">{timeLabel}</span>
+                                    </span>
+                                  ) : null}
+                                  {/* The file itself, not what the AI read in it. */}
+                                  {it.fileLabel ? (
+                                    <span className="tabular-nums" title="File size (and the change from the previous version)">
+                                      {it.fileLabel}
                                     </span>
                                   ) : null}
                                 </div>

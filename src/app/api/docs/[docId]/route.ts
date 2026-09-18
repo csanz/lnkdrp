@@ -335,11 +335,23 @@ export async function GET(
             firstPagePngUrl: 1,
             createdDate: 1,
             userId: 1,
+            sizeBytes: 1,
             "metadata.pages": 1,
+            "metadata.size": 1,
           })
           .lean()
       : lite && currentUploadId
-        ? await UploadModel.findById(currentUploadId).select({ _id: 1, version: 1, createdDate: 1, userId: 1, "metadata.pages": 1 }).lean()
+        ? await UploadModel.findById(currentUploadId)
+            .select({
+              _id: 1,
+              version: 1,
+              createdDate: 1,
+              userId: 1,
+              sizeBytes: 1,
+              "metadata.pages": 1,
+              "metadata.size": 1,
+            })
+            .lean()
         : null;
 
     // In `lite=1` mode we avoid hydrating the full Upload, but the doc page still needs the
@@ -615,6 +627,18 @@ export async function GET(
           const u = (upload ?? uploadLite) as { metadata?: { pages?: unknown } } | null;
           const n = u?.metadata?.pages;
           return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : null;
+        })(),
+        // Size of the PDF as stored, so the document page can show the file's own facts.
+        // `sizeBytes` is what the upload route wrote; `metadata.size` is the older mirror of it.
+        currentUploadSizeBytes: (function () {
+          const u = (upload ?? uploadLite) as { sizeBytes?: unknown; metadata?: { size?: unknown } } | null;
+          const raw =
+            typeof u?.sizeBytes === "number" && Number.isFinite(u.sizeBytes)
+              ? u.sizeBytes
+              : typeof u?.metadata?.size === "number" && Number.isFinite(u.metadata.size)
+                ? u.metadata.size
+                : null;
+          return typeof raw === "number" && raw > 0 ? Math.floor(raw) : null;
         })(),
         blobUrl: docLean.blobUrl ?? null,
         previewImageUrl:

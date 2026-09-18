@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 
 import Modal from "@/components/modals/Modal";
 import Alert from "@/components/ui/Alert";
+import { formatSizeChangeLine } from "@/lib/format/bytes";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 
 type DocChange = {
@@ -27,6 +28,10 @@ type DocChange = {
   changes: string[];
   pagesThatChanged: number[];
   createdDate: string | null;
+  /** The file's own facts, so a replaced deck can say it got lighter. Null where never recorded. */
+  fromSizeBytes: number | null;
+  toSizeBytes: number | null;
+  toPages: number | null;
 };
 
 /** Parse one change row defensively: this payload is best-effort and older rows are sparse. */
@@ -54,6 +59,9 @@ function parseChange(raw: unknown): DocChange | null {
     changes,
     pagesThatChanged: pages,
     createdDate: typeof r.createdDate === "string" ? r.createdDate : null,
+    fromSizeBytes: num(r.fromSizeBytes),
+    toSizeBytes: num(r.toSizeBytes),
+    toPages: num(r.toPages),
   };
 }
 
@@ -111,6 +119,14 @@ export default function ChangePreviewModal({
   const from = change?.fromVersion ?? (typeof version === "number" ? version - 1 : null);
   const to = change?.toVersion ?? version;
   const versionLine = from !== null && to !== null ? `v${from} → v${to}` : to !== null ? `v${to}` : "";
+  // The file itself: its new size, how far it moved from the previous version, and its page count.
+  // Shown whether or not an AI compare ran — the bytes are a fact we always have.
+  const fileLine = (function () {
+    const size = formatSizeChangeLine(change?.fromSizeBytes ?? null, change?.toSizeBytes ?? null);
+    if (!size) return null;
+    const pages = typeof change?.toPages === "number" && change.toPages > 0 ? change.toPages : null;
+    return pages ? `${size} · ${pages} page${pages === 1 ? "" : "s"}` : size;
+  })();
 
   return (
     <Modal open={open} onClose={onClose} ariaLabel="What changed" width={560}>
@@ -120,6 +136,11 @@ export default function ChangePreviewModal({
           <span className="text-[18px] font-semibold tracking-tight text-[var(--fg)]">{docTitle}</span>
           {versionLine ? <span className="text-[13px] font-medium tabular-nums text-[var(--muted-2)]">{versionLine}</span> : null}
         </div>
+        {fileLine ? (
+          <div className="mt-1 text-[12px] tabular-nums text-[var(--muted-2)]" title="The file itself">
+            {fileLine}
+          </div>
+        ) : null}
       </div>
 
       {error ? (

@@ -238,6 +238,63 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         })()
       : null;
 
+    /**
+     * File facts per version (size, pages), for the "what changed" line about the file itself.
+     *
+     * Keyed by version rather than by uploadId: backfilled DocChange rows can have a null
+     * `toUploadId`, and `version` is unique per doc among completed uploads anyway. One query for
+     * every version the page is about to render (both sides of each change), so a replaced deck can
+     * say "1.7 MB · −1.8 MB (−51%)" without a per-row lookup.
+     */
+    const uploadFactsByVersion = new Map<number, { sizeBytes: number | null; pages: number | null }>();
+    if (includeChangeList && changesAgg.length) {
+      const versions = Array.from(
+        new Set(
+          changesAgg
+            .flatMap((c) => [c?.fromVersion, c?.toVersion])
+            .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1)
+            .map((v) => Math.floor(v)),
+        ),
+      );
+      if (versions.length) {
+        try {
+          const rows = (await UploadModel.find({
+            docId: docObjectId,
+            isDeleted: { $ne: true },
+            status: "completed",
+            version: { $in: versions },
+          })
+            .select({ _id: 1, version: 1, sizeBytes: 1, createdDate: 1, "metadata.size": 1, "metadata.pages": 1 })
+            .sort({ version: -1, createdDate: -1 })
+            .lean()) as Array<Record<string, any>>;
+          for (const r of rows) {
+            const v = typeof r?.version === "number" && Number.isFinite(r.version) ? Math.floor(r.version) : null;
+            if (!v || v < 1) continue;
+            // Keep first-seen: the sort puts the newest row for a version first.
+            if (uploadFactsByVersion.has(v)) continue;
+            const rawSize =
+              typeof r?.sizeBytes === "number" && Number.isFinite(r.sizeBytes)
+                ? r.sizeBytes
+                : typeof r?.metadata?.size === "number" && Number.isFinite(r.metadata.size)
+                  ? r.metadata.size
+                  : null;
+            const rawPages =
+              typeof r?.metadata?.pages === "number" && Number.isFinite(r.metadata.pages) ? r.metadata.pages : null;
+            uploadFactsByVersion.set(v, {
+              sizeBytes: typeof rawSize === "number" && rawSize > 0 ? Math.floor(rawSize) : null,
+              pages: typeof rawPages === "number" && rawPages > 0 ? Math.floor(rawPages) : null,
+            });
+          }
+        } catch {
+          // Best-effort: a missing size line is a quieter failure than a 400 on the whole history.
+        }
+      }
+    }
+    const factsFor = (v: unknown) => {
+      const n = typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : null;
+      return n && n >= 1 ? (uploadFactsByVersion.get(n) ?? null) : null;
+    };
+
     // Resolve createdBy in one query (faster than $lookup for large-ish result sets).
     const createdByMap: Map<string, { id: string; name: string | null; email: string | null }> = new Map();
     if (!lite) {
@@ -296,6 +353,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             summary: c?.diff?.summary ?? "",
             ...(includeChangeList
               ? {
+                  // The file's own change, alongside the AI's reading of the contents.
+                  // `null` where the upload row never recorded it — the UI then shows no delta
+                  // rather than implying the file weighs nothing.
+                  fromSizeBytes: factsFor(c?.fromVersion)?.sizeBytes ?? null,
+                  toSizeBytes: factsFor(c?.toVersion)?.sizeBytes ?? null,
+                  fromPages: factsFor(c?.fromVersion)?.pages ?? null,
+                  toPages: factsFor(c?.toVersion)?.pages ?? null,
                   changes: Array.isArray(c?.diff?.changes) ? c.diff.changes : [],
                   pagesThatChanged: Array.isArray(c?.diff?.pagesThatChanged)
                     ? c.diff.pagesThatChanged
