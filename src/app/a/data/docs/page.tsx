@@ -30,6 +30,7 @@ import {
   TimeCell,
   useAdminAccess,
 } from "@/components/admin";
+import { ADMIN_NO_CONTENT_NOTE } from "@/lib/admin/docPrivacy";
 import { ADMIN_DASH, ADMIN_FOCUS_RING, statusLabel, type AdminTone } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { pipelineStatusTone } from "@/lib/admin/statusTones";
@@ -388,7 +389,6 @@ export default function AdminDataDocsPage() {
                         label="share id"
                         head={8}
                         tail={4}
-                        href={d.shareId ? `/s/${encodeURIComponent(d.shareId)}` : undefined}
                       />
                     </AdminTd>
                     <AdminTd>
@@ -448,16 +448,8 @@ export default function AdminDataDocsPage() {
                 </RowActions>
               </div>
 
-              <div className="mt-3">
-                <a
-                  className="inline-flex h-[26px] items-center rounded-md border border-[var(--border)] bg-[var(--panel-2)] px-2 text-[12px] font-medium leading-4 text-[var(--muted)] transition hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
-                  href={`/doc/${encodeURIComponent(selectedDocId)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Open in app
-                </a>
-              </div>
+              {/* No link into the document: admin sees metadata, never someone's file. */}
+              <p className="mt-3 text-[12px] leading-5 text-[var(--muted-2)]">{ADMIN_NO_CONTENT_NOTE}</p>
 
               {detailsError ? (
                 <AdminAlert className="mt-3">
@@ -488,12 +480,10 @@ export default function AdminDataDocsPage() {
                       <dd className="break-all font-mono text-[var(--fg)]">
                         {String(docDetails.doc.currentUploadId ?? docDetails.doc.uploadId ?? ADMIN_DASH)}
                       </dd>
-                      <dt className="text-[var(--muted-2)]">previewImageUrl</dt>
-                      <dd className="break-all font-mono">
-                        {docDetails.doc.previewImageUrl || docDetails.doc.firstPagePngUrl ? (
-                          <span className="text-[var(--fg)]">
-                            {String(docDetails.doc.previewImageUrl ?? docDetails.doc.firstPagePngUrl)}
-                          </span>
+                      <dt className="text-[var(--muted-2)]">Preview image</dt>
+                      <dd>
+                        {docDetails.doc.content?.hasPreviewImage || docDetails.doc.content?.hasFirstPagePng ? (
+                          <StatusPill tone="quiet">Stored</StatusPill>
                         ) : (
                           <StatusPill tone="danger">Missing</StatusPill>
                         )}

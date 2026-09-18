@@ -475,14 +475,7 @@ export default function AdminDataRequestDetailPage() {
                       <DetailRow label="Share link">
                         {d.shareId ? (
                           <span className="inline-flex items-center gap-1.5">
-                            <a
-                              className="rounded font-mono text-[12px] text-[var(--fg)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
-                              href={`/s/${encodeURIComponent(d.shareId)}`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              /s/{d.shareId}
-                            </a>
+                            <span className="font-mono text-[12px] text-[var(--fg)]">{d.shareId}</span>
                             <CopyTextButton text={d.shareId} label="Copy" />
                           </span>
                         ) : null}

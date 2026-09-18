@@ -31,6 +31,7 @@ import {
   TimeCell,
   useAdminAccess,
 } from "@/components/admin";
+import { ADMIN_NO_CONTENT_NOTE } from "@/lib/admin/docPrivacy";
 import { ADMIN_DASH, ADMIN_FOCUS_RING, statusLabel } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { pipelineStatusTone } from "@/lib/admin/statusTones";
@@ -302,8 +303,7 @@ function AdminDataUploadsPageInner() {
                         label="share id"
                         head={8}
                         tail={4}
-                        href={u.shareId ? `/s/${encodeURIComponent(u.shareId)}` : undefined}
-                      />
+                                              />
                     </AdminTd>
                     <AdminTd>
                       <IdCell value={u.id} label="upload id" />
@@ -361,14 +361,7 @@ function AdminDataUploadsPageInner() {
 
               {uploadDetails?.upload?.docId ? (
                 <div className="mt-3">
-                  <a
-                    className="inline-flex h-[26px] items-center rounded-md border border-[var(--border)] bg-[var(--panel-2)] px-2 text-[12px] font-medium leading-4 text-[var(--muted)] transition hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
-                    href={`/doc/${encodeURIComponent(String(uploadDetails.upload.docId))}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open in app
-                  </a>
+                  <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_NO_CONTENT_NOTE}</span>
                 </div>
               ) : null}
 

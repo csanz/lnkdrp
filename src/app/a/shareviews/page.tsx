@@ -398,15 +398,7 @@ export default function ShareViewsAdminPage() {
                     <AdminTd align="right" sticky actions>
                       <RowActions>
                         {shareId ? (
-                          <a
-                            href={`/s/${encodeURIComponent(shareId)}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className={ADMIN_ROW_ACTION_LINK}
-                            title="Open the public share in a new tab"
-                          >
-                            Open
-                          </a>
+                          <span className="text-[12px] text-[var(--muted-2)]">—</span>
                         ) : (
                           <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_DASH}</span>
                         )}

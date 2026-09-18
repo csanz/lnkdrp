@@ -175,15 +175,7 @@ export default function ShareViewsDocAdminPage() {
                 All share views
               </Link>
               {header?.shareId ? (
-                <a
-                  href={`/s/${encodeURIComponent(header.shareId)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className={ADMIN_ROW_ACTION_LINK}
-                  title="Open the public share in a new tab"
-                >
-                  Open share
-                </a>
+                <></>
               ) : null}
             </>
           }
@@ -331,15 +323,7 @@ export default function ShareViewsDocAdminPage() {
                     <AdminTd align="right" sticky actions>
                       <RowActions>
                         {v.shareId ? (
-                          <a
-                            href={`/s/${encodeURIComponent(v.shareId)}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className={ADMIN_ROW_ACTION_LINK}
-                            title="Open the public share in a new tab"
-                          >
-                            Open share
-                          </a>
+                          <span className="text-[12px] text-[var(--muted-2)]">—</span>
                         ) : (
                           <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_DASH}</span>
                         )}

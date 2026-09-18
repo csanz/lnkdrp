@@ -11,6 +11,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
+import { redactDocRow } from "@/lib/admin/docPrivacy";
 
 export const runtime = "nodejs";
 
@@ -49,6 +50,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       originalFileName: 1,
       contentType: 1,
       sizeBytes: 1,
+      // Content fields are still selected so `redactDocRow` can report what exists; they are
+      // stripped before the response leaves this route (see src/lib/admin/docPrivacy.ts).
       blobUrl: 1,
       blobPathname: 1,
       previewImageUrl: 1,
@@ -68,16 +71,18 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
 
   return NextResponse.json({
     ok: true,
-    doc: { ...doc, id: String((doc as any)._id) },
-    uploads: uploads.map((u) => ({
-      ...u,
-      id: String(u._id),
-      userId: u.userId ? String(u.userId) : null,
-      orgId: (u as any).orgId ? String((u as any).orgId) : null,
-      docId: u.docId ? String(u.docId) : null,
-      createdDate: u.createdDate ? new Date(u.createdDate).toISOString() : null,
-      updatedDate: u.updatedDate ? new Date(u.updatedDate).toISOString() : null,
-    })),
+    doc: redactDocRow({ ...(doc as Record<string, unknown>), id: String((doc as any)._id) }),
+    uploads: uploads.map((u) =>
+      redactDocRow({
+        ...(u as Record<string, unknown>),
+        id: String(u._id),
+        userId: u.userId ? String(u.userId) : null,
+        orgId: (u as any).orgId ? String((u as any).orgId) : null,
+        docId: u.docId ? String(u.docId) : null,
+        createdDate: u.createdDate ? new Date(u.createdDate).toISOString() : null,
+        updatedDate: u.updatedDate ? new Date(u.updatedDate).toISOString() : null,
+      }),
+    ),
   });
 }
 

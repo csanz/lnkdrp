@@ -11,6 +11,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { UploadModel } from "@/lib/models/Upload";
 import { ReviewModel } from "@/lib/models/Review";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
+import { redactDocRow } from "@/lib/admin/docPrivacy";
 
 export const runtime = "nodejs";
 
@@ -167,7 +168,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ requ
       createdDate: d.createdDate ? new Date(d.createdDate).toISOString() : null,
       updatedDate: d.updatedDate ? new Date(d.updatedDate).toISOString() : null,
       isGuideDoc: guideDocId ? String(d._id) === String(guideDocId) : false,
-      raw: pickPlainObject(d),
+      // `raw` is the whole row, so it needs the same redaction as the typed fields above.
+      raw: redactDocRow(pickPlainObject(d) ?? {}),
     })),
     uploads: uploads.map((u) => ({
       id: String(u._id),
@@ -180,7 +182,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ requ
       updatedDate: (u as unknown as { updatedDate?: Date | string | null }).updatedDate
         ? new Date((u as unknown as { updatedDate: Date | string }).updatedDate).toISOString()
         : null,
-      raw: pickPlainObject(u),
+      raw: redactDocRow(pickPlainObject(u) ?? {}),
     })),
     reviews: reviews.map((r) => ({
       id: String(r._id),
