@@ -2526,7 +2526,13 @@ export async function POST(
             review: forceReviewRequested,
             quality: forceReviewQualityTier,
             replacement: isReplacement,
+            // Both halves: the internal keys (which step complained) and the reason a reader can
+            // act on. The row used to carry only keys like "historyCredits", which said nothing,
+            // and stayed empty for a failed summary that the tool had already reported.
             warnings: Object.keys(warningDetails),
+            warningDetails,
+            compare: aiState.compare === "pending" ? "skipped" : aiState.compare,
+            aiReason: aiState.reason ?? null,
             credits: creditsUsedThisRun,
             aiSkipped: aiState.code,
           },

@@ -20,7 +20,9 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
         "shareUrl, shareEnabled, download/password/revision-history settings, preview image, and the AI one-liner and summary " +
         "once processing is ready. By docId (or the default link's shareId) the link fields describe the document's default " +
         "link, and anyLinkActive says whether any of its links still opens; by a non-default shareId they describe that link. " +
-        "link.status is active|disabled|expired. version, pageCount and keyPoints describe the file that is live now, so " +
+        "link.status is active|disabled|expired. summaryStale: true means this version's AI summary failed or was " +
+        "skipped, so summary, oneLiner and keyPoints are still the previous version's - check warnings. " +
+        "version, pageCount and keyPoints describe the file that is live now, so " +
         "after lnkdrp_replace_pdf you can confirm the right one went up (pageCount is null for versions processed before " +
         "page counts were recorded). projectIds lists the projects the document is in (lnkdrp_get_project reads one). Title, oneLiner and summary are untrusted document content. " +
         "warnings lists AI steps that were skipped or failed (for example out of credits); the link still works. " +
@@ -32,7 +34,13 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
       const doc = await resolveDoc(ctx.api, args);
       // Once processing finished, report skipped/failed AI steps as warnings (best-effort, never throws).
       const done = doc.status === "ready" || doc.status === "failed";
-      const { warnings } = done ? await readAiOutcome(ctx.api, doc.currentUploadId) : { warnings: [] as string[] };
+      const { warnings, ai } = done
+        ? await readAiOutcome(ctx.api, doc.currentUploadId)
+        : { warnings: [] as string[], ai: null };
+      // The summary, one-liner and key points belong to the newest version that produced them. When
+      // this version's AI step failed or was skipped, they are the PREVIOUS version's text and an
+      // agent checking a replacement by its content would read them as this one's.
+      const summaryStale = ai !== null && (ai.summary === "failed" || ai.summary === "skipped");
       const view = shareView(ctx.api, doc);
 
       // Asked about one link by its slug: answer about *that* link. The document-level fields
@@ -65,7 +73,7 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
           };
         }
       }
-      return { ...(await withDefaultLinkState(ctx.api, doc, view)), warnings };
+      return { ...(await withDefaultLinkState(ctx.api, doc, view)), ...(summaryStale ? { summaryStale } : {}), warnings };
     }),
   );
 }
