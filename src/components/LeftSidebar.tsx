@@ -2311,6 +2311,30 @@ export default function LeftSidebar({
                             <span className="block min-w-0 max-w-[220px] flex-1 truncate text-[var(--fg)]">
                               {title}
                             </span>
+                            {/* The same version chip the Docs rows carry: a starred row is the same
+                                document, and showing it in one list but not the other read as data
+                                that had failed to load. Prefers the live sidebar list, falls back to
+                                the starred cache so the chip is there on the first paint. */}
+                            {(() => {
+                              const version =
+                                typeof sidebarMeta?.version === "number" && Number.isFinite(sidebarMeta.version)
+                                  ? sidebarMeta.version
+                                  : typeof details?.version === "number" && Number.isFinite(details.version)
+                                    ? details.version
+                                    : null;
+                              if (version === null || version <= 0) return null;
+                              return (
+                                <span
+                                  className={[
+                                    "shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-2)]",
+                                    version > 1 ? "opacity-70" : "opacity-45",
+                                  ].join(" ")}
+                                  title={`Version ${version}`}
+                                >
+                                  v{version}
+                                </span>
+                              );
+                            })()}
                           </div>
                         </Link>
                         </div>
