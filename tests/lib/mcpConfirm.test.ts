@@ -33,11 +33,25 @@ describe("requireHumanConfirmation", () => {
   });
 
   it("a human decline is final, even with confirm: true", async () => {
-    for (const answer of [{ action: "decline" }, { action: "cancel" }, { action: "accept", content: { confirmed: false } }]) {
+    // An answer, not the absence of one: `decline` and an accepted form with the box unticked.
+    for (const answer of [{ action: "decline" }, { action: "accept", content: { confirmed: false } }]) {
       const err = await refusal(requireHumanConfirmation(fakeServer(withElicitation, async () => answer), preview, { confirm: true }));
       expect(err.code).toBe("validation");
       expect((err.details as { userAction: string }).userAction).toBe(answer.action);
     }
+  });
+
+  it("a dismissed prompt refuses on its own, and falls through to confirm: true (mt_zbIUhYgj27)", async () => {
+    // `cancel` means nobody answered — a client that cannot render the form returns it instantly,
+    // which had left deletes unreachable from every client.
+    const dismissed = fakeServer(withElicitation, async () => ({ action: "cancel" }));
+    const err = await refusal(requireHumanConfirmation(dismissed, preview, {}));
+    expect((err.details as { userAction: string }).userAction).toBe("cancel");
+    expect(err.message).toContain("confirm: true");
+    expect(await requireHumanConfirmation(dismissed, preview, { confirm: true })).toEqual({
+      via: "confirm_flag",
+      elicitationFailed: true,
+    });
   });
 
   it("an elicitation that times out refuses with the preview when confirm is absent", async () => {

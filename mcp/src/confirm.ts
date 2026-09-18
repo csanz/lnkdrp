@@ -138,11 +138,19 @@ export async function requireHumanConfirmation(
     // person pressing Escape, so it stays final like a decline. What differs is the guidance: the
     // agent needs to know a retry cannot get through and where the human can act instead.
     if (result.action === "cancel") {
+      // `cancel` is "dismissed without an answer", which the protocol keeps separate from `decline`.
+      // Clients that cannot render the form return it instantly and nobody ever saw the question —
+      // measured 2026-09-18, when an interactive Claude Code session timed out on the first call and
+      // got `cancel` on the retry, leaving deletes unreachable from every client we have. So it is
+      // treated exactly like a prompt that failed to deliver: the agent's `confirm: true`, its
+      // assertion that the human said yes in conversation, goes through. An explicit `decline`
+      // below still cannot be overridden.
+      if (args.confirm === true) return { via: "confirm_flag", elicitationFailed: true };
       throw new ToolError(
         "validation",
-        "The confirmation prompt was dismissed without an answer (headless clients dismiss it automatically). " +
-          "Nothing was changed, and calling again with confirm: true will not override it. " +
-          "Ask the user to do this in the lnkdrp app, or from a client that can show them the prompt.",
+        "The confirmation prompt was dismissed without an answer (a client that cannot show it dismisses it " +
+          "automatically). Nothing was changed. Show the user the preview in details, get an explicit yes in " +
+          "conversation, then call again with confirm: true.",
         { status: 400, details: { ...previewDetails, userAction: result.action } },
       );
     }
