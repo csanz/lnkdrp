@@ -30,6 +30,8 @@ function because(ai: UploadAi, step: "summary" | "compare"): string {
 export function warningsFromAi(ai: UploadAi | null): string[] {
   if (!ai) return [];
   const out: string[] = [];
+  // "unchanged": the upload was the same file, so the previous version's summary was kept. Nothing
+  // was skipped for a reason the human needs to hear.
   if (ai.summary === "skipped") out.push(`AI summary skipped: ${because(ai, "summary")}`);
   if (ai.summary === "failed") out.push(`AI summary failed: ${because(ai, "summary")} The share link still works.`);
   if (ai.compare === "skipped") out.push(`AI compare skipped: ${because(ai, "compare")}`);

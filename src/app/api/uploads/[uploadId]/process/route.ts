@@ -1845,7 +1845,7 @@ export async function POST(
       /** The reservation came back already charged (a retried job): run without charging again. */
       let summaryAlreadyPaid = false;
       const aiState: {
-        summary: "done" | "skipped" | "failed" | "pending";
+        summary: "done" | "skipped" | "failed" | "pending" | "unchanged";
         compare: "done" | "skipped" | "failed" | "not_applicable" | "pending";
         reason: string | null;
         code: "out_of_credits" | "daily_cap" | "plan" | "recipient" | "error" | null;
@@ -1862,8 +1862,27 @@ export async function POST(
         creditsUsed: 0,
         source: viaUploadSecret ? "recipient" : "owner",
       };
+      // Re-uploading the same file: the previous version's summary already describes it, so paying
+      // for a fresh one buys a differently-worded copy. The doc keeps its existing aiOutput below
+      // (finalDocAiOutput falls back to the prior one), so nothing is lost by not running it.
+      const sameAsPreviousVersion =
+        isReplacement &&
+        !summaryRerun &&
+        Boolean(extractedText) &&
+        normalizeForCompare(priorExtractedTextRaw.toString()) === normalizeForCompare(extractedText ?? "");
       const summaryWanted =
-        !upload.aiOutput && !agentSummary && Boolean(extractedText) && Boolean(process.env.OPENAI_API_KEY);
+        !upload.aiOutput &&
+        !agentSummary &&
+        !sameAsPreviousVersion &&
+        Boolean(extractedText) &&
+        Boolean(process.env.OPENAI_API_KEY);
+      if (sameAsPreviousVersion) {
+        // Its own state, not "skipped": nothing was withheld and nothing is missing, so readers
+        // must not warn about it or mark the kept summary as stale.
+        aiState.summary = "unchanged";
+        aiState.reason = aiState.reason ?? "the text is identical to the previous version, so its summary was kept";
+        debugLog(1, "[process] AI summary skipped: identical to the previous version", { uploadId, docId: String(docId), version: uploadVersion });
+      }
       if (summaryWanted && !viaUploadSecret) {
         try {
           const reserved = await reserveForAttempt({

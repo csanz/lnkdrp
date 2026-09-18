@@ -40,6 +40,8 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
       // The summary, one-liner and key points belong to the newest version that produced them. When
       // this version's AI step failed or was skipped, they are the PREVIOUS version's text and an
       // agent checking a replacement by its content would read them as this one's.
+      // "unchanged" means the file was identical and the previous summary still describes it, so it
+      // is not stale; only a failed or skipped step leaves this version undescribed.
       const summaryStale = ai !== null && (ai.summary === "failed" || ai.summary === "skipped");
       const view = shareView(ctx.api, doc);
 
