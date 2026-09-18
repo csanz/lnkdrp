@@ -34,6 +34,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { SubscriptionModel } from "@/lib/models/Subscription";
 import { isProSubscription } from "@/lib/billing/subscriptionState";
+import { liveProjectFilter } from "@/lib/projects/scope";
 // The cap counts shared documents directly through `DocModel` below. It used to import the
 // share-links service to count links instead — the drift that made two documents read "11 of 3"
 // — and this comment described that import as the thing keeping the cap honest. It was the thing
@@ -187,13 +188,9 @@ export async function getWorkspaceUsage(
       isDeleted: { $ne: true },
       isArchived: { $ne: true },
     }),
-    ProjectModel.countDocuments({
-      orgId: id,
-      isDeleted: { $ne: true },
-      isRequest: { $ne: true },
-      // `$in: [null, ""]` also matches a missing field.
-      requestUploadToken: { $in: [null, ""] },
-    }),
+    // Same filter the project list uses (src/lib/projects/scope.ts): the cap must never count a
+    // project the owner cannot see in their list.
+    ProjectModel.countDocuments(liveProjectFilter(id)),
     OrgMembershipModel.countDocuments({ orgId: id, isDeleted: { $ne: true } }),
   ]);
   return { documents, projects, members };
