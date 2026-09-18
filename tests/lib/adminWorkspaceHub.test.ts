@@ -20,6 +20,7 @@ import {
   keyStateLabel,
   kindLabel,
   ledgerBucketLabel,
+  ledgerBucketNames,
   ledgerCredits,
   planLabel,
   usageVsLimit,
@@ -210,6 +211,22 @@ describe("ledgerBucketLabel", () => {
   test("a grant row paid from nothing renders an em dash", () => {
     const r = ledgerRow({ eventType: "cycle_grant_included", creditsFromTrial: 0, creditsCharged: 0 });
     expect(ledgerBucketLabel(r)).toBe("—");
+  });
+});
+
+describe("ledgerBucketNames", () => {
+  test("names the bucket without repeating the amount the Credits column already shows", () => {
+    expect(ledgerBucketNames(ledgerRow())).toBe("starter");
+  });
+
+  test("a run across two buckets names both, in spend order", () => {
+    const r = ledgerRow({ creditsFromTrial: 2, creditsFromSubscription: 3, creditsFromPurchased: 0, creditsFromOnDemand: 1 });
+    expect(ledgerBucketNames(r)).toBe("included + starter + on-demand");
+  });
+
+  test("a grant row paid from nothing renders an em dash", () => {
+    const r = ledgerRow({ eventType: "cycle_grant_included", creditsFromTrial: 0, creditsCharged: 0 });
+    expect(ledgerBucketNames(r)).toBe("—");
   });
 });
 

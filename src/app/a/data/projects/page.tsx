@@ -1,18 +1,36 @@
 /**
  * Admin route: `/a/data/projects`
  *
- * Lists projects across all users (paged) for admin inspection.
+ * Lists projects across all users (paged) for admin inspection. Built on the shared admin
+ * UI in `@/components/admin` — see `/a/data/users` for the reference implementation.
  */
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import Alert from "@/components/ui/Alert";
+import { cn } from "@/lib/cn";
 import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import DataTable from "@/components/ui/DataTable";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  IdCell,
+  RowAction,
+  RowActionLink,
+  RowActions,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH, ADMIN_FOCUS_RING } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -30,15 +48,13 @@ type ProjectRow = {
   createdDate: string | null;
 };
 
+/** Column count of the table below; every full-width row's colSpan has to match it. */
+const COLUMN_COUNT = 6;
+
+/** The Projects browser: every project and request repo, filtered and paged server-side. */
 export default function AdminDataProjectsPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -50,7 +66,8 @@ export default function AdminDataProjectsPage() {
   const [deleteBusyProjectId, setDeleteBusyProjectId] = useState<string>("");
   const [reloadKey, setReloadKey] = useState(0);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
+  /** A search narrowing the list — decides which empty-state sentence the table shows. */
+  const filtered = Boolean(q.trim());
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -77,6 +94,7 @@ export default function AdminDataProjectsPage() {
     })();
   }, [canUseAdmin, limit, page, q, reloadKey]);
 
+  /** Soft-delete a project, then drop its row optimistically. */
   async function deleteProject(projectId: string) {
     if (!projectId) return;
     if (deleteBusyProjectId) return;
@@ -95,157 +113,136 @@ export default function AdminDataProjectsPage() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Projects</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/data/projects" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Projects</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Projects" description="Every project and request repo across all users, newest activity first." callbackUrl="/a/data/projects" />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Projects</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">Paged list of projects across all users.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="w-[260px] max-w-full"
-              placeholder="Search name, slug, shareId, token…"
-              value={q}
-              onChange={(e) => {
-                setPage(1);
-                setQ(e.target.value);
-              }}
-            />
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {page} / {totalPages} • {total} total
-            </div>
-            <Button
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+        <AdminPageHeader title="Projects" description="Every project and request repo across all users, newest activity first." />
+
+        <AdminFilterBar
+          className="mt-4"
+          page={page}
+          pageSize={limit}
+          total={total}
+          onPageChange={setPage}
+          noun="projects"
+          loading={loading}
+          actions={
+            <Button variant="outline" className="bg-[var(--panel)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
               {loading ? "Loading…" : "Refresh"}
             </Button>
-          </div>
-        </div>
+          }
+        >
+          <AdminSearchInput
+            value={q}
+            onValueChange={(v) => {
+              setPage(1);
+              setQ(v);
+            }}
+            placeholder="Search name, slug, shareId…"
+            ariaLabel="Search projects by name, slug, shareId or token"
+          />
+        </AdminFilterBar>
 
         {error ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+          <AdminAlert className="mt-3">
             {error}
-          </Alert>
+          </AdminAlert>
         ) : null}
 
-        {loading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-6">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Slug</th>
-                <th className="px-4 py-3">Type</th>
-                <th className="px-4 py-3">Docs</th>
-                <th className="px-4 py-3">Token</th>
-                <th className="px-4 py-3">Updated</th>
-                <th className="px-4 py-3">User ID</th>
-                <th className="px-4 py-3">Project ID</th>
-                <th className="px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {items.map((p) => (
-                <tr key={p.id}>
-                  <td className="px-4 py-3">
-                    <div className="min-w-0">
-                      <Link
-                        href={`/a/data/projects/${encodeURIComponent(p.id)}`}
-                        className="truncate font-semibold text-[var(--fg)] hover:underline"
-                        title="Open project editor"
-                      >
-                        {p.name ?? "—"}
-                      </Link>
-                      {p.description ? <div className="mt-1 truncate text-xs text-[var(--muted)]">{p.description}</div> : null}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{p.slug ?? "—"}</td>
-                  <td className="px-4 py-3">{p.isRequest || p.requestUploadToken ? "Request" : "Project"}</td>
-                  <td className="px-4 py-3">{typeof p.docCount === "number" ? p.docCount : "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">
-                    {p.requestUploadToken ? `${p.requestUploadToken.slice(0, 8)}…` : "—"}
-                  </td>
-                  <td className="px-4 py-3">{fmtDate(p.updatedDate) || fmtDate(p.createdDate) || "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{p.userId ?? "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{p.id}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                      disabled={Boolean(deleteBusyProjectId) && deleteBusyProjectId !== p.id}
-                      onClick={() => void deleteProject(p.id)}
-                      title="Soft delete project"
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Projects"
+          head={
+            <>
+              {/* Name carries the slack. Type, Token and User were one repeated value on
+                  every row of the page; all three are on the project's own detail page. */}
+              <AdminTh>Name</AdminTh>
+              <AdminTh width="w-[120px]">Kind</AdminTh>
+              <AdminTh align="right" width="w-[70px]">Docs</AdminTh>
+              <AdminTh align="right" width="w-[130px]">Updated</AdminTh>
+              <AdminTh width="w-[130px]">Project ID</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {loading && items.length === 0 ? (
+            <AdminTableMessage colSpan={COLUMN_COUNT}>Loading projects…</AdminTableMessage>
+          ) : items.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={COLUMN_COUNT}
+              title={filtered ? "No projects match that search" : "No projects yet"}
+              hint={filtered ? "Try a different name, slug, shareId or token." : undefined}
+            />
+          ) : (
+            items.map((p) => {
+              const isRequest = Boolean(p.isRequest || p.requestUploadToken);
+              return (
+                <AdminTr key={p.id}>
+                  {/* The description is the row's tooltip rather than a second line: one project
+                      per line keeps the vertical rhythm, and the full text is still readable. */}
+                  {/* The phone cap is what makes the ellipsis render at 390px: uncapped, the
+                      name column takes its natural width and the pinned Actions cell slices
+                      the name mid-word with no "…". */}
+                  <AdminTd primary truncate="max-w-[190px] sm:max-w-[520px]">
+                    <Link
+                      href={`/a/data/projects/${encodeURIComponent(p.id)}`}
+                      className={cn("block truncate rounded hover:underline", ADMIN_FOCUS_RING)}
+                      title={[p.name ?? "Untitled", p.slug ? `/${p.slug}` : "", p.description ?? ""]
+                        .filter(Boolean)
+                        .join(" — ")}
                     >
-                      {deleteBusyProjectId === p.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
-                    No projects.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </DataTable>
-        )}
+                      {p.name ?? ADMIN_DASH}
+                    </Link>
+                  </AdminTd>
+                  <AdminTd>
+                    {/* A "Project" pill on all 28 rows is decoration. Only the exception —
+                        a request repo — gets a chip; the default is a plain word. */}
+                    {isRequest ? (
+                      <StatusPill tone="info">Request</StatusPill>
+                    ) : (
+                      <span className="text-[var(--muted-2)]">Project</span>
+                    )}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {typeof p.docCount === "number" ? p.docCount.toLocaleString() : ADMIN_DASH}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    <TimeCell value={p.updatedDate ?? p.createdDate} />
+                  </AdminTd>
+                  <AdminTd>
+                    <IdCell value={p.id} label="project id" href={`/a/data/projects/${encodeURIComponent(p.id)}`} />
+                  </AdminTd>
+                  <AdminTd align="right" sticky actions>
+                    <RowActions>
+                      {/* Same right-hand shape as Docs, Uploads and Links: one primary action
+                          that opens the row, then the destructive one last. */}
+                      <RowActionLink href={`/a/data/projects/${encodeURIComponent(p.id)}`} title="Open project details">
+                        Details
+                      </RowActionLink>
+                      <RowAction
+                        tone="danger"
+                        busy={deleteBusyProjectId === p.id}
+                        busyLabel="Deleting…"
+                        disabled={Boolean(deleteBusyProjectId) && deleteBusyProjectId !== p.id}
+                        title="Soft delete project"
+                        onClick={() => void deleteProject(p.id)}
+                      >
+                        Delete
+                      </RowAction>
+                    </RowActions>
+                  </AdminTd>
+                </AdminTr>
+              );
+            })
+          )}
+        </AdminTable>
       </div>
     </div>
   );
 }
-
-

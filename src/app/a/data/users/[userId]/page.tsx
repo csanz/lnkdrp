@@ -1,19 +1,39 @@
 /**
  * Admin route: `/a/data/users/:userId`
  *
- * User detail page for admin inspection (user record + memberships).
+ * User detail: the account record, its billing state, and the workspaces it belongs to.
+ * Built from the shared admin pieces — the panels carry the same label/value rhythm as
+ * every other detail page, and the memberships table is the same density as the lists.
  */
 "use client";
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 
 import Button from "@/components/ui/Button";
-import DataTable from "@/components/ui/DataTable";
-import Panel from "@/components/ui/Panel";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminPageHeader,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  BoolState,
+  DetailGrid,
+  DetailPanel,
+  DetailRow,
+  DetailSection,
+  IdCell,
+  JsonBlock,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -52,18 +72,21 @@ type MembershipRow = {
   membershipUpdatedDate: string | null;
 };
 
+const MEMBERSHIP_COLUMNS = 9;
+
+/** Cents as money, with an em dash when the field was never set. */
+function centsText(cents: number | null | undefined): string {
+  if (typeof cents !== "number" || !Number.isFinite(cents)) return "";
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+/** The user detail page. */
 export default function AdminUserDetailPage() {
   const params = useParams<{ userId?: string }>();
   const userId = typeof params?.userId === "string" ? params.userId : "";
 
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [user, setUser] = useState<UserInfo | null>(null);
   const [memberships, setMemberships] = useState<MembershipRow[]>([]);
@@ -96,7 +119,9 @@ export default function AdminUserDetailPage() {
   }, [canUseAdmin, userId, reloadKey]);
 
   const title = useMemo(() => user?.email || user?.name || "User", [user?.email, user?.name]);
+  const plan = (user?.plan ?? "").toLowerCase() === "pro" ? "pro" : user?.plan ? "free" : null;
 
+  /** Soft-disable the account (confirms first), then mark the loaded row inactive. */
   async function deactivate() {
     if (!userId) return;
     if (deactivateBusy) return;
@@ -114,201 +139,208 @@ export default function AdminUserDetailPage() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Users</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: `/a/data/users/${encodeURIComponent(userId)}` })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Users</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="User" callbackUrl={`/a/data/users/${encodeURIComponent(userId)}`} />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-              <Link href="/a/data/users" className="hover:underline">
-                Users
-              </Link>{" "}
-              / {userId}
-            </div>
-            <h1 className="mt-1 text-xl font-semibold tracking-tight text-[var(--fg)]">{title}</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">User details and workspace memberships.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
-              {loading ? "Loading…" : "Refresh"}
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={loading || deactivateBusy || user?.isActive === false}
-              onClick={() => void deactivate()}
-              title="Deactivate user"
-            >
-              {user?.isActive === false ? "Deactivated" : deactivateBusy ? "Deactivating…" : "Deactivate"}
-            </Button>
-          </div>
-        </div>
+        <AdminPageHeader
+          title={title}
+          description="One account: its record, billing state and workspace memberships."
+          actions={
+            <>
+              <Button variant="outline" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+                {loading ? "Loading…" : "Refresh"}
+              </Button>
+              <Button
+                variant="secondary"
+                disabled={loading || deactivateBusy || user?.isActive === false}
+                onClick={() => void deactivate()}
+                title="Deactivate user (sets isActive=false)"
+              >
+                {user?.isActive === false ? "Deactivated" : deactivateBusy ? "Deactivating…" : "Deactivate"}
+              </Button>
+            </>
+          }
+        />
 
-        {error ? <div className="mt-4 text-sm text-red-700">{error}</div> : null}
+        {error ? (
+          <AdminAlert className="mt-3">
+            {error}
+          </AdminAlert>
+        ) : null}
 
-        <div className="mt-6 grid gap-4">
-          <Panel className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--fg)]">User record</div>
-            <div className="mt-3 grid gap-2 text-sm text-[var(--muted)]">
-              <div>
-                <span className="font-semibold text-[var(--fg)]">User ID:</span>{" "}
-                <span className="font-mono text-xs text-[var(--muted)]">{userId}</span>
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Email:</span> {user?.email ?? "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Name:</span> {user?.name ?? "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Role:</span> {user?.role ?? "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Plan:</span> {user?.plan ?? "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Active:</span> {user ? (user.isActive ? "Yes" : "No") : "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Temp:</span> {user ? (user.isTemp ? "Yes" : "No") : "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Created:</span> {fmtDate(user?.createdAt ?? null) || "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Last login:</span> {fmtDate(user?.lastLoginAt ?? null) || "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Auth provider:</span> {user?.authProvider ?? "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Provider account id:</span>{" "}
-                <span className="font-mono text-xs text-[var(--muted)]">{user?.providerAccountId ?? "—"}</span>
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Stripe customer:</span>{" "}
-                <span className="font-mono text-xs text-[var(--muted)]">{user?.stripeCustomerId ?? "—"}</span>
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Stripe subscription:</span>{" "}
-                <span className="font-mono text-xs text-[var(--muted)]">{user?.stripeSubscriptionId ?? "—"}</span>
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Stripe status:</span> {user?.stripeSubscriptionStatus ?? "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Stripe period end:</span> {fmtDate(user?.stripeCurrentPeriodEnd ?? null) || "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Spend limit (cents):</span>{" "}
-                {user?.spendLimitCents ?? "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Spend used this period (cents):</span>{" "}
-                {user?.spendUsedCentsThisPeriod ?? "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Onboarding completed:</span>{" "}
-                {user ? (user.onboardingCompleted ? "Yes" : "No") : "—"}
-              </div>
-              <div>
-                <span className="font-semibold text-[var(--fg)]">Image:</span>{" "}
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <DetailPanel title="Account" description="Who this user is and how they sign in.">
+            <DetailGrid>
+              <DetailRow label="Email" title={user?.email ?? undefined}>
+                {user?.email}
+              </DetailRow>
+              <DetailRow label="Name">{user?.name}</DetailRow>
+              <DetailRow label="Role">
+                {user?.role === "admin" ? (
+                  <StatusPill tone="accent">Admin</StatusPill>
+                ) : user?.role ? (
+                  <span className="capitalize">{user.role}</span>
+                ) : null}
+              </DetailRow>
+              <DetailRow label="Status">
+                {user ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    {user.isActive === false ? (
+                      <StatusPill tone="danger">Inactive</StatusPill>
+                    ) : (
+                      <StatusPill tone="quiet" dot>
+                        Active
+                      </StatusPill>
+                    )}
+                    {user.isTemp ? <StatusPill tone="warning">Temp</StatusPill> : null}
+                  </span>
+                ) : null}
+              </DetailRow>
+              <DetailRow label="Onboarding">
+                {user ? <BoolState value={user.onboardingCompleted} trueLabel="Completed" /> : null}
+              </DetailRow>
+              <DetailRow label="Created">{user ? <TimeCell value={user.createdAt} /> : null}</DetailRow>
+              <DetailRow label="Last login">{user ? <TimeCell value={user.lastLoginAt} /> : null}</DetailRow>
+              <DetailRow label="Auth provider">{user?.authProvider}</DetailRow>
+              <DetailRow label="Avatar">
                 {user?.image ? (
-                  <a className="break-all text-[var(--fg)] underline" href={user.image} target="_blank" rel="noreferrer">
+                  <a
+                    className="block truncate rounded text-[var(--fg)] underline decoration-[var(--border)] underline-offset-2 hover:decoration-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                    href={user.image}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={user.image}
+                  >
                     {user.image}
                   </a>
-                ) : (
-                  "—"
-                )}
-              </div>
-            </div>
-          </Panel>
-
-          <Panel className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--fg)]">Memberships</div>
-            <DataTable containerClassName="mt-3 rounded-xl bg-[var(--panel-2)]">
-              <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-                <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                  <th className="px-4 py-3">Workspace</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Slug</th>
-                  <th className="px-4 py-3">Role</th>
-                  <th className="px-4 py-3">Doc updates</th>
-                  <th className="px-4 py-3">Repo requests</th>
-                  <th className="px-4 py-3">Created</th>
-                  <th className="px-4 py-3">Updated</th>
-                  <th className="px-4 py-3">Org ID</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {memberships.map((m) => (
-                  <tr key={m.orgId}>
-                    <td className="px-4 py-3">{m.orgName ?? "—"}</td>
-                    <td className="px-4 py-3">{m.orgType ?? "—"}</td>
-                    <td className="px-4 py-3">{m.orgSlug ?? "—"}</td>
-                    <td className="px-4 py-3">{m.membershipRole ?? "—"}</td>
-                    <td className="px-4 py-3">{m.docUpdateEmailMode ?? "—"}</td>
-                    <td className="px-4 py-3">{m.repoLinkRequestEmailMode ?? "—"}</td>
-                    <td className="px-4 py-3">{fmtDate(m.membershipCreatedDate) || "—"}</td>
-                    <td className="px-4 py-3">{fmtDate(m.membershipUpdatedDate) || "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{m.orgId}</td>
-                  </tr>
-                ))}
-                {memberships.length === 0 ? (
-                  <tr>
-                    <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
-                      No memberships.
-                    </td>
-                  </tr>
                 ) : null}
-              </tbody>
-            </DataTable>
-          </Panel>
+              </DetailRow>
+              <DetailRow label="User ID">
+                <IdCell value={userId} label="user id" />
+              </DetailRow>
+              <DetailRow label="Provider account">
+                <IdCell value={user?.providerAccountId} label="provider account id" head={8} tail={4} />
+              </DetailRow>
+            </DetailGrid>
+          </DetailPanel>
 
-          <Panel className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--fg)]">Metadata (raw)</div>
-            <pre className="mt-3 max-h-[360px] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4 text-xs text-[var(--muted)]">
-              {JSON.stringify(user?.metadata ?? null, null, 2)}
-            </pre>
-          </Panel>
+          <DetailPanel title="Plan and billing" description="Plan override, Stripe state and the spend guardrail.">
+            <DetailGrid>
+              <DetailRow label="Plan">
+                {plan ? (
+                  <StatusPill tone={plan === "pro" ? "info" : "quiet"}>{plan === "pro" ? "Pro" : "Free"}</StatusPill>
+                ) : null}
+              </DetailRow>
+              <DetailRow label="Stripe status">
+                {user?.stripeSubscriptionStatus ? (
+                  <StatusPill tone={user.stripeSubscriptionStatus === "active" ? "positive" : "warning"}>
+                    {user.stripeSubscriptionStatus}
+                  </StatusPill>
+                ) : null}
+              </DetailRow>
+              <DetailRow label="Period end">
+                {user?.stripeCurrentPeriodEnd ? <TimeCell value={user.stripeCurrentPeriodEnd} mode="date" /> : null}
+              </DetailRow>
+              <DetailRow label="Spend limit">
+                <span className="tabular-nums">{centsText(user?.spendLimitCents)}</span>
+              </DetailRow>
+              <DetailRow label="Spent this period">
+                <span className="tabular-nums">{centsText(user?.spendUsedCentsThisPeriod)}</span>
+              </DetailRow>
+              <DetailRow label="Stripe customer">
+                <IdCell value={user?.stripeCustomerId} label="Stripe customer id" head={10} tail={4} />
+              </DetailRow>
+              <DetailRow label="Stripe subscription">
+                <IdCell value={user?.stripeSubscriptionId} label="Stripe subscription id" head={10} tail={4} />
+              </DetailRow>
+            </DetailGrid>
+          </DetailPanel>
         </div>
+
+        <DetailSection
+          className="mt-5"
+          title="Memberships"
+          description="Every workspace this user belongs to, and how it emails them."
+        />
+        <AdminTable
+          className="mt-2"
+          ariaLabel="Memberships"
+          head={
+            <>
+              <AdminTh>Workspace</AdminTh>
+              <AdminTh>Type</AdminTh>
+              <AdminTh>Slug</AdminTh>
+              <AdminTh>Role</AdminTh>
+              <AdminTh>Doc updates</AdminTh>
+              <AdminTh>Repo requests</AdminTh>
+              <AdminTh align="right">Created</AdminTh>
+              <AdminTh align="right">Updated</AdminTh>
+              <AdminTh>Workspace ID</AdminTh>
+            </>
+          }
+        >
+          {loading && memberships.length === 0 ? (
+            <AdminTableMessage colSpan={MEMBERSHIP_COLUMNS}>Loading memberships…</AdminTableMessage>
+          ) : memberships.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={MEMBERSHIP_COLUMNS}
+              title="No memberships"
+              hint="This user does not belong to any workspace yet."
+            />
+          ) : (
+            memberships.map((m) => (
+              <AdminTr key={m.orgId}>
+                <AdminTd primary truncate="max-w-[220px]">
+                  <Link
+                    href={`/a/data/workspaces/${encodeURIComponent(m.orgId)}`}
+                    className="rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                    title={m.orgName ?? "View workspace"}
+                  >
+                    {m.orgName ?? ADMIN_DASH}
+                  </Link>
+                </AdminTd>
+                <AdminTd>
+                  {m.orgType ? <span className="capitalize">{m.orgType}</span> : ADMIN_DASH}
+                </AdminTd>
+                <AdminTd truncate="max-w-[160px]">
+                  <span title={m.orgSlug ?? undefined}>{m.orgSlug ?? ADMIN_DASH}</span>
+                </AdminTd>
+                <AdminTd>
+                  {m.membershipRole ? <span className="capitalize">{m.membershipRole}</span> : ADMIN_DASH}
+                </AdminTd>
+                <AdminTd>{m.docUpdateEmailMode ?? ADMIN_DASH}</AdminTd>
+                <AdminTd>{m.repoLinkRequestEmailMode ?? ADMIN_DASH}</AdminTd>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={m.membershipCreatedDate} />
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={m.membershipUpdatedDate} />
+                </AdminTd>
+                <AdminTd>
+                  <IdCell
+                    value={m.orgId}
+                    label="workspace id"
+                    href={`/a/data/workspaces/${encodeURIComponent(m.orgId)}`}
+                  />
+                </AdminTd>
+              </AdminTr>
+            ))
+          )}
+        </AdminTable>
+
+        <DetailPanel
+          className="mt-5"
+          title="Metadata"
+          description="The raw metadata object on the user record."
+          bodyClassName="p-2"
+        >
+          <JsonBlock text={JSON.stringify(user?.metadata ?? null, null, 2)} maxHeight="max-h-[360px]" />
+        </DetailPanel>
       </div>
     </div>
   );
 }
-
-

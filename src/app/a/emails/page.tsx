@@ -5,27 +5,56 @@
  * out. The last part is the reason the page exists: only download-request emails are recorded per
  * message. Everything else leaves run-level counters or nothing, and the page says which rather
  * than implying a send log that does not exist.
+ *
+ * The previews are real bodies from the real builders, and there are a dozen of them — they open
+ * on demand rather than all at once, so the catalog above them stays the thing you land on.
  */
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
-import DataTable from "@/components/ui/DataTable";
 import Panel from "@/components/ui/Panel";
-import Select from "@/components/ui/Select";
-import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSelect,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  RowAction,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+  AdminSection,
+  IdCell,
+  RowActions,
+} from "@/components/admin";
+import { fmtDuration } from "@/lib/admin/format";
 import { sendStateLabel, traceLabel } from "@/lib/admin/emailsAdmin";
 import type {
   EmailCatalogRow,
+  EmailTrace,
   NotificationRunSummary,
   PlanLimitsRunSummary,
   SendOutcome,
 } from "@/lib/admin/emailsAdmin";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
+import {
+  ADMIN_CODE_BLOCK,
+  ADMIN_DASH,
+  ADMIN_FIELD_LABEL,
+  ADMIN_FIELD_VALUE,
+  ADMIN_NOTE,
+  type AdminTone,
+  toneTextStyle,
+  ADMIN_ROW_ACTION_LINK,
+} from "@/lib/admin/ui";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type SnapshotRow = {
@@ -73,50 +102,65 @@ type DownloadRequestRow = {
   claimEmailOutcome: SendOutcome;
 };
 
-const PAGE_TITLE = "Admin / Emails";
+const CATALOG_COLUMNS = 7;
+const BUCKET_COLUMNS = 8;
+const REQUEST_COLUMNS = 7;
 
-/** Colour for a cron job's status badge. */
-function statusPill(status: string | null): string {
-  if (status === "running") return "bg-blue-100 text-blue-800";
-  if (status === "error") return "bg-red-100 text-red-800";
-  return "bg-emerald-100 text-emerald-800";
+/** A cron job's state. `ok` is the boring case; only a failure gets a hue. */
+function jobTone(status: string | null): AdminTone {
+  if (status === "error") return "danger";
+  if (status === "running") return "info";
+  return "quiet";
 }
 
-/** Colour for how well a send is recorded: green per-send, amber run totals, grey nothing. */
-function tracePill(trace: EmailCatalogRow["trace"]): string {
-  if (trace === "per_send") return "bg-emerald-100 text-emerald-800";
-  if (trace === "run_totals") return "bg-amber-100 text-amber-900";
-  return "bg-[var(--panel-2)] text-[var(--muted-2)]";
-}
-
-/** Colour for one recorded send outcome. */
-function outcomePill(state: SendOutcome["state"]): string {
-  if (state === "sent") return "bg-emerald-100 text-emerald-800";
-  if (state === "failed") return "bg-red-100 text-red-800";
-  return "bg-[var(--panel-2)] text-[var(--muted-2)]";
+/** How well a send is recorded: per-message is the good case, nothing at all is the bad one. */
+function traceTone(trace: EmailTrace): AdminTone {
+  if (trace === "per_send") return "positive";
+  if (trace === "run_totals") return "warning";
+  return "quiet";
 }
 
 /** A number the server actually returned, or an em dash when the field was absent. */
 function n(v: number | null | undefined): string {
-  return typeof v === "number" && Number.isFinite(v) ? String(v) : "—";
+  return typeof v === "number" && Number.isFinite(v) ? String(v) : ADMIN_DASH;
 }
 
-/** A small status badge, in the shape the other admin pages use. */
-function Pillish({ className, children }: { className: string; children: React.ReactNode }) {
+/**
+ * One recorded send, on one line. A success is quiet — a column of green ticks says nothing —
+ * and the timestamp or the error that explains the state lives in the cell's title.
+ */
+function OutcomeCell({ outcome }: { outcome: SendOutcome }) {
+  const when = outcome.at ? new Date(outcome.at).toLocaleString() : null;
+  if (outcome.state === "failed") {
+    return (
+      <StatusPill tone="danger" title={[when, outcome.error].filter(Boolean).join(" — ") || undefined}>
+        {outcome.error ? outcome.error : sendStateLabel(outcome.state)}
+      </StatusPill>
+    );
+  }
+  if (outcome.state === "sent") {
+    return (
+      <StatusPill tone="quiet" title={when ?? undefined}>
+        {sendStateLabel(outcome.state)}
+      </StatusPill>
+    );
+  }
   return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${className}`}>
-      {children}
+    <span
+      className="text-[var(--muted-2)]"
+      title="Neither a sent-at stamp nor an error: never attempted, or the write that would have stamped it failed."
+    >
+      {ADMIN_DASH}
     </span>
   );
 }
 
-/** One recorded send: state, when it happened, and the error when it failed. */
-function OutcomeCell({ outcome }: { outcome: SendOutcome }) {
+/** One labelled fact about a cron job. */
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <Pillish className={outcomePill(outcome.state)}>{sendStateLabel(outcome.state)}</Pillish>
-      {outcome.at ? <div className="mt-1 text-xs text-[var(--muted-2)]">{fmtDate(outcome.at) || "—"}</div> : null}
-      {outcome.error ? <div className="mt-1 break-words text-xs text-red-700">{outcome.error}</div> : null}
+      <dt className={ADMIN_FIELD_LABEL}>{label}</dt>
+      <dd className={`mt-0.5 truncate ${ADMIN_FIELD_VALUE}`}>{children}</dd>
     </div>
   );
 }
@@ -124,39 +168,38 @@ function OutcomeCell({ outcome }: { outcome: SendOutcome }) {
 /** The header line for a cron job: status, last run, duration, schedule. */
 function JobSnapshot({ snapshot }: { snapshot: SnapshotRow }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-[var(--muted)]">
-      <Pillish className={statusPill(snapshot.status)}>{snapshot.status ?? "never run"}</Pillish>
-      <span>
-        <span className="font-semibold text-[var(--fg)]">Last run:</span> {fmtDate(snapshot.lastRunAt) || "—"}
-      </span>
-      <span>
-        <span className="font-semibold text-[var(--fg)]">Duration:</span>{" "}
-        {fmtDuration(snapshot.lastDurationMs) || "—"}
-      </span>
-      <span>
-        <span className="font-semibold text-[var(--fg)]">Schedule:</span>{" "}
+    <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+      <Fact label="Status">
+        <StatusPill tone={jobTone(snapshot.status)} dot={snapshot.status !== "error"}>
+          {snapshot.status ?? "never run"}
+        </StatusPill>
+      </Fact>
+      <Fact label="Last run">
+        <span className="tabular-nums">
+          <TimeCell value={snapshot.lastRunAt} />
+        </span>
+      </Fact>
+      <Fact label="Duration">
+        <span className="tabular-nums">{fmtDuration(snapshot.lastDurationMs) || ADMIN_DASH}</span>
+      </Fact>
+      <Fact label="Schedule">
         {snapshot.schedule ? (
-          <>
-            <span className="font-mono text-xs">{snapshot.schedule}</span> ({snapshot.scheduleHuman})
-          </>
+          <span title={`${snapshot.schedule} — ${snapshot.scheduleHuman}`}>
+            <span className="font-mono text-[12px]">{snapshot.schedule}</span>{" "}
+            <span className="text-[var(--muted-2)]">({snapshot.scheduleHuman})</span>
+          </span>
         ) : (
-          "—"
+          ADMIN_DASH
         )}
-      </span>
-    </div>
+      </Fact>
+    </dl>
   );
 }
 
 /** Render the Emails admin page (fetches the catalog, previews and download-request rows). */
 export default function AdminEmailsPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [overview, setOverview] = useState<OverviewPayload | null>(null);
   const [previews, setPreviews] = useState<PreviewRow[]>([]);
@@ -175,11 +218,8 @@ export default function AdminEmailsPage() {
 
   /** Which part of a preview is on screen: the text part, or the HTML part when it has one. */
   const [previewMode, setPreviewMode] = useState<Record<string, "text" | "html">>({});
-
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil((requestsTotal || 0) / limit)),
-    [requestsTotal, limit],
-  );
+  /** Which previews are unrolled. A dozen full email bodies at once is not a page. */
+  const [openPreviews, setOpenPreviews] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -244,499 +284,553 @@ export default function AdminEmailsPage() {
     setPreviewMode((prev) => ({ ...prev, [key]: mode }));
   }, []);
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
+  // Several previews can share a catalog id (three plan-limit kinds, free and pro view emails), so
+  // the anchor the catalog table links to goes on the first of them only — one id, one element.
+  const anchorKeys = useMemo(() => {
+    const keys = new Set<string>();
+    const seen = new Set<string>();
+    for (const preview of previews) {
+      if (seen.has(preview.catalogId)) continue;
+      seen.add(preview.catalogId);
+      keys.add(preview.key);
+    }
+    return keys;
+  }, [previews]);
 
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">{PAGE_TITLE}</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/emails" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // A link from the catalog lands on a folded preview; unfold the one it named.
+  useEffect(() => {
+    if (previews.length === 0) return;
+    /** Unfold the preview the location hash names, if it is one of ours. */
+    function openFromHash() {
+      const hash = window.location.hash.replace(/^#preview-/, "");
+      if (!hash || hash === window.location.hash) return;
+      const target = previews.find((p) => p.catalogId === hash && anchorKeys.has(p.key));
+      if (target) setOpenPreviews((prev) => ({ ...prev, [target.key]: true }));
+    }
+    openFromHash();
+    window.addEventListener("hashchange", openFromHash);
+    return () => window.removeEventListener("hashchange", openFromHash);
+  }, [previews, anchorKeys]);
 
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">{PAGE_TITLE}</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Emails" description="Every email the product can send, a preview of each one with a builder, and the jobs that send them." callbackUrl="/a/emails" />;
   }
 
   const catalog = overview?.catalog ?? [];
-  // Several previews can share a catalog id (three plan-limit kinds, free and pro view emails), so
-  // the anchor the catalog table links to goes on the first of them only — one id, one element.
-  const anchorKeys = new Set<string>();
-  const anchoredCatalogIds = new Set<string>();
-  for (const preview of previews) {
-    if (anchoredCatalogIds.has(preview.catalogId)) continue;
-    anchoredCatalogIds.add(preview.catalogId);
-    anchorKeys.add(preview.key);
-  }
   const notificationRun = overview?.notification?.run ?? null;
   const planLimitsRun = overview?.planLimits?.run ?? null;
-  const notRecorded = catalog.filter((row) => row.trace !== "per_send");
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">{PAGE_TITLE}</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Every email the product can send, a preview of each template that has a builder, and the last
-              run of the jobs that send them.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href="/a"
-              className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)]"
-            >
-              Admin home
-            </Link>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={loading}
-              onClick={() => setReloadKey((v) => v + 1)}
-            >
+        {/* One header shape: title, one line, one action. The advisory that used to sit in a
+            full-width grey box above the first section is the second half of the description —
+            no other admin page opens with a callout, and this one said nothing the sections
+            could not say where they are read. */}
+        {/* One sentence, like every other admin page. The longer version ran the header past
+            two lines, which wrapped Refresh underneath the prose instead of leaving it on the
+            right where every other page puts it; the caveat it carried is already the opening
+            line of both sections it applies to. */}
+        <AdminPageHeader
+          title="Emails"
+          description="Every email the product can send, a preview of each one, and the jobs that send them."
+          actions={
+            <Button variant="outline" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
               {loading ? "Loading…" : "Refresh"}
             </Button>
-          </div>
-        </div>
+          }
+        />
 
-        {error ? <div className="mt-4 text-sm text-red-700">{error}</div> : null}
+        {error ? (
+          <AdminAlert className="mt-3">
+            {error}
+          </AdminAlert>
+        ) : null}
 
-        <Alert variant="info" className="mt-5 text-sm">
-          Sends are not logged. Only the three download-request emails are recorded per message (in{" "}
-          <span className="font-mono text-xs">ShareDownloadRequest</span>); everything else leaves run
-          counters on the cron snapshot, or nothing at all. &quot;Sent&quot; here means the POST to Resend
-          returned 2xx — there is no bounce, open or complaint data anywhere in the product.
-        </Alert>
-
-        {/* ------------------------------------------------------------------ catalog */}
-        <h2 className="mt-8 text-base font-semibold text-[var(--fg)]">What we send</h2>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          From <span className="font-mono text-xs">EMAIL_CATALOG</span> in{" "}
-          <span className="font-mono text-xs">src/lib/email/templates</span>. It is hand-maintained
-          documentation, not derived from the senders, so it can drift from what actually sends.
-        </p>
-
-        {loading && !overview ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-4 rounded-xl bg-[var(--panel-2)]">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">Email</th>
-                <th className="px-4 py-3">To</th>
-                <th className="px-4 py-3">What it says</th>
-                <th className="px-4 py-3">Body built in</th>
-                <th className="px-4 py-3">Recorded</th>
-                <th className="px-4 py-3">Preview</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {catalog.map((row) => (
-                <tr key={row.id}>
-                  <td className="px-4 py-3">
-                    <div className="font-mono text-xs font-semibold text-[var(--fg)]">{row.id}</div>
-                    {row.flagGated ? (
-                      <div className="mt-1 text-xs text-amber-800">
-                        only sends when {row.flagGated}=1
-                      </div>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-3 text-[var(--muted)]">{row.to}</td>
-                  <td className="px-4 py-3 text-[var(--muted)]">{row.what}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{row.builtBy}</td>
-                  <td className="px-4 py-3">
-                    <Pillish className={tracePill(row.trace)}>{traceLabel(row.trace)}</Pillish>
-                    <div className="mt-1 max-w-[28rem] text-xs text-[var(--muted-2)]">{row.traceNote}</div>
-                  </td>
-                  <td className="px-4 py-3">
+        {/* ------------------------------------------------------------ catalog */}
+        <AdminSection
+          title="What we send"
+          description={
+            <>
+              From <span className="font-mono text-[12px]">EMAIL_CATALOG</span>, hand-maintained, so it can drift from
+              what actually sends. Recorded says what proof a send leaves — per message, run totals only, or nothing.
+            </>
+          }
+        >
+        <AdminTable
+          ariaLabel="Email catalog"
+          head={
+            <>
+              {/* The gate chip has its own column: sharing the Email cell with the id made it
+                  an atomic flex item inside a truncating cell, so it was sliced to "fl". */}
+              {/* Every column but the prose one is capped to what it actually holds, and the
+                  prose column takes whatever is left — otherwise the two columns a reader is
+                  here for (the id, and the sentence) were the two that ended in "…". */}
+              <AdminTh width="w-[232px]">Email</AdminTh>
+              <AdminTh width="w-[52px]">Gate</AdminTh>
+              <AdminTh width="w-[84px]">To</AdminTh>
+              <AdminTh width="w-full">What it says</AdminTh>
+              <AdminTh width="w-[162px]">Built in</AdminTh>
+              <AdminTh width="w-[100px]">Recorded</AdminTh>
+              <AdminTh align="right" sticky>
+                Preview
+              </AdminTh>
+            </>
+          }
+        >
+          {loading && catalog.length === 0 ? (
+            <AdminTableMessage colSpan={CATALOG_COLUMNS}>Loading the catalog…</AdminTableMessage>
+          ) : catalog.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={CATALOG_COLUMNS}
+              title="No catalog rows"
+              hint="EMAIL_CATALOG came back empty, which means the overview route could not read it."
+            />
+          ) : (
+            catalog.map((row) => (
+              <AdminTr key={row.id}>
+                <AdminTd primary mono truncate="max-w-[232px]">
+                  <span title={row.id}>{row.id}</span>
+                </AdminTd>
+                <AdminTd>
+                  {row.flagGated ? (
+                    <StatusPill tone="warning" title={`Only sends when ${row.flagGated}=1`}>
+                      Flagged
+                    </StatusPill>
+                  ) : (
+                    <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                  )}
+                </AdminTd>
+                <AdminTd truncate="max-w-[84px]">
+                  <span title={row.to}>{row.to}</span>
+                </AdminTd>
+                {/* `w-full` + `max-w-0`: the sentence contributes nothing to the table's
+                    intrinsic width, so it fills the slack instead of pushing a scrollbar. */}
+                <AdminTd truncate="w-full max-w-0">
+                  <span title={row.what}>{row.what}</span>
+                </AdminTd>
+                {/* The path is 60 characters of repeated prefix; the file is the answer and the
+                    full path is one hover away, so the prose column gets the slack. */}
+                <AdminTd mono truncate="max-w-[162px]">
+                  <span title={row.builtBy}>{row.builtBy.split("/").pop() || row.builtBy}</span>
+                </AdminTd>
+                <AdminTd>
+                  <StatusPill tone={traceTone(row.trace)} title={row.traceNote}>
+                    {traceLabel(row.trace)}
+                  </StatusPill>
+                </AdminTd>
+                <AdminTd align="right" sticky actions>
+                  {/* "Below" described a location; this is the jump itself, sized like every
+                      other row action so the column reads as actionable. */}
+                  <RowActions>
                     {row.previewable ? (
-                      <a href={`#preview-${row.id}`} className="text-sm font-semibold text-[var(--fg)] hover:underline">
-                        Below
+                      <a className={ADMIN_ROW_ACTION_LINK} href={`#preview-${row.id}`} title="Jump to this preview">
+                        Preview
                       </a>
                     ) : (
-                      <div className="max-w-[20rem] text-xs text-[var(--muted-2)]">{row.previewNote ?? "—"}</div>
+                      <span className="text-[var(--muted-2)]" title={row.previewNote ?? undefined}>
+                        {ADMIN_DASH}
+                      </span>
                     )}
-                  </td>
-                </tr>
-              ))}
-              {catalog.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={6}>
-                    No catalog rows.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </DataTable>
-        )}
+                  </RowActions>
+                </AdminTd>
+              </AdminTr>
+            ))
+          )}
+        </AdminTable>
+        </AdminSection>
 
-        {notRecorded.length > 0 ? (
-          <Panel className="mt-4">
-            <div className="text-sm font-semibold text-[var(--fg)]">Not recorded</div>
-            <div className="mt-2 grid gap-1 text-sm text-[var(--muted)]">
-              {notRecorded.map((row) => (
-                <div key={row.id}>
-                  not recorded: <span className="font-mono text-xs text-[var(--fg)]">{row.id}</span> — {row.traceNote}
-                </div>
-              ))}
-            </div>
+        {/* ------------------------------------------- notification job last run */}
+        <AdminSection
+          title="Notification job — last run"
+          description="One snapshot per job, overwritten every tick — there is no run history, so nothing here adds up over time. Emails are messages sent; events are the source rows folded into them. The daily gate says the digest window was open this tick, not that a digest went out."
+        >
+          <Panel padding="md" rounded="xl" className="min-w-0">
+            {overview ? <JobSnapshot snapshot={overview.notification.snapshot} /> : null}
+            {overview?.notification?.snapshot?.lastError ? (
+              <p className="mt-2 text-[12px] leading-5" style={toneTextStyle("danger")}>
+                {overview.notification.snapshot.lastError}
+              </p>
+            ) : null}
+            {/* The same `Fact` grid the plan-limit panel uses: two panels showing the same kind
+                of snapshot were a 4-field grid beside a run-on sentence. */}
+            {notificationRun ? (
+              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+                <Fact label="Run at">
+                  <span className="tabular-nums">
+                    <TimeCell value={notificationRun.now} />
+                  </span>
+                </Fact>
+                <Fact label="Workspaces">
+                  <span className="tabular-nums">{n(notificationRun.workspacesProcessed)}</span>
+                </Fact>
+                <Fact label="Members">
+                  <span className="tabular-nums">{n(notificationRun.membersProcessed)}</span>
+                </Fact>
+                <Fact label="Send failures">
+                  {notificationRun.sendFailures ? (
+                    <StatusPill tone="danger">{n(notificationRun.sendFailures)}</StatusPill>
+                  ) : (
+                    <span className="tabular-nums">{n(notificationRun.sendFailures)}</span>
+                  )}
+                </Fact>
+                <Fact label="View emails off">
+                  <span className="tabular-nums">{n(notificationRun.viewsOffMembers)}</span>
+                </Fact>
+                <Fact label="Cursors seeded">
+                  <span className="tabular-nums">{n(notificationRun.viewsCursorsInitialized)}</span>
+                </Fact>
+                <Fact label="Views errors">
+                  {notificationRun.viewsErrors ? (
+                    <StatusPill tone="danger">{n(notificationRun.viewsErrors)}</StatusPill>
+                  ) : (
+                    <span className="tabular-nums">{n(notificationRun.viewsErrors)}</span>
+                  )}
+                </Fact>
+                <Fact label="Dry run">
+                  {notificationRun.dryRun ? (
+                    <StatusPill tone="warning" title="Nothing sent, no cursor moved">
+                      Yes
+                    </StatusPill>
+                  ) : (
+                    <span className="text-[var(--muted-2)]">No</span>
+                  )}
+                </Fact>
+              </dl>
+            ) : (
+              <p className={ADMIN_NOTE}>
+                No run counters on this snapshot (the job may not have run since deploy, or the last tick was skipped
+                because another run held the lease).
+              </p>
+            )}
           </Panel>
-        ) : null}
-
-        {/* ------------------------------------------------- notification job last run */}
-        <h2 className="mt-8 text-base font-semibold text-[var(--fg)]">Notification job — last run</h2>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          One snapshot per job, overwritten on every tick. There is no run history, so nothing here adds up
-          over time.
-        </p>
-
-        <Panel className="mt-4">
-          {overview ? <JobSnapshot snapshot={overview.notification.snapshot} /> : null}
-          {overview?.notification?.snapshot?.lastError ? (
-            <div className="mt-2 text-xs text-red-700">{overview.notification.snapshot.lastError}</div>
-          ) : null}
 
           {notificationRun ? (
-            <>
-              <div className="mt-3 text-sm text-[var(--muted)]">
-                Run at {fmtDate(notificationRun.now) || "—"} • workspaces{" "}
-                {n(notificationRun.workspacesProcessed)} • members {n(notificationRun.membersProcessed)} • send
-                failures {n(notificationRun.sendFailures)}
-                {notificationRun.dryRun ? " • dry run (nothing sent, no cursor moved)" : ""}
-                {notificationRun.membersTruncated ? " • member scan was truncated" : ""}
-              </div>
-              <DataTable containerClassName="mt-4 rounded-xl bg-[var(--panel-2)]">
-                <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                    <th className="px-4 py-3">Type</th>
-                    <th className="px-4 py-3">Emails</th>
-                    <th className="px-4 py-3">Recipients</th>
-                    <th className="px-4 py-3">Events covered</th>
-                    <th className="px-4 py-3">Returns</th>
-                    <th className="px-4 py-3">Failed</th>
-                    <th className="px-4 py-3">Daily gate open</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {notificationRun.buckets.map((b) => (
-                    <tr key={b.key}>
-                      <td className="px-4 py-3">
-                        <div className="font-semibold text-[var(--fg)]">{b.label}</div>
-                        <div className="mt-1 font-mono text-xs text-[var(--muted-2)]">{b.key}</div>
-                      </td>
-                      <td className="px-4 py-3 text-[var(--muted)]">{n(b.emails)}</td>
-                      <td className="px-4 py-3 text-[var(--muted)]">{n(b.members)}</td>
-                      <td className="px-4 py-3 text-[var(--muted)]">{n(b.events)}</td>
-                      <td className="px-4 py-3 text-[var(--muted)]">{n(b.returns)}</td>
-                      <td className={`px-4 py-3 ${b.failed ? "text-red-700" : "text-[var(--muted)]"}`}>
-                        {n(b.failed)}
-                      </td>
-                      <td className="px-4 py-3 text-[var(--muted)]">
-                        {b.sentTodayUtc === null ? "—" : b.sentTodayUtc ? "yes" : "no"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </DataTable>
-              <div className="mt-3 grid gap-1 text-xs text-[var(--muted-2)]">
-                <div>
-                  Emails = messages sent. Events covered = source rows (viewers, doc changes, uploads) folded
-                  into them. Daily gate open says the digest window was open this tick, not that a digest went
-                  out.
-                </div>
-                <div>
-                  Cursor moves with nothing sent: {n(notificationRun.viewsOffMembers)} members with view emails
-                  off, {n(notificationRun.viewsCursorsInitialized)} cursors seeded.{" "}
-                  {n(notificationRun.viewsErrors)} workspaces threw in the views block.
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="mt-3 text-sm text-[var(--muted)]">
-              No run counters on this snapshot (the job may not have run since deploy, or the last tick was
-              skipped because another run held the lease).
-            </div>
-          )}
-        </Panel>
+            <AdminTable
+              className="mt-3"
+              ariaLabel="Notification buckets on the last run"
+              head={
+                <>
+                  <AdminTh>Type</AdminTh>
+                  <AdminTh>Key</AdminTh>
+                  <AdminTh align="right">Emails</AdminTh>
+                  <AdminTh align="right">Recipients</AdminTh>
+                  <AdminTh align="right">Events</AdminTh>
+                  <AdminTh align="right">Returns</AdminTh>
+                  <AdminTh align="right">Failed</AdminTh>
+                  <AdminTh>Daily gate</AdminTh>
+                </>
+              }
+            >
+              {notificationRun.buckets.length === 0 ? (
+                <AdminTableEmpty colSpan={BUCKET_COLUMNS} title="The last run reported no buckets" />
+              ) : (
+                notificationRun.buckets.map((b) => (
+                  <AdminTr key={b.key}>
+                    <AdminTd primary truncate="max-w-[220px]">
+                      <span title={b.label}>{b.label}</span>
+                    </AdminTd>
+                    <AdminTd mono truncate="max-w-[200px]">
+                      <span title={b.key}>{b.key}</span>
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      {n(b.emails)}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      {n(b.members)}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      {n(b.events)}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      {n(b.returns)}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      {b.failed ? (
+                        <StatusPill tone="danger">{n(b.failed)}</StatusPill>
+                      ) : (
+                        <span className="text-[var(--muted-2)]">{n(b.failed)}</span>
+                      )}
+                    </AdminTd>
+                    <AdminTd>
+                      {b.sentTodayUtc === null ? (
+                        ADMIN_DASH
+                      ) : b.sentTodayUtc ? (
+                        <StatusPill tone="quiet" title="The digest window was open this tick">
+                          Open
+                        </StatusPill>
+                      ) : (
+                        <span className="text-[var(--muted-2)]">Closed</span>
+                      )}
+                    </AdminTd>
+                  </AdminTr>
+                ))
+              )}
+            </AdminTable>
+          ) : null}
+        </AdminSection>
 
-        {/* --------------------------------------------------- plan limits job last run */}
-        <h2 className="mt-8 text-base font-semibold text-[var(--fg)]">Plan-limit job — last run</h2>
-        <Panel className="mt-4">
+        {/* --------------------------------------------- plan limits job last run */}
+        <AdminSection
+          title="Plan-limit job — last run"
+          description="Started, reminded and blocked count state transitions; each one sends one email to the owner. Errors mixes failed sends with failed writes, so a nonzero count does not say how many owners went unmailed."
+        >
+        <Panel padding="md" rounded="xl" className="min-w-0">
           {overview ? <JobSnapshot snapshot={overview.planLimits.snapshot} /> : null}
           {overview?.planLimits?.snapshot?.lastError ? (
-            <div className="mt-2 text-xs text-red-700">{overview.planLimits.snapshot.lastError}</div>
+            <p className="mt-2 text-[12px] leading-5" style={toneTextStyle("danger")}>{overview.planLimits.snapshot.lastError}</p>
           ) : null}
+
           {planLimitsRun ? (
             <>
-              <div className="mt-3 grid gap-2 text-sm text-[var(--muted)] sm:grid-cols-2">
-                <div>
-                  <span className="font-semibold text-[var(--fg)]">Workspaces scanned:</span>{" "}
-                  {n(planLimitsRun.scanned)}
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--fg)]">Grace started:</span> {n(planLimitsRun.started)}
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--fg)]">Reminded:</span> {n(planLimitsRun.reminded)}
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--fg)]">Blocked:</span> {n(planLimitsRun.blocked)}
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--fg)]">Cleared:</span> {n(planLimitsRun.cleared)}
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--fg)]">Upgraded:</span> {n(planLimitsRun.upgraded)}
-                </div>
-                <div className={planLimitsRun.errors ? "text-red-700" : undefined}>
-                  <span className="font-semibold text-[var(--fg)]">Errors:</span> {n(planLimitsRun.errors)}
-                </div>
-                <div>
-                  <span className="font-semibold text-[var(--fg)]">Dry run:</span>{" "}
-                  {planLimitsRun.dryRun === null ? "—" : planLimitsRun.dryRun ? "yes" : "no"}
-                </div>
-              </div>
-              <div className="mt-3 text-xs text-[var(--muted-2)]">
-                Started / reminded / blocked count state transitions, each of which sends one email per owner.
-                Errors mixes failed sends and failed writes; the sweep does not separate them, so a nonzero
-                errors count does not say how many owners went unmailed.
-              </div>
+              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+                <Fact label="Scanned">
+                  <span className="tabular-nums">{n(planLimitsRun.scanned)}</span>
+                </Fact>
+                <Fact label="Grace started">
+                  <span className="tabular-nums">{n(planLimitsRun.started)}</span>
+                </Fact>
+                <Fact label="Reminded">
+                  <span className="tabular-nums">{n(planLimitsRun.reminded)}</span>
+                </Fact>
+                <Fact label="Blocked">
+                  <span className="tabular-nums">{n(planLimitsRun.blocked)}</span>
+                </Fact>
+                <Fact label="Cleared">
+                  <span className="tabular-nums">{n(planLimitsRun.cleared)}</span>
+                </Fact>
+                <Fact label="Upgraded">
+                  <span className="tabular-nums">{n(planLimitsRun.upgraded)}</span>
+                </Fact>
+                <Fact label="Errors">
+                  {planLimitsRun.errors ? (
+                    <StatusPill tone="danger">{n(planLimitsRun.errors)}</StatusPill>
+                  ) : (
+                    <span className="tabular-nums">{n(planLimitsRun.errors)}</span>
+                  )}
+                </Fact>
+                <Fact label="Dry run">
+                  {planLimitsRun.dryRun === null ? (
+                    ADMIN_DASH
+                  ) : planLimitsRun.dryRun ? (
+                    <StatusPill tone="warning">Yes</StatusPill>
+                  ) : (
+                    <span className="text-[var(--muted-2)]">No</span>
+                  )}
+                </Fact>
+              </dl>
             </>
           ) : (
-            <div className="mt-3 text-sm text-[var(--muted)]">No sweep counters on this snapshot yet.</div>
+            <p className={ADMIN_NOTE}>No sweep counters on this snapshot yet.</p>
           )}
         </Panel>
+        </AdminSection>
 
-        {/* ----------------------------------------------------------------- previews */}
-        <h2 className="mt-8 text-base font-semibold text-[var(--fg)]">Previews</h2>
-        <p className="mt-1 text-sm text-[var(--muted)]">
-          Real bodies from the real builders, called with the sample inputs shown on each card. Nothing is
-          read from the database and nothing is sent.
-        </p>
-
-        {unavailable.length > 0 ? (
-          <Panel className="mt-4">
-            <div className="text-sm font-semibold text-[var(--fg)]">No preview available</div>
-            <div className="mt-2 grid gap-1 text-sm text-[var(--muted)]">
-              {unavailable.map((row) => (
-                <div key={row.catalogId}>
-                  <span className="font-mono text-xs text-[var(--fg)]">{row.catalogId}</span> — body is built
-                  inline in <span className="font-mono text-xs">{row.builtBy}</span>, with no exported builder
-                  to call.
-                </div>
-              ))}
-            </div>
-          </Panel>
-        ) : null}
-
-        <div className="mt-4 grid gap-4">
+        {/* ----------------------------------------------------------- previews */}
+        <AdminSection
+          title="Previews"
+          description="Real bodies from the real builders, called with sample inputs. Nothing is read from the database and nothing is sent."
+        >
+        <div className="grid gap-2">
           {previews.map((preview) => {
             const mode = previewMode[preview.key] ?? "text";
+            const open = Boolean(openPreviews[preview.key]);
             return (
-              <Panel
+              <details
                 key={preview.key}
                 id={anchorKeys.has(preview.key) ? `preview-${preview.catalogId}` : undefined}
-                className="min-w-0 scroll-mt-6"
+                open={open}
+                onToggle={(e) =>
+                  setOpenPreviews((prev) => ({ ...prev, [preview.key]: (e.target as HTMLDetailsElement).open }))
+                }
+                className="min-w-0 scroll-mt-6 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-[var(--fg)]">{preview.label}</div>
-                    <div className="mt-1 font-mono text-xs text-[var(--muted-2)]">{preview.catalogId}</div>
-                  </div>
-                  {preview.html ? (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className={mode === "text" ? "bg-[var(--panel-hover)]" : "bg-[var(--panel-2)]"}
-                        onClick={() => setMode(preview.key, "text")}
-                      >
-                        Text part
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className={mode === "html" ? "bg-[var(--panel-hover)]" : "bg-[var(--panel-2)]"}
-                        onClick={() => setMode(preview.key, "html")}
-                      >
-                        HTML part
-                      </Button>
+                <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 px-3.5 py-2.5 hover:bg-[var(--panel-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--fg)]">
+                  <span className="text-[13px] font-medium leading-5 text-[var(--fg)]">{preview.label}</span>
+                  <span className="truncate font-mono text-[12px] leading-5 text-[var(--muted-2)]">
+                    {preview.catalogId}
+                  </span>
+                  <span className="ml-auto truncate text-[12px] leading-5 text-[var(--muted-2)]" title={preview.subject}>
+                    {preview.subject}
+                  </span>
+                  {preview.html ? <StatusPill tone="quiet">text + html</StatusPill> : <StatusPill tone="quiet">text</StatusPill>}
+                </summary>
+
+                <div className="border-t border-[var(--border)] px-3.5 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] leading-5 text-[var(--muted-2)]">
+                      {preview.inputs.map((input) => (
+                        <span key={input.label}>
+                          <span className="font-medium">{input.label}:</span> {input.value}
+                        </span>
+                      ))}
                     </div>
-                  ) : (
-                    <div className="text-xs text-[var(--muted-2)]">text only — this email has no HTML part</div>
-                  )}
-                </div>
-
-                <div className="mt-3 text-sm text-[var(--muted)]">
-                  <span className="font-semibold text-[var(--fg)]">Subject:</span> {preview.subject}
-                </div>
-
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted-2)]">
-                  {preview.inputs.map((input) => (
-                    <span key={input.label}>
-                      <span className="font-semibold">{input.label}:</span> {input.value}
-                    </span>
-                  ))}
-                </div>
-
-                {mode === "html" && preview.html ? (
-                  // sandboxed and empty-allowlist: the email HTML is rendered, never run, and cannot
-                  // reach the admin page around it
-                  <iframe
-                    sandbox=""
-                    srcDoc={preview.html}
-                    title={`${preview.label} — HTML part`}
-                    className="mt-3 h-[560px] w-full rounded-xl border border-[var(--border)] bg-white"
-                  />
-                ) : (
-                  <pre className="mt-3 max-h-[560px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4 font-mono text-xs leading-5 text-[var(--fg)]">
-                    {preview.text}
-                  </pre>
-                )}
-
-                {preview.headers ? (
-                  <div className="mt-3 grid gap-1 text-xs text-[var(--muted-2)]">
-                    {preview.headers.map((h) => (
-                      <div key={h.name}>
-                        <span className="font-semibold text-[var(--fg)]">{h.name}:</span>{" "}
-                        <span className="font-mono break-words">{h.value}</span>
+                    {preview.html ? (
+                      <div className="flex items-center gap-1.5">
+                        <RowAction
+                          aria-pressed={mode === "text"}
+                          className={mode === "text" ? "bg-[var(--panel-hover)] text-[var(--fg)]" : undefined}
+                          onClick={() => setMode(preview.key, "text")}
+                        >
+                          Text part
+                        </RowAction>
+                        <RowAction
+                          aria-pressed={mode === "html"}
+                          className={mode === "html" ? "bg-[var(--panel-hover)] text-[var(--fg)]" : undefined}
+                          onClick={() => setMode(preview.key, "html")}
+                        >
+                          HTML part
+                        </RowAction>
                       </div>
-                    ))}
+                    ) : null}
                   </div>
-                ) : null}
-              </Panel>
+
+                  {mode === "html" && preview.html ? (
+                    // sandboxed and empty-allowlist: the email HTML is rendered, never run, and cannot
+                    // reach the admin page around it
+                    <iframe
+                      sandbox=""
+                      srcDoc={preview.html}
+                      title={`${preview.label} — HTML part`}
+                      className="mt-2.5 h-[460px] w-full rounded-lg border border-[var(--border)] bg-white"
+                    />
+                  ) : (
+                    <pre className={`mt-2.5 max-h-[420px] ${ADMIN_CODE_BLOCK}`}>{preview.text}</pre>
+                  )}
+
+                  {preview.headers ? (
+                    <div className="mt-2 grid gap-1 text-[12px] leading-5 text-[var(--muted-2)]">
+                      {preview.headers.map((h) => (
+                        <div key={h.name} className="truncate" title={`${h.name}: ${h.value}`}>
+                          <span className="font-medium text-[var(--fg)]">{h.name}:</span>{" "}
+                          <span className="font-mono">{h.value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </details>
             );
           })}
+
           {!loading && previews.length === 0 ? (
-            <Panel>
-              <div className="text-sm text-[var(--muted)]">No previews.</div>
+            <Panel padding="md" rounded="xl">
+              <div className="text-[13px] text-[var(--muted-2)]">No previews.</div>
             </Panel>
           ) : null}
         </div>
 
-        {/* -------------------------------------------------------- download requests */}
-        <div className="mt-8 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-[var(--fg)]">Download-request emails</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              The only emails recorded per message. Denials send no email at all, by design, so a denied
-              request shows nothing in the claim column.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              className="w-[160px] max-w-full"
-              value={requestStatus}
-              onChange={(e) => {
-                setPage(1);
-                setRequestStatus(e.target.value);
-              }}
-            >
-              <option value="">All statuses</option>
-              <option value="pending">pending</option>
-              <option value="approved">approved</option>
-              <option value="denied">denied</option>
-            </Select>
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {page} / {totalPages} • {requestsTotal} total
-            </div>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
+        {/* The one caveat this section has, in the section, not dangling under it. */}
+        {unavailable.length > 0 ? (
+          <p className={ADMIN_NOTE}>
+            No builder to call, so no preview:{" "}
+            {unavailable.map((row, i) => (
+              <span key={row.catalogId}>
+                {i > 0 ? ", " : ""}
+                <span className="font-mono text-[12px] text-[var(--muted)]" title={`body is built inline in ${row.builtBy}`}>
+                  {row.catalogId}
+                </span>
+              </span>
+            ))}
+            . Each of those is built inline in its sender.
+          </p>
+        ) : null}
+        </AdminSection>
 
-        {requestsError ? <div className="mt-4 text-sm text-red-700">{requestsError}</div> : null}
+        {/* -------------------------------------------------- download requests */}
+        <AdminSection
+          title="Download-request emails"
+          description="The only emails recorded per message. A denial sends nothing, by design, so it shows no claim mail. A dash in a mail column means neither a sent-at stamp nor an error: never attempted, or the write that would have stamped it failed."
+        >
+        <AdminFilterBar
+          page={page}
+          pageSize={limit}
+          total={requestsTotal}
+          onPageChange={setPage}
+          noun="requests"
+          loading={requestsLoading}
+        >
+          <AdminSelect
+            ariaLabel="Filter by request status"
+            value={requestStatus}
+            onChange={(e) => {
+              setPage(1);
+              setRequestStatus(e.target.value);
+            }}
+          >
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="denied">Denied</option>
+          </AdminSelect>
+        </AdminFilterBar>
 
-        {requestsLoading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-4 rounded-xl bg-[var(--panel-2)]">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">Requested</th>
-                <th className="px-4 py-3">Requester</th>
-                <th className="px-4 py-3">Link</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Receipt</th>
-                <th className="px-4 py-3">Owner mail</th>
-                <th className="px-4 py-3">Claim mail</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {requests.map((row) => (
-                <tr key={row.requestId}>
-                  <td className="px-4 py-3 text-[var(--muted)]">{fmtDate(row.createdDate) || "—"}</td>
-                  <td className="px-4 py-3 text-[var(--muted)]">{row.requesterEmail ?? "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{row.shareId ?? "—"}</td>
-                  <td className="px-4 py-3 text-[var(--muted)]">{row.status ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <OutcomeCell outcome={row.requesterEmailOutcome} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <OutcomeCell outcome={row.ownerEmailOutcome} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <OutcomeCell outcome={row.claimEmailOutcome} />
-                  </td>
-                </tr>
-              ))}
-              {requests.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
-                    No download requests.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </DataTable>
-        )}
+        {requestsError ? (
+          <AdminAlert className="mt-3">
+            {requestsError}
+          </AdminAlert>
+        ) : null}
 
-        <p className="mt-3 text-xs text-[var(--muted-2)]">
-          &quot;Not attempted&quot; means the row has neither a sent-at nor an error. Those are two different
-          things the schema cannot tell apart: the send was never tried, or it happened and the write that
-          would have stamped it failed.
-        </p>
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Download-request emails"
+          head={
+            <>
+              <AdminTh align="right">Requested</AdminTh>
+              <AdminTh>Requester</AdminTh>
+              <AdminTh>Status</AdminTh>
+              <AdminTh>Receipt</AdminTh>
+              <AdminTh>Owner mail</AdminTh>
+              <AdminTh>Claim mail</AdminTh>
+              <AdminTh>Link</AdminTh>
+            </>
+          }
+        >
+          {requestsLoading && requests.length === 0 ? (
+            <AdminTableMessage colSpan={REQUEST_COLUMNS}>Loading download requests…</AdminTableMessage>
+          ) : requests.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={REQUEST_COLUMNS}
+              title={requestStatus ? "No requests with that status" : "No download requests"}
+              hint={requestStatus ? "Try another status, or clear the filter." : undefined}
+            />
+          ) : (
+            requests.map((row) => (
+              <AdminTr key={row.requestId}>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={row.createdDate} />
+                </AdminTd>
+                <AdminTd primary truncate="max-w-[240px]">
+                  <span title={row.requesterEmail ?? undefined}>{row.requesterEmail ?? ADMIN_DASH}</span>
+                </AdminTd>
+                <AdminTd>
+                  {row.status === "pending" ? (
+                    <StatusPill tone="warning">Pending</StatusPill>
+                  ) : row.status === "denied" ? (
+                    <StatusPill tone="neutral">Denied</StatusPill>
+                  ) : row.status ? (
+                    <StatusPill tone="quiet">{row.status}</StatusPill>
+                  ) : (
+                    ADMIN_DASH
+                  )}
+                </AdminTd>
+                <AdminTd truncate="max-w-[200px]">
+                  <OutcomeCell outcome={row.requesterEmailOutcome} />
+                </AdminTd>
+                <AdminTd truncate="max-w-[200px]">
+                  <OutcomeCell outcome={row.ownerEmailOutcome} />
+                </AdminTd>
+                <AdminTd truncate="max-w-[200px]">
+                  <OutcomeCell outcome={row.claimEmailOutcome} />
+                </AdminTd>
+                <AdminTd>
+                  <IdCell value={row.shareId} label="share id" head={8} tail={4} />
+                </AdminTd>
+              </AdminTr>
+            ))
+          )}
+        </AdminTable>
+        </AdminSection>
       </div>
     </div>
   );

@@ -1,18 +1,34 @@
 /**
  * Admin route: `/a/data/workspaces`
  *
- * Workspace inspector: paged list of workspaces (team orgs) and drill-in to members.
+ * Workspace inspector: a paged list of workspaces (team or personal) and the way in to
+ * each one's hub. Same header/band/table shape as every other admin list.
  */
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
-import DataTable from "@/components/ui/DataTable";
-import Input from "@/components/ui/Input";
 import Link from "next/link";
-import Select from "@/components/ui/Select";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminSelect,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  IdCell,
+  RowAction,
+  RowActions,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -29,15 +45,12 @@ type WorkspaceRow = {
 type SortField = "createdDate" | "updatedDate";
 type SortOrder = "desc" | "asc";
 
+const COLUMN_COUNT = 7;
+
+/** The workspaces list page. */
 export default function AdminDataWorkspacesPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [q, setQ] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("team");
@@ -52,7 +65,7 @@ export default function AdminDataWorkspacesPage() {
   const [reloadKey, setReloadKey] = useState(0);
   const [deleteBusyWorkspaceId, setDeleteBusyWorkspaceId] = useState<string>("");
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
+  const searching = Boolean(q.trim());
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -82,6 +95,7 @@ export default function AdminDataWorkspacesPage() {
     })();
   }, [canUseAdmin, limit, page, q, typeFilter, sortField, sortOrder, reloadKey]);
 
+  /** Soft-delete one workspace (confirms first) and drop it from the loaded page. */
   async function deleteWorkspace(workspaceId: string) {
     if (!workspaceId) return;
     if (deleteBusyWorkspaceId) return;
@@ -102,182 +116,162 @@ export default function AdminDataWorkspacesPage() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Workspaces</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/data/workspaces" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Workspaces</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Workspaces" description="Every workspace on this deployment. Open one for its plan, credits and activity." callbackUrl="/a/data/workspaces" />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Workspaces</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">Paged list of workspaces. Click a workspace to view members.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="w-[260px] max-w-full"
-              placeholder="Search workspace name or slug…"
-              value={q}
-              onChange={(e) => {
-                setPage(1);
-                setQ(e.target.value);
-              }}
-            />
-            <Select
-              className="w-[170px] max-w-full"
-              value={typeFilter}
-              onChange={(e) => {
-                setPage(1);
-                setTypeFilter(e.target.value);
-              }}
-              title="Filter by type"
-            >
-              <option value="team">Team workspaces</option>
-              <option value="personal">Personal workspaces</option>
-            </Select>
-            <Select
-              className="w-[200px] max-w-full"
-              value={`${sortField}:${sortOrder}`}
-              onChange={(e) => {
-                const raw = e.target.value || "createdDate:desc";
-                const [f, o] = raw.split(":");
-                const nextField = (f === "updatedDate" ? "updatedDate" : "createdDate") as SortField;
-                const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
-                setPage(1);
-                setSortField(nextField);
-                setSortOrder(nextOrder);
-              }}
-              title="Sort"
-            >
-              <option value="createdDate:desc">Created (newest)</option>
-              <option value="createdDate:asc">Created (oldest)</option>
-              <option value="updatedDate:desc">Updated (newest)</option>
-              <option value="updatedDate:asc">Updated (oldest)</option>
-            </Select>
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {page} / {totalPages} • {total} total
-            </div>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={loading}
-              onClick={() => setReloadKey((v) => v + 1)}
-            >
+        <AdminPageHeader
+          title="Workspaces"
+          description="Every workspace on this deployment. Open one for its plan, credits and activity."
+        />
+
+        <AdminFilterBar
+          className="mt-4"
+          page={page}
+          pageSize={limit}
+          total={total}
+          onPageChange={setPage}
+          noun="workspaces"
+          loading={loading}
+          actions={
+            <Button variant="outline" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
               {loading ? "Loading…" : "Refresh"}
             </Button>
-          </div>
-        </div>
+          }
+        >
+          <AdminSearchInput
+            value={q}
+            onValueChange={(v) => {
+              setPage(1);
+              setQ(v);
+            }}
+            placeholder="Search name or slug…"
+            ariaLabel="Search workspaces by name or slug"
+          />
+          <AdminSelect
+            ariaLabel="Filter by workspace type"
+            value={typeFilter}
+            onChange={(e) => {
+              setPage(1);
+              setTypeFilter(e.target.value);
+            }}
+          >
+            <option value="team">Team workspaces</option>
+            <option value="personal">Personal workspaces</option>
+          </AdminSelect>
+          <AdminSelect
+            ariaLabel="Sort workspaces"
+            value={`${sortField}:${sortOrder}`}
+            onChange={(e) => {
+              const raw = e.target.value || "createdDate:desc";
+              const [f, o] = raw.split(":");
+              const nextField = (f === "updatedDate" ? "updatedDate" : "createdDate") as SortField;
+              const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
+              setPage(1);
+              setSortField(nextField);
+              setSortOrder(nextOrder);
+            }}
+          >
+            <option value="createdDate:desc">Created (newest)</option>
+            <option value="createdDate:asc">Created (oldest)</option>
+            <option value="updatedDate:desc">Updated (newest)</option>
+            <option value="updatedDate:asc">Updated (oldest)</option>
+          </AdminSelect>
+        </AdminFilterBar>
 
-        {error ? <div className="mt-4 text-sm text-red-700">{error}</div> : null}
+        {error ? (
+          <AdminAlert className="mt-3">
+            {error}
+          </AdminAlert>
+        ) : null}
 
-        {loading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-6 rounded-xl bg-[var(--panel-2)]">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">Workspace</th>
-                <th className="px-4 py-3">Slug</th>
-                <th className="px-4 py-3">Members</th>
-                <th className="px-4 py-3">Created</th>
-                <th className="px-4 py-3">Updated</th>
-                <th className="px-4 py-3">Workspace ID</th>
-                <th className="px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {items.map((w) => (
-                <tr key={w.workspaceId}>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/a/data/workspaces/${encodeURIComponent(w.workspaceId)}`}
-                      className="font-semibold text-[var(--fg)] hover:underline"
-                      title="View members for this workspace"
-                    >
-                      {w.name ?? "—"}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">{w.slug ?? "—"}</td>
-                  <td className="px-4 py-3">{Number.isFinite(w.memberCount) ? w.memberCount : "—"}</td>
-                  <td className="px-4 py-3">{fmtDate(w.createdDate) || "—"}</td>
-                  <td className="px-4 py-3">{fmtDate(w.updatedDate ?? null) || "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{w.workspaceId}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Workspaces"
+          head={
+            <>
+              {/* The two text columns share the slack; the counts, dates and the id are sized
+                  to their own content, so a date column can never drift from its header and
+                  the id header is never squeezed under the sticky Actions cell. */}
+              <AdminTh>Workspace</AdminTh>
+              <AdminTh>Slug</AdminTh>
+              <AdminTh align="right" width="w-[86px]">
+                Members
+              </AdminTh>
+              <AdminTh align="right" width="w-[116px]">
+                Created
+              </AdminTh>
+              <AdminTh align="right" width="w-[116px]">
+                Updated
+              </AdminTh>
+              <AdminTh width="w-[124px]">Workspace ID</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {loading && items.length === 0 ? (
+            <AdminTableMessage colSpan={COLUMN_COUNT}>Loading workspaces…</AdminTableMessage>
+          ) : items.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={COLUMN_COUNT}
+              title={searching ? "No workspaces match that search" : "No workspaces of this type"}
+              hint={searching ? "Try a different name or slug." : "Switch the type filter to see the others."}
+            />
+          ) : (
+            items.map((w) => (
+              <AdminTr key={w.workspaceId}>
+                <AdminTd primary truncate="max-w-[280px]">
+                  <Link
+                    href={`/a/data/workspaces/${encodeURIComponent(w.workspaceId)}`}
+                    className="rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                    title={w.name ?? "Open workspace hub"}
+                  >
+                    {w.name ?? ADMIN_DASH}
+                  </Link>
+                </AdminTd>
+                <AdminTd truncate="max-w-[200px]">
+                  <span title={w.slug ?? undefined}>{w.slug ?? ADMIN_DASH}</span>
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  {Number.isFinite(w.memberCount) ? w.memberCount.toLocaleString() : ADMIN_DASH}
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={w.createdDate} />
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={w.updatedDate ?? null} />
+                </AdminTd>
+                <AdminTd>
+                  <IdCell
+                    value={w.workspaceId}
+                    label="workspace id"
+                    href={`/a/data/workspaces/${encodeURIComponent(w.workspaceId)}`}
+                  />
+                </AdminTd>
+                <AdminTd align="right" sticky actions>
+                  <RowActions>
+                    <RowAction
+                      tone="danger"
+                      busy={deleteBusyWorkspaceId === w.workspaceId}
+                      busyLabel="Deleting…"
                       disabled={Boolean(deleteBusyWorkspaceId) && deleteBusyWorkspaceId !== w.workspaceId}
-                      onClick={() => void deleteWorkspace(w.workspaceId)}
                       title="Soft delete workspace"
+                      onClick={() => void deleteWorkspace(w.workspaceId)}
                     >
-                      {deleteBusyWorkspaceId === w.workspaceId ? "Deleting…" : "Delete"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
-                    No workspaces.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </DataTable>
-        )}
+                      Delete
+                    </RowAction>
+                  </RowActions>
+                </AdminTd>
+              </AdminTr>
+            ))
+          )}
+        </AdminTable>
       </div>
     </div>
   );
 }
-
-

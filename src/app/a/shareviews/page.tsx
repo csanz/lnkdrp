@@ -1,233 +1,72 @@
 /**
  * Admin route: `/a/shareviews`
  *
- * Shows recent share views (deduped by viewer) for debugging/ops.
+ * The most recent share views across every document, one row per (share link, viewer). The
+ * overview reads the whole loaded set; the search narrows the table under it, because two
+ * hundred viewers as two hundred cards is a page you scroll past rather than read.
+ *
+ * The 200 rows arrive in one request and are paged here, fifty at a time, for the reason every
+ * other list page pages: 200 rows was a 10,000px page whose column headers were gone after the
+ * first screen and whose row actions were 400 buttons stacked down the right edge.
  */
 "use client";
 
 import Link from "next/link";
-import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
-import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
-import Select from "@/components/ui/Select";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminSection,
+  AdminSelect,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  IdCell,
+  RowActions,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH, ADMIN_FOCUS_RING, ADMIN_ROW_ACTION_LINK } from "@/lib/admin/ui";
+import {
+  DaySeries,
+  PagesDistribution,
+  StatTile,
+  buildDailySeriesFromDayMap,
+  buildDailySeriesFromItems,
+  docInfo,
+  pagesBucket,
+  safeDate,
+  sumDownloadsByDay,
+  viewerLabel,
+  type ShareViewItem,
+} from "@/lib/admin/shareViews";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
-type RecentShareViewItem = {
-  _id: string;
-  shareId?: string | null;
-  docId?: { _id?: string; title?: string | null; shareId?: string | null } | string | null;
-  pagesSeen?: number[] | null;
-  downloads?: number | null;
-  downloadsByDay?: Record<string, number> | null;
-  createdDate?: string | null;
-  updatedDate?: string | null;
-  viewerEmail?: string | null;
-  viewerUserId?: { _id?: string; email?: string | null; name?: string | null } | string | null;
-  viewerIp?: string | null;
-};
+const COLUMN_COUNT = 7;
 
-type SeriesPoint = { key: string; label: string; value: number };
-/**
- * To Utc Day Key (uses slice, toISOString).
- */
+/** The rows come in one request; the table still pages like every other admin list. */
+const PAGE_SIZE = 50;
 
-
-function toUtcDayKey(d: Date) {
-  // YYYY-MM-DD
-  return d.toISOString().slice(0, 10);
-}
-/**
- * Safe Date (uses isNaN, valueOf).
- */
-
-
-function safeDate(v: string | null | undefined): Date | null {
-  if (!v) return null;
-  const d = new Date(v);
-  if (Number.isNaN(d.valueOf())) return null;
-  return d;
-}
-/**
- * Sum Downloads By Day (uses entries, Number, isFinite).
- */
-
-
-function sumDownloadsByDay(items: RecentShareViewItem[]) {
-  const out: Record<string, number> = {};
-  for (const item of items) {
-    const m = item.downloadsByDay ?? null;
-    if (!m || typeof m !== "object") continue;
-    for (const [k, raw] of Object.entries(m)) {
-      const n = typeof raw === "number" ? raw : Number(raw);
-      if (!Number.isFinite(n) || n <= 0) continue;
-      out[k] = (out[k] ?? 0) + n;
-    }
-  }
-  return out;
-}
-/**
- * Build Daily Series From Items (uses UTC, getUTCFullYear, getUTCMonth).
- */
-
-
-function buildDailySeriesFromItems(items: RecentShareViewItem[], days: number): SeriesPoint[] {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  start.setUTCDate(start.getUTCDate() - (days - 1));
-
-  const counts: Record<string, number> = {};
-  for (const item of items) {
-    const d = safeDate(item.updatedDate ?? item.createdDate ?? null);
-    if (!d) continue;
-    const dayKey = toUtcDayKey(d);
-    counts[dayKey] = (counts[dayKey] ?? 0) + 1;
-  }
-
-  const series: SeriesPoint[] = [];
-  for (let i = 0; i < days; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    const key = toUtcDayKey(d);
-    const label = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    series.push({ key, label, value: counts[key] ?? 0 });
-  }
-  return series;
-}
-/**
- * Build Daily Series From Day Map (uses UTC, getUTCFullYear, getUTCMonth).
- */
-
-
-function buildDailySeriesFromDayMap(dayMap: Record<string, number>, days: number): SeriesPoint[] {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  start.setUTCDate(start.getUTCDate() - (days - 1));
-
-  const series: SeriesPoint[] = [];
-  for (let i = 0; i < days; i++) {
-    const d = new Date(start);
-    d.setUTCDate(start.getUTCDate() + i);
-    const key = toUtcDayKey(d);
-    const label = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-    const v = typeof dayMap[key] === "number" ? dayMap[key] : Number(dayMap[key] ?? 0);
-    series.push({ key, label, value: Number.isFinite(v) ? Math.max(0, v) : 0 });
-  }
-  return series;
-}
-/**
- * Viewer Label.
- */
-
-
-function viewerLabel(item: RecentShareViewItem) {
-  const email = item.viewerEmail ?? null;
-  if (email) return email;
-  const u = item.viewerUserId && typeof item.viewerUserId === "object" ? item.viewerUserId : null;
-  if (u?.email) return u.email;
-  if (u?.name) return u.name;
-  return "anonymous";
-}
-/**
- * Doc Info (uses trim).
- */
-
-
-function docInfo(item: RecentShareViewItem): { docId: string | null; title: string; shareId: string | null } {
-  if (item.docId && typeof item.docId === "object") {
-    const id = typeof item.docId._id === "string" ? item.docId._id : null;
-    const title = typeof item.docId.title === "string" && item.docId.title.trim() ? item.docId.title : "(untitled)";
-    const shareId = typeof item.docId.shareId === "string" ? item.docId.shareId : null;
-    return { docId: id, title, shareId };
-  }
-  return { docId: null, title: "(unknown doc)", shareId: typeof item.shareId === "string" ? item.shareId : null };
-}
-/**
- * Render the StatCard UI.
- */
-
-
-function StatCard({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
-  return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4">
-      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">{label}</div>
-      <div className="mt-2 text-2xl font-semibold text-[var(--fg)]">{value}</div>
-      {sub ? <div className="mt-1 text-xs text-[var(--muted-2)]">{sub}</div> : null}
-    </div>
-  );
-}
-/**
- * Render the MiniBarSeries UI.
- */
-
-
-function MiniBarSeries({
-  title,
-  subtitle,
-  series,
-  valueSuffix,
-}: {
-  title: string;
-  subtitle?: string;
-  series: SeriesPoint[];
-  valueSuffix?: string;
-}) {
-  const max = series.reduce((m, p) => Math.max(m, p.value), 0);
-  return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold text-[var(--fg)]">{title}</div>
-          {subtitle ? <div className="mt-1 text-xs text-[var(--muted-2)]">{subtitle}</div> : null}
-        </div>
-        <div className="text-xs text-[var(--muted-2)]">
-          Max: {max}
-          {valueSuffix ?? ""}
-        </div>
-      </div>
-      <div className="mt-4 flex h-16 items-end gap-[2px]">
-        {series.map((p) => {
-          const pct = max > 0 ? Math.round((p.value / max) * 100) : 0;
-          const h = p.value > 0 ? Math.max(6, pct) : 2;
-          return (
-            <div
-              key={p.key}
-              className="flex-1 rounded-sm bg-[var(--primary-bg)]/70"
-              style={{ height: `${h}%` }}
-              title={`${p.label}: ${p.value}${valueSuffix ?? ""}`}
-            />
-          );
-        })}
-      </div>
-      <div className="mt-2 flex justify-between text-[10px] text-[var(--muted-2)]">
-        <span>{series[0]?.label ?? ""}</span>
-        <span>{series[Math.floor(series.length / 2)]?.label ?? ""}</span>
-        <span>{series[series.length - 1]?.label ?? ""}</span>
-      </div>
-    </div>
-  );
-}
-/**
- * Render the ShareViewsAdminPage UI (uses effects, memoized values, local state).
- */
-
-
+/** Recent share views across the fleet. */
 export default function ShareViewsAdminPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
-  const [items, setItems] = useState<RecentShareViewItem[]>([]);
+  const [items, setItems] = useState<ShareViewItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rangeDays, setRangeDays] = useState<7 | 14 | 30>(14);
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const normalized = useMemo(() => (Array.isArray(items) ? items : []), [items]);
 
@@ -261,18 +100,7 @@ export default function ShareViewsAdminPage() {
 
       const pages = Array.isArray(item.pagesSeen) ? item.pagesSeen.length : 0;
       totalPagesSeen += pages;
-      const bucket =
-        pages <= 0
-          ? "0"
-          : pages === 1
-            ? "1"
-            : pages <= 3
-              ? "2-3"
-              : pages <= 6
-                ? "4-6"
-                : pages <= 10
-                  ? "7-10"
-                  : "11+";
+      const bucket = pagesBucket(pages);
       pagesSeenCounts[bucket] = (pagesSeenCounts[bucket] ?? 0) + 1;
 
       const dl = typeof item.downloads === "number" ? item.downloads : Number(item.downloads ?? 0);
@@ -303,6 +131,30 @@ export default function ShareViewsAdminPage() {
     };
   }, [normalized, rangeDays]);
 
+  /** The table narrows on document title, viewer and share id; the overview above does not. */
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return normalized;
+    return normalized.filter((item) => {
+      const { title, shareId } = docInfo(item);
+      return (
+        title.toLowerCase().includes(needle) ||
+        viewerLabel(item).toLowerCase().includes(needle) ||
+        (shareId ?? "").toLowerCase().includes(needle) ||
+        (item.viewerIp ?? "").toLowerCase().includes(needle)
+      );
+    });
+  }, [normalized, q]);
+
+  /** The fifty rows this page of the table shows. */
+  const pageItems = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
+
+  /** A search that shortens the list must not leave the pager on a page that no longer exists. */
+  useEffect(() => {
+    const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+    if (page > pages) setPage(1);
+  }, [filtered.length, page]);
+
   useEffect(() => {
     if (!canUseAdmin) return;
     setLoading(true);
@@ -310,7 +162,7 @@ export default function ShareViewsAdminPage() {
     void (async () => {
       try {
         const data = await fetchJson<{ items?: unknown }>("/api/admin/shareviews/recent?limit=200", { method: "GET" });
-        setItems(Array.isArray(data.items) ? (data.items as RecentShareViewItem[]) : []);
+        setItems(Array.isArray(data.items) ? (data.items as ShareViewItem[]) : []);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load share views");
         setItems([]);
@@ -318,210 +170,255 @@ export default function ShareViewsAdminPage() {
         setLoading(false);
       }
     })();
-  }, [canUseAdmin]);
-
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Share views</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/shareviews" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  }, [canUseAdmin, reloadKey]);
 
   if (!canUseAdmin) {
     return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Share views</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
+      <AdminAccessState
+        access={access}
+        title="Share views"
+        description="The 200 most recent share views, one row per viewer of a link."
+        callbackUrl="/a/shareviews"
+      />
     );
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Share views</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">Most recent share views (deduped by viewer).</p>
-        </div>
+        <AdminPageHeader
+          title="Share views"
+          description="The 200 most recent share views, one row per viewer of a link."
+        />
+
+        <AdminFilterBar
+          className="mt-4"
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={filtered.length}
+          onPageChange={setPage}
+          noun="views"
+          loading={loading}
+          actions={
+            <Button variant="outline" onClick={() => setReloadKey((k) => k + 1)} disabled={loading}>
+              Refresh
+            </Button>
+          }
+        >
+          <AdminSearchInput
+            value={q}
+            onValueChange={(v) => {
+              setPage(1);
+              setQ(v);
+            }}
+            placeholder="Search document, viewer or IP…"
+            ariaLabel="Search share views"
+          />
+          <AdminSelect
+            ariaLabel="Chart range"
+            value={String(rangeDays)}
+            onChange={(e) => setRangeDays((Number(e.target.value) as 7 | 14 | 30) || 14)}
+          >
+            <option value="7">Last 7 days</option>
+            <option value="14">Last 14 days</option>
+            <option value="30">Last 30 days</option>
+          </AdminSelect>
+        </AdminFilterBar>
+
+        {error ? <AdminAlert className="mt-3">{error}</AdminAlert> : null}
 
         {normalized.length ? (
-          <div className="mt-6">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm font-semibold text-[var(--fg)]">Overview</div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[var(--muted-2)]">Range</span>
-                <Select
-                  value={rangeDays}
-                  onChange={(e) => setRangeDays((Number(e.target.value) as 7 | 14 | 30) || 14)}
-                >
-                  <option value={7}>Last 7 days</option>
-                  <option value={14}>Last 14 days</option>
-                  <option value={30}>Last 30 days</option>
-                </Select>
-              </div>
+          <>
+            {/* Both rows sit on one 12-column grid — four tiles at 3, three cards at 4 — so the
+                card edges line up down the page instead of breaking at two sets of points. */}
+            <div className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-12">
+              <StatTile
+                className="lg:col-span-3"
+                label="Viewers"
+                value={stats.totalViews.toLocaleString()}
+                sub="One per link and viewer"
+              />
+              <StatTile className="lg:col-span-3" label="Docs touched" value={stats.docCount.toLocaleString()} />
+              {/* One number per tile: the 7-day figure is the denominator, so it is muted. */}
+              <StatTile
+                className="lg:col-span-3"
+                label="Views 24h"
+                value={
+                  <>
+                    {stats.views24h.toLocaleString()}
+                    <span className="text-[var(--muted-2)]"> / {stats.views7d.toLocaleString()}</span>
+                  </>
+                }
+                sub="Of the last 7 days"
+              />
+              <StatTile
+                className="lg:col-span-3"
+                label="Downloads"
+                value={stats.totalDownloads.toLocaleString()}
+                sub="Best-effort, from the PDF route"
+              />
             </div>
 
-            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard label="Unique viewers (rows)" value={stats.totalViews} sub="Per (shareId, viewer) record" />
-              <StatCard label="Docs touched" value={stats.docCount} />
-              <StatCard label="Views (24h / 7d)" value={`${stats.views24h} / ${stats.views7d}`} />
-              <StatCard label="Downloads (total)" value={stats.totalDownloads} sub="Best-effort count from /s/:shareId/pdf?download=1" />
-            </div>
-
-            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
-              <MiniBarSeries title="Views by day" subtitle={`Last-seen activity (UTC), last ${rangeDays} days`} series={stats.viewSeries} />
-              <MiniBarSeries
+            <div className="mt-2 grid gap-2 lg:grid-cols-12">
+              <DaySeries
+                className="lg:col-span-6"
+                title="Views by day"
+                subtitle={`Last seen, UTC, ${rangeDays} days`}
+                series={stats.viewSeries}
+              />
+              <DaySeries
+                className="lg:col-span-3"
                 title="Downloads by day"
-                subtitle={`UTC, last ${rangeDays} days`}
+                subtitle={`UTC, ${rangeDays} days`}
                 series={stats.downloadSeries}
               />
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4">
-                <div className="text-sm font-semibold text-[var(--fg)]">Pages seen (distribution)</div>
-                <div className="mt-1 text-xs text-[var(--muted-2)]">Per viewer record</div>
-                <div className="mt-4 space-y-2">
-                  {(["0", "1", "2-3", "4-6", "7-10", "11+"] as const).map((k) => {
-                    const v = stats.pagesSeenCounts[k] ?? 0;
-                    const max = Math.max(...Object.values(stats.pagesSeenCounts), 1);
-                    const pct = Math.round((v / max) * 100);
-                    return (
-                      <div key={k} className="flex items-center gap-3">
-                        <div className="w-12 text-xs text-[var(--muted-2)]">{k}</div>
-                        <div className="h-2 flex-1 rounded-full bg-[var(--panel-2)]">
-                          <div className="h-2 rounded-full bg-[var(--primary-bg)]/70" style={{ width: `${pct}%` }} />
-                        </div>
-                        <div className="w-10 text-right text-xs text-[var(--muted-2)]">{v}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+              <PagesDistribution className="lg:col-span-3" counts={stats.pagesSeenCounts} />
             </div>
 
             {stats.topDocs.length ? (
-              <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4">
-                <div className="text-sm font-semibold text-[var(--fg)]">Top docs (unique viewers)</div>
-                <div className="mt-1 text-xs text-[var(--muted-2)]">From the loaded dataset</div>
-                <div className="mt-4 space-y-2">
-                  {stats.topDocs.map((d) => {
-                    const max = stats.topDocs[0]?.count ?? 1;
-                    const pct = Math.round((d.count / max) * 100);
-                    return (
-                      <div key={d.docId} className="flex items-center gap-3">
-                        <div className="min-w-0 flex-1">
-                          <Link
-                            href={`/a/shareviews/${encodeURIComponent(d.docId)}`}
-                            className="truncate text-sm font-semibold text-[var(--fg)] hover:underline"
-                          >
-                            {d.title}
-                          </Link>
-                          <div className="mt-1 h-2 rounded-full bg-[var(--panel-2)]">
-                            <div className="h-2 rounded-full bg-[var(--primary-bg)]/70" style={{ width: `${pct}%` }} />
-                          </div>
-                        </div>
-                        <div className="w-10 text-right text-xs text-[var(--muted-2)]">{d.count}</div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {error ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
-            {error}
-          </Alert>
-        ) : null}
-
-        {loading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : normalized.length === 0 ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            No views yet.
-          </div>
-        ) : (
-          <div className="mt-6 space-y-3">
-            {normalized.map((v) => {
-              const { docId, title, shareId } = docInfo(v);
-              const viewedAt = fmtDate(v.updatedDate ?? v.createdDate ?? null);
-              const pages = Array.isArray(v.pagesSeen) ? v.pagesSeen.length : 0;
-              const viewer = viewerLabel(v);
-              return (
-                <div
-                  key={v._id}
-                  className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4"
+              <AdminSection title="Top documents" description="Unique viewers per document, within the rows loaded above.">
+                <AdminTable
+                  ariaLabel="Top documents by unique viewers"
+                  head={
+                    <>
+                      <AdminTh>Document</AdminTh>
+                      <AdminTh align="right" width="w-[150px]">
+                        Viewers
+                      </AdminTh>
+                      <AdminTh width="w-[150px]">Share</AdminTh>
+                      <AdminTh width="w-[140px]">Doc ID</AdminTh>
+                    </>
+                  }
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-[var(--fg)]">
-                        {docId ? (
-                          <Link href={`/a/shareviews/${encodeURIComponent(docId)}`} className="hover:underline">
-                            {title}
-                          </Link>
-                        ) : (
-                          title
-                        )}
-                      </div>
-                      <div className="mt-1 text-xs text-[var(--muted-2)]">
-                        Viewed: {viewedAt} • Pages seen: {pages}
-                      </div>
-                      <div className="mt-1 text-xs text-[var(--muted-2)]">Viewer: {viewer}</div>
-                      {v.viewerIp ? (
-                        <div className="mt-1 text-xs text-[var(--muted-2)]">IP: {v.viewerIp}</div>
-                      ) : null}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {shareId ? (
-                        <a
-                          href={`/s/${encodeURIComponent(shareId)}`}
-                          className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)]"
-                          target="_blank"
-                          rel="noreferrer"
+                  {stats.topDocs.map((d) => (
+                    <AdminTr key={d.docId}>
+                      <AdminTd primary truncate="max-w-[520px]">
+                        <Link
+                          href={`/a/shareviews/${encodeURIComponent(d.docId)}`}
+                          className={`rounded hover:underline ${ADMIN_FOCUS_RING}`}
+                          title={d.title}
                         >
-                          Open share
-                        </a>
-                      ) : null}
+                          {d.title}
+                        </Link>
+                      </AdminTd>
+                      {/* A count alone does not say how far ahead the top row is; the bar behind
+                          it is this document's share of the busiest one. */}
+                      <AdminTd align="right" numeric>
+                        <span className="relative inline-flex h-5 w-[92px] items-center justify-end overflow-hidden rounded-[3px]">
+                          <span
+                            aria-hidden="true"
+                            className="absolute inset-y-0 right-0 rounded-[3px] bg-[var(--primary-bg)] opacity-20"
+                            style={{
+                              width: `${Math.max(4, Math.round((d.count / (stats.topDocs[0]?.count || 1)) * 100))}%`,
+                            }}
+                          />
+                          <span className="relative px-1.5">{d.count.toLocaleString()}</span>
+                        </span>
+                      </AdminTd>
+                      <AdminTd>
+                        <IdCell value={d.shareId} label="share id" head={8} tail={4} />
+                      </AdminTd>
+                      <AdminTd>
+                        <IdCell value={d.docId} label="doc id" href={`/a/shareviews/${encodeURIComponent(d.docId)}`} />
+                      </AdminTd>
+                    </AdminTr>
+                  ))}
+                </AdminTable>
+              </AdminSection>
+            ) : null}
+          </>
+        ) : null}
+
+        <AdminSection
+          title="Recent views"
+          description="Newest first, fifty to a page. One row per viewer of one link; the title opens every view of that document."
+        >
+          <AdminTable
+            ariaLabel="Share views"
+            head={
+              <>
+                <AdminTh>Document</AdminTh>
+                <AdminTh>Viewer</AdminTh>
+                <AdminTh align="right">Pages</AdminTh>
+                <AdminTh align="right">Downloads</AdminTh>
+                <AdminTh>IP</AdminTh>
+                <AdminTh align="right">Last seen</AdminTh>
+                <AdminTh align="right" sticky>
+                  Actions
+                </AdminTh>
+              </>
+            }
+          >
+            {loading && normalized.length === 0 ? (
+              <AdminTableMessage colSpan={COLUMN_COUNT}>Loading share views…</AdminTableMessage>
+            ) : filtered.length === 0 ? (
+              <AdminTableEmpty
+                colSpan={COLUMN_COUNT}
+                title={q.trim() ? "No views match that search" : "No share views yet"}
+                hint={q.trim() ? "Try a document title, a viewer's email or an IP." : undefined}
+              />
+            ) : (
+              pageItems.map((v) => {
+                const { docId, title, shareId } = docInfo(v);
+                const pages = Array.isArray(v.pagesSeen) ? v.pagesSeen.length : 0;
+                const downloads = typeof v.downloads === "number" ? v.downloads : Number(v.downloads ?? 0) || 0;
+                const viewer = viewerLabel(v);
+                return (
+                  <AdminTr key={v._id}>
+                    <AdminTd primary truncate="max-w-[280px]">
                       {docId ? (
                         <Link
                           href={`/a/shareviews/${encodeURIComponent(docId)}`}
-                          className="inline-flex items-center justify-center rounded-xl bg-[var(--primary-bg)] px-4 py-2 text-sm font-semibold text-[var(--primary-fg)] shadow-sm transition hover:bg-[var(--primary-hover-bg)]"
+                          className={`rounded hover:underline ${ADMIN_FOCUS_RING}`}
+                          title={title}
                         >
-                          All views
+                          {title}
                         </Link>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                      ) : (
+                        <span title={title}>{title}</span>
+                      )}
+                    </AdminTd>
+                    <AdminTd truncate="max-w-[190px]">
+                      <span title={viewer}>{viewer}</span>
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      {pages ? pages.toLocaleString() : ADMIN_DASH}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      {downloads ? downloads.toLocaleString() : ADMIN_DASH}
+                    </AdminTd>
+                    <AdminTd mono truncate="max-w-[110px]">
+                      <span title={v.viewerIp ?? undefined}>{v.viewerIp || ADMIN_DASH}</span>
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      <TimeCell value={v.updatedDate ?? v.createdDate ?? null} />
+                    </AdminTd>
+                    {/* One action, not two: "All views" repeated the link the document title
+                        already carries, and a pair per row was 400 buttons down the page. */}
+                    <AdminTd align="right" sticky actions>
+                      <RowActions>
+                        {shareId ? (
+                          <a
+                            href={`/s/${encodeURIComponent(shareId)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className={ADMIN_ROW_ACTION_LINK}
+                            title="Open the public share in a new tab"
+                          >
+                            Open
+                          </a>
+                        ) : (
+                          <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                        )}
+                      </RowActions>
+                    </AdminTd>
+                  </AdminTr>
+                );
+              })
+            )}
+          </AdminTable>
+        </AdminSection>
       </div>
     </div>
   );
 }
-
-

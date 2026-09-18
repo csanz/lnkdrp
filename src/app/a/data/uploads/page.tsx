@@ -1,19 +1,39 @@
 /**
  * Admin route: `/a/data/uploads`
  *
- * Lists uploads across all users for admin inspection (paged).
+ * Lists uploads across all users for admin inspection (paged), with a detail drawer carrying
+ * the raw upload record. Built on the shared admin UI in `@/components/admin` — see
+ * `/a/data/users` for the reference implementation.
  */
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { signIn, useSession } from "next-auth/react";
-import { Suspense, useEffect, useMemo, useState } from "react";
-import Alert from "@/components/ui/Alert";
+import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
+import { cn } from "@/lib/cn";
 import Button from "@/components/ui/Button";
-import DataTable from "@/components/ui/DataTable";
-import Input from "@/components/ui/Input";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  IdCell,
+  RowAction,
+  RowActions,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH, ADMIN_FOCUS_RING, statusLabel } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
+import { pipelineStatusTone } from "@/lib/admin/statusTones";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type UploadRow = {
@@ -34,6 +54,10 @@ type AdminUploadDetailsResponse = {
   error?: string;
 };
 
+/** Column count of the table below; every full-width row's colSpan has to match it. */
+const COLUMN_COUNT = 8;
+
+/** Route entry: the uploads list reads `?uploadId=`, so it renders inside a Suspense boundary. */
 export default function AdminDataUploadsPage() {
   return (
     <Suspense>
@@ -42,16 +66,11 @@ export default function AdminDataUploadsPage() {
   );
 }
 
+/** The Uploads browser: every uploaded file, with a detail drawer carrying the raw record. */
 function AdminDataUploadsPageInner() {
   const searchParams = useSearchParams();
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -69,8 +88,10 @@ function AdminDataUploadsPageInner() {
   const [uploadDetails, setUploadDetails] = useState<AdminUploadDetailsResponse | null>(null);
   const [uploadJsonCopyDone, setUploadJsonCopyDone] = useState(false);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
+  /** A search narrowing the list — decides which empty-state sentence the table shows. */
+  const filtered = Boolean(q.trim());
 
+  /** Best-effort clipboard write; returns false when the browser refuses. */
   async function copyToClipboard(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -80,6 +101,7 @@ function AdminDataUploadsPageInner() {
     }
   }
 
+  /** Load one upload's raw record into the detail drawer. */
   async function loadUploadDetails(uploadId: string) {
     if (!uploadId) return;
     setDetailsLoading(true);
@@ -133,6 +155,7 @@ function AdminDataUploadsPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseAdmin, searchParams]);
 
+  /** Soft-delete an upload, then drop its row optimistically. */
   async function deleteUpload(uploadId: string) {
     if (!uploadId) return;
     if (deleteBusyUploadId) return;
@@ -151,256 +174,246 @@ function AdminDataUploadsPageInner() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Uploads</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/data/uploads" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
+  /** Select a row and open the detail drawer on it. */
+  function openDetails(uploadId: string) {
+    setSelectedUploadId(uploadId);
+    void loadUploadDetails(uploadId);
   }
 
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Uploads</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Uploads" description="Every uploaded file across all users, with the record behind each one." callbackUrl="/a/data/uploads" />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Uploads</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">Paged list of uploads across all users.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="w-[260px] max-w-full"
-              placeholder="Search filename or doc title…"
-              value={q}
-              onChange={(e) => {
-                setPage(1);
-                setQ(e.target.value);
-              }}
-            />
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {page} / {totalPages} • {total} total
-            </div>
-            <Button
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+        <AdminPageHeader title="Uploads" description="Every uploaded file across all users, with the record behind each one." />
+
+        <AdminFilterBar
+          className="mt-4"
+          page={page}
+          pageSize={limit}
+          total={total}
+          onPageChange={setPage}
+          noun="uploads"
+          loading={loading}
+          actions={
+            <Button variant="outline" className="bg-[var(--panel)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
               {loading ? "Loading…" : "Refresh"}
             </Button>
-          </div>
-        </div>
+          }
+        >
+          <AdminSearchInput
+            value={q}
+            onValueChange={(v) => {
+              setPage(1);
+              setQ(v);
+            }}
+            placeholder="Search filename or doc title…"
+            ariaLabel="Search uploads by filename or document title"
+          />
+        </AdminFilterBar>
 
         {error ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+          <AdminAlert className="mt-3">
             {error}
-          </Alert>
+          </AdminAlert>
         ) : null}
 
-        <div className={["mt-6 grid gap-5", selectedUploadId ? "lg:grid-cols-[1fr_520px]" : ""].join(" ")}>
+        <div className={["mt-3 grid gap-4", selectedUploadId ? "lg:grid-cols-[1fr_480px]" : ""].join(" ")}>
           <div className="min-w-0">
-            {loading ? (
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-                Loading…
-              </div>
-            ) : (
-              <DataTable>
-                <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                    <th className="px-4 py-3">File</th>
-                    <th className="px-4 py-3">Doc</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Version</th>
-                    <th className="px-4 py-3">Created</th>
-                    <th className="px-4 py-3">User ID</th>
-                    <th className="px-4 py-3">Upload ID</th>
-                    <th className="px-4 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {items.map((u) => (
-                    <tr key={u.id} className={selectedUploadId === u.id ? "bg-[var(--panel-2)]/60" : ""}>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          className="text-left hover:underline"
-                          onClick={() => {
-                            setSelectedUploadId(u.id);
-                            void loadUploadDetails(u.id);
-                          }}
-                          title="Open upload details"
+            <AdminTable
+              ariaLabel="Uploads"
+              head={
+                <>
+                  {/* File is the identity and takes the slack; the two ids sit last. */}
+                  <AdminTh>File</AdminTh>
+                  <AdminTh>Document</AdminTh>
+                  <AdminTh width="w-[110px]">Status</AdminTh>
+                  <AdminTh align="right" width="w-[70px]">Version</AdminTh>
+                  <AdminTh align="right" width="w-[130px]">Created</AdminTh>
+                  <AdminTh width="w-[150px]">Share</AdminTh>
+                  <AdminTh width="w-[130px]">Upload ID</AdminTh>
+                  <AdminTh align="right" sticky>
+                    Actions
+                  </AdminTh>
+                </>
+              }
+            >
+              {loading && items.length === 0 ? (
+                <AdminTableMessage colSpan={COLUMN_COUNT}>Loading uploads…</AdminTableMessage>
+              ) : items.length === 0 ? (
+                <AdminTableEmpty
+                  colSpan={COLUMN_COUNT}
+                  title={filtered ? "No uploads match that search" : "No uploads yet"}
+                  hint={filtered ? "Try a different filename or document title." : undefined}
+                />
+              ) : (
+                items.map((u) => (
+                  <AdminTr key={u.id} className={selectedUploadId === u.id ? "bg-[var(--panel-hover)]" : undefined}>
+                    {/* The phone cap is what makes the ellipsis render at 390px: uncapped, the
+                        column takes its natural width and the pinned Actions cell slices the
+                        filename mid-word with no "…". */}
+                    <AdminTd primary truncate="max-w-[170px] sm:max-w-[250px]">
+                      {/* `block truncate` on the button: an inline-block child of a truncating
+                          wrapper is an atomic box and would be sliced mid-glyph with no "…". */}
+                      <button
+                        type="button"
+                        className={cn("block truncate rounded text-left hover:underline", ADMIN_FOCUS_RING)}
+                        onClick={() => openDetails(u.id)}
+                        title={u.originalFileName ?? "Open upload details"}
+                      >
+                        {u.originalFileName ?? ADMIN_DASH}
+                      </button>
+                    </AdminTd>
+                    <AdminTd truncate="max-w-[160px] sm:max-w-[210px]">
+                      {u.docId ? (
+                        <Link
+                          href={`/a/shareviews/${encodeURIComponent(u.docId)}`}
+                          className={cn("block truncate rounded hover:underline", ADMIN_FOCUS_RING)}
+                          title={u.docTitle ?? u.docId}
                         >
-                          {u.originalFileName ?? "—"}
-                        </button>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="min-w-0">
-                          <div className="truncate">{u.docTitle ?? u.docId ?? "—"}</div>
-                          {u.shareId ? (
-                            <a
-                              className="mt-1 inline-block text-xs text-[var(--muted)] hover:underline"
-                              href={`/s/${encodeURIComponent(u.shareId)}`}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              /s/{u.shareId}
-                            </a>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">{u.status ?? "—"}</td>
-                      <td className="px-4 py-3">{typeof u.version === "number" ? u.version : "—"}</td>
-                      <td className="px-4 py-3">{fmtDate(u.createdDate) || "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.userId ?? "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
-                            onClick={() => {
-                              setSelectedUploadId(u.id);
-                              void loadUploadDetails(u.id);
-                            }}
-                          >
-                            Details
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                            disabled={Boolean(deleteBusyUploadId) && deleteBusyUploadId !== u.id}
-                            onClick={() => void deleteUpload(u.id)}
-                          >
-                            {deleteBusyUploadId === u.id ? "Deleting…" : "Delete"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {items.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
-                        No uploads.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </DataTable>
-            )}
+                          {u.docTitle ?? u.docId}
+                        </Link>
+                      ) : (
+                        <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                      )}
+                    </AdminTd>
+                    <AdminTd>
+                      {/* A pill on every row is decoration: the happy path is a plain word,
+                          and only a status worth acting on gets a chip. */}
+                      {!u.status ? (
+                        <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                      ) : pipelineStatusTone(u.status) === "quiet" ? (
+                        <span className="text-[var(--muted-2)]">{statusLabel(u.status)}</span>
+                      ) : (
+                        <StatusPill tone={pipelineStatusTone(u.status)}>{u.status}</StatusPill>
+                      )}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      {typeof u.version === "number" ? u.version : ADMIN_DASH}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      <TimeCell value={u.createdDate} />
+                    </AdminTd>
+                    <AdminTd>
+                      <IdCell
+                        value={u.shareId}
+                        label="share id"
+                        head={8}
+                        tail={4}
+                        href={u.shareId ? `/s/${encodeURIComponent(u.shareId)}` : undefined}
+                      />
+                    </AdminTd>
+                    <AdminTd>
+                      <IdCell value={u.id} label="upload id" />
+                    </AdminTd>
+                    <AdminTd align="right" sticky actions>
+                      <RowActions>
+                        <RowAction title="Open upload details" onClick={() => openDetails(u.id)}>
+                          Details
+                        </RowAction>
+                        <RowAction
+                          tone="danger"
+                          busy={deleteBusyUploadId === u.id}
+                          busyLabel="Deleting…"
+                          disabled={Boolean(deleteBusyUploadId) && deleteBusyUploadId !== u.id}
+                          title="Soft delete upload"
+                          onClick={() => void deleteUpload(u.id)}
+                        >
+                          Delete
+                        </RowAction>
+                      </RowActions>
+                    </AdminTd>
+                  </AdminTr>
+                ))
+              )}
+            </AdminTable>
           </div>
 
           {selectedUploadId ? (
-            <aside className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 lg:sticky lg:top-6 lg:max-h-[calc(100svh-80px)] lg:overflow-auto">
+            <aside className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 lg:sticky lg:top-6 lg:max-h-[calc(100svh-80px)] lg:overflow-auto">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold text-[var(--fg)]">Upload details</div>
-                  <div className="mt-1 font-mono text-xs text-[var(--muted)] break-all">{selectedUploadId}</div>
+                  <div className="text-[13px] font-semibold text-[var(--fg)]">Upload details</div>
+                  <div className="mt-1 break-all font-mono text-[11px] text-[var(--muted-2)]">{selectedUploadId}</div>
                 </div>
-                <button
-                  type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
-                  onClick={() => {
-                    setSelectedUploadId("");
-                    setUploadDetails(null);
-                    setDetailsError(null);
-                  }}
-                >
-                  Close
-                </button>
+                <RowActions>
+                  <RowAction
+                    title="Reload this upload"
+                    disabled={detailsLoading}
+                    onClick={() => void loadUploadDetails(selectedUploadId)}
+                  >
+                    {detailsLoading ? "Loading…" : "Refresh"}
+                  </RowAction>
+                  <RowAction
+                    title="Close details"
+                    onClick={() => {
+                      setSelectedUploadId("");
+                      setUploadDetails(null);
+                      setDetailsError(null);
+                    }}
+                  >
+                    Close
+                  </RowAction>
+                </RowActions>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                  disabled={detailsLoading}
-                  onClick={() => void loadUploadDetails(selectedUploadId)}
-                >
-                  {detailsLoading ? "Loading…" : "Refresh"}
-                </button>
-                {uploadDetails?.upload?.docId ? (
+              {uploadDetails?.upload?.docId ? (
+                <div className="mt-3">
                   <a
-                    className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
+                    className="inline-flex h-[26px] items-center rounded-md border border-[var(--border)] bg-[var(--panel-2)] px-2 text-[12px] font-medium leading-4 text-[var(--muted)] transition hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
                     href={`/doc/${encodeURIComponent(String(uploadDetails.upload.docId))}`}
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Open /doc
+                    Open in app
                   </a>
-                ) : null}
-              </div>
+                </div>
+              ) : null}
 
               {detailsError ? (
-                <Alert variant="info" className="mt-3 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+                <AdminAlert className="mt-3">
                   {detailsError}
-                </Alert>
+                </AdminAlert>
               ) : null}
 
               {detailsLoading && !uploadDetails ? (
-                <div className="mt-3 text-sm text-[var(--muted)]">Loading upload JSON…</div>
+                <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-8 text-center text-[13px] text-[var(--muted-2)]">
+                  Loading upload…
+                </div>
               ) : uploadDetails?.upload ? (
                 <>
-                  <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Preview / error</div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                      <div className="text-[var(--muted)]">previewImageUrl</div>
-                      <div className={["font-mono break-all", uploadDetails.upload.previewImageUrl ? "text-[var(--fg)]" : "text-red-500"].join(" ")}>
-                        {String(uploadDetails.upload.previewImageUrl ?? uploadDetails.upload.firstPagePngUrl ?? "null")}
-                      </div>
-                      <div className="text-[var(--muted)]">error.message</div>
-                      <div className="font-mono text-[var(--fg)] break-all">
-                        {String(uploadDetails.upload.error?.message ?? "—")}
-                      </div>
-                      <div className="text-[var(--muted)]">error.details.preview</div>
-                      <div className="font-mono text-[var(--fg)] break-all">
-                        {String(uploadDetails.upload.error?.details?.preview ?? "—")}
-                      </div>
-                    </div>
+                  <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)]">Preview and error</div>
+                    <dl className="mt-2 grid grid-cols-[130px_1fr] gap-x-3 gap-y-1.5 text-[12px]">
+                      <dt className="text-[var(--muted-2)]">previewImageUrl</dt>
+                      <dd className="break-all font-mono">
+                        {uploadDetails.upload.previewImageUrl || uploadDetails.upload.firstPagePngUrl ? (
+                          <span className="text-[var(--fg)]">
+                            {String(uploadDetails.upload.previewImageUrl ?? uploadDetails.upload.firstPagePngUrl)}
+                          </span>
+                        ) : (
+                          <StatusPill tone="danger">Missing</StatusPill>
+                        )}
+                      </dd>
+                      <dt className="text-[var(--muted-2)]">error.message</dt>
+                      <dd className="break-all font-mono text-[var(--fg)]">
+                        {String(uploadDetails.upload.error?.message ?? ADMIN_DASH)}
+                      </dd>
+                      <dt className="text-[var(--muted-2)]">error.details.preview</dt>
+                      <dd className="break-all font-mono text-[var(--fg)]">
+                        {String(uploadDetails.upload.error?.details?.preview ?? ADMIN_DASH)}
+                      </dd>
+                    </dl>
                   </div>
 
                   <div className="mt-4">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Upload JSON</div>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)]">Upload JSON</div>
+                      <RowAction
                         disabled={!uploadDetails?.upload}
+                        title="Copy the upload record"
                         onClick={() => {
                           const txt = uploadDetails?.upload ? JSON.stringify(uploadDetails.upload, null, 2) : "";
                           void (async () => {
@@ -412,15 +425,18 @@ function AdminDataUploadsPageInner() {
                         }}
                       >
                         {uploadJsonCopyDone ? "Copied" : "Copy"}
-                      </button>
+                      </RowAction>
                     </div>
-                    <pre className="mt-2 max-h-[560px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[11px] text-[var(--fg)]">
+                    <pre className="mt-2 max-h-[560px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[11px] text-[var(--fg)]">
                       {JSON.stringify(uploadDetails.upload, null, 2)}
                     </pre>
                   </div>
                 </>
               ) : (
-                <div className="mt-3 text-sm text-[var(--muted)]">Select an upload to view details.</div>
+                <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-8 text-center">
+                  <div className="text-[13px] font-medium text-[var(--fg)]">Nothing loaded for this upload</div>
+                  <div className="mt-1 text-[12px] text-[var(--muted-2)]">Refresh, or pick another row from the list.</div>
+                </div>
               )}
             </aside>
           ) : null}
@@ -429,7 +445,3 @@ function AdminDataUploadsPageInner() {
     </div>
   );
 }
-
-
-
-

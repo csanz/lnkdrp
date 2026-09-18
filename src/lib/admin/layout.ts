@@ -7,5 +7,13 @@
  * `max-w-*`; inner caps that keep a form field or a paragraph readable are fine.
  */
 
-/** Page-level container for every admin page: full width, comfortable side padding. */
-export const ADMIN_PAGE_CONTAINER = "w-full px-5 py-8 sm:px-8";
+import { ADMIN_FOCUS_SCOPE } from "./ui";
+
+/**
+ * Page-level container for every admin page: full width, comfortable side padding.
+ *
+ * It also carries the admin focus colour (see `ADMIN_FOCUS_SCOPE`), so a control the
+ * admin area borrows from the app — `ui/Button`, a bare link — focuses with a ring a
+ * keyboard user can actually see, without changing that primitive for the rest of the app.
+ */
+export const ADMIN_PAGE_CONTAINER = `w-full px-5 py-8 sm:px-8 ${ADMIN_FOCUS_SCOPE}`;

@@ -1,19 +1,37 @@
 /**
  * Admin route: `/a/data/users`
  *
- * Lists users for admin inspection (paged).
+ * Lists users for admin inspection (paged). Reference implementation for the shared
+ * admin UI in `@/components/admin` — header, filter band, dense table, row actions.
  */
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
-import Alert from "@/components/ui/Alert";
-import Button from "@/components/ui/Button";
-import DataTable from "@/components/ui/DataTable";
-import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
+import { useSession } from "next-auth/react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { fmtDate } from "@/lib/admin/format";
+import Button from "@/components/ui/Button";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminSelect,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  IdCell,
+  RowAction,
+  RowActions,
+  SegmentedAction,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -32,15 +50,17 @@ type UserRow = {
 type SortField = "createdAt" | "lastLoginAt";
 type SortOrder = "desc" | "asc";
 
+const COLUMN_COUNT = 8;
+
+const PLAN_OPTIONS = [
+  { value: "free" as const, label: "Free", title: "Admin override: set plan to Free" },
+  { value: "pro" as const, label: "Pro", title: "Admin override: set plan to Pro" },
+];
+
 export default function AdminDataUsersPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const { data: session } = useSession();
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [q, setQ] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("");
@@ -55,8 +75,9 @@ export default function AdminDataUsersPage() {
   const [planBusyUserId, setPlanBusyUserId] = useState<string>("");
   const [planError, setPlanError] = useState<string | null>(null);
   const [deactivateBusyUserId, setDeactivateBusyUserId] = useState<string>("");
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
+  const filtered = Boolean(q.trim() || roleFilter);
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -84,7 +105,7 @@ export default function AdminDataUsersPage() {
         setLoading(false);
       }
     })();
-  }, [canUseAdmin, limit, page, q, roleFilter, sortField, sortOrder]);
+  }, [canUseAdmin, limit, page, q, roleFilter, sortField, sortOrder, reloadKey]);
 
   async function setUserPlan(userId: string, plan: "free" | "pro") {
     if (!userId) return;
@@ -131,214 +152,190 @@ export default function AdminDataUsersPage() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Users</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/data/users" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Users</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Users" description="Every account on this deployment. The plan control in Actions is both the current plan and the override." callbackUrl="/a/data/users" />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Users</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">Paged list of users.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="w-[260px] max-w-full"
-              placeholder="Search email or name…"
-              value={q}
-              onChange={(e) => {
-                setPage(1);
-                setQ(e.target.value);
-              }}
-            />
-            <Select
-              className="w-[160px] max-w-full"
-              value={roleFilter}
-              onChange={(e) => {
-                setPage(1);
-                setRoleFilter(e.target.value);
-              }}
-              title="Filter by role"
-            >
-              <option value="">All roles</option>
-              <option value="admin">admin</option>
-              <option value="user">user</option>
-              <option value="temp">temp</option>
-            </Select>
-            <Select
-              className="w-[170px] max-w-full"
-              value={`${sortField}:${sortOrder}`}
-              onChange={(e) => {
-                const raw = e.target.value || "createdAt:desc";
-                const [f, o] = raw.split(":");
-                const nextField = (f === "lastLoginAt" ? "lastLoginAt" : "createdAt") as SortField;
-                const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
-                setPage(1);
-                setSortField(nextField);
-                setSortOrder(nextOrder);
-              }}
-              title="Sort"
-            >
-              <option value="createdAt:desc">Created (newest)</option>
-              <option value="createdAt:asc">Created (oldest)</option>
-              <option value="lastLoginAt:desc">Last login (newest)</option>
-              <option value="lastLoginAt:asc">Last login (oldest)</option>
-            </Select>
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {page} / {totalPages} • {total} total
-            </div>
-            <Button
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
+        <AdminPageHeader
+          title="Users"
+          description="Every account on this deployment. The plan control in Actions is both the current plan and the override."
+        />
+
+        <AdminFilterBar
+          className="mt-4"
+          page={page}
+          pageSize={limit}
+          total={total}
+          onPageChange={setPage}
+          noun="users"
+          loading={loading}
+          actions={
+            <Button variant="outline" onClick={() => setReloadKey((k) => k + 1)} disabled={loading}>
+              Refresh
             </Button>
-            <Button
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
+          }
+        >
+          <AdminSearchInput
+            value={q}
+            onValueChange={(v) => {
+              setPage(1);
+              setQ(v);
+            }}
+            placeholder="Search email or name…"
+            ariaLabel="Search users by email or name"
+          />
+          <AdminSelect
+            ariaLabel="Filter by role"
+            value={roleFilter}
+            onChange={(e) => {
+              setPage(1);
+              setRoleFilter(e.target.value);
+            }}
+          >
+            <option value="">All roles</option>
+            <option value="admin">Admin</option>
+            <option value="user">User</option>
+            <option value="temp">Temp</option>
+          </AdminSelect>
+          <AdminSelect
+            ariaLabel="Sort users"
+            value={`${sortField}:${sortOrder}`}
+            onChange={(e) => {
+              const raw = e.target.value || "createdAt:desc";
+              const [f, o] = raw.split(":");
+              const nextField = (f === "lastLoginAt" ? "lastLoginAt" : "createdAt") as SortField;
+              const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
+              setPage(1);
+              setSortField(nextField);
+              setSortOrder(nextOrder);
+            }}
+          >
+            <option value="createdAt:desc">Created (newest)</option>
+            <option value="createdAt:asc">Created (oldest)</option>
+            <option value="lastLoginAt:desc">Last login (newest)</option>
+            <option value="lastLoginAt:asc">Last login (oldest)</option>
+          </AdminSelect>
+        </AdminFilterBar>
 
         {error ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+          <AdminAlert className="mt-3">
             {error}
-          </Alert>
+          </AdminAlert>
         ) : null}
         {planError ? (
-          <Alert variant="info" className="mt-3 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+          <AdminAlert className="mt-3">
             {planError}
-          </Alert>
+          </AdminAlert>
         ) : null}
 
-        {loading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-6">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">Email</th>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Role</th>
-                <th className="px-4 py-3">Plan</th>
-                <th className="px-4 py-3">Active</th>
-                <th className="px-4 py-3">Temp</th>
-                <th className="px-4 py-3">Created</th>
-                <th className="px-4 py-3">Last login</th>
-                <th className="px-4 py-3">ID</th>
-                <th className="px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {items.map((u) => (
-                <tr key={u.id}>
-                  <td className="px-4 py-3">
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Users"
+          head={
+            <>
+              <AdminTh>Email</AdminTh>
+              <AdminTh>Name</AdminTh>
+              <AdminTh>Role</AdminTh>
+              <AdminTh>Status</AdminTh>
+              <AdminTh align="right">Created</AdminTh>
+              <AdminTh align="right">Last login</AdminTh>
+              <AdminTh>User ID</AdminTh>
+              <AdminTh align="right" sticky>Actions</AdminTh>
+            </>
+          }
+        >
+          {loading && items.length === 0 ? (
+            <AdminTableMessage colSpan={COLUMN_COUNT}>Loading users…</AdminTableMessage>
+          ) : items.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={COLUMN_COUNT}
+              title={filtered ? "No users match that search" : "No users yet"}
+              hint={filtered ? "Try a different email, name or role filter." : undefined}
+            />
+          ) : (
+            items.map((u) => {
+              const plan = (u.plan ?? "free").toLowerCase() === "pro" ? "pro" : "free";
+              const planBusy = planBusyUserId === u.id;
+              const otherPlanBusy = Boolean(planBusyUserId) && !planBusy;
+              return (
+                <AdminTr key={u.id}>
+                  <AdminTd primary truncate="max-w-[260px]">
                     <Link
                       href={`/a/data/users/${encodeURIComponent(u.id)}`}
-                      className="font-semibold text-[var(--fg)] hover:underline"
-                      title="View user details"
+                      className="rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                      title={u.email ?? "View user details"}
                     >
-                      {u.email ?? "—"}
+                      {u.email ?? ADMIN_DASH}
                     </Link>
-                  </td>
-                  <td className="px-4 py-3">{u.name ?? "—"}</td>
-                  <td className="px-4 py-3">{u.role ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-[var(--panel-hover)] px-2 py-1 text-xs font-semibold text-[var(--fg)]">
-                        {(u.plan ?? "free").toLowerCase() === "pro" ? "Pro" : "Free"}
-                      </span>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
-                        disabled={Boolean(planBusyUserId) && planBusyUserId !== u.id}
-                        onClick={() => void setUserPlan(u.id, "pro")}
-                        title="Admin override: set plan to Pro"
+                  </AdminTd>
+                  <AdminTd truncate="max-w-[180px]">
+                    <span title={u.name ?? undefined}>{u.name ?? ADMIN_DASH}</span>
+                  </AdminTd>
+                  <AdminTd>
+                    {u.role === "admin" ? (
+                      <StatusPill tone="accent">Admin</StatusPill>
+                    ) : u.role ? (
+                      <span className="capitalize">{u.role}</span>
+                    ) : (
+                      ADMIN_DASH
+                    )}
+                  </AdminTd>
+                  {/* No Plan column: the segmented control in Actions already shows the
+                      current plan, and two "Free" chips per row read as two states. */}
+                  <AdminTd>
+                    <span className="inline-flex items-center gap-1.5">
+                      {u.isActive === false ? (
+                        <StatusPill tone="danger">Inactive</StatusPill>
+                      ) : (
+                        <StatusPill tone="positive" dot>
+                          Active
+                        </StatusPill>
+                      )}
+                      {u.isTemp ? <StatusPill tone="warning">Temp</StatusPill> : null}
+                    </span>
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    <TimeCell value={u.createdAt} />
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    <TimeCell value={u.lastLoginAt} />
+                  </AdminTd>
+                  <AdminTd>
+                    <IdCell value={u.id} label="user id" href={`/a/data/users/${encodeURIComponent(u.id)}`} />
+                  </AdminTd>
+                  <AdminTd align="right" sticky actions>
+                    <RowActions>
+                      <SegmentedAction
+                        options={PLAN_OPTIONS}
+                        value={plan}
+                        onSelect={(next) => void setUserPlan(u.id, next)}
+                        ariaLabel={`Plan for ${u.email ?? u.id}`}
+                        disabled={otherPlanBusy}
+                        busy={planBusy}
+                      />
+                      <RowAction
+                        tone="danger"
+                        busy={deactivateBusyUserId === u.id}
+                        busyLabel="Deactivating…"
+                        disabled={
+                          (Boolean(deactivateBusyUserId) && deactivateBusyUserId !== u.id) || u.isActive === false
+                        }
+                        title="Deactivate user (sets isActive=false)"
+                        onClick={() => void deactivateUser(u.id)}
                       >
-                        {planBusyUserId === u.id ? "Saving…" : "Set Pro"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] disabled:opacity-60"
-                        disabled={Boolean(planBusyUserId) && planBusyUserId !== u.id}
-                        onClick={() => void setUserPlan(u.id, "free")}
-                        title="Admin override: set plan to Free"
-                      >
-                        {planBusyUserId === u.id ? "Saving…" : "Set Free"}
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{u.isActive ? "Yes" : "No"}</td>
-                  <td className="px-4 py-3">{u.isTemp ? "Yes" : "No"}</td>
-                  <td className="px-4 py-3">{fmtDate(u.createdAt) || "—"}</td>
-                  <td className="px-4 py-3">{fmtDate(u.lastLoginAt) || "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{u.id}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                      disabled={(Boolean(deactivateBusyUserId) && deactivateBusyUserId !== u.id) || u.isActive === false}
-                      onClick={() => void deactivateUser(u.id)}
-                      title="Deactivate user (sets isActive=false)"
-                    >
-                      {u.isActive === false ? "Deactivated" : deactivateBusyUserId === u.id ? "Deactivating…" : "Deactivate"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={10}>
-                    No users.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </DataTable>
-        )}
+                        {u.isActive === false ? "Deactivated" : "Deactivate"}
+                      </RowAction>
+                    </RowActions>
+                  </AdminTd>
+                </AdminTr>
+              );
+            })
+          )}
+        </AdminTable>
       </div>
     </div>
   );
 }
-
-
-

@@ -1,18 +1,34 @@
 /**
  * Admin route: `/a/data/requests`
  *
- * Lists request link repos for admin inspection (paged).
+ * Lists request link repos for admin inspection (paged). Built on the shared admin UI in
+ * `@/components/admin` — see `/a/data/users` for the reference implementation.
  */
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
-import Input from "@/components/ui/Input";
-import DataTable from "@/components/ui/DataTable";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  BoolState,
+  IdCell,
+  RowAction,
+  RowActions,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH, truncateId } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
@@ -31,15 +47,13 @@ type RequestRow = {
   createdDate: string | null;
 };
 
+/** Column count of the table below; every full-width row's colSpan has to match it. */
+const COLUMN_COUNT = 9;
+
+/** The Requests browser: every request repo, filtered and paged server-side. */
 export default function AdminDataRequestsPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -51,7 +65,8 @@ export default function AdminDataRequestsPage() {
   const [deleteBusyRequestId, setDeleteBusyRequestId] = useState<string>("");
   const [reloadKey, setReloadKey] = useState(0);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
+  /** A search narrowing the list — decides which empty-state sentence the table shows. */
+  const filtered = Boolean(q.trim());
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -79,6 +94,7 @@ export default function AdminDataRequestsPage() {
     })();
   }, [canUseAdmin, limit, page, q, reloadKey]);
 
+  /** Soft-delete a request repo, then drop its row optimistically. */
   async function deleteRequest(requestId: string) {
     if (!requestId) return;
     if (deleteBusyRequestId) return;
@@ -97,169 +113,147 @@ export default function AdminDataRequestsPage() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Requests</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/data/requests" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Requests</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Requests" description="Request repos: the folders people upload into from a public link." callbackUrl="/a/data/requests" />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Requests</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">Paged list of request link repos.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="w-[260px] max-w-full"
-              placeholder="Search name, slug, shareId, token…"
-              value={q}
-              onChange={(e) => {
-                setPage(1);
-                setQ(e.target.value);
-              }}
-            />
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {page} / {totalPages} • {total} total
-            </div>
-            <Button
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+        <AdminPageHeader title="Requests" description="Request repos: the folders people upload into from a public link." />
+
+        <AdminFilterBar
+          className="mt-4"
+          page={page}
+          pageSize={limit}
+          total={total}
+          onPageChange={setPage}
+          noun="requests"
+          loading={loading}
+          actions={
+            <Button variant="outline" className="bg-[var(--panel)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
               {loading ? "Loading…" : "Refresh"}
             </Button>
-          </div>
-        </div>
+          }
+        >
+          <AdminSearchInput
+            value={q}
+            onValueChange={(v) => {
+              setPage(1);
+              setQ(v);
+            }}
+            placeholder="Search name, slug, shareId…"
+            ariaLabel="Search requests by name, slug, shareId or token"
+          />
+        </AdminFilterBar>
 
         {error ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+          <AdminAlert className="mt-3">
             {error}
-          </Alert>
+          </AdminAlert>
         ) : null}
 
-        {loading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-6">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Slug</th>
-                <th className="px-4 py-3">Docs</th>
-                <th className="px-4 py-3">Review</th>
-                <th className="px-4 py-3">Upload link</th>
-                <th className="px-4 py-3">Updated</th>
-                <th className="px-4 py-3">User ID</th>
-                <th className="px-4 py-3">Project ID</th>
-                <th className="px-4 py-3">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {items.map((r) => (
-                <tr key={r.id}>
-                  <td className="px-4 py-3">
-                    <div className="min-w-0">
-                      <Link
-                        href={`/a/data/requests/${encodeURIComponent(r.id)}`}
-                        className="truncate font-semibold text-[var(--fg)] hover:underline"
-                        title="Open request drilldown"
-                      >
-                        {r.name ?? "—"}
-                      </Link>
-                      {r.description ? <div className="mt-1 truncate text-xs text-[var(--muted)]">{r.description}</div> : null}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">{r.slug ?? "—"}</td>
-                  <td className="px-4 py-3">{typeof r.docCount === "number" ? r.docCount : "—"}</td>
-                  <td className="px-4 py-3">{r.requestReviewEnabled ? "Enabled" : "Off"}</td>
-                  <td className="px-4 py-3">
-                    {r.requestUploadToken ? (
-                      <a
-                        className="font-mono text-xs text-[var(--fg)] hover:underline"
-                        href={`/request/${encodeURIComponent(r.requestUploadToken)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="Open public request upload page"
-                      >
-                        /request/{r.requestUploadToken.slice(0, 8)}…
-                      </a>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="px-4 py-3">{fmtDate(r.updatedDate) || fmtDate(r.createdDate) || "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{r.userId ?? "—"}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{r.id}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                      disabled={Boolean(deleteBusyRequestId) && deleteBusyRequestId !== r.id}
-                      onClick={() => void deleteRequest(r.id)}
-                      title="Soft delete request repo"
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Request repos"
+          head={
+            <>
+              <AdminTh>Name</AdminTh>
+              <AdminTh>Slug</AdminTh>
+              <AdminTh align="right">Docs</AdminTh>
+              <AdminTh>Review</AdminTh>
+              <AdminTh>Upload link</AdminTh>
+              <AdminTh align="right">Updated</AdminTh>
+              <AdminTh>User</AdminTh>
+              <AdminTh>Request ID</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {loading && items.length === 0 ? (
+            <AdminTableMessage colSpan={COLUMN_COUNT}>Loading requests…</AdminTableMessage>
+          ) : items.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={COLUMN_COUNT}
+              title={filtered ? "No requests match that search" : "No request repos yet"}
+              hint={
+                filtered
+                  ? "Try a different name, slug, shareId or token."
+                  : "A request repo appears here once someone creates a request link."
+              }
+            />
+          ) : (
+            items.map((r) => (
+              <AdminTr key={r.id}>
+                {/* The description is the row's tooltip rather than a second line, so every
+                    request keeps the same one-line rhythm. */}
+                <AdminTd primary truncate="max-w-[190px] sm:max-w-[260px]">
+                  <Link
+                    href={`/a/data/requests/${encodeURIComponent(r.id)}`}
+                    className="rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                    title={r.description ? `${r.name ?? "Untitled"} — ${r.description}` : (r.name ?? "Open request")}
+                  >
+                    {r.name ?? ADMIN_DASH}
+                  </Link>
+                </AdminTd>
+                <AdminTd truncate="max-w-[170px]">
+                  <span title={r.slug ?? undefined}>{r.slug ?? ADMIN_DASH}</span>
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  {typeof r.docCount === "number" ? r.docCount.toLocaleString() : ADMIN_DASH}
+                </AdminTd>
+                <AdminTd>
+                  <BoolState value={r.requestReviewEnabled} trueLabel="On" />
+                </AdminTd>
+                <AdminTd>
+                  {r.requestUploadToken ? (
+                    <a
+                      className="rounded font-mono text-[12px] text-[var(--muted-2)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                      href={`/request/${encodeURIComponent(r.requestUploadToken)}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={`Open /request/${r.requestUploadToken}`}
                     >
-                      {deleteBusyRequestId === r.id ? "Deleting…" : "Delete"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {items.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
-                    No requests.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </DataTable>
-        )}
+                      /request/{truncateId(r.requestUploadToken)}
+                    </a>
+                  ) : (
+                    <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                  )}
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={r.updatedDate ?? r.createdDate} />
+                </AdminTd>
+                <AdminTd>
+                  <IdCell
+                    value={r.userId}
+                    label="user id"
+                    href={r.userId ? `/a/data/users/${encodeURIComponent(r.userId)}` : undefined}
+                  />
+                </AdminTd>
+                <AdminTd>
+                  <IdCell value={r.id} label="request id" href={`/a/data/requests/${encodeURIComponent(r.id)}`} />
+                </AdminTd>
+                <AdminTd align="right" sticky actions>
+                  <RowActions>
+                    <RowAction
+                      tone="danger"
+                      busy={deleteBusyRequestId === r.id}
+                      busyLabel="Deleting…"
+                      disabled={Boolean(deleteBusyRequestId) && deleteBusyRequestId !== r.id}
+                      title="Soft delete request repo"
+                      onClick={() => void deleteRequest(r.id)}
+                    >
+                      Delete
+                    </RowAction>
+                  </RowActions>
+                </AdminTd>
+              </AdminTr>
+            ))
+          )}
+        </AdminTable>
       </div>
     </div>
   );
 }
-
-

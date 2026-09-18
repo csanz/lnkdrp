@@ -283,6 +283,23 @@ export function ledgerBucketLabel(row: WorkspaceLedgerRowDTO): string {
   return parts.length ? parts.join(" + ") : "—";
 }
 
+/**
+ * The buckets that paid, named but not counted: `included`, `included + starter`.
+ *
+ * The ledger table already carries the figure in its own right-aligned Credits column, so
+ * repeating it here made every row state the same number twice ("1 charged" beside
+ * "included 1"). `ledgerBucketLabel` keeps the counted form for the `title`, where the
+ * split between two buckets is the whole point.
+ */
+export function ledgerBucketNames(row: WorkspaceLedgerRowDTO): string {
+  const parts: string[] = [];
+  if (row.creditsFromSubscription > 0) parts.push("included");
+  if (row.creditsFromTrial > 0) parts.push("starter");
+  if (row.creditsFromPurchased > 0) parts.push("purchased");
+  if (row.creditsFromOnDemand > 0) parts.push("on-demand");
+  return parts.length ? parts.join(" + ") : "—";
+}
+
 export type GraceState = { state: "none" | "active" | "blocked"; daysLeft: number | null };
 
 /**

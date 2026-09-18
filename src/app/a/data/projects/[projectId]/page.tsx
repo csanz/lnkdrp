@@ -1,33 +1,39 @@
 /**
  * Admin route: `/a/data/projects/:projectId`
  *
- * Allows admin to inspect and update a project (including setting `isRequest=true`).
+ * Project editor: inspect one project and mark it as a request repository. The identity
+ * panel and the raw JSON block are the shared detail shapes; the request settings keep
+ * their draft-then-Save behaviour exactly as before.
  */
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
-import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminPageHeader,
+  DetailGrid,
+  DetailPanel,
+  DetailRow,
+  IdCell,
+  JsonBlock,
+  StatusPill,
+  useAdminAccess,
+} from "@/components/admin";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type ProjectRaw = Record<string, unknown>;
 
+/** The project editor page. */
 export default function AdminProjectEditorPage() {
   const params = useParams<{ projectId: string }>();
   const projectId = decodeURIComponent(params?.projectId ?? "").trim();
 
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -70,6 +76,7 @@ export default function AdminProjectEditorPage() {
     })();
   }, [canUseAdmin, projectId]);
 
+  /** Persist the drafted `isRequest` flag, then re-read the project. */
   async function onSave() {
     setError(null);
     setOkMessage(null);
@@ -96,6 +103,7 @@ export default function AdminProjectEditorPage() {
     }
   }
 
+  /** Mint a request upload token for this project (confirms first), then re-read it. */
   async function convertToRequestRepo() {
     setError(null);
     setOkMessage(null);
@@ -123,140 +131,107 @@ export default function AdminProjectEditorPage() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Projects</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: `/a/data/projects/${encodeURIComponent(projectId)}` })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Projects</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Project" description="Inspect one project and mark it as a request repository." callbackUrl={`/a/data/projects/${encodeURIComponent(projectId)}`} />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Projects</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">Project editor</p>
-          </div>
-          <Link
-            href="/a/data/projects"
-            className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)]"
+        <AdminPageHeader
+          title="Project"
+          description="Inspect one project and mark it as a request repository."
+          /* Only the exception is worth a chip: an ordinary project says nothing here. */
+          actions={currentIsRequest ? <StatusPill tone="info">Request repo</StatusPill> : null}
+        />
+
+        {error ? (
+          <AdminAlert className="mt-3">
+            {error}
+          </AdminAlert>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {/* The same two fields this page has always shown — the rest lives in the raw document below. */}
+          <DetailPanel title="Identifiers" description="What names this project to the API and to uploaders.">
+            <DetailGrid>
+              <DetailRow label="Project ID">
+                <IdCell value={projectId} label="project id" />
+              </DetailRow>
+              <DetailRow label="Request token">
+                <IdCell value={token} label="request upload token" head={10} tail={4} />
+              </DetailRow>
+            </DetailGrid>
+          </DetailPanel>
+
+          <DetailPanel
+            title="Request repository"
+            description="Marks this project as a request repository (Received)."
+            actions={
+              <Button
+                variant="solid"
+                size="sm"
+                disabled={saving || loading || (draftIsRequest && !token)}
+                onClick={() => void onSave()}
+              >
+                {saving ? "Saving…" : "Save"}
+              </Button>
+            }
+            bodyClassName="p-3"
           >
-            Back to list
-          </Link>
-        </div>
+            <label className="flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2.5">
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium leading-5 text-[var(--fg)]">isRequest</span>
+                <span className="mt-0.5 block text-[12px] leading-4 text-[var(--muted-2)]">
+                  Uploads at <code className="font-mono">/request/:token</code> need this on.
+                </span>
+              </span>
+              <span className="flex shrink-0 items-center gap-2">
+                <StatusPill tone={draftIsRequest ? "info" : "quiet"}>{draftIsRequest ? "On" : "Off"}</StatusPill>
+                <input
+                  type="checkbox"
+                  checked={draftIsRequest}
+                  onChange={(e) => setDraftIsRequest(e.target.checked)}
+                  aria-label="Mark this project as a request repository"
+                  className="h-4 w-4 accent-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                />
+              </span>
+            </label>
 
-        <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-          {loading ? (
-            <div className="text-sm text-[var(--muted)]">Loading…</div>
-          ) : error ? (
-            <Alert variant="info" className="border border-[var(--border)] bg-[var(--panel-2)] text-sm text-red-700">
-              {error}
-            </Alert>
-          ) : raw ? (
-            <>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Project ID</div>
-                  <div className="mt-1 font-mono text-xs text-[var(--muted)]">{projectId}</div>
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Token</div>
-                  <div className="mt-1 font-mono text-xs text-[var(--muted)]">
-                    {token ? `${token.slice(0, 12)}…` : "—"}
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-5 flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3">
-                <div>
-                  <div className="text-sm font-semibold text-[var(--fg)]">isRequest</div>
-                  <div className="mt-1 text-sm text-[var(--muted)]">
-                    Marks this project as a request repository (Received).
-                  </div>
-                </div>
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={draftIsRequest}
-                    onChange={(e) => setDraftIsRequest(e.target.checked)}
-                    className="h-4 w-4 accent-black"
-                  />
-                  <span className="text-sm font-medium text-[var(--fg)]">{draftIsRequest ? "True" : "False"}</span>
-                </label>
-              </div>
-
-              {!token ? (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
-                  <div className="text-sm text-[var(--muted)]">
-                    This project has no request token. Convert it to enable `/request/:token` uploads.
-                  </div>
-                  <button
-                    type="button"
-                    disabled={saving || loading}
-                    className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={() => void convertToRequestRepo()}
-                  >
-                    Convert to request repo
-                  </button>
-                </div>
-              ) : null}
-
-              {okMessage ? <div className="mt-3 text-sm text-[var(--fg)]">{okMessage}</div> : null}
-
-              <div className="mt-5 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={saving || loading || (draftIsRequest && !token)}
-                  className="rounded-xl bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-black/90 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={() => void onSave()}
+            {!token ? (
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
+                <p className="min-w-0 text-[12px] leading-5 text-[var(--muted-2)]">
+                  No request token yet. Converting generates one and sets isRequest=true.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={saving || loading}
+                  onClick={() => void convertToRequestRepo()}
                 >
-                  {saving ? "Saving…" : "Save"}
-                </button>
+                  Convert to request repo
+                </Button>
               </div>
+            ) : null}
 
-              <details className="mt-6">
-                <summary className="cursor-pointer text-sm font-semibold text-[var(--fg)]">Raw project JSON</summary>
-                <pre className="mt-3 overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4 text-xs text-[var(--fg)]">
-                  {JSON.stringify(raw, null, 2)}
-                </pre>
-              </details>
-            </>
-          ) : (
-            <div className="text-sm text-[var(--muted)]">No data.</div>
-          )}
+            {okMessage ? (
+              <p className="mt-2 px-1 text-[12px] leading-5 text-[var(--muted-2)]">{okMessage}</p>
+            ) : null}
+          </DetailPanel>
         </div>
+
+        <DetailPanel
+          className="mt-3"
+          title="Raw project document"
+          description="Everything stored on this project, straight from Mongo."
+          bodyClassName="p-2"
+        >
+          <JsonBlock
+            text={loading ? "Loading…" : JSON.stringify(raw ?? null, null, 2)}
+            maxHeight="max-h-[420px]"
+          />
+        </DetailPanel>
       </div>
     </div>
   );
 }
-
-

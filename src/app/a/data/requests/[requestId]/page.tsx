@@ -1,19 +1,45 @@
 /**
  * Admin route: `/a/data/requests/:requestId`
  *
- * Request repo drilldown: shows full raw request repo data plus related docs/uploads.
+ * Request repo drilldown: the raw request repo record, the docs and uploads under it, and
+ * the AI runs behind them — four views behind one segmented control.
+ *
+ * Presentation is the shared admin kit: one page header, one band under it, titled panels
+ * with the same label/value rhythm as the other detail pages, and the AI runs list in the
+ * same table density as the admin lists.
  */
 "use client";
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { signIn, useSession } from "next-auth/react";
 import { useEffect, useMemo, useState } from "react";
-import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
 import CopyTextButton from "@/components/ui/CopyTextButton";
-import { fmtDate, fmtDuration } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminPageHeader,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  DetailGrid,
+  DetailPanel,
+  DetailRow,
+  DetailSection,
+  IdCell,
+  JsonBlock,
+  SegmentedAction,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
+import { fmtDuration } from "@/lib/admin/format";
+import { pipelineStatusTone } from "@/lib/admin/statusTones";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type DetailDoc = {
@@ -109,6 +135,11 @@ type AiRunDetail = {
   createdDate: string | null;
 };
 
+type TabKey = "request" | "docs" | "uploads" | "ai";
+
+const AI_RUN_COLUMNS = 6;
+
+/** Pretty-print any value, falling back to `String()` on a cycle. */
 function prettyJson(v: unknown) {
   try {
     return JSON.stringify(v, null, 2);
@@ -117,6 +148,7 @@ function prettyJson(v: unknown) {
   }
 }
 
+/** The `aiOutput` object off a raw doc/upload document, or null when there is none. */
 function extractAiOutput(raw: Record<string, unknown> | null | undefined) {
   if (!raw || typeof raw !== "object") return null;
   const v = (raw as { aiOutput?: unknown }).aiOutput;
@@ -124,18 +156,40 @@ function extractAiOutput(raw: Record<string, unknown> | null | undefined) {
   return v as Record<string, unknown>;
 }
 
+/** A collapsible block of raw text, on the same rhythm everywhere on this page. */
+function RawDisclosure({
+  label,
+  text,
+  copyLabel,
+  maxHeight,
+}: {
+  label: string;
+  text: string;
+  copyLabel?: string;
+  maxHeight?: string;
+}) {
+  return (
+    <details className="mt-2">
+      <summary className="cursor-pointer rounded px-1 text-[12px] font-medium leading-5 text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]">
+        {label}
+      </summary>
+      <JsonBlock
+        className="mt-2"
+        text={text}
+        maxHeight={maxHeight}
+        actions={<CopyTextButton text={text} label={copyLabel ?? "Copy"} />}
+      />
+    </details>
+  );
+}
+
+/** The request repo drilldown page. */
 export default function AdminDataRequestDetailPage() {
   const routeParams = useParams<{ requestId?: string | string[] }>();
   const requestIdRaw = routeParams?.requestId;
   const requestId = typeof requestIdRaw === "string" ? requestIdRaw : Array.isArray(requestIdRaw) ? requestIdRaw[0] : "";
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [data, setData] = useState<{
     requestRaw: Record<string, unknown> | null;
@@ -145,7 +199,7 @@ export default function AdminDataRequestDetailPage() {
   }>({ requestRaw: null, docs: [], uploads: [], reviews: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"request" | "docs" | "uploads" | "ai">("request");
+  const [tab, setTab] = useState<TabKey>("request");
 
   const [aiRuns, setAiRuns] = useState<AiRunRow[]>([]);
   const [aiRunsLoading, setAiRunsLoading] = useState(false);
@@ -180,6 +234,21 @@ export default function AdminDataRequestDetailPage() {
     });
   }, [aiRunDetail, aiRuns, data.docs, data.requestRaw, data.reviews, data.uploads, requestId, selectedAiRunId]);
 
+  const tabOptions = useMemo(
+    () =>
+      [
+        { value: "request" as const, label: "Raw record", title: "The raw request repo document" },
+        { value: "docs" as const, label: `Docs (${data.docs.length})`, title: "Docs under this request repo" },
+        {
+          value: "uploads" as const,
+          label: `Uploads (${data.uploads.length})`,
+          title: "Uploads under this request repo",
+        },
+        { value: "ai" as const, label: "AI runs", title: "AI runs for this request repo" },
+      ] satisfies ReadonlyArray<{ value: TabKey; label: string; title: string }>,
+    [data.docs.length, data.uploads.length],
+  );
+
   useEffect(() => {
     if (!canUseAdmin) return;
     if (!requestId) return;
@@ -198,7 +267,7 @@ export default function AdminDataRequestDetailPage() {
           requestRaw: raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null,
           docs: Array.isArray(body.docs) ? (body.docs as DetailDoc[]) : [],
           uploads: Array.isArray(body.uploads) ? (body.uploads as DetailUpload[]) : [],
-          reviews: Array.isArray(body.reviews) ? (body.reviews as any[]) : [],
+          reviews: Array.isArray(body.reviews) ? (body.reviews as DetailReview[]) : [],
         });
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load request");
@@ -262,609 +331,471 @@ export default function AdminDataRequestDetailPage() {
     })();
   }, [canUseAdmin, selectedAiRunId, tab]);
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Requests</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() =>
-                void signIn("google", {
-                  callbackUrl: requestId ? `/a/data/requests/${encodeURIComponent(requestId)}` : "/a/data/requests",
-                })
-              }
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
+  /** Re-fetch the request payload. Same request the mount effect makes. */
+  function reload() {
+    if (!requestId) return;
+    setLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const body = await fetchJson<DetailResponse>(`/api/admin/data/requests/${encodeURIComponent(requestId)}`, {
+          method: "GET",
+        });
+        const raw =
+          body.request && typeof body.request === "object" && "raw" in body.request
+            ? (body.request as { raw?: unknown }).raw
+            : null;
+        setData({
+          requestRaw: raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null,
+          docs: Array.isArray(body.docs) ? (body.docs as DetailDoc[]) : [],
+          uploads: Array.isArray(body.uploads) ? (body.uploads as DetailUpload[]) : [],
+          reviews: Array.isArray(body.reviews) ? (body.reviews as DetailReview[]) : [],
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to load request");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }
 
   if (!canUseAdmin) {
     return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Requests</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
+      <AdminAccessState
+        access={access}
+        title="Request"
+        callbackUrl={requestId ? `/a/data/requests/${encodeURIComponent(requestId)}` : "/a/data/requests"}
+      />
     );
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Link href="/a/data/requests" className="text-sm text-[var(--muted)] hover:underline">
-                Admin / Data / Requests
-              </Link>
-              <span className="text-sm text-[var(--muted)]">/</span>
-              <span className="text-sm font-semibold text-[var(--fg)]">{header.slug ?? header.name}</span>
-            </div>
-            <h1 className="mt-2 truncate text-xl font-semibold tracking-tight text-[var(--fg)]">{header.name}</h1>
-            <div className="mt-1 text-sm text-[var(--muted)]">
-              {header.slug ? (
-                <span className="inline-flex items-center gap-2">
-                  <span>Slug: {header.slug}</span>
-                  <CopyTextButton text={header.slug} label="Copy slug" />
-                </span>
-              ) : null}
+        <AdminPageHeader
+          title={header.name}
+          description="The request repo record, the docs and uploads under it, and the AI runs behind them."
+          actions={
+            <>
               {header.token ? (
-                <span className="inline-flex items-center gap-2">
-                  <span>{header.slug ? " • " : ""}Token: {header.token.slice(0, 10)}…</span>
-                  <CopyTextButton text={header.token} label="Copy token" />
-                </span>
+                <a
+                  className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                  href={`/request/${encodeURIComponent(header.token)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open upload page
+                </a>
               ) : null}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {header.token ? (
-              <a
-                className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)]"
-                href={`/request/${encodeURIComponent(header.token)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Open upload page
-              </a>
-            ) : null}
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              disabled={loading}
-              onClick={() => {
-                // trigger reload by toggling state
-                setTab((t) => t);
-                // reload happens via effect on requestId; easiest is force by re-setting error/loading state:
-                setLoading(true);
-                setError(null);
-                void (async () => {
-                  try {
-                    const body = await fetchJson<DetailResponse>(
-                      `/api/admin/data/requests/${encodeURIComponent(requestId)}`,
-                      { method: "GET" },
-                    );
-                    const raw =
-                      body.request && typeof body.request === "object" && "raw" in body.request
-                        ? (body.request as { raw?: unknown }).raw
-                        : null;
-                    setData({
-                      requestRaw: raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null,
-                      docs: Array.isArray(body.docs) ? (body.docs as DetailDoc[]) : [],
-                      uploads: Array.isArray(body.uploads) ? (body.uploads as DetailUpload[]) : [],
-                      reviews: Array.isArray(body.reviews) ? (body.reviews as any[]) : [],
-                    });
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : "Failed to load request");
-                  } finally {
-                    setLoading(false);
-                  }
-                })();
-              }}
-            >
-              Refresh
-            </Button>
-            <CopyTextButton text={copyAllLoadedText} label="Copy all (loaded)" />
+              <Button variant="outline" disabled={loading} onClick={reload}>
+                {loading ? "Loading…" : "Refresh"}
+              </Button>
+              <CopyTextButton text={copyAllLoadedText} label="Copy all (loaded)" className="px-3 py-2 text-sm" />
+            </>
+          }
+        />
+
+        {/* The band: which view, and the two identifiers support asks for. */}
+        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-2.5 py-2">
+          <SegmentedAction
+            options={tabOptions}
+            value={tab}
+            onSelect={(next) => setTab(next)}
+            ariaLabel="Request view"
+          />
+          <div className="ml-auto flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] leading-5 text-[var(--muted-2)]">
+            <span className="inline-flex items-center gap-1.5">
+              <span>Slug</span>
+              <span className="font-mono text-[var(--fg)]">{header.slug ?? ADMIN_DASH}</span>
+              {header.slug ? <CopyTextButton text={header.slug} label="Copy" /> : null}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span>Token</span>
+              <IdCell value={header.token} label="request upload token" head={10} tail={4} />
+            </span>
           </div>
         </div>
 
         {error ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+          <AdminAlert className="mt-3">
             {error}
-          </Alert>
+          </AdminAlert>
         ) : null}
 
-        <div className="mt-6 flex flex-wrap items-center gap-2 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-2">
-          {(
-            [
-              { key: "request", label: "Request (raw)" },
-              { key: "docs", label: `Docs (${data.docs.length})` },
-              { key: "uploads", label: `Uploads (${data.uploads.length})` },
-              { key: "ai", label: "AI runs" },
-            ] as const
-          ).map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              className={
-                tab === t.key
-                  ? "rounded-xl bg-[var(--panel-2)] px-3 py-2 text-sm font-semibold text-[var(--fg)]"
-                  : "rounded-xl px-3 py-2 text-sm text-[var(--muted)] hover:bg-[var(--panel-hover)]"
-              }
-              onClick={() => setTab(t.key)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {tab === "request" ? (
+          <DetailPanel
+            className="mt-3"
+            title="Raw request repo document"
+            description="Everything stored on this request repo, straight from Mongo."
+            actions={<CopyTextButton text={prettyJson(data.requestRaw)} />}
+            bodyClassName="p-2"
+          >
+            <JsonBlock text={loading ? "Loading…" : prettyJson(data.requestRaw)} maxHeight="max-h-[560px]" />
+          </DetailPanel>
+        ) : null}
 
-        {loading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : tab === "request" ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-sm font-semibold text-[var(--fg)]">Raw request repo document</div>
-              <CopyTextButton text={prettyJson(data.requestRaw)} />
-            </div>
-            <div className="mt-3 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
-              <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                {prettyJson(data.requestRaw)}
-              </pre>
-            </div>
-          </div>
-        ) : tab === "docs" ? (
-          <div className="mt-6 space-y-3">
-            {data.docs.map((d) => (
-              <div key={d.id} className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-[var(--fg)]">{d.title ?? "Untitled"}</div>
-                    <div className="mt-1 text-xs text-[var(--muted)]">
-                      Status: {d.status ?? "—"} • Created: {fmtDate(d.createdDate) || "—"} • Updated:{" "}
-                      {fmtDate(d.updatedDate) || "—"}
-                    </div>
-                    {d.isGuideDoc ? (
-                      <div className="mt-1 text-xs font-semibold text-[var(--muted-2)]">Guide doc</div>
-                    ) : null}
-                    <div className="mt-1 inline-flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-                      <span>Doc ID: {d.id}</span>
-                      <CopyTextButton text={d.id} label="Copy ID" />
-                    </div>
-                    {d.shareId ? (
-                      <div className="mt-1 inline-flex flex-wrap items-center gap-2">
-                        <a
-                          className="inline-block text-xs text-[var(--fg)] hover:underline"
-                          href={`/s/${encodeURIComponent(d.shareId)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          /s/{d.shareId}
-                        </a>
-                        <CopyTextButton text={d.shareId} label="Copy shareId" />
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Link
-                      href={`/a/shareviews/${encodeURIComponent(d.id)}`}
-                      className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)]"
-                      title="Open Share Views drilldown for this doc"
-                    >
-                      Share views
-                    </Link>
-                  </div>
-                </div>
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-xs font-semibold text-[var(--muted-2)]">
-                    Raw doc JSON
-                  </summary>
-                  <div className="mt-2 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
-                    <div className="mb-2 flex justify-end">
-                      <CopyTextButton text={prettyJson(d.raw)} />
-                    </div>
-                    <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">{prettyJson(d.raw)}</pre>
-                  </div>
-                </details>
-                {extractAiOutput(d.raw) ? (
-                  <details className="mt-3">
-                    <summary className="cursor-pointer text-xs font-semibold text-[var(--muted-2)]">
-                      AI output (doc.aiOutput)
-                    </summary>
-                    <div className="mt-2 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
-                      <div className="mb-2 flex justify-end">
-                        <CopyTextButton text={prettyJson(extractAiOutput(d.raw))} />
-                      </div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                        {prettyJson(extractAiOutput(d.raw))}
-                      </pre>
-                    </div>
-                  </details>
-                ) : null}
-                {data.reviews.filter((r) => r.docId === d.id).length ? (
-                  <details className="mt-3">
-                    <summary className="cursor-pointer text-xs font-semibold text-[var(--muted-2)]">
-                      Review output ({data.reviews.filter((r) => r.docId === d.id).length})
-                    </summary>
-                    <div className="mt-2 space-y-3">
-                      {data.reviews
-                        .filter((r) => r.docId === d.id)
-                        .map((r) => (
-                          <div key={r.id} className="rounded-xl border border-[var(--border)] bg-black/10 p-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="text-xs font-semibold text-[var(--fg)]">
-                                v{typeof r.version === "number" ? r.version : "—"} • {r.status ?? "—"}
-                                {r.model ? ` • ${r.model}` : ""}
-                              </div>
-                              <div className="text-[10px] text-[var(--muted-2)]">
-                                {fmtDate(r.updatedDate) || fmtDate(r.createdDate) || ""}
-                              </div>
-                            </div>
-                            {r.outputMarkdown ? (
-                              <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
-                                <div className="mb-2 flex justify-end">
-                                  <CopyTextButton text={r.outputMarkdown} label="Copy markdown" />
-                                </div>
-                                <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                                  {r.outputMarkdown}
-                                </pre>
-                              </div>
-                            ) : null}
-                            {r.intel ? (
-                              <details className="mt-2">
-                                <summary className="cursor-pointer text-[10px] font-semibold text-[var(--muted-2)]">
-                                  Intel (review.intel)
-                                </summary>
-                                <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
-                                  <div className="mb-2 flex justify-end">
-                                    <CopyTextButton text={prettyJson(r.intel)} label="Copy intel" />
+        {tab === "docs" ? (
+          <div className="mt-3 grid gap-3">
+            {loading && data.docs.length === 0 ? (
+              <DetailPanel title="Docs" description="Loading…">
+                <p className="px-2.5 py-1 text-[13px] leading-5 text-[var(--muted-2)]">Loading docs…</p>
+              </DetailPanel>
+            ) : data.docs.length === 0 ? (
+              <DetailPanel title="Docs" description="Nothing has been uploaded through this request repo yet.">
+                <p className="px-2.5 py-1 text-[13px] leading-5 text-[var(--muted-2)]">No docs for this request.</p>
+              </DetailPanel>
+            ) : (
+              data.docs.map((d) => {
+                const reviews = data.reviews.filter((r) => r.docId === d.id);
+                const aiOutput = extractAiOutput(d.raw);
+                return (
+                  <DetailPanel
+                    key={d.id}
+                    title={d.title ?? "Untitled"}
+                    description={d.isGuideDoc ? "Guide doc" : undefined}
+                    actions={
+                      <Link
+                        href={`/a/shareviews/${encodeURIComponent(d.id)}`}
+                        className="inline-flex h-[26px] items-center rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 text-[12px] font-medium leading-4 text-[var(--muted)] transition hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                        title="Open Share Views drilldown for this doc"
+                      >
+                        Share views
+                      </Link>
+                    }
+                  >
+                    <DetailGrid columns={2}>
+                      <DetailRow label="Status">
+                        {d.status ? <StatusPill tone={pipelineStatusTone(d.status)}>{d.status}</StatusPill> : null}
+                      </DetailRow>
+                      <DetailRow label="Created">{d.createdDate ? <TimeCell value={d.createdDate} /> : null}</DetailRow>
+                      <DetailRow label="Updated">{d.updatedDate ? <TimeCell value={d.updatedDate} /> : null}</DetailRow>
+                      <DetailRow label="Doc ID">
+                        <IdCell value={d.id} label="doc id" />
+                      </DetailRow>
+                      <DetailRow label="Share link">
+                        {d.shareId ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <a
+                              className="rounded font-mono text-[12px] text-[var(--fg)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                              href={`/s/${encodeURIComponent(d.shareId)}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              /s/{d.shareId}
+                            </a>
+                            <CopyTextButton text={d.shareId} label="Copy" />
+                          </span>
+                        ) : null}
+                      </DetailRow>
+                      <DetailRow label="Reviews">
+                        {reviews.length ? (
+                          <span className="tabular-nums">{reviews.length}</span>
+                        ) : (
+                          <span className="text-[var(--muted-2)]">None</span>
+                        )}
+                      </DetailRow>
+                    </DetailGrid>
+
+                    <div className="px-2.5 pb-1">
+                      <RawDisclosure label="Raw doc JSON" text={prettyJson(d.raw)} />
+                      {aiOutput ? (
+                        <RawDisclosure label="AI output (doc.aiOutput)" text={prettyJson(aiOutput)} />
+                      ) : null}
+                      {reviews.length ? (
+                        <details className="mt-2">
+                          <summary className="cursor-pointer rounded px-1 text-[12px] font-medium leading-5 text-[var(--muted-2)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]">
+                            Review output ({reviews.length})
+                          </summary>
+                          <div className="mt-2 grid gap-2">
+                            {reviews.map((r) => (
+                              <div
+                                key={r.id}
+                                className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-2.5"
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2 text-[12px] leading-5 text-[var(--muted)]">
+                                    <span className="font-medium text-[var(--fg)]">
+                                      v{typeof r.version === "number" ? r.version : ADMIN_DASH}
+                                    </span>
+                                    {r.status ? (
+                                      <StatusPill tone={pipelineStatusTone(r.status)}>{r.status}</StatusPill>
+                                    ) : null}
+                                    {r.model ? <span className="font-mono">{r.model}</span> : null}
                                   </div>
-                                  <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                                    {prettyJson(r.intel)}
-                                  </pre>
-                                </div>
-                              </details>
-                            ) : null}
-                            {r.agentOutput ? (
-                              <details className="mt-2">
-                                <summary className="cursor-pointer text-[10px] font-semibold text-[var(--muted-2)]">
-                                  Agent output (review.agentOutput)
-                                </summary>
-                                <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
-                                  <div className="mb-2 flex justify-end">
-                                    <CopyTextButton text={prettyJson(r.agentOutput)} label="Copy agent output" />
+                                  <div className="text-[12px] leading-5 tabular-nums text-[var(--muted-2)]">
+                                    <TimeCell value={r.updatedDate ?? r.createdDate} />
                                   </div>
-                                  <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                                    {prettyJson(r.agentOutput)}
-                                  </pre>
                                 </div>
-                              </details>
-                            ) : null}
-                            {r.agentRawOutputText ? (
-                              <details className="mt-2">
-                                <summary className="cursor-pointer text-[10px] font-semibold text-[var(--muted-2)]">
-                                  Raw model output (review.agentRawOutputText)
-                                </summary>
-                                <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
-                                  <div className="mb-2 flex justify-end">
-                                    <CopyTextButton text={r.agentRawOutputText} label="Copy raw output" />
-                                  </div>
-                                  <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                                    {r.agentRawOutputText}
-                                  </pre>
-                                </div>
-                              </details>
-                            ) : null}
-                            {r.agentSystemPrompt || r.agentUserPrompt ? (
-                              <details className="mt-2">
-                                <summary className="cursor-pointer text-[10px] font-semibold text-[var(--muted-2)]">
-                                  Prompts (system + user)
-                                </summary>
-                                <div className="mt-2 space-y-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
-                                  {r.agentSystemPrompt ? (
-                                    <div>
-                                      <div className="mb-1 flex items-center justify-between">
-                                        <div className="text-[10px] font-semibold text-[var(--muted-2)]">System</div>
-                                        <CopyTextButton text={r.agentSystemPrompt} label="Copy system" />
-                                      </div>
-                                      <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                                        {r.agentSystemPrompt}
-                                      </pre>
-                                    </div>
-                                  ) : null}
-                                  {r.agentUserPrompt ? (
-                                    <div>
-                                      <div className="mb-1 flex items-center justify-between">
-                                        <div className="text-[10px] font-semibold text-[var(--muted-2)]">User</div>
-                                        <CopyTextButton text={r.agentUserPrompt} label="Copy user" />
-                                      </div>
-                                      <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                                        {r.agentUserPrompt}
-                                      </pre>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </details>
-                            ) : null}
-                            <details className="mt-2">
-                              <summary className="cursor-pointer text-[10px] font-semibold text-[var(--muted-2)]">
-                                Raw review JSON
-                              </summary>
-                              <div className="mt-2 overflow-auto rounded-lg border border-[var(--border)] bg-black/20 p-2">
-                                <div className="mb-2 flex justify-end">
-                                  <CopyTextButton text={prettyJson(r.raw)} />
-                                </div>
-                                <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                                  {prettyJson(r.raw)}
-                                </pre>
+                                {r.outputMarkdown ? (
+                                  <JsonBlock
+                                    className="mt-2"
+                                    text={r.outputMarkdown}
+                                    maxHeight="max-h-[260px]"
+                                    actions={<CopyTextButton text={r.outputMarkdown} label="Copy markdown" />}
+                                  />
+                                ) : null}
+                                {r.intel ? (
+                                  <RawDisclosure
+                                    label="Intel (review.intel)"
+                                    text={prettyJson(r.intel)}
+                                    copyLabel="Copy intel"
+                                  />
+                                ) : null}
+                                {r.agentOutput ? (
+                                  <RawDisclosure
+                                    label="Agent output (review.agentOutput)"
+                                    text={prettyJson(r.agentOutput)}
+                                    copyLabel="Copy agent output"
+                                  />
+                                ) : null}
+                                {r.agentRawOutputText ? (
+                                  <RawDisclosure
+                                    label="Raw model output (review.agentRawOutputText)"
+                                    text={r.agentRawOutputText}
+                                    copyLabel="Copy raw output"
+                                  />
+                                ) : null}
+                                {r.agentSystemPrompt ? (
+                                  <RawDisclosure
+                                    label="System prompt"
+                                    text={r.agentSystemPrompt}
+                                    copyLabel="Copy system"
+                                  />
+                                ) : null}
+                                {r.agentUserPrompt ? (
+                                  <RawDisclosure label="User prompt" text={r.agentUserPrompt} copyLabel="Copy user" />
+                                ) : null}
+                                <RawDisclosure label="Raw review JSON" text={prettyJson(r.raw)} />
                               </div>
-                            </details>
+                            ))}
                           </div>
-                        ))}
+                        </details>
+                      ) : null}
                     </div>
-                  </details>
-                ) : (
-                  <div className="mt-3 text-xs text-[var(--muted-2)]">No reviews found for this doc.</div>
-                )}
-              </div>
-            ))}
-            {data.docs.length === 0 ? (
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-                No docs found for this request.
-              </div>
-            ) : null}
+                  </DetailPanel>
+                );
+              })
+            )}
           </div>
-        ) : tab === "uploads" ? (
-          <div className="mt-6 space-y-3">
-            {data.uploads.map((u) => (
-              <div key={u.id} className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-[var(--fg)]">
-                      {u.originalFileName ?? "Upload"}
+        ) : null}
+
+        {tab === "uploads" ? (
+          <div className="mt-3 grid gap-3">
+            {loading && data.uploads.length === 0 ? (
+              <DetailPanel title="Uploads" description="Loading…">
+                <p className="px-2.5 py-1 text-[13px] leading-5 text-[var(--muted-2)]">Loading uploads…</p>
+              </DetailPanel>
+            ) : data.uploads.length === 0 ? (
+              <DetailPanel title="Uploads" description="Nobody has uploaded a file through this request repo yet.">
+                <p className="px-2.5 py-1 text-[13px] leading-5 text-[var(--muted-2)]">No uploads for this request.</p>
+              </DetailPanel>
+            ) : (
+              data.uploads.map((u) => {
+                const aiOutput = extractAiOutput(u.raw);
+                return (
+                  <DetailPanel key={u.id} title={u.originalFileName ?? "Upload"}>
+                    <DetailGrid columns={2}>
+                      <DetailRow label="Status">
+                        {u.status ? <StatusPill tone={pipelineStatusTone(u.status)}>{u.status}</StatusPill> : null}
+                      </DetailRow>
+                      <DetailRow label="Version">
+                        {typeof u.version === "number" ? <span className="tabular-nums">v{u.version}</span> : null}
+                      </DetailRow>
+                      <DetailRow label="Created">{u.createdDate ? <TimeCell value={u.createdDate} /> : null}</DetailRow>
+                      <DetailRow label="Upload ID">
+                        <IdCell value={u.id} label="upload id" />
+                      </DetailRow>
+                      <DetailRow label="Doc ID">
+                        <IdCell value={u.docId} label="doc id" />
+                      </DetailRow>
+                    </DetailGrid>
+                    <div className="px-2.5 pb-1">
+                      <RawDisclosure label="Raw upload JSON" text={prettyJson(u.raw)} />
+                      {aiOutput ? (
+                        <RawDisclosure label="AI output (upload.aiOutput)" text={prettyJson(aiOutput)} />
+                      ) : null}
                     </div>
-                    <div className="mt-1 text-xs text-[var(--muted)]">
-                      Status: {u.status ?? "—"} • Version: {typeof u.version === "number" ? u.version : "—"} • Created:{" "}
-                      {fmtDate(u.createdDate) || "—"}
-                    </div>
-                    <div className="mt-1 inline-flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-                      <span>Upload ID: {u.id}</span>
-                      <CopyTextButton text={u.id} label="Copy ID" />
-                    </div>
-                    <div className="mt-1 text-xs text-[var(--muted)]">Doc ID: {u.docId ?? "—"}</div>
-                  </div>
-                </div>
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-xs font-semibold text-[var(--muted-2)]">
-                    Raw upload JSON
-                  </summary>
-                  <div className="mt-2 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
-                    <div className="mb-2 flex justify-end">
-                      <CopyTextButton text={prettyJson(u.raw)} />
-                    </div>
-                    <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">{prettyJson(u.raw)}</pre>
-                  </div>
-                </details>
-                {extractAiOutput(u.raw) ? (
-                  <details className="mt-3">
-                    <summary className="cursor-pointer text-xs font-semibold text-[var(--muted-2)]">
-                      AI output (upload.aiOutput)
-                    </summary>
-                    <div className="mt-2 overflow-auto rounded-xl border border-[var(--border)] bg-black/20 p-3">
-                      <div className="mb-2 flex justify-end">
-                        <CopyTextButton text={prettyJson(extractAiOutput(u.raw))} />
-                      </div>
-                      <pre className="whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                        {prettyJson(extractAiOutput(u.raw))}
-                      </pre>
-                    </div>
-                  </details>
-                ) : null}
-              </div>
-            ))}
-            {data.uploads.length === 0 ? (
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-                No uploads found for this request.
-              </div>
-            ) : null}
+                  </DetailPanel>
+                );
+              })
+            )}
           </div>
-        ) : tab === "ai" ? (
-          <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] 2xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-            <div className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-[var(--fg)]">AI runs (for this request repo)</div>
-                  <div className="mt-1 text-sm text-[var(--muted)]">Filtered by this request’s project id ({requestId}).</div>
-                </div>
-                <Link
-                  href="/a/ai-runs"
-                  className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)]"
+        ) : null}
+
+        {tab === "ai" ? (
+          <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] 2xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <div className="min-w-0">
+              <DetailSection
+                title="AI runs"
+                description="Filtered to this request repo's project id. Newest 100."
+                actions={
+                  <Link
+                    href="/a/ai-runs"
+                    className="inline-flex h-[26px] items-center rounded-md border border-[var(--border)] bg-[var(--panel)] px-2 text-[12px] font-medium leading-4 text-[var(--muted)] transition hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
+                  >
+                    All AI runs
+                  </Link>
+                }
+              />
+              {aiRunsError ? (
+                <AdminAlert className="mt-2">{aiRunsError}</AdminAlert>
+              ) : null}
+              <AdminTable
+                  className="mt-2"
+                  ariaLabel="AI runs for this request repo"
+                  head={
+                    <>
+                      <AdminTh align="right">When</AdminTh>
+                      <AdminTh>Kind</AdminTh>
+                      <AdminTh>Status</AdminTh>
+                      <AdminTh>Model</AdminTh>
+                      <AdminTh align="right">Temp</AdminTh>
+                      <AdminTh align="right">Duration</AdminTh>
+                    </>
+                  }
                 >
-                  Open AI runs
-                </Link>
-              </div>
-
-              {aiRunsLoading ? <div className="mt-4 text-sm text-[var(--muted)]">Loading…</div> : null}
-              {aiRunsError ? <div className="mt-4 text-sm text-red-600">{aiRunsError}</div> : null}
-
-              <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)]">
-                <table className="w-full border-collapse text-sm">
-                  <thead className="bg-[var(--panel-2)] text-[var(--muted)]">
-                    <tr>
-                      <th className="px-3 py-2 text-left font-semibold">When</th>
-                      <th className="px-3 py-2 text-left font-semibold">Kind</th>
-                      <th className="px-3 py-2 text-left font-semibold">Status</th>
-                      <th className="px-3 py-2 text-left font-semibold">Model</th>
-                      <th className="px-3 py-2 text-left font-semibold">Temp</th>
-                      <th className="px-3 py-2 text-left font-semibold">Dur</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {aiRuns.map((r) => {
+                  {aiRunsLoading && aiRuns.length === 0 ? (
+                    <AdminTableMessage colSpan={AI_RUN_COLUMNS}>Loading AI runs…</AdminTableMessage>
+                  ) : aiRuns.length === 0 ? (
+                    <AdminTableEmpty
+                      colSpan={AI_RUN_COLUMNS}
+                      title="No AI runs yet"
+                      hint="Nothing has been summarised or reviewed for this request repo."
+                    />
+                  ) : (
+                    aiRuns.map((r) => {
                       const selected = selectedAiRunId === r.id;
                       return (
-                        <tr
+                        <AdminTr
                           key={r.id}
-                          className={[
-                            "cursor-pointer border-t border-[var(--border)]",
-                            selected ? "bg-[var(--panel-hover)]" : "hover:bg-[var(--panel-hover)]",
-                          ].join(" ")}
+                          className={selected ? "cursor-pointer bg-[var(--panel-hover)]" : "cursor-pointer"}
+                          aria-selected={selected}
+                          tabIndex={0}
                           onClick={() => setSelectedAiRunId(r.id)}
-                          title="Click to inspect prompts/output"
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setSelectedAiRunId(r.id);
+                            }
+                          }}
+                          title="Inspect prompts and output"
                         >
-                          <td className="px-3 py-2 whitespace-nowrap text-[12px] text-[var(--muted)]">
-                            {fmtDate(r.createdDate)}
-                          </td>
-                          <td className="px-3 py-2 font-mono text-[12px]">{r.kind ?? "-"}</td>
-                          <td className="px-3 py-2 font-mono text-[12px]">{r.status ?? "-"}</td>
-                          <td className="px-3 py-2 font-mono text-[12px]">{r.model ?? "-"}</td>
-                          <td className="px-3 py-2 font-mono text-[12px]">
-                            {typeof r.temperature === "number" ? r.temperature : "-"}
-                          </td>
-                          <td className="px-3 py-2 font-mono text-[12px]">{fmtDuration(r.durationMs)}</td>
-                        </tr>
+                          <AdminTd align="right" numeric>
+                            <TimeCell value={r.createdDate} />
+                          </AdminTd>
+                          <AdminTd primary truncate="max-w-[140px]">
+                            <span title={r.kind ?? undefined}>{r.kind ?? ADMIN_DASH}</span>
+                          </AdminTd>
+                          <AdminTd>
+                            {/* Most runs completed: a chip is for the ones that did not. */}
+                            {!r.status ? (
+                              ADMIN_DASH
+                            ) : pipelineStatusTone(r.status) === "quiet" ? (
+                              r.status
+                            ) : (
+                              <StatusPill tone={pipelineStatusTone(r.status)}>{r.status}</StatusPill>
+                            )}
+                          </AdminTd>
+                          <AdminTd mono truncate="max-w-[180px]">
+                            <span title={r.model ?? undefined}>{r.model ?? ADMIN_DASH}</span>
+                          </AdminTd>
+                          <AdminTd align="right" numeric>
+                            {typeof r.temperature === "number" ? r.temperature : ADMIN_DASH}
+                          </AdminTd>
+                          <AdminTd align="right" numeric>
+                            {fmtDuration(r.durationMs) || ADMIN_DASH}
+                          </AdminTd>
+                        </AdminTr>
                       );
-                    })}
-                    {!aiRunsLoading && aiRuns.length === 0 ? (
-                      <tr>
-                        <td className="px-3 py-6 text-center text-sm text-[var(--muted)]" colSpan={6}>
-                          No AI runs found for this request repo yet.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
+                    })
+                  )}
+                </AdminTable>
             </div>
 
-            <div className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-[var(--fg)]">Run detail</div>
-                {selectedAiRunId ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="bg-[var(--panel-2)] text-[12px]"
-                    onClick={() => setSelectedAiRunId(null)}
-                  >
-                    Clear
-                  </Button>
+            <div className="min-w-0">
+              <DetailPanel
+                title="Run detail"
+                description={selectedAiRunId ? "Full prompts and raw output." : "Select a run from the table."}
+                actions={
+                  aiRunDetail ? (
+                    <>
+                      <CopyTextButton text={prettyJson(aiRunDetail)} label="Copy JSON" />
+                      <Button variant="outline" size="sm" onClick={() => setSelectedAiRunId(null)}>
+                        Clear
+                      </Button>
+                    </>
+                  ) : null
+                }
+              >
+                {aiRunDetailError ? (
+                  <AdminAlert className="mx-2">{aiRunDetailError}</AdminAlert>
                 ) : null}
-              </div>
-              <div className="mt-2 text-sm text-[var(--muted)]">
-                {selectedAiRunId ? "Shows full prompts and raw output." : "Select a run from the table."}
-              </div>
+                {aiRunDetailLoading ? (
+                  <p className="px-2.5 py-1 text-[13px] leading-5 text-[var(--muted-2)]">Loading detail…</p>
+                ) : null}
 
-              {aiRunDetailError ? <div className="mt-3 text-sm text-red-600">{aiRunDetailError}</div> : null}
-              {aiRunDetailLoading ? <div className="mt-3 text-sm text-[var(--muted)]">Loading detail…</div> : null}
+                {aiRunDetail ? (
+                  <>
+                    <DetailGrid>
+                      <DetailRow label="Run ID">
+                        <IdCell value={aiRunDetail.id} label="run id" />
+                      </DetailRow>
+                      <DetailRow label="Kind">{aiRunDetail.kind}</DetailRow>
+                      <DetailRow label="Status">
+                        {aiRunDetail.status ? (
+                          <StatusPill tone={pipelineStatusTone(aiRunDetail.status)}>{aiRunDetail.status}</StatusPill>
+                        ) : null}
+                      </DetailRow>
+                      <DetailRow label="Model">
+                        {aiRunDetail.model ? <span className="font-mono text-[12px]">{aiRunDetail.model}</span> : null}
+                      </DetailRow>
+                      <DetailRow label="Temperature">
+                        {typeof aiRunDetail.temperature === "number" ? (
+                          <span className="tabular-nums">{aiRunDetail.temperature}</span>
+                        ) : null}
+                      </DetailRow>
+                      <DetailRow label="Duration">
+                        <span className="tabular-nums">{fmtDuration(aiRunDetail.durationMs)}</span>
+                      </DetailRow>
+                      <DetailRow label="Doc ID">
+                        <IdCell value={aiRunDetail.docId} label="doc id" />
+                      </DetailRow>
+                      <DetailRow label="Upload ID">
+                        <IdCell value={aiRunDetail.uploadId} label="upload id" />
+                      </DetailRow>
+                      <DetailRow label="Created">
+                        {aiRunDetail.createdDate ? <TimeCell value={aiRunDetail.createdDate} /> : null}
+                      </DetailRow>
+                    </DetailGrid>
 
-              {aiRunDetail ? (
-                <div className="mt-4 space-y-4">
-                  <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Summary</div>
-                    <div className="mt-2 flex justify-end">
-                      <CopyTextButton text={prettyJson(aiRunDetail)} label="Copy run JSON" />
-                    </div>
-                    <div className="mt-2 grid gap-2 text-[12px] text-[var(--fg)]">
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">ID</div>
-                        <div className="font-mono break-all">{aiRunDetail.id}</div>
-                      </div>
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">Kind</div>
-                        <div className="font-mono">{aiRunDetail.kind ?? "-"}</div>
-                      </div>
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">Status</div>
-                        <div className="font-mono">{aiRunDetail.status ?? "-"}</div>
-                      </div>
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">Model</div>
-                        <div className="font-mono">{aiRunDetail.model ?? "-"}</div>
-                      </div>
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">Temp</div>
-                        <div className="font-mono">{typeof aiRunDetail.temperature === "number" ? aiRunDetail.temperature : "-"}</div>
-                      </div>
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">Duration</div>
-                        <div className="font-mono">{fmtDuration(aiRunDetail.durationMs)}</div>
-                      </div>
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">Doc</div>
-                        <div className="font-mono break-all">{aiRunDetail.docId ?? "-"}</div>
-                      </div>
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">Upload</div>
-                        <div className="font-mono break-all">{aiRunDetail.uploadId ?? "-"}</div>
-                      </div>
-                      <div className="grid grid-cols-[110px_1fr] gap-2">
-                        <div className="text-[var(--muted)]">Created</div>
-                        <div className="font-mono">{fmtDate(aiRunDetail.createdDate)}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">System prompt</div>
-                      <CopyTextButton text={aiRunDetail.systemPrompt ?? ""} label="Copy" />
-                    </div>
-                    <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--fg)]">
-                      {aiRunDetail.systemPrompt ?? "—"}
-                    </pre>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">User prompt</div>
-                      <CopyTextButton text={aiRunDetail.userPrompt ?? ""} label="Copy" />
-                    </div>
-                    <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--fg)]">
-                      {aiRunDetail.userPrompt ?? "—"}
-                    </pre>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Output</div>
-                      <CopyTextButton
+                    <div className="px-2.5 pb-1">
+                      <RawDisclosure
+                        label="System prompt"
+                        text={aiRunDetail.systemPrompt ?? ADMIN_DASH}
+                        maxHeight="max-h-[240px]"
+                      />
+                      <RawDisclosure
+                        label="User prompt"
+                        text={aiRunDetail.userPrompt ?? ADMIN_DASH}
+                        maxHeight="max-h-[240px]"
+                      />
+                      <RawDisclosure
+                        label="Output"
                         text={
                           aiRunDetail.outputText ??
-                          (aiRunDetail.outputObject ? prettyJson(aiRunDetail.outputObject) : "")
+                          (aiRunDetail.outputObject ? prettyJson(aiRunDetail.outputObject) : ADMIN_DASH)
                         }
-                        label="Copy"
+                        maxHeight="max-h-[240px]"
+                      />
+                      <RawDisclosure
+                        label="Error"
+                        text={aiRunDetail.error ? prettyJson(aiRunDetail.error) : ADMIN_DASH}
+                        maxHeight="max-h-[180px]"
                       />
                     </div>
-                    <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--fg)]">
-                      {aiRunDetail.outputText ?? (aiRunDetail.outputObject ? prettyJson(aiRunDetail.outputObject) : "—")}
-                    </pre>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Error</div>
-                      <CopyTextButton text={aiRunDetail.error ? prettyJson(aiRunDetail.error) : ""} label="Copy" />
-                    </div>
-                    <pre className="mt-2 max-h-[180px] overflow-auto whitespace-pre-wrap rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[12px] text-[var(--fg)]">
-                      {aiRunDetail.error ? prettyJson(aiRunDetail.error) : "—"}
-                    </pre>
-                  </div>
-                </div>
-              ) : null}
+                  </>
+                ) : null}
+              </DetailPanel>
             </div>
           </div>
         ) : null}
@@ -872,5 +803,3 @@ export default function AdminDataRequestDetailPage() {
     </div>
   );
 }
-
-

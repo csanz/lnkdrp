@@ -1,20 +1,38 @@
 /**
  * Admin route: `/a/data/docs`
  *
- * Lists docs across all users for admin inspection (paged).
+ * Lists docs across all users for admin inspection (paged), with a detail drawer that
+ * carries the raw doc JSON and the uploads behind it. Built on the shared admin UI in
+ * `@/components/admin` — see `/a/data/users` for the reference implementation.
  */
 "use client";
 
-import Link from "next/link";
-import { signIn, useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
-import Alert from "@/components/ui/Alert";
+import { useEffect, useState } from "react";
+import { cn } from "@/lib/cn";
 import Button from "@/components/ui/Button";
-import DataTable from "@/components/ui/DataTable";
-import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminSelect,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  IdCell,
+  RowAction,
+  RowActions,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH, ADMIN_FOCUS_RING, statusLabel, type AdminTone } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
+import { pipelineStatusTone } from "@/lib/admin/statusTones";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type DocRow = {
@@ -61,15 +79,29 @@ type AdminUploadDetailsResponse = {
 type SortField = "updatedDate" | "createdDate";
 type SortOrder = "desc" | "asc";
 
+/** Column count of the table below; every full-width row's colSpan has to match it. */
+const COLUMN_COUNT = 6;
+
+/**
+ * One state per row, not two columns of chrome.
+ *
+ * Status was a "Ready" pill on all 129 rows beside a separate ARCHIVED column — a wall of
+ * repeated chips where only the exception matters. Archived outranks the pipeline status
+ * (an archived document is not waiting on anything), the failure states get the only
+ * colour, and the happy path is a plain muted word rather than a chip drawn 129 times.
+ */
+function docState(status: string | null, archived: boolean): { label: string; tone: AdminTone | null } {
+  if (archived) return { label: "Archived", tone: "neutral" };
+  const s = (status ?? "").trim();
+  if (!s) return { label: ADMIN_DASH, tone: null };
+  if (s.toLowerCase() === "ready") return { label: statusLabel(s), tone: null };
+  return { label: statusLabel(s), tone: pipelineStatusTone(s) };
+}
+
+/** The Documents browser: every document across all users, with a detail drawer. */
 export default function AdminDataDocsPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [q, setQ] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("");
@@ -98,8 +130,10 @@ export default function AdminDataDocsPage() {
   const [docJsonCopyDone, setDocJsonCopyDone] = useState(false);
   const [uploadJsonCopyDone, setUploadJsonCopyDone] = useState(false);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
+  /** Any filter narrowing the list — decides which empty-state sentence the table shows. */
+  const filtered = Boolean(q.trim() || statusFilter || archivedFilter);
 
+  /** Best-effort clipboard write; returns false when the browser refuses. */
   async function copyToClipboard(text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -109,6 +143,7 @@ export default function AdminDataDocsPage() {
     }
   }
 
+  /** Load one document's raw record and its uploads into the detail drawer. */
   async function loadDocDetails(docId: string) {
     if (!docId) return;
     setDetailsLoading(true);
@@ -131,6 +166,7 @@ export default function AdminDataDocsPage() {
     }
   }
 
+  /** Load one upload's raw record, shown under the document JSON. */
   async function loadUploadDetails(uploadId: string) {
     if (!uploadId) return;
     setUploadDetailsLoading(true);
@@ -178,6 +214,7 @@ export default function AdminDataDocsPage() {
     })();
   }, [canUseAdmin, limit, page, q, statusFilter, archivedFilter, sortField, sortOrder, reloadKey]);
 
+  /** Soft-delete a document, then drop its row optimistically. */
   async function deleteDoc(docId: string) {
     if (!docId) return;
     if (deleteBusyDocId) return;
@@ -197,382 +234,352 @@ export default function AdminDataDocsPage() {
     }
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Docs</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/data/docs" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
+  /** Select a row and open the detail drawer on it. */
+  function openDetails(docId: string) {
+    setSelectedDocId(docId);
+    void loadDocDetails(docId);
   }
 
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Docs</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Documents" description="Every document across all users. Open one for its raw record and uploads." callbackUrl="/a/data/docs" />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Docs</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">Paged list of docs across all users.</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="w-[260px] max-w-full"
-              placeholder="Search title or shareId…"
-              value={q}
-              onChange={(e) => {
-                setPage(1);
-                setQ(e.target.value);
-              }}
-            />
-            <Select
-              className="w-[160px] max-w-full"
-              value={statusFilter}
-              onChange={(e) => {
-                setPage(1);
-                setStatusFilter(e.target.value);
-              }}
-              title="Filter by status"
-            >
-              <option value="">All statuses</option>
-              <option value="draft">draft</option>
-              <option value="preparing">preparing</option>
-              <option value="ready">ready</option>
-              <option value="failed">failed</option>
-            </Select>
-            <Select
-              className="w-[150px] max-w-full"
-              value={archivedFilter}
-              onChange={(e) => {
-                setPage(1);
-                setArchivedFilter(e.target.value);
-              }}
-              title="Filter by archived"
-            >
-              <option value="">All</option>
-              <option value="no">Not archived</option>
-              <option value="yes">Archived</option>
-            </Select>
-            <Select
-              className="w-[180px] max-w-full"
-              value={`${sortField}:${sortOrder}`}
-              onChange={(e) => {
-                const raw = e.target.value || "updatedDate:desc";
-                const [f, o] = raw.split(":");
-                const nextField = (f === "createdDate" ? "createdDate" : "updatedDate") as SortField;
-                const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
-                setPage(1);
-                setSortField(nextField);
-                setSortOrder(nextOrder);
-              }}
-              title="Sort"
-            >
-              <option value="updatedDate:desc">Updated (newest)</option>
-              <option value="updatedDate:asc">Updated (oldest)</option>
-              <option value="createdDate:desc">Created (newest)</option>
-              <option value="createdDate:asc">Created (oldest)</option>
-            </Select>
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {page} / {totalPages} • {total} total
-            </div>
-            <Button
-              variant="outline"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-            <Button variant="outline" className="bg-[var(--panel-2)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
+        <AdminPageHeader title="Documents" description="Every document across all users. Open one for its raw record and uploads." />
+
+        <AdminFilterBar
+          className="mt-4"
+          page={page}
+          pageSize={limit}
+          total={total}
+          onPageChange={setPage}
+          noun="docs"
+          loading={loading}
+          actions={
+            <Button variant="outline" className="bg-[var(--panel)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
               {loading ? "Loading…" : "Refresh"}
             </Button>
-          </div>
-        </div>
+          }
+        >
+          <AdminSearchInput
+            value={q}
+            onValueChange={(v) => {
+              setPage(1);
+              setQ(v);
+            }}
+            placeholder="Search title or shareId…"
+            ariaLabel="Search documents by title or shareId"
+          />
+          <AdminSelect
+            ariaLabel="Filter by status"
+            value={statusFilter}
+            onChange={(e) => {
+              setPage(1);
+              setStatusFilter(e.target.value);
+            }}
+          >
+            <option value="">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="preparing">Preparing</option>
+            <option value="ready">Ready</option>
+            <option value="failed">Failed</option>
+          </AdminSelect>
+          <AdminSelect
+            ariaLabel="Filter by archived"
+            value={archivedFilter}
+            onChange={(e) => {
+              setPage(1);
+              setArchivedFilter(e.target.value);
+            }}
+          >
+            <option value="">All documents</option>
+            <option value="no">Not archived</option>
+            <option value="yes">Archived</option>
+          </AdminSelect>
+          <AdminSelect
+            ariaLabel="Sort documents"
+            value={`${sortField}:${sortOrder}`}
+            onChange={(e) => {
+              const raw = e.target.value || "updatedDate:desc";
+              const [f, o] = raw.split(":");
+              const nextField = (f === "createdDate" ? "createdDate" : "updatedDate") as SortField;
+              const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
+              setPage(1);
+              setSortField(nextField);
+              setSortOrder(nextOrder);
+            }}
+          >
+            <option value="updatedDate:desc">Updated (newest)</option>
+            <option value="updatedDate:asc">Updated (oldest)</option>
+            <option value="createdDate:desc">Created (newest)</option>
+            <option value="createdDate:asc">Created (oldest)</option>
+          </AdminSelect>
+        </AdminFilterBar>
 
         {error ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+          <AdminAlert className="mt-3">
             {error}
-          </Alert>
+          </AdminAlert>
         ) : null}
 
-        <div className={["mt-6 grid gap-5", selectedDocId ? "lg:grid-cols-[1fr_520px]" : ""].join(" ")}>
+        <div className={["mt-3 grid gap-4", selectedDocId ? "lg:grid-cols-[1fr_480px]" : ""].join(" ")}>
           <div className="min-w-0">
-            {loading ? (
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-                Loading…
-              </div>
-            ) : (
-              <DataTable>
-                <thead className="border-b border-[var(--border)] bg-[var(--panel-2)]">
-                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                    <th className="px-4 py-3">Title</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Archived</th>
-                    <th className="px-4 py-3">Share</th>
-                    <th className="px-4 py-3">Updated</th>
-                    <th className="px-4 py-3">User ID</th>
-                    <th className="px-4 py-3">Doc ID</th>
-                    <th className="px-4 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {items.map((d) => (
-                    <tr
-                      key={d.id}
-                      className={selectedDocId === d.id ? "bg-[var(--panel-2)]/60" : ""}
-                    >
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          className="text-left hover:underline"
-                          onClick={() => {
-                            setSelectedDocId(d.id);
-                            void loadDocDetails(d.id);
-                          }}
-                          title="Open details"
-                        >
-                          {d.title ?? "—"}
-                        </button>
-                      </td>
-                      <td className="px-4 py-3">{d.status ?? "—"}</td>
-                      <td className="px-4 py-3">{d.isArchived ? "Yes" : "No"}</td>
-                      <td className="px-4 py-3">
-                        {d.shareId ? (
-                          <a
-                            className="text-[var(--fg)] underline decoration-[var(--border)] underline-offset-2 hover:decoration-[var(--muted)]"
-                            href={`/s/${encodeURIComponent(d.shareId)}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            /s/{d.shareId}
-                          </a>
+            <AdminTable
+              ariaLabel="Documents"
+              head={
+                <>
+                  {/* Identity first and widest; the two opaque ids sit last. */}
+                  <AdminTh>Title</AdminTh>
+                  <AdminTh width="w-[120px]">State</AdminTh>
+                  <AdminTh align="right" width="w-[130px]">Updated</AdminTh>
+                  <AdminTh width="w-[150px]">Share</AdminTh>
+                  <AdminTh width="w-[130px]">Doc ID</AdminTh>
+                  <AdminTh align="right" sticky>
+                    Actions
+                  </AdminTh>
+                </>
+              }
+            >
+              {loading && items.length === 0 ? (
+                <AdminTableMessage colSpan={COLUMN_COUNT}>Loading documents…</AdminTableMessage>
+              ) : items.length === 0 ? (
+                <AdminTableEmpty
+                  colSpan={COLUMN_COUNT}
+                  title={filtered ? "No documents match that search" : "No documents yet"}
+                  hint={filtered ? "Try a different title, status or archived filter." : undefined}
+                />
+              ) : (
+                items.map((d) => (
+                  <AdminTr key={d.id} className={selectedDocId === d.id ? "bg-[var(--panel-hover)]" : undefined}>
+                    {/* Two caps: the phone cap is what makes the ellipsis render at 390px.
+                        Without it the title column takes its natural width, the row scrolls,
+                        and the pinned Actions cell slices the title mid-word — the title then
+                        reads as corrupted data rather than as text that continues. */}
+                    <AdminTd primary truncate="max-w-[190px] sm:max-w-[460px]">
+                      {/* `block truncate` on the button itself: an inline-block child of a
+                          truncating wrapper is an atomic box and would clip mid-glyph. */}
+                      <button
+                        type="button"
+                        className={cn("block truncate rounded text-left hover:underline", ADMIN_FOCUS_RING)}
+                        onClick={() => openDetails(d.id)}
+                        title={d.title ?? "Open document details"}
+                      >
+                        {d.title ?? ADMIN_DASH}
+                      </button>
+                    </AdminTd>
+                    <AdminTd>
+                      {(() => {
+                        const st = docState(d.status, d.isArchived);
+                        return st.tone ? (
+                          <StatusPill tone={st.tone}>{st.label}</StatusPill>
                         ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="px-4 py-3">{fmtDate(d.updatedDate) || "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">{d.userId ?? "—"}</td>
-                      <td className="px-4 py-3">
-                        <Link
-                          href={`/a/shareviews/${encodeURIComponent(d.id)}`}
-                          className="font-mono text-xs text-[var(--muted)] hover:underline"
-                          title="Open Share Views drilldown for this doc"
+                          <span className="text-[var(--muted-2)]">{st.label}</span>
+                        );
+                      })()}
+                    </AdminTd>
+                    <AdminTd align="right" numeric>
+                      <TimeCell value={d.updatedDate} />
+                    </AdminTd>
+                    <AdminTd>
+                      <IdCell
+                        value={d.shareId}
+                        label="share id"
+                        head={8}
+                        tail={4}
+                        href={d.shareId ? `/s/${encodeURIComponent(d.shareId)}` : undefined}
+                      />
+                    </AdminTd>
+                    <AdminTd>
+                      <IdCell value={d.id} label="doc id" href={`/a/shareviews/${encodeURIComponent(d.id)}`} />
+                    </AdminTd>
+                    <AdminTd align="right" sticky actions>
+                      <RowActions>
+                        <RowAction title="Open document details" onClick={() => openDetails(d.id)}>
+                          Details
+                        </RowAction>
+                        <RowAction
+                          tone="danger"
+                          busy={deleteBusyDocId === d.id}
+                          busyLabel="Deleting…"
+                          disabled={Boolean(deleteBusyDocId) && deleteBusyDocId !== d.id}
+                          title="Soft delete doc"
+                          onClick={() => void deleteDoc(d.id)}
                         >
-                          {d.id}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
-                            onClick={() => {
-                              setSelectedDocId(d.id);
-                              void loadDocDetails(d.id);
-                            }}
-                          >
-                            Details
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold text-red-500 hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                            disabled={Boolean(deleteBusyDocId) && deleteBusyDocId !== d.id}
-                            onClick={() => void deleteDoc(d.id)}
-                            title="Soft delete doc"
-                          >
-                            {deleteBusyDocId === d.id ? "Deleting…" : "Delete"}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {items.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={8}>
-                        No docs.
-                      </td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </DataTable>
-            )}
+                          Delete
+                        </RowAction>
+                      </RowActions>
+                    </AdminTd>
+                  </AdminTr>
+                ))
+              )}
+            </AdminTable>
           </div>
 
           {selectedDocId ? (
-            <aside className="min-w-0 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 lg:sticky lg:top-6 lg:max-h-[calc(100svh-80px)] lg:overflow-auto">
+            <aside className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 lg:sticky lg:top-6 lg:max-h-[calc(100svh-80px)] lg:overflow-auto">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold text-[var(--fg)]">Doc details</div>
-                  <div className="mt-1 font-mono text-xs text-[var(--muted)] break-all">{selectedDocId}</div>
+                  <div className="text-[13px] font-semibold text-[var(--fg)]">Document details</div>
+                  <div className="mt-1 break-all font-mono text-[11px] text-[var(--muted-2)]">{selectedDocId}</div>
                 </div>
-                <button
-                  type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
-                  onClick={() => {
-                    setSelectedDocId("");
-                    setDocDetails(null);
-                    setDetailsError(null);
-                    setSelectedUploadId("");
-                    setUploadDetails(null);
-                    setUploadDetailsError(null);
-                  }}
-                >
-                  Close
-                </button>
+                <RowActions>
+                  <RowAction
+                    title="Reload this document"
+                    disabled={detailsLoading}
+                    onClick={() => void loadDocDetails(selectedDocId)}
+                  >
+                    {detailsLoading ? "Loading…" : "Refresh"}
+                  </RowAction>
+                  <RowAction
+                    title="Close details"
+                    onClick={() => {
+                      setSelectedDocId("");
+                      setDocDetails(null);
+                      setDetailsError(null);
+                      setSelectedUploadId("");
+                      setUploadDetails(null);
+                      setUploadDetailsError(null);
+                    }}
+                  >
+                    Close
+                  </RowAction>
+                </RowActions>
               </div>
 
-              <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="mt-3">
                 <a
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)]"
+                  className="inline-flex h-[26px] items-center rounded-md border border-[var(--border)] bg-[var(--panel-2)] px-2 text-[12px] font-medium leading-4 text-[var(--muted)] transition hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--fg)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--panel)]"
                   href={`/doc/${encodeURIComponent(selectedDocId)}`}
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Open /doc
+                  Open in app
                 </a>
-                <button
-                  type="button"
-                  className="rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-2 py-1 text-xs font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                  disabled={detailsLoading}
-                  onClick={() => void loadDocDetails(selectedDocId)}
-                >
-                  {detailsLoading ? "Loading…" : "Refresh"}
-                </button>
               </div>
 
               {detailsError ? (
-                <Alert variant="info" className="mt-3 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+                <AdminAlert className="mt-3">
                   {detailsError}
-                </Alert>
+                </AdminAlert>
               ) : null}
 
               {detailsLoading && !docDetails ? (
-                <div className="mt-3 text-sm text-[var(--muted)]">Loading doc JSON…</div>
+                <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-8 text-center text-[13px] text-[var(--muted-2)]">
+                  Loading document…
+                </div>
               ) : docDetails?.doc ? (
                 <>
-                  <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Key fields</div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                      <div className="text-[var(--muted)]">status</div>
-                      <div className="font-mono text-[var(--fg)]">{String(docDetails.doc.status ?? "—")}</div>
-                      <div className="text-[var(--muted)]">currentUploadId</div>
-                      <div className="font-mono text-[var(--fg)] break-all">{String(docDetails.doc.currentUploadId ?? docDetails.doc.uploadId ?? "—")}</div>
-                      <div className="text-[var(--muted)]">previewImageUrl</div>
-                      <div className={["font-mono break-all", docDetails.doc.previewImageUrl ? "text-[var(--fg)]" : "text-red-500"].join(" ")}>
-                        {String(docDetails.doc.previewImageUrl ?? docDetails.doc.firstPagePngUrl ?? "null")}
-                      </div>
-                    </div>
+                  <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-3">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)]">Key fields</div>
+                    <dl className="mt-2 grid grid-cols-[110px_1fr] gap-x-3 gap-y-1.5 text-[12px]">
+                      <dt className="text-[var(--muted-2)]">status</dt>
+                      <dd>
+                        {docDetails.doc.status ? (
+                          <StatusPill tone={pipelineStatusTone(String(docDetails.doc.status))}>
+                            {String(docDetails.doc.status)}
+                          </StatusPill>
+                        ) : (
+                          <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                        )}
+                      </dd>
+                      <dt className="text-[var(--muted-2)]">currentUploadId</dt>
+                      <dd className="break-all font-mono text-[var(--fg)]">
+                        {String(docDetails.doc.currentUploadId ?? docDetails.doc.uploadId ?? ADMIN_DASH)}
+                      </dd>
+                      <dt className="text-[var(--muted-2)]">previewImageUrl</dt>
+                      <dd className="break-all font-mono">
+                        {docDetails.doc.previewImageUrl || docDetails.doc.firstPagePngUrl ? (
+                          <span className="text-[var(--fg)]">
+                            {String(docDetails.doc.previewImageUrl ?? docDetails.doc.firstPagePngUrl)}
+                          </span>
+                        ) : (
+                          <StatusPill tone="danger">Missing</StatusPill>
+                        )}
+                      </dd>
+                    </dl>
                   </div>
 
                   <div className="mt-4">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Uploads</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)]">Uploads</div>
                     {Array.isArray(docDetails.uploads) && docDetails.uploads.length ? (
-                      <div className="mt-2 rounded-xl border border-[var(--border)] bg-[var(--panel-2)]">
-                        <div className="px-3 pt-2 text-[11px] text-[var(--muted-2)]">
-                          Showing latest {Math.min(5, docDetails.uploads.length)} of {docDetails.uploads.length}
+                      <>
+                        <div className="mt-1 text-[12px] leading-5 text-[var(--muted-2)]">
+                          Latest {Math.min(5, docDetails.uploads.length)} of {docDetails.uploads.length}
                         </div>
-                        <div className="max-h-[220px] overflow-auto">
-                          <table className="w-full text-xs">
-                            <thead className="sticky top-0 bg-[var(--panel-2)]">
-                              <tr className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                                <th className="px-3 py-2 text-left">v</th>
-                                <th className="px-3 py-2 text-left">status</th>
-                                <th className="px-3 py-2 text-left">preview</th>
-                                <th className="px-3 py-2 text-left">error</th>
-                                <th className="px-3 py-2 text-left">open</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-[var(--border)]">
-                              {docDetails.uploads.slice(0, 5).map((u) => {
-                                const hasPreview = Boolean(u.previewImageUrl || u.firstPagePngUrl);
-                                const errMsg =
-                                  u.error && typeof u.error === "object" && (u.error as any).message
-                                    ? String((u.error as any).message)
-                                    : "";
-                                return (
-                                  <tr
-                                    key={u.id}
-                                    className={selectedUploadId === u.id ? "bg-[var(--panel)]/80" : ""}
-                                  >
-                                    <td className="px-3 py-2 font-mono">{typeof u.version === "number" ? u.version : "—"}</td>
-                                    <td className="px-3 py-2">{u.status ?? "—"}</td>
-                                    <td className={["px-3 py-2 font-semibold", hasPreview ? "text-emerald-500" : "text-red-500"].join(" ")}>
-                                      {hasPreview ? "yes" : "no"}
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      <button
-                                        type="button"
-                                        className="font-mono text-[11px] text-[var(--muted)] hover:underline"
-                                        onClick={() => {
-                                          setSelectedUploadId(u.id);
-                                          void loadUploadDetails(u.id);
-                                        }}
-                                        title={errMsg || "Open upload JSON"}
-                                      >
-                                        {errMsg ? errMsg.slice(0, 42) : "view"}
-                                      </button>
-                                    </td>
-                                    <td className="px-3 py-2">
-                                      <a
-                                        className="font-mono text-[11px] text-[var(--muted)] hover:underline"
-                                        href={`/a/data/uploads?uploadId=${encodeURIComponent(u.id)}`}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        title="Open in /a/data/uploads"
-                                      >
-                                        /a/data/uploads
-                                      </a>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
+                        {/* The shared table, not a hand-rolled one: same density, same header
+                            metrics, and a header a screen reader can read out ("Version", not "v"). */}
+                        <AdminTable
+                          className="mt-2"
+                          ariaLabel="Uploads for this document"
+                          head={
+                            <>
+                              <AdminTh align="right" width="w-[70px]">Version</AdminTh>
+                              <AdminTh>Status</AdminTh>
+                              <AdminTh>Preview</AdminTh>
+                              <AdminTh align="right" sticky>Actions</AdminTh>
+                            </>
+                          }
+                        >
+                          {docDetails.uploads.slice(0, 5).map((u) => {
+                            const hasPreview = Boolean(u.previewImageUrl || u.firstPagePngUrl);
+                            const errMsg =
+                              u.error && typeof u.error === "object" && (u.error as { message?: unknown }).message
+                                ? String((u.error as { message?: unknown }).message)
+                                : "";
+                            return (
+                              <AdminTr key={u.id} className={selectedUploadId === u.id ? "bg-[var(--panel-hover)]" : undefined}>
+                                <AdminTd align="right" numeric>
+                                  {typeof u.version === "number" ? u.version : ADMIN_DASH}
+                                </AdminTd>
+                                <AdminTd>
+                                  {u.status ? (
+                                    <StatusPill tone={pipelineStatusTone(u.status)} title={errMsg || undefined}>
+                                      {u.status}
+                                    </StatusPill>
+                                  ) : (
+                                    <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                                  )}
+                                </AdminTd>
+                                <AdminTd>
+                                  {hasPreview ? (
+                                    <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                                  ) : (
+                                    <StatusPill tone="danger">Missing</StatusPill>
+                                  )}
+                                </AdminTd>
+                                <AdminTd align="right" sticky actions>
+                                  <RowActions>
+                                    <RowAction
+                                      title={errMsg || "Open upload JSON"}
+                                      onClick={() => {
+                                        setSelectedUploadId(u.id);
+                                        void loadUploadDetails(u.id);
+                                      }}
+                                    >
+                                      JSON
+                                    </RowAction>
+                                  </RowActions>
+                                </AdminTd>
+                              </AdminTr>
+                            );
+                          })}
+                        </AdminTable>
+                      </>
                     ) : (
-                      <div className="mt-2 text-sm text-[var(--muted)]">No uploads found for this doc.</div>
+                      <div className="mt-2 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-6 text-center text-[12px] text-[var(--muted-2)]">
+                        No uploads for this document yet.
+                      </div>
                     )}
                   </div>
 
                   <div className="mt-4">
                     <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Doc JSON</div>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)]">Document JSON</div>
+                      <RowAction
                         disabled={!docDetails?.doc}
+                        title="Copy the document record"
                         onClick={() => {
                           const txt = docDetails?.doc ? JSON.stringify(docDetails.doc, null, 2) : "";
                           void (async () => {
@@ -584,9 +591,9 @@ export default function AdminDataDocsPage() {
                         }}
                       >
                         {docJsonCopyDone ? "Copied" : "Copy"}
-                      </button>
+                      </RowAction>
                     </div>
-                    <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[11px] text-[var(--fg)]">
+                    <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[11px] text-[var(--fg)]">
                       {JSON.stringify(docDetails.doc, null, 2)}
                     </pre>
                   </div>
@@ -594,14 +601,11 @@ export default function AdminDataDocsPage() {
                   {selectedUploadId ? (
                     <div className="mt-4">
                       <div className="flex items-center justify-between gap-2">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                          Upload JSON
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold hover:bg-[var(--panel-hover)] disabled:opacity-60"
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.06em] text-[var(--muted-2)]">Upload JSON</div>
+                        <RowActions>
+                          <RowAction
                             disabled={!uploadDetails?.upload}
+                            title="Copy the upload record"
                             onClick={() => {
                               const txt = uploadDetails?.upload ? JSON.stringify(uploadDetails.upload, null, 2) : "";
                               void (async () => {
@@ -613,10 +617,9 @@ export default function AdminDataDocsPage() {
                             }}
                           >
                             {uploadJsonCopyDone ? "Copied" : "Copy"}
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold hover:bg-[var(--panel-hover)]"
+                          </RowAction>
+                          <RowAction
+                            title="Clear the selected upload"
                             onClick={() => {
                               setSelectedUploadId("");
                               setUploadDetails(null);
@@ -624,19 +627,21 @@ export default function AdminDataDocsPage() {
                             }}
                           >
                             Clear
-                          </button>
-                        </div>
+                          </RowAction>
+                        </RowActions>
                       </div>
 
                       {uploadDetailsError ? (
-                        <Alert variant="info" className="mt-2 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+                        <AdminAlert className="mt-2">
                           {uploadDetailsError}
-                        </Alert>
+                        </AdminAlert>
                       ) : null}
                       {uploadDetailsLoading && !uploadDetails ? (
-                        <div className="mt-2 text-sm text-[var(--muted)]">Loading upload JSON…</div>
+                        <div className="mt-2 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-6 text-center text-[12px] text-[var(--muted-2)]">
+                          Loading upload…
+                        </div>
                       ) : uploadDetails?.upload ? (
-                        <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[11px] text-[var(--fg)]">
+                        <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--border)] bg-[var(--panel-2)] p-3 text-[11px] text-[var(--fg)]">
                           {JSON.stringify(uploadDetails.upload, null, 2)}
                         </pre>
                       ) : null}
@@ -644,7 +649,10 @@ export default function AdminDataDocsPage() {
                   ) : null}
                 </>
               ) : (
-                <div className="mt-3 text-sm text-[var(--muted)]">Select a doc to view details.</div>
+                <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--panel-2)] px-3 py-8 text-center">
+                  <div className="text-[13px] font-medium text-[var(--fg)]">Nothing loaded for this document</div>
+                  <div className="mt-1 text-[12px] text-[var(--muted-2)]">Refresh, or pick another row from the list.</div>
+                </div>
               )}
             </aside>
           ) : null}
@@ -653,7 +661,3 @@ export default function AdminDataDocsPage() {
     </div>
   );
 }
-
-
-
-

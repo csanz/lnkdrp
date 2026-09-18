@@ -4,17 +4,39 @@
  * Share-link browser: every public link across every workspace, paged, with the settings support
  * actually gets asked about (password set, download allowed, expiry, disabled) and the link's own
  * view/download counters. Read-only — nothing here changes a link.
+ *
+ * Two of the twelve columns this table used to carry are gone, because twelve did not fit and the
+ * last three scrolled off the right edge where nobody found them. Expiry is answered by the
+ * `Expired` state pill, with the exact timestamp in its `title`; audience, which was `—` on almost
+ * every row, rides in the Link cell's `title`. Nothing is lost, and the nine that remain fit.
  */
 "use client";
 
 import Link from "next/link";
-import { signIn, useSession } from "next-auth/react";
-import { useEffect, useMemo, useState } from "react";
+import { cn } from "@/lib/cn";
+import { useEffect, useState } from "react";
 import Button from "@/components/ui/Button";
-import DataTable from "@/components/ui/DataTable";
-import Input from "@/components/ui/Input";
-import Select from "@/components/ui/Select";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminSelect,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  IdCell,
+  RowActionLink,
+  RowActions,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
+import { ADMIN_DASH, ADMIN_FOCUS_RING, fmtAdminDateFull, type AdminTone } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { linkStateLabel, publicLinkPath, type AdminLinkState } from "@/lib/admin/linksAdmin";
 import { fetchJson } from "@/lib/http/fetchJson";
@@ -49,26 +71,32 @@ type SortField = "createdDate" | "lastViewedAt" | "viewCount";
 type SortOrder = "desc" | "asc";
 
 /** Column count of the table below; the empty row's colSpan has to match it exactly. */
-const COLUMN_COUNT = 12;
+const COLUMN_COUNT = 9;
 
-/** Pill colours per state, so a disabled or expired link is visible at a glance in a long page. */
-const STATE_CLASS: Record<AdminLinkState, string> = {
-  active: "border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted-2)]",
-  disabled: "border-[var(--border)] bg-[var(--panel-2)] text-amber-700",
-  expired: "border-[var(--border)] bg-[var(--panel-2)] text-amber-700",
-  archived: "border-[var(--border)] bg-[var(--panel-2)] text-red-700",
+/**
+ * One state scale, and the STATE column is the only place on the page that uses a strong tone.
+ *
+ * The colours used to be inverted: `archived` — the normal, expected end of a link's life, and a
+ * third of all rows — was the loudest red on the page, while `active`, the state an admin is
+ * actually looking for, was the quietest grey. `disabled`, `expired` and `doc off` shared one
+ * amber, so three different meanings looked identical.
+ *
+ * Now: live is the one positive colour; a link that will not resolve is the one danger colour;
+ * a link switched off upstream (and recoverable by flipping the document back on) is the one
+ * warning; retired is neutral. `toneStyle()` mixes each hue against the theme's own `--fg` and
+ * `--panel`, so the pair means the same thing in light and in dark.
+ */
+const STATE_TONE: Record<AdminLinkState, AdminTone> = {
+  active: "positive",
+  disabled: "danger",
+  expired: "danger",
+  archived: "neutral",
 };
 
 /** The Links browser: every share link across workspaces, filtered and paged server-side. */
 export default function AdminDataLinksPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [q, setQ] = useState("");
   const [stateFilter, setStateFilter] = useState("");
@@ -83,7 +111,8 @@ export default function AdminDataLinksPage() {
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const totalPages = useMemo(() => Math.max(1, Math.ceil((total || 0) / limit)), [total, limit]);
+  /** Any filter narrowing the list — decides which empty-state sentence the table shows. */
+  const filtered = Boolean(q.trim() || stateFilter || kindFilter);
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -115,243 +144,234 @@ export default function AdminDataLinksPage() {
     })();
   }, [canUseAdmin, limit, page, q, stateFilter, kindFilter, sortField, sortOrder, reloadKey]);
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Links</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/data/links" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Data / Links</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Links" description="Every share link across workspaces. Counts are the link’s own and drift from share views." callbackUrl="/a/data/links" />;
   }
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Data / Links</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Every share link, across workspaces. Views and downloads are the link’s own counters, which drift from
-              the ShareView records — open a document’s share views for the honest numbers.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="w-[260px] max-w-full"
-              placeholder="Search label, audience or slug…"
-              value={q}
-              onChange={(e) => {
-                setPage(1);
-                setQ(e.target.value);
-              }}
-            />
-            <Select
-              className="w-[190px] max-w-full"
-              value={stateFilter}
-              onChange={(e) => {
-                setPage(1);
-                setStateFilter(e.target.value);
-              }}
-              title="Filter by state"
-            >
-              <option value="">All states</option>
-              <option value="active">Active</option>
-              <option value="disabled">Disabled</option>
-              <option value="expired">Expired</option>
-              <option value="archived">Archived</option>
-              <option value="password">Password-protected</option>
-            </Select>
-            <Select
-              className="w-[160px] max-w-full"
-              value={kindFilter}
-              onChange={(e) => {
-                setPage(1);
-                setKindFilter(e.target.value);
-              }}
-              title="Filter by kind"
-            >
-              <option value="">All links</option>
-              <option value="doc">Document links</option>
-              <option value="project">Project links</option>
-            </Select>
-            <Select
-              className="w-[200px] max-w-full"
-              value={`${sortField}:${sortOrder}`}
-              onChange={(e) => {
-                const raw = e.target.value || "createdDate:desc";
-                const [f, o] = raw.split(":");
-                const nextField = (f === "lastViewedAt" || f === "viewCount" ? f : "createdDate") as SortField;
-                const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
-                setPage(1);
-                setSortField(nextField);
-                setSortOrder(nextOrder);
-              }}
-              title="Sort"
-            >
-              <option value="createdDate:desc">Created (newest)</option>
-              <option value="createdDate:asc">Created (oldest)</option>
-              <option value="lastViewedAt:desc">Last viewed (newest)</option>
-              <option value="viewCount:desc">Views (most)</option>
-            </Select>
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {page} / {totalPages} • {total} total
-            </div>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            >
-              Next
-            </Button>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={loading}
-              onClick={() => setReloadKey((v) => v + 1)}
-            >
+        <AdminPageHeader
+          title="Links"
+          description="Every share link across workspaces. Counts are the link’s own and drift from share views."
+        />
+
+        <AdminFilterBar
+          className="mt-4"
+          page={page}
+          pageSize={limit}
+          total={total}
+          onPageChange={setPage}
+          noun="links"
+          loading={loading}
+          actions={
+            <Button variant="outline" className="bg-[var(--panel)]" disabled={loading} onClick={() => setReloadKey((v) => v + 1)}>
               {loading ? "Loading…" : "Refresh"}
             </Button>
-          </div>
-        </div>
+          }
+        >
+          <AdminSearchInput
+            value={q}
+            onValueChange={(v) => {
+              setPage(1);
+              setQ(v);
+            }}
+            placeholder="Search label, audience or slug…"
+            ariaLabel="Search share links by label, audience or slug"
+          />
+          <AdminSelect
+            ariaLabel="Filter by state"
+            value={stateFilter}
+            onChange={(e) => {
+              setPage(1);
+              setStateFilter(e.target.value);
+            }}
+          >
+            <option value="">All states</option>
+            <option value="active">Active</option>
+            <option value="disabled">Disabled</option>
+            <option value="expired">Expired</option>
+            <option value="archived">Archived</option>
+            <option value="password">Password-protected</option>
+          </AdminSelect>
+          <AdminSelect
+            ariaLabel="Filter by kind"
+            value={kindFilter}
+            onChange={(e) => {
+              setPage(1);
+              setKindFilter(e.target.value);
+            }}
+          >
+            <option value="">All links</option>
+            <option value="doc">Document links</option>
+            <option value="project">Project links</option>
+          </AdminSelect>
+          <AdminSelect
+            ariaLabel="Sort share links"
+            value={`${sortField}:${sortOrder}`}
+            onChange={(e) => {
+              const raw = e.target.value || "createdDate:desc";
+              const [f, o] = raw.split(":");
+              const nextField = (f === "lastViewedAt" || f === "viewCount" ? f : "createdDate") as SortField;
+              const nextOrder = (o === "asc" ? "asc" : "desc") as SortOrder;
+              setPage(1);
+              setSortField(nextField);
+              setSortOrder(nextOrder);
+            }}
+          >
+            <option value="createdDate:desc">Created (newest)</option>
+            <option value="createdDate:asc">Created (oldest)</option>
+            <option value="lastViewedAt:desc">Last viewed (newest)</option>
+            <option value="viewCount:desc">Views (most)</option>
+          </AdminSelect>
+        </AdminFilterBar>
 
-        {error ? <div className="mt-4 text-sm text-red-700">{error}</div> : null}
+        {error ? (
+          <AdminAlert className="mt-3">
+            {error}
+          </AdminAlert>
+        ) : null}
 
-        {loading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-6 rounded-xl bg-[var(--panel-2)]">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">Link</th>
-                <th className="px-4 py-3">Audience</th>
-                <th className="px-4 py-3">Workspace</th>
-                <th className="px-4 py-3">Target</th>
-                <th className="px-4 py-3">Slug</th>
-                <th className="px-4 py-3">State</th>
-                <th className="px-4 py-3">Password</th>
-                <th className="px-4 py-3">Download</th>
-                <th className="px-4 py-3">Expires</th>
-                <th className="px-4 py-3">Views</th>
-                <th className="px-4 py-3">Downloads</th>
-                <th className="px-4 py-3">Created</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {items.map((l) => {
-                const path = publicLinkPath(l.kind, l.shareId);
-                const target = l.kind === "project" ? l.projectName : l.docTitle;
-                return (
-                  <tr key={l.id}>
-                    <td className="px-4 py-3">
-                      {/* Only document links have an admin detail page; a project link has no single
-                          document whose viewers could be listed, so its label stays plain text. */}
-                      {l.docId ? (
-                        <Link
-                          href={`/a/shareviews/${encodeURIComponent(l.docId)}`}
-                          className="font-semibold text-[var(--fg)] hover:underline"
-                          title="View share views for this link’s document"
-                        >
-                          {l.label ?? "—"}
-                        </Link>
-                      ) : (
-                        <span className="font-semibold text-[var(--fg)]">{l.label ?? "—"}</span>
-                      )}
-                      {l.isDefault ? <span className="ml-2 text-xs text-[var(--muted-2)]">default</span> : null}
-                    </td>
-                    <td className="px-4 py-3">{l.audience ?? "—"}</td>
-                    <td className="px-4 py-3">
-                      {l.workspaceId ? (
-                        <Link
-                          href={`/a/data/workspaces/${encodeURIComponent(l.workspaceId)}`}
-                          className="text-[var(--fg)] hover:underline"
-                          title="View this workspace"
-                        >
-                          {l.workspaceName ?? l.workspaceId}
-                        </Link>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    {/* Em dash when the document or project row is gone: the link keeps its own
-                        analytics, so the row is still worth listing without a name. */}
-                    <td className="px-4 py-3">{target ?? "—"}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-[var(--muted)]">
-                      {path ? (
-                        <a href={path} className="hover:underline" target="_blank" rel="noreferrer" title="Open the public link">
-                          {l.shareId}
-                        </a>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[12px] font-semibold ${STATE_CLASS[l.state] ?? STATE_CLASS.active}`}
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Share links"
+          head={
+            <>
+              {/* The target document is what tells two rows apart, so it leads; the link's own
+                  label ("Default link" on four rows in five) is the secondary column. The
+                  workspace name rides in the target's tooltip — it costs a column and repeats. */}
+              <AdminTh>Target</AdminTh>
+              <AdminTh>Link</AdminTh>
+              <AdminTh width="w-[96px]">State</AdminTh>
+              <AdminTh width="w-[160px]">Access</AdminTh>
+              <AdminTh align="right" width="w-[70px]">Views</AdminTh>
+              <AdminTh align="right" width="w-[90px]">Downloads</AdminTh>
+              <AdminTh align="right" width="w-[130px]">Created</AdminTh>
+              <AdminTh width="w-[128px]">Slug</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {loading && items.length === 0 ? (
+            <AdminTableMessage colSpan={COLUMN_COUNT}>Loading share links…</AdminTableMessage>
+          ) : items.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={COLUMN_COUNT}
+              title={filtered ? "No share links match that search" : "No share links yet"}
+              hint={filtered ? "Try a different label, state or kind." : undefined}
+            />
+          ) : (
+            items.map((l) => {
+              const path = publicLinkPath(l.kind, l.shareId);
+              const target = l.kind === "project" ? l.projectName : l.docTitle;
+              const stateLabel = linkStateLabel(l.state, { disabledByDocSwitch: l.disabledByDocSwitch });
+              // Audience has no column of its own — it is a short tag that was mostly empty and cost
+              // the table its last 100px — so it rides in the Link cell's tooltip instead.
+              const linkTitle = [l.label ?? "Unnamed link", l.audience ? `audience: ${l.audience}` : null]
+                .filter(Boolean)
+                .join(" · ");
+              // The workspace name has no column of its own — it repeats down the page and cost
+              // the table 105px — so it rides in the target's tooltip.
+              const targetTitle = [target ?? "No target", l.workspaceName ? `workspace: ${l.workspaceName}` : null]
+                .filter(Boolean)
+                .join(" · ");
+              const stateTone: AdminTone =
+                l.state === "disabled" && l.disabledByDocSwitch ? "warning" : (STATE_TONE[l.state] ?? "quiet");
+              // The pill shows one word; the reason and the expiry date live in its tooltip, so the
+              // State column stays narrow while still answering "why isn't this link working?".
+              const stateTitle = [
+                stateLabel,
+                l.expiresAt ? `Expires ${fmtAdminDateFull(l.expiresAt)}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <AdminTr key={l.id}>
+                  {/* Em dash when the document or project row is gone: the link keeps its own
+                      analytics, so the row is still worth listing without a name. */}
+                  <AdminTd primary truncate="max-w-[205px]">
+                    {l.docId ? (
+                      <Link
+                        href={`/a/shareviews/${encodeURIComponent(l.docId)}`}
+                        className={cn("block truncate rounded hover:underline", ADMIN_FOCUS_RING)}
+                        title={targetTitle}
                       >
-                        {linkStateLabel(l.state, { disabledByDocSwitch: l.disabledByDocSwitch })}
-                      </span>
-                    </td>
-                    {/* Whether a password is set, never the password itself or its hash. */}
-                    <td className="px-4 py-3">{l.hasPassword ? "Set" : "—"}</td>
-                    <td className="px-4 py-3">{l.allowDownload ? "Allowed" : "—"}</td>
-                    <td className="px-4 py-3">{fmtDate(l.expiresAt) || "—"}</td>
-                    <td className="px-4 py-3" title="The link's own view counter">
-                      {Number.isFinite(l.viewCount) ? l.viewCount : "—"}
-                    </td>
-                    <td className="px-4 py-3" title="The link's own download counter">
-                      {Number.isFinite(l.downloadCount) ? l.downloadCount : "—"}
-                    </td>
-                    <td className="px-4 py-3">{fmtDate(l.createdDate) || "—"}</td>
-                  </tr>
-                );
-              })}
-              {items.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={COLUMN_COUNT}>
-                    No share links.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </DataTable>
-        )}
+                        {target ?? ADMIN_DASH}
+                      </Link>
+                    ) : (
+                      <span title={targetTitle}>{target ?? ADMIN_DASH}</span>
+                    )}
+                  </AdminTd>
+                  <AdminTd truncate="max-w-[134px]">
+                    {/* No "default" chip beside a label that already reads "Default link". */}
+                    <span title={linkTitle}>{l.label ?? (l.isDefault ? "Default link" : ADMIN_DASH)}</span>
+                  </AdminTd>
+                  <AdminTd>
+                    <StatusPill tone={stateTone} title={stateTitle}>
+                      {l.state === "disabled" && l.disabledByDocSwitch ? "Doc off" : linkStateLabel(l.state)}
+                    </StatusPill>
+                  </AdminTd>
+                  <AdminTd>
+                    {/* Permissions, not states: quiet chips, so they never outshout the STATE
+                        column. Whether a password is set — never the password or its hash. */}
+                    <span className="inline-flex items-center gap-1.5">
+                      {l.hasPassword ? (
+                        <StatusPill tone="quiet" title="A password is set on this link">
+                          Password
+                        </StatusPill>
+                      ) : null}
+                      {l.allowDownload ? (
+                        <StatusPill tone="quiet" title="Viewers may download the file">
+                          Download
+                        </StatusPill>
+                      ) : null}
+                      {!l.hasPassword && !l.allowDownload ? (
+                        <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                      ) : null}
+                    </span>
+                  </AdminTd>
+                  <AdminTd align="right" numeric title="The link's own view counter">
+                    {Number.isFinite(l.viewCount) ? l.viewCount.toLocaleString() : ADMIN_DASH}
+                  </AdminTd>
+                  <AdminTd align="right" numeric title="The link's own download counter">
+                    {Number.isFinite(l.downloadCount) ? l.downloadCount.toLocaleString() : ADMIN_DASH}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    <TimeCell value={l.createdDate} />
+                  </AdminTd>
+                  <AdminTd>
+                    <IdCell value={l.shareId} label="share id" head={8} tail={4} href={path ?? undefined} />
+                  </AdminTd>
+                  <AdminTd align="right" sticky actions>
+                    {/* Links had no right-hand affordance at all, and no cue that a row opened
+                        anything. Same shape as every other list page: one primary action. */}
+                    <RowActions>
+                      {l.docId ? (
+                        <RowActionLink
+                          href={`/a/shareviews/${encodeURIComponent(l.docId)}`}
+                          title="Who viewed this document"
+                        >
+                          Views
+                        </RowActionLink>
+                      ) : l.projectId ? (
+                        <RowActionLink
+                          href={`/a/data/projects/${encodeURIComponent(l.projectId)}`}
+                          title="Open the project behind this link"
+                        >
+                          Project
+                        </RowActionLink>
+                      ) : (
+                        <span className="text-[var(--muted-2)]">{ADMIN_DASH}</span>
+                      )}
+                    </RowActions>
+                  </AdminTd>
+                </AdminTr>
+              );
+            })
+          )}
+        </AdminTable>
       </div>
     </div>
   );

@@ -1,9 +1,9 @@
 /**
  * Admin route: `/a/credits`
  *
- * Credits across the fleet: anomalies first, then balances ordered by who runs out soonest, then
- * the ledger, purchases and on-demand spend. Picking a workspace scopes the lower panels to it and
- * fills the workspace field the existing write tools use.
+ * Credits across the fleet, in one reading order: what is wrong, who is nearly empty, what has
+ * been spent, what was bought, and — last, behind its own heading — the four buttons that write.
+ * Picking a workspace anywhere scopes the lower sections to it and fills the field the tools use.
  *
  * The read panels never call `getCreditsSnapshot`: it upserts a balance row (seeding the starter
  * grant and the daily cap) as a side effect, which would write to the workspace being inspected.
@@ -11,17 +11,31 @@
  */
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import Alert from "@/components/ui/Alert";
 import Button from "@/components/ui/Button";
-import DataTable from "@/components/ui/DataTable";
 import Input from "@/components/ui/Input";
 import Panel from "@/components/ui/Panel";
-import Select from "@/components/ui/Select";
-import { fmtDate } from "@/lib/admin/format";
+import {
+  AdminAlert,
+  AdminAccessState,
+  AdminFilterBar,
+  AdminPageHeader,
+  AdminSearchInput,
+  AdminSelect,
+  AdminTable,
+  AdminTableEmpty,
+  AdminTableMessage,
+  AdminTd,
+  AdminTh,
+  AdminTr,
+  IdCell,
+  RowAction,
+  RowActions,
+  StatusPill,
+  TimeCell,
+  useAdminAccess,
+} from "@/components/admin";
 import {
   bucketSplitLabel,
   creditsShown,
@@ -33,6 +47,20 @@ import {
   type AdminCreditPlan,
 } from "@/lib/admin/creditsAdmin";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
+import {
+  ADMIN_DASH,
+  ADMIN_FIELD_LABEL,
+  ADMIN_FIELD_VALUE,
+  ADMIN_NOTE,
+  ADMIN_SECTION_DESC,
+  ADMIN_SECTION_GAP,
+  ADMIN_SECTION_TITLE,
+  type AdminTone,
+  ADMIN_NOTE_PANEL,
+  ADMIN_SUBBAR,
+  statusLabel,
+  toneStyle,
+} from "@/lib/admin/ui";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type CreditRules = {
@@ -149,6 +177,11 @@ type AdminCreditsSnapshotResponse = {
 type MutateAction = "grant_included" | "grant_on_demand" | "burn";
 
 const BALANCES_PAGE_SIZE = 50;
+const ANOMALY_COLUMNS = 7;
+const BALANCE_COLUMNS = 12;
+const LEDGER_COLUMNS = 10;
+const PURCHASE_COLUMNS = 8;
+const ON_DEMAND_COLUMNS = 4;
 
 /** A whole positive number typed into an amount field. */
 function isPositiveIntString(v: string): boolean {
@@ -173,32 +206,38 @@ function planLabel(plan: AdminCreditPlan | null): string {
   if (plan === "pro") return "Pro";
   if (plan === "payg") return "Free + card";
   if (plan === "free") return "Free";
-  return "—";
+  return ADMIN_DASH;
 }
 
-/** Severity badge for one anomaly. */
-function SeverityPill({ severity }: { severity: AdminCreditAnomalySeverity }) {
-  const cls =
-    severity === "high"
-      ? "border-red-300 bg-red-50 text-red-700"
-      : "border-amber-300 bg-amber-50 text-amber-800";
+/** Pro is the paid tier, `payg` is a Free workspace with a card on file, Free is the norm. */
+function planTone(plan: AdminCreditPlan | null): AdminTone {
+  if (plan === "pro") return "info";
+  if (plan === "payg") return "neutral";
+  return "quiet";
+}
+
+/** A ledger row's state: charged is the norm, failed is the one to see. */
+function ledgerTone(status: string): AdminTone {
+  if (status === "failed") return "danger";
+  if (status === "refunded") return "warning";
+  if (status === "pending") return "neutral";
+  return "quiet";
+}
+
+/** One labelled figure in the snapshot panel. */
+function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
-      {severity}
-    </span>
+    <div className="min-w-0">
+      <dt className={ADMIN_FIELD_LABEL}>{label}</dt>
+      <dd className={`mt-0.5 truncate ${ADMIN_FIELD_VALUE}`}>{children}</dd>
+    </div>
   );
 }
 
 /** The admin credits page. */
 export default function AdminCreditsPage() {
-  const { data: session, status } = useSession();
-  const role = session?.user?.role ?? null;
-  const isAuthed = status === "authenticated";
-  const isAdmin = isAuthed && role === "admin";
-  const isLocalhost =
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-  const canUseAdmin = isAdmin || isLocalhost;
+  const access = useAdminAccess();
+  const canUseAdmin = access.canUseAdmin;
 
   const [workspaceId, setWorkspaceId] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -257,6 +296,7 @@ export default function AdminCreditsPage() {
   // for every character of a 24-character id. Scope only once the value is a complete id; until then
   // the panels stay fleet-wide, which is what an empty field already means.
   const scopedWorkspaceId = /^[0-9a-f]{24}$/i.test(typedWorkspaceId) ? typedWorkspaceId : "";
+  const anyLoading = anomaliesLoading || balancesLoading || ledgerLoading || purchasesLoading;
   const balancesTotalPages = useMemo(
     () =>
       reachablePageCount({
@@ -266,6 +306,9 @@ export default function AdminCreditsPage() {
       }),
     [balancesTotal, balancesMaxWindow],
   );
+  // The band sizes its pager from the total it is given, so hand it the reachable total — otherwise
+  // Next stays enabled past the window the route will serve and every click there answers 400.
+  const balancesReachableTotal = Math.min(balancesTotal, balancesTotalPages * BALANCES_PAGE_SIZE);
 
   useEffect(() => {
     if (!canUseAdmin) return;
@@ -477,667 +520,834 @@ export default function AdminCreditsPage() {
     setError(null);
   }
 
-  if (status === "loading") {
-    return <div className="px-6 py-8 text-sm text-[var(--muted)]">Loading…</div>;
-  }
-
-  if (!isAuthed && !isLocalhost) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Credits</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You must be signed in to view this page.</p>
-          <div className="mt-5">
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] px-5 py-2.5 text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void signIn("google", { callbackUrl: "/a/credits" })}
-            >
-              Sign in
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   if (!canUseAdmin) {
-    return (
-      <div className="px-6 py-10">
-        <div className="max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6">
-          <div className="text-base font-semibold text-[var(--fg)]">Admin / Credits</div>
-          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">You don’t have access to this page.</p>
-        </div>
-      </div>
-    );
+    return <AdminAccessState access={access} title="Credits" description="Anomalies first, then who is nearly empty, what was spent, and what was bought." callbackUrl="/a/credits" />;
   }
+
+  const scopeSuffix = scopedWorkspaceId ? "this workspace" : "all workspaces";
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
       <div className={ADMIN_PAGE_CONTAINER}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--fg)]">Admin / Credits</h1>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Balances, ledger, purchases and on-demand spend across workspaces, with anomalies called out.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={anomaliesLoading || balancesLoading || ledgerLoading || purchasesLoading}
-              onClick={() => setReloadKey((v) => v + 1)}
-            >
-              {anomaliesLoading || balancesLoading || ledgerLoading || purchasesLoading ? "Loading…" : "Refresh"}
-            </Button>
-            <Link
-              href="/a"
-              className="inline-flex items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-2 text-sm font-semibold text-[var(--fg)] transition hover:bg-[var(--panel-hover)]"
-            >
-              Admin home
-            </Link>
-          </div>
-        </div>
+        <AdminPageHeader
+          title="Credits"
+          description="Anomalies first, then who is nearly empty, what was spent, and what was bought."
+        />
 
-        {/* The rules the anomaly checks are measured against, read from the live constants. */}
-        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--muted-2)]">
-          <span>Starter: {rules ? `${fmtCredits(rules.starterGrant)} once, every non-Pro workspace` : "—"}</span>
-          <span>Free brake: {rules ? `${fmtCredits(rules.freeDailyCap)}/day` : "—"}</span>
-          <span>Pro included: {rules ? `${fmtCredits(rules.includedPerCycle)}/cycle, no rollover` : "—"}</span>
-          <span>On-demand: Pro only</span>
-          <span>Packs: Free only{rules ? `, expire after ${rules.purchaseExpiryMonths} months` : ""}</span>
-          <span>Metered rate: {rules ? fmtCents(rules.usdCentsPerCredit) : "—"}/credit</span>
+        {/* The one control the whole page hangs off: everything below is scoped by it. */}
+        {/* The one control the whole page hangs off, and the only full-width band on it:
+            everything below is scoped by this field. Sub-tables carry their own controls
+            inline, so a reader can tell page scope from table scope. */}
+        <AdminFilterBar
+          className="mt-4"
+          actions={
+            <>
+              <RowAction onClick={() => scopeTo("")} disabled={!typedWorkspaceId} title="Back to every workspace">
+                Clear scope
+              </RowAction>
+              <RowAction onClick={() => void loadSnapshot()} disabled={snapshotLoading} title="Read the customer-facing snapshot">
+                Load snapshot
+              </RowAction>
+              <Button variant="outline" disabled={anyLoading} onClick={() => setReloadKey((v) => v + 1)}>
+                {anyLoading ? "Loading…" : "Refresh"}
+              </Button>
+            </>
+          }
+        >
+          <AdminSearchInput
+            value={workspaceId}
+            onValueChange={setWorkspaceId}
+            placeholder="Scope to a workspaceId…"
+            ariaLabel="Scope every panel to one workspace id"
+          />
+          {/* Only the *exception* is worth a sentence in the band; "showing all workspaces"
+              is what an empty scope field already says. */}
+          {scopedWorkspaceId ? (
+            <span className="text-[12px] leading-5 text-[var(--muted-2)]">
+              Ledger, purchases and the tools act on this workspace.
+            </span>
+          ) : typedWorkspaceId ? (
+            <span className="text-[12px] leading-5 text-[var(--muted-2)]">
+              Not a complete ObjectId yet — still showing all workspaces.
+            </span>
+          ) : null}
+        </AdminFilterBar>
+
+        {/* The rules every anomaly check is measured against, read from the live constants.
+            A labelled grid inside a panel: as loose text between two panels it read as
+            leftover copy rather than the reference it is. */}
+        <div className={`mt-3 ${ADMIN_NOTE_PANEL}`}>
+          <dl className="grid grid-cols-2 gap-x-5 gap-y-2 sm:grid-cols-3 xl:grid-cols-6">
+            <Fact label="Starter">
+              {rules ? `${fmtCredits(rules.starterGrant)} once, non-Pro` : ADMIN_DASH}
+            </Fact>
+            <Fact label="Free brake">{rules ? `${fmtCredits(rules.freeDailyCap)}/day` : ADMIN_DASH}</Fact>
+            <Fact label="Pro included">
+              {rules ? `${fmtCredits(rules.includedPerCycle)}/cycle` : ADMIN_DASH}
+            </Fact>
+            <Fact label="On-demand">Pro only</Fact>
+            <Fact label="Packs">
+              {rules ? `Free only, ${rules.purchaseExpiryMonths}-month expiry` : "Free only"}
+            </Fact>
+            <Fact label="Metered rate">
+              {rules ? `${fmtCents(rules.usdCentsPerCredit)}/credit` : ADMIN_DASH}
+            </Fact>
+          </dl>
         </div>
 
         {error ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-red-700">
+          <AdminAlert className="mt-3">
             {error}
-          </Alert>
+          </AdminAlert>
         ) : null}
         {success ? (
-          <Alert variant="info" className="mt-5 border border-[var(--border)] bg-[var(--panel)] text-sm text-emerald-700">
+          <AdminAlert tone="positive" className="mt-3">
             {success}
-          </Alert>
+          </AdminAlert>
         ) : null}
 
-        {/* Anomalies */}
-        <Panel className="mt-6 min-w-0">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-sm font-semibold text-[var(--fg)]">
-              Anomalies {anomalies.length ? `(${anomalies.length})` : ""}
+        {normalizedSnapshot ? (
+          <Panel padding="md" rounded="xl" className="mt-3 min-w-0">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+              <div className="text-[13px] font-semibold leading-5 text-[var(--fg)]">Snapshot for this workspace</div>
+              <div className="text-[12px] leading-5 text-[var(--muted-2)]">
+                The customer-facing view. Reading it seeds a balance row — the one read on this page that writes.
+              </div>
             </div>
-            <div className="text-xs text-[var(--muted-2)]">
-              Rows that contradict the rules above. Each one says why it is suspicious.
-            </div>
-          </div>
-          {anomaliesError ? <div className="mt-4 text-sm text-red-700">{anomaliesError}</div> : null}
-          {anomaliesLoading ? (
-            <div className="mt-4 text-sm text-[var(--muted)]">Loading…</div>
-          ) : anomalies.length === 0 && !anomaliesError ? (
-            <div className="mt-3 text-sm text-[var(--muted)]">
-              Nothing flagged in the rows scanned. The sweep is bounded, so this is not proof the whole fleet is clean.
-            </div>
+            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+              <Fact label="Remaining">
+                <span className="tabular-nums">{fmtCredits(normalizedSnapshot.creditsRemaining)}</span>
+              </Fact>
+              <Fact label="Included / purchased">
+                <span className="tabular-nums">
+                  {fmtCredits(normalizedSnapshot.includedRemaining)} / {fmtCredits(normalizedSnapshot.paidRemaining)}
+                </span>
+              </Fact>
+              <Fact label="Used this cycle">
+                <span className="tabular-nums">{fmtCredits(normalizedSnapshot.usedThisCycle)}</span>
+              </Fact>
+              <Fact label="Plan">{data ? data.plan : ADMIN_DASH}</Fact>
+              <Fact label="Cycle start">
+                <TimeCell value={normalizedSnapshot.cycleStart} mode="date" />
+              </Fact>
+              <Fact label="Cycle end">
+                <TimeCell value={normalizedSnapshot.cycleEnd} mode="date" />
+              </Fact>
+              <Fact label="On-demand">
+                {normalizedSnapshot.onDemandEnabled
+                  ? `on • limit ${data?.onDemandLimitCredits ?? 0} • used ${fmtCredits(
+                      normalizedSnapshot.onDemandUsedCreditsThisCycle,
+                    )}`
+                  : "off"}
+              </Fact>
+              <Fact label="Cycle key">
+                <span className="font-mono text-[12px]" title={data?.cycleKey ?? undefined}>
+                  {data?.cycleKey ?? ADMIN_DASH}
+                </span>
+              </Fact>
+            </dl>
+          </Panel>
+        ) : null}
+
+        {/* ---------------------------------------------------------- anomalies */}
+        <h2 className={`${ADMIN_SECTION_GAP} ${ADMIN_SECTION_TITLE}`}>
+          Anomalies{anomalies.length ? ` (${anomalies.length})` : ""}
+        </h2>
+        <p className={ADMIN_SECTION_DESC}>Rows that contradict the rules above. Each one says why it is suspicious.</p>
+
+        {anomaliesError ? (
+          <AdminAlert className="mt-3">
+            {anomaliesError}
+          </AdminAlert>
+        ) : null}
+
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Credit anomalies"
+          head={
+            <>
+              {/* Why is the point of the row, so it takes the remaining width; the raw
+                  detail rides in its tooltip rather than truncating beside it, because two
+                  half-sentences explain nothing. */}
+              <AdminTh width="w-[74px]">Severity</AdminTh>
+              <AdminTh width="w-[150px]">Workspace</AdminTh>
+              <AdminTh width="w-[64px]">Plan</AdminTh>
+              <AdminTh width="w-[150px]">Code</AdminTh>
+              <AdminTh width="w-full">Why</AdminTh>
+              <AdminTh align="right" width="w-[112px]">Seen</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {anomaliesLoading && anomalies.length === 0 ? (
+            <AdminTableMessage colSpan={ANOMALY_COLUMNS}>Scanning for anomalies…</AdminTableMessage>
+          ) : anomalies.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={ANOMALY_COLUMNS}
+              title="Nothing flagged in the rows scanned"
+              hint="The sweep is bounded, so this is not proof the whole fleet is clean."
+            />
           ) : (
-            <div className="mt-3 grid gap-2">
-              {anomalies.map((a, i) => (
-                <div
-                  key={`${a.workspaceId}:${a.code}:${i}`}
-                  className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3"
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <SeverityPill severity={a.severity} />
-                    <span className="font-mono text-xs text-[var(--fg)]">{a.code}</span>
-                    <button
-                      type="button"
-                      className="text-sm font-semibold text-[var(--fg)] hover:underline"
-                      onClick={() => scopeTo(a.workspaceId)}
-                    >
-                      {a.workspaceName ?? a.workspaceId}
-                    </button>
-                    <span className="text-xs text-[var(--muted-2)]">{planLabel(a.plan)}</span>
-                    <span className="text-xs text-[var(--muted-2)]">{fmtDate(a.at) || "—"}</span>
-                  </div>
-                  <div className="mt-1 text-sm text-[var(--muted)]">{a.reason}</div>
-                  <div className="mt-1 font-mono text-xs text-[var(--muted-2)]">{a.detail}</div>
-                </div>
-              ))}
-            </div>
+            anomalies.map((a, i) => (
+              <AdminTr key={`${a.workspaceId}:${a.code}:${i}`}>
+                <AdminTd>
+                  <StatusPill tone={a.severity === "high" ? "danger" : "warning"}>{a.severity}</StatusPill>
+                </AdminTd>
+                <AdminTd primary truncate="max-w-[150px]">
+                  <span title={a.workspaceName ?? a.workspaceId}>{a.workspaceName ?? a.workspaceId}</span>
+                </AdminTd>
+                <AdminTd>{planLabel(a.plan)}</AdminTd>
+                <AdminTd mono truncate="max-w-[150px]">
+                  <span title={a.code}>{a.code}</span>
+                </AdminTd>
+                {/* `w-full` + `max-w-0` is what lets the explanation own every pixel the other
+                    columns do not need: the cell contributes nothing to the table's intrinsic
+                    width, so it fills the slack instead of forcing a scrollbar. */}
+                <AdminTd truncate="w-full max-w-0">
+                  <span title={[a.reason, a.detail].filter(Boolean).join(" — ")}>{a.reason}</span>
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={a.at} />
+                </AdminTd>
+                <AdminTd align="right" sticky actions>
+                  <RowActions>
+                    <RowAction onClick={() => scopeTo(a.workspaceId)} title="Scope this page to that workspace">
+                      Scope
+                    </RowAction>
+                  </RowActions>
+                </AdminTd>
+              </AdminTr>
+            ))
           )}
-          {anomalyScan &&
-          (anomalyScan.balanceCandidatesTruncated ||
-            anomalyScan.proSubscriptionsTruncated ||
-            anomalyScan.pendingRowsTruncated ||
-            anomalyScan.overduePurchasesTruncated) ? (
-            <div className="mt-3 text-xs text-[var(--muted-2)]">
-              One of the passes hit its row cap, so there may be more than is shown here.
-            </div>
-          ) : null}
-        </Panel>
+        </AdminTable>
 
-        {/* Balances */}
-        <div className="mt-8 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-[var(--fg)]">Balances</h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              Credits held per workspace, emptiest first. On-demand headroom is not counted as credits held.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              className="w-[220px] max-w-full"
-              value={balancesSort}
-              onChange={(e) => {
-                setBalancesPage(1);
-                setBalancesSort(e.target.value === "updated" ? "updated" : "remaining");
-              }}
-            >
-              <option value="remaining">Closest to running out</option>
-              <option value="updated">Recently changed</option>
-            </Select>
-            <div className="text-xs text-[var(--muted-2)]">
-              Page {balancesPage} / {balancesTotalPages} • {balancesTotal} total
-            </div>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={balancesPage <= 1}
-              onClick={() => setBalancesPage((p) => Math.max(1, p - 1))}
-            >
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              className="bg-[var(--panel-2)]"
-              disabled={balancesPage >= balancesTotalPages}
-              onClick={() => setBalancesPage((p) => Math.min(balancesTotalPages, p + 1))}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-        {balancesError ? <div className="mt-4 text-sm text-red-700">{balancesError}</div> : null}
-        {balancesLoading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-4 rounded-xl bg-[var(--panel-2)]">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">Workspace</th>
-                <th className="px-4 py-3">Plan</th>
-                <th className="px-4 py-3">Starter</th>
-                <th className="px-4 py-3">Included</th>
-                <th className="px-4 py-3">Purchased</th>
-                <th className="px-4 py-3">Total</th>
-                <th className="px-4 py-3">Daily cap</th>
-                <th className="px-4 py-3">On-demand</th>
-                <th className="px-4 py-3">Flags</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {balances.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
-                    No credit balances. A workspace only gets a balance row once it first needs credits.
-                  </td>
-                </tr>
-              ) : null}
-              {balances.map((b) => (
-                <tr key={b.workspaceId} className={b.workspaceId === scopedWorkspaceId ? "bg-[var(--panel-hover)]" : ""}>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className="font-semibold text-[var(--fg)] hover:underline"
-                      onClick={() => scopeTo(b.workspaceId)}
-                    >
-                      {b.workspaceName ?? "Workspace"}
-                    </button>
-                    <div className="font-mono text-xs text-[var(--muted)]">{b.workspaceId}</div>
-                    <div className="text-xs text-[var(--muted-2)]">{b.workspaceType ?? "—"}</div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                    {planLabel(b.plan)}
-                    <div className="text-xs text-[var(--muted-2)]">{b.subscriptionStatus ?? "no subscription"}</div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{fmtCredits(b.starter)}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{fmtCredits(b.included)}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{fmtCredits(b.purchased)}</td>
-                  <td className="px-4 py-3 text-sm font-semibold text-[var(--fg)]">{fmtCredits(b.totalRemaining)}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">
+        {anomalyScan &&
+        (anomalyScan.balanceCandidatesTruncated ||
+          anomalyScan.proSubscriptionsTruncated ||
+          anomalyScan.pendingRowsTruncated ||
+          anomalyScan.overduePurchasesTruncated) ? (
+          <p className={ADMIN_NOTE}>One of the passes hit its row cap, so there may be more than is shown here.</p>
+        ) : null}
+
+        {/* ----------------------------------------------------------- balances */}
+        <h2 className={`${ADMIN_SECTION_GAP} ${ADMIN_SECTION_TITLE}`}>Balances</h2>
+        <p className={ADMIN_SECTION_DESC}>
+          Credits held per workspace, emptiest first. On-demand headroom is not credits held.
+        </p>
+
+        <AdminFilterBar
+          className="mt-3 border-0 bg-transparent px-0"
+          page={balancesPage}
+          pageSize={BALANCES_PAGE_SIZE}
+          total={balancesReachableTotal}
+          onPageChange={setBalancesPage}
+          noun="workspaces"
+          loading={balancesLoading}
+        >
+          <AdminSelect
+            ariaLabel="Sort balances"
+            value={balancesSort}
+            onChange={(e) => {
+              setBalancesPage(1);
+              setBalancesSort(e.target.value === "updated" ? "updated" : "remaining");
+            }}
+          >
+            <option value="remaining">Closest to running out</option>
+            <option value="updated">Recently changed</option>
+          </AdminSelect>
+        </AdminFilterBar>
+
+        {balancesError ? (
+          <AdminAlert className="mt-3">
+            {balancesError}
+          </AdminAlert>
+        ) : null}
+
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Credit balances"
+          head={
+            <>
+              <AdminTh width="w-full">Workspace</AdminTh>
+              <AdminTh width="w-[70px]">Plan</AdminTh>
+              {/* Two headers were wider than any value beneath them and between them they put
+                  this table 46px past the container, which pushed the id column under the
+                  sticky Actions cell until its own header read "WORKSPACI". Shorter words are
+                  the first fix in the width budget, and both are the page's own vocabulary:
+                  the rules strip says "Packs", the workspace hub says "Stripe status". */}
+              <AdminTh width="w-[86px]" title="Stripe subscription status">
+                Status
+              </AdminTh>
+              <AdminTh align="right">Starter</AdminTh>
+              <AdminTh align="right">Included</AdminTh>
+              <AdminTh align="right" title="Purchased (pack) credits remaining">
+                Packs
+              </AdminTh>
+              <AdminTh align="right">Total</AdminTh>
+              <AdminTh align="right">Daily cap</AdminTh>
+              <AdminTh>On-demand</AdminTh>
+              <AdminTh>Flags</AdminTh>
+              {/* `min-w` not `w`: at twelve columns this table is past the width budget and
+                  scrolls, and a plain width let the browser squeeze the last data column until
+                  its own header read "WORKSPACI". */}
+              <AdminTh width="min-w-[128px]">Workspace ID</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {balancesLoading && balances.length === 0 ? (
+            <AdminTableMessage colSpan={BALANCE_COLUMNS}>Loading balances…</AdminTableMessage>
+          ) : balances.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={BALANCE_COLUMNS}
+              title="No credit balances"
+              hint="A workspace only gets a balance row once it first needs credits."
+            />
+          ) : (
+            balances.map((b) => {
+              const scoped = b.workspaceId === scopedWorkspaceId;
+              const flagTitle = b.anomalies.map((a) => `${a.code}: ${a.reason} (${a.detail})`).join("\n");
+              // A "personal" pill beside a workspace called Personal says nothing twice.
+              const showType =
+                Boolean(b.workspaceType) &&
+                b.workspaceType?.toLowerCase() !== (b.workspaceName ?? "").toLowerCase();
+              return (
+                <AdminTr key={b.workspaceId} className={scoped ? "bg-[var(--panel-hover)]" : undefined}>
+                  <AdminTd primary truncate="max-w-[220px]">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span className="truncate" title={b.workspaceName ?? "Workspace"}>
+                        {b.workspaceName ?? "Workspace"}
+                      </span>
+                      {showType ? <StatusPill tone="quiet" className="shrink-0">{b.workspaceType}</StatusPill> : null}
+                    </span>
+                  </AdminTd>
+                  {/* "Free free" and "Pro active" read as one value said twice. The pill is
+                      the plan; the subscription state is a different fact, so a different
+                      column. */}
+                  <AdminTd>
+                    <StatusPill tone={planTone(b.plan)}>{planLabel(b.plan)}</StatusPill>
+                  </AdminTd>
+                  <AdminTd truncate="max-w-[120px]">
+                    <span title={b.subscriptionStatus ?? "No subscription"}>
+                      {b.subscriptionStatus ? statusLabel(b.subscriptionStatus) : ADMIN_DASH}
+                    </span>
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {fmtCredits(b.starter)}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {fmtCredits(b.included)}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {fmtCredits(b.purchased)}
+                  </AdminTd>
+                  <AdminTd align="right" numeric primary>
+                    {fmtCredits(b.totalRemaining)}
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
                     {b.dailyCreditCap === null ? "none" : fmtCredits(b.dailyCreditCap)}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                    {b.onDemandEnabled ? `on • ${fmtCents(b.onDemandMonthlyLimitCents)}` : "off"}
-                  </td>
-                  <td className="px-4 py-3 text-sm">
-                    {b.anomalies.length === 0 ? (
-                      <span className="text-[var(--muted-2)]">—</span>
+                  </AdminTd>
+                  <AdminTd>
+                    {b.onDemandEnabled ? (
+                      <StatusPill tone="info">on • {fmtCents(b.onDemandMonthlyLimitCents)}</StatusPill>
                     ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {b.anomalies.map((a) => (
-                          <span
-                            key={a.code}
-                            title={`${a.reason} (${a.detail})`}
-                            className="font-mono text-[11px] text-red-700"
-                          >
-                            {a.code}
-                          </span>
-                        ))}
-                      </div>
+                      ADMIN_DASH
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </DataTable>
-        )}
+                  </AdminTd>
+                  <AdminTd>
+                    {b.anomalies.length === 0 ? (
+                      ADMIN_DASH
+                    ) : (
+                      <StatusPill tone="danger" title={flagTitle}>
+                        {b.anomalies.length === 1 ? b.anomalies[0].code : `${b.anomalies.length} flags`}
+                      </StatusPill>
+                    )}
+                  </AdminTd>
+                  <AdminTd>
+                    <IdCell value={b.workspaceId} label="workspace id" />
+                  </AdminTd>
+                  <AdminTd align="right" sticky actions>
+                    <RowActions>
+                      <RowAction onClick={() => scopeTo(b.workspaceId)} title="Scope this page to that workspace">
+                        {scoped ? "Scoped" : "Scope"}
+                      </RowAction>
+                    </RowActions>
+                  </AdminTd>
+                </AdminTr>
+              );
+            })
+          )}
+        </AdminTable>
 
-        {/* Workspace scope */}
-        <Panel className="mt-8 min-w-0">
-          <div className="text-sm font-semibold text-[var(--fg)]">Workspace scope</div>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            Set a workspace to scope the ledger, purchases and on-demand panels below, and to use the tools at the end.
+        {balancesTotal > balancesReachableTotal ? (
+          <p className={ADMIN_NOTE}>
+            Sorted on a computed total no index can serve, so only the first{" "}
+            {balancesReachableTotal.toLocaleString()} of {balancesTotal.toLocaleString()} rows can be paged through.
           </p>
-          <div className="mt-3 flex flex-wrap items-end gap-3">
-            <div className="min-w-[340px] flex-1">
-              <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">workspaceId</div>
+        ) : null}
+
+        {/* ------------------------------------------------------------- ledger */}
+        <h2 className={`${ADMIN_SECTION_GAP} ${ADMIN_SECTION_TITLE}`}>Ledger ({scopeSuffix})</h2>
+        <p className={ADMIN_SECTION_DESC}>
+          The 50 most recent rows. Credits shows whichever of charged, reserved or estimated the row actually has.
+        </p>
+
+        {/* Table-scoped controls: no border, no panel, so this cannot be mistaken for the
+            page's own band above. */}
+        <div className={`mt-3 ${ADMIN_SUBBAR}`}>
+          <AdminSelect
+            ariaLabel="Filter ledger by event"
+            value={ledgerEventType}
+            onChange={(e) => setLedgerEventType(e.target.value)}
+          >
+            <option value="">All events</option>
+            <option value="ai_run">AI runs</option>
+            <option value="cycle_grant_included">Cycle grants</option>
+            <option value="credit_pack_purchase">Pack purchases</option>
+            <option value="credit_pack_expired">Pack expiries</option>
+            <option value="free_floor_grant">Free floor (historic)</option>
+          </AdminSelect>
+          <AdminSelect
+            ariaLabel="Filter ledger by status"
+            value={ledgerStatus}
+            onChange={(e) => setLedgerStatus(e.target.value)}
+          >
+            <option value="">Any status</option>
+            <option value="pending">Pending</option>
+            <option value="charged">Charged</option>
+            <option value="refunded">Refunded</option>
+            <option value="failed">Failed</option>
+          </AdminSelect>
+        </div>
+
+        {ledgerError ? (
+          <AdminAlert className="mt-3">
+            {ledgerError}
+          </AdminAlert>
+        ) : null}
+
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Credit ledger"
+          head={
+            <>
+              <AdminTh align="right">When</AdminTh>
+              <AdminTh>Workspace</AdminTh>
+              <AdminTh>Action</AdminTh>
+              <AdminTh>Tier</AdminTh>
+              <AdminTh>Status</AdminTh>
+              <AdminTh>Event</AdminTh>
+              <AdminTh align="right">Credits</AdminTh>
+              <AdminTh>Bucket</AdminTh>
+              <AdminTh>Source</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {ledgerLoading && ledger.length === 0 ? (
+            <AdminTableMessage colSpan={LEDGER_COLUMNS}>Loading ledger…</AdminTableMessage>
+          ) : ledger.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={LEDGER_COLUMNS}
+              title="No ledger rows for this filter"
+              hint="Try another event type or status, or clear the workspace scope."
+            />
+          ) : (
+            ledger.map((r) => {
+              const shown = creditsShown(r);
+              return (
+                <AdminTr key={r.id}>
+                  <AdminTd align="right" numeric>
+                    <TimeCell value={r.createdDate} />
+                  </AdminTd>
+                  <AdminTd primary truncate="max-w-[180px]">
+                    <span title={r.workspaceName ?? r.workspaceId}>{r.workspaceName ?? r.workspaceId}</span>
+                  </AdminTd>
+                  <AdminTd truncate="max-w-[130px]">
+                    <span title={r.actionType ?? undefined}>{r.actionType ?? ADMIN_DASH}</span>
+                  </AdminTd>
+                  <AdminTd>{r.qualityTier ?? ADMIN_DASH}</AdminTd>
+                  <AdminTd>
+                    <span className="inline-flex items-center gap-1.5">
+                      {/* `charged` is every row but one: a chip drawn 49 times is decoration,
+                          so the ordinary status is a word and only the exception is a chip. */}
+                      {ledgerTone(r.status) === "quiet" ? (
+                        statusLabel(r.status)
+                      ) : (
+                        <StatusPill tone={ledgerTone(r.status)}>{r.status}</StatusPill>
+                      )}
+                      {r.stalePending ? (
+                        <StatusPill tone="danger" title="Pending far longer than a run should take">
+                          Stale
+                        </StatusPill>
+                      ) : null}
+                    </span>
+                  </AdminTd>
+                  <AdminTd truncate="max-w-[150px]">
+                    <span title={r.eventType ?? undefined}>{r.eventType ?? ADMIN_DASH}</span>
+                  </AdminTd>
+                  <AdminTd
+                    align="right"
+                    numeric
+                    title={`est ${fmtCredits(r.creditsEstimated)}, res ${fmtCredits(
+                      r.creditsReserved,
+                    )}, chg ${fmtCredits(r.creditsCharged)}`}
+                  >
+                    {/* The number alone: the basis is already the Status column's word, and
+                        the tooltip carries all three figures. */}
+                    <span className="font-medium text-[var(--fg)]">{fmtCredits(shown.value)}</span>
+                  </AdminTd>
+                  <AdminTd truncate="max-w-[160px]">
+                    <span title={bucketSplitLabel(r.split)}>{bucketSplitLabel(r.split)}</span>
+                  </AdminTd>
+                  <AdminTd>
+                    <span className="inline-flex items-center gap-1.5">
+                      <span>{r.source ?? ADMIN_DASH}</span>
+                      {r.adminReason ? (
+                        <StatusPill tone="warning" title={r.adminReason}>
+                          Admin
+                        </StatusPill>
+                      ) : null}
+                    </span>
+                  </AdminTd>
+                  <AdminTd align="right" sticky actions>
+                    <RowActions>
+                      <RowAction onClick={() => scopeTo(r.workspaceId)} title="Scope this page to that workspace">
+                        Scope
+                      </RowAction>
+                    </RowActions>
+                  </AdminTd>
+                </AdminTr>
+              );
+            })
+          )}
+        </AdminTable>
+
+        {/* ---------------------------------------------------------- purchases */}
+        <h2 className={`${ADMIN_SECTION_GAP} ${ADMIN_SECTION_TITLE}`}>Purchases ({scopeSuffix})</h2>
+        <p className={ADMIN_SECTION_DESC}>
+          Packs are Free-only at purchase time; a workspace keeps them after upgrading, so a live pack on Pro is normal.
+        </p>
+
+        {purchasesError ? (
+          <AdminAlert className="mt-3">
+            {purchasesError}
+          </AdminAlert>
+        ) : null}
+
+        <AdminTable
+          className="mt-3"
+          ariaLabel="Credit pack purchases"
+          head={
+            <>
+              <AdminTh align="right">Purchased</AdminTh>
+              <AdminTh>Workspace</AdminTh>
+              <AdminTh>Pack</AdminTh>
+              <AdminTh align="right">Credits</AdminTh>
+              <AdminTh align="right">Amount</AdminTh>
+              <AdminTh align="right">Expires</AdminTh>
+              <AdminTh>State</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {purchasesLoading && purchases.length === 0 ? (
+            <AdminTableMessage colSpan={PURCHASE_COLUMNS}>Loading purchases…</AdminTableMessage>
+          ) : purchases.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={PURCHASE_COLUMNS}
+              title="No credit pack purchases"
+              hint={scopedWorkspaceId ? "This workspace has never bought a pack." : undefined}
+            />
+          ) : (
+            purchases.map((p) => (
+              <AdminTr key={p.id}>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={p.purchasedAt} />
+                </AdminTd>
+                <AdminTd primary truncate="max-w-[220px]">
+                  <span title={p.workspaceName ?? p.workspaceId}>{p.workspaceName ?? p.workspaceId}</span>
+                </AdminTd>
+                <AdminTd truncate="max-w-[160px]">
+                  <span title={p.packId ?? undefined}>{p.packId ?? ADMIN_DASH}</span>
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  {fmtCredits(p.credits)}
+                </AdminTd>
+                <AdminTd align="right" numeric title={p.currency?.toUpperCase() ?? undefined}>
+                  {fmtCents(p.amountCents)}
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  <TimeCell value={p.expiresAt} mode="date" />
+                </AdminTd>
+                <AdminTd>
+                  {p.expiredAt ? (
+                    <StatusPill tone="quiet" title={`${fmtCredits(p.creditsExpired)} taken back`}>
+                      expired
+                    </StatusPill>
+                  ) : p.pastExpiry ? (
+                    <StatusPill tone="danger" title="Past its expiry and the sweep has not reclaimed it">
+                      past expiry
+                    </StatusPill>
+                  ) : (
+                    <StatusPill tone="positive" dot>
+                      live
+                    </StatusPill>
+                  )}
+                </AdminTd>
+                <AdminTd align="right" sticky actions>
+                  <RowActions>
+                    <RowAction onClick={() => scopeTo(p.workspaceId)} title="Scope this page to that workspace">
+                      Scope
+                    </RowAction>
+                  </RowActions>
+                </AdminTd>
+              </AdminTr>
+            ))
+          )}
+        </AdminTable>
+
+        {/* ---------------------------------------------------------- on-demand */}
+        <h2 className={`${ADMIN_SECTION_GAP} ${ADMIN_SECTION_TITLE}`}>On-demand spend ({scopeSuffix})</h2>
+        <p className={ADMIN_SECTION_DESC}>
+          {onDemand
+            ? scopedWorkspaceId
+              ? onDemand.cycle
+                ? `This cycle (${onDemand.cycle.cycleKey}): ${fmtCredits(
+                    onDemand.cycle.onDemandUsedCredits,
+                  )} on-demand of ${fmtCredits(onDemand.cycle.totalUsedCredits)} credits used.`
+                : `No cycle total — ${onDemand.cycleUnavailableReason ?? "unavailable"}.`
+              : `A rolling ${onDemand.windowDays}-day window: billing cycles start on a different day per workspace.`
+            : "Metered credits billed beyond a workspace's included allowance."}
+        </p>
+
+        <AdminTable
+          className="mt-3"
+          ariaLabel="On-demand spend"
+          head={
+            <>
+              <AdminTh>Workspace</AdminTh>
+              <AdminTh align="right">On-demand credits</AdminTh>
+              <AdminTh align="right">Runs</AdminTh>
+              <AdminTh align="right" sticky>
+                Actions
+              </AdminTh>
+            </>
+          }
+        >
+          {purchasesLoading && !onDemand ? (
+            <AdminTableMessage colSpan={ON_DEMAND_COLUMNS}>Loading on-demand spend…</AdminTableMessage>
+          ) : !onDemand || onDemand.rows.length === 0 ? (
+            <AdminTableEmpty
+              colSpan={ON_DEMAND_COLUMNS}
+              title="No on-demand credits billed in this window"
+              hint="On-demand is Pro-only and only bills past the included allowance."
+            />
+          ) : (
+            onDemand.rows.map((r) => (
+              <AdminTr key={r.workspaceId}>
+                <AdminTd primary truncate="max-w-[320px]">
+                  <span title={r.workspaceName ?? r.workspaceId}>{r.workspaceName ?? r.workspaceId}</span>
+                </AdminTd>
+                <AdminTd
+                  align="right"
+                  numeric
+                  title={rules ? `≈ ${fmtCents(r.credits * rules.usdCentsPerCredit)}` : undefined}
+                >
+                  {fmtCredits(r.credits)}
+                  {rules ? (
+                    <span className="text-[11.5px] text-[var(--muted-2)]">
+                      {" "}
+                      ≈ {fmtCents(r.credits * rules.usdCentsPerCredit)}
+                    </span>
+                  ) : null}
+                </AdminTd>
+                <AdminTd align="right" numeric>
+                  {fmtCredits(r.runs)}
+                </AdminTd>
+                <AdminTd align="right" sticky actions>
+                  <RowActions>
+                    <RowAction onClick={() => scopeTo(r.workspaceId)} title="Scope this page to that workspace">
+                      Scope
+                    </RowAction>
+                  </RowActions>
+                </AdminTd>
+              </AdminTr>
+            ))
+          )}
+        </AdminTable>
+
+        {/* -------------------------------------------------------------- tools */}
+        <h2 className={`${ADMIN_SECTION_GAP} ${ADMIN_SECTION_TITLE}`}>Tools</h2>
+        <p className={ADMIN_SECTION_DESC}>
+          Everything above only reads. These four write, to the workspace in the scope field at the top.
+        </p>
+
+        <div className="mt-3 grid gap-2 xl:grid-cols-2">
+          <Panel variant="panel" padding="md" rounded="xl" className="min-w-0">
+            <div className="text-[13px] font-semibold leading-5 text-[var(--fg)]">Grant included credits</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)]">
+              <label className="min-w-0">
+                <span className={ADMIN_FIELD_LABEL}>Amount</span>
+                <Input
+                  value={grantIncludedAmount}
+                  onChange={(e) => setGrantIncludedAmount(e.target.value)}
+                  variant="panel2"
+                  className="mt-1 w-full"
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={ADMIN_FIELD_LABEL}>Reason (required)</span>
+                <Input
+                  value={grantIncludedReason}
+                  onChange={(e) => setGrantIncludedReason(e.target.value)}
+                  variant="panel2"
+                  className="mt-1 w-full"
+                />
+              </label>
+            </div>
+            <div className="mt-3">
+              <Button
+                variant="solid"
+                className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
+                onClick={() => void runMutate("grant_included", grantIncludedAmount, grantIncludedReason)}
+                disabled={snapshotLoading}
+              >
+                Grant credits
+              </Button>
+            </div>
+          </Panel>
+
+          <Panel variant="panel" padding="md" rounded="xl" className="min-w-0">
+            <div className="text-[13px] font-semibold leading-5 text-[var(--fg)]">Grant on-demand credits</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)]">
+              <label className="min-w-0">
+                <span className={ADMIN_FIELD_LABEL}>Amount</span>
+                <Input
+                  value={grantPaidAmount}
+                  onChange={(e) => setGrantPaidAmount(e.target.value)}
+                  variant="panel2"
+                  className="mt-1 w-full"
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={ADMIN_FIELD_LABEL}>Reason (required)</span>
+                <Input
+                  value={grantPaidReason}
+                  onChange={(e) => setGrantPaidReason(e.target.value)}
+                  variant="panel2"
+                  className="mt-1 w-full"
+                />
+              </label>
+            </div>
+            <div className="mt-3">
+              <Button
+                variant="solid"
+                className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
+                onClick={() => void runMutate("grant_on_demand", grantPaidAmount, grantPaidReason)}
+                disabled={snapshotLoading}
+              >
+                Grant credits
+              </Button>
+            </div>
+            <p className={ADMIN_NOTE}>Adds to the purchased (non-expiring) bucket.</p>
+          </Panel>
+
+          <Panel variant="panel" padding="md" rounded="xl" className="min-w-0">
+            <div className="text-[13px] font-semibold leading-5 text-[var(--fg)]">Burn credits</div>
+            {/* The button sits under the inputs, not beside them: squeezed into a third
+                column its own label was cut to "Burn…", and a verb you cannot read is not a
+                button. Irreversible, so it wears the danger tone the admin area uses for
+                Delete rather than the neutral one that made it look safer. */}
+            <div className="mt-2 grid gap-2 sm:grid-cols-[130px_minmax(0,1fr)]">
+              <label className="min-w-0">
+                <span className={ADMIN_FIELD_LABEL}>Amount</span>
+                <Input
+                  value={burnAmount}
+                  onChange={(e) => setBurnAmount(e.target.value)}
+                  variant="panel2"
+                  className="mt-1 w-full"
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={ADMIN_FIELD_LABEL}>Reason (required)</span>
+                <Input
+                  value={burnReason}
+                  onChange={(e) => setBurnReason(e.target.value)}
+                  variant="panel2"
+                  className="mt-1 w-full"
+                />
+              </label>
+            </div>
+            <div className="mt-3">
+              <Button
+                variant="secondary"
+                style={toneStyle("danger")}
+                onClick={() => void runMutate("burn", burnAmount, burnReason)}
+                disabled={snapshotLoading}
+              >
+                Burn credits
+              </Button>
+            </div>
+            <p className={ADMIN_NOTE}>Asks once more before it takes the credits away.</p>
+          </Panel>
+
+          <Panel variant="panel" padding="md" rounded="xl" className="min-w-0">
+            <div className="text-[13px] font-semibold leading-5 text-[var(--fg)]">Simulate new billing cycle</div>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <label className="min-w-0">
+                <span className={ADMIN_FIELD_LABEL}>Period start (unix s)</span>
+                <Input
+                  value={simStartUnix}
+                  onChange={(e) => setSimStartUnix(e.target.value)}
+                  variant="panel2"
+                  className="mt-1 w-full"
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={ADMIN_FIELD_LABEL}>Period end (unix s)</span>
+                <Input
+                  value={simEndUnix}
+                  onChange={(e) => setSimEndUnix(e.target.value)}
+                  variant="panel2"
+                  className="mt-1 w-full"
+                />
+              </label>
+            </div>
+            <label className="mt-2 block min-w-0">
+              <span className={ADMIN_FIELD_LABEL}>Reason (required)</span>
               <Input
-                value={workspaceId}
-                onChange={(e) => setWorkspaceId(e.target.value)}
-                placeholder="Mongo ObjectId (org/workspace) — empty means all workspaces"
+                value={simReason}
+                onChange={(e) => setSimReason(e.target.value)}
                 variant="panel2"
                 className="mt-1 w-full"
               />
+            </label>
+            {/* Same rule as Burn: full label, its own row, danger tone — it moves the stored
+                billing period and applies a grant. */}
+            <div className="mt-3">
+              <Button
+                variant="secondary"
+                style={toneStyle("danger")}
+                onClick={() => void runSimulateCycle()}
+                disabled={snapshotLoading}
+              >
+                Simulate new cycle
+              </Button>
             </div>
-            {/* Clears whatever was typed, not just a valid id — a half-typed value has to be clearable. */}
-            <Button variant="outline" className="bg-[var(--panel-2)]" onClick={() => scopeTo("")} disabled={!typedWorkspaceId}>
-              Clear
-            </Button>
-            <Button
-              variant="solid"
-              className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-              onClick={() => void loadSnapshot()}
-              disabled={snapshotLoading}
-            >
-              Load snapshot
-            </Button>
-          </div>
-          <div className="mt-4 grid gap-1 text-[13px] text-[var(--muted)]">
-            <div className="text-xs text-[var(--muted-2)]">
-              The snapshot is the customer-facing view. Loading it seeds a balance row if the workspace has none, so it
-              is the one read on this page that can write.
-            </div>
-            <div>
-              <span className="font-semibold text-[var(--fg)]">Credits remaining:</span>{" "}
-              {normalizedSnapshot ? fmtCredits(normalizedSnapshot.creditsRemaining) : "—"}
-            </div>
-            <div>
-              <span className="font-semibold text-[var(--fg)]">Included / purchased:</span>{" "}
-              {normalizedSnapshot
-                ? `${fmtCredits(normalizedSnapshot.includedRemaining)} / ${fmtCredits(normalizedSnapshot.paidRemaining)}`
-                : "—"}
-            </div>
-            <div>
-              <span className="font-semibold text-[var(--fg)]">Used this cycle:</span>{" "}
-              {normalizedSnapshot ? fmtCredits(normalizedSnapshot.usedThisCycle) : "—"}
-            </div>
-            <div>
-              <span className="font-semibold text-[var(--fg)]">Cycle:</span>{" "}
-              {normalizedSnapshot
-                ? `${fmtDate(normalizedSnapshot.cycleStart) || "—"} → ${fmtDate(normalizedSnapshot.cycleEnd) || "—"}`
-                : "—"}
-            </div>
-            <div>
-              <span className="font-semibold text-[var(--fg)]">Plan:</span> {data ? data.plan : "—"}
-            </div>
-            <div>
-              <span className="font-semibold text-[var(--fg)]">On-demand:</span>{" "}
-              {normalizedSnapshot
-                ? `${normalizedSnapshot.onDemandEnabled ? "enabled" : "disabled"} • limit=${
-                    data?.onDemandLimitCredits ?? 0
-                  } credits • used=${fmtCredits(normalizedSnapshot.onDemandUsedCreditsThisCycle)}`
-                : "—"}
-            </div>
-            <div>
-              <span className="font-semibold text-[var(--fg)]">cycleKey:</span> {data?.cycleKey ?? "—"}
-            </div>
-          </div>
-        </Panel>
-
-        {/* Ledger */}
-        <div className="mt-8 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold text-[var(--fg)]">
-              Ledger {scopedWorkspaceId ? "(this workspace)" : "(all workspaces)"}
-            </h2>
-            <p className="mt-1 text-sm text-[var(--muted)]">
-              The 50 most recent rows. The headline credits figure is whichever of charged, reserved or
-              estimated the row actually has — a pending row holds reserved credits and has been charged
-              nothing yet — with all three shown beneath it.
+            <p className={ADMIN_NOTE}>
+              Never calls Stripe. Moves the stored period boundaries and applies one cycle grant, idempotently.
             </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Select
-              className="w-[200px] max-w-full"
-              value={ledgerEventType}
-              onChange={(e) => setLedgerEventType(e.target.value)}
-            >
-              <option value="">All events</option>
-              <option value="ai_run">AI runs</option>
-              <option value="cycle_grant_included">Cycle grants</option>
-              <option value="credit_pack_purchase">Pack purchases</option>
-              <option value="credit_pack_expired">Pack expiries</option>
-              <option value="free_floor_grant">Free floor (historic)</option>
-            </Select>
-            <Select className="w-[170px] max-w-full" value={ledgerStatus} onChange={(e) => setLedgerStatus(e.target.value)}>
-              <option value="">Any status</option>
-              <option value="pending">Pending</option>
-              <option value="charged">Charged</option>
-              <option value="refunded">Refunded</option>
-              <option value="failed">Failed</option>
-            </Select>
-          </div>
+          </Panel>
         </div>
-        {ledgerError ? <div className="mt-4 text-sm text-red-700">{ledgerError}</div> : null}
-        {ledgerLoading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <DataTable containerClassName="mt-4 rounded-xl bg-[var(--panel-2)]">
-            <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-              <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                <th className="px-4 py-3">When</th>
-                <th className="px-4 py-3">Workspace</th>
-                <th className="px-4 py-3">Action</th>
-                <th className="px-4 py-3">Tier</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Event</th>
-                <th className="px-4 py-3">Credits</th>
-                <th className="px-4 py-3">Bucket</th>
-                <th className="px-4 py-3">Source</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)]">
-              {ledger.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={9}>
-                    No ledger rows for this filter.
-                  </td>
-                </tr>
-              ) : null}
-              {ledger.map((r) => (
-                <tr key={r.id}>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{fmtDate(r.createdDate) || "—"}</td>
-                  <td className="px-4 py-3">
-                    <button
-                      type="button"
-                      className="text-sm font-semibold text-[var(--fg)] hover:underline"
-                      onClick={() => scopeTo(r.workspaceId)}
-                    >
-                      {r.workspaceName ?? r.workspaceId}
-                    </button>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{r.actionType ?? "—"}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{r.qualityTier ?? "—"}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                    {r.status}
-                    {r.stalePending ? <div className="text-xs font-semibold text-red-700">stale</div> : null}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{r.eventType ?? "—"}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                    <span className="font-semibold text-[var(--fg)]">{fmtCredits(creditsShown(r).value)}</span>
-                    <span className="text-xs text-[var(--muted-2)]"> {creditsShown(r).basis}</span>
-                    <div className="text-xs text-[var(--muted-2)]">
-                      est {fmtCredits(r.creditsEstimated)}, res {fmtCredits(r.creditsReserved)}, chg{" "}
-                      {fmtCredits(r.creditsCharged)}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{bucketSplitLabel(r.split)}</td>
-                  <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                    {r.source ?? "—"}
-                    {r.adminReason ? (
-                      <div className="text-xs text-[var(--muted-2)]" title={r.adminReason}>
-                        admin
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </DataTable>
-        )}
-
-        {/* Purchases + on-demand */}
-        <div className="mt-8">
-          <h2 className="text-base font-semibold text-[var(--fg)]">
-            Purchases and on-demand {scopedWorkspaceId ? "(this workspace)" : "(all workspaces)"}
-          </h2>
-          <p className="mt-1 text-sm text-[var(--muted)]">
-            Packs are Free-only at purchase time; a workspace keeps them after upgrading, so a live pack on Pro is
-            normal.
-          </p>
-        </div>
-        {purchasesError ? <div className="mt-4 text-sm text-red-700">{purchasesError}</div> : null}
-        {purchasesLoading ? (
-          <div className="mt-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-sm text-[var(--muted)]">
-            Loading…
-          </div>
-        ) : (
-          <>
-            <DataTable containerClassName="mt-4 rounded-xl bg-[var(--panel-2)]">
-              <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-                <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                  <th className="px-4 py-3">Purchased</th>
-                  <th className="px-4 py-3">Workspace</th>
-                  <th className="px-4 py-3">Pack</th>
-                  <th className="px-4 py-3">Credits</th>
-                  <th className="px-4 py-3">Amount</th>
-                  <th className="px-4 py-3">Expires</th>
-                  <th className="px-4 py-3">State</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {purchases.length === 0 ? (
-                  <tr>
-                    <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={7}>
-                      No credit pack purchases.
-                    </td>
-                  </tr>
-                ) : null}
-                {purchases.map((p) => (
-                  <tr key={p.id}>
-                    <td className="px-4 py-3 text-sm text-[var(--muted)]">{fmtDate(p.purchasedAt) || "—"}</td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        className="text-sm font-semibold text-[var(--fg)] hover:underline"
-                        onClick={() => scopeTo(p.workspaceId)}
-                      >
-                        {p.workspaceName ?? p.workspaceId}
-                      </button>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-[var(--muted)]">{p.packId ?? "—"}</td>
-                    <td className="px-4 py-3 text-sm text-[var(--muted)]">{fmtCredits(p.credits)}</td>
-                    <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                      {fmtCents(p.amountCents)}
-                      <span className="text-xs text-[var(--muted-2)]"> {p.currency?.toUpperCase() ?? ""}</span>
-                    </td>
-                    <td className="px-4 py-3 text-sm text-[var(--muted)]">{fmtDate(p.expiresAt) || "—"}</td>
-                    <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                      {p.expiredAt ? (
-                        `expired • ${fmtCredits(p.creditsExpired)} taken back`
-                      ) : p.pastExpiry ? (
-                        <span className="font-semibold text-red-700">past expiry, not reclaimed</span>
-                      ) : (
-                        "live"
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </DataTable>
-
-            <Panel className="mt-4 min-w-0">
-              <div className="text-sm font-semibold text-[var(--fg)]">On-demand spend</div>
-              <div className="mt-1 text-xs text-[var(--muted-2)]">
-                {onDemand
-                  ? scopedWorkspaceId
-                    ? onDemand.cycle
-                      ? `This cycle (${onDemand.cycle.cycleKey}): ${fmtCredits(
-                          onDemand.cycle.onDemandUsedCredits,
-                        )} on-demand of ${fmtCredits(onDemand.cycle.totalUsedCredits)} credits used.`
-                      : `No cycle total — ${onDemand.cycleUnavailableReason ?? "unavailable"}.`
-                    : `Billing cycles start on a different day per workspace, so this is a rolling ${onDemand.windowDays}-day window rather than one cycle.`
-                  : "—"}
-              </div>
-              <DataTable containerClassName="mt-3 rounded-xl bg-[var(--panel-2)]">
-                <thead className="border-b border-[var(--border)] bg-[var(--panel)]">
-                  <tr className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                    <th className="px-4 py-3">Workspace</th>
-                    <th className="px-4 py-3">On-demand credits</th>
-                    <th className="px-4 py-3">Runs</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {!onDemand || onDemand.rows.length === 0 ? (
-                    <tr>
-                      <td className="px-4 py-6 text-sm text-[var(--muted)]" colSpan={3}>
-                        No on-demand credits billed in this window.
-                      </td>
-                    </tr>
-                  ) : null}
-                  {(onDemand?.rows ?? []).map((r) => (
-                    <tr key={r.workspaceId}>
-                      <td className="px-4 py-3">
-                        <button
-                          type="button"
-                          className="text-sm font-semibold text-[var(--fg)] hover:underline"
-                          onClick={() => scopeTo(r.workspaceId)}
-                        >
-                          {r.workspaceName ?? r.workspaceId}
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-[var(--muted)]">
-                        {fmtCredits(r.credits)}
-                        {rules ? (
-                          <span className="text-xs text-[var(--muted-2)]">
-                            {" "}
-                            ≈ {fmtCents(r.credits * rules.usdCentsPerCredit)}
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-[var(--muted)]">{fmtCredits(r.runs)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </DataTable>
-            </Panel>
-          </>
-        )}
-
-        {/* Write tools, kept from the original page */}
-        <Panel className="mt-8 min-w-0">
-          <div className="text-sm font-semibold text-[var(--fg)]">Tools (these write)</div>
-          <div className="mt-1 text-xs text-[var(--muted-2)]">
-            Everything above is read-only. These act on the workspace in the scope field.
-          </div>
-          <div className="mt-3 grid gap-5">
-            <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
-              <div className="text-sm font-semibold text-[var(--fg)]">Grant included credits</div>
-              <div className="grid gap-3 md:grid-cols-[220px_1fr_auto]">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Amount</div>
-                  <Input value={grantIncludedAmount} onChange={(e) => setGrantIncludedAmount(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Reason (required)</div>
-                  <Input value={grantIncludedReason} onChange={(e) => setGrantIncludedReason(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div className="flex items-end">
-                  <Button
-                    variant="solid"
-                    className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-                    onClick={() => void runMutate("grant_included", grantIncludedAmount, grantIncludedReason)}
-                    disabled={snapshotLoading}
-                  >
-                    Grant
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
-              <div className="text-sm font-semibold text-[var(--fg)]">Grant on-demand credits</div>
-              <div className="grid gap-3 md:grid-cols-[220px_1fr_auto]">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Amount</div>
-                  <Input value={grantPaidAmount} onChange={(e) => setGrantPaidAmount(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Reason (required)</div>
-                  <Input value={grantPaidReason} onChange={(e) => setGrantPaidReason(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div className="flex items-end">
-                  <Button
-                    variant="solid"
-                    className="bg-[var(--primary-bg)] text-[var(--primary-fg)] hover:bg-[var(--primary-hover-bg)]"
-                    onClick={() => void runMutate("grant_on_demand", grantPaidAmount, grantPaidReason)}
-                    disabled={snapshotLoading}
-                  >
-                    Grant
-                  </Button>
-                </div>
-              </div>
-              <div className="text-xs text-[var(--muted-2)]">Note: This adds to the purchased (non-expiring) credit bucket.</div>
-            </div>
-
-            <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
-              <div className="text-sm font-semibold text-[var(--fg)]">Burn credits</div>
-              <div className="grid gap-3 md:grid-cols-[220px_1fr_auto]">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Amount</div>
-                  <Input value={burnAmount} onChange={(e) => setBurnAmount(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Reason (required)</div>
-                  <Input value={burnReason} onChange={(e) => setBurnReason(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div className="flex items-end">
-                  <Button variant="secondary" onClick={() => void runMutate("burn", burnAmount, burnReason)} disabled={snapshotLoading}>
-                    Burn…
-                  </Button>
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-4">
-              <div className="text-sm font-semibold text-[var(--fg)]">Simulate new billing cycle</div>
-              <div className="grid gap-3 md:grid-cols-[220px_220px_1fr_auto]">
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">newPeriodStartUnixSeconds</div>
-                  <Input value={simStartUnix} onChange={(e) => setSimStartUnix(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">newPeriodEndUnixSeconds</div>
-                  <Input value={simEndUnix} onChange={(e) => setSimEndUnix(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Reason (required)</div>
-                  <Input value={simReason} onChange={(e) => setSimReason(e.target.value)} variant="panel2" className="mt-1 w-full" />
-                </div>
-                <div className="flex items-end">
-                  <Button variant="secondary" onClick={() => void runSimulateCycle()} disabled={snapshotLoading}>
-                    Simulate…
-                  </Button>
-                </div>
-              </div>
-              <div className="text-xs text-[var(--muted-2)]">Does not call Stripe. Updates stored period boundaries and applies a cycle grant idempotently.</div>
-            </div>
-          </div>
-        </Panel>
       </div>
     </div>
   );
