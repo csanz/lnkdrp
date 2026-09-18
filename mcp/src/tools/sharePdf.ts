@@ -403,6 +403,8 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         "processing (preview, text, summary) and returns { docId, shareId, shareUrl, status, uploadId, warnings, creditsRemaining }. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. Optional: allowDownload, password. " +
         "Each upload's AI summary costs 1 credit, or nothing when you pass summary and keyPoints (write them from the document). " +
+        "status 'failed' means the file itself could not be processed: failureReason says why, the link is live but has no " +
+        "usable file, and the fix is lnkdrp_replace_pdf with a working PDF (or deleting the document). " +
         "A skipped AI step (for example out of credits) does not fail the call: the link is still valid and warnings says what was skipped. " +
         "Free workspaces have a cap on shared documents. At the cap this call fails with code plan_limit and creates " +
         "nothing — the error names what you can still do without upgrading, such as adding another link to a document " +
