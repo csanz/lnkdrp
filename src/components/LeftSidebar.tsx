@@ -2313,8 +2313,9 @@ export default function LeftSidebar({
                             </span>
                             {/* The same version chip the Docs rows carry: a starred row is the same
                                 document, and showing it in one list but not the other read as data
-                                that had failed to load. Prefers the live sidebar list, falls back to
-                                the starred cache so the chip is there on the first paint. */}
+                                that had failed to load. Same single weight as the Docs rows. Prefers
+                                the live sidebar list, falls back to the starred cache so the chip is
+                                there on the first paint. */}
                             {(() => {
                               const version =
                                 typeof sidebarMeta?.version === "number" && Number.isFinite(sidebarMeta.version)
@@ -2326,8 +2327,7 @@ export default function LeftSidebar({
                               return (
                                 <span
                                   className={[
-                                    "shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-2)]",
-                                    version > 1 ? "opacity-70" : "opacity-45",
+                                    "shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-2)] opacity-70",
                                   ].join(" ")}
                                   title={`Version ${version}`}
                                 >
@@ -2679,13 +2679,13 @@ export default function LeftSidebar({
                             <span className="block min-w-0 flex-1 truncate">{title}</span>
                             {/* Which version a row is on. v1 used to appear only on hover, which read as
                                 missing data next to a neighbour showing v7 — the Docs modal and the
-                                project rows show it on every row, so this one does too, with v1 quieter
-                                than a version that says the document has been replaced. */}
+                                project rows show it on every row, so this one does too. One weight for
+                                every version: the number already says whether a document was replaced,
+                                and dimming v1 read as two different styles rather than one meaning. */}
                             {typeof d.version === "number" && Number.isFinite(d.version) && d.version > 0 ? (
                               <span
                                 className={[
-                                  "shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-2)]",
-                                  d.version > 1 ? "opacity-70" : "opacity-45",
+                                  "shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-2)] opacity-70",
                                 ].join(" ")}
                                 title={`Version ${d.version}`}
                               >
