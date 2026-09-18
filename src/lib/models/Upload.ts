@@ -159,8 +159,14 @@ const uploadSchema = new Schema(
           imageUrl: { type: String, trim: true, default: null },
           /** Public blob URL to a smaller slide thumbnail (JPEG). */
           thumbUrl: { type: String, trim: true, default: null },
-          /** Best-effort perceptual hash derived from the thumbnail pixels (stable-ish across re-encodes). */
+          /** Exact hash of the normalized thumbnail pixels: differs on every re-encode. */
           imageHash: { type: String, trim: true, default: null },
+          /**
+           * Perceptual fingerprint (dHash hex) of the same thumbnail, added 2026-09-18. Survives a
+           * re-encode of the same picture, which `imageHash` does not - see
+           * `@/lib/history/pageFingerprint`. Null on uploads processed before that.
+           */
+          imageFingerprint: { type: String, trim: true, default: null },
           width: { type: Number, min: 0, default: null },
           height: { type: Number, min: 0, default: null },
         },

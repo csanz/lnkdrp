@@ -9,6 +9,7 @@ import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { OPENAI_PROVIDER_OPTIONS } from "./openaiProviderOptions";
 import { z } from "zod";
+import { NO_CHANGE_SUMMARY, isNoChangeSummary } from "./docChangeSummary";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -59,8 +60,7 @@ async function loadPrompts(): Promise<{ system: string; user: string }> {
   return cachedPrompts;
 }
 
-/** What a compare says when the new version reads the same as the old one. */
-export const NO_CHANGE_SUMMARY = "No changes: this version reads the same as the previous one.";
+export { NO_CHANGE_SUMMARY, isNoChangeSummary } from "./docChangeSummary";
 
 /** Whitespace-insensitive text for the "did anything change at all" check. */
 export function normalizeForCompare(text: string): string {
@@ -128,6 +128,11 @@ export async function runDocChangeDiff(input: {
   // invented "reorganized sections" and "updated terminology" (owner, 2026-09-17). Answered here,
   // before the model and before the API-key check, unless a page's image changed (same words, new
   // artwork) - that is a real change the text cannot show.
+  //
+  // `imageChanged` must be the perceptual verdict from `@/lib/history/changedPages`, not a byte
+  // comparison: every MCP upload is re-encoded by Ghostscript (`mcp/src/optimize.ts`) and every page
+  // is re-rendered here, so the bytes of an unchanged page differ on every single run. Fed a byte
+  // verdict, this short-circuit never fires and the whole deck comes back as "graphics changed".
   const pagesIn = Array.isArray(input.changedPages) ? input.changedPages : [];
   if (
     normalizeForCompare(input.previousText) === normalizeForCompare(input.newText) &&
@@ -221,6 +226,9 @@ export async function runDocChangeDiff(input: {
   const summary = (object.summary ?? "").toString().trim().slice(0, MAX_SUMMARY_CHARS).trimEnd();
   const changes = Array.isArray(object.changes) ? object.changes : [];
   const pagesThatChanged = Array.isArray((object as any).pagesThatChanged) ? (object as any).pagesThatChanged : [];
+  // The summary and the page list must never contradict each other: if the model echoed the
+  // no-change record, it cannot also list changed pages (see `docChangeSummary`).
+  if (isNoChangeSummary(summary)) return { summary: NO_CHANGE_SUMMARY, changes: [], pagesThatChanged: [] };
   return { summary, changes, pagesThatChanged };
 }
 

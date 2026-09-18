@@ -103,6 +103,8 @@ const docSchema = new Schema(
           imageUrl: { type: String, trim: true, default: null },
           thumbUrl: { type: String, trim: true, default: null },
           imageHash: { type: String, trim: true, default: null },
+          /** Perceptual fingerprint of the page image; see `@/lib/history/pageFingerprint`. */
+          imageFingerprint: { type: String, trim: true, default: null },
           width: { type: Number, min: 0, default: null },
           height: { type: Number, min: 0, default: null },
         },

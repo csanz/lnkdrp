@@ -24,6 +24,7 @@ import {
 import { analyzePdfText, isFallbackAnalysis, analysisTelemetry } from "@/lib/ai/analyzePdfText";
 import { normalizeForCompare, runDocChangeDiff } from "@/lib/ai/docChangeDiff";
 import { attachPageContext, extractPdfTextByPage, fetchPdfBytes, loadChangedPages, type ChangedPage } from "@/lib/history/changedPages";
+import { computePageFingerprint } from "@/lib/history/pageFingerprint";
 import { reviewDocText } from "@/lib/ai/reviewDocText";
 import { runRequestReviewInvestorFocused } from "@/lib/ai/requestReviewInvestorFocused";
 import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger, recordUnbilledRun } from "@/lib/credits/creditService";
@@ -129,7 +130,10 @@ type SlideNode = {
   pageNumber: number;
   imageUrl: string | null;
   thumbUrl: string | null;
+  /** Exact hash of the normalized thumbnail pixels: changes on every re-encode. */
   imageHash: string | null;
+  /** Perceptual fingerprint of the same thumbnail: survives a re-encode of the same picture. */
+  imageFingerprint: string | null;
   width: number | null;
   height: number | null;
 };
@@ -145,7 +149,8 @@ async function getSharp(): Promise<any> {
 }
 
 async function imageHashFromThumbJpeg(thumbJpeg: Buffer): Promise<string | null> {
-  // Best-effort perceptual-ish hash:
+  // Best-effort *exact* hash (kept for back-compat; the version compare prefers the perceptual
+  // fingerprint stored alongside it, because identical pictures re-encode to different bytes):
   // - decode
   // - normalize to fixed 64x64 grayscale raw pixels
   // - sha256 raw bytes
@@ -1617,6 +1622,7 @@ export async function POST(
               imageUrl: asString(p.imageUrl ?? p.image_url),
               thumbUrl: asString(p.thumbUrl ?? p.thumb_url),
               imageHash: asString(p.imageHash ?? p.image_hash),
+              imageFingerprint: asString(p.imageFingerprint ?? p.image_fingerprint),
               width: asNumber(p.width),
               height: asNumber(p.height),
             }))
@@ -1753,6 +1759,12 @@ export async function POST(
               .jpeg({ quality: PAGE_THUMB_QUALITY, mozjpeg: true, progressive: true })
               .toBuffer();
             const imageHash = await imageHashFromThumbJpeg(thumbJpeg);
+            // The exact hash above only answers "same bytes", and the bytes are never the same
+            // twice: the MCP optimizes every PDF through Ghostscript before upload
+            // (`mcp/src/optimize.ts`) and this loop re-rasterizes and re-encodes every page. The
+            // fingerprint is what the version compare uses to decide whether a page actually looks
+            // different (`@/lib/history/pageFingerprint`).
+            const imageFingerprint = await computePageFingerprint(thumbJpeg);
 
             const imagePathname = buildDocPageImagePathname({
               docId: String(docId),
@@ -1786,6 +1798,7 @@ export async function POST(
               imageUrl: imageBlob.url,
               thumbUrl: thumbBlob.url,
               imageHash,
+              imageFingerprint,
               width,
               height,
             });

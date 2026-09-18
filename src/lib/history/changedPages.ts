@@ -9,6 +9,8 @@
 import crypto from "node:crypto";
 
 import type { DocChangeDiff } from "@/lib/ai/docChangeDiff";
+import { isNoChangeSummary } from "@/lib/ai/docChangeSummary";
+import { fingerprintsDiffer } from "@/lib/history/pageFingerprint";
 import { openPdfDocument } from "@/lib/pdf/renderPage";
 
 export type PdfPageText = { page_number: number; text: string };
@@ -19,7 +21,10 @@ export type ChangedPage = {
   newText: string;
   previousImageUrl: string | null;
   newImageUrl: string | null;
-  /** True/false when both versions have an image hash for the page; null when unknown. */
+  /**
+   * Did the page's picture change? Perceptual, not byte-exact (see `pageImageChanged`).
+   * null when it cannot be told: one side has no image, or neither a fingerprint nor two hashes.
+   */
   imageChanged: boolean | null;
 };
 
@@ -69,7 +74,34 @@ export async function fetchPdfBytes(url: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
 
-type SlideInfo = { imageHash: string | null; thumbUrl: string | null; imageUrl: string | null };
+type SlideInfo = {
+  imageHash: string | null;
+  imageFingerprint: string | null;
+  thumbUrl: string | null;
+  imageUrl: string | null;
+};
+
+/**
+ * Did this page's picture actually change? `null` when it cannot be told.
+ *
+ * Prefers the perceptual fingerprint (`imageFingerprint`, see `@/lib/history/pageFingerprint`) over
+ * the exact `imageHash`. The exact hash is a sha256 of the rendered page's pixels, and every MCP
+ * upload now goes through Ghostscript first (`mcp/src/optimize.ts`) while the processing job
+ * re-rasterizes and re-encodes every page, so a re-upload of the *same* deck produces different
+ * bytes on every page every time. Byte-comparing those is what reported "graphics changed" on all
+ * nine pages of an unchanged deck, under a summary saying nothing had changed.
+ *
+ * Uploads processed before the fingerprint existed have none, so those fall back to the exact hash:
+ * old-vs-old and old-vs-new comparisons behave exactly as they did (and can still over-report), and
+ * the false positive disappears once both versions have been processed with fingerprints.
+ */
+function pageImageChanged(prev: SlideInfo | null, next: SlideInfo | null): boolean | null {
+  if (!prev || !next) return null;
+  const perceptual = fingerprintsDiffer(prev.imageFingerprint, next.imageFingerprint);
+  if (perceptual !== null) return perceptual;
+  if (prev.imageHash && next.imageHash) return prev.imageHash !== next.imageHash;
+  return null;
+}
 
 function slidesByPage(slideNodes: unknown): Map<number, SlideInfo> {
   const out = new Map<number, SlideInfo>();
@@ -80,7 +112,12 @@ function slidesByPage(slideNodes: unknown): Map<number, SlideInfo> {
     const n = Math.floor(Number(p.pageNumber ?? p.page_number));
     if (!Number.isFinite(n) || n < 1) continue;
     const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
-    out.set(n, { imageHash: str(p.imageHash), thumbUrl: str(p.thumbUrl), imageUrl: str(p.imageUrl) });
+    out.set(n, {
+      imageHash: str(p.imageHash),
+      imageFingerprint: str(p.imageFingerprint ?? p.image_fingerprint),
+      thumbUrl: str(p.thumbUrl),
+      imageUrl: str(p.imageUrl),
+    });
   }
   return out;
 }
@@ -118,8 +155,11 @@ export function computeChangedPages(params: {
     const nextImg = nextSlides.get(p) ?? null;
     let imgChanged = false;
     if (prevImg || nextImg) {
-      if (prevImg?.imageHash && nextImg?.imageHash) imgChanged = prevImg.imageHash !== nextImg.imageHash;
+      const verdict = pageImageChanged(prevImg, nextImg);
+      if (verdict !== null) imgChanged = verdict;
       else {
+        // Neither a fingerprint nor a pair of hashes: the URLs are all that is left to go on.
+        // Reported as `imageChanged: null` below, so this only widens the context sent to the model.
         const prevUrl = prevImg?.thumbUrl ?? prevImg?.imageUrl ?? "";
         const nextUrl = nextImg?.thumbUrl ?? nextImg?.imageUrl ?? "";
         imgChanged = Boolean(prevUrl && nextUrl && prevUrl !== nextUrl);
@@ -137,7 +177,7 @@ export function computeChangedPages(params: {
       newText: newByPage.get(p) ?? "",
       previousImageUrl: prevImg?.thumbUrl ?? prevImg?.imageUrl ?? null,
       newImageUrl: nextImg?.thumbUrl ?? nextImg?.imageUrl ?? null,
-      imageChanged: prevImg?.imageHash && nextImg?.imageHash ? prevImg.imageHash !== nextImg.imageHash : null,
+      imageChanged: pageImageChanged(prevImg, nextImg),
     };
   });
 }
@@ -173,6 +213,12 @@ export async function loadChangedPages(params: {
  */
 export function attachPageContext<T extends DocChangeDiff | null>(diff: T, changedPages: ChangedPage[]): T {
   if (!diff || typeof diff !== "object") return diff;
+  // A "no changes" diff can never carry changed pages - the modal printed both at once and the page
+  // list was the one that lied. Enforced here as well as at the source, since this is the last stop
+  // before the diff is stored (see `@/lib/ai/docChangeSummary`).
+  if (isNoChangeSummary((diff as { summary?: unknown }).summary)) {
+    return { ...diff, pagesThatChanged: [] } as T;
+  }
   const ctxByPage = new Map(changedPages.map((p) => [p.pageNumber, p]));
   const base = Array.isArray((diff as { pagesThatChanged?: unknown }).pagesThatChanged)
     ? ((diff as { pagesThatChanged: Array<Record<string, unknown>> }).pagesThatChanged)
