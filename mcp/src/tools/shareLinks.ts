@@ -145,6 +145,16 @@ export function registerCreateShareLinkTool(server: McpServer, ctx: ToolContext)
         enabled: args.enabled,
       };
       if (args.audience !== undefined) settings.audience = args.audience;
+      // `null` means "remove the password" when updating; on a link that does not exist yet it is
+      // almost always a lost value, and accepting it quietly produced an open link where the sender
+      // had asked for a gate.
+      if (args.password === null) {
+        throw new ToolError(
+          "validation",
+          "password: null has no meaning when creating a link - there is no password to remove. Omit it for an open link, " +
+            "or pass the password the human gave you.",
+        );
+      }
       if (args.password !== undefined) settings.password = args.password;
       if (args.expiresAt !== undefined) settings.expiresAt = args.expiresAt;
       // The label is how the human finds a link again; two identical ones on a document are
@@ -179,7 +189,8 @@ export function registerListShareLinksTool(server: McpServer, ctx: ToolContext):
     {
       title: "List share links",
       description:
-        "Every share link of a document, the default link first: label, audience, shareUrl, status (active|disabled|expired), " +
+        "Every share link of a document, the default link first: label, audience, shareUrl, status (active|disabled|expired|archived - " +
+        "archived means the document itself is archived, so none of its links resolve until it is brought back), " +
         "whether a password is set, expiry, and that link's view and download counts. Pass query to search this document's " +
         "links by label/audience instead of listing all of them, ranked by relevance. If you do not already know which " +
         "document a link is on, use lnkdrp_find_share_link instead - it searches by name across the whole workspace. " +
@@ -190,8 +201,17 @@ export function registerListShareLinksTool(server: McpServer, ctx: ToolContext):
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const links = await ctx.api.listShareLinks(args.docId, args.query);
-      return { docId: args.docId, links: links.map((l) => withUrl(ctx.api, l)) };
+      // The document's archive state decides whether any of these links opens, and it does not live
+      // on the link rows: an archived document keeps each link's own enabled/expiry so unarchiving
+      // restores exactly what was live. Reported here so a reader is never told "active" about a
+      // link that resolves for nobody.
+      const [links, doc] = await Promise.all([ctx.api.listShareLinks(args.docId, args.query), ctx.api.getDoc(args.docId)]);
+      const rows = links.map((l) => {
+        const row = withUrl(ctx.api, l);
+        if (!doc.isArchived) return row;
+        return { ...row, active: false, status: "archived" as const, docArchived: true };
+      });
+      return { docId: args.docId, ...(doc.isArchived ? { docArchived: true } : {}), links: rows };
     }),
   );
 }

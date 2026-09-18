@@ -92,11 +92,20 @@ export type ShareView = {
 export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: ShareView) {
   const defaultLink = (await api.listShareLinks(doc.id).catch(() => [])).find((l) => l.isDefault) ?? null;
   if (!defaultLink) return view;
+  // An archived document's links stop resolving, but the link rows keep their own enabled/expiry
+  // state so unarchiving can restore exactly what was live. Reading them raw made get_share answer
+  // "active" about a link that opens for nobody, which is the one question this tool is asked.
+  const live = !doc.isArchived && defaultLink.enabled && defaultLink.active;
   return {
     ...view,
-    shareEnabled: defaultLink.enabled && defaultLink.active,
-    anyLinkActive: doc.shareEnabled,
-    link: { id: defaultLink.id, isDefault: true, status: defaultLink.status, expiresAt: defaultLink.expiresAt },
+    shareEnabled: live,
+    anyLinkActive: doc.isArchived ? false : doc.shareEnabled,
+    link: {
+      id: defaultLink.id,
+      isDefault: true,
+      status: doc.isArchived ? "archived" : defaultLink.status,
+      expiresAt: defaultLink.expiresAt,
+    },
   };
 }
 

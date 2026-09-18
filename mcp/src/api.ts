@@ -149,9 +149,14 @@ export type ApiShareLink = {
 
 /** One `GET /api/share-links` search hit — a link plus enough of its document to tell it apart. */
 export type ApiShareLinkSearchHit = {
-  docId: string;
+  /** "doc" for a document's link, "project" for a project (data room) link. */
+  kind: "doc" | "project";
+  /** null on a project link: it belongs to a project, not a document. */
+  docId: string | null;
   docTitle: string | null;
   docShareId: string | null;
+  projectId: string | null;
+  projectName: string | null;
   linkId: string;
   shareId: string;
   label: string;
@@ -854,9 +859,15 @@ export class ApiClient {
     return rows.map((raw) => {
       const r = rec(raw);
       return {
-        docId: strOrNull(r.docId) ?? "",
+        // A workspace search now returns project links too (they live in the same collection), and
+        // they have no document: docId stays null rather than "" so nothing feeds an empty id back
+        // into a docId parameter.
+        kind: strOrNull(r.kind) === "project" ? "project" : "doc",
+        docId: strOrNull(r.docId),
         docTitle: strOrNull(r.docTitle),
         docShareId: strOrNull(r.docShareId),
+        projectId: strOrNull(r.projectId),
+        projectName: strOrNull(r.projectName),
         linkId: strOrNull(r.linkId) ?? "",
         shareId: strOrNull(r.shareId) ?? "",
         label: strOrNull(r.label) ?? "",

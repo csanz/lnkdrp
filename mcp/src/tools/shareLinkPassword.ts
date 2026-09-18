@@ -79,8 +79,8 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
         "Test whether a password opens a share link, without revealing what the real one is. Use it to confirm the " +
         "password a human gave you actually works, after setting it or before passing it on. Returns { passwordEnabled, " +
         "matches, linkStatus, opensLink }; matches is false whenever the link has no password at all. matches only compares " +
-        "the password: a disabled or expired link opens for nobody, so check opensLink (matches and linkStatus active) " +
-        "before telling the human the link works. This is safe to call: it does not open the " +
+        "the password, so check opensLink before telling the human the link works: it is true when the link is active and " +
+        "either the password matches or the link needs none (an open link opens for anyone). This is safe to call: it does not open the " +
         "link, does not record a view, and does not spend the recipient's unlock attempts - a recipient gets only 10 " +
         "tries per 5 minutes, so checking through the public link could lock out the person it was made for. This tool " +
         "has its own separate limit of 20 checks per link per 5 minutes. Owner or admin of the key's own workspace. " +
@@ -100,7 +100,10 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
         passwordEnabled: res.passwordEnabled,
         matches: res.matches,
         linkStatus,
-        opensLink: res.matches && linkStatus === "active",
+        // "does this link open for the person holding this password", which for a link with no
+        // password at all is yes: it opens for anyone. Tied to matches alone, this read false for a
+        // perfectly live open link, and the description tells agents to act on it.
+        opensLink: linkStatus === "active" && (res.passwordEnabled ? res.matches : true),
       };
     }),
   );
