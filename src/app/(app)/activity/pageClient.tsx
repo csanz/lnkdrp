@@ -8,6 +8,7 @@
  */
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import ChangePreviewModal from "@/components/activity/ChangePreviewModal";
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentType, type SVGProps } from "react";
 import {
@@ -306,6 +307,14 @@ function UploadProgressRow({ item, leaving = false }: { item: InFlightUpload; le
 type RowEnter = "fresh" | "none";
 
 function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: RowEnter }) {
+  // A "replaced" row announces a new version and says nothing about it; this opens that version's
+  // entry from the document's history without leaving the feed.
+  const [changeOpen, setChangeOpen] = useState(false);
+  const replacedVersion =
+    item.type === "doc.replaced" && typeof item.meta?.version === "number" && Number.isFinite(item.meta.version)
+      ? Number(item.meta.version)
+      : null;
+  const canPreviewChange = item.type === "doc.replaced" && Boolean(item.doc?.id) && !item.doc?.deleted;
   const docGone = item.type === "doc.deleted" || Boolean(item.doc?.deleted);
   const Icon = item.type === "doc.imported_url" && item.meta?.via === "bytes" ? ArrowUpTrayIcon : ICON_BY_TYPE[item.type] ?? ClockIcon;
   // Open the link the event came through (meta.shareId), not always the document's default link.
@@ -422,10 +431,31 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
               </Link>
             </>
           ) : null}
+          {canPreviewChange ? (
+            <>
+              <span aria-hidden="true">·</span>
+              <button
+                type="button"
+                className="hover:text-[var(--fg)] hover:underline underline-offset-4"
+                onClick={() => setChangeOpen(true)}
+              >
+                What changed
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
       </div>
       </div>
+      {canPreviewChange && item.doc?.id ? (
+        <ChangePreviewModal
+          open={changeOpen}
+          onClose={() => setChangeOpen(false)}
+          docId={item.doc.id}
+          docTitle={item.doc?.title?.trim() || "This document"}
+          version={replacedVersion}
+        />
+      ) : null}
     </li>
   );
 }
