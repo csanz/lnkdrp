@@ -10,7 +10,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { getSession, useSession } from "next-auth/react";
 import { useTheme } from "next-themes";
 import { Bars3Icon, XMarkIcon } from "@heroicons/react/24/outline";
 import LeftSidebar from "@/components/LeftSidebar";
@@ -39,10 +39,43 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? "/";
   const { status } = useSession();
 
+  /**
+   * Confirm before bouncing.
+   *
+   * `useSession` reports `"unauthenticated"` for a *failed* session request as readily as for a
+   * real signed-out visit, and that request fails whenever the server is briefly unreachable — a
+   * dev restart, a deploy, a dropped connection, a laptop waking up. The first version redirected
+   * on that status alone, so a blip logged people out of a page they were reading and sent them to
+   * /login with a valid session still in the cookie. One re-check (a direct `getSession()`, not the
+   * cached hook state) is enough to tell the two apart: a real signed-out visit answers `null`
+   * again, a blip answers with the session and the reader stays where they were.
+   */
   useEffect(() => {
     if (status !== "unauthenticated") return;
-    const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
-    router.replace(`/login${next}`);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const confirmed = await getSession();
+          if (cancelled) return;
+          if (confirmed?.user) {
+            // The blip is over and the hook is holding a stale "unauthenticated": re-render with
+            // fresh data rather than sending a signed-in reader to /login.
+            router.refresh();
+            return;
+          }
+        } catch {
+          // Still unreachable — treat as signed out, the same as before.
+        }
+        if (cancelled) return;
+        const next = pathname && pathname !== "/" ? `?next=${encodeURIComponent(pathname)}` : "";
+        router.replace(`/login${next}`);
+      })();
+    }, 1200);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [router, pathname, status]);
 
   if (status !== "authenticated") {
