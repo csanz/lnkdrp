@@ -4,14 +4,11 @@
  * Client UI for the `/project/[projectSlug]` page.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import {
-  ChartBarIcon,
   Cog6ToothIcon,
   FolderIcon,
-  LinkIcon,
   InboxArrowDownIcon,
   SparklesIcon,
   StarIcon as StarOutlineIcon,
@@ -22,6 +19,7 @@ import { fetchWithTempUser, tempUserHeaders } from "@/lib/gating/tempUserClient"
 import { usePlan } from "@/lib/client/usePlan";
 import { trackProjectClick, trackProjectView } from "@/lib/metrics/client";
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import ProjectSharePanel from "@/components/ProjectSharePanel";
 import { CopyButton } from "@/components/CopyButton";
@@ -395,6 +393,31 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
   const subtitle = useMemo(() => project?.description || "", [project?.description]);
   const maxPage = useMemo(() => Math.max(1, Math.ceil(docs.total / docs.limit)), [docs.total, docs.limit]);
   const isRequestRepo = useMemo(() => Boolean(project?.isRequest), [project?.isRequest]);
+
+  /**
+   * Open the settings modal with the project's current values.
+   *
+   * Named rather than inline because the sub-pages reach it too: their gear links here with
+   * `?settings=1` (they have no modal of their own), and the effect below opens it on arrival.
+   */
+  const openSettings = useCallback(() => {
+    if (!project) return;
+    setSaveError(null);
+    setDraftName(project.name ?? "");
+    setDraftDescription(project.description ?? "");
+    setDraftAutoAddFiles(Boolean(project.autoAddFiles));
+    setShowSettings(true);
+  }, [project]);
+
+  // Arriving from a sub-page's gear. The parameter is stripped once used, so a refresh or a back
+  // press does not reopen a modal the reader already closed.
+  useEffect(() => {
+    if (!project) return;
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("settings") !== "1") return;
+    openSettings();
+    router.replace(`/project/${encodeURIComponent(projectSlug)}`, { scroll: false });
+  }, [project, openSettings, router, projectSlug]);
   const docsForList = useMemo(() => {
     if (!isRequestRepo) return docs.items;
     if (requestSort !== "score") return docs.items;
@@ -872,58 +895,35 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         }
         actions={
           project ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[var(--muted-2)]">
-                {view === "archived" ? `${docs.total} archived` : `${docs.total} ${docs.total === 1 ? "doc" : "docs"}`}
-              </span>
-              {/* The two sub-pages of a project, beside its document count — the way a document
-                  header carries its metrics button. Without them the only route to either was the
-                  side panel's link count, which is hidden on a project with a single link: a
-                  project's analytics were unreachable from the project ("metrics link from
-                  projects page is not existent"). Not shown on a request repository, which shares
-                  through an upload token rather than through project links. */}
-              {!isRequestRepo ? (
-                <>
-                  {/* The document header's metrics action, class for class
-                      (`src/app/(app)/doc/[docId]/pageClient.tsx`): a bordered 8×8 icon button, not
-                      a bare glyph. Side by side the unbordered version read as decoration beside
-                      "2 docs" while the document's read as a control, which is the whole reason a
-                      reader found one and not the other. */}
-                  <Link
-                    href={`/project/${encodeURIComponent(projectSlug)}/links`}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                    aria-label="Open links"
-                    title="Links"
-                  >
-                    <LinkIcon className="h-4 w-4" aria-hidden="true" />
-                  </Link>
-                  <Link
-                    href={`/project/${encodeURIComponent(projectSlug)}/metrics`}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                    aria-label="Open metrics"
-                    title="Metrics"
-                  >
-                    <ChartBarIcon className="h-4 w-4" aria-hidden="true" />
-                  </Link>
-                </>
-              ) : null}
-              <button
-                type="button"
-                className="shrink-0 rounded-lg p-1 text-[var(--muted-2)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                aria-label="Project settings"
-                title="Project settings"
-                onClick={() => {
-                  if (!project) return;
-                  setSaveError(null);
-                  setDraftName(project.name ?? "");
-                  setDraftDescription(project.description ?? "");
-                  setDraftAutoAddFiles(Boolean(project.autoAddFiles));
-                  setShowSettings(true);
-                }}
-              >
-                <Cog6ToothIcon className="h-4 w-4" />
-              </button>
-            </div>
+            isRequestRepo ? (
+              // A request repository has no project links and no metrics of its own — it is filled
+              // through an upload token — so its header carries only the count and the gear.
+              <div className="flex items-center gap-2">
+                <span className="min-w-[44px] text-right text-xs text-[var(--muted-2)]">
+                  {view === "archived" ? `${docs.total} archived` : `${docs.total} ${docs.total === 1 ? "doc" : "docs"}`}
+                </span>
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--muted-2)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                  aria-label="Project settings"
+                  title="Project settings"
+                  onClick={openSettings}
+                >
+                  <Cog6ToothIcon className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              /* The same cluster the Links and Metrics pages render, from the same component: the
+                 count, the two sub-page buttons and the gear, always in that order at that width,
+                 so walking between the three pages never slides an icon sideways. */
+              <ProjectHeaderActions
+                projectSlug={projectSlug}
+                current="project"
+                docCount={docs.total}
+                countLabel={view === "archived" ? `${docs.total} archived` : undefined}
+                onSettings={openSettings}
+              />
+            )
           ) : null
         }
       />

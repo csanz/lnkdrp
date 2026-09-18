@@ -13,11 +13,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChartBarIcon, LinkIcon, PlusIcon } from "@heroicons/react/24/outline";
+import { LinkIcon, PlusIcon } from "@heroicons/react/24/outline";
 
 import LinksManager, { type LinksManagerHandle } from "@/components/links/LinksManager";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
-import SubPageHeader, { SubPageAction } from "@/components/SubPageHeader";
+import SubPageHeader from "@/components/SubPageHeader";
+import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import { usePlan } from "@/lib/client/usePlan";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 
@@ -68,40 +69,36 @@ export default function LinksPageClient({ projectId }: { projectId: string }) {
         titleHref={`/project/${encodeURIComponent(projectId)}`}
         crumbs={[{ label: "Project", href: `/project/${encodeURIComponent(projectId)}` }, { label: "Links" }]}
         actions={
-          <div className="flex items-center gap-2">
-            <SubPageAction href={`/project/${encodeURIComponent(projectId)}/links`} label="Links" active>
-              <LinkIcon className="h-4 w-4" aria-hidden="true" />
-            </SubPageAction>
-            {/* Every row's own "Analytics" button scopes to that one link; this is the way out of
-                the table to the metrics page that sums across all of them. */}
-            <SubPageAction href={`/project/${encodeURIComponent(projectId)}/metrics`} label="Metrics">
-              <ChartBarIcon className="h-4 w-4" aria-hidden="true" />
-            </SubPageAction>
-            {canManage ? (
-              <button
-                type="button"
-                onClick={() => managerRef.current?.openCreate()}
-                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary-bg)] px-3 text-[13px] font-semibold text-[var(--primary-fg)] shadow-sm transition-colors hover:bg-[var(--primary-hover-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-ring)] focus:ring-offset-2 focus:ring-offset-[var(--panel)]"
-              >
-                <PlusIcon className="h-4 w-4" aria-hidden="true" />
-                New link
-              </button>
-            ) : null}
-          </div>
+          // The project header's own cluster, unchanged. "New link" is not in it on purpose: a
+          // button only this page has would push the two icons out of the place they occupy on the
+          // other two pages, which is the whole point. It lives above the table instead.
+          <ProjectHeaderActions projectSlug={projectId} current="links" />
         }
       />
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
         <div className={`w-full py-6 ${APP_PAGE_GUTTER}`}>
-          <div className="mb-5">
-            <div className="flex items-center gap-2 text-base font-semibold text-[var(--fg)]">
-              <LinkIcon className="h-[18px] w-[18px] text-[var(--muted-2)]" aria-hidden="true" />
-              <span>Links</span>
+          <div className="mb-5 flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-base font-semibold text-[var(--fg)]">
+                <LinkIcon className="h-[18px] w-[18px] text-[var(--muted-2)]" aria-hidden="true" />
+                <span>Links</span>
+              </div>
+              <div className="mt-1 text-sm text-[var(--muted)]">
+                One link per audience, each with its own settings and its own stats. Labels are private
+                to you — recipients never see them.
+              </div>
             </div>
-            <div className="mt-1 text-sm text-[var(--muted)]">
-              One link per audience, each with its own settings and its own stats. Labels are private
-              to you — recipients never see them.
-            </div>
+            {canManage ? (
+              <button
+                type="button"
+                onClick={() => managerRef.current?.openCreate()}
+                className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary-bg)] px-3 text-[13px] font-semibold text-[var(--primary-fg)] shadow-sm transition-colors hover:bg-[var(--primary-hover-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--primary-ring)] focus:ring-offset-2 focus:ring-offset-[var(--panel)]"
+              >
+                <PlusIcon className="h-4 w-4" aria-hidden="true" />
+                New link
+              </button>
+            ) : null}
           </div>
 
           <LinksManager ref={managerRef} scope={{ kind: "project", id: projectId }} variant="page" canManage={canManage} />
