@@ -221,6 +221,35 @@ export type WorkspaceQuietDoc = {
  */
 export type WorkspaceOutput = { docsShared: number; linksCreated: number; uploads: number };
 
+/**
+ * One contributor: a person working in the app, or an agent working through the MCP.
+ *
+ * The rest of this page is what *readers* did; this is what the workspace's own side did, and it
+ * keeps the two apart. An agent is credited to its client ("Claude Code"), never folded into the
+ * person who holds the key: an agent that filed forty documents overnight and the person who
+ * asked for it are different facts, and conflating them hides the one the product exists to show.
+ *
+ * Counts are actions in the window, from the same work vocabulary the Activity page uses
+ * (`ACTIVITY_WORK_TYPES`), so the two surfaces can never disagree about what counts as work.
+ */
+export type WorkspaceContributor = {
+  /** `user:<id>` or `agent:<client>`. */
+  key: string;
+  kind: "person" | "agent";
+  /** A person's name (or email when unnamed), or the agent's client label. */
+  name: string;
+  /** People only, and only where the app already shows teammates' addresses. */
+  email: string | null;
+  /** Agents only: the MCP client id, for the glyph and for grouping. */
+  client: string | null;
+  /** Every counted action, including types with no tile of their own. */
+  actions: number;
+  docsAdded: number;
+  linksCreated: number;
+  docsReplaced: number;
+  lastActiveAt: string | null;
+};
+
 /** `GET /api/metrics/workspace?range=7d|30d|90d`. */
 export type WorkspaceMetricsResponse = {
   ok: true;
@@ -256,6 +285,8 @@ export type WorkspaceMetricsResponse = {
   people: WorkspacePeople;
   quietDocs: WorkspaceQuietDoc[];
   output: WorkspaceOutput;
+  /** Who did the work in the window — people and agents, most actions first. */
+  contributors: WorkspaceContributor[];
   /**
    * True when `opens` is known to be missing rows, so the UI withholds it instead of printing
    * something impossible.
@@ -275,3 +306,4 @@ export const WORKSPACE_TOP_DOCS_LIMIT = 8;
 export const WORKSPACE_TOP_LINKS_LIMIT = 8;
 export const WORKSPACE_PEOPLE_LIMIT = 8;
 export const WORKSPACE_QUIET_DOCS_LIMIT = 8;
+export const WORKSPACE_CONTRIBUTORS_LIMIT = 8;

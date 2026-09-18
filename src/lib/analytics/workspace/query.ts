@@ -28,6 +28,7 @@
 import { Types, type PipelineStage } from "mongoose";
 
 import { projectLinkSlugsForOrg } from "@/lib/analytics/docScope";
+import { loadContributors } from "./contributors";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   activityWindowMatch,
@@ -187,6 +188,7 @@ function emptyResponse(resolved: ResolvedWorkspaceRange, plan: PlanId, isPro: bo
     people: { count: 0, items: [], gated: !isPro },
     quietDocs: [],
     output: { docsShared: 0, linksCreated: 0, uploads: 0 },
+    contributors: [],
     opensPartial: false,
     generatedAt: new Date().toISOString(),
   };
@@ -775,6 +777,10 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   }
   const startIso = start.toISOString();
 
+  // Who did the work, from the activity rows: two bounded reads, and independent of everything
+  // above, so it rides along rather than adding a round trip.
+  const contributors = await loadContributors({ orgId, start, endExclusive: new Date(now.getTime() + 1) });
+
   // One scope for the whole output line. `linksCreated` and `uploads` count every live document, so
   // this clause does too: scoping only it to the usage meter's set said "66 documents shared · 214
   // links created" while counting the links of 86 documents. It is why the sentence says "got their
@@ -832,6 +838,7 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
     people: { count: peopleCount, items: people, gated: !isPro },
     quietDocs,
     output: { docsShared, linksCreated: safeCount(linksCreated), uploads: safeCount(uploads) },
+    contributors,
     opensPartial,
     generatedAt: new Date().toISOString(),
   };

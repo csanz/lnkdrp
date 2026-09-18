@@ -23,7 +23,13 @@ import HeadlineStrip from "@/components/workspaceMetrics/HeadlineStrip";
 import HeroChart from "@/components/workspaceMetrics/HeroChart";
 import MetricsSkeleton, { MetricsEmptyWorkspace } from "@/components/workspaceMetrics/MetricsSkeleton";
 import RangeControl from "@/components/workspaceMetrics/RangeControl";
-import { PeopleSection, QuietDocsSection, TopDocsSection, TopLinksSection } from "@/components/workspaceMetrics/Sections";
+import {
+  ContributorsSection,
+  PeopleSection,
+  QuietDocsSection,
+  TopDocsSection,
+  TopLinksSection,
+} from "@/components/workspaceMetrics/Sections";
 import { outputSentence, type MetricKey } from "@/components/workspaceMetrics/format";
 // `./types` and not the barrel: the barrel re-exports `./range`, which reaches the plan limits
 // and through them Mongoose. `types.ts` imports nothing, so nothing server-only follows it here.
@@ -284,6 +290,11 @@ export default function MetricsPageClient() {
                 </div>
                 <div className="order-4 min-w-0 lg:order-none">
                   <QuietDocsSection docs={data.quietDocs} now={now} />
+                </div>
+                {/* The workspace's own side of the period, under the reader-facing sections: who
+                    added, shared and replaced, with agents credited to their client. */}
+                <div className="order-5 min-w-0 lg:order-none">
+                  <ContributorsSection contributors={data.contributors} now={now} />
                 </div>
               </div>
             </div>
