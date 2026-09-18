@@ -286,7 +286,7 @@ download/password settings, then (by default) waits for processing to finish.
       and the browser's direct-to-Blob upload have no such ceiling. This is also why optimization
       below matters: it routinely takes a 3.5 MB deck to ~0.7 MB, which does fit.
   - `optimize?` boolean, default `true`. On the `filePath` / `fileBase64` paths only, the MCP server
-    shrinks the PDF before uploading: Ghostscript (`-dPDFSETTINGS=/printer`, colour and grey images
+    shrinks the PDF before uploading: Ghostscript (`-dPDFSETTINGS=/prepress`, colour and grey images
     downsampled to 300 dpi, tunable with `LNKDRP_PDF_OPTIMIZE_DPI`) into a temp file. Skipped silently when the file is under 1 MB, when
     Ghostscript is not installed, or when the run fails. **The original is kept** unless the result
     is a valid PDF, at least 5% smaller, *and* has exactly the same page count (pdfjs counts both) —

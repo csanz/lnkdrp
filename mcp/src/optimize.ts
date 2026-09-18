@@ -214,8 +214,10 @@ export function optimizeImageDpi(env: NodeJS.ProcessEnv = process.env): number {
  *
  * `/printer` at 260dpi, not `/ebook` at 150: the first pass shrank a deck to a fifth of its size
  * and the owner found the images too soft, and 220 still showed artefacts on photo-heavy slides
- * (2026-09-17, 2026-09-18). At 300 - print resolution - the same deck still comes back at a bit over
- * half its size, and that is the floor: past this the saving stops paying for the loss. The explicit
+ * (2026-09-17, 2026-09-18, three times). The preset matters as much as the resolution: /printer
+ * re-encodes images harder than /prepress at the same dpi. /prepress at 300 keeps the images the
+ * owner signed off on and still takes a photo-heavy deck from 3.57MB to 2.38MB (67%). That is the
+ * floor: below it the saving stops paying for what it costs the pictures. The explicit
  * `Downsample*` settings pin the resolutions rather than relying on the preset's defaults, which
  * vary between Ghostscript releases, and `ColorImageDownsampleThreshold=1.0` downsamples anything
  * above the target instead of only images far above it. `-dSAFER` because the input is a file the
@@ -226,7 +228,7 @@ export function ghostscriptArgs(input: { inputPath: string; outputPath: string; 
   return [
     "-sDEVICE=pdfwrite",
     "-dCompatibilityLevel=1.5",
-    "-dPDFSETTINGS=/printer",
+    "-dPDFSETTINGS=/prepress",
     "-dDownsampleColorImages=true",
     `-dColorImageResolution=${dpi}`,
     "-dColorImageDownsampleThreshold=1.0",
@@ -234,7 +236,7 @@ export function ghostscriptArgs(input: { inputPath: string; outputPath: string; 
     `-dGrayImageResolution=${dpi}`,
     "-dGrayImageDownsampleThreshold=1.0",
     "-dDownsampleMonoImages=true",
-    "-dMonoImageResolution=600",
+    "-dMonoImageResolution=1200",
     "-dDetectDuplicateImages=true",
     "-dCompressFonts=true",
     "-dNOPAUSE",

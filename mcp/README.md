@@ -119,7 +119,7 @@ machine: allowed when `LNKDRP_API_URL` is localhost/127.x or `LNKDRP_ALLOW_LOCAL
 `fileBase64` + `fileName?` (the PDF's bytes, decoded size up to 50MB — mt_bJwX4CtmhU, for a file with no public URL
 and no local path; note a serverless deployment caps request bodies far below that, Vercel at 4.5MB, so a big inline
 upload can still fail with the platform's own 413 — `sourceUrl` and the browser's direct upload do not).
-On the `filePath`/`fileBase64` paths the PDF is shrunk first (Ghostscript `/printer`, images to 300dpi, `LNKDRP_PDF_OPTIMIZE_DPI` to tune) unless it is
+On the `filePath`/`fileBase64` paths the PDF is shrunk first (Ghostscript `/prepress`, images to 300dpi, `LNKDRP_PDF_OPTIMIZE_DPI` to tune) unless it is
 under 1MB or `optimize: false`; the original is kept unless the result is a valid PDF, ≥5% smaller and has the same
 page count. Reported as `optimized: { from, to, ratio, tool }` or `optimized: null` + `optimizeNote`. `summary` and `keyPoints` go together (both or
 neither), plain text written from the document (URLs and markup are stripped). Each upload's AI summary costs 1 credit,
