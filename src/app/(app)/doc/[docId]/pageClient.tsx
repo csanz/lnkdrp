@@ -5,17 +5,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowPathIcon, ChartBarIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
 import { useSession } from "next-auth/react";
 import UploadButton from "@/components/UploadButton";
 import DocSharePanel from "@/components/DocSharePanel";
 import QuickStats from "@/components/metrics/QuickStats";
 import TempUserGateModal from "@/components/modals/TempUserGateModal";
+import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import DocProjectsModal, { type DocProjectListItem } from "@/components/modals/DocProjectsModal";
 import { useAuthEnabled, useNavigationLockWhile } from "@/app/providers";
 import { fetchJson } from "@/lib/http/fetchJson";
-import { apiCreateUpload, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
+import { apiCreateUpload, PlanLimitClientError, startBlobUploadAndProcess } from "@/lib/client/docUploadPipeline";
 import { buildPublicReplaceUrl, buildPublicShareUrl } from "@/lib/urls";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { formatBytes, formatPageCount } from "@/lib/format/bytes";
@@ -964,15 +966,27 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           } catch {
             // ignore (best-effort)
           }
+          /**
+           * The replacement landed — and whether it changed anything is part of what landed.
+           *
+           * The processor already compares the new text with the previous version's to decide
+           * whether a fresh AI summary is worth paying for; it now records that on the upload, so
+           * the banner can say it. Re-uploading the same file is a real and quiet mistake: it makes
+           * a version, bumps the number, notifies recipients, and looks exactly like success.
+           */
+          const unchanged = Boolean(upload && typeof upload === "object" && (upload as any).unchangedFromPrevious);
           const vLabel =
             typeof actualVersion === "number" && Number.isFinite(actualVersion)
               ? `Updated to v${actualVersion}.`
               : "Update complete.";
+          const summary = unchanged
+            ? `${vLabel} This file reads the same as the previous version — if you meant to upload a different one, replace it again.`
+            : vLabel;
           setReplaceNotice({
             kind: "success",
             toVersion: actualVersion,
             // Keep this banner short; the user can click into history for details.
-            summary: vLabel,
+            summary,
             createdAtMs: Date.now(),
           });
           setHighlightVersionLink(true);
@@ -1908,8 +1922,30 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         newUploadId = created.id;
         createdVersion = created.version;
       } catch (e) {
+        /**
+         * The replacement never started. What this branch must NOT do is what it used to: call
+         * `router.refresh()`.
+         *
+         * A refresh re-rendered the whole server tree — indistinguishable from the page reloading
+         * — and then returned, so the file the reader had just chosen was silently dropped. Every
+         * ordinary failure lands here (a non-PDF, the document limit, a rate limit, an expired
+         * session, any 4xx from `/api/uploads`), which made "pick a file, watch the page blink,
+         * nothing happens" the normal experience of a failed replace, with no message anywhere.
+         *
+         * The upload page has always done the right thing (`(app)/upload/pageClient.tsx`): say what
+         * went wrong, in place. This now matches it.
+         */
+        const limitErr = e instanceof PlanLimitClientError ? e.planLimit : null;
         const message = e instanceof Error ? e.message : "";
         if (message === "TEMP_USER_LIMIT") setTempGateOpen(true);
+        if (limitErr) {
+          openUpgrade(upsellKeyForLimit(limitErr.limit), {
+            used: limitErr.used,
+            max: limitErr.max,
+            graceHint: planLimitGraceHint(limitErr),
+          });
+          refreshPlan();
+        }
         replacePendingRef.current = false;
         setReplaceStarting(false);
         // Best effort: restore server-backed view.
@@ -1918,7 +1954,16 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           return null;
         });
         setLocalPreviewUploadId(null);
-        router.refresh();
+        // The upgrade modal is the message when a plan limit is what stopped it; anything else has
+        // to say so here, or the click looks like it did nothing at all.
+        if (!limitErr) {
+          setReplaceNotice({
+            kind: "error",
+            toVersion: null,
+            summary: message || "Could not start the replacement. Your existing document was kept.",
+            createdAtMs: Date.now(),
+          });
+        }
         return;
       }
       setReplaceStarting(false);
@@ -1967,8 +2012,17 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           setLocalPreviewUploadId(null);
         },
       });
-    } catch {
-      // ignore
+    } catch (e) {
+      // Nothing below the inner try is expected to throw, but a swallowed error here left the
+      // document sitting in its "replacing" animation for ever with no way to tell why.
+      replacePendingRef.current = false;
+      setReplaceStarting(false);
+      setReplaceNotice({
+        kind: "error",
+        toVersion: null,
+        summary: (e instanceof Error && e.message) || "Could not start the replacement. Your existing document was kept.",
+        createdAtMs: Date.now(),
+      });
     }
   }
 
@@ -1996,7 +2050,13 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           </div>
         ) : null}
         {/* Top bar */}
-        <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-4 py-4 md:flex-row md:items-center md:justify-between md:gap-6 md:px-6 md:py-5">
+        {/* The band every other header in the app uses — the same gutter and the same
+            pt-6/pb-5 — so the document's own page and its Links and Metrics pages are the
+            same height and nothing in the row moves as you walk between them
+            (`src/components/AppPageHeader.tsx`, `src/components/SubPageHeader.tsx`). */}
+        <div
+          className={`flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--panel)] ${APP_PAGE_GUTTER} pb-5 pt-6 md:flex-row md:items-center md:justify-between md:gap-6`}
+        >
             <div className="flex w-full min-w-0 items-center gap-3 md:w-auto">
               {isReceivedViaRequest ? (
                 <div
@@ -2017,7 +2077,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
               <div className="flex min-w-0 items-center gap-2">
                 <div className="min-w-0 flex-1">
                   {!isReceivedViaRequest && editingTitle ? (
-                    <div className="min-w-0">
+                    <div className="min-h-8 min-w-0">
                       <div className="flex min-w-0 items-center gap-2">
                         <button
                           type="button"
@@ -2080,7 +2140,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : isReceivedViaRequest ? (
-                    <div className="flex min-w-0 items-center gap-2.5 text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg">
+                    <div className="flex min-h-8 min-w-0 items-center gap-2.5 text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg">
                       <button
                         type="button"
                         onClick={() => void handleToggleStar()}
@@ -2135,7 +2195,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : (
-                    <div className="flex min-w-0 items-start gap-2.5">
+                    <div className="flex min-h-8 min-w-0 items-start gap-2.5">
                       <span className="flex h-6 shrink-0 items-center md:h-7">
                         <button
                           type="button"
@@ -2261,7 +2321,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                     </div>
                   )}
                   {doc.lastUpdate?.uploadedAt || fileFactsLabel ? (
-                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-[30px] text-[12px] text-[var(--muted)]">
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 pl-[30px] text-[12px] leading-5 text-[var(--muted)]">
                       {doc.lastUpdate?.uploadedAt ? (
                         <span>
                           {(() => {
@@ -2423,24 +2483,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 />
               ) : null}
 
-              {hasHydratedFromServer && !isReceivedViaRequest ? (
-                <button
-                  type="button"
-                  onClick={() => router.push(`/doc/${encodeURIComponent(doc.id)}/metrics`)}
-                  disabled={!hasHydratedFromServer || doc.status !== "ready"}
-                  aria-disabled={!hasHydratedFromServer || doc.status !== "ready"}
-                  aria-label="Open metrics"
-                  title={!hasHydratedFromServer || doc.status !== "ready" ? "Available when ready" : "Metrics"}
-                  className={[
-                    "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
-                    "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                    (!hasHydratedFromServer || doc.status !== "ready") ? "cursor-not-allowed opacity-60" : "",
-                  ].join(" ")}
-                >
-                  <ChartBarIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
-              ) : null}
-
               {isDev && hasHydratedFromServer ? (
                 <button
                   type="button"
@@ -2456,17 +2498,27 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 </button>
               ) : null}
 
+              {/* Links, Metrics and the "…" menu, from the component the two sub-pages render too,
+                  so the three of them never move. A document has had a links page since multi-links
+                  shipped and no way to reach it from the document itself: the panel on the right
+                  shows the *default* link, so "where are the other four" had no answer here. A
+                  document that is still preparing has nothing to manage yet, hence `ready`. */}
               {hasHydratedFromServer && !isReceivedViaRequest ? (
-                <DocActionsMenu
+                <DocHeaderActions
                   docId={doc.id}
-                  currentProjectId={doc.projectId ?? null}
-                  currentProjectIds={Array.isArray(doc.projectIds) ? doc.projectIds : null}
-                  disabled={
-                    !hasHydratedFromServer || doc.status === "preparing" || doc.status === "draft"
+                  current="doc"
+                  ready={hasHydratedFromServer && doc.status === "ready"}
+                  menu={
+                    <DocActionsMenu
+                      docId={doc.id}
+                      currentProjectId={doc.projectId ?? null}
+                      currentProjectIds={Array.isArray(doc.projectIds) ? doc.projectIds : null}
+                      disabled={!hasHydratedFromServer || doc.status === "preparing" || doc.status === "draft"}
+                      onDocPatched={(patch) => setDoc((d) => ({ ...d, ...patch }))}
+                      onDeleted={() => router.push("/")}
+                      onOpenQualityReview={() => setQualityReviewOpen(true)}
+                    />
                   }
-                  onDocPatched={(patch) => setDoc((d) => ({ ...d, ...patch }))}
-                  onDeleted={() => router.push("/")}
-                  onOpenQualityReview={() => setQualityReviewOpen(true)}
                 />
               ) : null}
             </div>
@@ -2474,7 +2526,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
           {/* Content */}
           <div className="relative min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-          <div className="px-4 py-6 md:px-6 lg:h-full">
+          <div className={`py-6 lg:h-full ${APP_PAGE_GUTTER}`}>
             <div
               className={[
                 "grid min-h-0 gap-5 lg:h-full",

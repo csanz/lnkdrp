@@ -10,11 +10,12 @@
  */
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeftIcon } from "@heroicons/react/24/outline";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { formatSizeChangeLine } from "@/lib/format/bytes";
+import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import SubPageHeader from "@/components/SubPageHeader";
+import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import Modal from "@/components/modals/Modal";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
@@ -522,30 +523,18 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
-        <Link
-          href={`/doc/${encodeURIComponent(docId)}`}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-          aria-label="Back to document"
-          title="Back to document"
-        >
-          <ArrowLeftIcon className="h-5 w-5" />
-        </Link>
-
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-[var(--fg)]">{docTitle || "Document"}</div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-            <Link href={`/doc/${encodeURIComponent(docId)}`} className="hover:underline underline-offset-4">
-              Document
-            </Link>
-            <span aria-hidden="true">›</span>
-            <span className="font-medium text-[var(--fg)]">History</span>
-          </div>
-        </div>
-      </div>
+      {/* The document's own header band, like its Links and Metrics pages: same height, same
+          gutter, same controls in the same place. */}
+      <SubPageHeader
+        kind="doc"
+        title={docTitle || "Document"}
+        titleHref={`/doc/${encodeURIComponent(docId)}`}
+        crumbs={[{ label: "Document", href: `/doc/${encodeURIComponent(docId)}` }, { label: "History" }]}
+        actions={<DocHeaderActions docId={docId} current="doc" />}
+      />
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-        <div className="w-full px-6 py-6">
+        <div className={`w-full py-6 ${APP_PAGE_GUTTER}`}>
           {(
           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_440px]">
             {/* Left: history list */}
