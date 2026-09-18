@@ -200,7 +200,7 @@ export async function pdfPageCount(bytes: Uint8Array): Promise<number | null> {
 }
 
 /** Image resolution the optimizer downsamples to, overridable with LNKDRP_PDF_OPTIMIZE_DPI. */
-export const OPTIMIZE_IMAGE_DPI = 300;
+export const OPTIMIZE_IMAGE_DPI = 270;
 
 /** Read the configured dpi, clamped to a sane range; anything unparseable falls back to the default. */
 export function optimizeImageDpi(env: NodeJS.ProcessEnv = process.env): number {
@@ -215,9 +215,10 @@ export function optimizeImageDpi(env: NodeJS.ProcessEnv = process.env): number {
  * `/printer` at 260dpi, not `/ebook` at 150: the first pass shrank a deck to a fifth of its size
  * and the owner found the images too soft, and 220 still showed artefacts on photo-heavy slides
  * (2026-09-17, 2026-09-18, three times). The preset matters as much as the resolution: /printer
- * re-encodes images harder than /prepress at the same dpi. /prepress at 300 keeps the images the
- * owner signed off on and still takes a photo-heavy deck from 3.57MB to 2.38MB (67%). That is the
- * floor: below it the saving stops paying for what it costs the pictures. The explicit
+ * re-encodes images harder than /prepress at the same dpi. /prepress keeps the images the owner
+ * signed off on; 270 is one notch tighter than the 300 they approved and takes a photo-heavy deck
+ * from 3.57MB to 2.22MB (62%). Below roughly this the saving stops paying for what it costs the
+ * pictures, which is the whole reason the dpi came up three times. The explicit
  * `Downsample*` settings pin the resolutions rather than relying on the preset's defaults, which
  * vary between Ghostscript releases, and `ColorImageDownsampleThreshold=1.0` downsamples anything
  * above the target instead of only images far above it. `-dSAFER` because the input is a file the
