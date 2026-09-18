@@ -1940,7 +1940,11 @@ export default function LeftSidebar({
   return (
     <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
       <div className="flex h-full flex-col">
-        <div className="flex min-w-0 items-center gap-2 px-4 pb-5 pt-5">
+        {/* The logo row centres on the same line as a page title: AppPageHeader is `pt-6` above an
+            `h-8` row, so its title sits 40px from the top, and a 34px row (the workspace pill) needs 23px above it to
+            match. Anything else leaves the product's two fixed points — the mark and the page name —
+            a few pixels apart on every screen. */}
+        <div className="flex min-w-0 items-center gap-2 px-4 pb-5 pt-[23px]">
           <Link href="/" className="inline-flex shrink-0 items-center gap-2" aria-label="Home">
             <Image src={logoSrc} alt="LinkDrop" width={28} height={28} className="block" />
           </Link>
