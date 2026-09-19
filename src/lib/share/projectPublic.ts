@@ -69,6 +69,31 @@ export function projectViewerKey(botIdHash: string, docId: string | Types.Object
 }
 
 /**
+ * The Mongo `$or` clause for **every row one person owns**: the bare digest a document link writes,
+ * and any project key that starts with it.
+ *
+ * It exists as a function because writing it inline got it wrong twice. The pattern needs a literal
+ * backslash before an interpolation — `` `^${key}\\${SEP}` `` — and one backslash instead of two
+ * escapes the `$`, turning the whole thing into the literal text "${PROJECT_VIEW_KEY_SEP}" with a
+ * stray end-anchor in front of it. That matches nothing, silently: no error, no empty result to
+ * notice, just an identity that never propagates to the rows read inside a data room. Built here,
+ * once, and asserted in tests/lib/projectPublic.test.ts.
+ *
+ * A key that is not a 64-character hex digest is matched exactly rather than interpolated into a
+ * pattern: these values are read back out of stored documents.
+ */
+export function viewerKeyMatchClause(viewerKey: string): Array<Record<string, unknown>> {
+  if (!/^[a-f0-9]{64}$/.test(viewerKey)) return [{ botIdHash: viewerKey }];
+  return [{ botIdHash: viewerKey }, { botIdHash: { $regex: viewerKeyPrefixPattern(viewerKey) } }];
+}
+
+/** The `^<digest>\.` pattern on its own, so a test can look at it without a Mongo clause around it. */
+export function viewerKeyPrefixPattern(viewerKey: string): string {
+  // Concatenation, not a template literal: the escaping that broke this twice cannot recur here.
+  return "^" + viewerKey + "\\" + PROJECT_VIEW_KEY_SEP;
+}
+
+/**
  * Split a stored key back into its viewer and its document.
  *
  * `docId` is null for a document link's row (a bare digest), which is how a caller tells the two
