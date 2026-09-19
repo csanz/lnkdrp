@@ -20,15 +20,12 @@
  */
 import { Types } from "mongoose";
 
-import { NotificationEmailCursorModel } from "@/lib/models/NotificationEmailCursor";
-import { OrgMembershipModel } from "@/lib/models/OrgMembership";
-import { UserModel } from "@/lib/models/User";
 import { debugError } from "@/lib/debug";
 import { sendViewerIntroducedEmail, sendViewerVerifyEmail } from "@/lib/email/sendViewerVerifyEmail";
 import { viewerEmailVerifyUrl } from "@/lib/share/viewerEmailToken";
+import { cursorBackedAlreadyTold, type AlreadyToldLookup } from "@/lib/share/anonymousNoticeAudience";
 import {
   noteVerifyEmailSent,
-  ownerNeedsIntroductionEmail,
   recordViewerIntroduction,
   shouldSendVerifyEmail,
 } from "@/lib/share/viewerEmailVerification";
@@ -52,73 +49,18 @@ export type ViewerIntroductionEmailArgs = {
   /** Absolute site base, resolved by the caller. */
   appUrl: string;
   now?: Date;
+  /**
+   * How to find out who was already emailed about this reader without a name. Injected so the
+   * notification system underneath can be replaced — the cursor scan is becoming a queue — without
+   * touching anything here. See `anonymousNoticeAudience.ts`.
+   */
+  alreadyTold?: AlreadyToldLookup;
 };
 
 export type ViewerIntroductionEmailResult = {
   verifySent: boolean;
   ownerEmailsSent: number;
 };
-
-/**
- * The members who were already told about this reader, anonymously.
- *
- * A member is in scope when view emails are on for them (a missing mode reads as "daily", matching
- * the notification job) and their `share_views` cursor has advanced at or past the moment this
- * reader first appeared — which is precisely what "you have already had a mail that included this
- * person, and it had no name in it" means.
- */
-async function membersAlreadyToldAnonymously(params: {
-  orgId: Types.ObjectId;
-  viewerFirstSeenAt: Date | null;
-}): Promise<{ email: string }[]> {
-  const { orgId, viewerFirstSeenAt } = params;
-  if (!viewerFirstSeenAt) return [];
-
-  const memberships = (await OrgMembershipModel.find({ orgId, isDeleted: { $ne: true } })
-    .select({ userId: 1, viewEmailMode: 1 })
-    .lean()) as Array<{ userId: Types.ObjectId; viewEmailMode?: string | null }>;
-
-  const wanting = memberships.filter((m) => (m.viewEmailMode ?? "daily") !== "off");
-  if (!wanting.length) return [];
-
-  const userIds = wanting.map((m) => m.userId);
-  const cursors = (await NotificationEmailCursorModel.find({
-    orgId,
-    key: "share_views",
-    userId: { $in: userIds },
-  })
-    .select({ userId: 1, lastNotifiedAt: 1, createdDate: 1 })
-    .lean()) as Array<{ userId: Types.ObjectId; lastNotifiedAt?: Date | null; createdDate?: Date | null }>;
-
-  const cursorByUser = new Map<string, { notifiedThroughAt: Date | null; createdAt: Date | null }>();
-  for (const c of cursors) {
-    cursorByUser.set(String(c.userId), {
-      notifiedThroughAt: c.lastNotifiedAt ? new Date(c.lastNotifiedAt) : null,
-      // The cursor's own age is what separates "a run covered this reader" from "the cursor was
-      // stamped `now` on a first run that sent nothing". See `ownerNeedsIntroductionEmail`.
-      createdAt: c.createdDate ? new Date(c.createdDate) : null,
-    });
-  }
-
-  const told = wanting.filter((m) => {
-    const cursor = cursorByUser.get(String(m.userId));
-    return ownerNeedsIntroductionEmail({
-      viewerFirstSeenAt,
-      notifiedThroughAt: cursor?.notifiedThroughAt ?? null,
-      cursorCreatedAt: cursor?.createdAt ?? null,
-    });
-  });
-  if (!told.length) return [];
-
-  const users = (await UserModel.find({ _id: { $in: told.map((m) => m.userId) }, isActive: { $ne: false } })
-    .select({ email: 1 })
-    .lean()) as Array<{ email?: string | null }>;
-
-  return users
-    .map((u) => (typeof u.email === "string" ? u.email.trim().toLowerCase() : ""))
-    .filter((e): e is string => Boolean(e))
-    .map((email) => ({ email }));
-}
 
 /** Send whatever this introduction warrants. Never throws. */
 export async function sendViewerIntroductionEmails(
@@ -169,10 +111,8 @@ export async function sendViewerIntroductionEmails(
   }
 
   try {
-    const recipients = await membersAlreadyToldAnonymously({
-      orgId,
-      viewerFirstSeenAt: args.viewerFirstSeenAt ?? null,
-    });
+    const lookup = args.alreadyTold ?? cursorBackedAlreadyTold;
+    const recipients = await lookup({ orgId, viewerFirstSeenAt: args.viewerFirstSeenAt ?? null });
     for (const recipient of recipients) {
       try {
         await sendViewerIntroducedEmail({
