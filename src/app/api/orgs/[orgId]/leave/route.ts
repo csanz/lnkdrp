@@ -9,7 +9,8 @@ import { connectMongo } from "@/lib/mongodb";
 import { OrgModel } from "@/lib/models/Org";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
-import { resolveActor } from "@/lib/gating/actor";
+import { membershipChanged, resolveActor } from "@/lib/gating/actor";
+import { recordActivity } from "@/lib/activity/log";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
@@ -46,10 +47,27 @@ export async function POST(request: Request, ctx: { params: Promise<{ orgId: str
     return NextResponse.json({ error: "Owners cannot leave their org" }, { status: 400 });
   }
 
+  const leaving = (await UserModel.findById(userObjectId).select({ name: 1, email: 1 }).lean()) as
+    | { name?: string | null; email?: string | null }
+    | null;
+
   await OrgMembershipModel.updateOne(
     { orgId: orgObjectId, userId: userObjectId },
     { $set: { isDeleted: true, updatedDate: new Date() } },
   );
+
+  membershipChanged({ orgId, userId: actor.userId });
+
+  // The workspace they left still gets to know: the people still in it see one person fewer on the
+  // Members page and, without this, nothing that says when or who.
+  void recordActivity({
+    orgId,
+    userId: actor.userId,
+    actorKind: "user",
+    type: "member.left",
+    meta: { role, name: leaving?.name?.trim() || null, email: leaving?.email?.trim().toLowerCase() || null },
+    request,
+  });
 
   // If the user is currently in this org, switch them back to their personal org.
   const shouldSwitch = actor.orgId === orgId;

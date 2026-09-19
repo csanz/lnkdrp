@@ -13,7 +13,9 @@ import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { recordActivity } from "@/lib/activity/log";
 import { OrgModel } from "@/lib/models/Org";
 import { debugError, debugLog } from "@/lib/debug";
-import { resolveActor } from "@/lib/gating/actor";
+import { membershipChanged, resolveActor } from "@/lib/gating/actor";
+import { UserModel } from "@/lib/models/User";
+import { approveUser } from "@/lib/waitlist/waitlist";
 
 export const runtime = "nodejs";
 
@@ -86,28 +88,88 @@ export async function POST(request: Request) {
       }
     }
 
-    // Upsert membership for the invited user.
+    // Membership for the invited user.
     //
-    // Important: Don't set the same path in multiple update operators (Mongo error code 40).
-    await OrgMembershipModel.updateOne(
-      { orgId: orgObjectId, userId },
-      {
-        $setOnInsert: {
-          orgId: orgObjectId,
-          userId,
-          role,
-          createdDate: now,
+    // Read first, then decide — a blind upsert on `{ orgId, userId }` gets this wrong, because a
+    // revoke soft-deletes the membership rather than removing it. The revoked row still matches,
+    // so `$setOnInsert` never runs and the role on it is whatever it was before: invite a former
+    // admin back as a viewer and they come back an admin. Three cases, three answers:
+    //
+    // - **No row** — a genuine first join. Insert it with the invite's role.
+    // - **A revoked row** — they left and were invited back. The *invite* decides the role now;
+    //   the one they used to hold is exactly what must not carry over.
+    // - **A live row** — already a member, following the link again. Leave the role alone: an
+    //   invite someone re-clicks (or an old one forwarded to them) must never quietly demote or
+    //   promote an existing member.
+    //
+    // Note for whoever edits this: don't set the same path in two update operators (Mongo error
+    // code 40), which is what the single upsert here was working around.
+    const membership = (await OrgMembershipModel.findOne({ orgId: orgObjectId, userId })
+      .select({ _id: 1, isDeleted: 1 })
+      .lean()) as { _id: Types.ObjectId; isDeleted?: boolean } | null;
+
+    if (!membership) {
+      await OrgMembershipModel.updateOne(
+        { orgId: orgObjectId, userId },
+        {
+          $setOnInsert: {
+            orgId: orgObjectId,
+            userId,
+            role,
+            createdDate: now,
+          },
+          $set: { isDeleted: false, updatedDate: now },
         },
-        $set: { isDeleted: false, updatedDate: now },
-      },
-      { upsert: true },
-    );
+        { upsert: true },
+      );
+    } else if (membership.isDeleted) {
+      await OrgMembershipModel.updateOne(
+        { _id: membership._id },
+        { $set: { role, isDeleted: false, updatedDate: now } },
+      );
+    } else {
+      await OrgMembershipModel.updateOne(
+        { _id: membership._id },
+        { $set: { isDeleted: false, updatedDate: now } },
+      );
+    }
+
+    // Someone an existing workspace invited is not a stranger at the door: claiming a valid invite
+    // takes them out of the early-access queue, if they were ever in it. Doing it here rather than
+    // at sign-in is what makes it a *vouch* — the token had to be valid first.
+    await approveUser({ userId: actor.userId });
+
+    // The membership is live from here, so the cached "is this person a member" answer must not be
+    // the stale `false` from the moment before they joined (see `membershipChanged`).
+    membershipChanged({ orgId, userId: actor.userId });
 
     // Mark invite as redeemed (best-effort; single-use).
     await OrgInviteModel.updateOne(
       { _id: (invite as unknown as { _id: Types.ObjectId })._id, redeemedAt: null },
       { $set: { redeemedAt: now, redeemedByUserId: userId, updatedDate: now } },
     );
+
+    // The other half of `member.invited`: an invitation is a hope, this is the arrival. Only when
+    // the join is new — an existing member following the link again has not joined anything, and
+    // the feed would otherwise announce them every time.
+    if (!alreadyMember) {
+      const joined = (await UserModel.findById(userId).select({ name: 1, email: 1 }).lean()) as
+        | { name?: string | null; email?: string | null }
+        | null;
+      void recordActivity({
+        orgId,
+        userId: actor.userId,
+        actorKind: "user",
+        type: "member.joined",
+        meta: {
+          role,
+          via: "invite",
+          name: joined?.name?.trim() || null,
+          email: joined?.email?.trim().toLowerCase() || null,
+        },
+        request,
+      });
+    }
 
     return NextResponse.json({ ok: true, orgId });
   } catch (err) {

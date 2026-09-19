@@ -126,6 +126,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     // than sitting out the current backoff.
     const retryNow = () => {
       if (cancelled) return;
+      // `visibilitychange` fires on hide as well as show. Retrying on hide reset the backoff and
+      // fired a request nobody was waiting for — and collapsed the 1.2s grace window that is the
+      // whole mechanism for telling a blip from a sign-out.
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       window.clearTimeout(timer);
       attempt = 0;
       void check();

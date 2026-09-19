@@ -267,6 +267,18 @@ export async function POST(request: Request) {
   const doc = Array.isArray(created) ? created[0] : created;
   const inviteId = String((doc as unknown as { _id: Types.ObjectId })._id);
 
+  // Who was let in, and by whom. An invite link is the moment the workspace's door opens, and
+  // before this nothing recorded it: the Members page shows who is here now, never who opened it or
+  // when. A link invite names no recipient, so the sentence says only that one was created.
+  void recordActivity({
+    orgId: orgIdRaw,
+    userId: session.userId,
+    actorKind: "user",
+    type: "member.invited",
+    meta: { role, inviteId, via: "link", expiresAt: expiresAt.toISOString() },
+    request,
+  });
+
   const origin = originFromRequest(request);
   const inviteUrl = origin ? `${origin}/org/join/${encodeURIComponent(token)}` : `/org/join/${encodeURIComponent(token)}`;
 

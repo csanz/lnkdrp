@@ -56,6 +56,27 @@ function setCachedMembershipExists(key: string, ok: boolean) {
 }
 
 /**
+ * Drop the cached membership answer for one (workspace, person).
+ *
+ * The cache above trades correctness for latency on a ten-second window, and for a *read* that is a
+ * fair trade. For a removal it is not: "remove" is a security action, and a removed member who can
+ * still read the workspace for another ten seconds is the one case where the reader is entitled to
+ * expect the click to have taken effect by the time the page repaints. Every route that adds or
+ * removes a membership calls this immediately after the write.
+ *
+ * Per-process, like the cache: on a multi-instance deploy the other instances still expire on their
+ * own TTL, so this shortens the window rather than closing it everywhere. That is why it is a
+ * companion to the membership check in `tryResolveUserActor`, not a substitute for it.
+ */
+export function membershipChanged(params: { orgId: string | Types.ObjectId; userId: string | Types.ObjectId }): void {
+  try {
+    membershipExistsCache?.delete(membershipCacheKey({ orgId: String(params.orgId), userId: String(params.userId) }));
+  } catch {
+    // A cache that cannot be cleared must not fail the write that cleared it.
+  }
+}
+
+/**
  * Short-lived in-memory personal-org cache.
  *
  * Why: `ensurePersonalOrgForUserId()` is intentionally idempotent but not cheap (read + upsert).
@@ -321,9 +342,34 @@ export async function tryResolveUserActor(request: Request): Promise<Actor | nul
   // Source of truth priority:
   // 1) UserModel.metadata.activeOrgId (server-persisted, avoids cookie edge cases)
   // 2) active-org cookie (membership validated)
-  // 3) JWT claim
+  // 3) JWT claim (membership validated — see below)
   // 4) personal org
-  let orgId = session.activeOrgId ?? personalOrgId;
+  //
+  // The claim used to be taken on trust, and it was the one source here that was not checked
+  // against a membership. A JWT is issued at sign-in and lives for weeks, so a member removed from
+  // a workspace kept resolving to it on every route that uses this resolver — the removal took
+  // effect only when they next signed in. Checking it costs one indexed `exists` on a path that
+  // already makes two, and a claim that fails it falls through to the person's own workspace, which
+  // is where someone who is no longer a member belongs.
+  let orgId = personalOrgId;
+  const claimOrgId = typeof session.activeOrgId === "string" ? session.activeOrgId.trim() : "";
+  if (claimOrgId && Types.ObjectId.isValid(claimOrgId)) {
+    if (claimOrgId === personalOrgId) {
+      orgId = claimOrgId;
+    } else {
+      try {
+        const ok = await OrgMembershipModel.exists({
+          orgId: new Types.ObjectId(claimOrgId),
+          userId: new Types.ObjectId(session.userId),
+          isDeleted: { $ne: true },
+        });
+        if (ok) orgId = claimOrgId;
+      } catch {
+        // A membership lookup that fails must not lock a real member out of their workspace.
+        orgId = claimOrgId;
+      }
+    }
+  }
 
   try {
     const u = await UserModel.findOne({ _id: new Types.ObjectId(session.userId) })
@@ -394,17 +440,26 @@ export async function tryResolveUserActorFast(request: Request): Promise<Actor |
   await connectMongo();
   const cacheKey = membershipCacheKey({ orgId, userId: session.userId });
   const cachedOk = getCachedMembershipExists(cacheKey);
-  const ok =
-    typeof cachedOk === "boolean"
-      ? cachedOk
-      : Boolean(
-          await OrgMembershipModel.exists({
-            orgId: new Types.ObjectId(orgId),
-            userId: new Types.ObjectId(session.userId),
-            isDeleted: { $ne: true },
-          }),
-        );
-  if (typeof cachedOk !== "boolean") setCachedMembershipExists(cacheKey, ok);
+  let ok: boolean;
+  if (typeof cachedOk === "boolean") {
+    ok = cachedOk;
+  } else {
+    try {
+      ok = Boolean(
+        await OrgMembershipModel.exists({
+          orgId: new Types.ObjectId(orgId),
+          userId: new Types.ObjectId(session.userId),
+          isDeleted: { $ne: true },
+        }),
+      );
+      setCachedMembershipExists(cacheKey, ok);
+    } catch {
+      // A lookup that *failed* is not a membership that is absent. Refusing this request is the
+      // safe direction and stays; caching the refusal is not, because it would answer the next ten
+      // seconds of requests from a blip that has already passed. The next request asks again.
+      return null;
+    }
+  }
   if (!ok) return null;
 
   // Note: personalOrgId isn't needed for most hot read paths; keep it stable without extra DB work.
@@ -436,17 +491,24 @@ export async function tryResolveUserActorFastWithPersonalOrg(request: Request): 
   // Membership check (cached)
   const membershipKey = membershipCacheKey({ orgId, userId: session.userId });
   const cachedOk = getCachedMembershipExists(membershipKey);
-  const ok =
-    typeof cachedOk === "boolean"
-      ? cachedOk
-      : Boolean(
-          await OrgMembershipModel.exists({
-            orgId: new Types.ObjectId(orgId),
-            userId: new Types.ObjectId(session.userId),
-            isDeleted: { $ne: true },
-          }),
-        );
-  if (typeof cachedOk !== "boolean") setCachedMembershipExists(membershipKey, ok);
+  let ok: boolean;
+  if (typeof cachedOk === "boolean") {
+    ok = cachedOk;
+  } else {
+    try {
+      ok = Boolean(
+        await OrgMembershipModel.exists({
+          orgId: new Types.ObjectId(orgId),
+          userId: new Types.ObjectId(session.userId),
+          isDeleted: { $ne: true },
+        }),
+      );
+      setCachedMembershipExists(membershipKey, ok);
+    } catch {
+      // See `tryResolveUserActorFast`: refuse this request, never the next ten seconds of them.
+      return null;
+    }
+  }
   if (!ok) return null;
 
   const personalOrgId = await resolvePersonalOrgIdCached(session.userId);
@@ -620,17 +682,25 @@ export async function resolveActorForStats(request: Request): Promise<Actor> {
     await connectMongo();
     const cacheKey = membershipCacheKey({ orgId, userId: session.userId });
     const cachedOk = getCachedMembershipExists(cacheKey);
-    const ok =
-      typeof cachedOk === "boolean"
-        ? cachedOk
-        : Boolean(
-            await OrgMembershipModel.exists({
-              orgId: new Types.ObjectId(orgId),
-              userId: new Types.ObjectId(session.userId),
-              isDeleted: { $ne: true },
-            }),
-          );
-    if (typeof cachedOk !== "boolean") setCachedMembershipExists(cacheKey, ok);
+    let ok: boolean;
+    if (typeof cachedOk === "boolean") {
+      ok = cachedOk;
+    } else {
+      try {
+        ok = Boolean(
+          await OrgMembershipModel.exists({
+            orgId: new Types.ObjectId(orgId),
+            userId: new Types.ObjectId(session.userId),
+            isDeleted: { $ne: true },
+          }),
+        );
+        setCachedMembershipExists(cacheKey, ok);
+      } catch {
+        // See `tryResolveUserActorFast`. Here the fallback is the full resolver rather than a
+        // refusal, which is also what an uncached miss does — so a blip costs one slower request.
+        ok = false;
+      }
+    }
     if (!ok) return await resolveActorUncached(request);
 
     // For stats endpoints we don't need personalOrgId for legacy access checks.

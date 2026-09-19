@@ -15,6 +15,7 @@ import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { OrgModel } from "@/lib/models/Org";
 import { resolveActor } from "@/lib/gating/actor";
 import { sendOrgInviteEmail } from "@/lib/email/sendOrgInviteEmail";
+import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
 
@@ -146,6 +147,17 @@ export async function POST(request: Request) {
     inviteUrl,
     role,
     invitedByEmail: null,
+  });
+
+  // Logged after the send, not before: an invite the mail provider refused is not an invitation,
+  // and a feed that says otherwise sends the sender looking for a reply that was never asked for.
+  void recordActivity({
+    orgId: orgIdRaw,
+    userId: actor.userId,
+    actorKind: "user",
+    type: "member.invited",
+    meta: { role, inviteId, via: "email", email, expiresAt: expiresAt.toISOString() },
+    request,
   });
 
   return NextResponse.json({
