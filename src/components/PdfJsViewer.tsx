@@ -28,6 +28,15 @@ import {
 } from "@/lib/share/readingClock";
 import { fetchJson } from "@/lib/http/fetchJson";
 import { CATEGORY_LABELS } from "@/lib/ai/constants";
+import type { ShareWorkspaceBrand } from "@/lib/share/brand";
+import {
+  clearShareViewerProfile,
+  normalizeShareViewerEmail,
+  normalizeShareViewerName,
+  readShareViewerProfile,
+  writeShareViewerProfile,
+  type ShareViewerProfile,
+} from "@/lib/share/viewerProfile";
 /**
  * Title From Enum (uses join, map, filter).
  */
@@ -55,6 +64,12 @@ type Props = {
    * Endpoint for fetching revision history JSON (typically `/api/share/:shareId/changes`).
    */
   revisionHistoryUrl?: string | null;
+  /**
+   * The workspace that shared this document, drawn beside our logo in the header. Omitted inside
+   * the app (an owner reading their own document already knows whose it is); present on every
+   * recipient-facing route.
+   */
+  workspace?: ShareWorkspaceBrand | null;
   /**
    * If true, show a receiver-facing "Download PDF" button.
    */
@@ -179,77 +194,12 @@ function writeVisitReported(shareId: string, next: { loaded: boolean; pages: Set
     // ignore
   }
 }
-const SHARE_VIEWER_PROFILE_KEY = "lnkdrp_share_viewer_profile_v1";
-
+/**
+ * The recipient's volunteered identity now lives in `@/lib/share/viewerProfile`: the data room's
+ * front page asks for it too, and both surfaces have to store the same thing under the same key.
+ */
 type OwnerStats = { views: number; pagesViewed: number };
 type ShareContext = { isOwner: boolean; stats?: OwnerStats };
-
-type ShareViewerProfile = {
-  name?: string;
-  email?: string;
-  updatedAt?: number;
-};
-
-function normalizeShareViewerName(v: string): string | null {
-  const s = v.replace(/\s+/g, " ").trim();
-  if (!s) return null;
-  return s.length > 80 ? s.slice(0, 80) : s;
-}
-
-function normalizeShareViewerEmail(v: string): string | null {
-  const s = v.trim().toLowerCase();
-  if (!s) return null;
-  if (s.length > 254) return null;
-  if (!s.includes("@") || s.startsWith("@") || s.endsWith("@")) return null;
-  return s;
-}
-
-function readShareViewerProfile(): ShareViewerProfile | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(SHARE_VIEWER_PROFILE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return null;
-    const nameRaw = (parsed as any).name;
-    const emailRaw = (parsed as any).email;
-    const updatedAtRaw = (parsed as any).updatedAt;
-    const name = typeof nameRaw === "string" ? normalizeShareViewerName(nameRaw) : null;
-    const email = typeof emailRaw === "string" ? normalizeShareViewerEmail(emailRaw) : null;
-    const updatedAt = typeof updatedAtRaw === "number" && Number.isFinite(updatedAtRaw) ? Math.floor(updatedAtRaw) : undefined;
-    if (!name && !email) return null;
-    return { ...(name ? { name } : {}), ...(email ? { email } : {}), ...(updatedAt ? { updatedAt } : {}) };
-  } catch {
-    return null;
-  }
-}
-
-function writeShareViewerProfile(next: { name: string | null; email: string | null }) {
-  if (typeof window === "undefined") return;
-  try {
-    const name = typeof next.name === "string" ? normalizeShareViewerName(next.name) : null;
-    const email = typeof next.email === "string" ? normalizeShareViewerEmail(next.email) : null;
-    if (!name && !email) {
-      window.localStorage.removeItem(SHARE_VIEWER_PROFILE_KEY);
-      return;
-    }
-    window.localStorage.setItem(
-      SHARE_VIEWER_PROFILE_KEY,
-      JSON.stringify({ ...(name ? { name } : {}), ...(email ? { email } : {}), updatedAt: Date.now() } satisfies ShareViewerProfile),
-    );
-  } catch {
-    // ignore (best-effort)
-  }
-}
-
-function clearShareViewerProfile() {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(SHARE_VIEWER_PROFILE_KEY);
-  } catch {
-    // ignore
-  }
-}
 
 type HistoryItem = {
   fromVersion: number | null;
@@ -363,6 +313,7 @@ export function PdfJsViewer({
   shareId,
   revisionHistoryEnabled = false,
   revisionHistoryUrl = null,
+  workspace = null,
   allowDownload = false,
   downloadUrl = null,
   relevancyEnabled: _relevancyEnabled = false,
@@ -893,6 +844,10 @@ export function PdfJsViewer({
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented) return;
+      // Typed as a string, not always one: password managers and autofill dispatch synthetic
+      // keydowns with no `key`, and this viewer is the page a recipient opens with whatever
+      // extensions they happen to run. Same guard as the ⌘K listener in `src/app/providers.tsx`.
+      if (typeof e.key !== "string") return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       const target = e.target as HTMLElement | null;
@@ -1887,6 +1842,7 @@ export function PdfJsViewer({
       {/* Top bar (fixed layout; does not overlay PDF) */}
       <BrandHeader
         ref={headerRef}
+        workspace={workspace}
         left={
               <div className="inline-flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-1.5">
                 <button
@@ -2606,7 +2562,16 @@ export function PdfJsViewer({
                     if (!botId) return;
                     const visitId = shareVisitIdRef.current ?? getOrCreateShareVisitId(shareIdSafe);
                     if (visitId) shareVisitIdRef.current = visitId;
-                    const payload: Record<string, unknown> = { botId, ...(visitId ? { visitId } : {}), viewerEmail: email };
+                    // `introduced` marks *this* post as the act of introducing, as opposed to the
+                    // heartbeats that follow, every one of which replays the same stored profile.
+                    // The server still decides whether it is news; this only tells it when to ask,
+                    // so the check costs nothing on the hot path.
+                    const payload: Record<string, unknown> = {
+                      botId,
+                      ...(visitId ? { visitId } : {}),
+                      viewerEmail: email,
+                      introduced: true,
+                    };
                     if (name) payload.viewerName = name;
                     await fetchWithTempUser(`/api/share/${shareIdSafe}/stats`, {
                       method: "POST",

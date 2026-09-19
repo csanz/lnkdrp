@@ -18,11 +18,15 @@ export const dynamic = "force-dynamic";
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { notFound } from "next/navigation";
 
 import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "@/components/PasswordGate";
+import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
+import IntroduceYourself from "./IntroduceYourself";
+import { isOwnerSideViewer } from "@/lib/share/ownerSide";
+import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { listProjectDocuments, projectLinkPasswordEnabled, type PublicProjectDoc } from "@/lib/share/projectPublic";
@@ -107,6 +111,9 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
   // a disabled or archived link reads exactly as it did before this feature existed.
   if (resolved.refusal) return <RefusalNotice kind={resolved.refusal === "expired" ? "expired" : "disabled"} />;
 
+  // Who this is from, on every branch below including the gate.
+  const workspace = await workspaceBrandForOrg(project.orgId);
+
   if (projectLinkPasswordEnabled(link)) {
     const c = await cookies();
     const cookie = c.get(shareAuthCookieName(shareId))?.value ?? "";
@@ -115,7 +122,7 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
       // Nothing before the password — not the project's name, not how many documents are in it.
       // Same rule as the document gate: the sender chose a password because the URL is not the
       // secret, and "Acme — Series A data room · 11 documents" gives away most of the answer.
-      return <PasswordGate shareId={shareId} title={null} previewUrl={null} />;
+      return <PasswordGate shareId={shareId} title={null} previewUrl={null} workspace={workspace} />;
     }
   }
 
@@ -123,11 +130,27 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
   // of the project stops being listed — and stops being openable — on the very next load.
   const docs = await listProjectDocuments(project);
   const name = typeof project.name === "string" ? project.name : "";
+  // The same rule every figure on this link uses: the owner and their teammates are recorded and
+  // never counted (`isOwnerSideViewer`), so they are never asked to introduce themselves either.
+  // A server component has no `Request`, and the session resolver reads the JWT out of one. The
+  // cookie header is the only part of it that matters here.
+  const sessionUserId = await (async () => {
+    try {
+      const h = await headers();
+      const session = await tryResolveAuthUserId(new Request("http://localhost/p", { headers: new Headers({ cookie: h.get("cookie") ?? "" }) }));
+      return session?.userId ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  const ownerSide = await isOwnerSideViewer(project as { orgId?: unknown; userId?: unknown }, sessionUserId);
   const description = typeof project.description === "string" ? project.description : "";
 
   return (
     <main className="min-h-screen bg-[var(--bg)] text-[var(--fg)]" style={PROJECT_SHARE_THEME}>
-      <BrandHeader />
+      {/* Asking who is here belongs at the top of the room, where the viewer asks it — and never of
+          the owning side, who would be introducing themselves to themselves. */}
+      <BrandHeader workspace={workspace}>{ownerSide ? null : <IntroduceYourself shareId={shareId} projectName={name} />}</BrandHeader>
       <LandingBeacon shareId={shareId} />
       <div className="mx-auto w-full max-w-5xl px-6 pb-12 pt-6">
         <div className="text-2xl font-semibold tracking-tight text-[var(--fg)]">{name}</div>

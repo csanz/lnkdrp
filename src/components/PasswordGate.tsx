@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import BrandHeader from "@/components/BrandHeader";
+import type { ShareWorkspaceBrand } from "@/lib/share/brand";
 import { fetchJson } from "@/lib/http/fetchJson";
+import { getOrCreateBotId } from "@/lib/botId";
 
 /**
  * Password gate for share pages.
@@ -13,10 +15,20 @@ export default function PasswordGate({
   shareId,
   title,
   previewUrl,
+  workspace,
 }: {
   shareId: string;
   title?: string | null;
   previewUrl?: string | null;
+  /**
+   * The workspace that shared this. Shown here on purpose, and it is the one thing on this page
+   * that is: the gate deliberately withholds the document's name and cover (see the callers), but
+   * an unsigned box demanding a password is also precisely what a phishing page looks like. Naming
+   * the sender is what tells a recipient the prompt is the one they were expecting — and the
+   * sender's identity is already known to whoever was sent the link, where the document's contents
+   * are the thing the password was set to protect.
+   */
+  workspace?: ShareWorkspaceBrand | null;
 }) {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -34,7 +46,9 @@ export default function PasswordGate({
       await fetchJson(`/api/share/${shareId}/unlock`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ password }),
+        // The device id goes with it so the unlock lands in the owner's feed as the same person who
+        // then reads the document, rather than as a second, anonymous someone.
+        body: JSON.stringify({ password, botId: getOrCreateBotId() }),
       });
       // Cookie is set by the API; re-render server component with auth.
       window.location.reload();
@@ -67,7 +81,7 @@ export default function PasswordGate({
         } as React.CSSProperties
       }
     >
-      <BrandHeader />
+      <BrandHeader workspace={workspace ?? null} />
       <div className="mx-auto flex w-full max-w-md flex-col items-center px-6 py-12 sm:py-16">
         <div className="w-full rounded-3xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-sm">
           <div className="text-base font-semibold text-[var(--fg)]">Password required</div>

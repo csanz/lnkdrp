@@ -28,6 +28,7 @@ import { notFound } from "next/navigation";
 import type { AiOutput } from "@/components/PdfJsViewer";
 import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "@/components/PasswordGate";
+import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { projectLinkPasswordEnabled, resolveProjectDocument } from "@/lib/share/projectPublic";
 import { buildShareMetadata } from "@/lib/share/shareMetadata";
@@ -123,13 +124,19 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
   if (resolved.refusal === "project_gone") notFound();
   if (resolved.refusal) return <RefusalNotice kind={resolved.refusal === "expired" ? "expired" : "disabled"} />;
 
+  // Who this is from. Read off the link rather than the project: the link is what the recipient
+  // holds, and it is already loaded here.
+  const linkOrgId = (link as { orgId?: unknown }).orgId;
+  const workspace = await workspaceBrandForOrg(typeof linkOrgId === "undefined" || linkOrgId === null ? null : String(linkOrgId));
+
   if (projectLinkPasswordEnabled(link)) {
     const c = await cookies();
     const cookie = c.get(shareAuthCookieName(shareId))?.value ?? "";
     const expected = shareAuthCookieValue({ shareId, sharePasswordHash: link.passwordHash as string });
     // One cookie for the whole link: unlocking the project page unlocks every document behind it,
     // and arriving here by deep link with no cookie asks for the password rather than 404ing.
-    if (!cookie || cookie !== expected) return <PasswordGate shareId={shareId} title={null} previewUrl={null} />;
+    if (!cookie || cookie !== expected)
+      return <PasswordGate shareId={shareId} title={null} previewUrl={null} workspace={workspace} />;
   }
 
   const blobUrl = typeof doc.blobUrl === "string" ? doc.blobUrl : "";
@@ -152,6 +159,7 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
           // exist on the model and must not appear here.
           revisionHistoryEnabled={false}
           revisionHistoryUrl={null}
+          workspace={workspace}
         />
       </main>
     );
@@ -162,7 +170,7 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
 
   return (
     <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
-      <BrandHeader />
+      <BrandHeader workspace={workspace} />
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
         <div className="text-lg font-semibold tracking-tight text-white/90">Shared document</div>
         <div className="mt-2 text-sm text-white/70">

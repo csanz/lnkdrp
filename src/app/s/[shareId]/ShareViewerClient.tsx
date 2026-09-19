@@ -8,6 +8,7 @@
  */
 import dynamic from "next/dynamic";
 import type { AiOutput } from "@/components/PdfJsViewer";
+import type { ShareWorkspaceBrand } from "@/lib/share/brand";
 
 const PdfJsViewer = dynamic(async () => (await import("@/components/PdfJsViewer")).PdfJsViewer, {
   ssr: false,
@@ -51,6 +52,8 @@ export default function ShareViewerClient(props: {
   downloadUrl: string | null;
   revisionHistoryEnabled: boolean;
   revisionHistoryUrl: string | null;
+  /** The workspace that shared this, for the viewer's header. */
+  workspace?: ShareWorkspaceBrand | null;
 }) {
   return (
     <PdfJsViewer
@@ -63,6 +66,7 @@ export default function ShareViewerClient(props: {
       downloadUrl={props.downloadUrl}
       revisionHistoryEnabled={props.revisionHistoryEnabled}
       revisionHistoryUrl={props.revisionHistoryUrl}
+      workspace={props.workspace ?? null}
     />
   );
 }

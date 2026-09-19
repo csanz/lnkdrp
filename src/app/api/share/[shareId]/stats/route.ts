@@ -16,6 +16,7 @@ import { Types } from "mongoose";
 import { DocModel } from "@/lib/models/Doc";
 import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { projectLinkPasswordEnabled, projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
+import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerIdentity";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
@@ -276,6 +277,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const numPages = parsePageBound((body as { numPages?: unknown })?.numPages);
       const viewerEmailRaw = asNonEmptyString((body as { viewerEmail?: unknown })?.viewerEmail);
       const viewerEmail = viewerEmailRaw ? normalizeEmail(viewerEmailRaw) : null;
+      /** This post is the act of introducing, not a heartbeat replaying a stored profile. */
+      const introducedNow = (body as { introduced?: unknown })?.introduced === true;
       const viewerNameRaw = asNonEmptyString((body as { viewerName?: unknown })?.viewerName, 160);
       const viewerNameIntro = viewerNameRaw ? normalizeViewerName(viewerNameRaw) : null;
       if (!botId) {
@@ -374,6 +377,26 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           const ownerPreview = await isOwnerSideViewer(doc as Record<string, unknown>, viewerUserId);
           setFields.isOwnerPreview = ownerPreview;
 
+          /**
+           * Before the upsert, because the upsert is what would make it look like old news.
+           *
+           * Gated on `introduced`, which the viewer sets only on the post that carries a *fresh*
+           * introduction. Every heartbeat after it replays the same stored profile, and asking on
+           * each of those would put two indexed reads on the busiest write path in the product for
+           * an answer that is "no" every time. The client only chooses *when to ask*; the check
+           * below still decides whether it is news, so a client that lies gets nothing.
+           */
+          const identityNews =
+            introducedNow && !viewerUserId && (viewerNameIntro || viewerEmail)
+              ? await viewerIdentityNews({
+                  shareId,
+                  botIdHash,
+                  orgId: shareOrgId ? String(shareOrgId) : null,
+                  name: viewerNameIntro,
+                  email: viewerEmail,
+                })
+              : { isNew: false, changed: false };
+
           // The upsert is the write most likely to throw: two first-time POSTs for the same
           // (shareId, botIdHash) race and the unique index makes the loser fail with E11000. That
           // used to abort the whole analytics block — losing this heartbeat's pages and time too —
@@ -397,6 +420,59 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             if (!/E11000|duplicate key/i.test(msg)) throw e;
+          }
+
+          if ((identityNews.isNew || identityNews.changed) && !ownerPreview && shareOrgId) {
+            void recordActivity({
+              orgId: String(shareOrgId),
+              userId: null,
+              actorKind: "viewer",
+              type: "viewer.introduced",
+              docId: String(docId),
+              projectId: projectTarget ? String(projectTarget.project._id) : null,
+              title: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
+              meta: {
+                changed: identityNews.changed,
+                viewerName: viewerNameIntro,
+                viewerEmail: viewerEmail,
+                shareId,
+                linkLabel: link.label ?? null,
+                isDefaultLink: Boolean(link.isDefault),
+                ...(projectTarget
+                  ? {
+                      projectName:
+                        typeof projectTarget.project.name === "string" ? projectTarget.project.name : null,
+                    }
+                  : null),
+              },
+              request,
+            });
+          }
+
+          /**
+           * A returning recipient is recognised from their browser's local storage, so they are
+           * only asked to introduce themselves once — which means a *corrected* name would land on
+           * this one row and nowhere else, and the owner would meet the same reader under two
+           * names on two pages. Write it through to the rest of this person's rows in this
+           * workspace. The realtime server watches these two fields, so an open metrics page
+           * updates itself from the same write (see `propagateViewerIdentity`).
+           */
+          // Gated on the same answer the event is: the viewer replays its stored profile on every
+          // heartbeat, and a rewrite that changes nothing still costs two collection-wide updates
+          // and — because the realtime server watches exactly these two fields — a frame per row
+          // it touches, to every open metrics page in the workspace.
+          if ((identityNews.isNew || identityNews.changed) && !viewerUserId && (viewerNameIntro || viewerEmail)) {
+            try {
+              await propagateViewerIdentity({
+                shareId,
+                botIdHash,
+                orgId: shareOrgId ?? null,
+                name: viewerNameIntro,
+                email: viewerEmail,
+              });
+            } catch {
+              // best-effort: the row this heartbeat wrote already carries the new identity.
+            }
           }
 
           // The link's `lastViewedAt` moves for every view, not only a first-time viewer's: a
@@ -437,6 +513,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                     ...(viewerUserId ? { viewerUserId } : {}),
                     isOwnerPreview: ownerPreview,
                     lastViewedAt: new Date(),
+                    // The introduction was in scope here and never copied across, so a visitor who
+                    // gave their name inside a data-room document stayed anonymous on the row that
+                    // says they came — the one row the room's own figures are keyed on.
+                    ...(!viewerUserId && viewerNameIntro ? { viewerName: viewerNameIntro } : {}),
+                    ...(!viewerUserId && viewerEmail ? { viewerEmailSnapshot: viewerEmail } : {}),
                   },
                   $addToSet: { docsOpened: new Types.ObjectId(String(docId)) },
                 },
@@ -478,6 +559,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                   actorKind: "viewer",
                   type: "share.viewed",
                   docId: String(docId),
+                  // A reading inside a data room belongs to the room as well as the document. It was
+                  // already in `meta`; on the row it also survives the project being renamed, and
+                  // lets the feed be filtered by project like every other project event.
+                  projectId: projectTarget ? String(projectTarget.project._id) : null,
                   title: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
                   meta: {
                     authenticated: Boolean(viewerUserId),

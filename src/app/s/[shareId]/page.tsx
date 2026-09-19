@@ -11,6 +11,7 @@ import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "./PasswordGate";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { buildShareMetadata } from "@/lib/share/shareMetadata";
+import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -148,6 +149,8 @@ export default async function SharePage(props: {
     select: {
       title: 1,
       blobUrl: 1,
+      // The workspace behind the link, so the header can say who shared this.
+      orgId: 1,
       // Perf: only fetch receiver-facing AI snapshot fields (avoid huge aiOutput JSON).
       "aiOutput.one_liner": 1,
       "aiOutput.core_problem_or_need": 1,
@@ -169,6 +172,11 @@ export default async function SharePage(props: {
   // Disabled, expired, archived or deleted: the link behaves as if it never existed.
   if (!resolved || resolved.refusal) notFound();
   const { link, doc } = resolved;
+
+  // Who this is from. Read once, used on every branch below — the gate included, which is the one
+  // page a recipient sees that says nothing else about what they are being shown.
+  const docOrgId = (doc as { orgId?: unknown }).orgId;
+  const workspace = await workspaceBrandForOrg(typeof docOrgId === "undefined" || docOrgId === null ? null : String(docOrgId));
 
   const previewUrl =
     typeof doc.previewImageUrl === "string"
@@ -197,7 +205,7 @@ export default async function SharePage(props: {
       // rendered first page, which is the document. A gate that shows a deck's title and its cover
       // slide to anyone holding the URL has already given away most of what the password was set
       // to protect — and the sender chose a password precisely because the URL is not the secret.
-      return <PasswordGate shareId={shareId} title={null} previewUrl={null} />;
+      return <PasswordGate shareId={shareId} title={null} previewUrl={null} workspace={workspace} />;
     }
   }
 
@@ -220,6 +228,7 @@ export default async function SharePage(props: {
           downloadUrl={allowDownload ? `/s/${encodeURIComponent(shareId)}/pdf?download=1` : null}
           revisionHistoryEnabled={allowRevisionHistory}
           revisionHistoryUrl={allowRevisionHistory ? `/s/${encodeURIComponent(shareId)}/changes` : null}
+          workspace={workspace}
         />
       </main>
     );
@@ -228,7 +237,7 @@ export default async function SharePage(props: {
   // Fallback if we don't have a PDF URL yet (older docs / processing).
   return (
     <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
-      <BrandHeader />
+      <BrandHeader workspace={workspace} />
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
         <div className="text-lg font-semibold tracking-tight text-white/90">Shared document</div>
         <div className="mt-2 text-sm text-white/70">
