@@ -16,6 +16,20 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
 import { ownerNeedsIntroductionEmail } from "@/lib/share/viewerEmailVerification";
 
+/**
+ * A horizon this question has, under either implementation, and which the caller should not fight.
+ *
+ * The queue keeps sent rows for 30 days. Past that the honest answer to "was a nameless email
+ * already sent about this person" becomes "we no longer know", and the lookup returns nobody — so
+ * a reader who is seen today and introduces themselves next quarter gets no correction sent on
+ * their behalf.
+ *
+ * That is the right outcome rather than a gap to paper over. The correction exists because a wrong
+ * email is sitting unread-as-wrong in an inbox; an inbox from three months ago is not somewhere a
+ * correction usefully lands, and "that anonymous reader in July was Dana" is noise by the time it
+ * arrives. If this ever needs a permanent answer, it wants its own record written at send time,
+ * not a longer TTL on someone else's collection.
+ */
 export type AlreadyToldQuery = {
   orgId: Types.ObjectId;
   /** When this reader first appeared in the workspace's analytics. */
