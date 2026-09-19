@@ -26,6 +26,12 @@ This document is a **product-oriented** breakdown of the main user-facing featur
   - Anyone can sign in with Google via NextAuth (`/api/auth/[...nextauth]`) when auth is enabled; no approval or gating step is required.
   - “Get Started” / “Log In” on the home page and `/login` call Google sign-in directly and return to `/`.
   - Disabled users (`isActive: false`) are denied sign-in.
+- **Leaving a workspace (removed, or left)**:
+  - The membership is soft-deleted (`OrgMembership.isDeleted`). The person keeps their account and their own personal workspace; only access to that workspace goes.
+  - **Their open browser session stays signed in** — they are not logged out, and nothing revokes their NextAuth token. What changes is which workspace their requests resolve to: `tryResolveUserActor` validates the token's `activeOrgId` claim against a live membership (as it already did for the DB copy and the active-org cookie) and falls back to their personal workspace when it fails. Before that check existed, a removed member kept resolving to the workspace for as long as their JWT lived — weeks.
+  - `membershipChanged()` (`src/lib/gating/actor.ts`) is called by the revoke, leave and claim routes so the ten-second membership cache drops the answer immediately instead of ageing out. It is per-process, so on a multi-instance deploy other instances still expire on their own TTL — the resolver check above is what actually closes the door, this only shortens the window on the instance that handled the write.
+  - Anything already open in their tab keeps rendering until it refetches; the next request resolves to their personal workspace, so the workspace's documents are gone from the sidebar rather than erroring.
+
 - **“Temp user” support**:
   - Client requests can be decorated with temp-user headers (used for upload flows and other gated actions).
   - Server route `/api/auth/claim-temp` exists to claim/convert temp access.
@@ -490,7 +496,7 @@ A document owns **any number of share links** — one per audience — instead o
 
 ## Activity (workspace feed)
 
-- **Page**: `/activity` (app shell; "Activity" entry in the left sidebar right after Upload). Rows are grouped by day (Today / Yesterday / date), filterable by **All / Uploads / Sharing / Documents**, and paged with "Load more" (cursor).
+- **Page**: `/activity` (app shell; "Activity" entry in the left sidebar right after Upload). Rows are grouped by day (Today / Yesterday / date), filterable by **All / Uploads / Sharing / Documents / Projects / Views / Members** (Views is the recipient group — opens, downloads, arrivals, unlocks and introductions — and is excluded wholesale from the workspace donut, whose denominator is work done *here*), and paged with "Load more" (cursor).
 - **API**: `GET /api/activity?limit=&cursor=&type=a,b&docId=` → `{ items, nextCursor }`. Read-only; any workspace member (viewer or above) can read. Temp users receive an empty list (not a 401).
 - **Storage**: `activityevents` collection (`ActivityEventModel`, `src/lib/models/ActivityEvent.ts`), scoped by `orgId`, with denormalized `title` for fast rendering and a `meta` payload per type.
 - **Recording**: `recordActivity()` in `src/lib/activity/log.ts` is best-effort (never throws) and is fired as `void recordActivity({...})` **after** the primary write succeeds, never inside a transaction.
@@ -504,9 +510,35 @@ A document owns **any number of share links** — one per audience — instead o
   - `request_repo.created` — `POST /api/requests`
   - `request.upload_received` — `POST /api/requests/:token/uploads` (`actorKind` is `user` when the inbox requires sign-in, else `secret`; `meta.fileName`, `meta.requireAuth`)
   - `download_request.created` / `download_request.approved` / `download_request.denied` — share download-request endpoints (`meta.email` is masked to first char + domain)
+  - `member.invited` — `POST /api/org-invites` (link, no recipient named) and `POST /api/org-invites/email` (after the mail is accepted, `meta.email`); `meta.role`, `meta.via`
+  - `member.joined` — `POST /api/org-invites/claim` (`via: "invite"`) and `POST /api/orgs/claim-join` (`via: "join_secret"`), only when the join is new; `meta.name`/`meta.email` are copied in so the row survives that account being deleted
+  - `member.removed` — `POST /api/orgs/:orgId/members/:userId/revoke` (the Members page's Remove button); actor is the remover, the removed person is in `meta`
+  - `member.left` — `POST /api/orgs/:orgId/leave`
+  - `project.landed` — `POST /api/share/:shareId/landing`, once per recipient per project link, never for the owning side. The arrival on a data room's file list, including the arrival that opens nothing — which `share.viewed` cannot report because that reader writes no `ShareView` row.
+  - `viewer.introduced` — the landing route and the stats ingest, when a recipient volunteers a name/email that is **new or different** (`viewerIdentityNews`, asked before the write — the viewer replays its stored profile on every heartbeat, so an unguarded event would fire every few seconds for as long as they read). `meta.changed` separates a correction from a first introduction. **Not** in `RECIPIENT_TYPES`: it keeps its name on Free, because the name was volunteered *to* this workspace.
+  - `share.unlocked` — `POST /api/share/:shareId/unlock`, on a correct password only (a wrong one is bounded by the route's limiter and is far more often a typo than an attack). Carries the gate's device id as `meta.viewerKey`, so the row takes the reader's name once they introduce themselves.
+- **Recipient rows** (`share.viewed`, `share.downloaded`, `project.landed`, `share.unlocked`) share two rules, held in one set (`RECIPIENT_TYPES` in `src/app/api/activity/route.ts`): identities on them are Pro-gated, and a name given *after* the row was written is joined back on from the reader's `ShareView`.
+- **Past rows rename themselves.** A name given later is joined onto earlier rows at read time from the reader's `ShareView` / `ProjectLinkView`, rather than rewritten into their stored `meta` — the row records what was known when it happened, the feed renders who they are now, and a second change corrects both without a migration. Both sides of the join are normalised to the *person* (`splitProjectViewerKey`), because inside a data room a reading is keyed `<digest>.<docId>` while an arrival or an unlock is keyed by the bare digest.
+- **The feed updates itself** on `activity` frames (a new row) and on `viewer` frames (a rename, which changes what existing rows say without adding one). The realtime server watches `shareviews` *and* `projectlinkviews` for the two identity fields, so an introduction on a data room's front page — from a visitor who has opened nothing, and so owns no reading row — still reaches an open page.
+- **Where a reading came from**: a document opened inside a data room reads "… in <project>" rather than "via <link>" — the ingest resolves the project from the slug itself (no `?source=` parameter to drop or forge) and writes `projectId` on the row as well as `meta.projectName`.
 - `share.viewed` / `share.downloaded` — recorded once per new viewer of a share link (first visit, not per page) and on each PDF download. `actorKind: "viewer"`, with the signed-in viewer’s user id when known, otherwise the name/email they introduced themselves with.
 - **Agent attribution**: agents/MCP clients send `x-lnkdrp-agent: <client>/<version>` (e.g. `claude-code/1.2.3`); when absent the User-Agent is sniffed for known clients (claude-code, claude-desktop, cursor, codex, gemini-cli, grok, windsurf, cline). Browsers resolve to no agent. The feed shows an agent badge (`agentLabel()`), e.g. "Claude Code". The upcoming MCP server will pass the MCP `initialize` `clientInfo { name, version }` instead (see `docs/prds/lnkdrp-mcp.md`).
 - **Feature flag**: the sidebar "Request" action and the "Received" section are hidden unless `NEXT_PUBLIC_FEATURE_REQUESTS=1` (the Received section still shows when the workspace already has inboxes). Routes stay available.
+
+## Recipient-facing branding
+
+Every page a recipient can land on says who shared it: the data room (`/p/:shareId`), the document viewer (`/s/:shareId` and `/p/:shareId/:docId`) and the password gate.
+
+- `workspaceBrandForOrg()` (`src/lib/share/shareBrand.ts`) resolves `{ name, avatarUrl }` for the workspace behind the link. A **team** workspace uses its own name; a **personal** one is called "Personal" internally, which means nothing to a recipient, so it is named after its owner instead — and named nothing at all rather than "Personal" when that cannot be resolved.
+- `ShareWorkspaceBrand` renders it in `BrandHeader` between our logo and the page's own controls, with a hairline between the two marks: they are two different parties, and a recipient who cannot tell them apart is the failure this arrangement avoids. The name is hidden below `sm`; the tile is not.
+- **On the password gate it is deliberate.** The gate withholds the document's name and cover on purpose, but an unsigned box demanding a password is also exactly what a phishing page looks like. Naming the *sender* is what tells a recipient the prompt is the one they were expecting; the sender's identity is already known to whoever was sent the link, where the document's contents are what the password protects.
+
+## Introduce yourself (recipients)
+
+- **In the viewer** (`PdfJsViewer`), on both document links and data-room documents: a toolbar button, a modal with a live "what the owner sees" preview, and a "free lnkdrp account" alternative. Never shown to the owning side.
+- **In the data room** (`src/app/p/[shareId]/IntroduceYourself.tsx`), in the room's header — the case where it matters most, because a visitor can read the file list and leave without writing a reading at all, so the arrival row is the owner's only record of them. A sibling component rather than the same one: the stored identity is shared, the words are not ("the owner of this document" is the wrong sentence on a page listing eleven files).
+- **Shared storage**: `src/lib/share/viewerProfile.ts` — one `lnkdrp_share_viewer_profile_v1` key and one pair of normalizers for both surfaces, so answering in either place means never being asked in the other, and the client stores what the server stores.
+- **Persistence**: the landing route takes `viewerName`/`viewerEmail` and writes them anonymous-only (a signed-in visitor's identity comes from their account), then `propagateViewerIdentity` writes the answer through to that person's other rows in the workspace — including `ProjectLinkView`, which the rename used to miss, leaving the one row a read-nothing visitor owns permanently nameless.
 
 ## View notification emails
 
