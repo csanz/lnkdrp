@@ -6,14 +6,15 @@
  * people, which is why merge is here and is the first thing offered when a rename collides with
  * an existing name.
  *
- * Deleting a tag removes it from everything that carries it. That is said plainly on the button's
- * confirm, with the count, because "delete" on a 40-document tag is not the same action as
- * "delete" on an empty one.
+ * Deleting a tag removes it from everything that carries it. The confirmation is a row that opens
+ * in place, naming the count, rather than a browser dialog: a native `confirm()` is a grey box
+ * from another era of the web that says nothing about what is about to happen, and on a
+ * 40-document tag that difference matters.
  */
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { CheckIcon, PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 import TagDot from "@/components/tags/TagDot";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -28,6 +29,9 @@ export default function TagsManager() {
   const [editingId, setEditingId] = useState("");
   const [draft, setDraft] = useState("");
   const [mergeFrom, setMergeFrom] = useState<Tag | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Tag | null>(null);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -76,11 +80,6 @@ export default function TagsManager() {
   }
 
   async function remove(tag: Tag) {
-    const carried = tag.count ?? 0;
-    const warning = carried
-      ? `Delete “${tag.name}”? It comes off ${carried} ${carried === 1 ? "item" : "items"}. The documents and projects themselves are untouched.`
-      : `Delete “${tag.name}”? Nothing carries it.`;
-    if (!window.confirm(warning)) return;
     if (busyId) return;
     setBusyId(tag.id);
     setError(null);
@@ -92,6 +91,7 @@ export default function TagsManager() {
       }
       await load();
       window.dispatchEvent(new Event("lnkdrp:tags-changed"));
+      setConfirmDelete(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not delete the tag");
     } finally {
@@ -99,19 +99,70 @@ export default function TagsManager() {
     }
   }
 
-  if (tags === null) return <div className="text-[13px] text-[var(--muted-2)]">Loading tags…</div>;
-
-  if (!tags.length) {
-    return (
-      <div className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center text-[13px] text-[var(--muted)]">
-        No tags yet. Add one from any document or project and it shows up here.
-      </div>
-    );
+  /** Make a tag that nothing carries yet — the one thing the picker cannot do from here. */
+  async function create() {
+    const name = newName.trim();
+    if (!name || creating) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const res = await fetchWithTempUser("/api/tags", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const json = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) throw new Error(json?.error || "Could not create the tag");
+      setNewName("");
+      await load();
+      window.dispatchEvent(new Event("lnkdrp:tags-changed"));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not create the tag");
+    } finally {
+      setCreating(false);
+    }
   }
+
+  if (tags === null) return <div className="text-[13px] text-[var(--muted-2)]">Loading tags…</div>;
 
   return (
     <div>
       {error ? <div className="mb-3 text-[12px] font-medium text-red-600">{error}</div> : null}
+
+      {/* Tags are normally made by typing one onto a document; this is for the times you are
+          setting up a scheme before there is anything to put in it. */}
+      <div className="mb-3 flex items-center gap-2">
+        <input
+          value={newName}
+          maxLength={60}
+          disabled={creating}
+          placeholder="New tag"
+          aria-label="New tag name"
+          className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
+          onChange={(e) => setNewName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void create();
+            }
+          }}
+        />
+        <button
+          type="button"
+          disabled={creating || !newName.trim()}
+          onClick={() => void create()}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary-bg)] px-3 py-2 text-[13px] font-semibold text-[var(--primary-fg)] transition-colors hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
+        >
+          <PlusIcon className="h-4 w-4" aria-hidden="true" />
+          Add
+        </button>
+      </div>
+
+      {!sorted.length ? (
+        <div className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center text-[13px] text-[var(--muted)]">
+          No tags yet. Type one above, or add one from any document or project.
+        </div>
+      ) : null}
 
       <ul className="grid gap-1.5">
         {sorted.map((tag) => {
@@ -205,7 +256,10 @@ export default function TagsManager() {
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void remove(tag)}
+                  onClick={() => {
+                    setMergeFrom(null);
+                    setConfirmDelete(confirmDelete?.id === tag.id ? null : tag);
+                  }}
                   aria-label={`Delete ${tag.name}`}
                   title="Delete"
                   className="shrink-0 rounded-lg p-1.5 text-[var(--muted-2)] transition-colors hover:bg-[var(--panel-hover)] hover:text-red-600 disabled:opacity-40"
@@ -214,10 +268,44 @@ export default function TagsManager() {
                 </button>
               </div>
 
+              {confirmDelete?.id === tag.id ? (
+                <div className="mt-2.5 border-t border-[var(--divider)] pt-2.5">
+                  <div className="text-[13px] text-[var(--fg)]">
+                    Delete &ldquo;{tag.name}&rdquo;?{" "}
+                    <span className="text-[var(--muted)]">
+                      {(tag.count ?? 0) > 0
+                        ? `It comes off ${tag.count} ${tag.count === 1 ? "item" : "items"}. The documents and projects themselves are untouched.`
+                        : "Nothing carries it."}
+                    </span>
+                  </div>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void remove(tag)}
+                      className="inline-flex items-center rounded-lg bg-red-600 px-3 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {busy ? "Deleting…" : "Delete"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setConfirmDelete(null)}
+                      className="inline-flex items-center rounded-lg border border-[var(--border)] px-3 py-1.5 text-[12px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)] disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {merging ? (
                 <div className="mt-2.5 border-t border-[var(--divider)] pt-2.5">
-                  <div className="text-[12px] text-[var(--muted)]">
-                    Move everything tagged &ldquo;{tag.name}&rdquo; onto:
+                  <div className="text-[13px] text-[var(--fg)]">
+                    Move everything tagged &ldquo;{tag.name}&rdquo; onto:{" "}
+                    <span className="text-[var(--muted)]">
+                      &ldquo;{tag.name}&rdquo; is removed; nothing it tagged is.
+                    </span>
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {sorted
@@ -227,16 +315,7 @@ export default function TagsManager() {
                           key={target.id}
                           type="button"
                           disabled={busy}
-                          onClick={() => {
-                            if (
-                              !window.confirm(
-                                `Merge “${tag.name}” into “${target.name}”? “${tag.name}” is removed and everything it tagged carries “${target.name}” instead.`,
-                              )
-                            ) {
-                              return;
-                            }
-                            void patch(tag, { mergeIntoTagId: target.id }, () => setMergeFrom(null));
-                          }}
+                          onClick={() => void patch(tag, { mergeIntoTagId: target.id }, () => setMergeFrom(null))}
                           className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)] disabled:opacity-50"
                         >
                           <TagDot color={target.color} />

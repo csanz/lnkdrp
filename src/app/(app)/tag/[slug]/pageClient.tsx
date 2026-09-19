@@ -12,7 +12,6 @@ import { Cog6ToothIcon, DocumentTextIcon, FolderIcon, TagIcon } from "@heroicons
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import TagDot from "@/components/tags/TagDot";
-import TagsManagerModal from "@/components/modals/TagsManagerModal";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import type { TagColorKey } from "@/lib/tags/palette";
 
@@ -26,7 +25,6 @@ export default function TagPageClient({ slug }: { slug: string }) {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [managing, setManaging] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,14 +58,13 @@ export default function TagPageClient({ slug }: { slug: string }) {
       <AppPageHeader
         icon={TagIcon}
         actions={
-          <button
-            type="button"
-            onClick={() => setManaging(true)}
+          <Link
+            href="/tags"
             className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-[13px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)]"
           >
             <Cog6ToothIcon className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
             Manage tags
-          </button>
+          </Link>
         }
         title={
           <span className="inline-flex min-w-0 items-center gap-2">
@@ -156,14 +153,6 @@ export default function TagPageClient({ slug }: { slug: string }) {
         </div>
       </div>
 
-      {/* Renaming or merging from here changes what this page is, so it reloads on close. */}
-      <TagsManagerModal
-        open={managing}
-        onClose={() => {
-          setManaging(false);
-          void load();
-        }}
-      />
     </div>
   );
 }

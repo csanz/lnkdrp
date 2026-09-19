@@ -16,7 +16,6 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import TagDot from "@/components/tags/TagDot";
-import TagsManagerModal from "@/components/modals/TagsManagerModal";
 import IconButton from "@/components/ui/IconButton";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -53,7 +52,6 @@ export default function SidebarTagsSection() {
   const [tags, setTags] = useState<Tag[] | null>(null);
   /** `null` until you say otherwise in this visit; the default depends on how many tags there are. */
   const [collapsedPref, setCollapsedPref] = useState<boolean | null>(null);
-  const [managing, setManaging] = useState(false);
 
   // The retired keys are cleared so nothing written by the older defaults can reach this again.
   useEffect(() => {
@@ -125,12 +123,6 @@ export default function SidebarTagsSection() {
     void load();
   }, [pathname, load]);
 
-  // "Manage tags" from anywhere in the app (the picker's footer) opens the same modal here.
-  useEffect(() => {
-    const onManage = () => setManaging(true);
-    window.addEventListener("lnkdrp:manage-tags", onManage);
-    return () => window.removeEventListener("lnkdrp:manage-tags", onManage);
-  }, []);
 
   // Nothing at all until there is a tag: an empty section is a permanent question nobody asked.
   if (!tags || !tags.length) return null;
@@ -155,19 +147,17 @@ export default function SidebarTagsSection() {
           {/* The count stays in the header for when the list is closed. */}
           <span className="font-semibold text-[var(--muted-2)]/70">{tags.length}</span>
         </button>
-        {/* Rename, recolour, merge, delete — in a modal, like Starred's and Projects' full lists,
-            so tidying a tag never costs you the page you were on. Always visible, not revealed on
-            hover: this section is collapsed by default, so a hidden control meant the answer to
+        {/* The way to /tags: rename, recolour, merge, delete. Always visible, not revealed on
+            hover — this section is collapsed by default, so a hidden control meant the answer to
             "where do I manage tags" was nowhere on the screen. */}
-        <button
-          type="button"
+        <Link
+          href="/tags"
           aria-label="Manage tags"
           title="Manage tags"
-          onClick={() => setManaging(true)}
           className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-2)] transition-colors hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]"
         >
           <Cog6ToothIcon className="h-3.5 w-3.5" aria-hidden="true" />
-        </button>
+        </Link>
         <IconButton
           ariaLabel={open ? "Collapse tags" : "Expand tags"}
           variant="ghost"
@@ -207,7 +197,6 @@ export default function SidebarTagsSection() {
         </ul>
       ) : null}
 
-      <TagsManagerModal open={managing} onClose={() => setManaging(false)} />
     </section>
   );
 }

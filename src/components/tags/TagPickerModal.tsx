@@ -17,6 +17,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon, PlusIcon } from "@heroicons/react/24/outline";
 
+import Link from "next/link";
+
 import Modal from "@/components/modals/Modal";
 import TagDot from "@/components/tags/TagDot";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -246,16 +248,13 @@ export default function TagPickerModal({
           {current.length} on this {targetKind === "doc" ? "document" : "project"}
           {" · "}
           {/* The moment you are picking tags is the moment you notice one needs renaming. */}
-          <button
-            type="button"
+          <Link
+            href="/tags"
             className="font-medium text-[var(--muted)] underline underline-offset-2 transition-colors hover:text-[var(--fg)]"
-            onClick={() => {
-              onClose();
-              window.dispatchEvent(new Event("lnkdrp:manage-tags"));
-            }}
+            onClick={onClose}
           >
             Manage tags
-          </button>
+          </Link>
         </span>
         <button
           type="button"
