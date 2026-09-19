@@ -264,6 +264,9 @@ export type DocPatch = Partial<{
 }>;
 
 /** One project from `/api/projects…`. Fields a given route does not return are null. */
+/** One tag, as the tag routes return it. `count` is present only on the workspace listing. */
+export type ApiTag = { id: string; name: string; slug: string; color: string; count: number | null };
+
 /** One starred document, as `GET /api/starred` lists it. */
 export type ApiStarredDoc = { id: string; title: string | null; starredAt: string | null };
 
@@ -389,6 +392,17 @@ function asDoc(raw: unknown): ApiDoc {
 }
 
 /** Normalise a project from any `/api/projects…` envelope (already unwrapped). */
+function asTag(raw: unknown): ApiTag {
+  const t = rec(raw);
+  return {
+    id: strOrNull(t.id) ?? "",
+    name: strOrNull(t.name) ?? "",
+    slug: strOrNull(t.slug) ?? "",
+    color: strOrNull(t.color) ?? "slate",
+    count: typeof t.count === "number" && Number.isFinite(t.count) ? t.count : null,
+  };
+}
+
 function asProject(raw: unknown): ApiProject {
   const p = rec(raw);
   const id = strOrNull(p.id);
@@ -763,6 +777,58 @@ export class ApiClient {
       const r = rec(raw);
       return { id: strOrNull(r.id) ?? "", title: strOrNull(r.title), starredAt: typeof r.starredAt === "number" && r.starredAt > 0 ? new Date(r.starredAt).toISOString() : null };
     });
+  }
+
+  /**
+   * `GET /api/tags` — every tag in the workspace, alphabetical, with how many things carry each.
+   */
+  async listTags(): Promise<ApiTag[]> {
+    const body = rec(await this.request("GET", "/api/tags"));
+    return (Array.isArray(body.tags) ? body.tags : []).map(asTag);
+  }
+
+  /** `GET /api/tags/assignments` — the tags on one document or project. */
+  async tagsForTarget(input: { targetKind: "doc" | "project"; targetId: string }): Promise<ApiTag[]> {
+    const body = rec(
+      await this.request("GET", "/api/tags/assignments", {
+        query: { targetKind: input.targetKind, targetId: input.targetId },
+      }),
+    );
+    return (Array.isArray(body.tags) ? body.tags : []).map(asTag);
+  }
+
+  /**
+   * `POST /api/tags/assignments` — attach a tag by name, creating it if the workspace has no such
+   * tag yet. One call on purpose: find-or-create-then-attach in the client would race with itself.
+   */
+  async attachTag(input: {
+    targetKind: "doc" | "project";
+    targetId: string;
+    name: string;
+  }): Promise<{ tags: ApiTag[]; created: boolean }> {
+    const body = rec(
+      await this.request("POST", "/api/tags/assignments", {
+        body: { targetKind: input.targetKind, targetId: input.targetId, name: input.name },
+      }),
+    );
+    return {
+      tags: (Array.isArray(body.tags) ? body.tags : []).map(asTag),
+      created: Boolean(body.created),
+    };
+  }
+
+  /** `DELETE /api/tags/assignments` — take one tag off one document or project. */
+  async detachTag(input: {
+    targetKind: "doc" | "project";
+    targetId: string;
+    tagId: string;
+  }): Promise<ApiTag[]> {
+    const body = rec(
+      await this.request("DELETE", "/api/tags/assignments", {
+        body: { targetKind: input.targetKind, targetId: input.targetId, tagId: input.tagId },
+      }),
+    );
+    return (Array.isArray(body.tags) ? body.tags : []).map(asTag);
   }
 
   /** `GET /api/projects` — non-request projects, most recently updated first, page-based. */

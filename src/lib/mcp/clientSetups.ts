@@ -736,6 +736,39 @@ export const TOOL_CATALOG: ToolCatalogEntry[] = [
     },
   },
   {
+    name: "lnkdrp_list_tags",
+    purpose: "Every tag in the workspace, with how many things carry each.",
+    access: "read",
+    detail: {
+      inputs: [],
+      output: "Each tag's id, name, slug, colour and how many documents and projects carry it, alphabetical.",
+      errors: [],
+      note: "Read it before tagging to reuse the workspace's own words; a workspace with \u201cFundraising\u201d does not want \u201cfund raising\u201d as well.",
+    },
+  },
+  {
+    name: "lnkdrp_tag",
+    purpose: "Put tags on a document or a project, by name.",
+    access: "write",
+    detail: {
+      inputs: ["docId or projectId \u2014 exactly one", "tags \u2014 1 to 10 names, created if the workspace has none by that name"],
+      output: "Every tag on the item afterwards, and which names were newly created.",
+      errors: ["validation \u2014 both or neither of docId and projectId, or a name with no letters or digits", "not_found \u2014 no such document or project in this workspace"],
+      note: "Names fold on case, accents and punctuation, so \u201cFundraising\u201d and \u201cfundraising\u201d are one tag. Tags are private to the workspace; recipients never see them.",
+    },
+  },
+  {
+    name: "lnkdrp_untag",
+    purpose: "Take tags off a document or a project.",
+    access: "write",
+    detail: {
+      inputs: ["docId or projectId \u2014 exactly one", "tags \u2014 1 to 10 names to remove"],
+      output: "What was removed, what was not on the item (notTagged), and the tags left.",
+      errors: ["validation \u2014 both or neither of docId and projectId", "not_found \u2014 no such document or project in this workspace"],
+      note: "The tag itself survives on everything else that carries it; only this item loses it.",
+    },
+  },
+  {
     name: "lnkdrp_list_starred",
     purpose: "List your starred documents, in sidebar order.",
     access: "read",

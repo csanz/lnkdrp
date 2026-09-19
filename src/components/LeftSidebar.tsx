@@ -36,6 +36,7 @@ import SidebarRequestsModal from "@/components/modals/SidebarRequestsModal";
 import SidebarStarredModal from "@/components/modals/SidebarStarredModal";
 import AccountMenu from "@/components/AccountMenu";
 import SidebarProjectsSection from "@/components/SidebarProjectsSection";
+import SidebarTagsSection from "@/components/SidebarTagsSection";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
 import SidebarCredits from "@/components/SidebarCredits";
@@ -2606,7 +2607,11 @@ export default function LeftSidebar({
                 truncateEnd={truncateEnd}
                 rowEnter={rowEnter}
               />
+
             </section>
+
+            {/* Below Projects: tags are a filing system, not the spine of the workspace. */}
+            <SidebarTagsSection />
 
             <section>
               <div className="group flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">

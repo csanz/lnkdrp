@@ -113,6 +113,8 @@ export default function TagsRow({
       if (!res.ok) throw new Error(json?.error || "Could not add the tag");
       setTags(Array.isArray(json?.tags) ? json!.tags! : []);
       setDraft("");
+      // The sidebar's Tags section counts these; tell it rather than making it poll.
+      window.dispatchEvent(new Event("lnkdrp:tags-changed"));
       // A tag created here belongs in the suggestions for the next one, without a refetch.
       setAll((prev) => {
         const next = Array.isArray(json?.tags) ? json!.tags! : [];
@@ -144,6 +146,7 @@ export default function TagsRow({
       if (!res.ok) throw new Error("Could not remove the tag");
       const json = (await res.json().catch(() => null)) as { tags?: Tag[] } | null;
       if (Array.isArray(json?.tags)) setTags(json!.tags!);
+      window.dispatchEvent(new Event("lnkdrp:tags-changed"));
     } catch (e) {
       setTags(before);
       setError(e instanceof Error ? e.message : "Could not remove the tag");
