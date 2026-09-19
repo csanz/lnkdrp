@@ -8,8 +8,12 @@
  *
  * Best-effort by design: the caller must never fail a removal because an email did not send —
  * the access change is the security action, the notice is a courtesy.
+ *
+ * The body lives in `templates/memberRemoved.ts` with every other email we send, so it can be read
+ * and tested without going through the revoke route.
  */
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { memberRemovedEmail } from "@/lib/email/templates";
 
 type SendMemberRemovedEmailParams = {
   to: string;
@@ -21,32 +25,10 @@ type SendMemberRemovedEmailParams = {
 };
 
 export async function sendMemberRemovedEmail(params: SendMemberRemovedEmailParams): Promise<void> {
-  const { to, orgName, removedByEmail } = params;
-  const appUrl = (params.appUrl ?? process.env.NEXT_PUBLIC_APP_URL ?? "").trim().replace(/\/+$/, "");
-  const workspace = orgName.trim() || "a workspace";
-
-  const text = [
-    `You no longer have access to the workspace "${workspace}".`,
-    "",
-    removedByEmail ? `Removed by: ${removedByEmail}` : null,
-    "",
-    "What this means:",
-    `- You can no longer open that workspace's documents, links or metrics.`,
-    `- Anything you uploaded stays with the workspace, and its share links keep working for recipients.`,
-    `- Your own account and personal workspace are unchanged.`,
-    "",
-    "If you think this was a mistake, ask an owner or admin of that workspace to invite you back.",
-    appUrl ? "" : null,
-    appUrl ? `Your workspace: ${appUrl}` : null,
-    "",
-    "- LinkDrop",
-  ]
-    .filter((line) => line !== null)
-    .join("\n");
-
-  await sendTextEmail({
-    to,
-    subject: `You were removed from ${workspace}`,
-    text,
+  const { subject, text } = memberRemovedEmail({
+    orgName: params.orgName,
+    removedByEmail: params.removedByEmail,
+    appUrl: params.appUrl,
   });
+  await sendTextEmail({ to: params.to, subject, text });
 }

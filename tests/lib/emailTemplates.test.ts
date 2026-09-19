@@ -5,6 +5,7 @@ import {
   downloadRequestApprovedEmail,
   downloadRequestOwnerEmail,
   downloadRequestReceivedEmail,
+  memberRemovedEmail,
 } from "@/lib/email/templates";
 
 /**
@@ -55,5 +56,34 @@ describe("download request emails", () => {
       expect(row.id, row.id).toMatch(/^[a-z_]+(\.[a-z_]+)?$/);
       expect(row.builtBy, row.id).toMatch(/\.ts$/);
     }
+  });
+});
+
+/**
+ * The removal notice. Short by design, so what is pinned here is the part that has to be right:
+ * the workspace is named, the "nothing of yours left with you" sentence is present, and the link
+ * comes from the caller rather than an env var nothing sets — which is how it went missing once.
+ */
+describe("member removed email", () => {
+  test("names the workspace, who did it, and what stays behind", () => {
+    const mail = memberRemovedEmail({
+      orgName: "USAVX",
+      removedByEmail: "owner@example.com",
+      appUrl: "https://lnkdrp.com/",
+    });
+    expect(mail.subject).toBe("You were removed from USAVX");
+    expect(mail.text).toContain("You no longer have access to the workspace \u201cUSAVX\u201d.");
+    expect(mail.text).toContain("Removed by: owner@example.com");
+    expect(mail.text).toContain("Anything you uploaded stays with the workspace");
+    // The trailing slash is trimmed rather than doubled into the URL.
+    expect(mail.text).toContain("Your workspace: https://lnkdrp.com\n");
+    expect(mail.text.trimEnd().endsWith("- LinkDrop")).toBe(true);
+  });
+
+  test("an unnamed workspace and an unknown remover still read as a sentence", () => {
+    const mail = memberRemovedEmail({ orgName: "  ", appUrl: "" });
+    expect(mail.subject).toBe("You were removed from a workspace");
+    expect(mail.text).not.toContain("Removed by:");
+    expect(mail.text).not.toContain("Your workspace:");
   });
 });
