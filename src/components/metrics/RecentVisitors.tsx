@@ -29,6 +29,8 @@ export type RecentVisitor = {
   detail?: string | null;
   /** Which link they came through, when the scope knows. */
   via?: string | null;
+  /** Opens this person's drawer — the same one the viewer tables open. */
+  onOpen?: () => void;
 };
 
 /** "just now", "12m ago", "3h ago", "Tue" — short enough to sit in a row. */
@@ -56,10 +58,15 @@ export default function RecentVisitors({
   visitors,
   limit = 5,
   className,
+  onSeeAll,
+  seeAllLabel = "See all visitors",
 }: {
   visitors: RecentVisitor[];
   limit?: number;
   className?: string;
+  /** Takes the reader to the full viewer lists further down the page. */
+  onSeeAll?: () => void;
+  seeAllLabel?: string;
 }) {
   const rows = visitors
     .filter((v) => v.lastSeen)
@@ -99,7 +106,17 @@ export default function RecentVisitors({
         {rows.map((v) => {
           const isFresh = (v.ago?.hours ?? Infinity) <= FRESH_HOURS;
           return (
-            <li key={v.key} className="flex items-center gap-3">
+            <li key={v.key}>
+              <button
+                type="button"
+                onClick={v.onOpen}
+                disabled={!v.onOpen}
+                title={v.onOpen ? "See what they read" : undefined}
+                className={[
+                  "-mx-2 flex w-[calc(100%+16px)] items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors",
+                  v.onOpen ? "hover:bg-[var(--panel-hover)]" : "cursor-default",
+                ].join(" ")}
+              >
               <span
                 className={[
                   "grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold",
@@ -132,10 +149,23 @@ export default function RecentVisitors({
               >
                 {v.ago?.label}
               </span>
+              </button>
             </li>
           );
         })}
       </ul>
+
+      {/* Five is the glance; everyone else is in the tables further down, so this jumps there
+          rather than making the card grow into a second copy of them. */}
+      {onSeeAll && visitors.length > rows.length ? (
+        <button
+          type="button"
+          onClick={onSeeAll}
+          className="mt-3 text-[12px] font-medium text-[var(--muted)] underline-offset-4 transition-colors hover:text-[var(--fg)] hover:underline"
+        >
+          {seeAllLabel} ({visitors.length}) ↓
+        </button>
+      ) : null}
     </section>
   );
 }

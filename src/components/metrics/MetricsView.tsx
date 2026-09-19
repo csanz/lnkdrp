@@ -1207,6 +1207,8 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
         lastSeen: v.lastSeen,
         detail: describe(v),
+        // The same drawer the tables below open: one row, one reader, one definition of them.
+        onOpen: () => openAuthedViewerDetail(v),
       });
     }
     for (const v of data?.anonymousViewers ?? []) {
@@ -1216,6 +1218,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
         lastSeen: v.lastSeen,
         detail: describe(v),
+        onOpen: () => openAnonViewerDetail(v),
       });
     }
     return rows;
@@ -1845,7 +1848,13 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
 
             {/* Who opened it, newest first — above the tiles, because "did they read it yet" is the
                 question this page is opened to answer and it used to be several screens down. */}
-            <RecentVisitors visitors={recentVisitors} className="mb-5" />
+            <RecentVisitors
+              visitors={recentVisitors}
+              className="mb-5"
+              onSeeAll={() => {
+                document.getElementById("viewer-lists")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            />
 
             <div className="grid gap-5 sm:grid-cols-2">
               {/* Views card */}
@@ -2387,7 +2396,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
               />
             ) : (
               <>
-                <div className="mt-1">
+                <div className="mt-1" id="viewer-lists">
                   <div className="text-sm font-semibold text-[var(--fg)]">Authenticated viewers</div>
                   <div className="mt-1 text-sm text-[var(--muted)]">Only signed-in viewers are listed here.</div>
 
@@ -2744,7 +2753,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
           setViewerDoc(null);
         }}
         ariaLabel="Viewer details"
-        width={560}
+        width={720}
       >
         {!viewerDetail ? null : (
           (() => {
@@ -2758,6 +2767,19 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
               .sort((a, b) => (parseIsoMs(b.startedAt) ?? 0) - (parseIsoMs(a.startedAt) ?? 0))
               .slice(0, 3);
             const initial = (viewerDetail.kind === "anon" && viewerDetail.title === "Anonymous viewer" ? "" : viewerDetail.title.trim()[0] ?? "").toUpperCase();
+            /**
+             * Every page this reader opened, longest first.
+             *
+             * The chart above it answers "how did they move through it" and this answers "how long
+             * on which page", which is the question people actually arrive with. Sorted by time
+             * rather than by page number for the same reason: page 14 holding them for two minutes
+             * is the finding, and in page order it is the eleventh row down.
+             */
+            const pageRows = viewerDetail.pagesSeen
+              .map((page) => ({ page, ms: viewerDetail.pageTimeMsByPage[String(page)] ?? 0 }))
+              .sort((a, b) => b.ms - a.ms || a.page - b.page);
+            const longestPage = pageRows.find((r) => r.ms > 0) ?? null;
+            const maxPageMs = Math.max(1, ...pageRows.map((r) => r.ms));
             const stat = (label: string, value: string) => (
               <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
                 <div className="truncate text-[11px] font-medium text-[var(--muted-2)]">{label}</div>
@@ -2791,7 +2813,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                     : projectViewerSummary(viewerDetail.docs, viewerTimeTotalMs, sessions)}
                 </p>
 
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
                   {stat(
                     "Sessions",
                     supportsPageDetail && visitsLoading && !visits.length
@@ -2813,6 +2835,20 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                           ? formatDurationShort(Math.round(viewerTimeTotalMs / viewerDetail.docs.length))
                           : "—",
                       )}
+                  {/* The two that answer "where did their attention actually go": the page that
+                      held them longest, and what a typical visit was worth. An average across
+                      pages hides both — nine seconds a page reads the same whether they skimmed
+                      evenly or stopped dead on the pricing slide. */}
+                  {stat(
+                    "Longest page",
+                    longestPage ? `p${longestPage.page} · ${formatDurationShort(longestPage.ms)}` : "—",
+                  )}
+                  {stat(
+                    "Avg per session",
+                    sessions > 0 && viewerTimeTotalMs > 0
+                      ? formatDurationShort(Math.round(viewerTimeTotalMs / sessions))
+                      : "—",
+                  )}
                 </div>
 
                 {/* The project's substitute for the per-page chart. A project link has no single
@@ -2940,12 +2976,52 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                       {`Spent ${formatDurationShort(viewerDetail.pageTimeMsByPage[String(viewerDetail.pagesSeen[0])] ?? 0)} on page ${viewerDetail.pagesSeen[0]}.`}
                     </div>
                   ) : viewerHasRealPerPageTime ? (
-                    <div className="mt-2">
-                      <PageTimeChart pages={viewerDetail.pagesSeen} msByPage={viewerDetail.pageTimeMsByPage} />
-                    </div>
+                    <>
+                      <div className="mt-2">
+                        <PageTimeChart pages={viewerDetail.pagesSeen} msByPage={viewerDetail.pageTimeMsByPage} />
+                      </div>
+                      {/* The same numbers as the chart, ranked — a shape tells you they slowed
+                          down somewhere, a list tells you where. */}
+                      <ul className="mt-3 grid gap-1 border-t border-[var(--divider)] pt-3">
+                        {pageRows.slice(0, 8).map((row) => (
+                          <li key={row.page} className="flex items-center gap-3">
+                            <span className="w-12 shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
+                              Page {row.page}
+                            </span>
+                            <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--panel-2)]">
+                              <span
+                                className="block h-full rounded-full bg-emerald-500/70"
+                                style={{ width: `${Math.max(2, Math.round((row.ms / maxPageMs) * 100))}%` }}
+                              />
+                            </span>
+                            <span className="w-14 shrink-0 text-right text-[12px] tabular-nums text-[var(--fg)]">
+                              {row.ms > 0 ? formatDurationShort(row.ms) : "—"}
+                            </span>
+                          </li>
+                        ))}
+                        {pageRows.length > 8 ? (
+                          <li className="pt-1 text-[12px] text-[var(--muted-2)]">
+                            and {pageRows.length - 8} more {pageRows.length - 8 === 1 ? "page" : "pages"}
+                          </li>
+                        ) : null}
+                      </ul>
+                    </>
                   ) : viewerDetail.pagesSeen.length ? (
-                    <div className="mt-2 text-[13px] text-[var(--muted)]">
-                      Opened pages {formatPageRanges(viewerDetail.pagesSeen)}. Time per page wasn&apos;t recorded for this viewer.
+                    <div className="mt-2">
+                      <div className="text-[13px] text-[var(--muted)]">
+                        Opened {viewerDetail.pagesSeen.length === 1 ? "page" : "pages"}{" "}
+                        {formatPageRanges(viewerDetail.pagesSeen)}
+                        {viewerTimeTotalMs > 0
+                          ? `, ${viewerTimeApproxPrefix}${formatDurationShort(viewerTimeTotalMs)} in total.`
+                          : "."}
+                      </div>
+                      {/* Per-page timing only exists for visits recorded since the reading clock
+                          shipped. Saying which pages, and what the whole visit was worth, is what
+                          this reader's data can support — the rest would be invented. */}
+                      <div className="mt-1 text-[12px] text-[var(--muted-2)]">
+                        Time per page wasn&apos;t recorded for this viewer
+                        {sessions > 1 ? `, across ${sessions} sessions` : ""}.
+                      </div>
                     </div>
                   ) : (
                     <div className="mt-2 text-[13px] text-[var(--muted)]">No page activity recorded yet.</div>
