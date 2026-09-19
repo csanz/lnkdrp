@@ -2155,7 +2155,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : (
-                    <div className="flex min-h-8 min-w-0 items-start gap-2.5">
+                    <div className="flex min-h-8 min-w-0 items-center gap-2.5">
                       <span className="flex h-6 shrink-0 items-center md:h-7">
                         {/* The document's glyph, in the slot every other page puts one: Search, Upload and
                             Activity draw theirs through `AppPageHeader`, a project draws a folder, and a
