@@ -28,11 +28,14 @@
  */
 export type EmailTrace = "per_send" | "run_totals" | "none";
 
+/** Who an email is addressed to. Mirrors the catalog's own union, structurally. */
+export type EmailAudience = "owner" | "member" | "requester" | "invitee" | "reader";
+
 /** One catalog row as the page renders it: the raw catalog entry plus what we know about it. */
 export type EmailCatalogRow = {
   id: string;
   what: string;
-  to: "owner" | "member" | "requester" | "invitee";
+  to: EmailAudience;
   builtBy: string;
   trace: EmailTrace;
   /** Where the trace lives, or why there is none. Rendered verbatim. */
@@ -49,7 +52,7 @@ export type EmailCatalogRow = {
 export type EmailCatalogEntry = {
   id: string;
   what: string;
-  to: "owner" | "member" | "requester" | "invitee";
+  to: EmailAudience;
   builtBy: string;
 };
 
@@ -102,6 +105,22 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
     trace: "none",
     traceNote:
       "Not recorded: the approve route sends it best-effort. User.approvedAt records that we let them in, not that the mail arrived.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  viewer_verify: {
+    trace: "none",
+    traceNote:
+      "Not recorded: sent best-effort when a reader introduces themselves, and deliberately gates nothing — the document is already open either way. The introduction itself is what we store; the delivery is not.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  viewer_introduced: {
+    trace: "none",
+    traceNote:
+      "Not recorded: sent best-effort, and only when the anonymous view email already went out. The share_views mail that it corrects is counted in that job's run totals, this one is not.",
     previewable: true,
     previewNote: null,
     flagGated: null,

@@ -16,6 +16,10 @@ import {
   downloadRequestApprovedEmail,
   downloadRequestOwnerEmail,
   downloadRequestReceivedEmail,
+  memberRemovedEmail,
+  viewerIntroducedEmail,
+  viewerVerifyEmail,
+  waitlistApprovedEmail,
 } from "@/lib/email/templates";
 import { buildPlanLimitEmail } from "@/lib/email/sendPlanLimitEmail";
 import {
@@ -208,6 +212,76 @@ function buildPreviews(): PreviewRow[] {
     html: null,
     headers: null,
   });
+
+  rows.push({
+    key: "member_removed",
+    catalogId: "member_removed",
+    label: "Removed from a workspace",
+    inputs: [
+      { label: "orgName", value: "Acme" },
+      { label: "removedByEmail", value: "owner@example.com" },
+      { label: "appUrl", value: SITE_URL },
+    ],
+    ...memberRemovedEmail({ orgName: "Acme", removedByEmail: "owner@example.com", appUrl: SITE_URL }),
+    html: null,
+    headers: null,
+  });
+
+  rows.push({
+    key: "waitlist_approved",
+    catalogId: "waitlist_approved",
+    label: "Early access opened",
+    inputs: [
+      { label: "name", value: "Dana" },
+      { label: "appUrl", value: SITE_URL },
+    ],
+    ...waitlistApprovedEmail({ name: "Dana", appUrl: SITE_URL }),
+    html: null,
+    headers: null,
+  });
+
+  rows.push({
+    key: "viewer_verify",
+    catalogId: "viewer_verify",
+    label: "Reader confirms the address they typed",
+    inputs: [
+      { label: "documentTitle", value: SAMPLE_TITLE },
+      { label: "workspaceName", value: "Acme" },
+      { label: "verifyUrl", value: `${SITE_URL}/share/verify?t=tok` },
+    ],
+    ...viewerVerifyEmail({
+      documentTitle: SAMPLE_TITLE,
+      workspaceName: "Acme",
+      verifyUrl: `${SITE_URL}/share/verify?t=tok`,
+    }),
+    html: null,
+    headers: null,
+  });
+
+  // Both halves, because the sentence that matters is the one that changes: a confirmed address is
+  // a fact and an unconfirmed one is a claim, and the owner has to be able to tell them apart.
+  for (const verified of [true, false] as const) {
+    rows.push({
+      key: `viewer_introduced.${verified ? "verified" : "claimed"}`,
+      catalogId: "viewer_introduced",
+      label: `Reader introduced themselves — ${verified ? "confirmed" : "unconfirmed"}`,
+      inputs: [
+        { label: "verified", value: String(verified) },
+        { label: "viewerName", value: "Dana Lee" },
+        { label: "viewerEmail", value: "dana@example.com" },
+        { label: "documentTitle", value: SAMPLE_TITLE },
+      ],
+      ...viewerIntroducedEmail({
+        documentTitle: SAMPLE_TITLE,
+        viewerName: "Dana Lee",
+        viewerEmail: "dana@example.com",
+        verified,
+        metricsUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/metrics`,
+      }),
+      html: null,
+      headers: null,
+    });
+  }
 
   const planUsage = { documents: 7, projects: 2, members: 3 };
   const graceEndsAt = new Date("2026-09-26T00:00:00.000Z");

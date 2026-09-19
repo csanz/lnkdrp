@@ -6,6 +6,8 @@ import {
   downloadRequestOwnerEmail,
   downloadRequestReceivedEmail,
   memberRemovedEmail,
+  viewerIntroducedEmail,
+  viewerVerifyEmail,
 } from "@/lib/email/templates";
 
 /**
@@ -85,5 +87,56 @@ describe("member removed email", () => {
     expect(mail.subject).toBe("You were removed from a workspace");
     expect(mail.text).not.toContain("Removed by:");
     expect(mail.text).not.toContain("Your workspace:");
+  });
+});
+
+/**
+ * The reader's confirmation mail and the owner's correction. What is pinned here is the promise
+ * the intro form makes and the distinction the owner acts on: the reader's mail must never read
+ * like a wall in front of a document they are already looking at, and the owner's must say plainly
+ * whether an address was confirmed or merely typed.
+ */
+describe("viewer introduction emails", () => {
+  test("the reader's mail says the document stays open", () => {
+    const mail = viewerVerifyEmail({
+      documentTitle: "Series A deck",
+      workspaceName: "Acme",
+      verifyUrl: "https://lnkdrp.com/share/verify?t=tok",
+    });
+    expect(mail.subject).toBe('Confirm your email for "Series A deck"');
+    expect(mail.text).toContain('reading "Series A deck" from Acme');
+    expect(mail.text).toContain("https://lnkdrp.com/share/verify?t=tok");
+    expect(mail.text).toContain("The document stays open either way");
+    expect(mail.text.trimEnd().endsWith("- LinkDrop")).toBe(true);
+  });
+
+  test("an untitled document and a nameless workspace still read as a sentence", () => {
+    const mail = viewerVerifyEmail({ documentTitle: "  ", workspaceName: null, verifyUrl: "https://x/y" });
+    expect(mail.subject).toBe("Confirm your email");
+    expect(mail.text).toContain("reading a document.");
+    expect(mail.text).not.toContain("from ");
+  });
+
+  test("the owner's mail distinguishes a confirmed address from a claimed one", () => {
+    const confirmed = viewerIntroducedEmail({
+      documentTitle: "Series A deck",
+      viewerName: "Dana Lee",
+      viewerEmail: "dana@example.com",
+      verified: true,
+      metricsUrl: "https://lnkdrp.com/doc/abc/metrics",
+    });
+    expect(confirmed.subject).toBe('Dana Lee introduced themselves on "Series A deck"');
+    expect(confirmed.text).toContain("Dana Lee (dana@example.com)");
+    expect(confirmed.text).toContain("so it is theirs");
+    expect(confirmed.text).toContain("What they read: https://lnkdrp.com/doc/abc/metrics");
+
+    const claimed = viewerIntroducedEmail({
+      documentTitle: "Series A deck",
+      viewerEmail: "dana@example.com",
+      verified: false,
+    });
+    expect(claimed.subject).toBe('A reader introduced themselves on "Series A deck"');
+    expect(claimed.text).toContain("treat it as their claim rather than a fact");
+    expect(claimed.text).not.toContain("What they read:");
   });
 });
