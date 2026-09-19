@@ -2155,7 +2155,9 @@ export default function LeftSidebar({
             {agentStatus && !navLocked ? (
               <button
                 type="button"
-                className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-normal text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                // `right-0.5` against its own px-1.5: the two cancel to the same right edge every
+                // other item in this column sits on. (`right-2` put the words 6px inside it.)
+                className="absolute right-0.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-normal text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
                 onClick={(e) => {
                   e.stopPropagation();
                   router.push(agentStatus.connected ? "/activity?who=agents" : "/connect");
@@ -2332,7 +2334,7 @@ export default function LeftSidebar({
                         >
                           {/* `pr-6` reserves the row menu's column, exactly as the Docs rows do, so
                               the version chip lands in the same place in both lists. */}
-                          <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal">
+                          <div className="flex min-w-0 items-center gap-2 pr-9 leading-normal">
                             <StarIcon className="h-3.5 w-3.5 shrink-0 text-amber-400 opacity-70" />
                             <span className="block min-w-0 max-w-[220px] flex-1 truncate text-[var(--fg)]">
                               {title}
@@ -2731,7 +2733,7 @@ export default function LeftSidebar({
                           ].join(" ")}
                           title={when ? `Updated ${when}` : undefined}
                         >
-                          <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal text-[var(--fg)]">
+                          <div className="flex min-w-0 items-center gap-2 pr-9 leading-normal text-[var(--fg)]">
                             <DocumentIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                             <span className="block min-w-0 flex-1 truncate">{title}</span>
                             {/* The document's tags, as dots, in front of its version — the same

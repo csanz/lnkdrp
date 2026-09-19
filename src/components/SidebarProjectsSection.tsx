@@ -209,7 +209,7 @@ export default function SidebarProjectsSection({
                       routerPush(`/project/${p.id}`);
                     }}
                   >
-                    <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal">
+                    <div className="flex min-w-0 items-center gap-2 pr-9 leading-normal">
                       {p.isRequest ? (
                         <InboxArrowDownIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                       ) : (
