@@ -1954,13 +1954,17 @@ export default function LeftSidebar({
 
   return (
     <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
-      {/* One scroller for the whole column, not a pinned header over a scrolling list: the logo,
-          the workspace pill and the nav items scroll away with everything else. A stable gutter
-          keeps the rows from shifting sideways when a section expands past the fold. */}
-      <div
-        className="flex h-full flex-col overflow-y-scroll overflow-x-hidden"
-        style={{ scrollbarGutter: "stable" }}
-      >
+      {/* Two parts, and the split is deliberate: everything you *browse* scrolls — the logo, the
+          workspace pill, the nav items and the lists — and the foot that says who you are and what
+          you have left stays put at the bottom. Pinning the header was wrong (it ate half a laptop
+          screen); letting the account block float up under a short list was wrong too, because it
+          is not part of the list. A stable gutter keeps rows from shifting sideways when a section
+          expands past the fold. */}
+      <div className="flex h-full flex-col">
+        <div
+          className="min-h-0 flex-1 overflow-y-scroll overflow-x-hidden"
+          style={{ scrollbarGutter: "stable" }}
+        >
         {/* The logo row centres on the same line as a page title: AppPageHeader is `pt-6` above an
             `h-8` row, so its title sits 40px from the top, and a 34px row (the workspace pill) needs 23px above it to
             match. Anything else leaves the product's two fixed points — the mark and the page name —
@@ -2799,6 +2803,7 @@ export default function LeftSidebar({
             </section>
           </div>
         </nav>
+        </div>
 
         {plan?.plan === "free" ? (
           // Free plan: proactive usage meters. Hidden on Pro and until the snapshot has loaded.
@@ -2851,7 +2856,7 @@ export default function LeftSidebar({
           </div>
         ) : null}
 
-        <div className="border-t border-[var(--border)] px-3 py-3">
+        <div className="shrink-0 border-t border-[var(--border)] px-3 py-3">
           <SidebarCredits />
           <AccountMenu />
         </div>
