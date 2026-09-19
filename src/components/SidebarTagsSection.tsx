@@ -16,6 +16,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import TagDot from "@/components/tags/TagDot";
+import TagsManagerModal from "@/components/modals/TagsManagerModal";
 import IconButton from "@/components/ui/IconButton";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import type { TagColorKey } from "@/lib/tags/palette";
@@ -39,6 +40,7 @@ export default function SidebarTagsSection() {
   const onTagPage = pathname.startsWith("/tag/");
   const [tags, setTags] = useState<Tag[] | null>(null);
   const [collapsed, setCollapsed] = useState(true);
+  const [managing, setManaging] = useState(false);
 
   useEffect(() => {
     try {
@@ -105,16 +107,18 @@ export default function SidebarTagsSection() {
           {/* The count belongs in the header, since the list it counts is usually shut. */}
           <span className="font-semibold text-[var(--muted-2)]/70">{tags.length}</span>
         </button>
-        {/* The way to rename, recolour, merge and delete. Hover-revealed like the other sections'
-            row actions, so it costs the header nothing when nobody is looking for it. */}
-        <Link
-          href="/preferences?tab=tags"
+        {/* Rename, recolour, merge, delete — in a modal, like Starred's and Projects' full lists,
+            so tidying a tag never costs you the page you were on. Hover-revealed, so it costs the
+            header nothing when nobody is looking for it. */}
+        <button
+          type="button"
           aria-label="Manage tags"
           title="Manage tags"
+          onClick={() => setManaging(true)}
           className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-2)] opacity-0 transition-opacity hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus:opacity-100 group-hover:opacity-100"
         >
           <Cog6ToothIcon className="h-3.5 w-3.5" aria-hidden="true" />
-        </Link>
+        </button>
         <IconButton
           ariaLabel={open ? "Collapse tags" : "Expand tags"}
           variant="ghost"
@@ -153,6 +157,8 @@ export default function SidebarTagsSection() {
           })}
         </ul>
       ) : null}
+
+      <TagsManagerModal open={managing} onClose={() => setManaging(false)} />
     </section>
   );
 }
