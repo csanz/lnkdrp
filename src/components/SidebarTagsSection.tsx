@@ -70,12 +70,42 @@ export default function SidebarTagsSection() {
     void load();
   }, [load]);
 
-  // A tag added or removed anywhere in the app should show up here without a reload.
+  /**
+   * A tag added or removed anywhere in the app shows up here at once — and the section opens to
+   * show it.
+   *
+   * Refreshing a collapsed list is refreshing nothing anyone can see: tagging a project put
+   * "Fundraising 1" into a list that was shut, so the change looked like it had not happened. The
+   * open state is not written to storage here, so the section is still collapsed by default the
+   * next time the app loads; this is only "you just did something, here it is".
+   */
   useEffect(() => {
-    const onChanged = () => void load();
+    const onChanged = () => {
+      setCollapsed(false);
+      void load();
+    };
     window.addEventListener("lnkdrp:tags-changed", onChanged);
     return () => window.removeEventListener("lnkdrp:tags-changed", onChanged);
   }, [load]);
+
+  /**
+   * Someone else's change — a teammate, or an agent filing documents through the MCP — arrives on
+   * the next moment this window is worth updating: coming back to the tab, or navigating. Cheaper
+   * than polling, and the list is never more than one glance out of date.
+   */
+  useEffect(() => {
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [load]);
+
+  useEffect(() => {
+    void load();
+  }, [pathname, load]);
 
   // Nothing at all until there is a tag: an empty section is a permanent question nobody asked.
   if (!tags || !tags.length) return null;
