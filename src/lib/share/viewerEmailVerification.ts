@@ -66,18 +66,33 @@ export function shouldSendVerifyEmail(
  * mail is already in the owner's inbox, and the reader said who they were afterwards. Without this
  * the first mail stays wrong forever and the correction lives only in the activity feed.
  *
- * `notifiedThroughAt` is the furthest any member's `share_views` cursor has advanced in this
- * workspace: if it is at or past the moment this reader first showed up, they were included in a
- * mail that had no name for them.
+ * `notifiedThroughAt` is how far a member's `share_views` cursor has advanced: if it is at or past
+ * the moment this reader first showed up, they were included in a mail that had no name for them.
+ *
+ * `cursorCreatedAt` is the other half, and without it this is wrong. A cursor that does not exist
+ * yet is created at the current time and **nothing is sent for anything before it** — no backfill.
+ * So a workspace whose notification job has never run gets twelve cursors stamped `now`, every view
+ * recorded before that moment becomes permanently un-emailable, and a cursor sitting far in advance
+ * of an old reading is evidence of nothing. Comparing timestamps alone would read that as "they
+ * were emailed" and send a correction for a mail that was never sent.
+ *
+ * A cursor is only evidence about a reader it *predates*: it had to exist before they arrived for
+ * the run that advanced it to have covered them.
  */
 export function ownerNeedsIntroductionEmail(params: {
   /** When this reader first appeared in the workspace's analytics. */
   viewerFirstSeenAt: Date | null;
-  /** The furthest `share_views` notification cursor in the workspace, or null if none has run. */
+  /** How far this member's `share_views` cursor has advanced, or null if they have none. */
   notifiedThroughAt: Date | null;
+  /** When that cursor row was created. Null is treated as "cannot prove it predates them". */
+  cursorCreatedAt?: Date | null;
 }): boolean {
-  const { viewerFirstSeenAt, notifiedThroughAt } = params;
+  const { viewerFirstSeenAt, notifiedThroughAt, cursorCreatedAt } = params;
   if (!viewerFirstSeenAt || !notifiedThroughAt) return false;
+  if (!cursorCreatedAt) return false;
+  // Created after they arrived: their reading fell before this cursor's first tick and no run ever
+  // looked at it.
+  if (cursorCreatedAt.getTime() > viewerFirstSeenAt.getTime()) return false;
   return notifiedThroughAt.getTime() >= viewerFirstSeenAt.getTime();
 }
 

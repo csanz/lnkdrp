@@ -87,20 +87,27 @@ async function membersAlreadyToldAnonymously(params: {
     key: "share_views",
     userId: { $in: userIds },
   })
-    .select({ userId: 1, lastNotifiedAt: 1 })
-    .lean()) as Array<{ userId: Types.ObjectId; lastNotifiedAt?: Date | null }>;
+    .select({ userId: 1, lastNotifiedAt: 1, createdDate: 1 })
+    .lean()) as Array<{ userId: Types.ObjectId; lastNotifiedAt?: Date | null; createdDate?: Date | null }>;
 
-  const notifiedThrough = new Map<string, Date | null>();
+  const cursorByUser = new Map<string, { notifiedThroughAt: Date | null; createdAt: Date | null }>();
   for (const c of cursors) {
-    notifiedThrough.set(String(c.userId), c.lastNotifiedAt ? new Date(c.lastNotifiedAt) : null);
+    cursorByUser.set(String(c.userId), {
+      notifiedThroughAt: c.lastNotifiedAt ? new Date(c.lastNotifiedAt) : null,
+      // The cursor's own age is what separates "a run covered this reader" from "the cursor was
+      // stamped `now` on a first run that sent nothing". See `ownerNeedsIntroductionEmail`.
+      createdAt: c.createdDate ? new Date(c.createdDate) : null,
+    });
   }
 
-  const told = wanting.filter((m) =>
-    ownerNeedsIntroductionEmail({
+  const told = wanting.filter((m) => {
+    const cursor = cursorByUser.get(String(m.userId));
+    return ownerNeedsIntroductionEmail({
       viewerFirstSeenAt,
-      notifiedThroughAt: notifiedThrough.get(String(m.userId)) ?? null,
-    }),
-  );
+      notifiedThroughAt: cursor?.notifiedThroughAt ?? null,
+      cursorCreatedAt: cursor?.createdAt ?? null,
+    });
+  });
   if (!told.length) return [];
 
   const users = (await UserModel.find({ _id: { $in: told.map((m) => m.userId) }, isActive: { $ne: false } })
