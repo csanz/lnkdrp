@@ -13,13 +13,16 @@ import { READING_DEPTH_CLASS, READING_DEPTH_LABEL, readingDepth } from "@/lib/me
 export default function DepthBadge({
   timeMs,
   pages,
+  totalPages,
   className,
 }: {
   timeMs: number | null | undefined;
   pages: number | null | undefined;
+  /** The document's page count, so "one page of nine" is not called a read. */
+  totalPages?: number | null;
   className?: string;
 }) {
-  const depth = readingDepth({ timeMs, pages });
+  const depth = readingDepth({ timeMs, pages, totalPages });
   if (depth === "unknown") return null;
   return (
     <span
@@ -30,10 +33,12 @@ export default function DepthBadge({
       ].join(" ")}
       title={
         depth === "read"
-          ? "Spent real time on it"
-          : depth === "skimmed"
-            ? "Moved through it quickly"
-            : "Opened it and left"
+          ? "Went through it properly"
+          : depth === "started"
+            ? "Read what they opened, but stopped early"
+            : depth === "skimmed"
+              ? "Turned the pages quickly"
+              : "Opened it and left"
       }
     >
       {READING_DEPTH_LABEL[depth]}

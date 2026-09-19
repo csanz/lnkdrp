@@ -32,6 +32,8 @@ export type RecentVisitor = {
   /** The raw pair behind the badge, so the row can say Read / Skimmed / Glanced. */
   timeMs?: number | null;
   pages?: number | null;
+  /** The document's page count, so one page of nine is not called a read. */
+  totalPages?: number | null;
   /** Which link they came through, when the scope knows. */
   via?: string | null;
   /** Opens this person's drawer — the same one the viewer tables open. */
@@ -141,7 +143,7 @@ export default function RecentVisitors({
                   </span>
                   {/* The judgement the numbers beside it require you to make: whether this visit is
                       worth opening. Silent when there is no clock to judge with. */}
-                  <DepthBadge timeMs={v.timeMs} pages={v.pages} />
+                  <DepthBadge timeMs={v.timeMs} pages={v.pages} totalPages={v.totalPages} />
                 </span>
                 {v.detail || v.via ? (
                   <span className="block truncate text-[12px] text-[var(--muted-2)]">

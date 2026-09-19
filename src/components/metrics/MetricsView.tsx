@@ -55,6 +55,7 @@ import { buildPublicProjectUrl, buildPublicShareUrl } from "@/lib/urls";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { rememberEntityTitle } from "@/lib/client/entityTitles";
 import EntityCrumbLabel, { CrumbSkeleton, EntityHeaderName, useHeaderName } from "@/components/HeaderIdentity";
+import { useEntityIdentity } from "@/lib/client/entityIdentity";
 
 /** Free = basic (totals, chart, unique viewer count); Pro = deep (identities, per-page time, visits). */
 type AnalyticsTier = "basic" | "deep";
@@ -799,6 +800,8 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    * the payload still overwrites it when it arrives.
    */
   const { name: remembered } = useHeaderName(scope.kind === "project" ? "project" : "doc", scope.id);
+  // The same shared read the header uses, for its page count: coverage needs a denominator.
+  const { identity: docIdentity } = useEntityIdentity(scope.kind === "project" ? "project" : "doc", scope.id);
   const [resourceTitle, setResourceTitle] = useState<string>("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [liveLoading, setLoading] = useState(false);
@@ -1183,6 +1186,12 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    * scope — a project link spans documents, so it reports documents opened where a document
    * reports pages read.
    */
+  /**
+   * The denominator for coverage: how many pages this document has. Documents only — a project's
+   * unit is documents opened, which has no fixed total worth dividing by.
+   */
+  const docTotalPages = scope.kind === "doc" ? docIdentity?.pages ?? null : null;
+
   const recentVisitors = useMemo(() => {
     const rows: RecentVisitor[] = [];
     const describe = (v: {
@@ -1211,6 +1220,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         detail: describe(v),
         timeMs: v.timeSpentMs ?? 0,
         pages: scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0),
+        totalPages: docTotalPages,
         // Straight to the reader's own page — no intermediate peek. The row and the tables below
         // now lead to the same address rather than to two different depths of the same story.
         onOpen: () => router.push(`${basePath}/metrics/viewer/${viewerRouteKey("authed", v.userId)}`),
@@ -1225,11 +1235,12 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         detail: describe(v),
         timeMs: v.timeSpentMs ?? 0,
         pages: scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0),
+        totalPages: docTotalPages,
         onOpen: () => router.push(`${basePath}/metrics/viewer/${viewerRouteKey("anon", v.botIdHash)}`),
       });
     }
     return rows;
-  }, [data?.viewers, data?.anonymousViewers, scope.kind]);
+  }, [data?.viewers, data?.anonymousViewers, scope.kind, docTotalPages, basePath, router]);
 
   const recentlyOpenedLinks = useMemo(
     () =>
@@ -2454,6 +2465,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                                 ? v.docsOpened ?? 0
                                                 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0)
                                             }
+                                            totalPages={docTotalPages}
                                           />
                                         </div>
                                         {showEmailLine ? (
@@ -2553,6 +2565,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                                 ? v.docsOpened ?? 0
                                                 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0)
                                             }
+                                            totalPages={docTotalPages}
                                           />
                                         </div>
                                         {showEmailLine ? (

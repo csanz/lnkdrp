@@ -43,4 +43,27 @@ describe("readingDepth", () => {
   test("a single page held for a moment sits between the two", () => {
     expect(readingDepth({ timeMs: 12_000, pages: 1 })).toBe("skimmed");
   });
+
+  test("the same visit is Read on a one-pager and Started on a deck", () => {
+    // 31 seconds on one page. On a one-page document that is the whole thing.
+    expect(readingDepth({ timeMs: 31_000, pages: 1, totalPages: 1 })).toBe("read");
+    // The same 31 seconds on one page of nine is someone who stopped, however attentively.
+    expect(readingDepth({ timeMs: 31_000, pages: 1, totalPages: 9 })).toBe("started");
+  });
+
+  test("a third of the document is the line", () => {
+    expect(readingDepth({ timeMs: 90_000, pages: 3, totalPages: 9 })).toBe("read");
+    expect(readingDepth({ timeMs: 60_000, pages: 2, totalPages: 9 })).toBe("started");
+  });
+
+  test("an unknown page count never downgrades anyone", () => {
+    // Projects have no page denominator; a good read there stays a read.
+    expect(readingDepth({ timeMs: 120_000, pages: 2 })).toBe("read");
+    expect(readingDepth({ timeMs: 120_000, pages: 2, totalPages: null })).toBe("read");
+  });
+
+  test("coverage cannot rescue a skim", () => {
+    // Every page, nine seconds each: still a skim, whatever the coverage.
+    expect(readingDepth({ timeMs: 80_000, pages: 9, totalPages: 9 })).toBe("skimmed");
+  });
 });

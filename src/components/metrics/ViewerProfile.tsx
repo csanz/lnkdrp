@@ -30,6 +30,8 @@ import {
 } from "@/components/metrics/MetricsView";
 import DepthBadge from "@/components/metrics/DepthBadge";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { subscribeRealtime } from "@/lib/client/realtime";
+import { useEntityIdentity } from "@/lib/client/entityIdentity";
 
 /** `u_<userId>` for a signed-in reader, `a_<botIdHash>` for a device. Readable in a URL. */
 export function viewerRouteKey(kind: "authed" | "anon", key: string): string {
@@ -82,6 +84,8 @@ export default function ViewerProfile({
   days?: number;
 }) {
   const who = useMemo(() => parseRouteKey(routeKey), [routeKey]);
+  // The document's page count, shared with the header above rather than fetched again.
+  const { identity } = useEntityIdentity(scopeKind, scopeId);
   const apiBase = scopeKind === "doc" ? `/api/docs/${encodeURIComponent(scopeId)}` : `/api/projects/${encodeURIComponent(scopeId)}`;
   const backHref = scopeKind === "doc" ? `/doc/${encodeURIComponent(scopeId)}/metrics` : `/project/${encodeURIComponent(scopeId)}/metrics`;
 
@@ -124,28 +128,56 @@ export default function ViewerProfile({
 
   // Sessions are a document idea: a tab session on a project spans documents, so its page sequence
   // has no project meaning and the documents list below carries what does.
-  useEffect(() => {
+  const loadVisits = useCallback(async () => {
     if (scopeKind !== "doc" || !who) return;
-    let cancelled = false;
-    void (async () => {
-      setVisitsLoading(true);
-      try {
-        const params = new URLSearchParams({ kind: who.kind, limit: "50" });
-        params.set(who.kind === "authed" ? "userId" : "botIdHash", who.key);
-        const res = await fetchWithTempUser(`${apiBase}/shareviews/visits?${params.toString()}`, { cache: "no-store" });
-        if (!res.ok) return;
-        const json = (await res.json()) as { visits?: Visit[] };
-        if (!cancelled) setVisits(Array.isArray(json.visits) ? json.visits : []);
-      } catch {
-        // The page still has everything except the session list.
-      } finally {
-        if (!cancelled) setVisitsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    setVisitsLoading(true);
+    try {
+      const params = new URLSearchParams({ kind: who.kind, limit: "50" });
+      params.set(who.kind === "authed" ? "userId" : "botIdHash", who.key);
+      const res = await fetchWithTempUser(`${apiBase}/shareviews/visits?${params.toString()}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const json = (await res.json()) as { visits?: Visit[] };
+      setVisits(Array.isArray(json.visits) ? json.visits : []);
+    } catch {
+      // The page still has everything except the session list.
+    } finally {
+      setVisitsLoading(false);
+    }
   }, [apiBase, scopeKind, who]);
+
+  useEffect(() => {
+    void loadVisits();
+  }, [loadVisits]);
+
+  /**
+   * Live, while they are still reading.
+   *
+   * The share-view and project-link-view change streams both broadcast `viewer` frames, and a
+   * recipient who introduces themselves mid-visit broadcasts one too — so the same subscription
+   * covers "they turned three more pages" and "the anonymous device now has a name". Debounced,
+   * because a fast reader produces a frame per page and this page makes two requests per refresh.
+   */
+  useEffect(() => {
+    let timer: number | undefined;
+    const refresh = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void load();
+        void loadVisits();
+      }, 1200);
+    };
+    const stopViewer = subscribeRealtime("viewer", refresh);
+    const stopActivity = subscribeRealtime("activity", (frame) => {
+      const type = frame.type === "activity" ? (frame.event?.type ?? "") : "";
+      if (type.startsWith("share.")) refresh();
+    });
+    return () => {
+      window.clearTimeout(timer);
+      stopViewer();
+      stopActivity();
+    };
+  }, [load, loadVisits]);
+
 
   const name = (viewer?.name ?? "").trim() || (viewer?.email ?? "").trim();
   const title = name || (who?.kind === "anon" ? "Anonymous visitor" : "Signed-in reader");
@@ -205,7 +237,11 @@ export default function ViewerProfile({
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-3">
             <span className="truncate text-3xl font-semibold tracking-tight text-[var(--fg)]">{title}</span>
-            <DepthBadge timeMs={timeMs} pages={scopeKind === "doc" ? viewer.pagesViewed ?? pagesSeen.length : viewer.docs?.length ?? 0} />
+            <DepthBadge
+              timeMs={timeMs}
+              pages={scopeKind === "doc" ? viewer.pagesViewed ?? pagesSeen.length : viewer.docs?.length ?? 0}
+              totalPages={scopeKind === "doc" ? identity?.pages ?? null : null}
+            />
           </div>
           <div className="mt-1 truncate text-sm text-[var(--muted)]">
             {viewer.email && name !== viewer.email ? `${viewer.email} · ` : ""}

@@ -22,8 +22,8 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
-import { type EntityKind, rememberEntityTitle } from "@/lib/client/entityTitles";
-import { ACTIVE_ORG_CHANGED_EVENT } from "@/lib/sidebarCache";
+import { type EntityKind, forgetEntityTitle, rememberEntityTitle } from "@/lib/client/entityTitles";
+import { ACTIVE_ORG_CHANGED_EVENT, ACTIVE_ORG_STORAGE_KEY } from "@/lib/sidebarCache";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 
 /** A project pill on a document's identity row. */
@@ -34,6 +34,14 @@ export type EntityIdentity = {
   name: string;
   /** The current version number — documents only; `null` on projects and on an unversioned doc. */
   version: number | null;
+  /**
+   * How many pages the current file has — documents only.
+   *
+   * Carried here because it is the denominator for "how much of it did they read": one page for
+   * thirty seconds is attentive on a one-pager and abandonment on a nine-page deck, and the two
+   * must not wear the same word.
+   */
+  pages?: number | null;
   /** The projects a document belongs to — empty on the project scope. */
   projects: EntityProjectPill[];
   /**
@@ -90,6 +98,20 @@ function subscribe(listener: () => void): () => void {
  * must not paint that document's cached name for the beat before the API refuses it.
  */
 function onActiveOrgChanged(): void {
+  /**
+   * "The workspace became known" is not a workspace switch.
+   *
+   * `providers.tsx` fires this event once on every load, when `/api/orgs/active` resolves and the
+   * stored id goes from absent to present. Clearing on that transition wiped identities that were
+   * already painted, and the header visibly blanked and came back — the very symptom this work
+   * exists to remove. Only a known workspace being replaced by a different one invalidates
+   * anything.
+   */
+  const next = activeOrgIdForIdentity();
+  const prev = lastKnownOrgId;
+  lastKnownOrgId = next;
+  if (!prev || prev === next) return;
+
   state.clear();
   inflight.clear();
   /**
@@ -107,12 +129,31 @@ function onActiveOrgChanged(): void {
 /** Incremented on every workspace switch, so mounted readers re-run their read. */
 let generation = 0;
 
+/** The workspace the entries in `state` belong to, so a first resolution is not read as a switch. */
+let lastKnownOrgId: string | null = null;
+
+/** The active workspace id, read the way every other client cache reads it. */
+function activeOrgIdForIdentity(): string | null {
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
+    return (raw ?? "").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** `/api/docs/:id?lite=1` — the document's title, version and projects without its extracted text. */
 async function readDoc(id: string): Promise<EntityIdentity | null> {
   const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(id)}?lite=1`, { cache: "no-store" });
   if (!res.ok) return null;
   const json = (await res.json()) as {
-    doc?: { title?: unknown; lastUpdate?: { version?: unknown } | null; projects?: unknown };
+    doc?: {
+      title?: unknown;
+      lastUpdate?: { version?: unknown } | null;
+      projects?: unknown;
+      currentUploadPages?: unknown;
+      pageSlugs?: unknown;
+    };
   } | null;
   const raw = json?.doc;
   if (!raw) return null;
@@ -126,7 +167,13 @@ async function readDoc(id: string): Promise<EntityIdentity | null> {
   const version = raw.lastUpdate && typeof raw.lastUpdate.version === "number" ? raw.lastUpdate.version : null;
   // `isRequest` describes a project, never a document; a document's own request-ness is carried by
   // the pills in `projects`.
-  return { name: typeof raw.title === "string" ? raw.title.trim() : "", version, projects, isRequest: false };
+  const pages =
+    typeof raw.currentUploadPages === "number" && Number.isFinite(raw.currentUploadPages)
+      ? Math.max(0, Math.floor(raw.currentUploadPages))
+      : Array.isArray(raw.pageSlugs)
+        ? raw.pageSlugs.length
+        : null;
+  return { name: typeof raw.title === "string" ? raw.title.trim() : "", version, projects, isRequest: false, pages };
 }
 
 /**
@@ -153,26 +200,59 @@ export function loadEntityIdentity(kind: EntityKind, id: string): Promise<void> 
   const key = cacheKey(kind, id);
   const existing = inflight.get(key);
   if (existing) return existing;
+  // The workspace this read belongs to. A switch bumps `generation`, and an answer that arrives
+  // afterwards is about the previous workspace — publishing it would paint one workspace's name in
+  // another, and `rememberEntityTitle` would then persist it under the new workspace's key, which
+  // is exactly the leak the per-workspace storage key exists to prevent.
+  const startedAt = generation;
+  let refused = false;
   const run = (async () => {
     let identity: EntityIdentity | null = null;
     try {
       identity = kind === "doc" ? await readDoc(id) : await readProject(id);
+      refused = identity === null;
     } catch {
       // A refused, offline or malformed read is still an answer as far as the header is concerned:
       // stop pulsing and let the caller print whatever it has.
     } finally {
       inflight.delete(key);
     }
+    if (startedAt !== generation) return;
     if (identity) {
       publish(key, { identity, settled: true });
       // The server has spoken — correct the remembered name for every page after this one.
       if (identity.name) rememberEntityTitle(kind, id, identity.name);
       return;
     }
+    /**
+     * The read came back with nothing. A network failure is not an answer about the resource, but
+     * a refusal is: the document or project has been deleted, or is no longer ours. Drop the
+     * remembered name then, or the sub-pages that never redirect (`/doc/:id/links`,
+     * `/project/:id/links`) go on printing it over an empty table for good.
+     */
+    if (refused) forgetEntityTitle(kind, id);
     publish(key, { identity: state.get(key)?.identity ?? null, settled: true });
   })();
   inflight.set(key, run);
   return run;
+}
+
+/**
+ * Correct the cached identity's name, for a rename the app already committed.
+ *
+ * The cache lives for the whole session, so without this a document renamed on its own page was
+ * still "Q3 deck" in `state` when its Links page mounted: the header painted the old name, then
+ * the refetch replaced it — the exact flash this feature removes, one level down. A no-op when the
+ * resource has not been read yet; the read will get the new name from the server anyway.
+ */
+export function noteEntityName(kind: EntityKind, id: string, name: string): void {
+  if (typeof window === "undefined" || !id) return;
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const key = cacheKey(kind, id);
+  const current = state.get(key);
+  if (!current?.identity || current.identity.name === trimmed) return;
+  publish(key, { identity: { ...current.identity, name: trimmed }, settled: current.settled });
 }
 
 /**
