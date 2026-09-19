@@ -22,6 +22,7 @@ import {
   PDF_ONLY_ERROR_MESSAGE,
   UNSUPPORTED_FILE_TYPE_CODE,
 } from "@/lib/blob/serverClientUploadRoute";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -170,13 +171,31 @@ export async function POST(request: Request) {
 
     await connectMongo();
 
-    // Ensure doc exists
-    let doc = await DocModel.findOne({
-      _id: new Types.ObjectId(body.docId),
-      userId: new Types.ObjectId(actor.userId),
-      isDeleted: { $ne: true },
-    });
-    if (!doc) return NextResponse.json({ error: "Doc not found" }, { status: 404 });
+    /**
+     * The document, scoped to the **workspace** rather than to whoever uploaded it.
+     *
+     * This used to match on `userId: actor.userId`, which meant an invited member of a shared
+     * workspace could open a document and then be told "Doc not found" when they replaced the
+     * file — the one write path still using pre-workspace ownership while every read path around
+     * it was org-scoped. `buildDocMatch` is the same rule `/api/docs/:docId` applies, legacy
+     * personal documents included.
+     */
+    let doc = await DocModel.findOne(
+      buildDocMatch(
+        new Types.ObjectId(body.docId),
+        new Types.ObjectId(actor.orgId),
+        new Types.ObjectId(actor.userId),
+        actor.orgId === actor.personalOrgId,
+      ),
+    );
+    if (!doc) {
+      return NextResponse.json(
+        // Say which of the two it is. "Doc not found" sent a member looking for a deleted document
+        // when the truth was that they were in the wrong workspace.
+        { error: "Doc not found", message: "That document isn't in this workspace. Switch workspaces and try again." },
+        { status: 404 },
+      );
+    }
 
     // Ensure the doc has a public shareId at upload time.
     if (!doc.shareId) {

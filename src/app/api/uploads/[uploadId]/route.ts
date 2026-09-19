@@ -67,6 +67,9 @@ export async function GET(
           docId: upload.docId ? String(upload.docId) : null,
           status: upload.status ?? null,
           version: typeof (upload as any).version === "number" ? (upload as any).version : null,
+          // "A new version landed and it reads exactly like the last one" — the replacing UI says
+          // so rather than reporting an ordinary success for a file that changed nothing.
+          unchangedFromPrevious: Boolean((upload as { unchangedFromPrevious?: unknown }).unchangedFromPrevious),
           ai: (upload as { ai?: unknown }).ai ?? null,
           // Why a failed upload failed. Without it a caller (the MCP's share_pdf, the upload UI)
           // could only say "failed" and leave the person guessing whether to retry.
@@ -108,6 +111,9 @@ export async function GET(
           docId: upload.docId ? String(upload.docId) : null,
           status: upload.status ?? null,
           version: typeof (upload as any).version === "number" ? (upload as any).version : null,
+          // "A new version landed and it reads exactly like the last one" — the replacing UI says
+          // so rather than reporting an ordinary success for a file that changed nothing.
+          unchangedFromPrevious: Boolean((upload as { unchangedFromPrevious?: unknown }).unchangedFromPrevious),
           ai: (upload as { ai?: unknown }).ai ?? null,
           // Why a failed upload failed. Without it a caller (the MCP's share_pdf, the upload UI)
           // could only say "failed" and leave the person guessing whether to retry.

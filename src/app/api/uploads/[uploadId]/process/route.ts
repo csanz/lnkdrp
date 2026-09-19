@@ -1877,6 +1877,13 @@ export async function POST(
         Boolean(extractedText) &&
         Boolean(process.env.OPENAI_API_KEY);
       if (sameAsPreviousVersion) {
+        // The replacing UI polls this upload row, so the fact rides home on it rather than through
+        // a second request for the version history.
+        try {
+          await UploadModel.updateOne({ _id: upload._id }, { $set: { unchangedFromPrevious: true } });
+        } catch {
+          // best-effort: the banner falls back to its ordinary "Updated to vN".
+        }
         // Its own state, not "skipped": nothing was withheld and nothing is missing, so readers
         // must not warn about it or mark the kept summary as stale.
         aiState.summary = "unchanged";

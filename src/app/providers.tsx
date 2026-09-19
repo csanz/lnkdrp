@@ -191,6 +191,12 @@ function SearchShortcut() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // `key` is typed as a string and is not always one. Password managers, autofill and other
+      // extensions dispatch synthetic keydowns without it, and this listener is on `document` for
+      // every page in the app — including the recipient-facing share pages, where an autofilled
+      // email field turned a helpful extension into a full-page error overlay on someone else's
+      // document.
+      if (typeof e.key !== "string") return;
       if (e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
       const active = document.activeElement;
       const isSearchInput = active instanceof HTMLElement && active.hasAttribute("data-lnkdrp-search-input");
