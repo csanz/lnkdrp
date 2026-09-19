@@ -25,6 +25,9 @@ type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?:
 
 const COLLAPSED_KEY = "ld_sidebar_tags_collapsed";
 
+/** Up to this many tags, the section opens itself; past it, the header's count speaks for it. */
+const AUTO_OPEN_MAX = 8;
+
 /** The same plus/minus the other sidebar sections use, without importing the sidebar itself. */
 function PlusMinus({ expanded }: { expanded: boolean }) {
   return (
@@ -39,16 +42,17 @@ export default function SidebarTagsSection() {
   const pathname = usePathname() ?? "";
   const onTagPage = pathname.startsWith("/tag/");
   const [tags, setTags] = useState<Tag[] | null>(null);
-  const [collapsed, setCollapsed] = useState(true);
+  /** `null` until this browser says otherwise: the default depends on how many tags there are. */
+  const [collapsedPref, setCollapsedPref] = useState<boolean | null>(null);
   const [managing, setManaging] = useState(false);
 
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(COLLAPSED_KEY);
-      // Collapsed unless this browser said otherwise; a tag page opens it regardless.
-      if (raw === "0") setCollapsed(false);
+      if (raw === "0") setCollapsedPref(false);
+      else if (raw === "1") setCollapsedPref(true);
     } catch {
-      // Storage refused: the default stands.
+      // Storage refused: the size-based default below stands.
     }
   }, []);
 
@@ -81,7 +85,7 @@ export default function SidebarTagsSection() {
    */
   useEffect(() => {
     const onChanged = () => {
-      setCollapsed(false);
+      setCollapsedPref(false);
       void load();
     };
     window.addEventListener("lnkdrp:tags-changed", onChanged);
@@ -110,19 +114,26 @@ export default function SidebarTagsSection() {
   // Nothing at all until there is a tag: an empty section is a permanent question nobody asked.
   if (!tags || !tags.length) return null;
 
-  const open = onTagPage || !collapsed;
+  /**
+   * Open unless this browser said to close it — up to a point.
+   *
+   * "Collapsed by default" was the call when the section was hypothetical, and in use it means a
+   * workspace with three tags shows a header with a number and nothing else, which reads as a
+   * feature that is not working. A short list is not clutter. A long one is, so past
+   * `AUTO_OPEN_MAX` the default flips back to closed and the header's count carries it. Either
+   * way an explicit toggle is remembered and wins.
+   */
+  const open = onTagPage || (collapsedPref === null ? tags.length <= AUTO_OPEN_MAX : !collapsedPref);
   const activeSlug = onTagPage ? decodeURIComponent(pathname.slice("/tag/".length)).toLowerCase() : "";
 
   function toggle() {
-    setCollapsed((v) => {
-      const next = !v;
-      try {
-        window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
-      } catch {
-        // ignore
-      }
-      return next;
-    });
+    const next = open; // open now means the click closes it
+    setCollapsedPref(next);
+    try {
+      window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+    } catch {
+      // ignore
+    }
   }
 
   return (
