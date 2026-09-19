@@ -18,6 +18,8 @@ import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { agentLabel } from "@/lib/activity/log";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
+import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
@@ -60,6 +62,21 @@ function decodeCursor(raw: string | null): Cursor | null {
  * `docId`. Response: `{ items, nextCursor }` with actor/doc/project resolved via one `$in` each.
  * Errors: 403 when the caller is not a workspace member; 400 for unexpected failures.
  */
+/**
+ * Events written by a recipient rather than by someone in the workspace.
+ *
+ * Two rules hang off this set, and both were once written out by hand as
+ * `share.viewed || share.downloaded`, which is how arriving in a data room and entering a password
+ * ended up outside them: identities on these rows are Pro-gated, and a name given *after* the row
+ * was written is joined back onto it from the reader's `ShareView`.
+ */
+const RECIPIENT_TYPES: ReadonlySet<string> = new Set([
+  "share.viewed",
+  "share.downloaded",
+  "project.landed",
+  "share.unlocked",
+]);
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
@@ -142,19 +159,39 @@ export async function GET(request: Request) {
       if (r.projectId) projectIds.set(String(r.projectId), r.projectId as Types.ObjectId);
     }
 
-    // Recipients who introduced themselves after their "viewed"/"downloaded" row was written: pick
-    // up the name from their ShareView row (keyed by the viewer key stored on the event).
+    /**
+     * Recipients who introduced themselves after their row was written: pick the name up from the
+     * rows that carry identity, keyed by the viewer key stored on the event.
+     *
+     * The key is normalised to **the person** on both sides, which is the whole difficulty. Inside
+     * a data room a reading row is keyed `<digest>.<docId>` (`projectViewerKey` — one row per
+     * document read behind one slug) while an arrival or an unlock is keyed by the bare digest,
+     * because neither is about a document. Matching the two literally — which is what this did —
+     * meant every project-link row stayed "Someone" for ever, however many times the reader gave
+     * their name.
+     */
     const viewerKeys = new Map<string, { shareId: string; botIdHash: string }>();
     for (const r of page) {
-      if (r.type !== "share.viewed" && r.type !== "share.downloaded") continue;
+      if (!RECIPIENT_TYPES.has(r.type as string)) continue;
       const m = (r.meta ?? {}) as Record<string, unknown>;
       if (typeof m.viewerName === "string" && m.viewerName) continue;
       if (typeof m.viewerKey === "string" && m.viewerKey && typeof m.shareId === "string" && m.shareId) {
-        viewerKeys.set(`${m.shareId}:${m.viewerKey}`, { shareId: m.shareId, botIdHash: m.viewerKey });
+        const person = splitProjectViewerKey(m.viewerKey).botIdHash;
+        if (person) viewerKeys.set(`${m.shareId}:${person}`, { shareId: m.shareId, botIdHash: person });
       }
     }
+    /**
+     * `{shareId, botIdHash}` for a document link, and the same digest with any document suffix for
+     * a project one. The digest is hex, so it needs no escaping — but it is read off a stored
+     * document, so anything that is not a digest falls back to an exact match rather than being
+     * interpolated into a regex.
+     */
+    const viewerKeyClauses = Array.from(viewerKeys.values()).map(({ shareId, botIdHash }) => ({
+      shareId,
+      $or: viewerKeyMatchClause(botIdHash),
+    }));
 
-    const [users, docs, projects, knownViewers, plan] = await Promise.all([
+    const [users, docs, projects, knownViewers, knownLanders, plan] = await Promise.all([
       userIds.size
         ? UserModel.find({ _id: { $in: Array.from(userIds.values()) } })
             .select({ _id: 1, name: 1, email: 1, isTemp: 1 })
@@ -171,15 +208,43 @@ export async function GET(request: Request) {
             .lean()
         : Promise.resolve([]),
       viewerKeys.size
-        ? ShareViewModel.find({ $or: Array.from(viewerKeys.values()) })
-            .select({ shareId: 1, botIdHash: 1, viewerName: 1, viewerEmail: 1 })
+        ? ShareViewModel.find({ $or: viewerKeyClauses })
+            .select({ shareId: 1, botIdHash: 1, viewerName: 1, viewerEmail: 1, viewerEmailSnapshot: 1 })
+            .lean()
+        : Promise.resolve([]),
+      // The arrival rows. A visitor who opens a data room and reads nothing writes no `ShareView`
+      // at all, so this is the only place their name exists — and an arrival is exactly the row
+      // that wants one.
+      viewerKeys.size
+        ? ProjectLinkViewModel.find({ $or: Array.from(viewerKeys.values()) })
+            .select({ shareId: 1, botIdHash: 1, viewerName: 1, viewerEmail: 1, viewerEmailSnapshot: 1 })
             .lean()
         : Promise.resolve([]),
       getWorkspacePlan(orgId).catch(() => "free" as const),
     ]);
     const viewerByKey = new Map<string, { name: string | null; email: string | null }>();
-    for (const v of knownViewers as Array<{ shareId?: string; botIdHash?: string; viewerName?: string | null; viewerEmail?: string | null }>) {
-      if (v.shareId && v.botIdHash) viewerByKey.set(`${v.shareId}:${v.botIdHash}`, { name: v.viewerName ?? null, email: v.viewerEmail ?? null });
+    type KnownViewerRow = {
+      shareId?: string;
+      botIdHash?: string;
+      viewerName?: string | null;
+      viewerEmail?: string | null;
+      viewerEmailSnapshot?: string | null;
+    };
+    // Arrivals first, readings second: both are indexed by the person, and a reading row is the
+    // fresher of the two whenever a reader has both.
+    for (const v of [...(knownLanders as KnownViewerRow[]), ...(knownViewers as KnownViewerRow[])]) {
+      if (!v.shareId || !v.botIdHash) continue;
+      const person = splitProjectViewerKey(v.botIdHash).botIdHash;
+      if (!person) continue;
+      const name = v.viewerName ?? null;
+      const email = v.viewerEmail ?? v.viewerEmailSnapshot ?? null;
+      if (!name && !email) continue;
+      // Merged field by field, not replaced. The ingest writes `viewerEmail` independently of
+      // `viewerName`, so an email-only reading row was overwriting a named arrival row and the
+      // feed rendered the address where it already had the person's name.
+      const key = `${v.shareId}:${person}`;
+      const held = viewerByKey.get(key);
+      viewerByKey.set(key, { name: name ?? held?.name ?? null, email: email ?? held?.email ?? null });
     }
     // Who read a document is deep analytics, a Pro feature: on Free, recipient rows stay anonymous
     // here exactly as they are on the metrics page.
@@ -207,13 +272,16 @@ export async function GET(request: Request) {
     }
 
     const items = page.map((r) => {
-      const isRecipientRow = r.actorKind === "viewer" && (r.type === "share.viewed" || r.type === "share.downloaded");
+      const isRecipientRow = r.actorKind === "viewer" && RECIPIENT_TYPES.has(r.type as string);
       const hideIdentity = isRecipientRow && !showViewerIdentity;
       const uid = r.userId && !hideIdentity ? String(r.userId) : null;
       const u = uid ? userById.get(uid) ?? null : null;
       let meta = r.meta && typeof r.meta === "object" ? { ...(r.meta as Record<string, unknown>) } : {};
       if (isRecipientRow) {
-        const known = typeof meta.viewerKey === "string" && typeof meta.shareId === "string" ? viewerByKey.get(`${meta.shareId}:${meta.viewerKey}`) : undefined;
+        const known =
+          typeof meta.viewerKey === "string" && typeof meta.shareId === "string"
+            ? viewerByKey.get(`${meta.shareId}:${splitProjectViewerKey(meta.viewerKey).botIdHash}`)
+            : undefined;
         if (known && !meta.viewerName) meta = { ...meta, viewerName: known.name, viewerEmail: meta.viewerEmail ?? known.email };
         delete meta.viewerKey;
         if (hideIdentity) {
@@ -227,7 +295,9 @@ export async function GET(request: Request) {
       const p = pid ? projectById.get(pid) ?? null : null;
       const agent = r.agent && typeof r.agent.client === "string" ? { client: r.agent.client, version: r.agent.version ?? null } : null;
       const createdDate = r.createdDate instanceof Date ? r.createdDate : new Date(String(r.createdDate));
-      const isProjectEvent = r.type === "request_repo.created";
+      // Events whose `title` is the PROJECT's name rather than a document's, so the fallback used
+      // when the project row is gone names the right thing.
+      const isProjectEvent = r.type === "request_repo.created" || r.type === "project.landed";
 
       return {
         id: String(r._id),

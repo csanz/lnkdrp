@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
+import crypto from "node:crypto";
+
+import { recordActivity } from "@/lib/activity/log";
 import { resolveShareLink } from "@/lib/share/links";
+import { isOwnerSideViewer } from "@/lib/share/ownerSide";
+import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { shareAuthCookieName, shareAuthCookieValue, verifySharePassword } from "@/lib/sharePassword";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
@@ -32,6 +37,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
     const body = (await request.json().catch(() => ({}))) as unknown;
     const password = asNonEmptyString((body as { password?: unknown }).password);
+    // The gate sends the same device id the viewer uses, so the unlock can be attributed to the
+    // same person as the reading that follows — and renamed by the activity feed's `viewerKey` join
+    // the moment they introduce themselves. Optional: a browser that refuses storage still unlocks.
+    const botId = asNonEmptyString((body as { botId?: unknown }).botId);
     if (!password) return NextResponse.json({ error: "Missing password" }, { status: 400 });
 
     // Count every attempt (valid or not) so guessing is bounded per IP + share.
@@ -60,6 +69,42 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
     const ok = verifySharePassword({ password, salt: salt as string, hash: hash as string });
     if (!ok) return NextResponse.json({ error: "Invalid password" }, { status: 401 });
+
+    /**
+     * A protected link's one moment of truth: the password reached the right person and was used.
+     *
+     * Recorded on success only. A wrong password is bounded by the limiter above and is far more
+     * often a recipient mistyping than anyone guessing, so announcing every attempt would bury the
+     * event that matters in the event that doesn't.
+     */
+    const link = resolved.link as { orgId?: unknown; docId?: unknown; projectId?: unknown; label?: unknown; isDefault?: unknown };
+    /**
+     * The owning side is recorded everywhere and announced nowhere — the rule every other
+     * recipient event in this product follows (`isOwnerSideViewer`). Without it, an owner testing
+     * their own password wrote "Someone entered the password for X" into their own feed, and on
+     * Free the identity is stripped, so it read as an unknown outsider getting in.
+     */
+    const unlockSession = await tryResolveAuthUserId(request);
+    const ownerSide = await isOwnerSideViewer(
+      { orgId: link.orgId, userId: (resolved.link as { createdByUserId?: unknown }).createdByUserId },
+      unlockSession?.userId ?? null,
+    );
+    if (link.orgId && !ownerSide) {
+      void recordActivity({
+        orgId: String(link.orgId),
+        actorKind: "viewer",
+        type: "share.unlocked",
+        docId: link.docId ? String(link.docId) : null,
+        projectId: link.projectId ? String(link.projectId) : null,
+        meta: {
+          shareId,
+          ...(botId ? { viewerKey: crypto.createHash("sha256").update(botId).digest("hex") } : {}),
+          linkLabel: typeof link.label === "string" ? link.label : null,
+          isDefaultLink: Boolean(link.isDefault),
+        },
+        request,
+      });
+    }
 
     const res = NextResponse.json({ ok: true, sharePasswordEnabled: true });
     res.cookies.set({
