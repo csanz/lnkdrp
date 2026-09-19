@@ -38,6 +38,7 @@ import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
 import RecentVisitors, { type RecentVisitor } from "@/components/metrics/RecentVisitors";
 import { viewerRouteKey } from "@/components/metrics/ViewerProfile";
+import DepthBadge from "@/components/metrics/DepthBadge";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
@@ -1208,6 +1209,8 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
         lastSeen: v.lastSeen,
         detail: describe(v),
+        timeMs: v.timeSpentMs ?? 0,
+        pages: scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0),
         // Straight to the reader's own page — no intermediate peek. The row and the tables below
         // now lead to the same address rather than to two different depths of the same story.
         onOpen: () => router.push(`${basePath}/metrics/viewer/${viewerRouteKey("authed", v.userId)}`),
@@ -1220,6 +1223,8 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
         lastSeen: v.lastSeen,
         detail: describe(v),
+        timeMs: v.timeSpentMs ?? 0,
+        pages: scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0),
         onOpen: () => router.push(`${basePath}/metrics/viewer/${viewerRouteKey("anon", v.botIdHash)}`),
       });
     }
@@ -2438,7 +2443,19 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                     const showIdLine = !showEmailLine && !email && shortId;
                                     return (
                                       <>
-                                        <div className="truncate text-sm font-semibold text-[var(--fg)]">{title}</div>
+                                        <div className="flex min-w-0 items-center gap-2">
+                                          <span className="truncate text-sm font-semibold text-[var(--fg)]">{title}</span>
+                                          {/* Same judgement as the strip at the top, so a reader
+                                              scanning this list can skip the rows not worth a click. */}
+                                          <DepthBadge
+                                            timeMs={v.timeSpentMs ?? 0}
+                                            pages={
+                                              scope.kind === "project"
+                                                ? v.docsOpened ?? 0
+                                                : v.pagesViewed ?? (v.pagesSeen?.length ?? 0)
+                                            }
+                                          />
+                                        </div>
                                         {showEmailLine ? (
                                           <div className="truncate text-xs text-[var(--muted-2)]">{email}</div>
                                         ) : showIdLine ? (
@@ -2526,9 +2543,17 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                     const showEmailLine = Boolean(name && email);
                                     return (
                                       <>
-                                        <div className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--fg)]">
+                                        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--fg)]">
                                           <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                                           <span className="truncate">{title}</span>
+                                          <DepthBadge
+                                            timeMs={v.timeSpentMs ?? 0}
+                                            pages={
+                                              scope.kind === "project"
+                                                ? v.docsOpened ?? 0
+                                                : v.pagesViewed ?? (v.pagesSeen?.length ?? 0)
+                                            }
+                                          />
                                         </div>
                                         {showEmailLine ? (
                                           <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">{email}</div>

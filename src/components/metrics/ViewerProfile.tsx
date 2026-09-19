@@ -28,6 +28,7 @@ import {
   parseIsoMs,
   relativeAge,
 } from "@/components/metrics/MetricsView";
+import DepthBadge from "@/components/metrics/DepthBadge";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 
 /** `u_<userId>` for a signed-in reader, `a_<botIdHash>` for a device. Readable in a URL. */
@@ -202,7 +203,10 @@ export default function ViewerProfile({
           {name ? name.trim()[0]?.toUpperCase() : <UserIcon className="h-8 w-8 text-[var(--muted)]" aria-hidden="true" />}
         </div>
         <div className="min-w-0">
-          <div className="truncate text-3xl font-semibold tracking-tight text-[var(--fg)]">{title}</div>
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="truncate text-3xl font-semibold tracking-tight text-[var(--fg)]">{title}</span>
+            <DepthBadge timeMs={timeMs} pages={scopeKind === "doc" ? viewer.pagesViewed ?? pagesSeen.length : viewer.docs?.length ?? 0} />
+          </div>
           <div className="mt-1 truncate text-sm text-[var(--muted)]">
             {viewer.email && name !== viewer.email ? `${viewer.email} · ` : ""}
             Last seen {relativeAge(viewer.lastSeen ?? null)}

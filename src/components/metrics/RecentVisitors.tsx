@@ -17,6 +17,8 @@
 
 import { ClockIcon, UserIcon } from "@heroicons/react/24/outline";
 
+import DepthBadge from "@/components/metrics/DepthBadge";
+
 /** Inside this many hours a visit is news, not history. */
 const FRESH_HOURS = 6;
 
@@ -27,6 +29,9 @@ export type RecentVisitor = {
   lastSeen: string | null;
   /** "3 pages · 2m" — whatever the scope can honestly say about what they did. */
   detail?: string | null;
+  /** The raw pair behind the badge, so the row can say Read / Skimmed / Glanced. */
+  timeMs?: number | null;
+  pages?: number | null;
   /** Which link they came through, when the scope knows. */
   via?: string | null;
   /** Opens this person's drawer — the same one the viewer tables open. */
@@ -130,8 +135,13 @@ export default function RecentVisitors({
               </span>
 
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium text-[var(--fg)]">
-                  {v.name ?? "Anonymous visitor"}
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-[13px] font-medium text-[var(--fg)]">
+                    {v.name ?? "Anonymous visitor"}
+                  </span>
+                  {/* The judgement the numbers beside it require you to make: whether this visit is
+                      worth opening. Silent when there is no clock to judge with. */}
+                  <DepthBadge timeMs={v.timeMs} pages={v.pages} />
                 </span>
                 {v.detail || v.via ? (
                   <span className="block truncate text-[12px] text-[var(--muted-2)]">
