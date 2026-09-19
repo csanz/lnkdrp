@@ -1940,7 +1940,13 @@ export default function LeftSidebar({
 
   return (
     <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
-      <div className="flex h-full flex-col">
+      {/* One scroller for the whole column, not a pinned header over a scrolling list: the logo,
+          the workspace pill and the nav items scroll away with everything else. A stable gutter
+          keeps the rows from shifting sideways when a section expands past the fold. */}
+      <div
+        className="flex h-full flex-col overflow-y-scroll overflow-x-hidden"
+        style={{ scrollbarGutter: "stable" }}
+      >
         {/* The logo row centres on the same line as a page title: AppPageHeader is `pt-6` above an
             `h-8` row, so its title sits 40px from the top, and a 34px row (the workspace pill) needs 23px above it to
             match. Anything else leaves the product's two fixed points — the mark and the page name —
@@ -2201,12 +2207,7 @@ export default function LeftSidebar({
           </div>
         </div>
 
-        <nav
-          // Force a stable scrollbar presence to avoid horizontal layout shift when sections collapse/expand.
-          // (Some browsers ignore `scrollbar-gutter`, so `overflow-y-scroll` is the reliable backstop.)
-          className="mt-1 flex-1 overflow-y-scroll overflow-x-hidden border-t border-[var(--border)] pl-3 pr-12 pb-4 pt-4"
-          style={{ scrollbarGutter: "stable" }}
-        >
+        <nav className="mt-1 border-t border-[var(--border)] pl-3 pr-12 pb-4 pt-4">
           {/* Sections may not grow past the nav's padding box: a long doc title's min-content width
               used to widen the Docs section, pushing rows and their "..." past the sidebar edge. */}
           <div className="grid gap-4 [&>*]:min-w-0">
