@@ -18,6 +18,7 @@ import { LinkIcon, PlusIcon } from "@heroicons/react/24/outline";
 import LinksManager, { type LinksManagerHandle } from "@/components/links/LinksManager";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
+import ProjectIdentityRow from "@/components/project/ProjectIdentityRow";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import { usePlan } from "@/lib/client/usePlan";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -65,8 +66,8 @@ export default function LinksPageClient({ projectId }: { projectId: string }) {
           the description's place and the first crumb is the way back. */}
       <SubPageHeader
         kind="project"
-        title={projectName || "Project"}
-        titleHref={`/project/${encodeURIComponent(projectId)}`}
+        hideTile
+        title={<ProjectIdentityRow projectId={projectId} name={projectName} canManageTags={canManage} />}
         crumbs={[{ label: "Project", href: `/project/${encodeURIComponent(projectId)}` }, { label: "Links" }]}
         actions={
           // The project header's own cluster, unchanged. "New link" is not in it on purpose: a

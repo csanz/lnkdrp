@@ -39,6 +39,7 @@ import SubPageHeader from "@/components/SubPageHeader";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
+import ProjectIdentityRow from "@/components/project/ProjectIdentityRow";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
@@ -1534,15 +1535,17 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         // A document's own metrics page leads with the document's title row, so walking in from
         // the header icons feels like going deeper rather than leaving. One link's metrics keep
         // the link tile: there, the thing you are inside is the link.
-        hideTile={scope.kind === "doc" && !shareId}
+        hideTile={!shareId}
         title={
-          scope.kind === "doc" && !shareId ? (
+          shareId ? (
+            resourceTitle || noun
+          ) : scope.kind === "doc" ? (
             <DocIdentityRow docId={scope.id} fallbackTitle={resourceTitle} />
           ) : (
-            resourceTitle || noun
+            <ProjectIdentityRow projectId={scope.id} name={resourceTitle} />
           )
         }
-        titleHref={scope.kind === "doc" && !shareId ? undefined : basePath}
+        titleHref={shareId ? basePath : undefined}
         crumbs={
           shareId
             ? [
