@@ -13,6 +13,7 @@ import QuickStats from "@/components/metrics/QuickStats";
 import TempUserGateModal from "@/components/modals/TempUserGateModal";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
+import TagsRow from "@/components/tags/TagsRow";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import DocProjectsModal, { type DocProjectListItem } from "@/components/modals/DocProjectsModal";
 import { useAuthEnabled, useNavigationLockWhile } from "@/app/providers";
@@ -2780,6 +2781,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       uploadAi?.uploadId === doc.currentUploadId ? (uploadAi?.summaryBy?.label ?? uploadAi?.summaryBy?.client ?? null) : null
                     }
                     summaryMissing={summaryMissingNotice}
+                    tags={hasHydratedFromServer ? <TagsRow targetKind="doc" targetId={doc.id} /> : null}
                     quickStats={
                       hasHydratedFromServer && doc.status === "ready" ? (
                         <QuickStats

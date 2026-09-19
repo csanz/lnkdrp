@@ -20,6 +20,7 @@ import { usePlan } from "@/lib/client/usePlan";
 import { trackProjectClick, trackProjectView } from "@/lib/metrics/client";
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
+import TagsRow from "@/components/tags/TagsRow";
 import DocActionsMenu from "@/components/DocActionsMenu";
 import ProjectSharePanel from "@/components/ProjectSharePanel";
 import { CopyButton } from "@/components/CopyButton";
@@ -1216,6 +1217,20 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                 ) : null}
               </section>
 
+              {/* One grid child, not two: the column holds the tags card and the link panel, and a
+                  third child would drop the panel onto a second row. */}
+              <div className="flex min-w-0 flex-col gap-5 lg:min-h-0 lg:overflow-auto">
+              {/* The project's tags, above the link panel: what this project *is*, before how it is
+                  shared. Same component and same place in the column as the document page's. */}
+              {project ? (
+                <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+                  <div className="mb-2.5 text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                    Tags
+                  </div>
+                  <TagsRow targetKind="project" targetId={projectSlug} canManage={canManageLinks} />
+                </div>
+              ) : null}
+
               {project?.isRequest ? (
                 <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">
@@ -1369,6 +1384,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                   onShareEnabledChange={(next) => void setProjectShareEnabled(next)}
                 />
               )}
+              </div>
             </div>
           )}
         </div>

@@ -38,6 +38,8 @@ type Props = {
   uploadError?: unknown | null;
   /** Optional quick-stats card rendered between the share controls and the Snapshot. */
   quickStats?: ReactNode;
+  /** The document's tags, at the top of the panel — what this document *is*, before what it does. */
+  tags?: ReactNode;
   /** Optional notice rendered directly under the links summary (e.g. a plan-limit prompt). */
   shareNotice?: ReactNode;
   /** Who wrote the summary when it was not LinkDrop (e.g. "Claude Code" for an agent-written summary). */
@@ -75,6 +77,7 @@ export default function DocSharePanel({
   aiOutput,
   uploadError,
   quickStats,
+  tags,
   shareNotice,
   summaryAuthorLabel,
   summaryMissing,
@@ -158,6 +161,10 @@ export default function DocSharePanel({
 
   return (
     <div className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+      {/* 0) Tags — the document's own labels. First because they say what this is; everything
+             below is about sending it. */}
+      {tags ? <div className="mb-4">{tags}</div> : null}
+
       {/* 1) Links — the default link, the count, and the way through to /doc/:docId/links */}
       <LinksManager scope={{ kind: "doc", id: docId }} variant="panel" />
 

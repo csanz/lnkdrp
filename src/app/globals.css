@@ -55,6 +55,14 @@
   --diff-hunk-bg: #f2efff;
 
   --border: #e4e4e7;
+
+  /* Tag palette (src/lib/tags/palette.ts owns the keys; these are the light-theme shades). */
+  --tag-jade: #0f9b6c;
+  --tag-sky: #2563eb;
+  --tag-amber: #b45309;
+  --tag-rose: #be185d;
+  --tag-violet: #6d28d9;
+  --tag-slate: #475569;
   /* Rules *inside* a card (between its header and sections). --border is tuned for card outlines
      against the page; on a --panel-2 card in dark mode it was nearly invisible as an inner rule. */
   --divider: #e4e4e7;
@@ -125,6 +133,14 @@
   --divider: #3a3a43;
   --ring: color-mix(in srgb, #ffffff 20%, transparent);
 
+  /* Tag palette, dark shades. */
+  --tag-jade: #34d399;
+  --tag-sky: #60a5fa;
+  --tag-amber: #f59e0b;
+  --tag-rose: #f472b6;
+  --tag-violet: #a78bfa;
+  --tag-slate: #94a3b8;
+
   --muted: #b3b3bb;
   --muted-2: #8b8b96;
 
@@ -188,6 +204,14 @@
     --border: #2a2a31;
     --divider: #3a3a43;
     --ring: color-mix(in srgb, #ffffff 20%, transparent);
+
+    /* Tag palette, dark shades. */
+    --tag-jade: #34d399;
+    --tag-sky: #60a5fa;
+    --tag-amber: #f59e0b;
+    --tag-rose: #f472b6;
+    --tag-violet: #a78bfa;
+    --tag-slate: #94a3b8;
 
     --muted: #b3b3bb;
     --muted-2: #8b8b96;
