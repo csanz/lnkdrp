@@ -35,7 +35,25 @@ export const ACTIVITY_FILTERS = [
     label: "Projects",
     types: ["project.created", "project.updated", "project.deleted", "doc.added_to_project", "doc.removed_from_project"],
   },
-  { id: "views", label: "Views", types: ["share.viewed", "share.downloaded"] },
+  // Filing, kept out of Documents and Projects on purpose: a burst of tagging would otherwise
+  // drown the rows about the documents themselves, and "show me what got filed" is its own
+  // question.
+  { id: "tags", label: "Tags", types: ["tag.applied", "tag.removed"] },
+  // What *recipients* did, which is also what keeps them out of the workspace donut: its
+  // denominator is work done here, and `ACTIVITY_WORK_TYPES` excludes this group wholesale
+  // (see `NOT_WORK` in ./summary.ts). Entering a password belongs with the rest of a recipient's
+  // visit, not beside the sender's link settings — filed under Sharing it was counted as work
+  // somebody in this workspace had done.
+  {
+    id: "views",
+    label: "Views",
+    types: ["share.viewed", "share.downloaded", "project.landed", "viewer.introduced", "share.unlocked"],
+  },
+  {
+    id: "members",
+    label: "Members",
+    types: ["member.invited", "member.joined", "member.removed", "member.left"],
+  },
 ] as const;
 
 export type ActivityFilterId = (typeof ACTIVITY_FILTERS)[number]["id"];
@@ -107,12 +125,23 @@ function describeShareChanges(meta: Record<string, unknown>): string | null {
 }
 
 /**
- * "via {label}" for a view/download that came through a named share link.
+ * Where a view or download came in through: the data room, or the named link.
  *
- * A document's default link is unnamed as far as the reader is concerned ("Default link" is an
- * internal label), so it never adds a suffix; only the links a sender created and named do.
+ * A reading inside a project link is the case worth naming first. The reader did not open this
+ * document's own link at all — they opened the room and picked a file out of it — and until this
+ * said so, a sender looking at "Michael J viewed USAVX Deck" had no way to tell that from a reading
+ * of the link they had sent one investor, which is a different fact about a different audience. The
+ * room's own links are named for the room ("Default link"), so its label adds nothing beside it.
+ *
+ * Otherwise: a document's default link is unnamed as far as the reader is concerned ("Default link"
+ * is an internal label), so it never adds a suffix; only the links a sender created and named do.
+ *
+ * `alreadyNamesProject` is for the sentences whose object IS the room (`project.landed`), which
+ * would otherwise read "opened Data room in Data room".
  */
-function linkSuffix(meta: Record<string, unknown>): string | null {
+function linkSuffix(meta: Record<string, unknown>, opts?: { alreadyNamesProject?: boolean }): string | null {
+  const projectName = opts?.alreadyNamesProject ? null : metaString(meta, "projectName");
+  if (projectName) return `in ${projectName}`;
   if (meta?.isDefaultLink === true) return null;
   const label = metaString(meta, "linkLabel");
   if (!label || label === DEFAULT_LINK_LABEL) return null;
@@ -160,6 +189,22 @@ const DEFAULT_LINK_LABEL = "Default link";
  * ("Christian Sanz and Claude Code"); otherwise agent label > user name > "Someone".
  */
 
+/** The tag a filing event was about, by the name copied into the event when it happened. */
+function tagNameLabel(item: ActivityItem): string {
+  return metaString(item.meta, "tagName") || "a tag";
+}
+
+/**
+ * What was filed: the document, or the project when the row is about one.
+ *
+ * A tag lands on either, and the two rows read differently — "tagged the Series A deck" against
+ * "tagged the data room" — so the sentence asks the event which it was rather than assuming a
+ * document and printing "Untitled document" for every project.
+ */
+function tagTargetLabel(item: ActivityItem, docTitle: string): string {
+  return metaString(item.meta, "targetKind") === "project" ? projectLabel(item) : docTitle;
+}
+
 /** A project's name for a sentence: the live name, else the name recorded when the event was logged (deleted projects). */
 function projectLabel(item: ActivityItem): string {
   return item.project?.name?.trim() || metaString(item.meta, "projectName") || "a project";
@@ -167,8 +212,13 @@ function projectLabel(item: ActivityItem): string {
 
 /**
  * What a share link hangs off: the document, or the project when the row has no document
- * (a project link — docs/prds/lnkdrp-project-links.md). Keeps the three `share_link.*` sentences
- * from announcing every project link as belonging to "Untitled document".
+ * (a project link — docs/prds/lnkdrp-project-links.md). Keeps the `share_link.*` and password
+ * sentences from announcing every project link as belonging to "Untitled document".
+ *
+ * Every sentence that names what a link belongs to goes through here. Three of them did and three
+ * did not, which is how revealing a data room's password came out as "viewed the password for
+ * “Accel · locked” on Untitled document" — a document that does not exist, named in a sentence
+ * about a project.
  */
 function linkOwnerLabel(item: ActivityItem, docTitle: string): string {
   if (!item.doc && (item.project?.name || metaString(item.meta, "projectName"))) return `project ${projectLabel(item)}`;
@@ -247,12 +297,12 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
     }
     case "share_link.password_revealed": {
       const label = metaString(item.meta, "linkLabel") || "a link";
-      return { subject, verb: "viewed the password for", object: `“${label}”`, suffix: `on ${docTitle}` };
+      return { subject, verb: "viewed the password for", object: `“${label}”`, suffix: `on ${linkOwnerLabel(item, docTitle)}` };
     }
     case "share.password_set":
-      return { subject, verb: "set a password on", object: docTitle, suffix: null };
+      return { subject, verb: "set a password on", object: linkOwnerLabel(item, docTitle), suffix: null };
     case "share.password_cleared":
-      return { subject, verb: "removed the password from", object: docTitle, suffix: null };
+      return { subject, verb: "removed the password from", object: linkOwnerLabel(item, docTitle), suffix: null };
     case "project.created":
       return { subject, verb: "created project", object: projectLabel(item), suffix: null };
     case "project.updated":
@@ -263,10 +313,59 @@ export function describeActivity(item: ActivityItem): ActivitySentence {
       return { subject, verb: "added", object: docTitle, suffix: `to ${projectLabel(item)}` };
     case "doc.removed_from_project":
       return { subject, verb: "removed", object: docTitle, suffix: `from ${projectLabel(item)}` };
+    // Filing. The tag's name is copied into the event, so a tag that is later renamed, merged or
+    // deleted still reads correctly in the history of what was done that day.
+    case "tag.applied":
+      return { subject, verb: "tagged", object: tagTargetLabel(item, docTitle), suffix: `as ${tagNameLabel(item)}` };
+    case "tag.removed":
+      return { subject, verb: "untagged", object: tagTargetLabel(item, docTitle), suffix: `(${tagNameLabel(item)})` };
     case "request_repo.created":
       return { subject, verb: "created request inbox", object: item.project?.name?.trim() || docTitle, suffix: null };
     case "request.upload_received":
       return { subject: user || "Someone", verb: "submitted a document to", object: projectName, suffix: "via request link" };
+    // Who is in the workspace. The target is carried in meta rather than looked up, so the sentence
+    // still reads correctly after that person's account is gone.
+    case "member.invited": {
+      const who = metaString(item.meta, "email") || "someone";
+      const role = metaString(item.meta, "role");
+      return { subject, verb: "invited", object: who, suffix: role && role !== "member" ? `as ${role}` : null };
+    }
+    case "member.joined": {
+      const who = user || metaString(item.meta, "email") || "Someone";
+      const role = metaString(item.meta, "role");
+      return { subject: who, verb: "joined", object: "this workspace", suffix: role && role !== "member" ? `as ${role}` : null };
+    }
+    case "member.removed": {
+      const who = metaString(item.meta, "name") || metaString(item.meta, "email") || "a member";
+      return { subject, verb: "removed", object: who, suffix: "from this workspace" };
+    }
+    case "member.left": {
+      const who = user || metaString(item.meta, "name") || metaString(item.meta, "email") || "Someone";
+      return { subject: who, verb: "left", object: "this workspace", suffix: null };
+    }
+    case "project.landed": {
+      // No document: this is the arrival on the file list, and the reader may have opened nothing.
+      const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
+      return { subject: who, verb: "opened", object: projectLabel(item), suffix: linkSuffix(item.meta, { alreadyNamesProject: true }) };
+    }
+    case "viewer.introduced": {
+      const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
+      const changed = item.meta?.changed === true;
+      const email = metaString(item.meta, "viewerEmail");
+      return {
+        subject: who,
+        verb: changed ? "updated who they are on" : "introduced themselves on",
+        object: item.doc?.title?.trim() ? docTitle : projectLabel(item),
+        // The address is the point of the event — it is what the sender can actually reply to.
+        suffix: email && email !== who ? email : null,
+      };
+    }
+    case "share.unlocked": {
+      const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
+      // The object is whatever the link opens: a document, or the whole room.
+      const what = item.doc?.title?.trim() ? docTitle : item.project?.name?.trim() || metaString(item.meta, "projectName") || "a shared link";
+      return { subject: who, verb: "entered the password for", object: what, suffix: linkSuffix(item.meta) };
+    }
     case "share.viewed": {
       const who = user || metaString(item.meta, "viewerName") || metaString(item.meta, "viewerEmail") || "Someone";
       return { subject: who, verb: "viewed", object: docTitle, suffix: linkSuffix(item.meta) };

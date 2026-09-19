@@ -22,6 +22,7 @@ import { ProjectModel } from "@/lib/models/Project";
 import { TAG_TARGET_KINDS, type TagTargetKind } from "@/lib/models/TagAssignment";
 import { attachTag, detachTag, findOrCreateTag, tagsForTarget } from "@/lib/tags/service";
 import { isUsableTagName } from "@/lib/tags/slug";
+import { recordActivity } from "@/lib/activity/log";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
 export const runtime = "nodejs";
@@ -114,8 +115,28 @@ export async function POST(request: Request) {
         return applyTempUserHeaders(NextResponse.json({ error: "Unknown tag" }, { status: 400 }), actor);
       }
 
+      const before = await tagsForTarget({ orgId: actor.orgId, targetKind, targetId });
       await attachTag({ orgId: actor.orgId, tagId, targetKind, targetId, userId: actor.userId });
       const tags = await tagsForTarget({ orgId: actor.orgId, targetKind, targetId });
+
+      // Only when it actually changed: re-tagging something is the same fact, not a second event,
+      // and an agent that tags defensively should not fill the feed with rows saying nothing new.
+      const added = tags.find((t) => t.id === tagId && !before.some((b) => b.id === t.id));
+      if (added) {
+        void recordActivity({
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "tag.applied",
+          docId: targetKind === "doc" ? targetId : undefined,
+          projectId: targetKind === "project" ? targetId : undefined,
+          // The name is copied in, so a tag later renamed, merged or deleted still reads correctly
+          // in the history of what was done that day.
+          meta: { tagId, tagName: added.name, tagSlug: added.slug, targetKind, created },
+          request,
+        });
+      }
+
       return applyTempUserHeaders(NextResponse.json({ ok: true, tags, created }), actor);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not add the tag";
@@ -152,8 +173,24 @@ export async function DELETE(request: Request) {
         return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
       }
 
+      const before = await tagsForTarget({ orgId: actor.orgId, targetKind, targetId });
       await detachTag({ orgId: actor.orgId, tagId, targetKind, targetId });
       const tags = await tagsForTarget({ orgId: actor.orgId, targetKind, targetId });
+
+      const removed = before.find((t) => t.id === tagId && !tags.some((n) => n.id === t.id));
+      if (removed) {
+        void recordActivity({
+          orgId: actor.orgId,
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "tag.removed",
+          docId: targetKind === "doc" ? targetId : undefined,
+          projectId: targetKind === "project" ? targetId : undefined,
+          meta: { tagId, tagName: removed.name, tagSlug: removed.slug, targetKind },
+          request,
+        });
+      }
+
       return applyTempUserHeaders(NextResponse.json({ ok: true, tags }), actor);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Could not remove the tag";

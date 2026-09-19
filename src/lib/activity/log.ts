@@ -36,6 +36,12 @@ export type ActivityType =
   | "project.deleted"
   | "doc.added_to_project"
   | "doc.removed_from_project"
+  // Filing. Worth a row because it is the one kind of housekeeping an agent keeps doing after a
+  // person stops, and "Claude Code tagged the Series A deck as Fundraising" is the sentence that
+  // makes that visible. The tag's name rides in `meta` rather than being looked up when rendered,
+  // so a renamed or deleted tag leaves the history readable.
+  | "tag.applied"
+  | "tag.removed"
   | "request_repo.created"
   | "request.upload_received"
   | "download_request.created"
@@ -55,7 +61,25 @@ export type ActivityType =
   | "agent.connected"
   | "agent.key_verified"
   | "account.deletion_requested"
-  | "account.purged";
+  | "account.purged"
+  // Who is in this workspace. A member arriving or leaving changes who can read every document in
+  // it, which makes it the most consequential thing that can happen here and the one thing the feed
+  // could not show: the Members page was the only record, and it only ever shows the present tense.
+  | "member.invited"
+  | "member.joined"
+  | "member.removed"
+  | "member.left"
+  // A recipient reached a project link's file list. `share.viewed` covers opening a document; this
+  // is the arrival, including the arrival that opens nothing — which on a data room is a signal in
+  // its own right (see `landedWithoutOpening` in docs/METRICS.md).
+  | "project.landed"
+  // A recipient got past a share link's password. The one moment on a protected link where the
+  // sender learns the password reached the right person and was used.
+  | "share.unlocked"
+  // A recipient put a name to their visit. Unlike the other recipient events this one is not
+  // identity-gated: the name was volunteered *to* this workspace, and hiding it on Free would be
+  // hiding a message its sender meant them to have.
+  | "viewer.introduced";
 
 export type ActivityAgent = { client: string; version: string | null } | null;
 

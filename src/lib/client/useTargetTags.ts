@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { subscribeRealtime } from "@/lib/client/realtime";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import type { TagColorKey } from "@/lib/tags/palette";
 
@@ -42,7 +43,16 @@ export function useTargetTags(targetKind: "doc" | "project", ids: readonly strin
   useEffect(() => {
     const onChanged = () => void load();
     window.addEventListener("lnkdrp:tags-changed", onChanged);
-    return () => window.removeEventListener("lnkdrp:tags-changed", onChanged);
+    // And when someone else does the tagging — a teammate, or an agent through the MCP — the
+    // workspace's realtime feed carries the row that says so.
+    const unsubscribe = subscribeRealtime("activity", (frame) => {
+      const type = frame.type === "activity" ? (frame.event?.type ?? "") : "";
+      if (type.startsWith("tag.")) void load();
+    });
+    return () => {
+      window.removeEventListener("lnkdrp:tags-changed", onChanged);
+      unsubscribe();
+    };
   }, [load]);
 
   return byId;

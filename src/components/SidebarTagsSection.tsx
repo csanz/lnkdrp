@@ -18,21 +18,24 @@ import { useCallback, useEffect, useState } from "react";
 import TagDot from "@/components/tags/TagDot";
 import TagsManagerModal from "@/components/modals/TagsManagerModal";
 import IconButton from "@/components/ui/IconButton";
+import { subscribeRealtime } from "@/lib/client/realtime";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import type { TagColorKey } from "@/lib/tags/palette";
 
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
 
 /**
- * Up to this many tags, the section is open; past it, closed, and the header's count carries it.
+ * Closed by default, and nothing is remembered between loads.
  *
- * Nothing is remembered between loads, and that is deliberate. Two versions of this component
- * stored the open state, and both times a stale "closed" written under an older default outlived
- * the rule that wrote it and pinned the section shut — twice reported as "the tags don't show up".
- * A sidebar section that opens on a rule you can read in one line beats one that depends on what
- * a browser was told months ago. Collapsing is per visit; it costs one click to get back.
+ * It opened itself for a while, because a header with a count and nothing under it read as a
+ * feature that was not working. What actually fixed that is the dots on the rows: the sidebar now
+ * says which project is fundraising without this list being open at all, so the list can go back
+ * to being what it was asked to be — somewhere to go, not something to read.
+ *
+ * Nothing persists on purpose. Two earlier versions stored the open state, and both times a stale
+ * "closed" written under an older default outlived the rule that wrote it and pinned the section
+ * shut — twice reported as "the tags don't show up". Per visit is simpler and cannot rot.
  */
-const AUTO_OPEN_MAX = 8;
 
 /** The same plus/minus the other sidebar sections use, without importing the sidebar itself. */
 function PlusMinus({ expanded }: { expanded: boolean }) {
@@ -90,24 +93,29 @@ export default function SidebarTagsSection() {
    * next time the app loads; this is only "you just did something, here it is".
    */
   useEffect(() => {
-    const onChanged = () => {
-      setCollapsedPref(false);
-      void load();
-    };
+    // Not opened for you: the row you just tagged shows its own dot, which is the answer to "did
+    // that work" without a section unfolding under your cursor.
+    const onChanged = () => void load();
     window.addEventListener("lnkdrp:tags-changed", onChanged);
     return () => window.removeEventListener("lnkdrp:tags-changed", onChanged);
   }, [load]);
 
   /**
    * Someone else's change — a teammate, or an agent filing documents through the MCP — arrives on
-   * the next moment this window is worth updating: coming back to the tab, or navigating. Cheaper
-   * than polling, and the list is never more than one glance out of date.
+   * the workspace's realtime feed, which carries every activity row. Tagging writes `tag.applied`
+   * and `tag.removed`, so the list updates while you watch it rather than on your next navigation.
+   * Focus is kept as the fallback for a socket that is down or unavailable.
    */
   useEffect(() => {
+    const unsubscribe = subscribeRealtime("activity", (frame) => {
+      const type = frame.type === "activity" ? (frame.event?.type ?? "") : "";
+      if (type.startsWith("tag.")) void load();
+    });
     const onFocus = () => void load();
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onFocus);
     return () => {
+      unsubscribe();
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
@@ -120,14 +128,8 @@ export default function SidebarTagsSection() {
   // Nothing at all until there is a tag: an empty section is a permanent question nobody asked.
   if (!tags || !tags.length) return null;
 
-  /**
-   * Open unless you closed it in this visit — up to a point.
-   *
-   * "Collapsed by default" was the call when the section was hypothetical; in use it means a
-   * workspace with three tags shows a header with a number and nothing under it, which reads as a
-   * feature that is not working. A short list is not clutter; a long one is.
-   */
-  const open = onTagPage || (collapsedPref === null ? tags.length <= AUTO_OPEN_MAX : !collapsedPref);
+  // Open only when you opened it, or when you are on a tag page — where the list is the context.
+  const open = onTagPage || collapsedPref === false;
   const activeSlug = onTagPage ? decodeURIComponent(pathname.slice("/tag/".length)).toLowerCase() : "";
 
   function toggle() {

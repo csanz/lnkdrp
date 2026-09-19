@@ -65,6 +65,16 @@ const ACTIVITY_TYPES = [
   "agent.key_verified",
   "account.deletion_requested",
   "account.purged",
+  "member.invited",
+  "member.joined",
+  "member.removed",
+  "member.left",
+  "project.landed",
+  "share.unlocked",
+  "viewer.introduced",
+  // Filing, so an agent can ask what has been tagged lately — including by itself.
+  "tag.applied",
+  "tag.removed",
 ] as const;
 
 // Compile-time guard: an event type the app logs but this list lacks cannot be filtered on, which
