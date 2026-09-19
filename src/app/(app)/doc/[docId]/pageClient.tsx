@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowPathIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
+import { ArrowPathIcon, DocumentTextIcon, FolderIcon, InboxArrowDownIcon, LightBulbIcon } from "@heroicons/react/24/outline";
 import { useSession } from "next-auth/react";
 import UploadButton from "@/components/UploadButton";
 import DocSharePanel from "@/components/DocSharePanel";
@@ -37,6 +37,7 @@ import {
   upsertStarredDocTitle,
 } from "@/lib/starredDocs";
 import { ACTIVE_ORG_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocsChanged, setSidebarCacheSnapshot } from "@/lib/sidebarCache";
+import { rememberEntityTitle, useEntityTitle } from "@/lib/client/entityTitles";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
@@ -197,7 +198,6 @@ function buildCachedPdfIframeUrl(params: {
 export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const router = useRouter();
   const authEnabled = useAuthEnabled();
-  const isDev = process.env.NODE_ENV !== "production";
   const [doc, setDoc] = useState<DocDTO>(initialDoc);
   const docRef = useRef<DocDTO>(initialDoc);
   const [currentUpload, setCurrentUpload] = useState<UploadDTO | null>(null);
@@ -260,13 +260,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
   const [copyDone, setCopyDone] = useState(false);
   const [replaceIsCopying, setReplaceIsCopying] = useState(false);
   const [replaceCopyDone, setReplaceCopyDone] = useState(false);
-  const [debugJsonOpen, setDebugJsonOpen] = useState(false);
-  const [debugJsonLoading, setDebugJsonLoading] = useState(false);
-  const [debugJsonError, setDebugJsonError] = useState<string | null>(null);
-  const [debugJsonText, setDebugJsonText] = useState<string>("");
-  const [debugJsonPayload, setDebugJsonPayload] = useState<Record<string, unknown> | null>(null);
-  const [debugJsonCopying, setDebugJsonCopying] = useState(false);
-  const [debugJsonCopyDone, setDebugJsonCopyDone] = useState(false);
   const [preparingTick, setPreparingTick] = useState(0);
   const [hasHydratedFromServer, setHasHydratedFromServer] = useState(false);
   const [hydrateError, setHydrateError] = useState<string | null>(null);
@@ -699,7 +692,11 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       }
     }
 
-    const nextTitle = displayDocName || "Document";
+    // `displayDocName` now carries the remembered name before hydration, so starring a document
+    // the instant the page opens records what it is actually called rather than the placeholder
+    // the header used to be showing at that moment. An empty name is left to `toggleStarredDoc`'s
+    // own fallback rather than invented here.
+    const nextTitle = displayDocName.trim();
     const res = toggleStarredDoc({ id: doc.id, title: nextTitle });
     setStarred(res.starred);
   }
@@ -1189,73 +1186,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
   // We intentionally do not show summary/tags on the owner panel when AI Snapshot is present.
 
-  async function loadDebugJson() {
-    if (!isDev) return;
-    const docId = docRef.current.id;
-    setDebugJsonLoading(true);
-    setDebugJsonError(null);
-    setDebugJsonCopyDone(false);
-    try {
-      const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?t=${Date.now()}`, {
-        cache: "no-store",
-      });
-      const json = (await res.json().catch(() => null)) as any;
-      if (!res.ok) {
-        const msg =
-          json && typeof json === "object" && typeof json.error === "string"
-            ? json.error
-            : `Request failed (${res.status})`;
-        throw new Error(msg);
-      }
 
-      const payload = {
-        fetchedAt: new Date().toISOString(),
-        docId,
-        // What the server believes right now (most useful for debugging preview updates).
-        apiDocs: json,
-        // What the client currently has rendered (can be stale).
-        localDocState: docRef.current,
-        localCurrentUploadState: currentUpload,
-      };
-      setDebugJsonPayload(payload as unknown as Record<string, unknown>);
-      setDebugJsonText(JSON.stringify(payload, null, 2));
-    } catch (e) {
-      setDebugJsonText("");
-      setDebugJsonPayload(null);
-      setDebugJsonError(e instanceof Error ? e.message : "Failed to load debug JSON.");
-    } finally {
-      setDebugJsonLoading(false);
-    }
-  }
 
-  async function openDebugJson() {
-    if (!isDev) return;
-    setDebugJsonOpen(true);
-    await loadDebugJson();
-  }
 
-  async function copyDebugJson() {
-    if (!debugJsonText) return;
-    setDebugJsonCopying(true);
-    setDebugJsonCopyDone(false);
-    try {
-      await navigator.clipboard.writeText(debugJsonText);
-      setDebugJsonCopyDone(true);
-      window.setTimeout(() => setDebugJsonCopyDone(false), 1200);
-    } catch {
-      // ignore (best-effort)
-    } finally {
-      setDebugJsonCopying(false);
-    }
-  }
-
-  async function copyObjectJson(obj: unknown) {
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(obj, null, 2));
-    } catch {
-      // ignore
-    }
-  }
 
   useEffect(() => {
     // Defensive boundary enforcement: the doc page must never render Phase-1 CTAs.
@@ -1293,16 +1226,35 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
     return { label: "Preparing…", tone: "neutral" as const };
   }, [doc.status, hasHydratedFromServer]);
 
+  /**
+   * The name this browser last knew this document by — almost always the row you just clicked.
+   *
+   * `/doc/:id` is client-first and hydrates from `/api/docs/:id` after mount. That window used to
+   * be a hole in the header: the title was suppressed entirely (a skeleton), so walking between
+   * documents made the name vanish and come back every time. Now it only vanishes for a document
+   * this browser has genuinely never seen.
+   */
+  const rememberedDocName = useEntityTitle("doc", doc.id);
+
   const displayDocName = useMemo(
     () => {
-      // `/doc/:id` is client-first and initially hydrates from `/api/docs/:id`.
-      // During that brief window, don't show a placeholder word in the title area.
-      if (!hasHydratedFromServer) return "";
       const t = (doc.title ?? "").toString().trim();
-      return t || "Document";
+      if (t) return t;
+      // Before the server answers, the remembered name stands in. Never the word "Document":
+      // a placeholder shaped like a name is exactly the flash this removes.
+      if (!hasHydratedFromServer) return rememberedDocName || "";
+      // Hydrated, and the document genuinely has no title of its own.
+      return rememberedDocName || "Document";
     },
-    [doc.title, hasHydratedFromServer],
+    [doc.title, hasHydratedFromServer, rememberedDocName],
   );
+
+  // The server is the authority: correct the memory as soon as it answers, and after a rename.
+  useEffect(() => {
+    if (!hasHydratedFromServer) return;
+    const t = (doc.title ?? "").toString().trim();
+    if (t) rememberEntityTitle("doc", doc.id, t);
+  }, [doc.id, doc.title, hasHydratedFromServer]);
 
   const displayVersion = useMemo(() => {
     const v = doc.currentUploadVersion;
@@ -2141,7 +2093,14 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       ) : null}
                     </div>
                   ) : isReceivedViaRequest ? (
-                    <div className="flex min-h-8 min-w-0 items-center gap-2.5 text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg">
+                    <div className="flex min-h-8 min-w-0 items-center gap-2.5 text-lg font-semibold tracking-tight text-[var(--fg)]">
+                      {/* The document's glyph, in the slot every other page puts one: Search, Upload and
+                          Activity draw theirs through `AppPageHeader`, a project draws a folder, and a
+                          document drew nothing — so the one page named after a single file was the one
+                          page whose name had no mark beside it. Same 20px, same muted colour, same
+                          2.5 gap, so the name starts on the same pixel here, on the sub-pages
+                          (`DocIdentityRow`) and on a project. */}
+                      <DocumentTextIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                       <button
                         type="button"
                         onClick={() => void handleToggleStar()}
@@ -2164,13 +2123,13 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       >
                         <StarIcon filled={starred} />
                       </button>
-                      {!hasHydratedFromServer ? (
+                      {displayDocName ? (
+                        <span className="min-w-0 truncate">{displayDocName}</span>
+                      ) : (
                         <span
                           className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
                           aria-hidden="true"
                         />
-                      ) : (
-                        <span className="min-w-0 truncate">{displayDocName}</span>
                       )}
                       {displayVersion != null ? (
                         navLockActive ? (
@@ -2198,6 +2157,42 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                   ) : (
                     <div className="flex min-h-8 min-w-0 items-start gap-2.5">
                       <span className="flex h-6 shrink-0 items-center md:h-7">
+                        {/* The document's glyph, in the slot every other page puts one: Search, Upload and
+                            Activity draw theirs through `AppPageHeader`, a project draws a folder, and a
+                            document drew nothing — so the one page named after a single file was the one
+                            page whose name had no mark beside it. Same 20px, same muted colour, same
+                            2.5 gap, so the name starts on the same pixel here, on the sub-pages
+                            (`DocIdentityRow`) and on a project. */}
+                        <DocumentTextIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                      </span>
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+                        <button
+                          type="button"
+                          disabled={navLockActive}
+                          aria-disabled={navLockActive}
+                          aria-label={displayDocName || "Loading document name"}
+                          title={navLockActive ? "Disabled while uploading" : "Rename document"}
+                          onClick={() => {
+                            if (navLockActive) return;
+                            setTitleDraft(displayDocName);
+                            setTitleSaveError(null);
+                            setEditingTitle(true);
+                          }}
+                          className={[
+                            "block min-w-0 truncate text-left text-lg font-semibold tracking-tight text-[var(--fg)]",
+                            navLockActive ? "cursor-not-allowed opacity-70" : "hover:underline",
+                          ].join(" ")}
+                        >
+                          {displayDocName || (
+                            <span
+                              className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
+                              aria-hidden="true"
+                            />
+                          )}
+                        </button>
+                        {/* After the name, not before it: the name is what the page is, and two
+                            controls in front of it pushed the one thing you read into third
+                            place. */}
                         <button
                           type="button"
                           onClick={() => void handleToggleStar()}
@@ -2220,34 +2215,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         >
                           <StarIcon filled={starred} />
                         </button>
-                      </span>
-                      <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-                        <button
-                          type="button"
-                          disabled={navLockActive}
-                          aria-disabled={navLockActive}
-                          aria-label={hasHydratedFromServer ? displayDocName : "Loading document name"}
-                          title={navLockActive ? "Disabled while uploading" : "Rename document"}
-                          onClick={() => {
-                            if (navLockActive) return;
-                            setTitleDraft(displayDocName);
-                            setTitleSaveError(null);
-                            setEditingTitle(true);
-                          }}
-                          className={[
-                            "block min-w-0 truncate text-left text-base font-semibold tracking-tight text-[var(--fg)] md:text-lg",
-                            navLockActive ? "cursor-not-allowed opacity-70" : "hover:underline",
-                          ].join(" ")}
-                        >
-                          {!hasHydratedFromServer ? (
-                            <span
-                              className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            displayDocName
-                          )}
-                        </button>
+
                         {displayVersion != null ? (
                           navLockActive ? (
                             <span
@@ -2488,21 +2456,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                 }}
                 onFileSelected={replaceFile}
                 />
-              ) : null}
-
-              {isDev && hasHydratedFromServer ? (
-                <button
-                  type="button"
-                  onClick={() => void openDebugJson()}
-                  aria-label="Open debug JSON"
-                  title="Debug JSON"
-                  className={[
-                    "inline-flex h-8 w-8 items-center justify-center rounded-lg border transition-colors",
-                    "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
-                  ].join(" ")}
-                >
-                  <LightBulbIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
               ) : null}
 
               {/* Links, Metrics and the "…" menu, from the component the two sub-pages render too,
@@ -3304,105 +3257,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
         </div>
       </div>
 
-      <Modal
-        open={debugJsonOpen}
-        onClose={() => {
-          if (debugJsonLoading) return;
-          setDebugJsonOpen(false);
-          setDebugJsonError(null);
-        }}
-        ariaLabel="Debug JSON"
-        panelClassName="w-[min(980px,calc(100vw-32px))]"
-      >
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="text-base font-semibold text-[var(--fg)]">Debug JSON</div>
-            <div className="mt-1 text-sm text-[var(--muted)]">
-              Fresh server response from <code className="font-mono">/api/docs/{doc.id}</code>. Check{" "}
-              <code className="font-mono">doc.previewImageUrl</code>.
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void loadDebugJson()}
-              disabled={debugJsonLoading}
-              className="inline-flex items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-            >
-              {debugJsonLoading ? "Refreshing…" : "Refresh"}
-            </button>
-            <CopyButton
-              copyDone={debugJsonCopyDone}
-              isCopying={debugJsonCopying}
-              disabled={!debugJsonText}
-              onCopy={() => void copyDebugJson()}
-              label="Copy"
-              copiedLabel="Copied"
-              className={[
-                "inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors",
-                "border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] hover:bg-[var(--panel-hover)]",
-                !debugJsonText ? "cursor-not-allowed opacity-60" : "",
-              ].join(" ")}
-            />
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-          {debugJsonError ? (
-            <div className="text-sm text-red-700">{debugJsonError}</div>
-          ) : debugJsonLoading && !debugJsonText ? (
-            <div className="text-sm text-[var(--muted)]">Loading…</div>
-          ) : debugJsonPayload ? (
-            <div className="grid gap-3">
-              {(() => {
-                const apiDocs = (debugJsonPayload as any).apiDocs ?? null;
-                const apiDoc = apiDocs && typeof apiDocs === "object" ? (apiDocs as any).doc ?? null : null;
-                const apiUpload = apiDocs && typeof apiDocs === "object" ? (apiDocs as any).upload ?? null : null;
-                const localDocState = (debugJsonPayload as any).localDocState ?? null;
-                const localCurrentUploadState = (debugJsonPayload as any).localCurrentUploadState ?? null;
-                const blocks: Array<{ title: string; value: unknown; defaultOpen?: boolean }> = [
-                  { title: "API: doc", value: apiDoc, defaultOpen: true },
-                  { title: "API: upload (current)", value: apiUpload, defaultOpen: true },
-                  { title: "Client: localDocState", value: localDocState },
-                  { title: "Client: localCurrentUploadState", value: localCurrentUploadState },
-                  { title: "All (combined payload)", value: debugJsonPayload },
-                ];
-
-                return blocks.map((b) => (
-                  <details
-                    key={b.title}
-                    open={Boolean(b.defaultOpen)}
-                    className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] p-3"
-                  >
-                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-                      <div className="text-[12px] font-semibold text-[var(--fg)]">{b.title}</div>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2 py-1 text-[11px] font-semibold text-[var(--fg)] hover:bg-[var(--panel-hover)] disabled:opacity-60"
-                        disabled={b.value == null}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          void copyObjectJson(b.value);
-                        }}
-                        title="Copy JSON"
-                      >
-                        Copy
-                      </button>
-                    </summary>
-                    <pre className="mt-3 max-h-[46vh] overflow-auto whitespace-pre-wrap break-words text-xs text-[var(--fg)]">
-                      {b.value == null ? "null" : JSON.stringify(b.value, null, 2)}
-                    </pre>
-                  </details>
-                ));
-              })()}
-            </div>
-          ) : (
-            <div className="text-sm text-[var(--muted)]">No data.</div>
-          )}
-        </div>
-      </Modal>
 
       <Modal open={showStarAuthModal} onClose={() => setShowStarAuthModal(false)} ariaLabel="Sign up to star docs">
         <div className="text-base font-semibold text-[var(--fg)]">Sign up to star docs</div>

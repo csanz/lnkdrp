@@ -14,11 +14,13 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { FolderIcon, InboxArrowDownIcon } from "@heroicons/react/24/outline";
+import { DocumentTextIcon, FolderIcon, InboxArrowDownIcon } from "@heroicons/react/24/outline";
 
 import StarIcon from "@/components/icons/StarIcon";
 import TagsRow from "@/components/tags/TagsRow";
+import { rememberEntityTitle, useEntityTitle } from "@/lib/client/entityTitles";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { isDocStarred, STARRED_DOCS_CHANGED_EVENT, toggleStarredDoc } from "@/lib/starredDocs";
 
 type DocProject = { id: string; name: string; isRequest?: boolean };
 type DocIdentity = { title: string; version: number | null; projects: DocProject[] };
@@ -29,7 +31,15 @@ const MAX_PROJECTS = 2;
 export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string; fallbackTitle?: string }) {
   const [doc, setDoc] = useState<DocIdentity | null>(null);
   const [starred, setStarred] = useState(false);
-  const [starBusy, setStarBusy] = useState(false);
+  /** What this browser last knew this document to be called — the name shown on the first frame. */
+  const remembered = useEntityTitle("doc", docId);
+
+  // Whatever the page already knew is worth remembering too: a sub-page reached from a list has a
+  // fallbackTitle in hand before any fetch, and the next page in should not have to re-learn it.
+  useEffect(() => {
+    const seed = fallbackTitle?.trim();
+    if (seed) rememberEntityTitle("doc", docId, seed);
+  }, [docId, fallbackTitle]);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +60,10 @@ export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string
             }))
           : [];
         const version = raw.lastUpdate && typeof raw.lastUpdate.version === "number" ? raw.lastUpdate.version : null;
-        setDoc({ title: typeof raw.title === "string" ? raw.title : "", version, projects });
+        const fetchedTitle = typeof raw.title === "string" ? raw.title : "";
+        setDoc({ title: fetchedTitle, version, projects });
+        // The server has spoken: correct the remembered name for every page after this one.
+        rememberEntityTitle("doc", docId, fetchedTitle);
       } catch {
         // The title the page already knows stands in.
       }
@@ -60,57 +73,68 @@ export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string
     };
   }, [docId]);
 
-  // The star is part of the row's shape as much as its meaning: without it the title would sit a
-  // few pixels left of where the document page puts it, which is the thing this component exists
-  // to prevent.
+  /**
+   * Stars go through the store the sidebar reads, never straight to the API.
+   *
+   * `toggleStarredDoc` writes the local list, posts to the server and fires
+   * `STARRED_DOCS_CHANGED_EVENT` — which the sidebar's Starred section listens for, so a star set
+   * from a document's Metrics page lands in the list under the cursor. Posting to `/api/starred`
+   * from here left the sidebar on its old list until a reload, which looked like nothing
+   * happening at all.
+   */
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetchWithTempUser("/api/starred", { cache: "no-store" });
-        if (!res.ok) return;
-        const json = (await res.json()) as { docs?: Array<{ id?: unknown }> };
-        if (cancelled) return;
-        setStarred((json.docs ?? []).some((d) => String(d?.id ?? "") === docId));
-      } catch {
-        // Unstarred is the safe assumption; the document page is where stars are usually set.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    const sync = () => setStarred(isDocStarred(docId));
+    sync();
+    window.addEventListener(STARRED_DOCS_CHANGED_EVENT, sync);
+    return () => window.removeEventListener(STARRED_DOCS_CHANGED_EVENT, sync);
   }, [docId]);
 
-  const toggleStar = useCallback(async () => {
-    if (starBusy) return;
-    setStarBusy(true);
-    const next = !starred;
-    setStarred(next);
-    try {
-      const res = await fetchWithTempUser("/api/starred", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ docId, starred: next }),
-      });
-      if (!res.ok) setStarred(!next);
-    } catch {
-      setStarred(!next);
-    } finally {
-      setStarBusy(false);
-    }
-  }, [docId, starBusy, starred]);
+  const toggleStar = useCallback(() => {
+    const next = toggleStarredDoc({ id: docId, title: doc?.title?.trim() || fallbackTitle?.trim() || "" });
+    setStarred(next.starred);
+  }, [docId, doc?.title, fallbackTitle]);
 
-  const title = doc?.title?.trim() || fallbackTitle?.trim() || "Document";
+  /**
+   * The name, in order of authority: this row's own fetch, then whatever the page already had,
+   * then what this browser last knew the document to be called.
+   *
+   * There is no "Document" in that list any more. A placeholder shaped like a name is what made
+   * every walk into Links or Metrics read as arriving at a different, unnamed document for a beat.
+   * When all three are empty the row renders a skeleton — honest about not knowing yet — and that
+   * only happens for a document this browser has never seen.
+   */
+  const title = doc?.title?.trim() || fallbackTitle?.trim() || remembered || "";
+
   const projects = doc?.projects ?? [];
   const shown = projects.slice(0, MAX_PROJECTS);
   const extra = projects.length - shown.length;
 
   return (
     <span className="flex min-w-0 items-center gap-2.5">
+      {/* The document's own glyph, in the slot every other header puts one: `AppPageHeader` draws a
+          page's icon here, the project header draws a folder, and a document showed nothing at all.
+          Same 20px, same muted colour, so the name starts on the same pixel on every page. */}
+      <DocumentTextIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+
+      {title ? (
+        <Link
+          href={`/doc/${encodeURIComponent(docId)}`}
+          className="min-w-0 truncate text-lg font-semibold tracking-tight text-[var(--fg)] hover:underline underline-offset-4"
+        >
+          {title}
+        </Link>
+      ) : (
+        <span
+          className="block h-5 w-40 animate-pulse rounded bg-[var(--panel-hover)]"
+          aria-label="Loading document name"
+        />
+      )}
+
+      {/* After the name, not before it: the name is what the page is, and a control in front of it
+          pushed the one thing you read into second place. */}
       <button
         type="button"
-        onClick={() => void toggleStar()}
-        disabled={starBusy}
+        onClick={toggleStar}
         aria-label={starred ? "Unstar document" : "Star document"}
         title={starred ? "Starred" : "Star"}
         className={[
@@ -120,13 +144,6 @@ export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string
       >
         <StarIcon filled={starred} />
       </button>
-
-      <Link
-        href={`/doc/${encodeURIComponent(docId)}`}
-        className="min-w-0 truncate text-lg font-semibold tracking-tight text-[var(--fg)] hover:underline underline-offset-4"
-      >
-        {title}
-      </Link>
 
       {doc?.version != null && doc.version > 0 ? (
         <Link
