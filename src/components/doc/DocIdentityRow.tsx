@@ -9,6 +9,9 @@
  * So the sub-pages render the same row, from the same data, in the same order, and put the
  * breadcrumb underneath where the document page puts its file facts. Nothing moves on navigation
  * but the second line.
+ *
+ * The row's own read of the document lives in `entityIdentity` rather than here, so the breadcrumb
+ * beside it and the sub-page around it share the one request instead of each issuing their own.
  */
 "use client";
 
@@ -18,21 +21,26 @@ import { DocumentTextIcon, FolderIcon, InboxArrowDownIcon } from "@heroicons/rea
 
 import StarIcon from "@/components/icons/StarIcon";
 import TagsRow from "@/components/tags/TagsRow";
-import { rememberEntityTitle, useEntityTitle } from "@/lib/client/entityTitles";
-import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import { EntityHeaderName, useHeaderName } from "@/components/HeaderIdentity";
+import { useEntityIdentity } from "@/lib/client/entityIdentity";
+import { rememberEntityTitle } from "@/lib/client/entityTitles";
 import { isDocStarred, STARRED_DOCS_CHANGED_EVENT, toggleStarredDoc } from "@/lib/starredDocs";
-
-type DocProject = { id: string; name: string; isRequest?: boolean };
-type DocIdentity = { title: string; version: number | null; projects: DocProject[] };
 
 /** How many project pills before the rest become "+2" — the document page's own rule. */
 const MAX_PROJECTS = 2;
 
+/** Render the document's identity row: glyph, name, star, version, tags and project pills. */
 export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string; fallbackTitle?: string }) {
-  const [doc, setDoc] = useState<DocIdentity | null>(null);
   const [starred, setStarred] = useState(false);
-  /** What this browser last knew this document to be called — the name shown on the first frame. */
-  const remembered = useEntityTitle("doc", docId);
+  const { identity } = useEntityIdentity("doc", docId);
+  /**
+   * The name, in order of authority: whatever the page already had, then this session's read of the
+   * document, then what this browser last knew it to be called.
+   *
+   * There is no "Document" in that list. A placeholder shaped like a name is what made every walk
+   * into Links or Metrics read as arriving at a different, unnamed document for a beat.
+   */
+  const { name: title } = useHeaderName("doc", docId, fallbackTitle);
 
   // Whatever the page already knew is worth remembering too: a sub-page reached from a list has a
   // fallbackTitle in hand before any fetch, and the next page in should not have to re-learn it.
@@ -40,38 +48,6 @@ export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string
     const seed = fallbackTitle?.trim();
     if (seed) rememberEntityTitle("doc", docId, seed);
   }, [docId, fallbackTitle]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?lite=1`, { cache: "no-store" });
-        if (!res.ok) return;
-        const json = (await res.json()) as {
-          doc?: { title?: unknown; lastUpdate?: { version?: unknown } | null; projects?: unknown };
-        };
-        if (cancelled) return;
-        const raw = json.doc ?? {};
-        const projects = Array.isArray(raw.projects)
-          ? (raw.projects as Array<Record<string, unknown>>).map((p) => ({
-              id: String(p.id ?? ""),
-              name: typeof p.name === "string" ? p.name : "",
-              isRequest: Boolean(p.isRequest),
-            }))
-          : [];
-        const version = raw.lastUpdate && typeof raw.lastUpdate.version === "number" ? raw.lastUpdate.version : null;
-        const fetchedTitle = typeof raw.title === "string" ? raw.title : "";
-        setDoc({ title: fetchedTitle, version, projects });
-        // The server has spoken: correct the remembered name for every page after this one.
-        rememberEntityTitle("doc", docId, fetchedTitle);
-      } catch {
-        // The title the page already knows stands in.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [docId]);
 
   /**
    * Stars go through the store the sidebar reads, never straight to the API.
@@ -90,24 +66,20 @@ export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string
   }, [docId]);
 
   const toggleStar = useCallback(() => {
-    const next = toggleStarredDoc({ id: docId, title: doc?.title?.trim() || fallbackTitle?.trim() || "" });
+    // Without a name there is nothing safe to write: `toggleStarredDoc` substitutes the literal
+    // "Document" for an empty title and POSTs it to /api/starred, which persists that placeholder
+    // as the document's name on every device — and `entityTitles` then recalls it as the
+    // remembered name, painting "Document" as the title on every later navigation. The button is
+    // disabled for the few hundred milliseconds the name is unknown instead.
+    if (!title) return;
+    const next = toggleStarredDoc({ id: docId, title });
     setStarred(next.starred);
-  }, [docId, doc?.title, fallbackTitle]);
+  }, [docId, title]);
 
-  /**
-   * The name, in order of authority: this row's own fetch, then whatever the page already had,
-   * then what this browser last knew the document to be called.
-   *
-   * There is no "Document" in that list any more. A placeholder shaped like a name is what made
-   * every walk into Links or Metrics read as arriving at a different, unnamed document for a beat.
-   * When all three are empty the row renders a skeleton — honest about not knowing yet — and that
-   * only happens for a document this browser has never seen.
-   */
-  const title = doc?.title?.trim() || fallbackTitle?.trim() || remembered || "";
-
-  const projects = doc?.projects ?? [];
+  const projects = identity?.projects ?? [];
   const shown = projects.slice(0, MAX_PROJECTS);
   const extra = projects.length - shown.length;
+  const version = identity?.version ?? null;
 
   return (
     <span className="flex min-w-0 items-center gap-2.5">
@@ -116,42 +88,35 @@ export default function DocIdentityRow({ docId, fallbackTitle }: { docId: string
           Same 20px, same muted colour, so the name starts on the same pixel on every page. */}
       <DocumentTextIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
 
-      {title ? (
-        <Link
-          href={`/doc/${encodeURIComponent(docId)}`}
-          className="min-w-0 truncate text-lg font-semibold tracking-tight text-[var(--fg)] hover:underline underline-offset-4"
-        >
-          {title}
-        </Link>
-      ) : (
-        <span
-          className="block h-5 w-40 animate-pulse rounded bg-[var(--panel-hover)]"
-          aria-label="Loading document name"
-        />
-      )}
+      {/* Unknown draws a skeleton — honest about not knowing yet — and only until the read settles,
+          because a pulse that never resolves is worse than a plain word. */}
+      <EntityHeaderName kind="doc" id={docId} name={fallbackTitle} href={`/doc/${encodeURIComponent(docId)}`} />
 
       {/* After the name, not before it: the name is what the page is, and a control in front of it
           pushed the one thing you read into second place. */}
       <button
         type="button"
         onClick={toggleStar}
+        disabled={!title}
+        aria-disabled={!title}
         aria-label={starred ? "Unstar document" : "Star document"}
-        title={starred ? "Starred" : "Star"}
+        title={!title ? "Loading document name…" : starred ? "Starred" : "Star"}
         className={[
           "inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-[var(--panel-hover)]",
           starred ? "text-amber-600 dark:text-amber-200" : "text-[var(--muted)] hover:text-[var(--fg)]",
+          !title ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
         ].join(" ")}
       >
         <StarIcon filled={starred} />
       </button>
 
-      {doc?.version != null && doc.version > 0 ? (
+      {version != null && version > 0 ? (
         <Link
-          href={`/doc/${encodeURIComponent(docId)}/history#v-${doc.version}`}
+          href={`/doc/${encodeURIComponent(docId)}/history#v-${version}`}
           className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--panel-hover)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:text-[var(--fg)]"
-          title={`Version ${doc.version} (view history)`}
+          title={`Version ${version} (view history)`}
         >
-          <span>v{doc.version}</span>
+          <span>v{version}</span>
           <span aria-hidden="true" className="opacity-50">
             ·
           </span>

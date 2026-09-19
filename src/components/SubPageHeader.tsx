@@ -22,8 +22,13 @@ import type { ReactNode } from "react";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import ScopeTile, { type ScopeKind } from "@/components/ScopeTile";
 
-/** One step of the breadcrumb. The last one is the current page and never links. */
-export type Crumb = { label: string; href?: string };
+/**
+ * One step of the breadcrumb. The last one is the current page and never links.
+ *
+ * `label` is a node, not a string, because a crumb that names a resource has to be able to wait for
+ * that name the way the title above it does — see `EntityCrumbLabel`.
+ */
+export type Crumb = { label: ReactNode; href?: string };
 
 export default function SubPageHeader({
   kind,
@@ -76,7 +81,7 @@ export default function SubPageHeader({
       {/* Exactly where `AppPageHeader` puts its description, so the band is the same height. */}
       <div className="mt-1.5 flex min-w-0 items-center gap-2 text-[13px] leading-5 text-[var(--muted-2)]">
         {crumbs.map((crumb, i) => (
-          <span key={`${crumb.label}-${i}`} className="flex min-w-0 items-center gap-2">
+          <span key={i} className="flex min-w-0 items-center gap-2">
             {i > 0 ? (
               <span aria-hidden="true" className="text-[var(--muted-2)]">
                 ›

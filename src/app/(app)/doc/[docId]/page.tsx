@@ -21,7 +21,15 @@ export default function DocPage(props: { params: Promise<{ docId: string }> }) {
       initialDoc={{
         id: docId,
         shareId: null,
-        title: "Document",
+        /**
+         * Deliberately empty, not the word "Document".
+         *
+         * This route is client-first and does no server read, so whatever is written here is what
+         * the header renders until `/api/docs/:id` answers — and a placeholder that *looks like a
+         * name* is the flash this page used to have on every navigation. The client fills the real
+         * name from `useEntityTitle` (`src/lib/client/entityTitles.ts`) on its first frame instead.
+         */
+        title: "",
         status: "preparing",
         currentUploadId: null,
         currentUploadVersion: null,

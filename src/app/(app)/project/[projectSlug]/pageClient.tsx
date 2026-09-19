@@ -30,6 +30,7 @@ import Modal from "@/components/modals/Modal";
 import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import { notifyProjectsChanged, refreshSidebarCache } from "@/lib/sidebarCache";
+import { forgetEntityTitle, rememberEntityTitle, rememberEntityTitles, useEntityTitle } from "@/lib/client/entityTitles";
 
 type DocListItem = {
   id: string;
@@ -284,6 +285,17 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         if (cancelled) return;
         if (res.status === 404) {
           setNotFound(true);
+          /**
+           * The project is gone, so nothing about it is true any more — including its name.
+           *
+           * Leaving `project` populated here meant a 404 arriving on a mount that had already
+           * loaded (a search, a tab switch, a page change, a docs-changed tick) kept the old DTO:
+           * the header went on showing the deleted project's name over a "Project not found."
+           * body, and the remembered-name effect saw a truthy `project.name` and wrote it back to
+           * localStorage — so every later header for this id painted a project that no longer
+           * exists.
+           */
+          setProject(null);
           // If the project was deleted out-of-band (e.g., DB reset), prune stale sidebar cache.
           notifyProjectsChanged();
           void refreshSidebarCache({ reason: "project-not-found", force: true });
@@ -306,6 +318,9 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         const nextProject = json.project ?? null;
         setNotFound(false);
         setProject(nextProject);
+        // Every row below shows a document's title; the document page you click into should open
+        // already wearing it instead of fetching it back before it can name itself.
+        rememberEntityTitles("doc", Array.isArray(json.docs) ? json.docs : []);
         setDocs((prev) => {
           const computed: Paged<DocListItem> = {
             items: Array.isArray(json.docs) ? json.docs : [],
@@ -389,8 +404,33 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
     };
   }, []);
 
-  // Never show the slug as the visible title; wait for the full project name.
-  const title = useMemo(() => project?.name ?? "", [project?.name]);
+  /**
+   * Never show the slug as the visible title — and never show the word "Project" either.
+   *
+   * Until the fetch lands we use what this browser last knew this project to be called, which is
+   * how the header paints the right name on the first frame of a navigation instead of a skeleton
+   * that resolves a moment later. The fetch still wins the instant it answers.
+   */
+  const remembered = useEntityTitle("project", projectSlug);
+  /**
+   * `notFound` deliberately drops the remembered name. A project that has been deleted or is no
+   * longer yours must not wear its old name above a "Project not found." body — that reads as a
+   * page that half-loaded, and it would leave the header's own `notFound` branch unreachable for
+   * anyone whose browser had opened the project before.
+   */
+  const title = useMemo(
+    () => project?.name?.trim() || (notFound ? "" : remembered) || "",
+    [project?.name, notFound, remembered],
+  );
+
+  // Correct the memory whenever the server tells us the name — including after a rename — and
+  // drop it the moment the server says the project is gone, so it cannot resurface on the next
+  // visit to that URL.
+  useEffect(() => {
+    const name = project?.name?.trim();
+    if (name) rememberEntityTitle("project", projectSlug, name);
+    else if (notFound) forgetEntityTitle("project", projectSlug);
+  }, [projectSlug, project?.name, notFound]);
   const subtitle = useMemo(() => project?.description || "", [project?.description]);
   const maxPage = useMemo(() => Math.max(1, Math.ceil(docs.total / docs.limit)), [docs.total, docs.limit]);
   const isRequestRepo = useMemo(() => Boolean(project?.isRequest), [project?.isRequest]);

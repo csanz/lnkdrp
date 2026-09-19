@@ -14,6 +14,7 @@ import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MagnifyingGlassIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { rememberEntityTitles } from "@/lib/client/entityTitles";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { DocResultRow, ProjectResultRow, SearchSkeleton, type SearchDoc, type SearchProject } from "./SearchResultRow";
 import { SCOPES, SORTS, buildSearch, parseSort, readUrlState, type UrlState } from "./searchUrl";
@@ -136,7 +137,11 @@ export default function SearchPageClient() {
         const json = (await res.json().catch(() => ({}))) as { docs?: SearchDoc[]; total?: number; error?: string };
         if (!res.ok) throw new Error(json?.error || "Failed to load documents.");
         if (id !== docsReqRef.current) return;
-        setDocs(Array.isArray(json.docs) ? json.docs : []);
+        const nextDocs = Array.isArray(json.docs) ? json.docs : [];
+        setDocs(nextDocs);
+        // The row you are about to click already shows the name; the page behind it should open
+        // with that name rather than a skeleton it fills in a fetch later.
+        rememberEntityTitles("doc", nextDocs);
         setDocsTotal(typeof json.total === "number" ? json.total : 0);
         if (wasLeaving) setPageKey((k) => k + 1);
       } catch (e) {
@@ -174,7 +179,9 @@ export default function SearchPageClient() {
         const json = (await res.json().catch(() => ({}))) as { projects?: SearchProject[]; error?: string };
         if (!res.ok) throw new Error(json?.error || "Failed to load projects.");
         if (id !== projectsReqRef.current) return;
-        setProjects(Array.isArray(json.projects) ? json.projects : []);
+        const nextProjects = Array.isArray(json.projects) ? json.projects : [];
+        setProjects(nextProjects);
+        rememberEntityTitles("project", nextProjects);
       } catch (e) {
         if (ctrl.signal.aborted || id !== projectsReqRef.current) return;
         setError(e instanceof Error ? e.message : "Failed to load projects.");

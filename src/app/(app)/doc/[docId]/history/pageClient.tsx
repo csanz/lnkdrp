@@ -15,6 +15,7 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { formatSizeChangeLine } from "@/lib/format/bytes";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
+import EntityCrumbLabel from "@/components/HeaderIdentity";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import Modal from "@/components/modals/Modal";
@@ -530,7 +531,13 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
         kind="doc"
         hideTile
         title={<DocIdentityRow docId={docId} fallbackTitle={docTitle} />}
-        crumbs={[{ label: "Document", href: `/doc/${encodeURIComponent(docId)}` }, { label: "History" }]}
+        crumbs={[
+          {
+            label: <EntityCrumbLabel kind="doc" id={docId} noun="Document" name={docTitle} />,
+            href: `/doc/${encodeURIComponent(docId)}`,
+          },
+          { label: "History" },
+        ]}
         actions={<DocHeaderActions docId={docId} current="doc" />}
       />
 

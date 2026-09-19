@@ -12,6 +12,7 @@ import { Cog6ToothIcon, DocumentTextIcon, FolderIcon, TagIcon } from "@heroicons
 
 import AppPageHeader, { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import TagDot from "@/components/tags/TagDot";
+import { rememberEntityTitles } from "@/lib/client/entityTitles";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import type { TagColorKey } from "@/lib/tags/palette";
 
@@ -37,8 +38,14 @@ export default function TagPageClient({ slug }: { slug: string }) {
       if (!res.ok) return;
       const json = (await res.json()) as { tag?: Tag; docs?: DocRow[]; projects?: ProjectRow[] };
       setTag(json.tag ?? null);
-      setDocs(Array.isArray(json.docs) ? json.docs : []);
-      setProjects(Array.isArray(json.projects) ? json.projects : []);
+      const nextDocs = Array.isArray(json.docs) ? json.docs : [];
+      const nextProjects = Array.isArray(json.projects) ? json.projects : [];
+      setDocs(nextDocs);
+      setProjects(nextProjects);
+      // A name this page has already drawn is a name the page you click into should not have to
+      // fetch before it can title itself.
+      rememberEntityTitles("doc", nextDocs);
+      rememberEntityTitles("project", nextProjects);
       setNotFound(false);
     } catch {
       // Leaves the empty state below, which says the same thing without an alarm.
@@ -69,7 +76,19 @@ export default function TagPageClient({ slug }: { slug: string }) {
         title={
           <span className="inline-flex min-w-0 items-center gap-2">
             {tag ? <TagDot color={tag.color} /> : null}
-            <span className="truncate">{tag?.name || (notFound ? "Tag not found" : slug)}</span>
+            {/* The URL slug is not the tag's name — it is lower-cased and hyphenated — so printing
+                it here titled the page with something nobody typed, and then corrected itself. A
+                header waits instead; only a tag that is genuinely gone gets words. */}
+            {tag?.name ? (
+              <span className="truncate">{tag.name}</span>
+            ) : notFound ? (
+              <span className="truncate">Tag not found</span>
+            ) : (
+              <span
+                className="block h-5 w-40 animate-pulse rounded bg-[var(--panel-hover)]"
+                aria-label="Loading tag name"
+              />
+            )}
           </span>
         }
         description={

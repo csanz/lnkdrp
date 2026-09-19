@@ -37,7 +37,10 @@ import {
   upsertStarredDocTitle,
 } from "@/lib/starredDocs";
 import { ACTIVE_ORG_CHANGED_EVENT, getSidebarCacheSnapshot, notifyDocsChanged, setSidebarCacheSnapshot } from "@/lib/sidebarCache";
-import { rememberEntityTitle, useEntityTitle } from "@/lib/client/entityTitles";
+import { forgetEntityTitle, rememberEntityTitle, useEntityTitle } from "@/lib/client/entityTitles";
+// The same pulse the sub-page headers draw: one shape for one document's name, so the bar does not
+// change size or baseline when you walk from the document into its Links or Metrics page.
+import { HeaderNameSkeleton } from "@/components/HeaderIdentity";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
@@ -769,6 +772,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
         if (!res.ok) {
           if (res.status === 404) {
+            // Gone: drop the remembered name with it, or `/doc/:id/links` (which does not
+            // redirect) keeps painting a deleted document's title from localStorage.
+            forgetEntityTitle("doc", docRef.current.id);
             if (!cancelled) router.replace("/dashboard");
             return false;
           } else {
@@ -2126,10 +2132,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       {displayDocName ? (
                         <span className="min-w-0 truncate">{displayDocName}</span>
                       ) : (
-                        <span
-                          className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
-                          aria-hidden="true"
-                        />
+                        <HeaderNameSkeleton kind="doc" />
                       )}
                       {displayVersion != null ? (
                         navLockActive ? (
@@ -2184,10 +2187,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           ].join(" ")}
                         >
                           {displayDocName || (
-                            <span
-                              className="inline-block h-4 w-32 animate-pulse rounded bg-[var(--panel-hover)] align-middle"
-                              aria-hidden="true"
-                            />
+                            <HeaderNameSkeleton kind="doc" />
                           )}
                         </button>
                         {/* After the name, not before it: the name is what the page is, and two

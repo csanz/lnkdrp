@@ -9,41 +9,19 @@
  */
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import { LinkIcon, PlusIcon } from "@heroicons/react/24/outline";
 
 import LinksManager, { type LinksManagerHandle } from "@/components/links/LinksManager";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
+import EntityCrumbLabel from "@/components/HeaderIdentity";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
-import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 
-/**
- * Render the LinksPageClient UI (uses effects, local state).
- */
+/** Render the document's Links page: the document's own header band over the links table. */
 export default function LinksPageClient({ docId }: { docId: string }) {
-  const [docTitle, setDocTitle] = useState<string>("");
   const managerRef = useRef<LinksManagerHandle | null>(null);
-
-  // The header shows the document title; `lite=1` keeps the read cheap (no extracted text).
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetchWithTempUser(`/api/docs/${encodeURIComponent(docId)}?lite=1`, { cache: "no-store" });
-        if (!res.ok) return;
-        const json = (await res.json()) as { doc?: { title?: unknown } } | null;
-        const t = typeof json?.doc?.title === "string" ? json.doc.title.trim() : "";
-        if (!cancelled && t) setDocTitle(t);
-      } catch {
-        // the header falls back to "Document"
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [docId]);
 
   return (
     <div className="flex h-full flex-col">
@@ -53,8 +31,16 @@ export default function LinksPageClient({ docId }: { docId: string }) {
       <SubPageHeader
         kind="doc"
         hideTile
-        title={<DocIdentityRow docId={docId} fallbackTitle={docTitle} />}
-        crumbs={[{ label: "Document", href: `/doc/${encodeURIComponent(docId)}` }, { label: "Links" }]}
+        // The row makes the `?lite=1` read itself, and shares it with the crumb below, so this page
+        // no longer runs a second copy of the same fetch to hand a title down.
+        title={<DocIdentityRow docId={docId} />}
+        crumbs={[
+          {
+            label: <EntityCrumbLabel kind="doc" id={docId} noun="Document" />,
+            href: `/doc/${encodeURIComponent(docId)}`,
+          },
+          { label: "Links" },
+        ]}
         actions={<DocHeaderActions docId={docId} current="links" />}
       />
 
