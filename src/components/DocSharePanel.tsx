@@ -38,8 +38,6 @@ type Props = {
   uploadError?: unknown | null;
   /** Optional quick-stats card rendered between the share controls and the Snapshot. */
   quickStats?: ReactNode;
-  /** The document's tags, under the quick stats. */
-  tags?: ReactNode;
   /** Optional notice rendered directly under the links summary (e.g. a plan-limit prompt). */
   shareNotice?: ReactNode;
   /** Who wrote the summary when it was not LinkDrop (e.g. "Claude Code" for an agent-written summary). */
@@ -77,7 +75,6 @@ export default function DocSharePanel({
   aiOutput,
   uploadError,
   quickStats,
-  tags,
   shareNotice,
   summaryAuthorLabel,
   summaryMissing,
@@ -168,10 +165,6 @@ export default function DocSharePanel({
 
       {/* 1b) Quick stats (owner engagement glimpse) */}
       {quickStats ? <div className="mt-4">{quickStats}</div> : null}
-
-      {/* 1c) Tags — under the numbers, not above them: they are how you find this document again,
-             not something you read while sharing it. */}
-      {tags ? <div className="mt-4">{tags}</div> : null}
 
       {/* 2) Snapshot — same spacing as the cards above it; it used to sit under a rule and a bigger gap. */}
       {hasSnapshot ? (

@@ -7,6 +7,14 @@
  * this item, and lets you set several in one sitting — which is how tagging actually happens, in a
  * burst when a document lands rather than one tag per visit.
  *
+ * Two shapes:
+ *
+ * - `panel` — full-size chips in a card, with an × on each.
+ * - `header` — the compact row that sits beside a page title. Two chips and a "+2", never more:
+ *   the title row is 32px on every page in the app, and a project with nine tags must not be the
+ *   one page where the header is two lines tall. Removing happens in the picker there, since an ×
+ *   at that size is a mis-click waiting to happen.
+ *
  * Reading is open to any member; writing takes the same role the server enforces, and `canManage`
  * fails closed while the plan snapshot loads, so nobody is shown an input the API will refuse.
  */
@@ -23,15 +31,20 @@ import type { TagColorKey } from "@/lib/tags/palette";
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
 export type TagTargetKind = "doc" | "project";
 
+/** How many chips a header shows before the rest become "+N". */
+const HEADER_VISIBLE = 2;
+
 export default function TagsRow({
   targetKind,
   targetId,
   canManage = true,
+  variant = "panel",
   className,
 }: {
   targetKind: TagTargetKind;
   targetId: string;
   canManage?: boolean;
+  variant?: "panel" | "header";
   className?: string;
 }) {
   const [tags, setTags] = useState<Tag[] | null>(null);
@@ -87,6 +100,71 @@ export default function TagsRow({
   // Nothing at all until the first read lands: an empty "Tags" label that then fills in reads as a
   // page that lost something.
   if (tags === null) return null;
+
+  if (variant === "header") {
+    const shown = tags.slice(0, HEADER_VISIBLE);
+    const extra = tags.length - shown.length;
+    const all = tags.map((t) => t.name).join(" · ");
+
+    return (
+      <span className={["inline-flex min-w-0 items-center gap-1.5", className ?? ""].join(" ")}>
+        {shown.map((tag) => (
+          <button
+            key={tag.id}
+            type="button"
+            onClick={() => canManage && setPicking(true)}
+            title={canManage ? `${all} — click to change` : all}
+            className={[
+              "inline-flex h-6 max-w-[160px] shrink-0 items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 text-[11px] font-medium text-[var(--muted)] transition-colors",
+              canManage ? "hover:text-[var(--fg)]" : "cursor-default",
+            ].join(" ")}
+          >
+            <TagDot color={tag.color} size={6} />
+            <span className="truncate">{tag.name}</span>
+          </button>
+        ))}
+
+        {extra > 0 ? (
+          <button
+            type="button"
+            onClick={() => canManage && setPicking(true)}
+            title={all}
+            className="inline-flex h-6 shrink-0 items-center rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:text-[var(--fg)]"
+          >
+            +{extra}
+          </button>
+        ) : null}
+
+        {canManage ? (
+          <button
+            type="button"
+            onClick={() => setPicking(true)}
+            aria-label={tags.length ? "Change tags" : "Add a tag"}
+            title={tags.length ? "Change tags" : "Add a tag"}
+            className={[
+              "inline-flex h-6 shrink-0 items-center gap-1 rounded-full border border-dashed border-[var(--border)] text-[11px] font-medium text-[var(--muted-2)] transition-colors hover:border-[var(--muted-2)] hover:text-[var(--fg)]",
+              // With no tags at all it says so; beside chips it is just a plus.
+              tags.length ? "w-6 justify-center" : "px-2",
+            ].join(" ")}
+          >
+            <PlusIcon className="h-3 w-3" aria-hidden="true" />
+            {tags.length ? null : <span>Tag</span>}
+          </button>
+        ) : null}
+
+        {canManage ? (
+          <TagPickerModal
+            open={picking}
+            onClose={() => setPicking(false)}
+            targetKind={targetKind}
+            targetId={targetId}
+            attached={tags}
+            onChanged={(next) => setTags(next)}
+          />
+        ) : null}
+      </span>
+    );
+  }
 
   return (
     <div className={className}>

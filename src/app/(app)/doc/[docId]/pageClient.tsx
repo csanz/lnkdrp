@@ -2271,6 +2271,12 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           )
                         ) : null}
 
+                        {/* Tags sit with the version and the projects: the row that says what
+                            this document is. */}
+                        {hasHydratedFromServer ? (
+                          <TagsRow targetKind="doc" targetId={doc.id} variant="header" />
+                        ) : null}
+
                         {projectsInline.length ? (
                           <div className="inline-flex shrink-0 flex-wrap items-center gap-1 text-sm font-medium text-[var(--muted-2)]">
                             {projectsInline.map((p) => {
@@ -2781,7 +2787,6 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                       uploadAi?.uploadId === doc.currentUploadId ? (uploadAi?.summaryBy?.label ?? uploadAi?.summaryBy?.client ?? null) : null
                     }
                     summaryMissing={summaryMissingNotice}
-                    tags={hasHydratedFromServer ? <TagsRow targetKind="doc" targetId={doc.id} /> : null}
                     quickStats={
                       hasHydratedFromServer && doc.status === "ready" ? (
                         <QuickStats
