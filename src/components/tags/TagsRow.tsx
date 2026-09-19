@@ -85,13 +85,42 @@ export default function TagsRow({
 
   const attached = useMemo(() => new Set((tags ?? []).map((t) => t.id)), [tags]);
   const query = draft.trim().toLowerCase();
-  const suggestions = useMemo(() => {
+
+  /**
+   * Which tags to offer, and in what order.
+   *
+   * The list arrives alphabetical, which is the wrong order for a suggestion: in a workspace with
+   * a hundred tags it would offer whatever starts with "A". So:
+   *
+   * - **Before you type**, the most-used tags. What a workspace files things under most is the
+   *   best guess at what this one is, and it is also the list that keeps people reusing tags
+   *   instead of inventing near-duplicates.
+   * - **As you type**, anything containing what you typed, with names that *start* with it first —
+   *   "fin" should offer "Finance" ahead of "Refinancing" — then the most-used, then alphabetical
+   *   so the order never jitters between keystrokes.
+   *
+   * Eight at a time, with a count of what is not shown, so a long list says so rather than
+   * pretending the workspace has eight tags.
+   */
+  const matches = useMemo(() => {
     if (!adding) return [];
-    return all
-      .filter((t) => !attached.has(t.id))
-      .filter((t) => (query ? t.name.toLowerCase().includes(query) : true))
-      .slice(0, 6);
+    const pool = all.filter((t) => !attached.has(t.id));
+    const filtered = query ? pool.filter((t) => t.name.toLowerCase().includes(query)) : pool;
+    return [...filtered].sort((a, b) => {
+      if (query) {
+        const aStarts = a.name.toLowerCase().startsWith(query) ? 0 : 1;
+        const bStarts = b.name.toLowerCase().startsWith(query) ? 0 : 1;
+        if (aStarts !== bStarts) return aStarts - bStarts;
+      }
+      const byCount = (b.count ?? 0) - (a.count ?? 0);
+      if (byCount) return byCount;
+      return a.name.localeCompare(b.name);
+    });
   }, [adding, all, attached, query]);
+
+  const SUGGESTION_LIMIT = 8;
+  const suggestions = useMemo(() => matches.slice(0, SUGGESTION_LIMIT), [matches]);
+  const hiddenCount = Math.max(0, matches.length - suggestions.length);
 
   /** Exactly matching an existing tag means Enter attaches it rather than offering to create it. */
   const exactMatch = useMemo(
@@ -234,7 +263,7 @@ export default function TagsRow({
           />
 
           {suggestions.length ? (
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {suggestions.map((tag) => (
                 <button
                   key={tag.id}
@@ -248,6 +277,15 @@ export default function TagsRow({
                   <span className="truncate">{tag.name}</span>
                 </button>
               ))}
+              {hiddenCount ? (
+                <span className="text-[11px] text-[var(--muted-2)]">
+                  +{hiddenCount} more — keep typing
+                </span>
+              ) : null}
+            </div>
+          ) : query && !exactMatch ? (
+            <div className="mt-1.5 text-[12px] text-[var(--muted-2)]">
+              Press Enter to create &ldquo;{draft.trim()}&rdquo;.
             </div>
           ) : null}
         </div>

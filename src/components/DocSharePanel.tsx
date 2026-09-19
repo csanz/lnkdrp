@@ -38,7 +38,7 @@ type Props = {
   uploadError?: unknown | null;
   /** Optional quick-stats card rendered between the share controls and the Snapshot. */
   quickStats?: ReactNode;
-  /** The document's tags, at the top of the panel — what this document *is*, before what it does. */
+  /** The document's tags, under the quick stats. */
   tags?: ReactNode;
   /** Optional notice rendered directly under the links summary (e.g. a plan-limit prompt). */
   shareNotice?: ReactNode;
@@ -161,10 +161,6 @@ export default function DocSharePanel({
 
   return (
     <div className="min-h-0 overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-      {/* 0) Tags — the document's own labels. First because they say what this is; everything
-             below is about sending it. */}
-      {tags ? <div className="mb-4">{tags}</div> : null}
-
       {/* 1) Links — the default link, the count, and the way through to /doc/:docId/links */}
       <LinksManager scope={{ kind: "doc", id: docId }} variant="panel" />
 
@@ -172,6 +168,10 @@ export default function DocSharePanel({
 
       {/* 1b) Quick stats (owner engagement glimpse) */}
       {quickStats ? <div className="mt-4">{quickStats}</div> : null}
+
+      {/* 1c) Tags — under the numbers, not above them: they are how you find this document again,
+             not something you read while sharing it. */}
+      {tags ? <div className="mt-4">{tags}</div> : null}
 
       {/* 2) Snapshot — same spacing as the cards above it; it used to sit under a rule and a bigger gap. */}
       {hasSnapshot ? (

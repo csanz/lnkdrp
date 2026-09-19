@@ -5,6 +5,7 @@
 "use client";
 
 import WorkspaceManager from "./WorkspaceManager";
+import TagsManager from "@/components/tags/TagsManager";
 import NotificationPreferences from "@/components/notifications/NotificationPreferences";
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -15,6 +16,7 @@ import {
   ChartBarIcon,
   Cog6ToothIcon,
   CreditCardIcon,
+  TagIcon,
   UserCircleIcon,
 } from "@heroicons/react/24/outline";
 
@@ -36,11 +38,12 @@ function Section({
   );
 }
 
-type PrefTab = "account" | "workspace" | "usage" | "spending" | "billing";
+type PrefTab = "account" | "workspace" | "tags" | "usage" | "spending" | "billing";
 
 const TABS: Array<{ id: PrefTab; label: string }> = [
   { id: "account", label: "Account" },
   { id: "workspace", label: "Workspace" },
+  { id: "tags", label: "Tags" },
   { id: "usage", label: "Usage" },
   { id: "spending", label: "Spending" },
   { id: "billing", label: "Billing" },
@@ -49,13 +52,16 @@ const TABS: Array<{ id: PrefTab; label: string }> = [
 const TAB_ICON: Record<PrefTab, React.ReactNode> = {
   account: <UserCircleIcon className="h-4 w-4" />,
   workspace: <Cog6ToothIcon className="h-4 w-4" />,
+  tags: <TagIcon className="h-4 w-4" />,
   usage: <ChartBarIcon className="h-4 w-4" />,
   spending: <BanknotesIcon className="h-4 w-4" />,
   billing: <CreditCardIcon className="h-4 w-4" />,
 };
 
 function isPrefTab(v: unknown): v is PrefTab {
-  return v === "account" || v === "workspace" || v === "usage" || v === "spending" || v === "billing";
+  return (
+    v === "account" || v === "workspace" || v === "tags" || v === "usage" || v === "spending" || v === "billing"
+  );
 }
 
 function tabFromSearchParams(searchParams: URLSearchParams | null): PrefTab {
@@ -161,6 +167,15 @@ function PreferencesPageInner() {
             <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-3 py-2 text-[12px] text-[var(--muted-2)]">
               Account deletion isn’t available yet. Email hi@lnkdrp.com and we’ll take care of it.
             </div>
+          </Section>
+        ) : null}
+
+        {tab === "tags" ? (
+          <Section
+            title="Tags"
+            description="The workspace's tags, and what carries them. Renaming or merging here changes them everywhere."
+          >
+            <TagsManager />
           </Section>
         ) : null}
 
