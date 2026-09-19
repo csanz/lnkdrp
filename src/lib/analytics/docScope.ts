@@ -24,6 +24,7 @@ import { Types } from "mongoose";
 
 import { PROJECT_LINK_FILTER, ShareLinkModel } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { shareIdClause } from "./shareViewAggregates";
 
 /**
@@ -33,14 +34,22 @@ import { shareIdClause } from "./shareViewAggregates";
  * then which of those are project links. Passing several documents at once is deliberate — the
  * rollup runs over a batch and a project slug is a project slug for every document in it, so one
  * pair of queries answers for the whole batch.
+ *
+ * `source` picks which collection the first read asks. Sessions live in `ShareVisit` and readings
+ * in `ShareView`, and the visits route used to derive its own copy of this list off the former —
+ * two implementations of one rule, which is exactly what this module exists to prevent.
  */
-export async function projectLinkSlugsForDocs(docIds: ReadonlyArray<Types.ObjectId | string>): Promise<string[]> {
+export async function projectLinkSlugsForDocs(
+  docIds: ReadonlyArray<Types.ObjectId | string>,
+  opts?: { source?: "views" | "visits" },
+): Promise<string[]> {
   const ids = docIds
     .map((id) => String(id))
     .filter((id) => Types.ObjectId.isValid(id))
     .map((id) => new Types.ObjectId(id));
   if (!ids.length) return [];
-  const trafficShareIds = (await ShareViewModel.distinct("shareId", {
+  const model = opts?.source === "visits" ? ShareVisitModel : ShareViewModel;
+  const trafficShareIds = (await model.distinct("shareId", {
     docId: ids.length === 1 ? ids[0] : { $in: ids },
   })) as unknown as string[];
   if (!trafficShareIds.length) return [];

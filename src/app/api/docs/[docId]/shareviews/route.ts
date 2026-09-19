@@ -68,6 +68,8 @@ import { analyticsTierForPlan, clampAnalyticsDays, getWorkspacePlan, limitsForPl
 import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
 import { toShareLinkDTO } from "@/lib/share/links";
 import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
+import { ProjectModel } from "@/lib/models/Project";
+import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   shareIdClause,
@@ -865,6 +867,133 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         }
       }
 
+      /**
+       * Traffic this document earned inside a project link — the data room's front door, one slug
+       * for every document in it.
+       *
+       * `scopeMatch` excludes these rows on purpose: a project link has no `docId`, so letting them
+       * into the document's totals made them render as "Deleted link" and made three surfaces
+       * disagree. But a reader asking "who read this document" was then told nobody, while the
+       * activity feed showed a named person reading it minutes earlier. So the rows are reported
+       * here instead: their own section, their own figures, never folded into `totals`.
+       *
+       * Identities follow the same rule as the rest of the page: on Basic the projection never asks
+       * for a name, so a Free workspace gets the counts and the grouping and no identity at all.
+       */
+      /**
+       * Skipped when the page is scoped to one of the document's own links: "traffic that came
+       * through a project link" is not a fact about the link the reader selected, and rendering it
+       * there answers a question nobody asked.
+       *
+       * Wrapped in its own catch for the reason the identity block above is: these are three new
+       * queries inside the route's single big try, and a failure in any of them used to turn a
+       * document metrics page that had always rendered into a 400. A missing section degrades; a
+       * 400 does not.
+       */
+      const projectLinkTraffic = foreignShareIds.length && !link
+        ? await (async () => {
+            const match = {
+              docId: docObjectId,
+              shareId: { $in: foreignShareIds },
+              ...RECIPIENT_ONLY_MATCH,
+              ...activityWindowMatch(start),
+            };
+            const rows = (await ShareViewModel.aggregate([
+              { $match: match },
+              { $sort: { updatedDate: -1 } },
+              {
+                $group: {
+                  _id: { shareId: "$shareId", viewer: { $ifNull: ["$viewerUserId", "$botIdHash"] } },
+                  views: { $sum: 1 },
+                  lastSeen: { $max: LAST_ACTIVITY_EXPR },
+                  timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
+                  ...(includeViewers
+                    ? {
+                        viewerName: { $first: "$viewerName" },
+                        viewerEmailSnapshot: { $first: "$viewerEmailSnapshot" },
+                        viewerEmail: { $first: "$viewerEmail" },
+                      }
+                    : {}),
+                },
+              },
+              { $sort: { lastSeen: -1 } },
+              { $limit: 200 },
+            ])) as Array<{
+              _id: { shareId: string; viewer: unknown };
+              views: number;
+              lastSeen?: Date | null;
+              timeSpentMs?: number;
+              viewerName?: string | null;
+              viewerEmailSnapshot?: string | null;
+              viewerEmail?: string | null;
+            }>;
+            if (!rows.length) return null;
+
+            const slugs = [...new Set(rows.map((r) => String(r._id.shareId)))];
+            const links = (await ShareLinkModel.find({ shareId: { $in: slugs } })
+              .select({ shareId: 1, label: 1, projectId: 1 })
+              .lean()) as Array<{ shareId: string; label?: string | null; projectId?: Types.ObjectId | null }>;
+            const projectIds = links.map((l) => l.projectId).filter(Boolean) as Types.ObjectId[];
+            const projects = projectIds.length
+              ? ((await ProjectModel.find({ _id: { $in: projectIds } }).select({ name: 1 }).lean()) as Array<{
+                  _id: Types.ObjectId;
+                  name?: string | null;
+                }>)
+              : [];
+            const projectById = new Map(projects.map((p) => [String(p._id), p.name ?? null]));
+            const linkBySlug = new Map(links.map((l) => [l.shareId, l]));
+
+            const groups = new Map<
+              string,
+              { shareId: string; label: string | null; projectId: string | null; projectName: string | null; href: string | null; views: number; viewers: number; lastViewedAt: string | null }
+            >();
+            const viewers: Array<Record<string, unknown>> = [];
+            for (const r of rows) {
+              const shareId = String(r._id.shareId);
+              const link = linkBySlug.get(shareId);
+              const projectId = link?.projectId ? String(link.projectId) : null;
+              const projectName = projectId ? projectById.get(projectId) ?? null : null;
+              const g = groups.get(shareId) ?? {
+                shareId,
+                label: link?.label ?? null,
+                projectId,
+                projectName,
+                href: projectId ? projectLinkMetricsHref(projectId, shareId) : null,
+                views: 0,
+                viewers: 0,
+                lastViewedAt: null,
+              };
+              g.views += r.views;
+              g.viewers += 1;
+              const seen = r.lastSeen ? new Date(r.lastSeen).toISOString() : null;
+              if (seen && (!g.lastViewedAt || seen > g.lastViewedAt)) g.lastViewedAt = seen;
+              groups.set(shareId, g);
+              viewers.push({
+                shareId,
+                projectId,
+                projectName,
+                views: r.views,
+                timeSpentMs: Math.max(0, Math.floor(r.timeSpentMs ?? 0)),
+                lastViewedAt: seen,
+                ...(includeViewers
+                  ? {
+                      viewerName: r.viewerName ?? null,
+                      viewerEmail: r.viewerEmail ?? r.viewerEmailSnapshot ?? null,
+                    }
+                  : {}),
+              });
+            }
+            const list = [...groups.values()].sort((a, b) => b.views - a.views);
+            return {
+              views: list.reduce((n, g) => n + g.views, 0),
+              viewers: list.reduce((n, g) => n + g.viewers, 0),
+              links: list,
+              // Newest activity first, like the other viewer lists.
+              viewerRows: viewers.slice(0, 100),
+            };
+          })().catch(() => null)
+        : null;
+
       const res = NextResponse.json(
         {
         ok: true,
@@ -962,6 +1091,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
          * not a filter: the download numbers above are counted either way.
          */
         downloadsEnabled,
+        /**
+         * Views of this document that came through a project link, kept out of `totals` on purpose
+         * (see the comment where it is built). `null` when the document has no such traffic.
+         */
+        ...(projectLinkTraffic ? { projectLinkTraffic } : {}),
         ...(viewersOnly ? {} : { series }),
         // On Basic both viewer arrays are `[]` (the aggregates never run), which also omits the
         // per-viewer `pageTimeMsByPage` / `pagesSeen` maps.

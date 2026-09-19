@@ -14,6 +14,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { PROJECT_LINK_FILTER, ShareLinkModel, type ShareLink } from "@/lib/models/ShareLink";
+import { projectLinkSlugsForDocs } from "@/lib/analytics/docScope";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
@@ -108,12 +109,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     // `docId` of each document opened inside the data room, so the unfiltered branch has to drop
     // the slugs that are not this document's links — the same bound `/shareviews` applies, for the
     // same reason: those sessions belong to the project's timeline, not the document's.
-    const foreignShareIds: string[] = link
-      ? []
-      : ((await ShareLinkModel.find({
-          shareId: { $in: (await ShareVisitModel.distinct("shareId", { docId: docObjectId })) as unknown as string[] },
-          ...PROJECT_LINK_FILTER,
-        }).distinct("shareId")) as unknown as string[]);
+    const foreignShareIds: string[] = link ? [] : await projectLinkSlugsForDocs([docObjectId], { source: "visits" });
     const query: Record<string, unknown> = {
       ...(link
         ? { docId: docObjectId, shareId: link.shareId }

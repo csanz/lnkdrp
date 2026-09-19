@@ -28,6 +28,13 @@ export type RealtimeFrame =
       upload: { id: string; docId: string | null; percent: number; stage: string | null; status: string | null };
     }
   | { type: "project"; orgId: string; project: { id: string; name: string | null } }
+  // A recipient's volunteered name or email changed (they re-answered "introduce yourself"). The
+  // metrics pages refetch on it so a corrected name does not wait for a reload.
+  | {
+      type: "viewer";
+      orgId: string;
+      viewer: { docId: string | null; shareId: string | null; name: string | null };
+    }
   | { type: "ping" };
 
 type Handler = (frame: RealtimeFrame) => void;

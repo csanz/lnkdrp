@@ -689,8 +689,25 @@ export default function ActivityPageClient() {
       fetchPage(null)
         .then((page) => {
           setItems((prev) => {
-            const changed = page.items.length !== prev.length || page.items.some((it, i) => it.id !== prev[i]?.id);
+            /**
+             * Identity, not just arrival.
+             *
+             * This compared ids alone, and a rename is a *read-time join* onto rows that already
+             * exist — same ids, same count, same order. So the refetch triggered by a `viewer`
+             * frame fetched the corrected names and then threw them away, and the feed went on
+             * saying "Someone" until it was reloaded by hand: exactly what subscribing to that
+             * frame was meant to fix.
+             */
+            const identity = (it: (typeof page.items)[number]) =>
+              `${it.id}:${it.actor?.name ?? ""}:${it.actor?.email ?? ""}:${String((it.meta as Record<string, unknown> | undefined)?.viewerName ?? "")}`;
+            const changed =
+              page.items.length !== prev.length || page.items.some((it, i) => identity(it) !== (prev[i] ? identity(prev[i]) : ""));
             if (!changed) return prev;
+            // Same rows, new names: swap them in wholesale rather than running the arrivals
+            // animation, which exists for rows that are genuinely new.
+            const sameIds =
+              page.items.length === prev.length && page.items.every((it, i) => it.id === prev[i]?.id);
+            if (sameIds) return page.items;
             if (!prev.length) return page.items;
             const known = new Set([...prev.map((it) => it.id), ...arrivalQueueRef.current.map((it) => it.id)]);
             // Newest first on the wire; enqueue oldest first so each insert lands above the last.
@@ -715,6 +732,10 @@ export default function ActivityPageClient() {
     // Push: a new activity row in this workspace arrives as an "activity" frame; refetch page one
     // right away. The 10s timer is only a fallback: it skips its fetch while the socket is open.
     const unsubscribe = subscribeRealtime("activity", () => tick());
+    // A recipient's name is joined onto their past rows at read time, so a rename changes what the
+    // feed *says* without adding a row — no "activity" frame, nothing to react to, and the page sat
+    // there showing "Someone" until it was reloaded by hand.
+    const unsubscribeViewer = subscribeRealtime("viewer", () => tick());
     const timer = window.setInterval(() => {
       if (realtimeState() === "open") return;
       tick();
@@ -722,6 +743,7 @@ export default function ActivityPageClient() {
     window.addEventListener("focus", tick);
     return () => {
       unsubscribe();
+      unsubscribeViewer();
       window.clearInterval(timer);
       window.removeEventListener("focus", tick);
     };

@@ -96,7 +96,15 @@ async function main() {
   // cursor, which emits 'close'. So after either, wait out the resume and only then trust `closed`.
   // A dead stream turns /healthz 503 and exits the process: Fly http checks only pull the one
   // machine out of routing, and only an exit gets it restarted with fresh streams.
-  const streamHealth: Record<"activity" | "apikeys" | "docs" | "projects" | "uploads", boolean> = { activity: true, apikeys: true, docs: true, projects: true, uploads: true };
+  const streamHealth: Record<"activity" | "apikeys" | "docs" | "projects" | "uploads" | "shareviews" | "projectlinkviews", boolean> = {
+    activity: true,
+    apikeys: true,
+    docs: true,
+    projects: true,
+    uploads: true,
+    shareviews: true,
+    projectlinkviews: true,
+  };
   let shuttingDown = false;
   let exiting = false;
   const watchHealth = (name: keyof typeof streamHealth, stream: mongoose.mongo.ChangeStream) => {
@@ -226,6 +234,78 @@ async function main() {
     });
   });
   watchHealth("uploads", uploads);
+
+  // A recipient's volunteered identity, the moment it changes.
+  //
+  // "Introduce yourself" is asked once per browser and then remembered there, so the interesting
+  // case is the *second* answer: someone fixes a typo or adds a surname, the app writes it through
+  // to that person's rows (see `propagateViewerIdentity`), and an owner watching the document's
+  // metrics page should see the name correct itself rather than sit on the old one until a reload.
+  //
+  // Matching on the two identity fields keeps every other `shareviews` write off the channel —
+  // and there are a great many of them: each heartbeat from each open reader touches this
+  // collection several times a minute.
+  const shareViews = db.collection("shareviews").watch(
+    [
+      {
+        $match: {
+          operationType: "update",
+          $or: [
+            { "updateDescription.updatedFields.viewerName": { $exists: true } },
+            { "updateDescription.updatedFields.viewerEmailSnapshot": { $exists: true } },
+          ],
+        },
+      },
+    ],
+    { fullDocument: "updateLookup" },
+  );
+  shareViews.on("change", (change) => {
+    const doc = (change as { fullDocument?: { orgId?: unknown; docId?: unknown; shareId?: unknown; viewerName?: unknown } })
+      .fullDocument;
+    if (!doc?.orgId) return;
+    broadcast(String(doc.orgId), {
+      type: "viewer",
+      viewer: {
+        docId: doc.docId ? String(doc.docId) : null,
+        shareId: typeof doc.shareId === "string" ? doc.shareId : null,
+        name: typeof doc.viewerName === "string" ? doc.viewerName : null,
+      },
+    });
+  });
+  watchHealth("shareviews", shareViews);
+
+  // The same identity, on the row a visitor writes when they open a data room and read nothing.
+  // Without this, someone who introduces themselves on the room's front page and opens no document
+  // changes nothing the metrics page can see until it is reloaded — which is exactly the visitor
+  // this collection exists to record.
+  const projectLinkViews = db.collection("projectlinkviews").watch(
+    [
+      {
+        $match: {
+          operationType: "update",
+          $or: [
+            { "updateDescription.updatedFields.viewerName": { $exists: true } },
+            { "updateDescription.updatedFields.viewerEmailSnapshot": { $exists: true } },
+          ],
+        },
+      },
+    ],
+    { fullDocument: "updateLookup" },
+  );
+  projectLinkViews.on("change", (change) => {
+    const doc = (change as { fullDocument?: { orgId?: unknown; shareId?: unknown; viewerName?: unknown } }).fullDocument;
+    if (!doc?.orgId) return;
+    broadcast(String(doc.orgId), {
+      type: "viewer",
+      viewer: {
+        // No document: this is an arrival, not a reading.
+        docId: null,
+        shareId: typeof doc.shareId === "string" ? doc.shareId : null,
+        name: typeof doc.viewerName === "string" ? doc.viewerName : null,
+      },
+    });
+  });
+  watchHealth("projectlinkviews", projectLinkViews);
 
   // --- http + ws ---------------------------------------------------------------------------------
   const server = http.createServer((req, res) => {
