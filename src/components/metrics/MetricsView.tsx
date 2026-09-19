@@ -37,6 +37,7 @@ import {
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
 import RecentVisitors, { type RecentVisitor } from "@/components/metrics/RecentVisitors";
+import { viewerRouteKey } from "@/components/metrics/ViewerProfile";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
@@ -298,7 +299,7 @@ type ShareViewerVisitDetailResponse = {
   };
 };
 
-function formatDateTime(iso: string | null): string {
+export function formatDateTime(iso: string | null): string {
   if (!iso) return "-";
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return "-";
@@ -314,7 +315,7 @@ function formatDateShort(iso: string | null): string {
 }
 
 /** "3h ago" / "12 Sep" for the LINKS card's mini lists, matching `QuickStats`. */
-function relativeAge(iso: string | null): string {
+export function relativeAge(iso: string | null): string {
   if (!iso) return "—";
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return "—";
@@ -384,14 +385,14 @@ function ViewerCounts({
   );
 }
 
-function formatShortId(id: string | null | undefined, { head = 4, tail = 4 }: { head?: number; tail?: number } = {}): string {
+export function formatShortId(id: string | null | undefined, { head = 4, tail = 4 }: { head?: number; tail?: number } = {}): string {
   const raw = typeof id === "string" ? id.trim() : "";
   if (!raw) return "";
   if (raw.length <= head + tail + 1) return raw;
   return `${raw.slice(0, head)}…${raw.slice(-tail)}`;
 }
 
-function formatPageRanges(pages: number[]): string {
+export function formatPageRanges(pages: number[]): string {
   const sorted = Array.from(new Set(pages.filter((n) => typeof n === "number" && Number.isFinite(n) && n >= 1)))
     .map((n) => Math.floor(n))
     .sort((a, b) => a - b);
@@ -414,14 +415,14 @@ function formatPageRanges(pages: number[]): string {
 }
 
 
-function parseIsoMs(iso: string | null | undefined): number | null {
+export function parseIsoMs(iso: string | null | undefined): number | null {
   if (!iso) return null;
   const d = new Date(iso);
   const t = d.getTime();
   return Number.isFinite(t) ? t : null;
 }
 
-function formatDurationShort(msRaw: number | null | undefined): string {
+export function formatDurationShort(msRaw: number | null | undefined): string {
   const ms = typeof msRaw === "number" && Number.isFinite(msRaw) ? Math.max(0, Math.floor(msRaw)) : 0;
   if (ms <= 0) return "";
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
@@ -556,7 +557,7 @@ function MiniLineChartSingle({
  * Time on each page for one viewer: a smooth area across page numbers with the seconds printed on the
  * pages that matter, the same chart language as the Views chart. Unseen pages sit at zero.
  */
-function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: Record<string, number> }) {
+export function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: Record<string, number> }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
@@ -621,7 +622,7 @@ function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: Record<
 }
 
 /** "Viewed 9 pages in 29s over 2 sessions, most time on page 3." — the one-line read of a viewer. */
-function viewerSummary(pagesViewed: number, timeMs: number, sessions: number, msByPage: Record<string, number>): string {
+export function viewerSummary(pagesViewed: number, timeMs: number, sessions: number, msByPage: Record<string, number>): string {
   const parts = [`Viewed ${pagesViewed} ${pagesViewed === 1 ? "page" : "pages"}`];
   if (timeMs > 0) parts.push(`in ${formatDurationShort(timeMs)}`);
   let text = parts.join(" ");
@@ -644,7 +645,7 @@ function viewerSummary(pagesViewed: number, timeMs: number, sessions: number, ms
  * time on page 3". The "most time on" clause appears under the same rule: only when the top
  * document is at least half again the mean, so it names a real preference rather than a rounding.
  */
-function projectViewerSummary(
+export function projectViewerSummary(
   docs: Array<{ title: string | null; timeSpentMs: number }>,
   timeMs: number,
   sessions: number,
@@ -1207,8 +1208,9 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
         lastSeen: v.lastSeen,
         detail: describe(v),
-        // The same drawer the tables below open: one row, one reader, one definition of them.
-        onOpen: () => openAuthedViewerDetail(v),
+        // Straight to the reader's own page — no intermediate peek. The row and the tables below
+        // now lead to the same address rather than to two different depths of the same story.
+        onOpen: () => router.push(`${basePath}/metrics/viewer/${viewerRouteKey("authed", v.userId)}`),
       });
     }
     for (const v of data?.anonymousViewers ?? []) {
@@ -1218,7 +1220,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
         lastSeen: v.lastSeen,
         detail: describe(v),
-        onOpen: () => openAnonViewerDetail(v),
+        onOpen: () => router.push(`${basePath}/metrics/viewer/${viewerRouteKey("anon", v.botIdHash)}`),
       });
     }
     return rows;
