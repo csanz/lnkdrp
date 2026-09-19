@@ -13,6 +13,7 @@ import {
   refreshOrgsCache,
 } from "@/lib/orgsCache";
 import { useNavigationLocked } from "@/app/providers";
+import RemoveMemberModal from "@/components/modals/RemoveMemberModal";
 import Pill from "@/components/ui/Pill";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { planLimitPrompt } from "@/lib/client/planLimit";
@@ -95,6 +96,11 @@ export default function TeamsManager() {
   const [membersBusy, setMembersBusy] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
   const [members, setMembers] = useState<MemberRow[]>([]);
+  // The member the Remove button is asking about. A browser confirm() named nobody and said nothing
+  // about what removal does; this carries the row so the modal can.
+  const [removing, setRemoving] = useState<MemberRow | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const [inviteRole, setInviteRole] = useState<"member" | "viewer" | "admin">("member");
   const [inviteBusy, setInviteBusy] = useState(false);
@@ -439,20 +445,24 @@ export default function TeamsManager() {
       if (!canAdminTeams) return;
       if (navLocked) return;
       if (!userId) return;
-      const ok = window.confirm("Remove this member from the workspace?");
-      if (!ok) return;
+      setRemoveBusy(true);
+      setRemoveError(null);
       try {
         await fetchJson(`/api/orgs/${encodeURIComponent(activeOrgId)}/members/${encodeURIComponent(userId)}/revoke`, {
           method: "POST",
         });
+        setRemoving(null);
         await loadMembers();
         // Removing a member frees a collaborator seat.
         refreshPlan();
       } catch (e) {
-        setMembersError(e instanceof Error ? e.message : "Failed to remove member");
+        // Shown inside the dialog, next to the button that failed, rather than behind it.
+        setRemoveError(e instanceof Error ? e.message : "Failed to remove member");
+      } finally {
+        setRemoveBusy(false);
       }
     },
-    [session?.user, activeOrgId, canAdminTeams, navLocked, loadMembers],
+    [session?.user, activeOrgId, canAdminTeams, navLocked, loadMembers, refreshPlan],
   );
 
   useEffect(() => {
@@ -612,7 +622,10 @@ export default function TeamsManager() {
                             <button
                               type="button"
                               className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)]"
-                              onClick={() => void revokeMember(m.userId)}
+                              onClick={() => {
+                                setRemoveError(null);
+                                setRemoving(m);
+                              }}
                             >
                               Remove
                             </button>
@@ -893,6 +906,21 @@ export default function TeamsManager() {
           </div>
         )
       ) : null}
+      <RemoveMemberModal
+        open={removing !== null}
+        busy={removeBusy}
+        name={removing?.name ?? null}
+        email={removing?.email ?? null}
+        role={removing?.memberRole ?? null}
+        error={removeError}
+        onCancel={() => {
+          setRemoving(null);
+          setRemoveError(null);
+        }}
+        onConfirm={() => {
+          if (removing) void revokeMember(removing.userId);
+        }}
+      />
     </div>
   );
 }
