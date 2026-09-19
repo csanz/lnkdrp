@@ -90,6 +90,22 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
     previewNote: null,
     flagGated: null,
   },
+  member_removed: {
+    trace: "none",
+    traceNote:
+      "Not recorded: the revoke route sends it best-effort and never waits for it. The member.removed activity row records the removal, not the delivery.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
+  waitlist_approved: {
+    trace: "none",
+    traceNote:
+      "Not recorded: the approve route sends it best-effort. User.approvedAt records that we let them in, not that the mail arrived.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
   org_invite: {
     trace: "none",
     traceNote:

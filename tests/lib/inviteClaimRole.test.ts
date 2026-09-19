@@ -61,6 +61,9 @@ vi.mock("@/lib/billing/planLimits", () => ({
 vi.mock("@/lib/activity/log", () => ({ recordActivity: vi.fn(async () => undefined) }));
 vi.mock("@/lib/debug", () => ({ debugLog: vi.fn(), debugError: vi.fn() }));
 vi.mock("@/lib/gating/actor", () => ({ resolveActor, membershipChanged: vi.fn() }));
+// Claiming an invite also takes the claimer out of the early-access queue; that write has its own
+// tests (tests/lib/waitlist.test.ts) and would otherwise reach a model this file does not mock.
+vi.mock("@/lib/waitlist/waitlist", () => ({ approveUser: vi.fn(async () => ({ ok: true, changed: false, email: null, name: null })) }));
 
 import crypto from "node:crypto";
 

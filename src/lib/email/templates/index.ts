@@ -12,6 +12,7 @@
 export * from "./signature";
 export * from "./downloadRequest";
 export * from "./memberRemoved";
+export * from "./waitlistApproved";
 
 /** One row per email we send: for docs, for support ("which email is this?"), and for review. */
 export const EMAIL_CATALOG: readonly {
@@ -24,6 +25,7 @@ export const EMAIL_CATALOG: readonly {
   { id: "download_request.owner", what: "Asks the owner to approve or deny a download request", to: "owner", builtBy: "templates/downloadRequest.ts" },
   { id: "download_request.approved", what: "Tells the requester their download was approved", to: "requester", builtBy: "templates/downloadRequest.ts" },
   { id: "member_removed", what: "Tells someone their access to a workspace was removed", to: "member", builtBy: "templates/memberRemoved.ts" },
+  { id: "waitlist_approved", what: "Tells someone in the early-access queue that their account is open", to: "invitee", builtBy: "templates/waitlistApproved.ts" },
   { id: "org_invite", what: "Invites someone to a workspace", to: "invitee", builtBy: "email/sendOrgInviteEmail.ts" },
   { id: "plan_limit", what: "A Free workspace is over a plan limit (grace, then blocked)", to: "owner", builtBy: "email/sendPlanLimitEmail.ts" },
   { id: "share_views.immediate", what: "A recipient opened a share link", to: "member", builtBy: "notifications/sendNotificationEmails.ts" },

@@ -30,6 +30,7 @@ export default function AdminLeftSidebar() {
   const sections: NavSection[] = useMemo(
     () => [
       { label: "Home", items: [{ label: "Home", href: "/a", exact: true }] },
+      { label: "Access", items: [{ label: "Early access", href: "/a/waitlist", exact: true }] },
       { label: "Metrics", items: [{ label: "Share views", href: "/a/shareviews", exact: false }] },
       { label: "AI", items: [{ label: "Runs", href: "/a/ai-runs", exact: true }] },
       { label: "Billing", items: [{ label: "Credits", href: "/a/credits", exact: true }] },
