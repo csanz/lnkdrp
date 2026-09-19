@@ -244,6 +244,18 @@ export default function TagPickerModal({
       <div className="mt-4 flex items-center justify-between gap-3">
         <span className="text-[12px] text-[var(--muted-2)]">
           {current.length} on this {targetKind === "doc" ? "document" : "project"}
+          {" · "}
+          {/* The moment you are picking tags is the moment you notice one needs renaming. */}
+          <button
+            type="button"
+            className="font-medium text-[var(--muted)] underline underline-offset-2 transition-colors hover:text-[var(--fg)]"
+            onClick={() => {
+              onClose();
+              window.dispatchEvent(new Event("lnkdrp:manage-tags"));
+            }}
+          >
+            Manage tags
+          </button>
         </span>
         <button
           type="button"

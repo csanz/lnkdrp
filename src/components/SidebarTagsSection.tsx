@@ -125,6 +125,13 @@ export default function SidebarTagsSection() {
     void load();
   }, [pathname, load]);
 
+  // "Manage tags" from anywhere in the app (the picker's footer) opens the same modal here.
+  useEffect(() => {
+    const onManage = () => setManaging(true);
+    window.addEventListener("lnkdrp:manage-tags", onManage);
+    return () => window.removeEventListener("lnkdrp:manage-tags", onManage);
+  }, []);
+
   // Nothing at all until there is a tag: an empty section is a permanent question nobody asked.
   if (!tags || !tags.length) return null;
 
@@ -149,14 +156,15 @@ export default function SidebarTagsSection() {
           <span className="font-semibold text-[var(--muted-2)]/70">{tags.length}</span>
         </button>
         {/* Rename, recolour, merge, delete — in a modal, like Starred's and Projects' full lists,
-            so tidying a tag never costs you the page you were on. Hover-revealed, so it costs the
-            header nothing when nobody is looking for it. */}
+            so tidying a tag never costs you the page you were on. Always visible, not revealed on
+            hover: this section is collapsed by default, so a hidden control meant the answer to
+            "where do I manage tags" was nowhere on the screen. */}
         <button
           type="button"
           aria-label="Manage tags"
           title="Manage tags"
           onClick={() => setManaging(true)}
-          className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-2)] opacity-0 transition-opacity hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus:opacity-100 group-hover:opacity-100"
+          className="ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--muted-2)] transition-colors hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]"
         >
           <Cog6ToothIcon className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
