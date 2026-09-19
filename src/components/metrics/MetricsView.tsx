@@ -36,6 +36,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
+import RecentVisitors, { type RecentVisitor } from "@/components/metrics/RecentVisitors";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
@@ -50,6 +51,8 @@ import { formatDayKey } from "@/lib/format/date";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
 import { buildPublicProjectUrl, buildPublicShareUrl } from "@/lib/urls";
 import { subscribeRealtime } from "@/lib/client/realtime";
+import { rememberEntityTitle } from "@/lib/client/entityTitles";
+import EntityCrumbLabel, { CrumbSkeleton, EntityHeaderName, useHeaderName } from "@/components/HeaderIdentity";
 
 /** Free = basic (totals, chart, unique viewer count); Pro = deep (identities, per-page time, visits). */
 type AnalyticsTier = "basic" | "deep";
@@ -785,6 +788,15 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
   const { kind, noun, nounLower, basePath, apiBase, supportsPageDetail } = scope;
   /** Landings, the per-document ranking and the DOCUMENTS card exist only on the project scope. */
   const isProject = kind === "project";
+  /**
+   * The resource's name for this header.
+   *
+   * It used to start empty and fill from the metrics payload — which means the name of the thing
+   * you are looking at waited on the whole analytics aggregation, and the header showed the word
+   * "Document" or "Project" until it landed. The remembered name (`entityTitles`) covers that gap;
+   * the payload still overwrites it when it arrives.
+   */
+  const { name: remembered } = useHeaderName(scope.kind === "project" ? "project" : "doc", scope.id);
   const [resourceTitle, setResourceTitle] = useState<string>("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [liveLoading, setLoading] = useState(false);
@@ -1039,7 +1051,10 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         const parsed = json as MetricsResponse;
         setData(parsed);
         const t = (typeof parsed?.docTitle === "string" ? parsed.docTitle : parsed?.projectName ?? "").trim();
-        if (!cancelled && t) setResourceTitle(t);
+        if (!cancelled && t) {
+          setResourceTitle(t);
+          rememberEntityTitle(scope.kind === "project" ? "project" : "doc", scope.id, t);
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load metrics");
       } finally {
@@ -1129,8 +1144,21 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBase, days, linkFilterParam, data, deepAnalytics]);
 
-  /** The label of the selected link, for copy that must not say "this document" under a filter. */
-  const selectedLinkLabel = useMemo(() => (shareId ? (data?.link?.label ?? "this link") : null), [shareId, data]);
+  /**
+   * The selected link's own label, or `null` while the payload that carries it is still out.
+   *
+   * Name slots — the breadcrumb, the line under the link's address — take this one and wait when it
+   * is null, because "this link" is a phrase for a sentence, not something anyone named a link.
+   */
+  const selectedLinkName = useMemo(() => (shareId ? (data?.link?.label ?? null) : null), [shareId, data]);
+  /**
+   * What a name slot shows for the link: its label, a pulse while the payload is out, and the bare
+   * noun once it has come back without one — a request that failed must not leave a bar pulsing at
+   * the top of the page forever.
+   */
+  const selectedLinkSlot = selectedLinkName ?? (data || error ? "Link" : <CrumbSkeleton />);
+  /** The same label for prose, where a sentence still has to say *something* about its subject. */
+  const selectedLinkLabel = shareId ? (selectedLinkName ?? "this link") : null;
 
   /**
    * The "LINKS" card's two lists: which links are pulling the traffic, and which are live right
@@ -1145,6 +1173,54 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
   );
   /** Longest bar = 100%, so the bars read relative to each other, not to some absolute scale. */
   const maxTopLinkViewers = useMemo(() => Math.max(1, ...topLinksByViewers.map((r) => r.viewers)), [topLinksByViewers]);
+  /**
+   * The recent-visitor strip's rows: named viewers and anonymous ones in one list, newest first.
+   *
+   * Both come from the same payload the viewer tables below use, so there is no second request and
+   * no second definition of who counts as a viewer. What each row can honestly say differs by
+   * scope — a project link spans documents, so it reports documents opened where a document
+   * reports pages read.
+   */
+  const recentVisitors = useMemo(() => {
+    const rows: RecentVisitor[] = [];
+    const describe = (v: {
+      pagesViewed?: number;
+      docsOpened?: number;
+      timeSpentMs?: number;
+      views?: number;
+      openedNothing?: boolean;
+    }): string | null => {
+      if (v.openedNothing) return "opened nothing";
+      const parts: string[] = [];
+      if (scope.kind === "project" && typeof v.docsOpened === "number" && v.docsOpened > 0) {
+        parts.push(`${v.docsOpened} ${v.docsOpened === 1 ? "document" : "documents"}`);
+      } else if (typeof v.pagesViewed === "number" && v.pagesViewed > 0) {
+        parts.push(`${v.pagesViewed} ${v.pagesViewed === 1 ? "page" : "pages"}`);
+      }
+      if (typeof v.timeSpentMs === "number" && v.timeSpentMs > 0) parts.push(formatDurationShort(v.timeSpentMs));
+      return parts.length ? parts.join(" · ") : null;
+    };
+
+    for (const v of data?.viewers ?? []) {
+      rows.push({
+        key: `u:${v.userId}`,
+        name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
+        lastSeen: v.lastSeen,
+        detail: describe(v),
+      });
+    }
+    for (const v of data?.anonymousViewers ?? []) {
+      rows.push({
+        // A volunteered name on an anonymous device is still a name worth showing.
+        key: `a:${v.botIdHash}`,
+        name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
+        lastSeen: v.lastSeen,
+        detail: describe(v),
+      });
+    }
+    return rows;
+  }, [data?.viewers, data?.anonymousViewers, scope.kind]);
+
   const recentlyOpenedLinks = useMemo(
     () =>
       [...(data?.byLink ?? [])]
@@ -1516,6 +1592,22 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anonViewersModalOpen, anonModalPageSafe]);
 
+  /**
+   * The trail's first step: "Project" or "Document", the hierarchy word.
+   *
+   * It waits for the name. While the title beside it was a skeleton this crumb was the only text in
+   * the band, sitting top-left where the name goes — so the page appeared to be titled "Project" and
+   * then to rename itself when the real name arrived. That is the bug, exactly as reported.
+   */
+  const parentCrumb = (
+    <EntityCrumbLabel
+      kind={scope.kind === "project" ? "project" : "doc"}
+      id={scope.id}
+      noun={noun}
+      name={resourceTitle}
+    />
+  );
+
   return (
     <div className="flex h-full flex-col">
       {/* A sub-page keeps its resource's own header band — same gutter, same height, same title
@@ -1538,22 +1630,26 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         hideTile={!shareId}
         title={
           shareId ? (
-            resourceTitle || noun
+            // A link's metrics is titled with the resource the link points at. Same rule as the
+            // identity rows: the name, or a skeleton — never the bare noun, which under a
+            // `?shareId=` filter used to stand here for as long as the whole aggregation took.
+            <EntityHeaderName kind={scope.kind === "project" ? "project" : "doc"} id={scope.id} name={resourceTitle} />
           ) : scope.kind === "doc" ? (
-            <DocIdentityRow docId={scope.id} fallbackTitle={resourceTitle} />
+            <DocIdentityRow docId={scope.id} fallbackTitle={resourceTitle || remembered || ""} />
           ) : (
-            <ProjectIdentityRow projectId={scope.id} name={resourceTitle} />
+            <ProjectIdentityRow projectId={scope.id} name={resourceTitle || remembered || ""} />
           )
         }
         titleHref={shareId ? basePath : undefined}
         crumbs={
           shareId
             ? [
-                { label: noun, href: basePath },
+                { label: parentCrumb, href: basePath },
                 { label: "Links", href: `${basePath}/links` },
-                { label: selectedLinkLabel ?? "Link" },
+                // A breadcrumb is a name slot: "this link" is a phrase for a sentence, not a label.
+                { label: selectedLinkSlot },
               ]
-            : [{ label: noun, href: basePath }, { label: "Metrics" }]
+            : [{ label: parentCrumb, href: basePath }, { label: "Metrics" }]
         }
         actions={
           // The parent page's own cluster, from the same component it renders, so the controls
@@ -1624,7 +1720,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                       </button>
                     </div>
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-[var(--muted)]">
-                      <span className="max-w-[280px] truncate font-medium text-[var(--fg)]">{selectedLinkLabel}</span>
+                      <span className="max-w-[280px] truncate font-medium text-[var(--fg)]">{selectedLinkSlot}</span>
                       <span aria-hidden="true">·</span>
                       <button
                         type="button"
@@ -1746,6 +1842,10 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                 </button>
               </div>
             ) : null}
+
+            {/* Who opened it, newest first — above the tiles, because "did they read it yet" is the
+                question this page is opened to answer and it used to be several screens down. */}
+            <RecentVisitors visitors={recentVisitors} className="mb-5" />
 
             <div className="grid gap-5 sm:grid-cols-2">
               {/* Views card */}

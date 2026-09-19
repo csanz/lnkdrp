@@ -42,6 +42,7 @@ import {
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { usePlan } from "@/lib/client/usePlan";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
+import RecentVisitors from "@/components/metrics/RecentVisitors";
 
 /** Where the chosen range is remembered. Per browser, like the dashboard's usage range. */
 const RANGE_STORAGE_KEY = "lnkdrp:metrics:range";
@@ -254,6 +255,19 @@ export default function MetricsPageClient() {
           <MetricsEmptyWorkspace />
         ) : (
           <div className="grid gap-6">
+            {/* Who opened something in this workspace, newest first, above everything else — the
+                same strip the document and project metrics pages lead with. Named people only:
+                the workspace payload identifies readers by person, and on Free it identifies
+                nobody, so the card simply does not appear there. */}
+            <RecentVisitors
+              visitors={data.people.items.map((p) => ({
+                key: p.key,
+                name: (p.name ?? "").trim() || (p.email ?? "").trim() || null,
+                lastSeen: p.lastSeenAt,
+                detail: p.docs > 0 ? `${p.docs} ${p.docs === 1 ? "document" : "documents"}` : null,
+              }))}
+            />
+
             <HeadlineStrip
               headline={data.headline}
               selected={shownMetric}
