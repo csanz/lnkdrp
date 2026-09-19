@@ -26,7 +26,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowLeftIcon,
   ClipboardDocumentCheckIcon,
   DocumentTextIcon,
   FolderIcon,
@@ -35,7 +34,11 @@ import {
   Square2StackIcon,
   UserIcon,
 } from "@heroicons/react/24/outline";
-import ScopeTile from "@/components/ScopeTile";
+import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
+import SubPageHeader from "@/components/SubPageHeader";
+import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
+import DocHeaderActions from "@/components/doc/DocHeaderActions";
+import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import Modal from "@/components/modals/Modal";
 import Button from "@/components/ui/Button";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
@@ -229,6 +232,11 @@ type MetricsResponse = {
     docs?: Array<{ docId: string; title: string | null; timeSpentMs: number }>;
     /** Project scope only: distinct tab sessions, de-duplicated across the documents in each. */
     sessions?: number;
+    /**
+     * Project scope only: they arrived and opened nothing. Their row comes from the arrival
+     * record rather than from any reading, so every figure beside it is legitimately zero.
+     */
+    openedNothing?: boolean;
     firstSeen: string | null;
     lastSeen: string | null;
   }>;
@@ -245,6 +253,8 @@ type MetricsResponse = {
     docsOpened?: number;
     docs?: Array<{ docId: string; title: string | null; timeSpentMs: number }>;
     sessions?: number;
+    /** See `viewers[].openedNothing`. */
+    openedNothing?: boolean;
     firstSeen: string | null;
     lastSeen: string | null;
   }>;
@@ -337,11 +347,14 @@ function ViewerCounts({
   views,
   pagesViewed,
   docsOpened,
+  openedNothing,
   supportsPageDetail,
 }: {
   views: number;
   pagesViewed?: number;
   docsOpened?: number;
+  /** The server says so, rather than the row inferring it from a zero it cannot interpret. */
+  openedNothing?: boolean;
   supportsPageDetail: boolean;
 }) {
   if (supportsPageDetail) {
@@ -355,6 +368,11 @@ function ViewerCounts({
   // `views` is the fallback for a response written before `docsOpened` existed: on this scope the
   // two are the same number, so the row is still right, only less explicit.
   const n = typeof docsOpened === "number" ? docsOpened : views;
+  // Someone who arrived and read nothing. "0 documents" is true and reads like a missing value;
+  // this says what actually happened, which on a data room is a result rather than an absence.
+  // `openedNothing` is the server saying it, so a payload that simply did not compute `docsOpened`
+  // cannot be mistaken for a visitor who read nothing.
+  if (openedNothing || n === 0) return <>Opened nothing yet</>;
   return (
     <>
       {n} {n === 1 ? "document" : "documents"}
@@ -628,6 +646,12 @@ function projectViewerSummary(
   sessions: number,
 ): string {
   const n = docs.length;
+  // Arrived and opened nothing. "Opened 0 documents in 0s" is arithmetic; this is the sentence a
+  // sender can act on, and on a data room it is a real and common outcome rather than an edge case.
+  if (n === 0) {
+    const visits = sessions > 1 ? ` over ${sessions} visits` : "";
+    return `Opened the room${visits} and no documents yet`;
+  }
   const parts = [`Opened ${n} ${n === 1 ? "document" : "documents"}`];
   if (timeMs > 0) parts.push(`in ${formatDurationShort(timeMs)}`);
   let text = parts.join(" ");
@@ -886,6 +910,35 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         sessions: number;
         firstSeen: string | null;
         lastSeen: string | null;
+      }
+  >(null);
+
+  /**
+   * Drilled into one document from a project viewer's drawer.
+   *
+   * The room's drawer can say "Steve opened 1 document in 5m 53s" and no more, because the viewer
+   * aggregate merges his per-document rows and drops the page fields (a project has no single page
+   * axis — page 3 of the term sheet is not page 3 of the deck). Clicking a document goes back for
+   * the one row that was merged, which is where "which pages, for how long" still lives.
+   */
+  const [viewerDoc, setViewerDoc] = useState<
+    | null
+    | {
+        docId: string;
+        /** Whose reading this is — see the guard in `openViewerDoc`. */
+        viewerKey: string;
+        title: string | null;
+        loading: boolean;
+        error: boolean;
+        data: {
+          pagesSeen: number[];
+          pageTimeMsByPage: Record<string, number>;
+          pagesViewed: number;
+          timeSpentMs: number;
+          sessions: number;
+          views: number;
+          lastSeen: string | null;
+        } | null;
       }
   >(null);
 
@@ -1214,6 +1267,8 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
       timeSpentMs > 0 || firstMs === null || lastMs === null ? 0 : Math.max(0, Math.min(24 * 60 * 60 * 1000, lastMs - firstMs));
     const pageTimeMsByPage =
       v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object" ? (v.pageTimeMsByPage as Record<string, number>) : {};
+    // The drill-down belongs to whoever's drawer is open; a new one starts at the top.
+    setViewerDoc(null);
     setViewerDetail({
       kind: "authed",
       key: v.userId,
@@ -1231,6 +1286,63 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
       firstSeen: firstSeenIso,
       lastSeen: lastSeenIso,
     });
+  }
+
+  /**
+   * Open one document's reading for the viewer whose drawer is open.
+   *
+   * Optimistic: the title and a spinner go up immediately, because the click already knows what it
+   * opened and waiting for the round-trip to show even that reads as a dead control.
+   */
+  function openViewerDoc(d: { docId: string; title: string | null }) {
+    if (!viewerDetail) return;
+    /**
+     * The request is per (viewer, document), so the guard has to be too.
+     *
+     * Keyed on the document alone, a slow response could land after the drawer was closed and
+     * another reader's opened on the same file — and one person's pages and time would render
+     * under the other person's name, silently. Wrong attribution is the one failure this page
+     * cannot have.
+     */
+    const viewerKey = viewerDetail.key;
+    setViewerDoc({ docId: d.docId, viewerKey, title: d.title, loading: true, error: false, data: null });
+    const who =
+      viewerDetail.kind === "authed"
+        ? `userId=${encodeURIComponent(viewerKey)}`
+        : `botIdHash=${encodeURIComponent(viewerKey)}`;
+    void (async () => {
+      try {
+        const res = await fetchWithTempUser(
+          `${apiBase}/shareviews/viewer-doc?docId=${encodeURIComponent(d.docId)}&${who}&days=${encodeURIComponent(String(days))}${linkFilterParam}`,
+          { cache: "no-store" },
+        );
+        const json = (await res.json().catch(() => null)) as any;
+        if (!res.ok || !json || json.ok !== true) throw new Error("failed");
+        setViewerDoc((prev) =>
+          prev && prev.docId === d.docId && prev.viewerKey === viewerKey
+            ? {
+                ...prev,
+                loading: false,
+                title: typeof json.title === "string" ? json.title : prev.title,
+                data: {
+                  pagesSeen: Array.isArray(json.pagesSeen) ? json.pagesSeen.filter((n: unknown) => typeof n === "number") : [],
+                  pageTimeMsByPage:
+                    json.pageTimeMsByPage && typeof json.pageTimeMsByPage === "object" ? json.pageTimeMsByPage : {},
+                  pagesViewed: typeof json.pagesViewed === "number" ? json.pagesViewed : 0,
+                  timeSpentMs: typeof json.timeSpentMs === "number" ? json.timeSpentMs : 0,
+                  sessions: typeof json.sessions === "number" ? json.sessions : 0,
+                  views: typeof json.views === "number" ? json.views : 0,
+                  lastSeen: typeof json.lastSeen === "string" ? json.lastSeen : null,
+                },
+              }
+            : prev,
+        );
+      } catch {
+        setViewerDoc((prev) =>
+          prev && prev.docId === d.docId && prev.viewerKey === viewerKey ? { ...prev, loading: false, error: true } : prev,
+        );
+      }
+    })();
   }
 
   function openAnonViewerDetail(v: NonNullable<MetricsResponse["anonymousViewers"]>[number]) {
@@ -1258,6 +1370,8 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
       timeSpentMs > 0 || firstMs === null || lastMs === null ? 0 : Math.max(0, Math.min(24 * 60 * 60 * 1000, lastMs - firstMs));
     const pageTimeMsByPage =
       v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object" ? (v.pageTimeMsByPage as Record<string, number>) : {};
+    // The drill-down belongs to whoever's drawer is open; a new one starts at the top.
+    setViewerDoc(null);
     setViewerDetail({
       kind: "anon",
       key: botIdHash || "anon",
@@ -1403,54 +1517,55 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* One link's metrics sit under the links list, not under the document: the back arrow and
-          the breadcrumb both say so when `?shareId=` is set. Before this, a reader who came from
-          /doc/:id/links and pressed back landed on the document page and had to find the list
-          again — the one place the link they were just reading about actually lives. Hierarchical
-          rather than referrer-based on purpose: the same URL is reached from the activity feed and
-          the side panel, and the parent of a link is the list either way. */}
-      <div className="flex items-center gap-3 border-b border-[var(--border)] bg-[var(--panel)] px-6 py-4">
-        <Link
-          href={shareId ? `${basePath}/links` : basePath}
-          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-          aria-label={shareId ? "Back to links" : `Back to ${nounLower}`}
-          title={shareId ? "Back to links" : `Back to ${nounLower}`}
-        >
-          <ArrowLeftIcon className="h-5 w-5" />
-        </Link>
+      {/* A sub-page keeps its resource's own header band — same gutter, same height, same title
+          line — with the breadcrumb where that page puts its description or its file facts, so
+          walking from a project or a document into its metrics moves nothing and still feels like
+          being inside the thing you opened. The way back is the breadcrumb's first crumb, sitting
+          where the parent page's own icon does, which is why there is no back arrow in front of
+          the tile pushing the title off that line.
 
-        {/* Whose numbers these are: the tile is the thing you are inside, the heading is what the
-            page shows. Filled rather than muted — a link page and a project page are otherwise the
-            same page, and a grey glyph at the weight of every other icon did not say which. */}
-        <ScopeTile
-          kind={shareId ? "link" : scope.kind === "project" ? "project" : "doc"}
-          parent={scope.kind === "project" ? "project" : "doc"}
-        />
-
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-[var(--fg)]">{resourceTitle || noun}</div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-            <Link href={basePath} className="hover:underline underline-offset-4">
-              {noun}
-            </Link>
-            <span aria-hidden="true">›</span>
-            {shareId ? (
-              <>
-                <Link href={`${basePath}/links`} className="hover:underline underline-offset-4">
-                  Links
-                </Link>
-                <span aria-hidden="true">›</span>
-                <span className="max-w-[240px] truncate font-medium text-[var(--fg)]">{selectedLinkLabel ?? "Link"}</span>
-              </>
-            ) : (
-              <span className="font-medium text-[var(--fg)]">Metrics</span>
-            )}
-          </div>
-        </div>
-      </div>
+          One link's metrics sit under the links list, not under the document: the breadcrumb says
+          so when `?shareId=` is set. Hierarchical rather than referrer-based on purpose — the same
+          URL is reached from the activity feed and the side panel, and the parent of a link is the
+          list either way. */}
+      <SubPageHeader
+        kind={shareId ? "link" : scope.kind === "project" ? "project" : "doc"}
+        parent={scope.kind === "project" ? "project" : "doc"}
+        // A document's own metrics page leads with the document's title row, so walking in from
+        // the header icons feels like going deeper rather than leaving. One link's metrics keep
+        // the link tile: there, the thing you are inside is the link.
+        hideTile={scope.kind === "doc" && !shareId}
+        title={
+          scope.kind === "doc" && !shareId ? (
+            <DocIdentityRow docId={scope.id} fallbackTitle={resourceTitle} />
+          ) : (
+            resourceTitle || noun
+          )
+        }
+        titleHref={scope.kind === "doc" && !shareId ? undefined : basePath}
+        crumbs={
+          shareId
+            ? [
+                { label: noun, href: basePath },
+                { label: "Links", href: `${basePath}/links` },
+                { label: selectedLinkLabel ?? "Link" },
+              ]
+            : [{ label: noun, href: basePath }, { label: "Metrics" }]
+        }
+        actions={
+          // The parent page's own cluster, from the same component it renders, so the controls
+          // never move between a resource and its sub-pages.
+          scope.kind === "project" ? (
+            <ProjectHeaderActions projectSlug={scope.id} current={shareId ? "links" : "metrics"} />
+          ) : (
+            <DocHeaderActions docId={scope.id} current={shareId ? "links" : "metrics"} />
+          )
+        }
+      />
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-        <div className="w-full px-6 py-6">
+        {/* The body lines up with the header band above it. */}
+        <div className={`w-full py-6 ${APP_PAGE_GUTTER}`}>
           <div className="mt-1 grid gap-5">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
@@ -2225,6 +2340,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                       views={v.views}
                                       pagesViewed={v.pagesViewed}
                                       docsOpened={v.docsOpened}
+                                      openedNothing={(v as { openedNothing?: boolean }).openedNothing}
                                       supportsPageDetail={supportsPageDetail}
                                     />
                                   </div>
@@ -2315,6 +2431,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                                       views={v.views}
                                       pagesViewed={v.pagesViewed}
                                       docsOpened={v.docsOpened}
+                                      openedNothing={(v as { openedNothing?: boolean }).openedNothing}
                                       supportsPageDetail={supportsPageDetail}
                                     />
                                   </div>
@@ -2390,6 +2507,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                           views={v.views}
                           pagesViewed={v.pagesViewed}
                           docsOpened={v.docsOpened}
+                                      openedNothing={(v as { openedNothing?: boolean }).openedNothing}
                           supportsPageDetail={supportsPageDetail}
                         />
                       </div>
@@ -2474,6 +2592,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                           views={v.views}
                           pagesViewed={v.pagesViewed}
                           docsOpened={v.docsOpened}
+                                      openedNothing={(v as { openedNothing?: boolean }).openedNothing}
                           supportsPageDetail={supportsPageDetail}
                         />
                       </div>
@@ -2515,7 +2634,15 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         ) : null}
       </Modal>
 
-      <Modal open={Boolean(viewerDetail)} onClose={() => setViewerDetail(null)} ariaLabel="Viewer details" width={560}>
+      <Modal
+        open={Boolean(viewerDetail)}
+        onClose={() => {
+          setViewerDetail(null);
+          setViewerDoc(null);
+        }}
+        ariaLabel="Viewer details"
+        width={560}
+      >
         {!viewerDetail ? null : (
           (() => {
             // On a document, sessions come from the `/visits` route; on a project they arrive on
@@ -2590,41 +2717,110 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                     the same axis — so the question that *does* have an answer here is which files
                     this person opened and which one held them. Same card frame, same emerald bars
                     as the rankings above, so the drawer still reads as one page. */}
-                {!supportsPageDetail ? (
+                {!supportsPageDetail && viewerDoc ? (
+                  /* Drilled into one file. Same frame, one level down: the reader is still the
+                     subject, the document has become the scope. */
+                  <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setViewerDoc(null)}
+                        className="-ml-1 inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[12px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                      >
+                        <span aria-hidden="true">←</span> All documents
+                      </button>
+                    </div>
+                    <div className="mt-1.5 truncate text-[13px] font-semibold text-[var(--fg)]">
+                      {viewerDoc.title || "Deleted document"}
+                    </div>
+
+                    {viewerDoc.loading ? (
+                      <div className="mt-3 h-24 animate-pulse rounded-xl bg-[var(--panel-hover)]" aria-hidden="true" />
+                    ) : viewerDoc.error ? (
+                      <div className="mt-2 text-[13px] text-[var(--muted)]">Couldn&apos;t load this reading.</div>
+                    ) : viewerDoc.data ? (
+                      <>
+                        <div className="mt-3 grid grid-cols-3 gap-2">
+                          {stat("Sessions", String(viewerDoc.data.sessions || 1))}
+                          {stat("Time spent", viewerDoc.data.timeSpentMs > 0 ? formatDurationShort(viewerDoc.data.timeSpentMs) : "—")}
+                          {stat("Pages", viewerDoc.data.pagesViewed ? String(viewerDoc.data.pagesViewed) : "—")}
+                        </div>
+                        <div className="mt-3 text-[13px] font-semibold text-[var(--fg)]">Time on each page</div>
+                        {(() => {
+                          const msByPage = viewerDoc.data.pageTimeMsByPage;
+                          const pages = viewerDoc.data.pagesSeen;
+                          const hasRealTime = Object.values(msByPage).some((ms) => ms > 0);
+                          if (hasRealTime && pages.length === 1) {
+                            return (
+                              <div className="mt-2 text-[13px] text-[var(--muted)]">
+                                {`Spent ${formatDurationShort(msByPage[String(pages[0])] ?? 0)} on page ${pages[0]}.`}
+                              </div>
+                            );
+                          }
+                          if (hasRealTime) {
+                            return (
+                              <div className="mt-2">
+                                <PageTimeChart pages={pages} msByPage={msByPage} />
+                              </div>
+                            );
+                          }
+                          if (pages.length) {
+                            return (
+                              <div className="mt-2 text-[13px] text-[var(--muted)]">
+                                Opened pages {formatPageRanges(pages)}. Time per page wasn&apos;t recorded for this reading.
+                              </div>
+                            );
+                          }
+                          return (
+                            <div className="mt-2 text-[13px] text-[var(--muted)]">
+                              No page activity recorded in this range.
+                            </div>
+                          );
+                        })()}
+                      </>
+                    ) : null}
+                  </div>
+                ) : !supportsPageDetail ? (
                   <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
                     <div className="text-[13px] font-semibold text-[var(--fg)]">Documents opened</div>
                     {viewerDetail.docs.length ? (
                       <ul className="mt-2.5 space-y-2.5">
                         {viewerDetail.docs.map((d) => (
                           <li key={d.docId}>
-                            <div className="flex items-baseline justify-between gap-3 text-[13px]">
-                              {d.title ? (
-                                /* The file itself: this person's reading of it happened in the
-                                   data room and the document's own metrics page does not count it. */
-                                <Link
-                                  href={`/doc/${encodeURIComponent(d.docId)}`}
-                                  className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
-                                >
-                                  {d.title}
-                                </Link>
-                              ) : (
-                                <span
-                                  className="min-w-0 truncate text-[var(--muted)]"
-                                  title="This document was deleted; this viewer's time on it is still counted"
-                                >
-                                  Deleted document
+                            {/* The whole row opens this person's reading of this file — which pages,
+                                for how long — rather than only the file. The document's own metrics
+                                page is one click further on and does not count this reading at all,
+                                so it is the wrong destination for a row inside a viewer's drawer. */}
+                            <button
+                              type="button"
+                              onClick={() => openViewerDoc(d)}
+                              className="group w-full rounded-lg px-1.5 py-1 text-left hover:bg-[var(--panel-hover)]"
+                              title={d.title ? `See which pages ${viewerDetail.title} read` : undefined}
+                            >
+                              <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                                {d.title ? (
+                                  <span className="min-w-0 truncate font-medium text-[var(--fg)] group-hover:underline">
+                                    {d.title}
+                                  </span>
+                                ) : (
+                                  <span
+                                    className="min-w-0 truncate text-[var(--muted)]"
+                                    title="This document was deleted; this viewer's time on it is still counted"
+                                  >
+                                    Deleted document
+                                  </span>
+                                )}
+                                <span className="shrink-0 tabular-nums text-[12px] text-[var(--muted)]">
+                                  {d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}
                                 </span>
-                              )}
-                              <span className="shrink-0 tabular-nums text-[12px] text-[var(--muted)]">
-                                {d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}
-                              </span>
-                            </div>
-                            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
-                              <div
-                                className="h-full rounded-full bg-[rgb(16_185_129)]"
-                                style={{ width: `${Math.max(4, (d.timeSpentMs / maxDocMs) * 100)}%` }}
-                              />
-                            </div>
+                              </div>
+                              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
+                                <div
+                                  className="h-full rounded-full bg-[rgb(16_185_129)]"
+                                  style={{ width: `${Math.max(4, (d.timeSpentMs / maxDocMs) * 100)}%` }}
+                                />
+                              </div>
+                            </button>
                           </li>
                         ))}
                       </ul>

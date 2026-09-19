@@ -33,6 +33,13 @@ export default function SubPageHeader({
   crumbs,
   badge,
   actions,
+  /**
+   * Drop the scope tile, for a header whose `title` is already an identity of its own — the
+   * document sub-pages pass the document's whole title row (star, name, version, tags, projects),
+   * and a tile in front of it would both duplicate the point and shift the name off the line the
+   * document page puts it on.
+   */
+  hideTile = false,
 }: {
   kind: ScopeKind;
   /** For a link tile: the thing the link points at, badged onto the tile. */
@@ -44,12 +51,13 @@ export default function SubPageHeader({
   crumbs: Crumb[];
   badge?: ReactNode;
   actions?: ReactNode;
+  hideTile?: boolean;
 }) {
   return (
     <header className={`shrink-0 border-b border-[var(--border)] bg-[var(--panel)] ${APP_PAGE_GUTTER} pb-5 pt-6`}>
       <div className="flex h-8 items-center justify-between gap-x-4">
         <div className="flex min-w-0 items-center gap-2.5">
-          <ScopeTile kind={kind} parent={parent} size="sm" />
+          {hideTile ? null : <ScopeTile kind={kind} parent={parent} size="sm" />}
           {titleHref ? (
             <Link
               href={titleHref}

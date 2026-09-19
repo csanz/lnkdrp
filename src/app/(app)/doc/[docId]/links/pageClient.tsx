@@ -15,6 +15,7 @@ import { LinkIcon, PlusIcon } from "@heroicons/react/24/outline";
 import LinksManager, { type LinksManagerHandle } from "@/components/links/LinksManager";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
+import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 
@@ -51,8 +52,8 @@ export default function LinksPageClient({ docId }: { docId: string }) {
           document's file facts, and the first crumb is the way back. */}
       <SubPageHeader
         kind="doc"
-        title={docTitle || "Document"}
-        titleHref={`/doc/${encodeURIComponent(docId)}`}
+        hideTile
+        title={<DocIdentityRow docId={docId} fallbackTitle={docTitle} />}
         crumbs={[{ label: "Document", href: `/doc/${encodeURIComponent(docId)}` }, { label: "Links" }]}
         actions={<DocHeaderActions docId={docId} current="links" />}
       />

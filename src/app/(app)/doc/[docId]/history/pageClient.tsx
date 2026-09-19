@@ -15,6 +15,7 @@ import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { formatSizeChangeLine } from "@/lib/format/bytes";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
+import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import Modal from "@/components/modals/Modal";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
@@ -527,8 +528,8 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
           gutter, same controls in the same place. */}
       <SubPageHeader
         kind="doc"
-        title={docTitle || "Document"}
-        titleHref={`/doc/${encodeURIComponent(docId)}`}
+        hideTile
+        title={<DocIdentityRow docId={docId} fallbackTitle={docTitle} />}
         crumbs={[{ label: "Document", href: `/doc/${encodeURIComponent(docId)}` }, { label: "History" }]}
         actions={<DocHeaderActions docId={docId} current="doc" />}
       />
