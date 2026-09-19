@@ -1,29 +1,27 @@
 /**
- * The tags on one document or project: the chips, and the box that adds another.
+ * The tags on one document or project.
  *
- * Type a name and press Enter. That is one call, not two — `POST /api/tags/assignments` takes a
- * *name*, finds or creates the tag and attaches it in the same request — so there is no window in
- * which two people typing "Fundraising" at once produce two tags. Suggestions come from the
- * workspace's existing tags and are filtered as you type, because the failure mode for tagging is
- * not a typo, it is five near-identical tags nobody consolidates.
+ * The chips themselves, with an × on hover to take one off, and a button that opens the picker
+ * (`TagPickerModal`) for everything else. The inline suggestion box this used to carry worked for
+ * six tags and hid the rest at sixty; the picker shows the whole list, ticks what is already on
+ * this item, and lets you set several in one sitting — which is how tagging actually happens, in a
+ * burst when a document lands rather than one tag per visit.
  *
  * Reading is open to any member; writing takes the same role the server enforces, and `canManage`
  * fails closed while the plan snapshot loads, so nobody is shown an input the API will refuse.
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PlusIcon, XMarkIcon } from "@heroicons/react/24/outline";
 
 import TagDot from "@/components/tags/TagDot";
+import TagPickerModal from "@/components/tags/TagPickerModal";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import type { TagColorKey } from "@/lib/tags/palette";
 
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
 export type TagTargetKind = "doc" | "project";
-
-/** Tag names are short; this is the same bound the server applies. */
-const NAME_MAX = 60;
 
 export default function TagsRow({
   targetKind,
@@ -37,12 +35,9 @@ export default function TagsRow({
   className?: string;
 }) {
   const [tags, setTags] = useState<Tag[] | null>(null);
-  const [all, setAll] = useState<Tag[]>([]);
-  const [adding, setAdding] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -62,101 +57,6 @@ export default function TagsRow({
   useEffect(() => {
     void load();
   }, [load]);
-
-  // The workspace's tags, for suggestions. Only once the input opens: a document page should not
-  // pay for a list nobody is about to read.
-  useEffect(() => {
-    if (!adding || all.length) return;
-    void (async () => {
-      try {
-        const res = await fetchWithTempUser("/api/tags", { cache: "no-store" });
-        if (!res.ok) return;
-        const json = (await res.json()) as { tags?: Tag[] };
-        setAll(Array.isArray(json.tags) ? json.tags : []);
-      } catch {
-        // Suggestions are a convenience; typing a name still works without them.
-      }
-    })();
-  }, [adding, all.length]);
-
-  useEffect(() => {
-    if (adding) inputRef.current?.focus();
-  }, [adding]);
-
-  const attached = useMemo(() => new Set((tags ?? []).map((t) => t.id)), [tags]);
-  const query = draft.trim().toLowerCase();
-
-  /**
-   * Which tags to offer, and in what order.
-   *
-   * The list arrives alphabetical, which is the wrong order for a suggestion: in a workspace with
-   * a hundred tags it would offer whatever starts with "A". So:
-   *
-   * - **Before you type**, the most-used tags. What a workspace files things under most is the
-   *   best guess at what this one is, and it is also the list that keeps people reusing tags
-   *   instead of inventing near-duplicates.
-   * - **As you type**, anything containing what you typed, with names that *start* with it first —
-   *   "fin" should offer "Finance" ahead of "Refinancing" — then the most-used, then alphabetical
-   *   so the order never jitters between keystrokes.
-   *
-   * Eight at a time, with a count of what is not shown, so a long list says so rather than
-   * pretending the workspace has eight tags.
-   */
-  const matches = useMemo(() => {
-    if (!adding) return [];
-    const pool = all.filter((t) => !attached.has(t.id));
-    const filtered = query ? pool.filter((t) => t.name.toLowerCase().includes(query)) : pool;
-    return [...filtered].sort((a, b) => {
-      if (query) {
-        const aStarts = a.name.toLowerCase().startsWith(query) ? 0 : 1;
-        const bStarts = b.name.toLowerCase().startsWith(query) ? 0 : 1;
-        if (aStarts !== bStarts) return aStarts - bStarts;
-      }
-      const byCount = (b.count ?? 0) - (a.count ?? 0);
-      if (byCount) return byCount;
-      return a.name.localeCompare(b.name);
-    });
-  }, [adding, all, attached, query]);
-
-  const SUGGESTION_LIMIT = 8;
-  const suggestions = useMemo(() => matches.slice(0, SUGGESTION_LIMIT), [matches]);
-  const hiddenCount = Math.max(0, matches.length - suggestions.length);
-
-  /** Exactly matching an existing tag means Enter attaches it rather than offering to create it. */
-  const exactMatch = useMemo(
-    () => all.find((t) => t.name.trim().toLowerCase() === query) ?? null,
-    [all, query],
-  );
-
-  async function attach(payload: { tagId?: string; name?: string }) {
-    if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetchWithTempUser("/api/tags/assignments", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ targetKind, targetId, ...payload }),
-      });
-      const json = (await res.json().catch(() => null)) as { tags?: Tag[]; error?: string } | null;
-      if (!res.ok) throw new Error(json?.error || "Could not add the tag");
-      setTags(Array.isArray(json?.tags) ? json!.tags! : []);
-      setDraft("");
-      // The sidebar's Tags section counts these; tell it rather than making it poll.
-      window.dispatchEvent(new Event("lnkdrp:tags-changed"));
-      // A tag created here belongs in the suggestions for the next one, without a refetch.
-      setAll((prev) => {
-        const next = Array.isArray(json?.tags) ? json!.tags! : [];
-        const known = new Set(prev.map((t) => t.id));
-        return [...prev, ...next.filter((t) => !known.has(t.id))];
-      });
-      inputRef.current?.focus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not add the tag");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function detach(tagId: string) {
     if (busy) return;
@@ -188,8 +88,6 @@ export default function TagsRow({
   // page that lost something.
   if (tags === null) return null;
 
-  const showEmpty = !tags.length && !adding;
-
   return (
     <div className={className}>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -215,80 +113,27 @@ export default function TagsRow({
           </span>
         ))}
 
-        {canManage && !adding ? (
+        {canManage ? (
           <button
             type="button"
-            onClick={() => setAdding(true)}
+            onClick={() => setPicking(true)}
             className="inline-flex items-center gap-1 rounded-full border border-dashed border-[var(--border)] px-2.5 py-1 text-[12px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--muted-2)] hover:text-[var(--fg)]"
           >
             <PlusIcon className="h-3 w-3" aria-hidden="true" />
-            {showEmpty ? "Add a tag" : "Tag"}
+            {tags.length ? "Tag" : "Add a tag"}
           </button>
         ) : null}
       </div>
 
-      {adding ? (
-        <div className="relative mt-2">
-          <input
-            ref={inputRef}
-            value={draft}
-            maxLength={NAME_MAX}
-            disabled={busy}
-            placeholder="Type a tag, press Enter"
-            aria-label="Add a tag"
-            className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1.5 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
-            onChange={(e) => {
-              setDraft(e.target.value);
-              if (error) setError(null);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                const name = draft.trim();
-                if (!name) return;
-                // An exact match attaches the tag that exists; anything else is find-or-create on
-                // the server, which folds case and punctuation the same way.
-                void attach(exactMatch ? { tagId: exactMatch.id } : { name });
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                setDraft("");
-                setAdding(false);
-                setError(null);
-              }
-            }}
-            onBlur={() => {
-              // Closing on blur would eat a click on a suggestion; only an empty box closes.
-              if (!draft.trim()) setAdding(false);
-            }}
-          />
-
-          {suggestions.length ? (
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              {suggestions.map((tag) => (
-                <button
-                  key={tag.id}
-                  type="button"
-                  disabled={busy}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => void attach({ tagId: tag.id })}
-                  className="inline-flex max-w-[200px] items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--fg)] disabled:opacity-50"
-                >
-                  <TagDot color={tag.color} />
-                  <span className="truncate">{tag.name}</span>
-                </button>
-              ))}
-              {hiddenCount ? (
-                <span className="text-[11px] text-[var(--muted-2)]">
-                  +{hiddenCount} more — keep typing
-                </span>
-              ) : null}
-            </div>
-          ) : query && !exactMatch ? (
-            <div className="mt-1.5 text-[12px] text-[var(--muted-2)]">
-              Press Enter to create &ldquo;{draft.trim()}&rdquo;.
-            </div>
-          ) : null}
-        </div>
+      {canManage ? (
+        <TagPickerModal
+          open={picking}
+          onClose={() => setPicking(false)}
+          targetKind={targetKind}
+          targetId={targetId}
+          attached={tags}
+          onChanged={(next) => setTags(next)}
+        />
       ) : null}
 
       {error ? <div className="mt-1.5 text-[12px] font-medium text-red-600">{error}</div> : null}
