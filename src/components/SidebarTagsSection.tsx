@@ -24,16 +24,14 @@ import type { TagColorKey } from "@/lib/tags/palette";
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
 
 /**
- * The remembered open state.
+ * Up to this many tags, the section is open; past it, closed, and the header's count carries it.
  *
- * A new key, not the old one: the first version wrote "collapsed" on every toggle while the
- * default was also collapsed, so a browser that had ever touched the section was pinned shut and
- * a size-based default could never apply to it. Retiring the key lets everyone start from the
- * current rule; anyone who closes it again is remembered under this one.
+ * Nothing is remembered between loads, and that is deliberate. Two versions of this component
+ * stored the open state, and both times a stale "closed" written under an older default outlived
+ * the rule that wrote it and pinned the section shut — twice reported as "the tags don't show up".
+ * A sidebar section that opens on a rule you can read in one line beats one that depends on what
+ * a browser was told months ago. Collapsing is per visit; it costs one click to get back.
  */
-const OPEN_KEY = "ld_sidebar_tags_open";
-
-/** Up to this many tags, the section opens itself; past it, the header's count speaks for it. */
 const AUTO_OPEN_MAX = 8;
 
 /** The same plus/minus the other sidebar sections use, without importing the sidebar itself. */
@@ -50,19 +48,17 @@ export default function SidebarTagsSection() {
   const pathname = usePathname() ?? "";
   const onTagPage = pathname.startsWith("/tag/");
   const [tags, setTags] = useState<Tag[] | null>(null);
-  /** `null` until this browser says otherwise: the default depends on how many tags there are. */
+  /** `null` until you say otherwise in this visit; the default depends on how many tags there are. */
   const [collapsedPref, setCollapsedPref] = useState<boolean | null>(null);
   const [managing, setManaging] = useState(false);
 
+  // The retired keys are cleared so nothing written by the older defaults can reach this again.
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(OPEN_KEY);
-      if (raw === "1") setCollapsedPref(false);
-      else if (raw === "0") setCollapsedPref(true);
-      // The retired key is cleared so it cannot come back if this ever reads it again.
       window.localStorage.removeItem("ld_sidebar_tags_collapsed");
+      window.localStorage.removeItem("ld_sidebar_tags_open");
     } catch {
-      // Storage refused: the size-based default below stands.
+      // ignore
     }
   }, []);
 
@@ -125,25 +121,17 @@ export default function SidebarTagsSection() {
   if (!tags || !tags.length) return null;
 
   /**
-   * Open unless this browser said to close it — up to a point.
+   * Open unless you closed it in this visit — up to a point.
    *
-   * "Collapsed by default" was the call when the section was hypothetical, and in use it means a
-   * workspace with three tags shows a header with a number and nothing else, which reads as a
-   * feature that is not working. A short list is not clutter. A long one is, so past
-   * `AUTO_OPEN_MAX` the default flips back to closed and the header's count carries it. Either
-   * way an explicit toggle is remembered and wins.
+   * "Collapsed by default" was the call when the section was hypothetical; in use it means a
+   * workspace with three tags shows a header with a number and nothing under it, which reads as a
+   * feature that is not working. A short list is not clutter; a long one is.
    */
   const open = onTagPage || (collapsedPref === null ? tags.length <= AUTO_OPEN_MAX : !collapsedPref);
   const activeSlug = onTagPage ? decodeURIComponent(pathname.slice("/tag/".length)).toLowerCase() : "";
 
   function toggle() {
-    const nextOpen = !open;
-    setCollapsedPref(!nextOpen);
-    try {
-      window.localStorage.setItem(OPEN_KEY, nextOpen ? "1" : "0");
-    } catch {
-      // ignore
-    }
+    setCollapsedPref(open);
   }
 
   return (
@@ -155,7 +143,7 @@ export default function SidebarTagsSection() {
           onClick={toggle}
         >
           <span>Tags</span>
-          {/* The count belongs in the header, since the list it counts is usually shut. */}
+          {/* The count stays in the header for when the list is closed. */}
           <span className="font-semibold text-[var(--muted-2)]/70">{tags.length}</span>
         </button>
         {/* Rename, recolour, merge, delete — in a modal, like Starred's and Projects' full lists,
