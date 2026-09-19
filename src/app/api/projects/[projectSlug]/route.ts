@@ -15,6 +15,7 @@ import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
 import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
 import { setAllProjectLinksEnabled } from "@/lib/share/projectLinks";
+import { removeAllTagsFromTarget } from "@/lib/tags/service";
 
 export const runtime = "nodejs";
 
@@ -550,6 +551,10 @@ export async function DELETE(
     }
 
     await ProjectModel.deleteOne({ _id: projectId, ...docTenant });
+
+    // The project row is gone for good (this delete is not a soft one), so its tag assignments
+    // have nothing left to point at (src/lib/tags/service.ts).
+    void removeAllTagsFromTarget({ orgId: actor.orgId, targetKind: "project", targetId: projectId }).catch(() => {});
     void recordActivity({
       orgId: actor.orgId,
       userId: actor.userId,

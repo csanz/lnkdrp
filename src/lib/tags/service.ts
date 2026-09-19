@@ -12,6 +12,8 @@
 import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
+import { DocModel } from "@/lib/models/Doc";
+import { ProjectModel } from "@/lib/models/Project";
 import { TagModel, type Tag } from "@/lib/models/Tag";
 import { TagAssignmentModel, type TagTargetKind } from "@/lib/models/TagAssignment";
 import { asTagColorKey, nextTagColor, type TagColorKey, TAG_COLOR_KEYS } from "./palette";
@@ -109,12 +111,83 @@ export async function listTags(params: {
   const tags = (await TagModel.find({ orgId }).sort({ name: 1 }).lean()) as Tag[];
   if (!params.withCounts || !tags.length) return tags.map((t) => toTagDTO(t));
 
-  const counts = (await TagAssignmentModel.aggregate([
-    { $match: { orgId, tagId: { $in: tags.map((t) => t._id) } } },
-    { $group: { _id: "$tagId", n: { $sum: 1 } } },
-  ])) as Array<{ _id?: Types.ObjectId; n?: number }>;
-  const byId = new Map(counts.map((c) => [String(c._id), Math.max(0, Number(c.n ?? 0))]));
+  const byId = await countLiveAssignments({ orgId, tagIds: tags.map((t) => t._id) });
   return tags.map((t) => toTagDTO(t, byId.get(String(t._id)) ?? 0));
+}
+
+/**
+ * How many *live* things carry each tag.
+ *
+ * Counting the assignment rows themselves was wrong, and visibly so: a tag whose only document had
+ * been deleted read "1" in the sidebar and opened onto an empty page. Assignments outlive their
+ * targets — a project is hard-deleted, a document is soft-deleted and stops being listed anywhere —
+ * so the count has to ask whether the target is still there.
+ *
+ * Three bounded reads, not a per-tag query: the workspace's assignments, then the live ids among
+ * the documents and projects they point at. Deleting the orphaned rows is handled where the
+ * document or project is deleted; this stays correct even when that misses one.
+ */
+async function countLiveAssignments(params: {
+  orgId: Types.ObjectId;
+  tagIds: Types.ObjectId[];
+}): Promise<Map<string, number>> {
+  const orgId = params.orgId;
+  const rows = (await TagAssignmentModel.find({ orgId, tagId: { $in: params.tagIds } })
+    .select({ tagId: 1, targetKind: 1, targetId: 1 })
+    .lean()) as Array<{ tagId?: Types.ObjectId; targetKind?: string; targetId?: Types.ObjectId }>;
+  if (!rows.length) return new Map();
+
+  const docIds = rows.filter((r) => r.targetKind === "doc" && r.targetId).map((r) => r.targetId as Types.ObjectId);
+  const projectIds = rows
+    .filter((r) => r.targetKind === "project" && r.targetId)
+    .map((r) => r.targetId as Types.ObjectId);
+
+  // Archived documents still count: they are still in the workspace, still on the tag's page, and
+  // unarchiving is one click. Deleted ones do not exist as far as anything else is concerned.
+  const [docs, projects] = await Promise.all([
+    docIds.length
+      ? (DocModel.find({ _id: { $in: docIds }, orgId, isDeleted: { $ne: true } })
+          .select({ _id: 1 })
+          .lean() as unknown as Promise<Array<{ _id: Types.ObjectId }>>)
+      : Promise.resolve([]),
+    projectIds.length
+      ? (ProjectModel.find({ _id: { $in: projectIds }, orgId, isDeleted: { $ne: true } })
+          .select({ _id: 1 })
+          .lean() as unknown as Promise<Array<{ _id: Types.ObjectId }>>)
+      : Promise.resolve([]),
+  ]);
+
+  const liveDocs = new Set(docs.map((d) => String(d._id)));
+  const liveProjects = new Set(projects.map((p) => String(p._id)));
+
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.tagId || !row.targetId) continue;
+    const live = row.targetKind === "doc" ? liveDocs.has(String(row.targetId)) : liveProjects.has(String(row.targetId));
+    if (!live) continue;
+    const key = String(row.tagId);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Forget every tag on one thing, because the thing is gone.
+ *
+ * Called where a document or project is deleted. The counts survive a missed call
+ * (`countLiveAssignments` checks the target is still there), but the rows should not pile up: a
+ * workspace that deletes a thousand documents would otherwise carry a thousand assignments that
+ * can never match anything again.
+ */
+export async function removeAllTagsFromTarget(params: {
+  orgId: string | Types.ObjectId;
+  targetKind: TagTargetKind;
+  targetId: string | Types.ObjectId;
+}): Promise<void> {
+  await connectMongo();
+  const orgId = orgObjectId(params.orgId);
+  const targetId = typeof params.targetId === "string" ? new Types.ObjectId(params.targetId) : params.targetId;
+  await TagAssignmentModel.deleteMany({ orgId, targetKind: params.targetKind, targetId });
 }
 
 /** The tags on one document or project, in the order a chip row should print them. */

@@ -17,6 +17,8 @@ import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked } from "@/lib/billing/planLimits";
 import { ensureDefaultLink, setAllLinksEnabled, updateShareLink } from "@/lib/share/links";
+import { buildDocMatch } from "@/lib/docs/docMatch";
+import { removeAllTagsFromTarget } from "@/lib/tags/service";
 
 /**
  * How long an upload may sit in `uploading` with nothing written before a read treats it as dead.
@@ -101,25 +103,6 @@ function isObjectId(id: string) {
  *
  * Exists to reduce duplication across GET/PATCH/DELETE handlers.
  */
-function buildDocMatch(
-  docObjectId: Types.ObjectId,
-  orgId: Types.ObjectId,
-  legacyUserId: Types.ObjectId,
-  allowLegacyByUserId: boolean,
-) {
-  // A soft-deleted document is gone: GET used to keep serving it and PATCH kept editing it, and a
-  // second DELETE logged a second doc.deleted row.
-  const notDeleted = { isDeleted: { $ne: true } };
-  return allowLegacyByUserId
-    ? {
-        ...notDeleted,
-        $or: [
-          { _id: docObjectId, orgId },
-          { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-        ],
-      }
-    : { _id: docObjectId, orgId, ...notDeleted };
-}
 
 /**
  * Generate a secret token for a public "replace upload" link for a doc.
@@ -1293,6 +1276,10 @@ export async function DELETE(
       .select({ _id: 1, title: 1 })
       .lean();
     if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // A deleted document keeps no tags: the rows would otherwise sit in the join collection
+    // pointing at something nothing can open (src/lib/tags/service.ts).
+    void removeAllTagsFromTarget({ orgId: actor.orgId, targetKind: "doc", targetId: docObjectId }).catch(() => {});
 
     void recordActivity({
       orgId: actor.orgId,
