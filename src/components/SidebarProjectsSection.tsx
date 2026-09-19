@@ -6,9 +6,11 @@ import {
   InboxArrowDownIcon,
   PlusIcon,
 } from "@heroicons/react/24/outline";
-import type { Dispatch, SetStateAction } from "react";
+import { useMemo, type Dispatch, type SetStateAction } from "react";
 import IconButton from "@/components/ui/IconButton";
 import { PROJECT_NAV_OVERLAY_ID, showSwitchingOverlay } from "@/components/SwitchingOverlay";
+import TagDots from "@/components/tags/TagDots";
+import { useTargetTags } from "@/lib/client/useTargetTags";
 
 type ProjectListItem = {
   id: string;
@@ -69,6 +71,12 @@ export default function SidebarProjectsSection({
   /** Grow-in classes for a row that just appeared (see LeftSidebar); empty strings once settled. */
   rowEnter?: (id: string) => { li: string; child: string };
 }) {
+  // One request for the whole visible list, refreshed when a tag changes anywhere in the app.
+  const tagsByProject = useTargetTags(
+    "project",
+    useMemo(() => projectsForSidebar.map((p) => p.id), [projectsForSidebar]),
+  );
+
   return (
     <section>
       <div className="group flex h-7 items-center gap-1 pl-2 pr-2 text-[11px] font-semibold uppercase leading-5 tracking-[0.08em] text-[var(--muted-2)]">
@@ -214,10 +222,10 @@ export default function SidebarProjectsSection({
                         </span>
                       )}
                       <span className="block min-w-0 flex-1 truncate text-[var(--fg)]">{title}</span>
-                      {/* How many documents are in it, in the column where a Docs row prints its
-                          version: the two lists then end the same way, and "Data room 4" answers
-                          the question a folder raises without opening it. `docCount` is maintained
-                          on the project row, so this costs nothing to read. */}
+                      {/* The project's tags, as dots, before the count: at a glance the sidebar
+                          says which rooms are fundraising and which are diligence, without a word
+                          of width spent on it. */}
+                      <TagDots tags={tagsByProject[p.id]} />
                       {typeof p.docCount === "number" && Number.isFinite(p.docCount) && p.docCount > 0 ? (
                         <span
                           className="shrink-0 text-[11px] font-medium tabular-nums text-[var(--muted-2)] opacity-70"

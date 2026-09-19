@@ -37,6 +37,8 @@ import SidebarStarredModal from "@/components/modals/SidebarStarredModal";
 import AccountMenu from "@/components/AccountMenu";
 import SidebarProjectsSection from "@/components/SidebarProjectsSection";
 import SidebarTagsSection from "@/components/SidebarTagsSection";
+import TagDots from "@/components/tags/TagDots";
+import { useTargetTags } from "@/lib/client/useTargetTags";
 import ActiveWorkspacePill from "@/components/ActiveWorkspacePill";
 import IconButton from "@/components/ui/IconButton";
 import SidebarCredits from "@/components/SidebarCredits";
@@ -1319,6 +1321,18 @@ export default function LeftSidebar({
   const seenRowIdsRef = useRef<Set<string> | null>(null);
   const markRowsSeen = useCallback((ids: string[]) => ids.forEach((id) => seenRowIdsRef.current?.add(id)), []);
   const docRowsForSidebar = useLeavingRows(docsForSidebar, leaveReasons, { requireReason: false, onBackfill: markRowsSeen });
+
+  /**
+   * The tags on the rows the sidebar is showing — the Docs list and the Starred list — in one
+   * request, so a row can print a dot per tag the way project rows do.
+   */
+  const docTagsById = useTargetTags(
+    "doc",
+    useMemo(
+      () => [...new Set([...docsForSidebar.map((d) => d.id), ...starredForSidebar.map((d) => d.id)])],
+      [docsForSidebar, starredForSidebar],
+    ),
+  );
   // Starred rows only fold for a known archive/delete: they also drop stale localStorage entries on
   // load and on unstar, which should not read as "Archived".
   const starredRowsForSidebar = useLeavingRows(starredForSidebar, leaveReasons, { requireReason: true, onBackfill: markRowsSeen });
@@ -2324,6 +2338,7 @@ export default function LeftSidebar({
                                 that had failed to load. Same single weight as the Docs rows. Prefers
                                 the live sidebar list, falls back to the starred cache so the chip is
                                 there on the first paint. */}
+                            <TagDots tags={docTagsById[d.id]} />
                             {(() => {
                               const version =
                                 typeof sidebarMeta?.version === "number" && Number.isFinite(sidebarMeta.version)
@@ -2715,6 +2730,9 @@ export default function LeftSidebar({
                           <div className="flex min-w-0 items-center gap-2 pr-6 leading-normal text-[var(--fg)]">
                             <DocumentIcon className="h-3.5 w-3.5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                             <span className="block min-w-0 flex-1 truncate">{title}</span>
+                            {/* The document's tags, as dots, in front of its version — the same
+                                treatment project rows get. */}
+                            <TagDots tags={docTagsById[d.id]} />
                             {/* Which version a row is on. v1 used to appear only on hover, which read as
                                 missing data next to a neighbour showing v7 — the Docs modal and the
                                 project rows show it on every row, so this one does too. One weight for
