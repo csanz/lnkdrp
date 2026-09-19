@@ -26,7 +26,7 @@ export default function ViewerPageClient({ projectId, viewerKey }: { projectId: 
       />
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-        <div className={`w-full max-w-5xl py-6 ${APP_PAGE_GUTTER}`}>
+        <div className={`w-full py-6 ${APP_PAGE_GUTTER}`}>
           <ViewerProfile scopeKind="project" scopeId={projectId} routeKey={viewerKey} />
         </div>
       </div>

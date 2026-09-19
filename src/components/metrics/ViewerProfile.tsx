@@ -164,9 +164,9 @@ export default function ViewerProfile({
   const longest = pageRows.find((r) => r.ms > 0) ?? null;
 
   const stat = (label: string, value: string) => (
-    <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3.5 py-3">
-      <div className="truncate text-[11px] font-medium text-[var(--muted-2)]">{label}</div>
-      <div className="mt-0.5 truncate text-lg font-semibold tabular-nums text-[var(--fg)]">{value}</div>
+    <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-4">
+      <div className="truncate text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--muted-2)]">{label}</div>
+      <div className="mt-1 truncate text-2xl font-semibold tabular-nums text-[var(--fg)]">{value}</div>
     </div>
   );
 
@@ -187,21 +187,23 @@ export default function ViewerProfile({
   }
 
   return (
-    <div className="grid gap-5">
-      <div className="flex items-center gap-3">
+    <div className="grid gap-6">
+      {/* The page is about a person, so the person is the headline — not a row-sized chip above a
+          wall of figures. The breadcrumb above already says which document this is. */}
+      <div className="flex items-center gap-4">
         <Link
           href={backHref}
           aria-label="Back to metrics"
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition-colors hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
         >
           <ArrowLeftIcon className="h-4 w-4" />
         </Link>
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] text-sm font-semibold text-[var(--fg)]">
-          {name ? name.trim()[0]?.toUpperCase() : <UserIcon className="h-5 w-5 text-[var(--muted)]" aria-hidden="true" />}
+        <div className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] text-2xl font-semibold text-[var(--fg)]">
+          {name ? name.trim()[0]?.toUpperCase() : <UserIcon className="h-8 w-8 text-[var(--muted)]" aria-hidden="true" />}
         </div>
         <div className="min-w-0">
-          <div className="truncate text-lg font-semibold tracking-tight text-[var(--fg)]">{title}</div>
-          <div className="truncate text-[13px] text-[var(--muted)]">
+          <div className="truncate text-3xl font-semibold tracking-tight text-[var(--fg)]">{title}</div>
+          <div className="mt-1 truncate text-sm text-[var(--muted)]">
             {viewer.email && name !== viewer.email ? `${viewer.email} · ` : ""}
             Last seen {relativeAge(viewer.lastSeen ?? null)}
           </div>
@@ -225,9 +227,12 @@ export default function ViewerProfile({
         {stat("Avg per session", sessions > 0 && timeMs > 0 ? formatDurationShort(Math.round(timeMs / sessions)) : "—")}
       </div>
 
+      {/* Two columns once the window allows it: the reading shape on the left, the visits on the
+          right, instead of a metre of white space beside each. */}
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] xl:items-start">
       {scopeKind === "doc" ? (
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-          <div className="text-[13px] font-semibold text-[var(--fg)]">Time on each page</div>
+          <div className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">Time on each page</div>
           {hasPerPageTime ? (
             <>
               <div className="mt-3">
@@ -263,7 +268,7 @@ export default function ViewerProfile({
         </section>
       ) : (
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-          <div className="text-[13px] font-semibold text-[var(--fg)]">Documents they opened</div>
+          <div className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">Documents they opened</div>
           {viewer.docs?.length ? (
             <ul className="mt-3 grid gap-1.5">
               {viewer.docs.map((d) => {
@@ -301,7 +306,7 @@ export default function ViewerProfile({
       {scopeKind === "doc" ? (
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-[13px] font-semibold text-[var(--fg)]">
+            <div className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">
               Sessions{visits.length ? ` · ${visits.length >= 50 ? "50+" : visits.length}` : ""}
             </div>
             <div className="text-[12px] text-[var(--muted-2)]">Newest first</div>
@@ -347,6 +352,7 @@ export default function ViewerProfile({
           )}
         </section>
       ) : null}
+      </div>
 
       <div className="text-[11px] text-[var(--muted-2)]">
         First seen {formatDateTime(viewer.firstSeen ?? null)}

@@ -28,7 +28,7 @@ export default function ViewerPageClient({ docId, viewerKey }: { docId: string; 
       />
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-        <div className={`w-full max-w-5xl py-6 ${APP_PAGE_GUTTER}`}>
+        <div className={`w-full py-6 ${APP_PAGE_GUTTER}`}>
           <ViewerProfile scopeKind="doc" scopeId={docId} routeKey={viewerKey} />
         </div>
       </div>
