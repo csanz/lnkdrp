@@ -23,7 +23,15 @@ import type { TagColorKey } from "@/lib/tags/palette";
 
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
 
-const COLLAPSED_KEY = "ld_sidebar_tags_collapsed";
+/**
+ * The remembered open state.
+ *
+ * A new key, not the old one: the first version wrote "collapsed" on every toggle while the
+ * default was also collapsed, so a browser that had ever touched the section was pinned shut and
+ * a size-based default could never apply to it. Retiring the key lets everyone start from the
+ * current rule; anyone who closes it again is remembered under this one.
+ */
+const OPEN_KEY = "ld_sidebar_tags_open";
 
 /** Up to this many tags, the section opens itself; past it, the header's count speaks for it. */
 const AUTO_OPEN_MAX = 8;
@@ -48,9 +56,11 @@ export default function SidebarTagsSection() {
 
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(COLLAPSED_KEY);
-      if (raw === "0") setCollapsedPref(false);
-      else if (raw === "1") setCollapsedPref(true);
+      const raw = window.localStorage.getItem(OPEN_KEY);
+      if (raw === "1") setCollapsedPref(false);
+      else if (raw === "0") setCollapsedPref(true);
+      // The retired key is cleared so it cannot come back if this ever reads it again.
+      window.localStorage.removeItem("ld_sidebar_tags_collapsed");
     } catch {
       // Storage refused: the size-based default below stands.
     }
@@ -127,10 +137,10 @@ export default function SidebarTagsSection() {
   const activeSlug = onTagPage ? decodeURIComponent(pathname.slice("/tag/".length)).toLowerCase() : "";
 
   function toggle() {
-    const next = open; // open now means the click closes it
-    setCollapsedPref(next);
+    const nextOpen = !open;
+    setCollapsedPref(!nextOpen);
     try {
-      window.localStorage.setItem(COLLAPSED_KEY, next ? "1" : "0");
+      window.localStorage.setItem(OPEN_KEY, nextOpen ? "1" : "0");
     } catch {
       // ignore
     }
