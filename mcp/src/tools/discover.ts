@@ -94,7 +94,7 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
         "current version, one-line AI summary and dates. Page-based: pass page to get the next set; total tells you how many " +
         "match. Use a result's id with lnkdrp_get_share, lnkdrp_list_share_links or lnkdrp_get_share_stats. Archived documents " +
         "are listed only with archived: true (then only archived ones - bring one back with lnkdrp_archive_doc archived: false); " +
-        "deleted documents never are. With ids, any that did not resolve come back in notFound. " +
+        "deleted documents never are. With ids, any that did not resolve come back in notFound - which includes archived documents unless you also pass archived: true, so an id there means 'not live' rather than 'never existed'. " +
         SAFETY_TAIL,
       inputSchema: {
         query: z.string().trim().max(200).optional().describe("Match against document titles and share-link slugs, case-insensitively. Omit to list everything."),
@@ -109,14 +109,20 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
       const page = await ctx.api.listDocsPage({ q: args.query, ids: args.ids, page: args.page, limit: args.limit, archived: args.archived });
       // Ids that did not resolve (unknown, deleted, archived, or not a document id at all) used to
       // vanish without a trace, so an agent could not tell "not found" from "not returned".
-      const found = new Set(page.docs.map((d) => d.id));
-      const notFound = args.ids ? [...new Set(args.ids)].filter((id) => !found.has(id)) : [];
+      //
+      // Compared case-insensitively: the id regex accepts either case and the API echoes ids back
+      // lowercased, so a caller who passed an uppercase id saw its document in `docs` AND its own
+      // id in `notFound` — the same document reported found and missing in one response.
+      const found = new Set(page.docs.map((d) => d.id.toLowerCase()));
+      const notFound = args.ids ? [...new Set(args.ids)].filter((id) => !found.has(id.toLowerCase())) : [];
       return {
         total: page.total,
         page: page.page,
         limit: page.limit,
         hasMore: page.docs.length > 0 && page.page * page.limit < page.total,
-        ...(notFound.length ? { notFound } : {}),
+        // Always present when ids were asked for, empty or not: a key that disappears when there is
+        // nothing to report makes "everything resolved" indistinguishable from an older server.
+        ...(args.ids ? { notFound } : {}),
         docs: page.docs.map((d) => ({
           docId: d.id,
           shareId: d.shareId,

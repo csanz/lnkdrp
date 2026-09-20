@@ -61,7 +61,8 @@ export function registerStarDocsTool(server: McpServer, ctx: ToolContext): void 
           else throw err;
         }
       }
-      return { starred: args.starred, changed, unchanged, ...(notFound.length ? { notFound } : {}), starredDocs: starredView(current) };
+      return { starred: args.starred, changed, unchanged, // Always present, like changed and unchanged beside it: the description promises all three.
+        notFound, starredDocs: starredView(current) };
     }),
   );
 }
