@@ -37,6 +37,47 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import { ToolError } from "./errors";
+import { isLocalApiUrl } from "./tools/sharePdf";
+
+/**
+ * Skip the prompt while developing against a throwaway database.
+ *
+ * Confirming every delete is right in production and miserable in a test loop, where an agent may
+ * create and destroy fifty objects in a run and a human sits answering prompts about rows that
+ * existed for four seconds.
+ *
+ * Two conditions, both required, and the second is the one that matters:
+ *
+ * 1. `LNKDRP_SKIP_CONFIRMATIONS` is explicitly set. Nothing is skipped by default, ever.
+ * 2. `LNKDRP_API_URL` points at localhost — the *data* is a dev database.
+ *
+ * The second condition is not the same as "the server process is local", and conflating them is
+ * how this feature would cause the accident it is supposed to avoid. A local MCP pointed at
+ * https://lnkdrp.com is a normal, supported setup (it is how `filePath` uploads work), and in it a
+ * delete destroys a real document belonging to a real workspace. The process being on your laptop
+ * says nothing about whose data is at the other end; the API URL does.
+ *
+ * A flag set against a non-local API is ignored rather than honoured, and says so at startup — a
+ * silently disregarded safety switch is worse than one that never existed, because the operator
+ * believes something about the system that is not true.
+ */
+function skipConfirmations(env: NodeJS.ProcessEnv = process.env): boolean {
+  const flag = (env.LNKDRP_SKIP_CONFIRMATIONS || "").trim().toLowerCase();
+  if (!(flag === "1" || flag === "true" || flag === "yes")) return false;
+  const apiUrl = (env.LNKDRP_API_URL || "").trim();
+  // No API URL configured means the default, which is localhost outside production (config.ts).
+  return apiUrl ? isLocalApiUrl(apiUrl) : env.NODE_ENV !== "production";
+}
+
+/**
+ * Whether the flag was asked for but refused, so the server can say so once at startup rather than
+ * leaving the operator to infer it from prompts they did not expect.
+ */
+export function confirmationsSkipRequestedButUnsafe(env: NodeJS.ProcessEnv = process.env): boolean {
+  const flag = (env.LNKDRP_SKIP_CONFIRMATIONS || "").trim().toLowerCase();
+  const asked = flag === "1" || flag === "true" || flag === "yes";
+  return asked && !skipConfirmations(env);
+}
 
 /** What a destructive tool is about to do, in terms a person can weigh. */
 /**
@@ -90,6 +131,10 @@ export async function requireHumanConfirmation(
   preview: DestructivePreview,
   args: { confirm?: boolean | undefined },
 ): Promise<{ via: "elicitation" | "confirm_flag"; elicitationFailed?: true }> {
+  // Dev escape hatch, gated on the data being a dev database rather than on where this process
+  // runs. See `skipConfirmations`.
+  if (skipConfirmations()) return { via: "confirm_flag" };
+
   const workspace = workspaceLabels.get(server)?.() ?? null;
   const previewDetails = {
     requiresConfirmation: true,

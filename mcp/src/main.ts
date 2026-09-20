@@ -24,6 +24,7 @@ import type { Server as HttpServer } from "node:http";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { confirmationsSkipRequestedButUnsafe } from "./confirm";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import express, { type Request, type Response } from "express";
@@ -280,12 +281,24 @@ function createApp() {
 /** Streamable HTTP mode (default). */
 async function runHttp(): Promise<void> {
   const app = createApp();
+  const skippingConfirmations =
+    !confirmationsSkipRequestedButUnsafe() && /^(1|true|yes)$/i.test((process.env.LNKDRP_SKIP_CONFIRMATIONS || "").trim());
   const httpServer: HttpServer = app.listen(config.port, () => {
     log(`listening on :${config.port}`, {
       apiUrl: config.apiUrl,
       publicUrl: config.publicUrl,
       realtime: config.realtimeUrl && config.realtimeSecretConfigured ? config.realtimeUrl : "off (polling only)",
+      ...(skippingConfirmations ? { confirmations: "SKIPPED (dev database)" } : {}),
     });
+    // A safety switch that was asked for and refused has to say so out loud: the operator otherwise
+    // believes deletes are unprompted, and finds out they are not by being prompted mid-test — or
+    // worse, believes the opposite.
+    if (confirmationsSkipRequestedButUnsafe()) {
+      console.error(
+        `[mcp] LNKDRP_SKIP_CONFIRMATIONS is set but IGNORED: ${config.apiUrl} is not localhost, so deletes act on ` +
+          "real data and will still ask for confirmation. Unset it, or point LNKDRP_API_URL at a dev database.",
+      );
+    }
   });
   httpServer.on("error", (err: NodeJS.ErrnoException) => {
     if (err.code === "EADDRINUSE") {
