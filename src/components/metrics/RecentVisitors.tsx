@@ -117,78 +117,80 @@ export default function RecentVisitors({
           const isFresh = (v.ago?.hours ?? Infinity) <= FRESH_HOURS;
           return (
             <li key={v.key}>
-              {/* The row is a button and the project chip is a link, so they cannot nest: the
-                  clickable body stops before the chip, and the chip carries its own destination. */}
-              <span className="-mx-2 flex w-[calc(100%+16px)] items-center gap-2 rounded-lg px-2 py-1">
-              <button
-                type="button"
-                onClick={v.onOpen}
-                disabled={!v.onOpen}
-                title={v.onOpen ? "See what they read" : undefined}
-                className={[
-                  "-mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors",
-                  v.onOpen ? "hover:bg-[var(--panel-hover)]" : "cursor-default",
-                ].join(" ")}
-              >
-              <span
-                className={[
-                  "grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold",
-                  v.name
-                    ? "bg-[var(--panel-hover)] text-[var(--fg)]"
-                    : "bg-[var(--panel-2)] text-[var(--muted-2)] ring-1 ring-[var(--border)]",
-                ].join(" ")}
-                aria-hidden="true"
-              >
-                {v.name ? v.name.trim().slice(0, 1).toUpperCase() : <UserIcon className="h-3.5 w-3.5" />}
-              </span>
+              {/* A reader who came through a project has no page of their own here — their reading
+                  is recorded against the project — so their whole row is the way there, and the
+                  chip sits beside their name saying which one. A reader of this document's own
+                  links opens their reader page instead. */}
+              {(() => {
+                const body = (
+                  <>
+                    <span
+                      className={[
+                        "grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-semibold",
+                        v.name
+                          ? "bg-[var(--panel-hover)] text-[var(--fg)]"
+                          : "bg-[var(--panel-2)] text-[var(--muted-2)] ring-1 ring-[var(--border)]",
+                      ].join(" ")}
+                      aria-hidden="true"
+                    >
+                      {v.name ? v.name.trim().slice(0, 1).toUpperCase() : <UserIcon className="h-3.5 w-3.5" />}
+                    </span>
 
-              <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-[13px] font-medium text-[var(--fg)]">
-                    {v.name ?? "Anonymous visitor"}
-                  </span>
-                  {/* The judgement the numbers beside it require you to make: whether this visit is
-                      worth opening. Silent when there is no clock to judge with. */}
-                  <DepthBadge timeMs={v.timeMs} pages={v.pages} totalPages={v.totalPages} />
-                </span>
-                {v.detail ? (
-                  <span className="block truncate text-[12px] text-[var(--muted-2)]">{v.detail}</span>
-                ) : null}
-              </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="truncate text-[13px] font-medium text-[var(--fg)]">
+                          {v.name ?? "Anonymous visitor"}
+                        </span>
+                        <DepthBadge timeMs={v.timeMs} pages={v.pages} totalPages={v.totalPages} />
+                        {v.via ? (
+                          <span
+                            className="inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]"
+                            title={`Opened through ${v.via}`}
+                          >
+                            <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{v.via}</span>
+                          </span>
+                        ) : null}
+                      </span>
+                      {v.detail ? (
+                        <span className="block truncate text-[12px] text-[var(--muted-2)]">{v.detail}</span>
+                      ) : null}
+                    </span>
 
-              </button>
+                    <span
+                      className={[
+                        "shrink-0 whitespace-nowrap text-[12px] tabular-nums",
+                        isFresh ? "font-medium text-[var(--fg)]" : "text-[var(--muted-2)]",
+                      ].join(" ")}
+                      title={v.lastSeen ?? undefined}
+                    >
+                      {v.ago?.label}
+                    </span>
+                  </>
+                );
 
-              {/* Where they came in from, beside the name rather than buried in the line under it:
-                  a read through a project is a different fact about a person than a read of the
-                  document's own link, and the chip goes to the project that owns it. */}
-              {v.via ? (
-                v.viaHref ? (
-                  <Link
-                    href={v.viaHref}
-                    className="inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--fg)]"
-                    title={`Opened through ${v.via} — see that project's metrics`}
+                const rowClass =
+                  "-mx-2 flex w-[calc(100%+16px)] items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors hover:bg-[var(--panel-hover)]";
+
+                if (v.viaHref) {
+                  return (
+                    <Link href={v.viaHref} className={rowClass} title={`Opened through ${v.via} — see that project's metrics`}>
+                      {body}
+                    </Link>
+                  );
+                }
+                return (
+                  <button
+                    type="button"
+                    onClick={v.onOpen}
+                    disabled={!v.onOpen}
+                    title={v.onOpen ? "See what they read" : undefined}
+                    className={[rowClass, v.onOpen ? "" : "cursor-default hover:bg-transparent"].join(" ")}
                   >
-                    <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{v.via}</span>
-                  </Link>
-                ) : (
-                  <span className="inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
-                    <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-                    <span className="truncate">{v.via}</span>
-                  </span>
-                )
-              ) : null}
-
-              <span
-                className={[
-                  "shrink-0 whitespace-nowrap text-[12px] tabular-nums",
-                  isFresh ? "font-medium text-[var(--fg)]" : "text-[var(--muted-2)]",
-                ].join(" ")}
-                title={v.lastSeen ?? undefined}
-              >
-                {v.ago?.label}
-              </span>
-              </span>
+                    {body}
+                  </button>
+                );
+              })()}
             </li>
           );
         })}
