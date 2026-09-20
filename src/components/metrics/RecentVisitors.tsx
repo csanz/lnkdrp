@@ -16,7 +16,7 @@
 "use client";
 
 import Link from "next/link";
-import { ClockIcon, FolderIcon, UserIcon } from "@heroicons/react/24/outline";
+import { ClockIcon, DocumentTextIcon, FolderIcon, UserIcon } from "@heroicons/react/24/outline";
 
 import DepthBadge, {
   ReadingLegendButton,
@@ -43,7 +43,16 @@ export type RecentVisitor = {
    * A list rather than a single value because one person can reach the same document through two
    * data rooms, and the row is one person.
    */
-  vias?: Array<{ name: string; href: string | null }>;
+  vias?: Array<{
+    name: string;
+    href: string | null;
+    /**
+     * What the chip names. A document page says which project a reader came through; the workspace
+     * page says which document they read — same slot, same shape, different noun, so the icon has
+     * to say which. Defaults to a project, which is what every caller but the workspace means.
+     */
+    kind?: "project" | "doc";
+  }>;
   /** This person's own page. A row without one is a row you cannot click. */
   href?: string | null;
   /** The row's tooltip — what clicking the person will show you. */
@@ -217,25 +226,27 @@ export default function RecentVisitors({
                       <Link
                         key={via.name}
                         href={via.href}
-                        title={`Opened through ${via.name} — see that project's metrics`}
+                        title={via.kind === "doc" ? `Read ${via.name}` : `Opened through ${via.name} — see that project's metrics`}
                         className="relative z-10 inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--muted-2)] hover:text-[var(--fg)]"
                       >
-                        <FolderIcon
-                          className="h-3 w-3 shrink-0"
-                          aria-hidden="true"
-                        />
+                        {via.kind === "doc" ? (
+                          <DocumentTextIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        ) : (
+                          <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        )}
                         <span className="truncate">{via.name}</span>
                       </Link>
                     ) : (
                       <span
                         key={via.name}
                         className="inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]"
-                        title={`Opened through ${via.name}`}
+                        title={via.kind === "doc" ? `Read ${via.name}` : `Opened through ${via.name}`}
                       >
-                        <FolderIcon
-                          className="h-3 w-3 shrink-0"
-                          aria-hidden="true"
-                        />
+                        {via.kind === "doc" ? (
+                          <DocumentTextIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        ) : (
+                          <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                        )}
                         <span className="truncate">{via.name}</span>
                       </span>
                     ),

@@ -958,6 +958,11 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
               docs: view ? safeCount(view.docs) : safeCount(row.docs),
               lastSeenAt: toIsoOrNull(view?.lastSeen ?? row.lastSeen),
               depthSample: (() => depthSampleFor(view, row))(),
+              docTitle: (() => {
+                const sample = depthSampleFor(view, row);
+                const title = sample ? docById.get(sample.docId)?.title : null;
+                return typeof title === "string" && title.trim() ? title.trim() : null;
+              })(),
               readerHref: (() => {
                 const sample = depthSampleFor(view, row);
                 return readerHrefFor(view, sample);
@@ -977,6 +982,7 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
               // No visit rows: their traffic predates the reading clock, so there is no reading to
               // judge and the row carries figures without a word, and nowhere to send a click.
               depthSample: null,
+              docTitle: null,
               readerHref: null,
             });
           }

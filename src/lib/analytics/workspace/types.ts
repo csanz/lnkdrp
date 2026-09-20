@@ -196,6 +196,11 @@ export type WorkspacePerson = {
    */
   depthSample: { docId: string; timeMs: number; pages: number; totalPages: number | null } | null;
   /**
+   * What that document is called — the answer to "what did they read", which "1 document" was
+   * carefully not giving. Null when the document has been deleted since.
+   */
+  docTitle: string | null;
+  /**
    * This person's reader page for the reading their badge is about, or `null` when there is
    * nowhere honest to send a click: a reading that happened through a project link lives on the
    * project's pages, not the document's, and an unaddressable reader has no page at all.

@@ -276,14 +276,22 @@ export default function MetricsPageClient() {
                 key: p.key,
                 name: (p.name ?? "").trim() || (p.email ?? "").trim() || null,
                 lastSeen: p.lastSeenAt,
-                // The same shape the other two cards print — "1 document · 58s" beside their
-                // "9 pages · 58s" — instead of a bare noun with the figures left out.
+                /**
+                 * What they read, not how many. "1 document" is the one fact on this row nobody
+                 * needed — the name of the document is the answer to the question the card asks,
+                 * and it goes in the chip beside their name where the other pages put the project.
+                 * The count survives only when it adds something: a reader of several documents
+                 * gets "+2 more" after the one their badge is about.
+                 */
                 detail: [
-                  p.docs > 0 ? `${p.docs} ${p.docs === 1 ? "document" : "documents"}` : null,
                   p.readingTimeMs > 0 ? formatDurationShort(p.readingTimeMs) : null,
+                  p.docs > 1 ? `+${p.docs - 1} more` : null,
                 ]
                   .filter(Boolean)
                   .join(" · ") || null,
+                vias: p.docTitle && p.depthSample
+                  ? [{ name: p.docTitle, href: `/doc/${encodeURIComponent(p.depthSample.docId)}/metrics`, kind: "doc" as const }]
+                  : [],
                 /**
                  * The badge is judged on one real reading, not on a workspace-wide average.
                  *
