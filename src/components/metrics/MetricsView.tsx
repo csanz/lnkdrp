@@ -986,7 +986,9 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
       ? Math.round(viewerDetail.timeSpentMs / Math.max(1, viewerDetail.pagesViewed || viewerDetail.pagesSeen.length || 1))
       : 0;
 
-  const VIEWERS_PAGE_SIZE = 25;
+  /** Rows in the viewers card before it defers to the full list. */
+const VIEWERS_SHOWN = 8;
+const VIEWERS_PAGE_SIZE = 25;
 
   // Doc title now comes back as part of /shareviews to avoid an extra API call on load.
 
@@ -1191,6 +1193,94 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    * unit is documents opened, which has no fixed total worth dividing by.
    */
   const docTotalPages = scope.kind === "doc" ? docIdentity?.pages ?? null : null;
+
+  /**
+   * Every reader of this resource in one list: signed in, anonymous, and arrived through a project.
+   *
+   * The three were separate sections with separate explanations, which pushed the merging onto the
+   * reader — and made "who read this?" answerable three different ways depending on where you were
+   * looking. What actually differs between them is carried on the row instead: whether a name is
+   * known, the depth badge, and the project chip.
+   */
+  const allViewerRows = useMemo(() => {
+    type Row = {
+      key: string;
+      title: string;
+      subtitle: string | null;
+      stats: string;
+      timeMs: number;
+      pages: number | null;
+      lastSeen: string | null;
+      via: string | null;
+      href: string | null;
+      hint?: string;
+    };
+    const rows: Row[] = [];
+    const countsLine = (views: number, pages: number | null, timeMs: number) =>
+      [
+        `${views.toLocaleString()} ${views === 1 ? "view" : "views"}`,
+        pages && pages > 0 ? `${pages} ${pages === 1 ? "page" : "pages"}` : null,
+        timeMs > 0 ? formatDurationShort(timeMs) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+    for (const v of data?.viewers ?? []) {
+      const name = (v.name ?? "").trim();
+      const email = (v.email ?? "").trim();
+      const pages = scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0);
+      rows.push({
+        key: `u:${v.userId}`,
+        title: name || email || "Signed-in user",
+        subtitle: name && email ? email : null,
+        stats: countsLine(v.views ?? 0, pages, v.timeSpentMs ?? 0),
+        timeMs: v.timeSpentMs ?? 0,
+        pages,
+        lastSeen: v.lastSeen,
+        via: null,
+        href: `${basePath}/metrics/viewer/${viewerRouteKey("authed", v.userId)}`,
+        hint: "See what they read",
+      });
+    }
+
+    for (const v of data?.anonymousViewers ?? []) {
+      const name = (v.name ?? "").trim();
+      const email = (v.email ?? "").trim();
+      const pages = scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0);
+      rows.push({
+        key: `a:${v.botIdHash}`,
+        title: name || email || "Anonymous viewer",
+        subtitle: name && email ? email : v.firstSeen ? `First seen ${formatDateTime(v.firstSeen)}` : null,
+        stats: countsLine(v.views ?? 0, pages, v.timeSpentMs ?? 0),
+        timeMs: v.timeSpentMs ?? 0,
+        pages,
+        lastSeen: v.lastSeen,
+        via: null,
+        href: `${basePath}/metrics/viewer/${viewerRouteKey("anon", v.botIdHash)}`,
+        hint: "See what they read",
+      });
+    }
+
+    // Project readers have no page of their own here; their row goes to the project that counts it.
+    for (const [i, v] of (data?.projectLinkTraffic?.viewerRows ?? []).entries()) {
+      const name = (v.viewerName ?? "").trim();
+      const email = (v.viewerEmail ?? "").trim();
+      rows.push({
+        key: `p:${v.shareId}:${i}`,
+        title: name || email || "Anonymous viewer",
+        subtitle: name && email ? email : null,
+        stats: countsLine(v.views ?? 0, null, v.timeSpentMs ?? 0),
+        timeMs: v.timeSpentMs ?? 0,
+        pages: null,
+        lastSeen: v.lastViewedAt,
+        via: v.projectName || "Project",
+        href: v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null,
+        hint: `Counted with ${v.projectName || "that project"} — see its metrics`,
+      });
+    }
+
+    return rows.sort((a, b) => new Date(b.lastSeen ?? 0).getTime() - new Date(a.lastSeen ?? 0).getTime());
+  }, [data?.viewers, data?.anonymousViewers, data?.projectLinkTraffic, scope.kind, basePath]);
 
   const recentVisitors = useMemo(() => {
     const rows: RecentVisitor[] = [];
@@ -2496,245 +2586,57 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
               />
             ) : (
               <>
+                {/* One list, not three.
+                    Signed-in, anonymous and project readers were three headings with three
+                    explanations, which made the reader do the merging — and left "who read this?"
+                    answered differently depending on which section you happened to be looking at.
+                    They are one list now, newest first, and what distinguishes them travels on the
+                    row: the depth badge, the project chip, and whether a name is known. */}
                 <div className="mt-1" id="viewer-lists">
-                  <div className="text-sm font-semibold text-[var(--fg)]">Authenticated viewers</div>
-                  <div className="mt-1 text-sm text-[var(--muted)]">Only signed-in viewers are listed here.</div>
-
-                  <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-                    <div>
-                      {loading ? (
-                        <div className="p-4">
-                          <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                          <div className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                          <div className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                        </div>
-                      ) : error ? (
-                        <div className="p-4 text-sm text-red-700">{error}</div>
-                      ) : !hasData ? (
-                        <div className="p-4 text-sm text-[var(--muted)]">No data yet.</div>
-                      ) : viewersLoading ? (
-                        <div className="p-4 text-sm text-[var(--muted)]">Loading authenticated viewers…</div>
-                      ) : !data?.viewers?.length ? (
-                        <div className="p-4 text-sm text-[var(--muted)]">No authenticated viewers yet.</div>
-                      ) : (
-                        <ul className="divide-y divide-[var(--border)]">
-                          {authedViewersTop.map((v) => (
-                            <li key={v.userId} className="hover:bg-[var(--panel-hover)]">
-                              <button
-                                type="button"
-                                onClick={() => openAuthedViewerDetail(v)}
-                                className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
-                                title="View details"
-                              >
-                                <div className="min-w-0">
-                                  {(() => {
-                                    const name = typeof v.name === "string" ? v.name.trim() : "";
-                                    const email = typeof v.email === "string" ? v.email.trim() : "";
-                                    const title = name || email || "Signed-in user";
-                                    const showEmailLine = Boolean(name && email);
-                                    const shortId = formatShortId(v.userId);
-                                    const showIdLine = !showEmailLine && !email && shortId;
-                                    return (
-                                      <>
-                                        <div className="flex min-w-0 items-center gap-2">
-                                          <span className="truncate text-sm font-semibold text-[var(--fg)]">{title}</span>
-                                          {/* Same judgement as the strip at the top, so a reader
-                                              scanning this list can skip the rows not worth a click. */}
-                                          <DepthBadge
-                                            timeMs={v.timeSpentMs ?? 0}
-                                            pages={
-                                              scope.kind === "project"
-                                                ? v.docsOpened ?? 0
-                                                : v.pagesViewed ?? (v.pagesSeen?.length ?? 0)
-                                            }
-                                            totalPages={docTotalPages}
-                                          />
-                                        </div>
-                                        {showEmailLine ? (
-                                          <div className="truncate text-xs text-[var(--muted-2)]">{email}</div>
-                                        ) : showIdLine ? (
-                                          <div className="truncate text-xs text-[var(--muted-2)]">User ID {shortId}</div>
-                                        ) : null}
-                                      </>
-                                    );
-                                  })()}
-                                </div>
-                                <div className="shrink-0 sm:text-right">
-                                  <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
-                                    <ViewerCounts
-                                      views={v.views}
-                                      pagesViewed={v.pagesViewed}
-                                      docsOpened={v.docsOpened}
-                                      openedNothing={(v as { openedNothing?: boolean }).openedNothing}
-                                      supportsPageDetail={supportsPageDetail}
-                                    />
-                                  </div>
-                                  <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
-                                </div>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                  {authedViewersList.length > 5 ? (
-                    <div className="mt-3 flex justify-end">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setAuthedViewersModalPage(0);
-                          setAuthedViewersModalOpen(true);
-                        }}
-                      >
-                        See more
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="mt-6">
-                  <div className="text-sm font-semibold text-[var(--fg)]">Anonymous viewers</div>
+                  <div className="text-sm font-semibold text-[var(--fg)]">Viewers</div>
                   <div className="mt-1 text-sm text-[var(--muted)]">
-                    Anonymous viewers are tracked per browser/device (best-effort).
+                    Everyone who opened this {nounLower} in this window, newest first. A project chip means they
+                    came in through that project, where the read is counted.
                   </div>
 
                   <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-                    <div>
-                      {loading ? (
-                        <div className="p-4">
-                          <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                          <div className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                          <div className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                        </div>
-                      ) : error ? (
-                        <div className="p-4 text-sm text-red-700">{error}</div>
-                      ) : !hasData ? (
-                        <div className="p-4 text-sm text-[var(--muted)]">No data yet.</div>
-                      ) : viewersLoading ? (
-                        <div className="p-4 text-sm text-[var(--muted)]">Loading anonymous viewers…</div>
-                      ) : !anonymousViewersList.length ? (
-                        <div className="p-4 text-sm text-[var(--muted)]">No anonymous viewers yet.</div>
-                      ) : (
-                        <ul className="divide-y divide-[var(--border)]">
-                          {anonViewersTop.map((v) => (
-                            <li
-                              key={typeof v.botIdHash === "string" ? v.botIdHash : "anon"}
-                              className="hover:bg-[var(--panel-hover)]"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => openAnonViewerDetail(v)}
-                                className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
-                                title="View details"
-                              >
-                                <div className="min-w-0">
-                                  {(() => {
-                                    const name = typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
-                                    const email = typeof (v as any).email === "string" ? String((v as any).email).trim() : "";
-                                    const title = name || email || "Anonymous viewer";
-                                    const showEmailLine = Boolean(name && email);
-                                    return (
-                                      <>
-                                        <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--fg)]">
-                                          <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                                          <span className="truncate">{title}</span>
-                                          <DepthBadge
-                                            timeMs={v.timeSpentMs ?? 0}
-                                            pages={
-                                              scope.kind === "project"
-                                                ? v.docsOpened ?? 0
-                                                : v.pagesViewed ?? (v.pagesSeen?.length ?? 0)
-                                            }
-                                            totalPages={docTotalPages}
-                                          />
-                                        </div>
-                                        {showEmailLine ? (
-                                          <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">{email}</div>
-                                        ) : (
-                                          <div className="mt-0.5 text-xs text-[var(--muted-2)]">First seen {formatDateTime(v.firstSeen)}</div>
-                                        )}
-                                      </>
-                                    );
-                                  })()}
-                                </div>
-                                <div className="shrink-0 sm:text-right">
-                                  <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
-                                    <ViewerCounts
-                                      views={v.views}
-                                      pagesViewed={v.pagesViewed}
-                                      docsOpened={v.docsOpened}
-                                      openedNothing={(v as { openedNothing?: boolean }).openedNothing}
-                                      supportsPageDetail={supportsPageDetail}
-                                    />
-                                  </div>
-                                  <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
-                                </div>
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                  {anonymousViewersList.length > 5 ? (
-                    <div className="mt-3 flex justify-end">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setAnonViewersModalPage(0);
-                          setAnonViewersModalOpen(true);
-                        }}
-                      >
-                        See more
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* And the readers who came through a project.
-                    They are absent from both lists above by design — their reads are attributed to
-                    the project — so a page that answers "who read this document" has to name them
-                    here or not at all. Each row says which project, and goes to it, because that is
-                    where their reading is counted and where it can be opened in full. */}
-                {projectLinkTraffic && projectLinkTraffic.viewerRows.length ? (
-                  <div className="mt-6">
-                    <div className="text-sm font-semibold text-[var(--fg)]">Readers through projects</div>
-                    <div className="mt-1 text-sm text-[var(--muted)]">
-                      Opened this document from inside a project. Counted with that project, not with this
-                      document.
-                    </div>
-
-                    <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                    {loading ? (
+                      <div className="p-4">
+                        <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                        <div className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                        <div className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                      </div>
+                    ) : error ? (
+                      <div className="p-4 text-sm text-red-700">{error}</div>
+                    ) : viewersLoading && !allViewerRows.length ? (
+                      <div className="p-4 text-sm text-[var(--muted)]">Loading viewers…</div>
+                    ) : !allViewerRows.length ? (
+                      <div className="p-4 text-sm text-[var(--muted)]">No viewers yet.</div>
+                    ) : (
                       <ul className="divide-y divide-[var(--border)]">
-                        {projectLinkTraffic.viewerRows.slice(0, 8).map((v, i) => {
-                          const label = (v.viewerName ?? "").trim() || (v.viewerEmail ?? "").trim() || "Anonymous viewer";
-                          const href = v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null;
+                        {allViewerRows.slice(0, VIEWERS_SHOWN).map((row) => {
                           const body = (
                             <>
                               <div className="min-w-0 flex-1">
                                 <div className="flex min-w-0 items-center gap-2">
                                   <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                                  <span className="truncate text-sm font-semibold text-[var(--fg)]">{label}</span>
-                                  <DepthBadge timeMs={v.timeSpentMs ?? 0} pages={null} />
-                                  <span className="inline-flex max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]">
-                                    <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-                                    <span className="truncate">{v.projectName || "Project"}</span>
-                                  </span>
+                                  <span className="truncate text-sm font-semibold text-[var(--fg)]">{row.title}</span>
+                                  <DepthBadge timeMs={row.timeMs} pages={row.pages} totalPages={docTotalPages} />
+                                  {row.via ? (
+                                    <span className="inline-flex max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]">
+                                      <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                      <span className="truncate">{row.via}</span>
+                                    </span>
+                                  ) : null}
                                 </div>
-                                {v.viewerEmail && v.viewerName ? (
-                                  <div className="mt-0.5 truncate pl-7 text-xs text-[var(--muted-2)]">{v.viewerEmail}</div>
+                                {row.subtitle ? (
+                                  <div className="mt-0.5 truncate pl-7 text-xs text-[var(--muted-2)]">{row.subtitle}</div>
                                 ) : null}
                               </div>
                               <div className="shrink-0 text-right">
-                                <div className="text-xs font-medium tabular-nums text-[var(--muted-2)]">
-                                  {v.views.toLocaleString()} {v.views === 1 ? "view" : "views"}
-                                  {v.timeSpentMs ? ` · ${formatDurationShort(v.timeSpentMs)}` : ""}
-                                </div>
+                                <div className="text-xs font-medium tabular-nums text-[var(--muted-2)]">{row.stats}</div>
                                 <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                                  {v.lastViewedAt ? relativeAge(v.lastViewedAt) : "—"}
+                                  {row.lastSeen ? relativeAge(row.lastSeen) : "—"}
                                 </div>
                               </div>
                             </>
@@ -2742,9 +2644,9 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                           const rowClass =
                             "flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--panel-hover)]";
                           return (
-                            <li key={`${v.shareId}-${i}`}>
-                              {href ? (
-                                <Link href={href} className={rowClass} title={`See ${v.projectName || "this project"}'s metrics`}>
+                            <li key={row.key}>
+                              {row.href ? (
+                                <Link href={row.href} className={rowClass} title={row.hint}>
                                   {body}
                                 </Link>
                               ) : (
@@ -2754,182 +2656,83 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                           );
                         })}
                       </ul>
-                    </div>
+                    )}
                   </div>
-                ) : null}
+
+                  {allViewerRows.length > VIEWERS_SHOWN ? (
+                    <div className="mt-2 flex justify-end">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setAuthedViewersModalPage(0);
+                          setAuthedViewersModalOpen(true);
+                        }}
+                      >
+                        See all {allViewerRows.length}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
               </>
             )}
           </div>
         </div>
       </div>
 
-      <Modal open={authedViewersModalOpen} onClose={() => setAuthedViewersModalOpen(false)} ariaLabel="Authenticated viewers">
-        <div className="text-base font-semibold text-[var(--fg)]">Authenticated viewers</div>
-        <div className="mt-1 text-sm text-[var(--muted)]">Only signed-in viewers are listed here.</div>
+      {/* The same list, all of it. One modal now, because there is one list. */}
+      <Modal open={authedViewersModalOpen} onClose={() => setAuthedViewersModalOpen(false)} ariaLabel="Viewers">
+        <div className="text-base font-semibold text-[var(--fg)]">Viewers</div>
+        <div className="mt-1 text-sm text-[var(--muted)]">
+          Everyone who opened this {nounLower} in this window, newest first.
+        </div>
         <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-          {!authedViewersList.length ? (
-            <div className="p-4 text-sm text-[var(--muted)]">No authenticated viewers yet.</div>
+          {!allViewerRows.length ? (
+            <div className="p-4 text-sm text-[var(--muted)]">No viewers yet.</div>
           ) : (
-            <ul className="divide-y divide-[var(--border)]">
-              {authedModalItems.map((v) => (
-                <li key={v.userId} className="hover:bg-[var(--panel-hover)]">
-                  <button
-                    type="button"
-                    onClick={() => openAuthedViewerDetail(v)}
-                    className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
-                    title="View details"
-                  >
-                    <div className="min-w-0">
-                      {(() => {
-                        const name = typeof v.name === "string" ? v.name.trim() : "";
-                        const email = typeof v.email === "string" ? v.email.trim() : "";
-                        const title = name || email || "Signed-in user";
-                        const showEmailLine = Boolean(name && email);
-                        const shortId = formatShortId(v.userId);
-                        const showIdLine = !showEmailLine && !email && shortId;
-                        return (
-                          <>
-                            <div className="truncate text-sm font-semibold text-[var(--fg)]">{title}</div>
-                            {showEmailLine ? (
-                              <div className="truncate text-xs text-[var(--muted-2)]">{email}</div>
-                            ) : showIdLine ? (
-                              <div className="truncate text-xs text-[var(--muted-2)]">User ID {shortId}</div>
-                            ) : null}
-                          </>
-                        );
-                      })()}
-                    </div>
-                    <div className="shrink-0 sm:text-right">
-                      <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
-                        <ViewerCounts
-                          views={v.views}
-                          pagesViewed={v.pagesViewed}
-                          docsOpened={v.docsOpened}
-                                      openedNothing={(v as { openedNothing?: boolean }).openedNothing}
-                          supportsPageDetail={supportsPageDetail}
-                        />
+            <ul className="max-h-[min(60vh,560px)] divide-y divide-[var(--border)] overflow-auto">
+              {allViewerRows.map((row) => {
+                const body = (
+                  <>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                        <span className="truncate text-sm font-semibold text-[var(--fg)]">{row.title}</span>
+                        <DepthBadge timeMs={row.timeMs} pages={row.pages} totalPages={docTotalPages} />
+                        {row.via ? (
+                          <span className="inline-flex max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]">
+                            <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{row.via}</span>
+                          </span>
+                        ) : null}
                       </div>
-                      <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
+                      {row.subtitle ? (
+                        <div className="mt-0.5 truncate pl-7 text-xs text-[var(--muted-2)]">{row.subtitle}</div>
+                      ) : null}
                     </div>
-                  </button>
-                </li>
-              ))}
+                    <div className="shrink-0 text-right">
+                      <div className="text-xs font-medium tabular-nums text-[var(--muted-2)]">{row.stats}</div>
+                      <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
+                        {row.lastSeen ? relativeAge(row.lastSeen) : "—"}
+                      </div>
+                    </div>
+                  </>
+                );
+                const rowClass = "flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--panel-hover)]";
+                return (
+                  <li key={row.key}>
+                    {row.href ? (
+                      <Link href={row.href} className={rowClass} title={row.hint} onClick={() => setAuthedViewersModalOpen(false)}>
+                        {body}
+                      </Link>
+                    ) : (
+                      <div className={rowClass}>{body}</div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
-        {authedModalTotal > VIEWERS_PAGE_SIZE ? (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="text-xs text-[var(--muted)] tabular-nums">
-              Showing {authedModalTotal ? authedModalStart + 1 : 0}–{authedModalEnd} of {authedModalTotal}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setAuthedViewersModalPage((p) => Math.max(0, p - 1))}
-                disabled={authedModalPageSafe <= 0}
-              >
-                Prev
-              </Button>
-              <div className="text-xs text-[var(--muted)] tabular-nums">
-                Page {authedModalPageSafe + 1} / {authedModalPages}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setAuthedViewersModalPage((p) => Math.min(authedModalPages - 1, p + 1))}
-                disabled={authedModalPageSafe >= authedModalPages - 1}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        ) : null}
-      </Modal>
-
-      <Modal open={anonViewersModalOpen} onClose={() => setAnonViewersModalOpen(false)} ariaLabel="Anonymous viewers">
-        <div className="text-base font-semibold text-[var(--fg)]">Anonymous viewers</div>
-        <div className="mt-1 text-sm text-[var(--muted)]">Tracked per browser/device (best-effort).</div>
-        <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-          {!anonymousViewersList.length ? (
-            <div className="p-4 text-sm text-[var(--muted)]">No anonymous viewers yet.</div>
-          ) : (
-            <ul className="divide-y divide-[var(--border)]">
-              {anonModalItems.map((v) => (
-                <li key={typeof v.botIdHash === "string" ? v.botIdHash : "anon"} className="hover:bg-[var(--panel-hover)]">
-                  <button
-                    type="button"
-                    onClick={() => openAnonViewerDetail(v)}
-                    className="grid w-full gap-1 px-4 py-3 text-left sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
-                    title="View details"
-                  >
-                    <div className="min-w-0">
-                      {(() => {
-                        const name = typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
-                        const email = typeof (v as any).email === "string" ? String((v as any).email).trim() : "";
-                        const title = name || email || "Anonymous viewer";
-                        const showEmailLine = Boolean(name && email);
-                        return (
-                          <>
-                            <div className="flex items-center gap-2 truncate text-sm font-semibold text-[var(--fg)]">
-                              <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                              <span className="truncate">{title}</span>
-                            </div>
-                            {showEmailLine ? (
-                              <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">{email}</div>
-                            ) : (
-                              <div className="mt-0.5 text-xs text-[var(--muted-2)]">First seen {formatDateTime(v.firstSeen)}</div>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </div>
-                    <div className="shrink-0 sm:text-right">
-                      <div className="text-xs font-medium text-[var(--muted-2)] tabular-nums">
-                        <ViewerCounts
-                          views={v.views}
-                          pagesViewed={v.pagesViewed}
-                          docsOpened={v.docsOpened}
-                                      openedNothing={(v as { openedNothing?: boolean }).openedNothing}
-                          supportsPageDetail={supportsPageDetail}
-                        />
-                      </div>
-                      <div className="mt-0.5 text-xs text-[var(--muted)]">Last seen {formatDateTime(v.lastSeen)}</div>
-                    </div>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        {anonModalTotal > VIEWERS_PAGE_SIZE ? (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <div className="text-xs text-[var(--muted)] tabular-nums">
-              Showing {anonModalTotal ? anonModalStart + 1 : 0}–{anonModalEnd} of {anonModalTotal}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setAnonViewersModalPage((p) => Math.max(0, p - 1))}
-                disabled={anonModalPageSafe <= 0}
-              >
-                Prev
-              </Button>
-              <div className="text-xs text-[var(--muted)] tabular-nums">
-                Page {anonModalPageSafe + 1} / {anonModalPages}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setAnonViewersModalPage((p) => Math.min(anonModalPages - 1, p + 1))}
-                disabled={anonModalPageSafe >= anonModalPages - 1}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        ) : null}
       </Modal>
 
       <Modal
