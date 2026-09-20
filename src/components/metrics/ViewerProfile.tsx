@@ -16,7 +16,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeftIcon, DocumentTextIcon, UserIcon } from "@heroicons/react/24/outline";
 
 import {
@@ -210,6 +210,58 @@ export default function ViewerProfile({
     void loadVisits();
   }, [loadVisits]);
 
+  /** Which document's panel is open, readable from the realtime handler without resubscribing. */
+  const openDocRef = useRef<string | null>(null);
+
+  /**
+   * One document's pages, for the panel that opens under it.
+   *
+   * Always fetches. It used to return early whenever the document was already in `docDetail`,
+   * which made the panel a snapshot of the moment it was opened: a reader you were watching could
+   * walk from page 1 to page 9 while the drill-down underneath still read "1 page · time per page
+   * wasn't recorded", chart and all. Refetching is what the realtime refresh below needs it to do.
+   *
+   * `silent` keeps what is on screen while the new answer is in flight, so a live refresh does not
+   * blink the chart out and back.
+   */
+  const loadDocDetail = useCallback(
+    async (docId: string, silent = false) => {
+      if (!who) return;
+      if (!silent) setDocDetail((d) => (d[docId] ? d : { ...d, [docId]: "loading" }));
+      try {
+        const params = new URLSearchParams({ docId, days: String(days) });
+        params.set(who.kind === "authed" ? "userId" : "botIdHash", who.key);
+        const res = await fetchWithTempUser(`${apiBase}/shareviews/viewer-doc?${params.toString()}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(String(res.status));
+        const json = (await res.json()) as {
+          pagesSeen?: number[];
+          pageTimeMsByPage?: Record<string, number>;
+          timeSpentMs?: number;
+          sessions?: number;
+        };
+        setDocDetail((d) => ({
+          ...d,
+          [docId]: {
+            pagesSeen: Array.isArray(json.pagesSeen) ? json.pagesSeen : [],
+            pageTimeMsByPage: json.pageTimeMsByPage ?? {},
+            timeSpentMs: typeof json.timeSpentMs === "number" ? json.timeSpentMs : 0,
+            sessions: typeof json.sessions === "number" ? json.sessions : 0,
+          },
+        }));
+      } catch {
+        // A failed refresh keeps the panel that is already open rather than emptying it.
+        if (!silent) {
+          setDocDetail((d) => {
+            const next = { ...d };
+            delete next[docId];
+            return next;
+          });
+        }
+      }
+    },
+    [apiBase, days, who],
+  );
+
   /**
    * Live, while they are still reading.
    *
@@ -230,6 +282,10 @@ export default function ViewerProfile({
       timer = window.setTimeout(() => {
         void load(true);
         void loadVisits(true);
+        // The panel open under a document is part of "what they are reading", not a snapshot of
+        // when it was opened: refresh it with everything else.
+        const open = openDocRef.current;
+        if (open) void loadDocDetail(open, true);
       }, 1200);
     };
     // Reconnected: whatever happened while the socket was down never arrived, so start again from
@@ -263,7 +319,7 @@ export default function ViewerProfile({
       stopViewer();
       stopActivity();
     };
-  }, [load, loadVisits, who, scopeKind, scopeId]);
+  }, [load, loadVisits, loadDocDetail, who, scopeKind, scopeId]);
 
 
   /**
@@ -281,9 +337,11 @@ export default function ViewerProfile({
       if (document.visibilityState !== "visible") return;
       void load(true);
       void loadVisits(true);
+      const open = openDocRef.current;
+      if (open) void loadDocDetail(open, true);
     }, 20_000);
     return () => window.clearInterval(id);
-  }, [load, loadVisits]);
+  }, [load, loadVisits, loadDocDetail]);
 
   /**
    * Following one person into one document.
@@ -303,40 +361,17 @@ export default function ViewerProfile({
     Record<string, { pagesSeen: number[]; pageTimeMsByPage: Record<string, number>; timeSpentMs: number; sessions: number } | "loading">
   >({});
 
+  useEffect(() => {
+    openDocRef.current = openDoc;
+  }, [openDoc]);
+
   const openDocDetail = useCallback(
     async (docId: string) => {
       setOpenDoc((cur) => (cur === docId ? null : docId));
-      if (docDetail[docId] || !who) return;
-      setDocDetail((d) => ({ ...d, [docId]: "loading" }));
-      try {
-        const params = new URLSearchParams({ docId, days: String(days) });
-        params.set(who.kind === "authed" ? "userId" : "botIdHash", who.key);
-        const res = await fetchWithTempUser(`${apiBase}/shareviews/viewer-doc?${params.toString()}`, { cache: "no-store" });
-        if (!res.ok) throw new Error(String(res.status));
-        const json = (await res.json()) as {
-          pagesSeen?: number[];
-          pageTimeMsByPage?: Record<string, number>;
-          timeSpentMs?: number;
-          sessions?: number;
-        };
-        setDocDetail((d) => ({
-          ...d,
-          [docId]: {
-            pagesSeen: Array.isArray(json.pagesSeen) ? json.pagesSeen : [],
-            pageTimeMsByPage: json.pageTimeMsByPage ?? {},
-            timeSpentMs: typeof json.timeSpentMs === "number" ? json.timeSpentMs : 0,
-            sessions: typeof json.sessions === "number" ? json.sessions : 0,
-          },
-        }));
-      } catch {
-        setDocDetail((d) => {
-          const next = { ...d };
-          delete next[docId];
-          return next;
-        });
-      }
+      if (docDetail[docId]) return;
+      await loadDocDetail(docId);
     },
-    [apiBase, days, docDetail, who],
+    [docDetail, loadDocDetail],
   );
 
   const name = (viewer?.name ?? "").trim() || (viewer?.email ?? "").trim();
