@@ -14,7 +14,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { CheckIcon, PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 import TagDot from "@/components/tags/TagDot";
 import Modal from "@/components/modals/Modal";
@@ -29,6 +29,9 @@ type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?:
  * every one of them into a single scroll.
  */
 const PAGE_SIZE = 24;
+
+/** How many merge targets the dialog lists before asking you to search instead. */
+const MERGE_LIST_CAP = 50;
 
 export default function TagsManager() {
   const [tags, setTags] = useState<Tag[] | null>(null);
@@ -45,6 +48,7 @@ export default function TagsManager() {
   /** Which row has its palette open; only one at a time, so the table does not grow six rows at once. */
   const [colorFor, setColorFor] = useState("");
   const [adding, setAdding] = useState(false);
+  const [mergeQuery, setMergeQuery] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +84,23 @@ export default function TagsManager() {
     const folded = fold(needle);
     return sorted.filter((t) => fold(t.name).includes(folded) || t.slug.includes(folded));
   }, [sorted, filter]);
+
+  /**
+   * Who this tag can be merged into: every other tag, searched and capped. The cap is what makes
+   * this survive a workspace with thousands — the dialog renders a list you can read, not one you
+   * scroll for a minute.
+   */
+  const mergeAll = useMemo(() => {
+    if (!mergeFrom) return [];
+    const needle = mergeQuery.trim().toLowerCase();
+    const fold = (v: string) => v.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const folded = fold(needle);
+    return sorted.filter(
+      (t) => t.id !== mergeFrom.id && (!folded || fold(t.name).includes(folded) || t.slug.includes(folded)),
+    );
+  }, [sorted, mergeFrom, mergeQuery]);
+  const mergeCandidates = mergeAll.slice(0, MERGE_LIST_CAP);
+  const mergeTruncated = mergeAll.length > MERGE_LIST_CAP;
 
   const pageCount = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
   // A filter that shortens the list can strand you past the end; clamp rather than show nothing.
@@ -209,6 +230,84 @@ export default function TagsManager() {
         </button>
       </div>
 
+      {/* Merging asks "onto which tag?", and the honest answer at any real size is a search box.
+          This used to render every other tag as a chip under the row: fine at six, unusable at
+          three hundred, and it pushed the table off the screen to ask one question. Searchable,
+          scrollable, and capped — a list you scroll past a hundred of is not a list you are
+          reading. */}
+      <Modal
+        open={Boolean(mergeFrom)}
+        onClose={() => {
+          if (!busyId) setMergeFrom(null);
+        }}
+        ariaLabel="Merge tag"
+        width={460}
+        contentClassName="px-6 pb-6 pt-5"
+      >
+        {mergeFrom ? (
+          <>
+            <div className="flex items-center gap-2 text-base font-semibold text-[var(--fg)]">
+              <TagDot color={mergeFrom.color} />
+              <span className="truncate">Merge &ldquo;{mergeFrom.name}&rdquo; into…</span>
+            </div>
+            <p className="mt-1.5 text-[13px] leading-5 text-[var(--muted)]">
+              Everything tagged &ldquo;{mergeFrom.name}&rdquo;
+              {(mergeFrom.count ?? 0) > 0 ? ` (${mergeFrom.count} ${mergeFrom.count === 1 ? "item" : "items"})` : ""} moves
+              onto the tag you pick. &ldquo;{mergeFrom.name}&rdquo; is then removed; nothing it tagged is.
+            </p>
+
+            <input
+              autoFocus
+              value={mergeQuery}
+              placeholder="Search tags"
+              aria-label="Search tags to merge into"
+              className="mt-4 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
+              onChange={(e) => setMergeQuery(e.target.value)}
+            />
+
+            <ul className="mt-3 max-h-[320px] overflow-auto rounded-lg border border-[var(--border)]">
+              {mergeCandidates.length ? (
+                mergeCandidates.map((target) => (
+                  <li key={target.id} className="border-b border-[var(--divider)] last:border-b-0">
+                    <button
+                      type="button"
+                      disabled={Boolean(busyId)}
+                      onClick={() => void patch(mergeFrom, { mergeIntoTagId: target.id }, () => setMergeFrom(null))}
+                      className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-[var(--panel-hover)] disabled:opacity-50"
+                    >
+                      <TagDot color={target.color} />
+                      <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[var(--fg)]">{target.name}</span>
+                      <span className="shrink-0 text-[12px] tabular-nums text-[var(--muted-2)]">{target.count ?? 0}</span>
+                    </button>
+                  </li>
+                ))
+              ) : (
+                <li className="px-3 py-6 text-center text-[13px] text-[var(--muted)]">
+                  {mergeQuery.trim() ? `No tag matches “${mergeQuery}”.` : "No other tag to merge into."}
+                </li>
+              )}
+            </ul>
+
+            {mergeTruncated ? (
+              <div className="mt-2 text-[12px] text-[var(--muted-2)]">
+                Showing the first {MERGE_LIST_CAP}. Search to narrow it.
+              </div>
+            ) : null}
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                disabled={Boolean(busyId)}
+                onClick={() => setMergeFrom(null)}
+                className="rounded-lg border border-[var(--border)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : null}
+      </Modal>
+
       {/* A dialog for one field, because the alternative was that field sitting empty on the page
           forever. Opens carrying whatever is in the search box: searching for a tag and not finding
           it is the most likely reason anyone presses this. */}
@@ -286,7 +385,7 @@ export default function TagsManager() {
       <DataTable containerClassName="bg-[var(--panel-2)]">
         <thead className="bg-[var(--panel)] text-[12px] font-semibold text-[var(--muted-2)]">
           <tr>
-            <th className="w-10 px-3 py-2.5" aria-label="Colour" />
+            <th className="w-16 px-3 py-2.5">Colour</th>
             <th className="px-3 py-2.5">Tag</th>
             <th className="w-24 px-3 py-2.5 text-right">Items</th>
             <th className="w-44 px-3 py-2.5 text-right">Actions</th>
@@ -301,7 +400,7 @@ export default function TagsManager() {
             const open = merging || confirmDelete?.id === tag.id;
             return (
               <Fragment key={tag.id}>
-                <tr className={`border-t border-[var(--divider)] ${open ? "" : "hover:bg-[var(--panel-hover)]"}`}>
+                <tr className={`group border-t border-[var(--divider)] ${open ? "" : "hover:bg-[var(--panel-hover)]"}`}>
                   <td className="px-3 py-2">
                     <button
                       type="button"
@@ -309,9 +408,9 @@ export default function TagsManager() {
                       aria-label={`Change colour of ${tag.name}`}
                       title="Change colour"
                       onClick={() => setColorFor(picking ? "" : tag.id)}
-                      className="grid h-6 w-6 place-items-center rounded-full transition-colors hover:bg-[var(--panel-hover)] disabled:opacity-40"
+                      className="grid h-7 w-7 place-items-center rounded-full ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--panel-hover)] hover:ring-[var(--fg)] disabled:opacity-40"
                     >
-                      <TagDot color={tag.color} />
+                      <TagDot color={tag.color} size={11} />
                     </button>
                   </td>
 
@@ -361,11 +460,21 @@ export default function TagsManager() {
                   </td>
 
                   <td className="px-3 py-2">
-                    <div className="flex items-center justify-end gap-1.5">
+                    {/* Twenty-four rows meant twenty-four Merge buttons and twenty-four bins
+                        competing with the names. They are one keystroke or one hover away instead,
+                        and stay put once a row is open so a panel never loses its own controls. */}
+                    <div
+                      className={`flex items-center justify-end gap-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
+                        open ? "opacity-100" : "opacity-0"
+                      }`}
+                    >
                       <button
                         type="button"
                         disabled={busy || (tags?.length ?? 0) < 2}
-                        onClick={() => setMergeFrom(merging ? null : tag)}
+                        onClick={() => {
+                          setMergeQuery("");
+                          setMergeFrom(merging ? null : tag);
+                        }}
                         className="rounded-lg border border-[var(--border)] px-2 py-1 text-[12px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--fg)] disabled:opacity-40"
                         title={(tags?.length ?? 0) < 2 ? "Nothing to merge into yet" : "Merge into another tag"}
                       >
@@ -451,35 +560,6 @@ export default function TagsManager() {
                   </tr>
                 ) : null}
 
-                {merging ? (
-                  <tr className="bg-[var(--panel)]">
-                    <td colSpan={4} className="px-3 pb-3 pt-0">
-                      <div className="text-[13px] text-[var(--fg)]">
-                        Move everything tagged &ldquo;{tag.name}&rdquo; onto:{" "}
-                        <span className="text-[var(--muted)]">
-                          &ldquo;{tag.name}&rdquo; is removed; nothing it tagged is.
-                        </span>
-                      </div>
-                      <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        {sorted
-                          .filter((t) => t.id !== tag.id)
-                          .map((target) => (
-                            <button
-                              key={target.id}
-                              type="button"
-                              disabled={busy}
-                              onClick={() => void patch(tag, { mergeIntoTagId: target.id }, () => setMergeFrom(null))}
-                              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2.5 py-1 text-[12px] font-medium text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)] disabled:opacity-50"
-                            >
-                              <TagDot color={target.color} />
-                              <span className="max-w-[160px] truncate">{target.name}</span>
-                              <CheckIcon className="h-3 w-3 text-[var(--muted-2)]" aria-hidden="true" />
-                            </button>
-                          ))}
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
               </Fragment>
             );
           })}
