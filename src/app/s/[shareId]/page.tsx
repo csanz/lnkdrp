@@ -119,16 +119,14 @@ export async function generateMetadata(props: {
     meta.title || og.title || (typeof doc?.title === "string" ? doc.title : "") || "Shared document";
   const description = meta.description || og.description || "Shared with LinkDrop.";
 
-  // Prefer the doc preview thumbnail (if it's a real URL). `buildShareMetadata` falls back to the
-  // site default OG image for anything it cannot use.
-  const previewCandidate =
-    (typeof (doc as { previewImageUrl?: unknown })?.previewImageUrl === "string" &&
-      (doc as { previewImageUrl: string }).previewImageUrl) ||
-    (typeof (doc as { firstPagePngUrl?: unknown })?.firstPagePngUrl === "string" &&
-      (doc as { firstPagePngUrl: string }).firstPagePngUrl) ||
-    null;
-
-  return buildShareMetadata({ title, description, previewUrl: previewCandidate });
+  // The preview goes out through our own proxy, never as the blob's own URL.
+  //
+  // This used to publish `doc.previewImageUrl` verbatim, which is the storage URL and carries the
+  // document id and upload id in its path — so the unfurl card in every Slack channel and mailbox a
+  // link was forwarded to disclosed both, to anyone who saw the message rather than only to whoever
+  // opened the link. `/s/:shareId/og.png` re-serves the same bytes from this origin and applies the
+  // same refusal and password gates the page does, so a revoked link stops unfurling too.
+  return buildShareMetadata({ title, description, previewUrl: `/s/${shareId}/og.png` });
 }
 
 /**

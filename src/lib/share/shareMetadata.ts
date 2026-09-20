@@ -19,8 +19,8 @@ import { getMetadataBaseUrl } from "@/lib/urls";
 /**
  * Build the page's `Metadata` from strings the caller has already decided are safe to publish.
  *
- * `previewUrl` may be absolute (`https://…`) or root-relative (`/…`); anything else falls back to
- * the site's default OG image, as does an absent one.
+ * `previewUrl` must be **root-relative** (`/s/<shareId>/og.png`). Anything else — an absolute URL
+ * above all — falls back to the site's default OG image, as does an absent one.
  */
 export async function buildShareMetadata(input: {
   title: string;
@@ -48,9 +48,20 @@ export async function buildShareMetadata(input: {
 
   const previewCandidate = typeof input.previewUrl === "string" && input.previewUrl ? input.previewUrl : null;
   const images: NonNullable<Metadata["openGraph"]>["images"] = (() => {
-    if (previewCandidate) {
-      if (/^https?:\/\//i.test(previewCandidate)) return [{ url: new URL(previewCandidate), alt: title }];
-      if (previewCandidate.startsWith("/")) return [{ url: new URL(previewCandidate, metadataBase), alt: title }];
+    // Root-relative only, on purpose. An absolute URL used to be published verbatim, and the one
+    // thing callers had to hand was the document's stored preview: a public blob URL whose path is
+    // `docs/<docId>/uploads/<uploadId>/preview.png`. That went straight into `og:image`, so anyone
+    // forwarded a share link — or any bot that unfurled it into a channel — could read the
+    // document id and upload id out of the page source, and those ids are exactly what every
+    // `/api/docs/:docId` surface is addressed by. The blob is meant to reach recipients through
+    // `/s/<shareId>/og.png`, which re-serves the bytes from our own origin and re-runs the
+    // refusal/password checks on every fetch. Refusing absolute URLs here is what keeps that proxy
+    // from being bypassed the next time someone reaches for the stored URL as a convenience.
+    if (previewCandidate?.startsWith("/")) {
+      // `//evil.example/x` is protocol-relative, not a path: it resolves off-origin.
+      if (!previewCandidate.startsWith("//")) {
+        return [{ url: new URL(previewCandidate, metadataBase), alt: title }];
+      }
     }
     return [{ url: new URL("/images/og.png", metadataBase), width: 840, height: 491, alt: title }];
   })();

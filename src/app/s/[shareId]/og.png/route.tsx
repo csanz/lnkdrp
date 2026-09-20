@@ -14,6 +14,18 @@ import {
 export const runtime = "nodejs";
 
 /**
+ * `private`, never `public` — the same rule the recipient history endpoint states at
+ * `/s/[shareId]/changes/route.ts`. The refusal and password checks below run per request, but a
+ * shared/CDN cache is keyed on the URL alone and never re-asks: the previous
+ * `public, s-maxage=3600, stale-while-revalidate=86400` meant that once any unfurl bot had warmed
+ * an edge entry, the document's title and a picture of its first page kept being served for up to
+ * 25 hours after the owner disabled, expired, archived or password-protected the link — i.e. the
+ * revocation controls silently stopped applying to the one surface that needs no cookie to reach.
+ * The short `max-age` still absorbs a single client's repeated fetches of the same preview.
+ */
+const OG_CACHE_CONTROL = "private, max-age=300";
+
+/**
  * Dynamic OG image route for a share page.
  *
  * Prefers a doc's server-generated preview image when available; otherwise
@@ -85,7 +97,7 @@ export async function GET(
       mime,
       alt: title,
       dims: sniffImageDims(buf) ?? DEFAULT_OG_SIZE,
-      cacheControl: "public, max-age=3600, s-maxage=3600, stale-while-revalidate=86400",
+      cacheControl: OG_CACHE_CONTROL,
     });
   } catch {
     const res = new ImageResponse(
@@ -111,10 +123,8 @@ export async function GET(
       ),
       DEFAULT_OG_SIZE,
     );
-    res.headers.set(
-      "Cache-Control",
-      "public, max-age=300, s-maxage=300, stale-while-revalidate=3600",
-    );
+    // The text card is the document's real title, so it is revocable too — same header.
+    res.headers.set("Cache-Control", OG_CACHE_CONTROL);
     return res;
   }
 }

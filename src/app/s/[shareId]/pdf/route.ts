@@ -8,9 +8,22 @@ import { ShareViewModel } from "@/lib/models/ShareView";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
+import { clientIpFromRequest, rateLimit } from "@/lib/http/rateLimit";
 import crypto from "node:crypto";
 
 export const runtime = "nodejs";
+
+/**
+ * How much analytics one caller may write through this proxy.
+ *
+ * A real reader on a real link opens a handful of documents a minute; these are generous enough that
+ * nobody legitimate ever meets them, and low enough that the flood this bounds (see the comment at
+ * the tracking block) is not worth an attacker's time.
+ */
+const DOWNLOAD_TRACK_PER_LINK_LIMIT = 30;
+/** Wider bucket, so a caller cannot simply walk across every link they hold to dodge the first. */
+const DOWNLOAD_TRACK_PER_IP_LIMIT = 120;
+const DOWNLOAD_TRACK_WINDOW_MS = 60_000;
 /**
  * Utc Day Key (uses slice, toISOString).
  */
@@ -114,6 +127,24 @@ function safePdfFilename(input: string | null | undefined): string {
     .slice(0, 120);
   const withExt = cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned}.pdf`;
   return withExt || "document.pdf";
+}
+
+/**
+ * True when a `Range` header asks for something other than the beginning of the file.
+ *
+ * One read arrives here as several GETs: a reader that fetches a PDF in pieces repeats the same
+ * `botId` on each chunk, and every one of them used to be counted as its own download. Only the
+ * request that starts at byte 0 is treated as the read; its continuations are served without
+ * touching a counter. Anything unparseable is treated as the start, so a header shape we did not
+ * anticipate loses bytes to nobody — it just counts, exactly as before.
+ */
+function rangeStartsAfterFirstByte(raw: string | null): boolean {
+  if (!raw) return false;
+  const m = /^bytes\s*=\s*(\d*)\s*-/i.exec(raw.trim());
+  if (!m) return false;
+  // `bytes=-500` is a suffix range: it names the tail of the file, never its start.
+  if (m[1] === "") return true;
+  return Number(m[1]) > 0;
 }
 
 /**
@@ -226,10 +257,42 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     ? await isOwnerSideViewer(doc as { orgId?: unknown; userId?: unknown }, downloadSession?.userId ?? null)
     : false;
 
+  // Everything below this line is a write, and until now the only thing standing between a stranger
+  // holding the link and the owner's analytics was the stranger's patience. This route is public,
+  // unauthenticated and side-effecting: each `?download=1&botId=<anything>` upserts a `ShareView`
+  // row, moves the link's counters and appends to the owner's activity feed, with the identity of
+  // the "reader" taken straight from the query string — and `Range: bytes=0-0` made each invented
+  // reader cost about a byte of egress. The stats ingest already bounded exactly this shape
+  // (`sharestats:ip:<ip>`, see `/api/share/[shareId]/stats`); this route simply never got the same
+  // bound.
+  //
+  // A blocked caller still receives their PDF. Refusing the bytes would turn a noisy-neighbour limit
+  // into a broken download for whoever shares an office NAT with them; the only thing withheld is
+  // the counter move.
+  //
+  // The key uses `clientIpFromRequest` rather than this file's `getClientIp`: the latter also honours
+  // `cf-connecting-ip` / `true-client-ip`, which a direct caller sets freely and could therefore use
+  // to mint a fresh bucket per request. `getClientIp` stays for analytics attribution only.
+  const rangeHeader = request.headers.get("range");
+  const trackingBotId = typeof botId === "string" && botId.trim() ? botId.trim() : null;
+  let trackDownload = wantsDownload && Boolean(trackingBotId) && !rangeStartsAfterFirstByte(rangeHeader);
+  if (trackDownload) {
+    const limiterIp = clientIpFromRequest(request);
+    const [perLink, perIp] = await Promise.all([
+      rateLimit({
+        key: `sharepdf:${shareId}:${limiterIp}`,
+        limit: DOWNLOAD_TRACK_PER_LINK_LIMIT,
+        windowMs: DOWNLOAD_TRACK_WINDOW_MS,
+      }),
+      rateLimit({ key: `sharepdf:ip:${limiterIp}`, limit: DOWNLOAD_TRACK_PER_IP_LIMIT, windowMs: DOWNLOAD_TRACK_WINDOW_MS }),
+    ]);
+    trackDownload = perLink.ok && perIp.ok;
+  }
+
   // Best-effort download tracking (only when an explicit download is requested).
-  if (wantsDownload && typeof botId === "string" && botId.trim()) {
+  if (trackDownload && trackingBotId) {
     try {
-      const botIdHash = crypto.createHash("sha256").update(botId.trim()).digest("hex");
+      const botIdHash = crypto.createHash("sha256").update(trackingBotId).digest("hex");
       const docId = (doc as { _id: unknown })._id;
       const docOrgId = (doc as { orgId?: unknown }).orgId;
       const day = utcDayKey(new Date());
@@ -271,7 +334,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
       // Ignore tracking failures (never block download).
       // If a duplicate key race occurs, retry once without upsert.
       try {
-        const botIdHash = crypto.createHash("sha256").update(botId.trim()).digest("hex");
+        const botIdHash = crypto.createHash("sha256").update(trackingBotId).digest("hex");
         const day = utcDayKey(new Date());
         await ShareViewModel.updateOne(
           { shareId, botIdHash },
@@ -307,9 +370,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     }
   }
 
-  const range = request.headers.get("range");
+  // Range passes through untouched: pdf.js depends on it, and the limiter above only decided whether
+  // this chunk counted, never whether it is served.
   const upstream = await fetch(blobUrl, {
-    headers: range ? { range } : undefined,
+    headers: rangeHeader ? { range: rangeHeader } : undefined,
     cache: "no-store",
   });
 

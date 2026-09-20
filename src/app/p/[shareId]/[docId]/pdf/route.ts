@@ -25,13 +25,34 @@ import { touchShareLink } from "@/lib/share/links";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 import { projectLinkPasswordEnabled, projectViewerKey, resolveProjectDocument } from "@/lib/share/projectPublic";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
-import { clientIpFromRequest } from "@/lib/http/rateLimit";
+import { clientIpFromRequest, rateLimit } from "@/lib/http/rateLimit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
+/** Analytics-write budget per caller. The twin of the same constants on `/s/:shareId/pdf`. */
+const DOWNLOAD_TRACK_PER_LINK_LIMIT = 30;
+const DOWNLOAD_TRACK_PER_IP_LIMIT = 120;
+const DOWNLOAD_TRACK_WINDOW_MS = 60_000;
+
 function utcDayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * True when a `Range` header asks for something other than the beginning of the file.
+ *
+ * One read arrives as several GETs carrying the same `botId`, and each chunk used to count as its
+ * own download. Only the request that starts at byte 0 is the read; an unparseable header counts,
+ * so nothing legitimate is ever lost to a shape we did not anticipate.
+ */
+function rangeStartsAfterFirstByte(raw: string | null): boolean {
+  if (!raw) return false;
+  const m = /^bytes\s*=\s*(\d*)\s*-/i.exec(raw.trim());
+  if (!m) return false;
+  // `bytes=-500` is a suffix range: the tail of the file, never its start.
+  if (m[1] === "") return true;
+  return Number(m[1]) > 0;
 }
 
 /** Minimal cookie read: the share-auth value is opaque hex and needs no decoding. */
@@ -155,8 +176,33 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   const downloadSession = wantsDownload ? await tryResolveAuthUserId(request) : null;
   const ownerPreview = wantsDownload ? await isOwnerSideViewer(doc as { orgId?: unknown; userId?: unknown }, downloadSession?.userId ?? null) : false;
 
-  if (wantsDownload && typeof botId === "string" && botId.trim()) {
-    const botIdHash = crypto.createHash("sha256").update(botId.trim()).digest("hex");
+  // The same bound the document route now carries, and for the same reason — this route is the
+  // louder half of the pair, because one project link fans out over every document in the room and
+  // each `?download=1&botId=<anything>` writes *two* rows (`ShareView` plus the `ProjectLinkView`
+  // landing row) as well as the activity entry. The caller picks the analytics key, the route is
+  // unauthenticated, and `Range: bytes=0-0` made each invented reader cost about a byte.
+  //
+  // Blocked callers are still served their PDF: only the counter move is withheld. The limiter key
+  // comes from `clientIpFromRequest`, which reads only proxy-set forwarding headers — a direct
+  // caller cannot rotate buckets by inventing one.
+  const rangeHeader = request.headers.get("range");
+  const trackingBotId = typeof botId === "string" && botId.trim() ? botId.trim() : null;
+  let trackDownload = wantsDownload && Boolean(trackingBotId) && !rangeStartsAfterFirstByte(rangeHeader);
+  if (trackDownload) {
+    const limiterIp = clientIpFromRequest(request);
+    const [perLink, perIp] = await Promise.all([
+      rateLimit({
+        key: `sharepdf:${shareId}:${limiterIp}`,
+        limit: DOWNLOAD_TRACK_PER_LINK_LIMIT,
+        windowMs: DOWNLOAD_TRACK_WINDOW_MS,
+      }),
+      rateLimit({ key: `sharepdf:ip:${limiterIp}`, limit: DOWNLOAD_TRACK_PER_IP_LIMIT, windowMs: DOWNLOAD_TRACK_WINDOW_MS }),
+    ]);
+    trackDownload = perLink.ok && perIp.ok;
+  }
+
+  if (trackDownload && trackingBotId) {
+    const botIdHash = crypto.createHash("sha256").update(trackingBotId).digest("hex");
     // One row per (link, viewer, document) — see `projectViewerKey` for why the document is carried
     // inside the key rather than beside it.
     const viewKey = projectViewerKey(botIdHash, doc._id);
@@ -243,8 +289,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     }
   }
 
-  const range = request.headers.get("range");
-  const upstream = await fetch(blobUrl, { headers: range ? { range } : undefined, cache: "no-store" });
+  // Range passes through untouched: pdf.js depends on it, and the limiter above only decided whether
+  // this chunk counted, never whether it is served.
+  const upstream = await fetch(blobUrl, { headers: rangeHeader ? { range: rangeHeader } : undefined, cache: "no-store" });
 
   const headers = new Headers();
   // Pinned, not copied. These routes serve one thing — the stored PDF — so echoing the upstream

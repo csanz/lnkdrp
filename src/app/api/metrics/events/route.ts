@@ -4,14 +4,30 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveExistingActor } from "@/lib/gating/actor";
 import { errorJson } from "@/lib/http/errorResponse";
+import { rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
+import { buildDocMatch } from "@/lib/docs/docMatch";
+import { liveProjectByIdMatch } from "@/lib/projects/scope";
 import { PageTimingModel } from "@/lib/models/PageTiming";
 import { ProjectClickModel } from "@/lib/models/ProjectClick";
+import { ProjectModel } from "@/lib/models/Project";
 import { ProjectViewModel } from "@/lib/models/ProjectView";
 import { DocModel } from "@/lib/models/Doc";
 import { DocPageTimingModel } from "@/lib/models/DocPageTiming";
 import { ShareLinkModel } from "@/lib/models/ShareLink";
 
 export const runtime = "nodejs";
+
+/**
+ * Ingest budget: rows one identity may push into the analytics collections per minute.
+ *
+ * Every accepted call is a write, and `resolveExistingActor` is not the barrier it looks like — a
+ * temp identity is handed out by any other endpoint, so "already exists" only means "bootstrapped
+ * once". Matches the public viewer ingest (`STATS_POST_LIMIT` in `share/[shareId]/stats`): a real
+ * tab sends a handful of timings a minute, so 120 is far above anything a reader produces.
+ */
+const METRICS_EVENT_LIMIT = 120;
+const METRICS_EVENT_WINDOW_MS = 60 * 1000;
+
 /**
  * As Non Empty String (uses trim).
  */
@@ -99,11 +115,33 @@ export async function POST(request: Request) {
     }
     const viewerUserId = new Types.ObjectId(actor.userId);
 
+    // The workspace bounds every tenancy check below is built from. Hoisted because the doc branch
+    // and both project branches need the same three values, and the two places that spelled them
+    // out separately are exactly where one of them was forgotten.
+    const orgId = new Types.ObjectId(actor.orgId);
+    const legacyUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+
     const sessionIdRaw = asNonEmptyString((body as { sessionId?: unknown })?.sessionId, 256);
     if (!sessionIdRaw) {
       return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
     }
     const sessionIdHash = hashSessionId(sessionIdRaw);
+
+    // Bound the write volume one identity can drive. Keyed on the resolved actor rather than the
+    // client IP because the only legitimate senders are browser tabs, and tabs share an IP behind
+    // any office NAT — one chatty tab there must not silence everyone else's timings. Buying more
+    // budget by minting more identities is capped per IP by `guardTempWorkspaceCreation`, which is
+    // the barrier this endpoint was leaning on but never charged.
+    //
+    // A 429 is safe here: `src/lib/metrics/client.ts` posts fire-and-forget and never reads the
+    // response, so refusing costs a real visitor a dropped analytics row and nothing else.
+    const rl = await rateLimit({
+      key: `metrics:events:${actor.userId}`,
+      limit: METRICS_EVENT_LIMIT,
+      windowMs: METRICS_EVENT_WINDOW_MS,
+    });
+    if (!rl.ok) return rateLimitedResponse(rl);
 
     await connectMongo();
 
@@ -157,25 +195,11 @@ export async function POST(request: Request) {
       }
 
       // Ensure the doc is visible in the actor's active org (with legacy personal-org fallback).
-      const orgId = new Types.ObjectId(actor.orgId);
-      const legacyUserId = new Types.ObjectId(actor.userId);
-      const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+      // This was a hand-rolled copy of `buildDocMatch`; the copy is what let the two project
+      // branches below ship with no equivalent at all, so the filter now comes from the one place
+      // that defines "a document this actor may act on".
       const docObjectId = new Types.ObjectId(docIdRaw);
-      const ok = await DocModel.exists({
-        ...(allowLegacyByUserId
-          ? {
-              $or: [
-                { _id: docObjectId, orgId, isDeleted: { $ne: true } },
-                {
-                  _id: docObjectId,
-                  userId: legacyUserId,
-                  isDeleted: { $ne: true },
-                  $or: [{ orgId: { $exists: false } }, { orgId: null }],
-                },
-              ],
-            }
-          : { _id: docObjectId, orgId, isDeleted: { $ne: true } }),
-      });
+      const ok = await DocModel.exists(buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId));
       if (!ok) {
         // Mirror other doc APIs: 404 for "not found / not authorized".
         return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -224,6 +248,20 @@ export async function POST(request: Request) {
       }
       const projectId = new Types.ObjectId(projectIdRaw);
 
+      // The same proof the doc branch demands, which this branch never asked for: `projectId`
+      // comes out of the request body, so with only an `isValid` check any holder of a throwaway
+      // identity could write rows against a stranger's project — storage and IOPS on someone
+      // else's bill, and a poisoned baseline for anything that later reads these collections.
+      // The only real sender is the signed-in project page, which is already scoped to the actor's
+      // active workspace, so a genuine view never misses here.
+      const visible = await ProjectModel.exists(
+        liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId),
+      );
+      if (!visible) {
+        // Mirror the doc branch: 404 for "not found / not authorized".
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+
       // Dedupe: one view per session per user per project.
       await ProjectViewModel.updateOne(
         { projectId, viewerUserId, sessionIdHash },
@@ -246,6 +284,16 @@ export async function POST(request: Request) {
       }
       const projectId = new Types.ObjectId(projectIdRaw);
       const toDocId = toDocIdRaw && Types.ObjectId.isValid(toDocIdRaw) ? new Types.ObjectId(toDocIdRaw) : null;
+
+      // Clicks are the worse half of the pair: `ProjectClick` has no unique index, so every
+      // unchecked call appended a fresh row carrying two caller-supplied 2048-character strings.
+      // Same workspace proof as the view branch.
+      const visible = await ProjectModel.exists(
+        liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId),
+      );
+      if (!visible) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
 
       await ProjectClickModel.create({
         projectId,

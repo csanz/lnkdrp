@@ -48,15 +48,29 @@ export async function GET(
 
   await connectMongo();
 
-  const project = await ProjectModel.findOne({ requestViewToken: viewToken })
+  // A deleted request repo has to stop answering for its own token. Deleting the repo is the
+  // owner's way of retiring the whole capability link, and without this clause the token outlived
+  // the thing it was a token for.
+  const project = await ProjectModel.findOne({
+    requestViewToken: viewToken,
+    isDeleted: { $ne: true },
+  })
     .select({ _id: 1 })
     .lean();
   if (!project?._id) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // `isArchived` belongs here next to `isDeleted`. Archiving is the product's one way to take a
+  // received document out of circulation without destroying it — share links already refuse an
+  // archived doc (src/lib/share/links.ts resolves it to the "archived" refusal) and the data-room
+  // aggregation already filters it out. This route was the one reader that only knew about
+  // `isDeleted`, so an owner who archived a sensitive upload was told it was withdrawn while every
+  // holder of the request-view link kept streaming the bytes. The listing page carries the same
+  // pair of clauses; the two queries must stay in step.
   const doc = await DocModel.findOne({
     _id: new Types.ObjectId(docId),
     receivedViaRequestProjectId: project._id,
     isDeleted: { $ne: true },
+    isArchived: { $ne: true },
   })
     .select({ blobUrl: 1, title: 1, fileName: 1 })
     .lean();

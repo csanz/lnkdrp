@@ -105,14 +105,18 @@ export async function generateMetadata(props: { params: Promise<{ shareId: strin
   const doc = resolved && !resolved.refusal && !locked && !hidden ? (resolved.doc as Record<string, unknown>) : null;
   if (!doc) return buildShareMetadata({ title: "Shared document", description: "" });
 
-  const preview =
-    (typeof doc.previewImageUrl === "string" && doc.previewImageUrl) ||
-    (typeof doc.firstPagePngUrl === "string" && doc.firstPagePngUrl) ||
-    null;
+  // No preview on a project link's unfurl card, deliberately.
+  //
+  // This passed `doc.previewImageUrl` — the storage URL, which spells out the document id and
+  // upload id — so the card disclosed both to everyone who saw the message the link was pasted
+  // into, not only to whoever opened it. `buildShareMetadata` now refuses absolute URLs outright,
+  // so passing it would silently fall back to the site image anyway; saying `null` here says so out
+  // loud. The document page has a same-origin proxy for this (`/s/:shareId/og.png`); the project
+  // link has no equivalent yet, and a card showing the generic mark is the safe side to err on.
   return buildShareMetadata({
     title: (typeof doc.title === "string" ? doc.title : "") || "Shared document",
     description: "",
-    previewUrl: preview,
+    previewUrl: null,
   });
 }
 

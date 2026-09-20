@@ -14,8 +14,8 @@ import crypto from "node:crypto";
 import net from "node:net";
 import { Types } from "mongoose";
 import { DocModel } from "@/lib/models/Doc";
-import { resolveShareLink, touchShareLink } from "@/lib/share/links";
-import { projectLinkPasswordEnabled, projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
+import { resolveShareLink, shareLinkUnlocked, touchShareLink, type PasswordProtectedLink } from "@/lib/share/links";
+import { projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
 import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerIdentity";
 import { enqueueNotification, notificationDedupeKey } from "@/lib/notifications/queue";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
@@ -34,10 +34,8 @@ import {
   parseTimingVersion,
   visitTimeIncrement,
 } from "@/lib/analytics/shareTiming";
-import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { after } from "next/server";
-import { cookies } from "next/headers";
 import { UserModel } from "@/lib/models/User";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
@@ -135,15 +133,25 @@ function normalizeEmail(v: string): string | null {
   return s;
 }
 /**
- * As Positive Int (uses Number, isFinite, floor).
+ * How many pages the current version of this document actually has, or null when we cannot tell
+ * (a document still processing has no slide nodes yet).
+ *
+ * `slideNodes` is the per-page render of the current upload, denormalized onto the document, and is
+ * the cheapest authoritative page count available on a path that already reads the document — the
+ * plain `metadata.pages` number lives on the `Upload`, and a second query per heartbeat is not a
+ * trade this route can make. Same derivation as `docTitlesAndPages` in
+ * `@/lib/notifications/viewNotifications`, so a page number judged in range here and a "3 of 12
+ * pages" line in the owner's mail cannot disagree about how long the deck is.
  */
-
-
-function asPositiveInt(v: unknown): number | null {
-  const n = typeof v === "number" ? v : Number(v);
-  if (!Number.isFinite(n)) return null;
-  const i = Math.floor(n);
-  return i >= 1 ? i : null;
+function docPageCount(slideNodes: unknown): number | null {
+  if (!Array.isArray(slideNodes) || slideNodes.length === 0) return null;
+  let max = 0;
+  for (const node of slideNodes) {
+    const n = Number((node as { pageNumber?: unknown } | null)?.pageNumber);
+    if (Number.isFinite(n) && n > max) max = Math.floor(n);
+  }
+  // Nodes with no `pageNumber` still tell us how many pages were rendered.
+  return max > 0 ? max : slideNodes.length;
 }
 
 /**
@@ -198,6 +206,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         : await resolveProjectStatsTarget({ shareId, request, select: { userId: 1, orgId: 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      const link = resolved ? resolved.link : projectTarget!.link;
+      // A locked link answers nothing about itself until the password has been given — the same
+      // rule the share page itself runs, which has no owner exemption either (`/s/[shareId]`
+      // renders `PasswordGate` for anyone without the cookie, owner included). So the overlay is
+      // only ever read from a page that already passed the gate, and the check costs a real
+      // recipient nothing. Answered with the same `{ isOwner: false }` a stranger gets rather than
+      // a 404: the viewer's `loadContext` treats it as "no overlay", not as a broken link.
+      if (!shareLinkUnlocked(request, shareId, link as PasswordProtectedLink)) {
+        return NextResponse.json({ isOwner: false }, { headers: { "cache-control": "no-store" } });
       }
       const doc = (resolved ? resolved.doc : projectTarget!.doc) as { _id?: unknown; userId?: unknown };
       const docScope = projectTarget ? { docId: projectTarget.doc._id } : {};
@@ -259,7 +277,17 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
       const body = (await request.json().catch(() => ({}))) as unknown;
       const botId = asNonEmptyString((body as { botId?: unknown })?.botId);
-      const pageNumber = asPositiveInt((body as { pageNumber?: unknown })?.pageNumber);
+      /**
+       * Bounded like every other page field on this payload (`toPage`, `numPages`), which it was
+       * not: the old parser floored anything numeric and accepted it as long as it was >= 1, so a
+       * caller could post `pageNumber: 9e15`. Each distinct value is a new entry in the row's
+       * `pagesSeen` and a new key under `pageTimeMsByPage` / `pageVisitCountByPage`, and those are
+       * Map fields on ONE analytics document — enough of them and the row passes Mongo's 16MB
+       * limit, at which point every further write to that viewer fails and the owner's stats
+       * overlay for the link stops loading. 1..5000 is the same ceiling `parsePageBound` already
+       * imposed on the neighbouring fields; the document's own page count narrows it further below.
+       */
+      const pageNumberRaw = parsePageBound((body as { pageNumber?: unknown })?.pageNumber);
       const durationMs = asDurationMs((body as { durationMs?: unknown })?.durationMs);
       /**
        * Time on the *current page*, which is a different interval from `durationMs` and must never
@@ -299,7 +327,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       if (!rl.ok) return rateLimitedResponse(rl);
 
       // Views are recorded against the link that was opened; a refused link records nothing.
-      const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
+      // `slideNodes.pageNumber` rides along on a query that already runs: it is the document's real
+      // page count, which bounds `pageNumber` below. One small subdocument per page, projected.
+      const resolved = await resolveShareLink(shareId, { select: { title: 1, "slideNodes.pageNumber": 1 } as Record<string, 1> });
       /**
        * The project-link path (PRD decision 5). `resolveShareLink` returns null for a project
        * slug by design, so only then do we ask which document of that project is being read — from
@@ -310,29 +340,48 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
        */
       const projectTarget = resolved
         ? null
-        : await resolveProjectStatsTarget({ shareId, request, bodyDocId: (body as { docId?: unknown })?.docId, select: { title: 1, userId: 1, orgId: 1 } as Record<string, 1> });
+        : await resolveProjectStatsTarget({ shareId, request, bodyDocId: (body as { docId?: unknown })?.docId, select: { title: 1, userId: 1, orgId: 1, "slideNodes.pageNumber": 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       const link = resolved ? resolved.link : projectTarget!.link;
-      // A locked project link ingests nothing until the password has been given. The viewer at
-      // `/p/:shareId/:docId` only renders behind that gate, so this costs a real recipient nothing
-      // — but the route is public, and `resolveProjectStatsTarget` proves only that the document is
-      // *in* the project, never that this caller was allowed to open it. Same guard, same reasoning
-      // and same quiet 200 as `POST /api/share/:shareId/landing`.
-      //
-      // Project branch only, deliberately: the document ingest has always accepted a view on a
-      // locked `/s/:shareId` and changing that here would alter document behaviour, which this
-      // change must not do. Flagged in the report instead.
-      if (projectTarget && projectLinkPasswordEnabled(link as { passwordHash?: string | null; passwordSalt?: string | null })) {
-        const jar = await cookies();
-        const presented = jar.get(shareAuthCookieName(shareId))?.value ?? "";
-        const expected = shareAuthCookieValue({ shareId, sharePasswordHash: String((link as { passwordHash?: unknown }).passwordHash ?? "") });
-        if (!presented || presented !== expected) {
-          return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
-        }
+      /**
+       * A locked link ingests nothing until the password has actually been given.
+       *
+       * This used to be the project branch only, on the reasoning that the document ingest had
+       * always accepted a view on a locked `/s/:shareId`. It had, and that was the bug: this route
+       * is public and `resolveShareLink` says nothing about the password (it computes `refusal`
+       * from archived/disabled/expired alone), so anyone holding a forwarded slug could POST a
+       * view, a page and — worse than a number — an `introduced: true` name and email of their
+       * choosing, which lands in the owner's activity feed as a named reader and is mailed to the
+       * whole workspace as fact. A password on a link is the owner saying the URL is not enough;
+       * an analytics row that only a URL was needed to write breaks that promise as surely as
+       * serving the PDF would.
+       *
+       * One unconditional call covers both branches: `shareLinkUnlocked` returns true for a link
+       * with no password, so the guard cannot be acquired by forgetting the `if`, and it reads the
+       * cookie off the raw request (no `await cookies()` needed here).
+       *
+       * Answered 200 with no write, never 401, for the same reason as `POST
+       * /api/share/:shareId/landing`: a recipient whose browser refuses the cookie must see a
+       * quiet no-op, not an error in the console of a page that is otherwise working.
+       */
+      if (!shareLinkUnlocked(request, shareId, link as PasswordProtectedLink)) {
+        return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
       }
       const doc = (resolved ? resolved.doc : projectTarget!.doc) as Record<string, unknown> & { _id: unknown; orgId?: unknown };
+      /**
+       * The page this POST claims to be about, now judged against the document it claims to be in.
+       *
+       * The 1..5000 parse above bounds the damage; this bounds the lie. A deck has the pages it has,
+       * so a `pageNumber` past the last one is not a reading — it is a stranger inflating "Pages
+       * viewed" and planting keys in the row's per-page maps. The page side effects are *skipped*
+       * rather than refused: the visit is still a visit, its time still counts, and a document whose
+       * slide nodes have not been written yet (still processing) has no count to check against and
+       * keeps the 5000 ceiling as its only bound.
+       */
+      const pageCount = docPageCount(doc.slideNodes);
+      const pageNumber = pageNumberRaw && (!pageCount || pageNumberRaw <= pageCount) ? pageNumberRaw : null;
       const shareLinkId = link._id;
       // Denormalized tenancy on the analytics rows (see `ShareView.orgId`).
       const shareOrgId = doc.orgId ? new Types.ObjectId(String(doc.orgId)) : null;

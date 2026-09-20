@@ -554,10 +554,11 @@ async function main() {
         shareId?: unknown;
         botIdHash?: unknown;
         viewerUserId?: unknown;
-        viewerName?: unknown;
         isOwnerPreview?: unknown;
       };
     };
+    // `viewerName` is deliberately absent from that shape: see the broadcast below. Declaring it
+    // is how it got onto the wire the first time.
     const doc = c.fullDocument;
     if (!doc?.orgId) return;
     const orgId = String(doc.orgId);
@@ -568,12 +569,28 @@ async function main() {
     const identityChanged =
       "viewerName" in changed || "viewerEmailSnapshot" in changed;
     if (!isUpdate || identityChanged) {
+      /**
+       * A nudge, never an identity.
+       *
+       * This frame used to carry `name: doc.viewerName` — the name a reader volunteered to open a
+       * document — to every socket in the workspace room. Who may see that name is a plan
+       * decision, made in one place on the REST side (`GET /api/activity` computes
+       * `showViewerIdentity = plan === "pro"` and deletes `viewerName`/`viewerEmail` otherwise),
+       * and this process has no notion of a workspace's tier at all: the ticket authorises a
+       * socket for a user and a workspace, nothing more. So a Free workspace was pushed the very
+       * identity the product told the reader it would not show, visible to anyone with a network
+       * tab open.
+       *
+       * It bought nothing either — every subscriber uses this frame purely as "refetch now" and
+       * reads the name back through the gated endpoint. The trigger above is still the identity
+       * *fields changing*; only their values stay off the wire. Nothing here may ever carry viewer
+       * identity again.
+       */
       broadcast(orgId, {
         type: "viewer",
         viewer: {
           docId: doc.docId ? String(doc.docId) : null,
           shareId: typeof doc.shareId === "string" ? doc.shareId : null,
-          name: typeof doc.viewerName === "string" ? doc.viewerName : null,
         },
       });
     }
@@ -653,18 +670,18 @@ async function main() {
         fullDocument?: {
           orgId?: unknown;
           shareId?: unknown;
-          viewerName?: unknown;
         };
       }
     ).fullDocument;
     if (!doc?.orgId) return;
+    // Same frame, same rule as the `shareviews` half above: the arrival is the news, the visitor's
+    // volunteered name is not ours to push — only the paid REST gate decides who reads it.
     broadcast(String(doc.orgId), {
       type: "viewer",
       viewer: {
         // No document: this is an arrival, not a reading.
         docId: null,
         shareId: typeof doc.shareId === "string" ? doc.shareId : null,
-        name: typeof doc.viewerName === "string" ? doc.viewerName : null,
       },
     });
   });
