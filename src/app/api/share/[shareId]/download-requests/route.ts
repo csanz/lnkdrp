@@ -99,41 +99,49 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     const doc = resolved.doc;
     const docTitle = typeof doc.title === "string" ? doc.title : null;
 
-    // If downloads are already enabled, no need to request.
+    // If downloads are already enabled, no need to request. This is a fact about the link, not
+    // about any person, so it keeps its own answer — see the note on the response shape below.
     if (Boolean(resolved.link.allowDownload)) {
-      return NextResponse.json({ ok: true, kind: "download_already_enabled" as const, emailedOwner: false });
+      return NextResponse.json({ ok: true, kind: "download_already_enabled" as const });
     }
 
-    // De-dupe: suppress repeat requests for a short window (avoid spam),
-    // but allow retry after that so the requester can resend.
-    const existingPending = await ShareDownloadRequestModel.findOne({
+    /**
+     * De-dupe — without letting one stranger act for another.
+     *
+     * The only identity in this request is the address the caller typed into a public form, so
+     * every branch here has to stay safe when that address belongs to somebody else. Two things
+     * went wrong on the way to "only one request remains actionable":
+     *
+     * - A pending row older than the window was flipped to `denied` before a fresh one was made.
+     *   That is a *write on a third party's row*: anyone holding the slug could post the
+     *   recipient's address, and the approve link already sitting in the owner's inbox would stop
+     *   working — it matches the old row, sees `denied`, and short-circuits at
+     *   `[token]/approve/route.ts` with "Already denied". The owner clicked Approve, nothing
+     *   happened, and nothing said why. The old row is now left alone: two live requests for the
+     *   same address on the same link are harmless, because approving either one hands the same
+     *   person the same document, and every approve link the owner was ever sent keeps working.
+     * - The answer named which branch ran (`created` / `resent` / `already_requested`), which made
+     *   this public endpoint a lookup for "does this address have a request outstanding on this
+     *   link?" — i.e. who has been asking the owner for the file. Every accepted submission now
+     *   answers with the same body.
+     *
+     * The window itself is unchanged and is now expressed in the query rather than recomputed from
+     * `createdDate`: a row newer than `DEDUPE_WINDOW_MS` suppresses this submission entirely.
+     */
+    const recentPending = await ShareDownloadRequestModel.findOne({
       shareId,
       requesterEmail: email,
       status: "pending",
+      createdDate: { $gt: new Date(Date.now() - DEDUPE_WINDOW_MS) },
     })
       .sort({ createdDate: -1 })
-      .select({ _id: 1, createdDate: 1 })
+      .select({ _id: 1 })
       .lean();
-    if (existingPending) {
-      const createdDate = (existingPending as { createdDate?: unknown }).createdDate;
-      const createdAtMs = createdDate instanceof Date ? createdDate.getTime() : 0;
-      const ageMs = createdAtMs ? Date.now() - createdAtMs : Number.POSITIVE_INFINITY;
-
-      if (Number.isFinite(ageMs) && ageMs < DEDUPE_WINDOW_MS) {
-        const retryAfterSeconds = Math.max(1, Math.ceil((DEDUPE_WINDOW_MS - ageMs) / 1000));
-        return NextResponse.json({
-          ok: true,
-          kind: "already_requested" as const,
-          emailedOwner: false,
-          retryAfterSeconds,
-        });
-      }
-
-      // Allow resend: mark the old pending request as denied so only one request remains actionable.
-      await ShareDownloadRequestModel.updateOne(
-        { _id: (existingPending as { _id: unknown })._id, status: "pending" },
-        { $set: { status: "denied", deniedAt: new Date() } },
-      ).catch(() => void 0);
+    if (recentPending) {
+      // Inside the window the request that already exists *is* the answer: no second row, no
+      // second pair of emails, and the same body a fresh create returns, so a caller cannot tell
+      // this branch from that one.
+      return NextResponse.json({ ok: true, kind: "created" as const });
     }
 
     const requestToken = crypto.randomBytes(24).toString("base64url");
@@ -244,12 +252,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       debugWarn(1, "[api/share/*/download-requests] missing owner email", { shareId });
     }
 
-    return NextResponse.json({
-      ok: true,
-      kind: existingPending ? "resent" as const : "created" as const,
-      emailedOwner,
-      emailedRequester,
-    });
+    // One body for every accepted submission. `emailedOwner` / `emailedRequester` used to ride
+    // along here; they are the delivery status of somebody else's mail, nothing in the viewer read
+    // them, and together with `kind` they were the other half of the outstanding-request oracle.
+    // They are still recorded on the row (`ownerEmailSentAt`, `requesterEmailError`, …) where the
+    // owner and the admin email screen can see them.
+    debugLog(2, "[api/share/*/download-requests] created", { shareId, emailedOwner, emailedRequester });
+    return NextResponse.json({ ok: true, kind: "created" as const });
   } catch (err) {
     return errorJson(err, {
       status: 400,

@@ -119,6 +119,14 @@ vi.mock("@/lib/notifications/queue", () => ({
 /** Bucket key prefixes a test wants to report as spent. Reset in `beforeEach`. */
 const exhaustedBuckets: string[] = [];
 
+// Wiring the viewer-verification control gave the introduction path two more DB-backed calls.
+// Unstubbed they hang against no Mongo, which reads as a five-second timeout rather than a failure.
+vi.mock("@/lib/share/viewerEmailVerification", () => ({ isViewerEmailVerified: vi.fn(async () => false) }));
+vi.mock("@/lib/share/viewerIntroductionEmails", () => ({
+  sendViewerIntroductionEmails: vi.fn(async () => ({ verifySent: false, ownerEmailsSent: 0 })),
+  viewerIntroductionAppUrl: () => "https://lnkdrp.test",
+}));
+
 vi.mock("@/lib/http/rateLimit", () => ({
   clientIpFromRequest: () => "203.0.113.7",
   // Buckets default to open; a test names the prefixes it wants exhausted.

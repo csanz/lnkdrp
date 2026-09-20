@@ -18,7 +18,16 @@ export default async function RequestUploadPage(props: {
   if (!requestToken) notFound();
 
   await connectMongo();
-  const project = await ProjectModel.findOne({ requestUploadToken: requestToken })
+  // `isDeleted` belongs in the lookup, not just in the owner's own lists. Deleting the request repo
+  // is the only thing an owner could do about a forwarded upload link before rotation existed, and
+  // it did nothing: this query matched on the token alone, so a retired repo kept serving its
+  // upload page and kept accepting files. The view-token readers under src/app/request-view carry
+  // the same clause; so does `/api/requests/:token/uploads`, which is the API half of this page —
+  // the two must stay in step or the page refuses while the endpoint still writes.
+  const project = await ProjectModel.findOne({
+    requestUploadToken: requestToken,
+    isDeleted: { $ne: true },
+  })
     .select({ _id: 1, name: 1, description: 1, isRequest: 1, requestRequireAuthToUpload: 1 })
     .lean();
 

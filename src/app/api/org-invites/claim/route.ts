@@ -50,6 +50,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid or expired invite" }, { status: 404 });
     }
 
+    const inviteId = (invite as unknown as { _id: Types.ObjectId })._id;
     const orgId = String((invite as unknown as { orgId?: unknown }).orgId ?? "");
     if (!orgId || !Types.ObjectId.isValid(orgId)) {
       return NextResponse.json({ error: "Invalid invite" }, { status: 404 });
@@ -89,6 +90,34 @@ export async function POST(request: Request) {
       }
     }
 
+    // Claim the token *before* anything is granted with it.
+    //
+    // This stamp used to be the last write in the handler: the `findOne` at the top decided the
+    // invite was unredeemed, the membership was created, the claimer was taken off the waitlist,
+    // and only then was `redeemedAt` set. Nothing held the token across that gap, so N concurrent
+    // POSTs with the same token all passed the read, all seated a member, and only one of them won
+    // the stamp — a token documented as single-use seating several accounts. The `checkLimit` above
+    // cleared every sibling too, because it counts memberships and none of theirs had been written
+    // yet, so the collaborator allowance (Free 0, Pro `PRO_INCLUDED_COLLABORATORS`) was exceeded
+    // without payment, and every one of those accounts was quietly approved off the early-access
+    // queue by `approveUser`.
+    //
+    // The conditional update is the lock. Mongo evaluates `{ _id, redeemedAt: null }` and applies
+    // the write atomically, so exactly one racer matches a document and the others match nothing.
+    // `matchedCount: 0` means a sibling got there first, which is the same situation as an invite
+    // that was already redeemed before this request began — so it gets the same answer.
+    //
+    // A result that does not report `matchedCount` is treated as a win, not a loss: this guard is
+    // here to stop a race, not to start refusing valid invites whenever it cannot read the driver's
+    // reply.
+    const claim = (await OrgInviteModel.updateOne(
+      { _id: inviteId, redeemedAt: null },
+      { $set: { redeemedAt: now, redeemedByUserId: userId, updatedDate: now } },
+    )) as { matchedCount?: number } | null;
+    if (claim && claim.matchedCount === 0) {
+      return NextResponse.json({ error: "Invalid or expired invite" }, { status: 404 });
+    }
+
     // Membership for the invited user.
     //
     // Read first, then decide — a blind upsert on `{ orgId, userId }` gets this wrong, because a
@@ -109,30 +138,47 @@ export async function POST(request: Request) {
       .select({ _id: 1, isDeleted: 1 })
       .lean()) as { _id: Types.ObjectId; isDeleted?: boolean } | null;
 
-    if (!membership) {
-      await OrgMembershipModel.updateOne(
-        { orgId: orgObjectId, userId },
-        {
-          $setOnInsert: {
-            orgId: orgObjectId,
-            userId,
-            role,
-            createdDate: now,
+    try {
+      if (!membership) {
+        await OrgMembershipModel.updateOne(
+          { orgId: orgObjectId, userId },
+          {
+            $setOnInsert: {
+              orgId: orgObjectId,
+              userId,
+              role,
+              createdDate: now,
+            },
+            $set: { isDeleted: false, updatedDate: now },
           },
-          $set: { isDeleted: false, updatedDate: now },
-        },
-        { upsert: true },
-      );
-    } else if (membership.isDeleted) {
-      await OrgMembershipModel.updateOne(
-        { _id: membership._id },
-        { $set: { role, isDeleted: false, updatedDate: now } },
-      );
-    } else {
-      await OrgMembershipModel.updateOne(
-        { _id: membership._id },
-        { $set: { isDeleted: false, updatedDate: now } },
-      );
+          { upsert: true },
+        );
+      } else if (membership.isDeleted) {
+        await OrgMembershipModel.updateOne(
+          { _id: membership._id },
+          { $set: { role, isDeleted: false, updatedDate: now } },
+        );
+      } else {
+        await OrgMembershipModel.updateOne(
+          { _id: membership._id },
+          { $set: { isDeleted: false, updatedDate: now } },
+        );
+      }
+    } catch (err) {
+      // Claiming first means the token is spent before the membership exists. If the membership
+      // write is the thing that failed, nobody was seated, and leaving the invite stamped would
+      // hand the person a dead link and make an admin cut a new one for a failure that was ours.
+      // Put it back. Scoped to `redeemedByUserId: userId` so this can only ever release the claim
+      // *this* request made, never one a sibling won in the meantime.
+      try {
+        await OrgInviteModel.updateOne(
+          { _id: inviteId, redeemedByUserId: userId },
+          { $set: { redeemedAt: null, redeemedByUserId: null, updatedDate: new Date() } },
+        );
+      } catch {
+        // Best effort — the membership failure is the one worth reporting.
+      }
+      throw err;
     }
 
     // Someone an existing workspace invited is not a stranger at the door: claiming a valid invite
@@ -147,11 +193,7 @@ export async function POST(request: Request) {
     // the stale `false` from the moment before they joined (see `membershipChanged`).
     membershipChanged({ orgId, userId: actor.userId });
 
-    // Mark invite as redeemed (best-effort; single-use).
-    await OrgInviteModel.updateOne(
-      { _id: (invite as unknown as { _id: Types.ObjectId })._id, redeemedAt: null },
-      { $set: { redeemedAt: now, redeemedByUserId: userId, updatedDate: now } },
-    );
+    // (The invite was already claimed above, before anything was granted with it.)
 
     // The other half of `member.invited`: an invitation is a hope, this is the arrival. Only when
     // the join is new — an existing member following the link again has not joined anything, and

@@ -15,7 +15,9 @@
  *
  * `notFound()` covers a slug that is not a project link's, a document that is not in this project,
  * and a project that is gone: a recipient must not be able to probe for document ids by watching
- * the answers change shape.
+ * the answers change shape. On a password-protected link that probe is refused one step earlier —
+ * the gate goes up before the room is asked whether it holds the document at all; see the ordering
+ * note in the page body.
  */
 
 export const runtime = "nodejs";
@@ -30,7 +32,8 @@ import BrandHeader from "@/components/BrandHeader";
 import PasswordGate from "@/components/PasswordGate";
 import { workspaceBrandForOrg } from "@/lib/share/shareBrand";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
-import { projectLinkPasswordEnabled, resolveProjectDocument } from "@/lib/share/projectPublic";
+import { resolveProjectLink } from "@/lib/share/projectLinks";
+import { findProjectDocument, projectLinkPasswordEnabled, resolveProjectDocument } from "@/lib/share/projectPublic";
 import { buildShareMetadata } from "@/lib/share/shareMetadata";
 import ShareViewerClient from "@/app/s/[shareId]/ShareViewerClient";
 
@@ -124,14 +127,32 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
   const { shareId, docId } = await props.params;
   if (!shareId || !docId) notFound();
 
-  const resolved = await resolveProjectDocument(shareId, docId, { select: VIEWER_DOC_FIELDS, projectSelect: { isRequest: 1 } });
-  if (!resolved) notFound();
+  /**
+   * The link first, the document only after the password — in that order, and that order is the
+   * whole point.
+   *
+   * This used to resolve link *and* document in one call and 404 when the document was not in the
+   * project, which meant the password gate answered two different things: a 200 `PasswordGate` for
+   * an id that is in the room, a 404 for one that is not. Walking a list of candidate ids against a
+   * locked room therefore returned its exact contents — the document inventory the gate is written
+   * to withhold, which is why it renders `title={null} previewUrl={null}` in the first place.
+   *
+   * So: resolve the link, apply every refusal that depends only on the link, and put the gate up
+   * *before* the room is asked whether it contains this document. Behind the gate the answers split
+   * again, which is correct — by then the caller has the password.
+   *
+   * The link-level refusals stay ahead of the gate on purpose: they are properties of the link the
+   * recipient already holds, not of its contents, so an expired link still says "expired" rather
+   * than asking for a password it will not accept.
+   */
+  const resolvedLink = await resolveProjectLink(shareId, { select: { isRequest: 1 } });
+  if (!resolvedLink) notFound();
   // A request repo has no public room — the rule, and why, is at `/p/[shareId]/page.tsx`. Repeated
   // here because a deep link to one document must not be the way around the room's own 404.
-  if (resolved.project.isRequest) notFound();
-  const { link, doc } = resolved;
-  if (resolved.refusal === "project_gone") notFound();
-  if (resolved.refusal) return <RefusalNotice kind={resolved.refusal === "expired" ? "expired" : "disabled"} />;
+  if (resolvedLink.project.isRequest) notFound();
+  const { link } = resolvedLink;
+  if (resolvedLink.refusal === "project_gone") notFound();
+  if (resolvedLink.refusal) return <RefusalNotice kind={resolvedLink.refusal === "expired" ? "expired" : "disabled"} />;
 
   // Who this is from. Read off the link rather than the project: the link is what the recipient
   // holds, and it is already loaded here.
@@ -147,6 +168,11 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
     if (!cookie || cookie !== expected)
       return <PasswordGate shareId={shareId} title={null} previewUrl={null} workspace={workspace} />;
   }
+
+  // Membership is re-proved here, on every request, exactly as `resolveProjectDocument` did — the
+  // only change is that it now happens after the gate.
+  const doc = await findProjectDocument(resolvedLink.project, docId, { select: VIEWER_DOC_FIELDS });
+  if (!doc) notFound();
 
   const blobUrl = typeof doc.blobUrl === "string" ? doc.blobUrl : "";
   const base = `/p/${encodeURIComponent(shareId)}/${encodeURIComponent(String(doc._id))}`;

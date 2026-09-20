@@ -21,6 +21,7 @@
 import { Types } from "mongoose";
 
 import { debugError } from "@/lib/debug";
+import { getPublicSiteBase, resolveConfiguredSiteUrl } from "@/lib/urls";
 import { sendViewerIntroducedEmail, sendViewerVerifyEmail } from "@/lib/email/sendViewerVerifyEmail";
 import { viewerEmailVerifyUrl } from "@/lib/share/viewerEmailToken";
 import { queueBackedAlreadyTold, type AlreadyToldLookup } from "@/lib/share/anonymousNoticeAudience";
@@ -56,6 +57,26 @@ export type ViewerIntroductionEmailArgs = {
    */
   alreadyTold?: AlreadyToldLookup;
 };
+
+/**
+ * The absolute base every link in these two mails is built on.
+ *
+ * Exactly what `publicBaseUrl()` in `@/lib/notifications/sendNotificationEmails` resolves — the
+ * configured site URL, falling back to the local dev origin outside production and to empty in
+ * production with nothing set — but built from `@/lib/urls`, which is two pure functions and no
+ * imports.
+ *
+ * It is here rather than a direct call to `publicBaseUrl` because the callers are the two hottest
+ * public ingest routes in the product, and importing the notification email pipeline into them
+ * pulls the whole digest machinery (and its module-level constants) onto their cold start for one
+ * string. Both routes ask this, and skip the mail entirely when it is empty: a relative link does
+ * nothing in a mail client, so no confirmation is better than a broken one.
+ */
+export function viewerIntroductionAppUrl(): string {
+  const configured = resolveConfiguredSiteUrl();
+  if (configured) return configured.toString().replace(/\/+$/, "");
+  return getPublicSiteBase().replace(/\/+$/, "");
+}
 
 export type ViewerIntroductionEmailResult = {
   verifySent: boolean;

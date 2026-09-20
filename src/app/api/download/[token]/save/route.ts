@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { resolveActor } from "@/lib/gating/actor";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
@@ -26,6 +27,27 @@ export async function POST(request: Request, ctx: { params: Promise<{ token: str
     if (actor.kind !== "user" || !Types.ObjectId.isValid(actor.userId)) {
       return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
     }
+
+    /**
+     * "Save to my account" ends in `DocModel.create` below, so it is a document-creating path and
+     * answers to the same role check as every other one (`POST /api/docs`, the upload routes).
+     * This handler proved only that the caller's address matches `requesterEmail` — which is who
+     * the *document* was approved for, not what they may do in the workspace they happen to be
+     * sitting in. A `viewer` is read-only by definition (see requireOrgEditor), and without this
+     * they could write a row into a shared workspace they are only allowed to read.
+     *
+     * Scoped to the active workspace, so it refuses the destination rather than the claim: a
+     * viewer in a team workspace who owns another one switches workspace and saves there, and the
+     * 403 body from `requireOrgRole` is what the claim page renders.
+     *
+     * Deliberately no `checkLimit(actor.orgId, "documents")` beside it, unlike POST /api/docs. The
+     * Free cap counts *shared* documents (`getWorkspaceUsage` filters `shareEnabled: { $ne: false }`)
+     * and the row below is created `shareEnabled: false`, so the saved copy adds nothing to the
+     * count. Checking here would refuse a claim the recipient is entitled to because of other
+     * documents that this one does not touch.
+     */
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
 
     const { token } = await ctx.params;
     const rawToken = decodeURIComponent(token ?? "").trim();

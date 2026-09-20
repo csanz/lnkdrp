@@ -8,11 +8,18 @@
  * on two pages — the document's metrics page and the workspace's — with nothing in either to
  * suggest they are the same reader.
  *
- * The assertions are about the filter the update *issues*, which is where all four rules live: one
- * workspace, this person's rows only (including the project keys that carry a document suffix),
- * never over an account-backed identity, and only where something actually differs — that last one
- * because the realtime server watches these two fields, and a write that changes nothing would
- * still tell every open metrics page to refetch.
+ * The assertions are about the filter the update *issues*, which is where all four rules live:
+ * this person's rows only (including the project keys that carry a document suffix), never over an
+ * account-backed identity, only where something actually differs — that last one because the
+ * realtime server watches these two fields, and a write that changes nothing would still tell every
+ * open metrics page to refetch — and, the first rule, **how far the rename reaches**.
+ *
+ * That last one narrowed. It used to be "one workspace", full stop, and that was too generous: a
+ * viewer's name and email are typed into a public box by whoever holds the link, with nothing
+ * proving either. So one stranger's claim was written across every row that workspace had for that
+ * browser. It is now one workspace only once the address has been *confirmed* by a click in the
+ * verification mail (`emailVerified`); until then — and for a name with no address at all — the
+ * rename reaches only the link it was typed on. See `identityFanOutScope`.
  */
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { Types } from "mongoose";
@@ -70,13 +77,15 @@ describe("propagateViewerIdentity", () => {
     projectUpdateMany.mockClear();
   });
 
-  test("renames this person's rows across the workspace, not just the link they typed it on", async () => {
+  test("a confirmed address renames this person across the workspace", async () => {
     const n = await propagateViewerIdentity({
       shareId: "the-link",
       botIdHash: DIGEST,
       orgId: ORG_ID,
       name: "Michael Jay",
       email: "Michael@Example.com",
+      // The reader clicked the link in the verification mail: the address is theirs.
+      emailVerified: true,
     });
 
     // Reading rows and the arrival row, both renamed.
@@ -86,6 +95,23 @@ describe("propagateViewerIdentity", () => {
     expect(filter().orgId).toBe(ORG_ID);
     expect(filter().shareId).toBeUndefined();
     expect(update().$set).toEqual({ viewerName: "Michael Jay", viewerEmailSnapshot: "michael@example.com" });
+  });
+
+  test("an unconfirmed address reaches only the link it was typed on", async () => {
+    // This assertion is the inverse of the one above, and it is the one that changed. Anyone
+    // holding the link can type any name and any address into that box; until a click proves the
+    // address, treating the claim as a fact about the reader — and stamping it across every row
+    // the workspace holds for that browser — is taking a stranger's word for who they are.
+    await propagateViewerIdentity({
+      shareId: "the-link",
+      botIdHash: DIGEST,
+      orgId: ORG_ID,
+      name: "Michael Jay",
+      email: "Michael@Example.com",
+    });
+
+    expect(filter().shareId).toBe("the-link");
+    expect(filter().orgId).toBeUndefined();
   });
 
   test("covers the project-link rows, whose key carries the document too", async () => {
@@ -161,7 +187,10 @@ describe("propagateViewerIdentity", () => {
 
     expect(projectUpdateMany).toHaveBeenCalledTimes(1);
     const [filter, update] = projectUpdateMany.mock.calls[0]! as [Record<string, any>, Record<string, any>];
-    expect(filter.orgId).toBe(ORG_ID);
+    // A bare name with no address is a claim like any other, so it stays on its own link. This
+    // used to assert `orgId` — see the note at the top of the file for why that narrowed.
+    expect(filter.shareId).toBe("the-room");
+    expect(filter.orgId).toBeUndefined();
     expect(update.$set).toEqual({ viewerName: "Michael Jay" });
     // `ProjectLinkView` is about the person, not what they read: no document suffix, so no prefix
     // match — an equality test on the digest.

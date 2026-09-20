@@ -159,7 +159,15 @@ export async function POST(
 
     await connectMongo();
 
-    const project = await ProjectModel.findOne({ requestUploadToken: requestToken })
+    // `isDeleted` belongs in the lookup, not just in the owner's own lists. Without it a retired
+    // request repo went on accepting uploads from anyone still holding the link — files landing in
+    // a repo the owner had already thrown away. Same clause as the page at `/r/:token` and as the
+    // view-token readers under src/app/request-view; a write path that outlives its own UI is the
+    // worse half of that pair, so it gets the clause too.
+    const project = await ProjectModel.findOne({
+      requestUploadToken: requestToken,
+      isDeleted: { $ne: true },
+    })
       .select({ _id: 1, orgId: 1, userId: 1, name: 1, description: 1, isRequest: 1, requestRequireAuthToUpload: 1 })
       .lean();
 

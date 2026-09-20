@@ -10,12 +10,13 @@
  *
  * So a changed introduction is written through to the rows that are already about this person.
  *
- * Two boundaries hold it in:
+ * Three boundaries hold it in:
  *
  *   - **One owner.** Rows are updated inside the document owner's org, never globally. Telling
  *     this owner who you are is not telling every owner whose links you have ever opened.
  *   - **Anonymous rows only.** A signed-in viewer's name comes from their account (see the
  *     `UserModel` snapshot in the stats route); a typed-in name must never overwrite it.
+ *   - **One link, until the address is proved.** See `identityFanOutScope` below.
  *
  * On a project link the stored key carries the document too (`projectViewerKey`), so one person
  * reading three files in a data room owns three rows whose keys all start with the same digest —
@@ -35,7 +36,53 @@ export type PropagateViewerIdentityArgs = {
   orgId?: Types.ObjectId | string | null;
   name?: string | null;
   email?: string | null;
+  /**
+   * Has this workspace had a confirmed click for this address (`isViewerEmailVerified`)?
+   *
+   * Asked by the caller, not here, for two reasons: this module is otherwise a pure builder of
+   * Mongo filters, and both callers are already inside an `after()` block where one more indexed
+   * read costs nothing the reader waits for. Absent means **not** verified — the safe default, so
+   * a caller that forgets it narrows the write rather than widening it. See `identityFanOutScope`.
+   */
+  emailVerified?: boolean;
 };
+
+/**
+ * How far a volunteered identity is allowed to travel.
+ *
+ * What went wrong: the write below was always scoped to `{ orgId }`, so one unauthenticated POST
+ * carrying `viewerName` / `viewerEmail` restamped **every** analytics row in the workspace that
+ * matched the caller's own `botId` digest. Nothing checks that the address is the caller's — the
+ * confirmation mail exists but was never sent from anywhere — so a stranger holding a share link
+ * could write a named partner at a real company across the owner's whole workspace, and rotate
+ * `botId` to mint as many of them as they liked. The owner then acted on a contact list a stranger
+ * had written.
+ *
+ * The fix is not to refuse the introduction — it is the product, and refusing it would cost every
+ * honest reader their name. It is to stop an *unproved* claim behaving like a proved one:
+ *
+ *   - a claim whose address this workspace has confirmed (`ShareViewerEmail.verifiedAt`, set when
+ *     the reader clicks the link in the confirmation mail) still fans out across `{ orgId }`, which
+ *     is what makes "I fixed my surname" reach the other links they have read;
+ *   - anything else — an unconfirmed address, or a name with no address at all — is written only
+ *     within `{ shareId }`, the link the claim was actually made on. That still covers the case the
+ *     fan-out was built for (a data room, where one reader owns one row per document behind a
+ *     single slug), and it keeps a claim made on one link out of every other link's figures.
+ *
+ * The caller answers "is it confirmed"; a caller that cannot answer, or whose lookup failed, says
+ * nothing and gets the narrow scope. A database blip must not widen the blast radius.
+ */
+function identityFanOutScope(
+  shareId: string,
+  orgId: Types.ObjectId | string | null | undefined,
+  email: string | null,
+  emailVerified: boolean | undefined,
+): { orgId: Types.ObjectId | string } | { shareId: string } {
+  if (!orgId) return { shareId };
+  // No address is nothing to confirm, so a bare name never travels past its own link.
+  if (!email) return { shareId };
+  return emailVerified === true ? { orgId } : { shareId };
+}
 
 /**
  * Has this person told this workspace something new about themselves?
@@ -61,6 +108,9 @@ export async function viewerIdentityNews({
   const viewerKey = splitProjectViewerKey(botIdHash).botIdHash;
   if (!viewerKey) return { isNew: false, changed: false };
 
+  // Deliberately still workspace-wide, unlike the write below: this is a *read* that answers "have
+  // we announced this person before", and narrowing it would put the same introduction in the feed
+  // once per link the reader touches. Nothing is stamped on a row from here.
   const scope = orgId ? { orgId } : { shareId };
   const person = { ...scope, $or: viewerKeyMatchClause(viewerKey) };
   const select = { viewerName: 1, viewerEmailSnapshot: 1 } as const;
@@ -100,6 +150,10 @@ export async function viewerIdentityNews({
  * watches `shareviews` for exactly these two fields, and an update that changes nothing would put
  * a frame on the wire telling every open metrics page to refetch for no reason.
  *
+ * How wide it writes is `identityFanOutScope`'s answer, not `orgId`'s presence: an address this
+ * workspace has confirmed reaches the whole workspace, an unproved claim reaches only the link it
+ * was made on.
+ *
  * Best-effort by contract: returns the number of rows changed and throws nothing the caller has to
  * handle beyond its own try/catch.
  */
@@ -109,6 +163,7 @@ export async function propagateViewerIdentity({
   orgId,
   name,
   email,
+  emailVerified,
 }: PropagateViewerIdentityArgs): Promise<number> {
   const cleanName = typeof name === "string" && name.trim() ? name.trim() : null;
   const cleanEmail = typeof email === "string" && email.trim() ? email.trim().toLowerCase() : null;
@@ -129,7 +184,8 @@ export async function propagateViewerIdentity({
     changed.push({ viewerEmailSnapshot: { $ne: cleanEmail } });
   }
 
-  const scope = orgId ? { orgId } : { shareId };
+  // `{ orgId }` only once the address has been proved; otherwise the link it was claimed on.
+  const scope = identityFanOutScope(shareId, orgId, cleanEmail, emailVerified);
   /** Never over an account-backed identity, and only where something differs. */
   const guards = [
     { $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] },

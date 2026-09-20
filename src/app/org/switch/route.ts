@@ -87,6 +87,38 @@ function escapeHtmlAttr(s: string): string {
 }
 
 /**
+ * True when this workspace switch is one the app itself started.
+ *
+ * `GET /org/switch` is side-effecting: it writes `metadata.activeOrgId` onto the user record and
+ * sets a year-long active-org cookie. A side-effecting GET with no CSRF token, reached with a
+ * `SameSite=Lax` session cookie that rides along on top-level navigations, is exactly the shape a
+ * link exploits — send a colleague `/org/switch?orgId=<a team they are genuinely in>` and their
+ * active workspace flips under them without them ever choosing to switch. Membership is validated,
+ * so it succeeds silently, and because the active org is persisted on the user record it outlives
+ * the tab and follows them to their other devices. The next document they upload lands in that
+ * other workspace.
+ *
+ * `Sec-Fetch-Site` is stamped by the browser and cannot be set from page script, so it is the one
+ * signal in this handler that separates the app's own navigation from a link somebody sent. Every
+ * caller in this product navigates (or `fetch`es) from a page already on this origin —
+ * `SwitchingOverlay`, both `WorkspaceManager`s, `AccountMenu`, the upload page, the join page — so
+ * a genuine switch always reports `same-origin`, or `same-site` if the app is ever served from a
+ * sibling subdomain. `cross-site` is a foreign page. `none` is an address bar, a bookmark, or a
+ * link opened out of a native mail or chat client, which is the finding's delivery route and is
+ * never something this product generates.
+ *
+ * A request carrying no Fetch Metadata at all is honoured, deliberately. Browsers that predate the
+ * headers omit them, and refusing those would break the workspace switcher outright for real people
+ * in order to inconvenience a client that can simply choose to send whichever header it likes. This
+ * raises the bar on the everyday "click this link" version; it is not a CSRF token.
+ */
+function isAppInitiatedSwitch(request: Request): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (!site) return true;
+  return site === "same-origin" || site === "same-site";
+}
+
+/**
  * Extracts a doc id from a `/doc/:docId...` path (or returns null).
  *
  * Exists to prevent redirecting into a doc page that doesn't belong to the target org.
@@ -107,6 +139,13 @@ export async function GET(request: Request) {
   const orgId = url.searchParams.get("orgId")?.trim() ?? "";
   const returnTo = safeReturnTo(url.searchParams.get("returnTo"));
   const wantsJson = url.searchParams.get("json") === "1";
+
+  // A switch nobody in the app asked for is not a switch. Degrade rather than refuse: send them to
+  // the app in the workspace they are already in — the same answer every other rejected input here
+  // gets — instead of showing an error for a link they were probably just curious about.
+  if (!isAppInitiatedSwitch(request)) {
+    return NextResponse.redirect(new URL("/", request.url));
+  }
 
   const actor = await resolveActor(request);
   if (actor.kind !== "user") {

@@ -17,6 +17,8 @@ import { DocModel } from "@/lib/models/Doc";
 import { resolveShareLink, shareLinkUnlocked, touchShareLink, type PasswordProtectedLink } from "@/lib/share/links";
 import { projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
 import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerIdentity";
+import { sendViewerIntroductionEmails, viewerIntroductionAppUrl } from "@/lib/share/viewerIntroductionEmails";
+import { isViewerEmailVerified } from "@/lib/share/viewerEmailVerification";
 import { enqueueNotification, notificationDedupeKey } from "@/lib/notifications/queue";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
@@ -566,6 +568,18 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           // and — because the realtime server watches exactly these two fields — a frame per row
           // it touches, to every open metrics page in the workspace.
           if ((identityNews.isNew || identityNews.changed) && !viewerUserId && (viewerNameIntro || viewerEmail)) {
+            /**
+             * Has this workspace ever had a confirmed click for this address?
+             *
+             * Nothing on this request proves the address is the caller's — it is a string in a
+             * public POST body — so this is the only thing that separates "a reader told us who
+             * they are" from "a stranger holding the link typed a real person's name". The answer
+             * decides how far `propagateViewerIdentity` writes it; see `identityFanOutScope`.
+             * A lookup that throws is treated as unverified, which narrows the write.
+             */
+            const emailVerified = viewerEmail && shareOrgId
+              ? await isViewerEmailVerified(shareOrgId, viewerEmail).catch(() => false)
+              : false;
             try {
               await propagateViewerIdentity({
                 shareId,
@@ -573,9 +587,53 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                 orgId: shareOrgId ?? null,
                 name: viewerNameIntro,
                 email: viewerEmail,
+                emailVerified,
               });
             } catch {
               // best-effort: the row this heartbeat wrote already carries the new identity.
+            }
+
+            /**
+             * And now actually send the mail an introduction owes.
+             *
+             * What went wrong: `sendViewerIntroductionEmails` — the confirmation link to the
+             * reader, and the correction to the members who were already told about them
+             * anonymously — was written, tested and then never called from anywhere. Its own doc
+             * comment said it was called "from the two routes that can receive an introduction";
+             * neither route imported it. So the address on the row was accepted as fact and the
+             * only control that could ever turn it into a *proved* address was dead code, which is
+             * also why `/share/verify` was reachable only by a token nothing minted.
+             *
+             * Gated on the same answer the fan-out above is, plus the two gates this specific side
+             * effect needs: `!ownerPreview` (an owner testing their own link mails nobody) and
+             * `fanOutAllowed` (the per-link daily ceiling that already bounds the "new reader"
+             * mail, for the same reason — `botId` is the caller's and a fresh one is free).
+             *
+             * Awaited, not `void`-ed: this whole block is inside `after()`, which keeps the lambda
+             * alive only for work it is awaiting. The function never throws by contract.
+             */
+            if (viewerEmail && !ownerPreview && shareOrgId && fanOutAllowed) {
+              const appUrl = viewerIntroductionAppUrl();
+              // No absolute base configured in production means a relative link, and a relative
+              // link in a mail client does nothing — so there is no confirmation to offer.
+              if (appUrl) {
+                await sendViewerIntroductionEmails({
+                  orgId: shareOrgId,
+                  shareId,
+                  // The PERSON: never `botIdHash`, which on a project link carries the document
+                  // suffix. The token is about a reader, not about a reader-and-a-file.
+                  viewerKey: viewerBotIdHash,
+                  email: viewerEmail,
+                  name: viewerNameIntro,
+                  documentTitle: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
+                  // The same shape `buildMetricsUrl` produces, inlined rather than imported: the
+                  // module it lives in is the notification email pipeline, and pulling that onto
+                  // this route's cold start for one string is not a trade the busiest write path
+                  // in the product should make.
+                  metricsUrl: `${appUrl}/doc/${encodeURIComponent(String(docId))}/metrics?shareId=${encodeURIComponent(shareId)}`,
+                  appUrl,
+                });
+              }
             }
           }
 

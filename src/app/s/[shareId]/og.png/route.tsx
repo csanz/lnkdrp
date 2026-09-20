@@ -1,8 +1,7 @@
 import { ImageResponse } from "next/og";
 import { notFound } from "next/navigation";
 import type { NextRequest } from "next/server";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isBlobStoreHost } from "@/lib/blob/serverClientUploadRoute";
 import { resolveShareLink } from "@/lib/share/links";
 import {
   DEFAULT_OG_SIZE,
@@ -12,6 +11,54 @@ import {
 } from "@/lib/og/imageResponse";
 
 export const runtime = "nodejs";
+
+/**
+ * Vercel Blob's public CDN, where the upload pipeline writes every preview
+ * (`<storeId>.public.blob.vercel-storage.com`, and the bare host on older rows).
+ */
+const VERCEL_BLOB_HOST = "blob.vercel-storage.com";
+
+/**
+ * Which stored preview value this route is willing to go and *dereference*.
+ *
+ * `previewImageUrl` reaches this file as owner-controlled text: `PATCH /api/docs/:docId` stores
+ * whatever string the body carries, with no validation. This route is unauthenticated — anyone who
+ * knows a slug can `GET /s/<slug>/og.png` — so whatever that field says, the server does, on demand.
+ *
+ * It used to say two dangerous things:
+ *
+ *  - anything matching `^https?://` was `fetch`ed, so `http://169.254.169.254/latest/meta-data/`
+ *    or any hostname inside the deployment's network turned this into an SSRF probe that an
+ *    attacker could time from the outside;
+ *  - anything *else* was `readFileSync(join(process.cwd(), value))`, so `../../../../etc/passwd`
+ *    (or `/dev/zero`) was an arbitrary filesystem read. That branch existed for
+ *    `aiOutput.openGraph.imagePath`, a field nothing in this repo has ever written — its only
+ *    reachable input was a value someone typed into the API — so it is gone entirely rather than
+ *    path-sanitised.
+ *
+ * What remains is an allowlist of the blob CDN previews actually live on: our own configured store
+ * (`isBlobStoreHost`, the same authority the upload routes use), plus the Vercel Blob public host
+ * family so rows written before the store id was pinned keep rendering. Another tenant's blob store
+ * is still a public, read-only, credential-free CDN, so pointing at one buys nothing; an internal
+ * address or a local path is what this refuses.
+ *
+ * Returning null is deliberately *not* an error: the caller falls through to the text card it
+ * already renders for a document with no preview, so a legitimate document with an unusual URL
+ * still unfurls with its title instead of 404ing.
+ */
+function previewFetchUrl(candidate: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    // Not absolute at all — a relative path, which only the removed filesystem branch ever wanted.
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  const host = url.hostname.toLowerCase();
+  if (isBlobStoreHost(host)) return url;
+  return host === VERCEL_BLOB_HOST || host.endsWith(`.${VERCEL_BLOB_HOST}`) ? url : null;
+}
 
 /**
  * `private`, never `public` — the same rule the recipient history endpoint states at
@@ -76,21 +123,15 @@ export async function GET(
 
   try {
     if (!candidate) throw new Error("no image candidate");
+    const previewUrl = previewFetchUrl(candidate);
+    // Not a preview we are allowed to dereference: fall through to the text card (see
+    // `previewFetchUrl` for what used to happen instead).
+    if (!previewUrl) throw new Error("preview URL is not on the blob store");
 
-    let buf: Buffer;
-    let mime: string;
-
-    if (/^https?:\/\//i.test(candidate)) {
-      const res = await fetch(candidate, { cache: "no-store" });
-      if (!res.ok) throw new Error(`failed to fetch preview (${res.status})`);
-      const arr = await res.arrayBuffer();
-      buf = Buffer.from(arr);
-      mime = res.headers.get("content-type")?.split(";")[0]?.trim() || mimeFromPath(candidate);
-    } else {
-      const abs = join(process.cwd(), candidate);
-      buf = readFileSync(abs);
-      mime = mimeFromPath(candidate);
-    }
+    const res = await fetch(previewUrl, { cache: "no-store" });
+    if (!res.ok) throw new Error(`failed to fetch preview (${res.status})`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    const mime = res.headers.get("content-type")?.split(";")[0]?.trim() || mimeFromPath(candidate);
 
     return imageResponseFromBytes({
       bytes: buf,
