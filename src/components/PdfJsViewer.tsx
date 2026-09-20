@@ -71,6 +71,15 @@ type Props = {
    */
   workspace?: ShareWorkspaceBrand | null;
   /**
+   * Where this document sits, when it was opened from a data room: the room's URL and its name.
+   *
+   * A recipient who clicks a document out of a data room is one browser-back from the list — and
+   * browser-back is exactly what people do not reach for inside a viewer that has taken over the
+   * window. Without this, the way back is a guess.
+   */
+  backHref?: string | null;
+  backLabel?: string | null;
+  /**
    * If true, show a receiver-facing "Download PDF" button.
    */
   allowDownload?: boolean;
@@ -165,6 +174,14 @@ const SHARE_VISIT_SESSION_PREFIX = "lnkdrp_share_visit_session_v1:";
 const SHARE_VISIT_PAGES_PREFIX = "lnkdrp_share_visit_pages_v1:";
 
 /** Pages already reported during this tab session, and whether the load POST has gone out. */
+/**
+ * What this visit has already reported, keyed by **link and document**.
+ *
+ * It used to be keyed on the link alone, which is correct for a document link and wrong for a data
+ * room: every document in a room is read through the same `shareId`, so opening a second one found
+ * `loaded: true` and its pages already "seen", and reported nothing at all. A reader who opened
+ * three documents appeared in the metrics having opened one — the bug this key fixes.
+ */
 function readVisitReported(shareId: string): { loaded: boolean; pages: Set<number> } {
   if (!isBrowser()) return { loaded: false, pages: new Set() };
   try {
@@ -314,6 +331,8 @@ export function PdfJsViewer({
   revisionHistoryEnabled = false,
   revisionHistoryUrl = null,
   workspace = null,
+  backHref = null,
+  backLabel = null,
   allowDownload = false,
   downloadUrl = null,
   relevancyEnabled: _relevancyEnabled = false,
@@ -413,6 +432,20 @@ export function PdfJsViewer({
   >({ kind: "idle" });
 
   const shareIdSafe = typeof shareId === "string" && shareId.trim() ? shareId.trim() : null;
+
+  /**
+   * The key this visit's "already reported" state is stored under.
+   *
+   * A data room's documents all share one `shareId`, so keying on that alone made the second
+   * document a visitor opened report nothing: the gate said this visit had already sent its load
+   * and its pages. The document id — which is in the PDF URL on a project link,
+   * `/p/:shareId/:docId/pdf` — puts each document back in its own bucket.
+   */
+  const reportKey = useMemo(() => {
+    if (!shareIdSafe) return null;
+    const match = /\/p\/[^/]+\/([^/?#]+)\//.exec(url ?? "");
+    return match?.[1] ? `${shareIdSafe}:${match[1]}` : shareIdSafe;
+  }, [shareIdSafe, url]);
   const canDownload = Boolean(allowDownload && downloadUrl);
 
   function applyViewerProfileToStatsPayload(payload: Record<string, unknown>) {
@@ -420,6 +453,15 @@ export function PdfJsViewer({
     if (p?.email) payload.viewerEmail = p.email;
     if (p?.name) payload.viewerName = p.name;
   }
+
+  /**
+   * Set once an introduction is stored, turning the modal into a confirmation instead of closing.
+   *
+   * Closing on save was the entire acknowledgement, which reads as a form that may or may not have
+   * worked. Someone who has just chosen to stop being anonymous is owed the other half: what the
+   * owner sees now, in the words they typed, before going back to the document.
+   */
+  const [introSaved, setIntroSaved] = useState<{ name: string | null; email: string } | null>(null);
 
   const [downloadRequestOpen, setDownloadRequestOpen] = useState(false);
   const [downloadRequestEmail, setDownloadRequestEmail] = useState("");
@@ -1671,7 +1713,7 @@ export function PdfJsViewer({
     return () => {
       cancelled = true;
     };
-  }, [hasFirstPaint, shareIdSafe]);
+  }, [hasFirstPaint, shareIdSafe, reportKey]);
 
   useEffect(() => {
     numPagesRef.current = numPages;
@@ -1774,7 +1816,7 @@ export function PdfJsViewer({
     // Gated on the visit, not on the browser. The server's unique (shareId, botIdHash) index is
     // what stops a repeat view being counted twice, so this gate only saves a request — and paying
     // for it with a missing `ShareVisit` row on every return visit was a bad trade.
-    const reported = readVisitReported(shareIdSafe);
+    const reported = readVisitReported(reportKey ?? shareIdSafe);
     if (!reported.loaded || !reported.pages.has(pageNumber)) {
       scheduleAfterPaint(() => {
         const payload = buildSeenPayload({ botId, visitId, pageNumber, numPages: numPagesRef.current });
@@ -1786,7 +1828,7 @@ export function PdfJsViewer({
         }).catch(() => void 0);
       });
       reported.pages.add(pageNumber);
-      writeVisitReported(shareIdSafe, { loaded: true, pages: reported.pages });
+      writeVisitReported(reportKey ?? shareIdSafe, { loaded: true, pages: reported.pages });
       // Kept for anything still reading it; it no longer gates a request.
       const local = readLocalShareStats(shareIdSafe);
       const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
@@ -1810,7 +1852,7 @@ export function PdfJsViewer({
     // Per visit, for the same reason as the load POST above: a `ShareVisit` row's `pagesSeen` is
     // what "which pages did they read this time" is built from, and gating on a browser-lifetime
     // record meant a returning reader's second visit recorded no pages they had seen before.
-    const reported = readVisitReported(shareIdSafe);
+    const reported = readVisitReported(reportKey ?? shareIdSafe);
     if (reported.pages.has(pageNumber)) return;
 
     scheduleAfterPaint(() => {
@@ -1824,7 +1866,7 @@ export function PdfJsViewer({
     });
 
     reported.pages.add(pageNumber);
-    writeVisitReported(shareIdSafe, { loaded: true, pages: reported.pages });
+    writeVisitReported(reportKey ?? shareIdSafe, { loaded: true, pages: reported.pages });
     const local = readLocalShareStats(shareIdSafe);
     const pagesSeen = new Set<number>(Array.isArray(local.pagesSeen) ? local.pagesSeen : []);
     pagesSeen.add(pageNumber);
@@ -1844,6 +1886,17 @@ export function PdfJsViewer({
         ref={headerRef}
         workspace={workspace}
         left={
+          <>
+            {backHref ? (
+              <a
+                href={backHref}
+                className="inline-flex h-9 min-w-0 shrink-0 items-center gap-1.5 rounded-2xl border border-white/10 bg-white/5 px-3 text-xs font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                title={backLabel ? `Back to ${backLabel}` : "Back"}
+              >
+                <span aria-hidden="true">←</span>
+                <span className="max-w-[160px] truncate">{backLabel || "Back"}</span>
+              </a>
+            ) : null}
               <div className="inline-flex min-w-0 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-1.5">
                 <button
                   type="button"
@@ -1879,6 +1932,7 @@ export function PdfJsViewer({
 
                 {/* Intentionally no share-context badge here; share links are self-evident. */}
               </div>
+          </>
         }
       >
             {/* Right */}
@@ -2359,11 +2413,60 @@ export function PdfJsViewer({
           if (introBusy) return;
           setIntroOpen(false);
           setIntroError(null);
+          setIntroSaved(null);
         }}
         ariaLabel="Introduce yourself"
         panelClassName="w-[min(680px,calc(100vw-32px))] border-white/15 bg-black/95 text-white ring-white/15"
         contentClassName="px-6 pb-6 pt-5"
       >
+        {introSaved ? (
+          <>
+            <div className="pr-10">
+              <div className="text-base font-semibold text-white">Thank you</div>
+              <div className="mt-2 text-sm leading-6 text-white/70">
+                The owner of this document can see who is reading it now. The pages you open and how
+                long you spend on them are attributed to you from here.
+              </div>
+            </div>
+
+            {/* The same row the form previewed, now as fact. "Saved" on its own does not tell them
+                which of the two fields the owner actually sees. */}
+            <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">You show up as</div>
+              <div className="mt-2.5 flex items-center gap-3">
+                <span
+                  aria-hidden="true"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white text-[13px] font-semibold text-black"
+                >
+                  {(introSaved.name ?? introSaved.email).trim().charAt(0).toUpperCase()}
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-white">{introSaved.name || introSaved.email}</div>
+                  {introSaved.name ? <div className="truncate text-xs text-white/50">{introSaved.email}</div> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 text-xs leading-5 text-white/55">
+              You can change it or clear it any time from &ldquo;Viewing as&rdquo; in the toolbar.
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setIntroOpen(false);
+                  setIntroError(null);
+                  setIntroSaved(null);
+                }}
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black hover:bg-white/90"
+              >
+                Back to the document
+              </button>
+            </div>
+          </>
+        ) : (
+        <>
         {/*
           Why a viewer would bother: the owner sees who each visit belongs to, and an anonymous visit
           is only a number in their analytics — there is nobody to reply to. The preview below shows
@@ -2582,7 +2685,7 @@ export function PdfJsViewer({
                     // ignore (best-effort)
                   } finally {
                     setIntroBusy(false);
-                    setIntroOpen(false);
+                    setIntroSaved({ name: name || null, email });
                   }
                 })();
               }}
@@ -2591,6 +2694,8 @@ export function PdfJsViewer({
             </button>
           </div>
         </div>
+        </>
+        )}
       </Modal>
 
       <Modal

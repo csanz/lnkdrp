@@ -1864,6 +1864,61 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
               </div>
             ) : null}
 
+            {/* Where the reads came from. A document in a data room is opened through the room's
+                link, and those reads belong to the room (docScope.ts) — so the document's own
+                number excludes them and this says what the other number is, and from which room.
+                It was one line of small print under the Views tile; a sender who shares the same
+                deck into three rooms needs it broken out. */}
+            {!loading && projectLinkTraffic && projectLinkTraffic.links.length ? (
+              <section className="mb-5 rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">
+                    Opened through data rooms
+                  </div>
+                  <div className="text-[12px] text-[var(--muted-2)]">
+                    Counted with the room, not with this document
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span className="text-2xl font-semibold tabular-nums text-[var(--fg)]">
+                    {projectLinkTraffic.views.toLocaleString()}
+                  </span>
+                  <span className="text-[13px] text-[var(--muted)]">
+                    {projectLinkTraffic.views === 1 ? "view" : "views"}
+                    {projectLinkTraffic.viewers > 0
+                      ? ` · ${projectLinkTraffic.viewers.toLocaleString()} ${projectLinkTraffic.viewers === 1 ? "viewer" : "viewers"}`
+                      : ""}
+                  </span>
+                </div>
+                <ul className="mt-3 grid gap-1.5 border-t border-[var(--divider)] pt-3">
+                  {projectLinkTraffic.links.slice(0, 5).map((l) => (
+                    <li key={l.shareId} className="flex items-center gap-3">
+                      <FolderIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--fg)]">
+                        {l.projectId ? (
+                          <Link
+                            href={`/project/${encodeURIComponent(l.projectId)}/metrics`}
+                            className="hover:underline underline-offset-4"
+                          >
+                            {l.projectName || "Data room"}
+                          </Link>
+                        ) : (
+                          l.projectName || "Data room"
+                        )}
+                        {l.label ? <span className="text-[var(--muted-2)]"> · {l.label}</span> : null}
+                      </span>
+                      <span className="shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
+                        {l.views.toLocaleString()} {l.views === 1 ? "view" : "views"}
+                      </span>
+                      <span className="w-20 shrink-0 text-right text-[12px] text-[var(--muted-2)]">
+                        {l.lastViewedAt ? relativeAge(l.lastViewedAt) : "—"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+
             {/* Who opened it, newest first — above the tiles, because "did they read it yet" is the
                 question this page is opened to answer and it used to be several screens down. */}
             <RecentVisitors
