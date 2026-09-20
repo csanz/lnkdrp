@@ -153,8 +153,10 @@ plus `creditsRemaining`, `creditsResetAt`, `onDemand` (from `GET /api/credits/sn
 unreadable; whoami never fails over them), `costTiers: ["basic","standard","advanced"]`, `costs: { summary: [1,2,5],
 compare: [2,5,12] }` and `mcpVersion`. `costs` are computed from `creditsForRun` (`src/lib/credits/schedule.ts`,
 imported by the MCP server and copied into the Docker image), so they always match what the app charges.
-`onDemand: true` alongside `plan: "free"` is a Free workspace that added a card for pay-as-you-go credits — the
-document/project limits are still Free's, but it will not just run dry once its one-time starter credits are gone.
+`onDemand` is Pro-only: it means AI runs continue past `creditsRemaining: 0`, billed per credit up to the
+workspace's spend limit. On Free it is always `false` — the snapshot cannot return anything else — so a Free
+workspace that reaches zero credits stops running AI until its cycle resets. It is also `false` when the snapshot
+could not be read at all, which is indistinguishable here; treat `false` as "not known to be on".
 Also carries `capabilities` (mt_1mVhlEPXGT): `{ links: {limited:false}, documents/projects: {limit,used,remaining}|null,
 collaborators: {limit,used}|null, analyticsDaysLimit, deepAnalytics, recipientsCanBrowseVersions, notMcpAccessible:
 [{feature,reason}] }` — one call to answer "what can I do here" instead of learning a gate by hitting it.
@@ -242,8 +244,13 @@ update. Idempotent by key, same 24h in-memory store as `share_pdf`, its own name
 
 ### `lnkdrp_get_share`
 In `{ docId? | shareId? }` (exactly one). Out `{ docId, shareId, title*, status, shareEnabled, shareAllowPdfDownload,
-sharePasswordEnabled, shareAllowRevisionHistory, shareUrl, previewImageUrl, oneLiner*, summary*, isArchived }`
-(`*` untrusted or `null`). shareId lookups use `GET /api/docs?q=`, which does not list archived docs.
+sharePasswordEnabled, shareAllowRevisionHistory, shareUrl, previewImageUrl, oneLiner*, summary*, keyPoints*, version,
+pageCount, projectIds, anyLinkActive, tags, summaryStale?, link?, warnings }` (`*` untrusted or `null`).
+`tags` is how the workspace has filed the document — `[{ name, slug, color }]`, empty when nothing is on it, private
+to the workspace. Naming a non-default `shareId` re-scopes the answer to that link and adds `link`; the rest of the
+shape, `tags` included, is the same either way.
+An archived document is not reachable by `shareId` (`GET /api/docs?q=` does not list them) and says so, naming the
+document and its `docId`, rather than reporting that nothing matched.
 
 ### `lnkdrp_set_share_access`
 In `{ idempotencyKey, docId, shareEnabled?, allowDownload?, password?: string|null, allowRevisionHistory? }` (≥1 setting).
@@ -253,9 +260,13 @@ Out: the `lnkdrp_get_share` shape. Free-plan caps surface as `plan_limit` with t
 In `{ docId?, shareId?, days? 1–60 = 15, includeViewers? = false }` (at least one id). A `shareId` scopes every number to that
 one link (`perLink: true`, `GET /api/docs/:id/shareviews?shareId=`); a `docId` covers the document and all of its links. Pass
 both for a non-default link: a bare `shareId` goes through `GET /api/docs?q=`, which only matches a document's default link.
-Out `{ docId, shareId, perLink, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, downloads, pagesViewed,
-timeSpentMs, authenticatedViewers, anonymousViewers }, series: [{ date, views, downloads }], viewers?, anonymousViewers?,
-projectLinkTraffic? }`.
+Out `{ docId, shareId, perLink, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, ownerPreviews,
+opens, opensPartial, downloads, pagesViewed, timeSpentMs, authenticatedViewers, anonymousViewers },
+series: [{ date, views, opens, downloads }], viewers?, anonymousViewers?, projectLinkTraffic? }`.
+`views` counts recipients and `opens` counts tab sessions, so a reader who came back three times is one view and
+three opens. `ownerPreviews` is the owning side's own opens, kept out of `views` — `views: 0` with
+`ownerPreviews: 3` means only the owner has looked, not that nobody has. `opensPartial` marks traffic older than
+per-session tracking, so `opens` is a floor rather than a count.
 `viewers` and `anonymousViewers` (untrusted `name`/`email`, `views`, `timeSpentMs`, `pagesViewed`, `pagesSeen`,
 `pageTimeMsByPage`, `firstSeen`, `lastSeen`) are present only with `includeViewers` on a Pro workspace
 (`analyticsTier: "deep"`), and both are returned together: most people who open a share link never sign in, so the
@@ -425,7 +436,10 @@ links affected, whether it is reversible, a `low`/`high` severity — and gets a
 
 1. **Elicitation**, when the client declared `elicitation` at `initialize` (`server.server.getClientCapabilities()`; the
    server logs it per connection). The user sees the preview and one checkbox through the protocol; the agent cannot
-   answer it. Decline, cancel or unticked all mean no, and `confirm: true` does not override a human who answered.
+   answer it. An explicit decline, or an accept with the box unticked, is final: `confirm: true` does not override a
+   human who answered. A *cancel* is different — it is what a client that cannot render the prompt sends
+   automatically, so nobody was asked — and there `confirm: true` does get through, which is the only way a headless
+   client can ever delete anything.
    Declaring the capability is not the same as surfacing the prompt: Claude Code 2.1.261 declares
    `{"elicitation":{"form":{}}}` and, measured live, the request times out (`-32001`) without a prompt appearing. A
    request that fails to deliver (error or timeout) falls through to path 2 — `mcp/src/confirm.ts`, mt_N2E6syf6Lq.
@@ -476,14 +490,16 @@ replaces raw keys.
 read of the container's filesystem, and `filePath` is meaningless to a caller whose machine is somewhere else
 anyway; `sourceUrl` and `fileBase64` are the paths that work remotely.
 
-**The image has no Ghostscript, so the hosted server shrinks nothing.** `mcp/Dockerfile` installs the five runtime
-packages and no `gs` binary, so every inline (`fileBase64`) upload to `mcp.lnkdrp.com` is sent at its original size
-with the "Ghostscript (gs) is not installed" note — expect that note rather than reading it as a fault. Shipping
-without it is a choice, not an oversight: `sourceUrl` uploads never needed optimization, and nothing breaks without
-it. Turning it on takes both halves — `RUN apk add --no-cache ghostscript` *and* `pdfjs-dist` in the same generated
-`package.json`, because without `pdfjs-dist` the page count cannot be verified and every shrunk file is thrown away
-again. Ghostscript is a large package with its own fonts, so check the image size against the machine before
-assuming it fits (DEPLOY.md, "PDF optimization needs Ghostscript").
+**The image installs Ghostscript, so the hosted server shrinks what it sends.** `mcp/Dockerfile`
+adds `ghostscript` with `apk` and `pdfjs-dist` to the generated `package.json`, and both halves are
+needed: without `gs` the optimizer skips and uploads the original bytes, and without `pdfjs-dist` it
+cannot verify the page count, refuses to trust the smaller file, and uploads the original bytes
+anyway. Neither absence fails loudly — a deck simply arrives at full size — which is why the image
+was shipping without them and nothing said so.
+
+Ghostscript is a large package with its own fonts, so check the image size against the machine
+(DEPLOY.md, "PDF optimization needs Ghostscript"). `sourceUrl` uploads are fetched by the app rather
+than by this server and are not optimized here either way.
 
 ## Layout
 

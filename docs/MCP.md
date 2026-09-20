@@ -205,9 +205,11 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
 - `plan` comes from `GET /api/plan` when readable, else from whoami. `creditsRemaining`, `creditsResetAt` and
   `onDemand` come from `GET /api/credits/snapshot?fast=1` (`creditsResetAt` is the snapshot's reset date, falling
   back to `cycleEnd`; both are `null` when the snapshot cannot be read, and `onDemand` is `false`). whoami never
-  fails because of them. `onDemand: true` on `plan: "free"` means the workspace added a card for pay-as-you-go
-  (`$0.10`/credit past its one-time 50 starter credits) — it is still on Free's document/project limits, but it
-  will not simply run out of credits the way a plain Free workspace does once those 50 are spent.
+  fails because of them. `onDemand` is Pro-only (`src/lib/credits/snapshot.ts`): it means AI runs continue past
+  `creditsRemaining: 0`, billed per credit up to the workspace's spend limit. On Free the snapshot can only ever
+  return `false`, so a Free workspace that spends its credits stops running AI until the cycle resets. `false` is
+  also what an unreadable snapshot returns, and the two are indistinguishable here — read it as "not known to be
+  on" rather than "off".
 - `capabilities` (mt_1mVhlEPXGT) — "what can I do here", answerable from this one call instead of learning a
   gate by triggering it: `{ links: { limited: false }, projectLinks: { proOnly: true, available: boolean },
   documents: { limit, used, remaining } | null,
@@ -471,6 +473,10 @@ Status, settings and summary of one link. Poll this after `share_pdf` when you d
   or bring it back with lnkdrp_archive_doc archived: false"`, with `details: { docId, archived: true }`.
   A slug that matches nothing at all gets the plain message pointing at `lnkdrp_find_share_link`, so
   the two cases are finally distinguishable.
+
+- `tags` — `[{ name, slug, color }]`, how the workspace has filed this document. Empty when nothing
+  is on it, private to the workspace, and present whichever id you named the document by: asking about
+  a non-default `shareId` re-scopes the link fields but returns the same document-level shape.
 
 ### `lnkdrp_set_share_access` (write, idempotent)
 
@@ -855,6 +861,10 @@ belongs to the workspace, which is why the tools always read the project first.
 - In: `{}`. `GET /api/starred`. Out: `{ total, starredDocs: [{ docId, title, starredAt }] }`, sidebar
   order; deleted and archived documents are left out.
 
+- `tags` on the project and on every document row: `[{ name, slug, color }]`, how the workspace has
+  filed it. Empty when nothing is on it. Private to the workspace — recipients never see tags. Read for
+  the whole page in one call to `GET /api/tags/targets`, not one request per row.
+
 ### Tags
 
 The workspace's own filing system, across both kinds of thing a project tool can name: a tag goes
@@ -1022,9 +1032,12 @@ whether it can be undone — and gets a human's yes in one of two ways:
 
 1. **Through the protocol**, when the connecting client declared the `elicitation` capability at
    `initialize`. The user is shown the preview and a single checkbox; the agent cannot answer it.
-   The tool proceeds only on an explicit accept. Decline, cancel or an unticked box all mean no,
-   and the tool returns `validation` with nothing changed — `confirm: true` does not override a
-   human who answered.
+   The tool proceeds only on an explicit accept. An explicit decline, or an accept with the box
+   unticked, is final: the tool returns `validation` with nothing changed and `confirm: true` does
+   not override it, because a human answered. A **cancel** is not an answer — it is what a client
+   that declares elicitation and then cannot render the prompt sends automatically — so there
+   `confirm: true` does get through (fc90c92). Without that, the escape hatch built for clients
+   that cannot show a prompt was unreachable by the one client that claimed it could.
 2. **Through `confirm: true`**, when the client did not declare elicitation **or the elicitation
    request failed to reach a human** (timeout, transport error). The first call is
    **refused** with `validation`, `details.requiresConfirmation: true` and `details.preview`
