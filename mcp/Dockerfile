@@ -20,13 +20,29 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
+# Ghostscript, because PDF optimization is a real feature and not a nice-to-have.
+#
+# share_pdf/replace_pdf shrink image-heavy decks before upload (mcp/src/optimize.ts, /prepress at
+# 220dpi, tuned by eye over several rounds). Without `gs` on PATH the optimizer does not fail — it
+# silently skips and uploads the original bytes, so the behaviour in the container quietly differed
+# from the behaviour everyone tested locally, where Ghostscript happens to be installed.
+#
+# It is an apk package rather than a Node dependency, so it has to be asked for explicitly; the
+# version floats with the base image's Alpine release, which is acceptable for a downsampler whose
+# output is checked (below) rather than trusted.
+RUN apk add --no-cache ghostscript && gs --version
+
+# pdfjs-dist is in the list because the optimizer refuses to ship a file whose page count it cannot
+# verify, and pdfjs is how it counts them. Without it every shrunk PDF is discarded and the original
+# uploaded instead — the same silent no-op as a missing Ghostscript, one step further along.
 RUN printf '%s\n' \
       '{"name":"lnkdrp-mcp","private":true,"dependencies":{' \
       '"@modelcontextprotocol/sdk":"1.30.0",' \
       '"express":"5.2.1",' \
       '"zod":"4.2.0",' \
       '"ws":"8.21.3",' \
-      '"tsx":"4.21.0"' \
+      '"tsx":"4.21.0",' \
+      '"pdfjs-dist":"5.4.449"' \
       '}}' > package.json \
  && npm install --omit=dev --no-audit --no-fund \
  && npm cache clean --force
