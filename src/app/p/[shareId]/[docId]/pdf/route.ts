@@ -240,7 +240,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   const upstream = await fetch(blobUrl, { headers: range ? { range } : undefined, cache: "no-store" });
 
   const headers = new Headers();
-  pickHeader(upstream.headers, headers, "content-type", { fallback: "application/pdf" });
+  // Pinned, not copied. These routes serve one thing — the stored PDF — so echoing the upstream
+  // `content-type` bought nothing and cost everything: with `content-disposition: inline` and no
+  // `script-src` in the app's CSP, an upstream that answered `text/html` made this origin serve
+  // attacker markup and script. The write path that made that reachable is closed
+  // (`blobUrl` is no longer patchable), and this is the second lock: even a blob the store itself
+  // mislabels can only ever be delivered as a PDF.
+  headers.set("content-type", "application/pdf");
   pickHeader(upstream.headers, headers, "content-length");
   pickHeader(upstream.headers, headers, "content-range");
   pickHeader(upstream.headers, headers, "accept-ranges");
