@@ -68,8 +68,8 @@ const TOKENS = {
 const CONTENT = {
   extractedText: "THE ENTIRE TEXT OF THE CUSTOMER PDF",
   rawExtractedText: "THE ENTIRE TEXT OF THE CUSTOMER PDF",
-  blobUrl: "https://blob.example.com/private.pdf",
-  slideNodes: [{ page: 1, imageUrl: "https://blob.example.com/page1.jpg" }],
+  blobUrl: "https://store123.public.blob.vercel-storage.com.com/private.pdf",
+  slideNodes: [{ page: 1, imageUrl: "https://store123.public.blob.vercel-storage.com.com/page1.jpg" }],
   aiOutput: { summary: "WHAT THE DECK SAYS" },
 };
 

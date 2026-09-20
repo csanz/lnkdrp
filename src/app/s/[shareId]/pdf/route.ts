@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
+import { isBlobStoreHost } from "@/lib/blob/serverClientUploadRoute";
 import { recordActivity } from "@/lib/activity/log";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { resolveShareLink, touchShareLink } from "@/lib/share/links";
@@ -24,6 +25,63 @@ const DOWNLOAD_TRACK_PER_LINK_LIMIT = 30;
 /** Wider bucket, so a caller cannot simply walk across every link they hold to dodge the first. */
 const DOWNLOAD_TRACK_PER_IP_LIMIT = 120;
 const DOWNLOAD_TRACK_WINDOW_MS = 60_000;
+
+/**
+ * Vercel Blob's public CDN, where the upload pipeline writes every stored PDF
+ * (`<storeId>.public.blob.vercel-storage.com`, and the bare host on rows written before the store
+ * id was pinned).
+ */
+const VERCEL_BLOB_HOST = "blob.vercel-storage.com";
+
+/**
+ * Which stored `Doc.blobUrl` this route is willing to go and *dereference*.
+ *
+ * The canonical copy of this rule for the PDF proxies; `/p/:shareId/:docId/pdf` and
+ * `/api/request-view/:token/docs/:docId/pdf` carry the same check and point back here. It is the
+ * twin of `previewFetchUrl` in `/s/:shareId/og.png` and `/p/:shareId/:docId/preview`, which decide
+ * the same question for `previewImageUrl`.
+ *
+ * What went wrong: all three proxies did a bare `await fetch(blobUrl)` and streamed `upstream.body`
+ * straight back to an unauthenticated caller who only had to know a slug. `blobUrl` was, until
+ * recently, free text that `PATCH /api/docs/:docId` would store verbatim — any actor, an
+ * unauthenticated temp user included, could point a document at `http://169.254.169.254/latest/
+ * meta-data/` or at any hostname inside the deployment's network and then read the response body
+ * through the share page. Making the field unpatchable closed the *writer*, which is why this is
+ * shaped as a read-side check rather than a backfill: it also covers every row poisoned while the
+ * field still was patchable, and those rows are still sitting in the database today. Pinning
+ * `content-type: application/pdf` below stopped the same bytes from *executing* on this origin; it
+ * never stopped them from being fetched and returned.
+ *
+ * Why an allowlist and not a denylist of internal ranges: a denylist is a DNS rebind and a
+ * redirect away from useless, and there is exactly one place our PDFs legitimately live. This
+ * reuses `isBlobStoreHost` — the same authority the upload write path uses (it fails closed in
+ * production when the store is not identified) — rather than restating the rule, so the read side
+ * and the write side cannot drift apart. The Vercel Blob public host family is accepted alongside
+ * it so rows written before the store id was pinned keep serving; another tenant's blob store is
+ * still a public, read-only, credential-free CDN, so pointing at one buys an attacker nothing that
+ * their own browser would not.
+ *
+ * Refusing rather than degrading, because there is no useful fallback for "these bytes are not
+ * ours". What an owner sees is the viewer's "PDF not available" — the same 404 a document whose
+ * processing never finished gets, and deliberately the same one, so a poisoned row is not
+ * distinguishable from an empty one by a caller probing from outside. The document, its title and
+ * its analytics are untouched; re-uploading the file rewrites `blobUrl` through the validated
+ * write path and the link serves again.
+ */
+function blobFetchUrl(candidate: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    // Not absolute at all — never a blob URL our pipeline wrote.
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  const host = url.hostname.toLowerCase();
+  if (isBlobStoreHost(host)) return url;
+  return host === VERCEL_BLOB_HOST || host.endsWith(`.${VERCEL_BLOB_HOST}`) ? url : null;
+}
+
 /**
  * Utc Day Key (uses slice, toISOString).
  */
@@ -252,6 +310,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   if (typeof blobUrl !== "string" || !blobUrl) {
     return NextResponse.json({ error: "PDF not available" }, { status: 404 });
   }
+  // A stored pointer we are not willing to dereference is the same answer as no pointer at all —
+  // see `blobFetchUrl`. Decided here, next to the empty check and ahead of everything else, so a
+  // refused row never reaches the analytics writes below: a download that cannot be served must not
+  // be counted as one, and a `fetch` of a host that does not resolve would otherwise throw out of
+  // this handler as a 500 instead of the document's own 404.
+  const pdfUrl = blobFetchUrl(blobUrl);
+  if (!pdfUrl) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
   const sharePasswordHash = link.passwordHash;
   const sharePasswordSalt = link.passwordSalt;
@@ -409,7 +474,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
   // Range passes through untouched: pdf.js depends on it, and the limiter above only decided whether
   // this chunk counted, never whether it is served.
-  const upstream = await fetch(blobUrl, {
+  const upstream = await fetch(pdfUrl, {
     headers: rangeHeader ? { range: rangeHeader } : undefined,
     cache: "no-store",
   });

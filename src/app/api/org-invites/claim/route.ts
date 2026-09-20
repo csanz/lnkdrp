@@ -2,6 +2,10 @@
  * API route for `/api/org-invites/claim`.
  *
  * Redeem an invite token into an org membership (auth required).
+ *
+ * Two things a reader should know before editing: an emailed invite is bound to the address it was
+ * sent to (see the recipient check below), and only a signed-in human may redeem one — an API key
+ * cannot, the same rule that already applies to sending an invite.
  */
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
@@ -14,6 +18,7 @@ import { recordActivity } from "@/lib/activity/log";
 import { OrgModel } from "@/lib/models/Org";
 import { debugError, debugLog } from "@/lib/debug";
 import { membershipChanged, resolveActor } from "@/lib/gating/actor";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { UserModel } from "@/lib/models/User";
 import { approveUser } from "@/lib/waitlist/waitlist";
 import { accessStatusChanged } from "@/lib/gating/waitlist";
@@ -24,10 +29,46 @@ function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
 }
 
+/**
+ * Fold an address down to the mailbox it actually reaches, so a match is decided on delivery and
+ * not on spelling.
+ *
+ * Only the two transformations that are true of the mail system itself, not guesses:
+ *
+ * - **`+tag` sub-addressing.** Mail to `dana+lnkdrp@corp.com` is delivered to `dana@corp.com`, so
+ *   someone invited at a tagged address and signed in at the plain one is the same mailbox. (The
+ *   reverse holds too: to hold an account at a tagged address you must be able to read mail at the
+ *   base one.)
+ * - **Gmail's dot-blindness**, and only for Gmail: `d.ana@gmail.com` and `dana@gmail.com` are one
+ *   account there. Everywhere else a dot is a real character and stripping it would merge two
+ *   different people, so this is scoped to gmail.com/googlemail.com by name.
+ *
+ * Anything more aggressive (domain aliases, corporate forwards, "same name, different company")
+ * cannot be verified from here and is left to the admin to re-invite — see the refusal below.
+ */
+function mailbox(email: string): string {
+  const trimmed = email.trim().toLowerCase();
+  const at = trimmed.lastIndexOf("@");
+  if (at <= 0 || at === trimmed.length - 1) return trimmed;
+  let local = trimmed.slice(0, at);
+  const domain = trimmed.slice(at + 1);
+  const plus = local.indexOf("+");
+  if (plus > 0) local = local.slice(0, plus);
+  if (domain === "gmail.com" || domain === "googlemail.com") local = local.split(".").join("");
+  return `${local}@${domain}`;
+}
+
 export async function POST(request: Request) {
   try {
     debugLog(2, "[api/org-invites/claim] POST");
     const actor = await resolveActor(request);
+    // Identity-grade: a key may not seat anyone in a workspace, not even its own owner — see
+    // forbidApiKey. The minting half (`/api/org-invites/email`) already refuses keys; without the
+    // same gate here a leaked `lnk_` key that got hold of an invite URL could still redeem it and
+    // hand its owner's account a role — or, with the owner's own key, promote that account past
+    // the deliberate "a person clicked Join" step this flow is built around.
+    const keyRefusal = forbidApiKey(actor, "redeem a workspace invite");
+    if (keyRefusal) return keyRefusal;
     if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
     const body = (await request.json().catch(() => ({}))) as Partial<{ token: string }>;
@@ -38,7 +79,7 @@ export async function POST(request: Request) {
 
     const tokenHash = sha256Hex(token);
     const invite = await OrgInviteModel.findOne({ tokenHash, isRevoked: { $ne: true } })
-      .select({ _id: 1, orgId: 1, role: 1, expiresAt: 1, redeemedAt: 1 })
+      .select({ _id: 1, orgId: 1, role: 1, expiresAt: 1, redeemedAt: 1, recipientEmail: 1 })
       .lean();
 
     const expiresAt = invite && (invite as unknown as { expiresAt?: unknown }).expiresAt;
@@ -67,6 +108,55 @@ export async function POST(request: Request) {
 
     const roleRaw = String((invite as unknown as { role?: unknown }).role ?? "member");
     const role = roleRaw === "admin" || roleRaw === "viewer" ? roleRaw : "member";
+
+    // An emailed invite is addressed to someone. Until now it wasn't.
+    //
+    // `recipientEmail` was written when the invite was sent and shown back in the Teams tab, but
+    // nothing ever compared it: this handler selected `_id, orgId, role, expiresAt, redeemedAt`,
+    // took the role verbatim and seated whoever happened to be signed in. So the address on an
+    // `admin` invite was decoration — forward the mail, quote it in a reply-all, pull it out of a
+    // scanned inbox or a shared support mailbox, and the finder became an admin of a workspace
+    // that never meant to offer them anything. The token was the whole authorization; the name on
+    // the envelope bought nothing.
+    //
+    // So: if the invite names a recipient, the claimer has to *be* that recipient. Sign-in is
+    // Google-only (src/lib/auth.ts), so the account email here is one Google verified, not a
+    // self-asserted string — which is what makes this check worth anything.
+    //
+    // Two deliberate limits on the strictness:
+    //
+    // - Link invites (`POST /api/org-invites`, no recipient) are unaffected. Those are *meant* to
+    //   be bearer capabilities — an admin copies the link and hands it to someone — and there is
+    //   no address to bind them to. Nothing here changes for them.
+    // - Matching is on the delivered mailbox (`mailbox()` above), not the literal string, so a
+    //   `+tag` alias or a dotted Gmail spelling still joins.
+    //
+    // A mismatch is a refusal, not a "are you sure?" — the only party who could meaningfully
+    // confirm that a different address is still the right person is the admin who sent the
+    // invite, and they are not in this request. Asking the *claimer* to confirm would hand the
+    // decision to exactly the person the check exists to stop. Someone who signed up under
+    // another address gets a fresh invite from an admin, which costs one click and leaves a
+    // record. The invite is not spent by a refusal: it stays claimable by the right person.
+    const invitedEmailRaw = (invite as unknown as { recipientEmail?: unknown }).recipientEmail;
+    const invitedEmail = typeof invitedEmailRaw === "string" ? invitedEmailRaw.trim() : "";
+    if (invitedEmail) {
+      const claimer = (await UserModel.findById(new Types.ObjectId(actor.userId))
+        .select({ email: 1 })
+        .lean()) as { email?: string | null } | null;
+      const claimerEmail = typeof claimer?.email === "string" ? claimer.email.trim() : "";
+      // No address on the account is a mismatch too, not a pass: an account we cannot name cannot
+      // be shown to be the invited one.
+      if (!claimerEmail || mailbox(claimerEmail) !== mailbox(invitedEmail)) {
+        debugLog(1, "[api/org-invites/claim] recipient mismatch", { inviteId: String((invite as unknown as { _id: unknown })._id) });
+        return NextResponse.json(
+          {
+            error: "This invite was sent to a different email address. Sign in with the address it was sent to, or ask an admin of the workspace to invite this account.",
+            code: "INVITE_EMAIL_MISMATCH",
+          },
+          { status: 403, headers: { "cache-control": "no-store" } },
+        );
+      }
+    }
 
     const now = new Date();
     const userId = new Types.ObjectId(actor.userId);

@@ -15,7 +15,9 @@
  * the address of the customer's document, so `state=active&kind=doc&limit=200`, filtered to the
  * rows reporting no password, was a page of documents anyone on the staff could open — with the
  * reads landing in the owner's analytics as anonymous recipient views. A slug an admin was actually
- * given still works as a search term above; it just does not come back in the rows.
+ * given still works as a search term above; it just does not come back in the rows, and it is
+ * matched whole rather than as a substring — see `searchClauses` for why that distinction is the
+ * whole of the protection.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -53,6 +55,32 @@ function asPositiveInt(v: unknown): number | null {
 /** Escapes a string for safe use inside a RegExp literal (search terms are user input). */
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The `$or` behind `?q=`: substring over the labels, whole-value equality over the slug.
+ *
+ * Redaction stopped *returning* `shareId`, and then the filter beside it handed the same value back
+ * one character at a time. An unanchored `new RegExp(q, "i")` over a field the caller cannot read is
+ * an extraction oracle: pick a row with a two-character `q`, extend the substring by one character
+ * and keep whichever of the 62 candidates leaves that row's `id` in the response. `newShareId()` is
+ * `randomBase62(12)`, so a slug falls out in ~12 x 62 unthrottled requests, after which
+ * `/s/<shareId>` renders the customer's document — exactly the thing dropping the column withheld.
+ *
+ * Equality closes it without costing the workflow the header promises: paste a slug a customer or a
+ * colleague handed you, find its row. A whole-value match confirms only a value the caller already
+ * had, so it carries no information back. It is case-sensitive because base62 slugs are — folding
+ * case here would quietly match a different link than the one that was pasted.
+ *
+ * `label` and `audience` stay substring searches: they are staff-authored text that comes back in
+ * every row anyway, so a regex over them reveals nothing the response does not already say.
+ *
+ * Written as `{ $eq: q }` rather than a bare `q`: the operator says *match this value*, and the
+ * source scan in `tests/lib/adminRouteSecrets.test.ts` reads these four files for that shape.
+ */
+function searchClauses(q: string): Record<string, unknown>[] {
+  const rx = new RegExp(escapeRegex(q), "i");
+  return [{ label: rx }, { audience: rx }, { shareId: { $eq: q } }];
 }
 
 /** Read a stored value that should be a trimmed string, or null. */
@@ -133,8 +161,7 @@ export async function GET(request: Request) {
     // A regex rather than the `sharelinks_label_audience_text` index: that index tokenises whole
     // words only and does not cover `shareId`, and an admin looking a link up usually has a slug or
     // a fragment of a label. The `.limit()` below keeps the scan bounded.
-    const rx = new RegExp(escapeRegex(q), "i");
-    and.push({ $or: [{ label: rx }, { audience: rx }, { shareId: rx }] });
+    and.push({ $or: searchClauses(q) });
   }
 
   const filter: Record<string, unknown> = and.length ? { $and: and } : {};

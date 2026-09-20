@@ -7,7 +7,8 @@
  * public slug — are selected to answer "is this repo live?" and then dropped. They used to come
  * back in every row, and the page turned the upload token into a clickable `/request/:token`, so
  * the listing was a set of working write capabilities into other people's workspaces. Either token
- * still works as a search term: matching one an admin was handed is a lookup, not a handout.
+ * still works as a search term: matching one an admin was handed *whole* is a lookup, not a handout
+ * — matching a fragment of one was a handout in instalments; see `searchClauses`.
  */
 import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
@@ -27,6 +28,29 @@ function asPositiveInt(v: unknown): number | null {
   if (!Number.isFinite(n)) return null;
   const i = Math.floor(n);
   return i >= 1 ? i : null;
+}
+
+/**
+ * The `$or` behind `?q=`: substring over the names the rows already show, whole-value equality over
+ * the two fields whose *value is the access*. Same clause, same reasoning, as the projects listing.
+ *
+ * `shareId` and `requestUploadToken` are stripped from every row below and then were handed back by
+ * the filter a character at a time: with an unanchored `new RegExp(q, "i")`, a caller picks a row
+ * with a two-character `q`, extends the substring by one character and keeps whichever of the 62
+ * candidates keeps that row's `id` in the response. Both tokens are base62 (12 and 24 characters),
+ * so ~12 x 62 and ~24 x 62 unthrottled requests recover them — and the upload token is the worse of
+ * the two, because `POST /api/requests/:token/uploads` mints a fresh `uploadSecret`, a session-less
+ * write into a customer's repo with no expiry and no revocation.
+ *
+ * Equality keeps the lookup this header promises and returns nothing new: a whole-value match only
+ * confirms a token the caller already held. Case-sensitive, because base62 is.
+ *
+ * Written as `{ $eq: q }` rather than a bare `q`: the operator says *match this value*, and the
+ * source scan in `tests/lib/adminRouteSecrets.test.ts` reads these four files for that shape.
+ */
+function searchClauses(q: string): Record<string, unknown>[] {
+  const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  return [{ name: rx }, { slug: rx }, { shareId: { $eq: q } }, { requestUploadToken: { $eq: q } }];
 }
 
 /**
@@ -55,20 +79,18 @@ export async function GET(request: Request) {
   );
 
   // Request repos are stored as Projects with request-only fields (e.g. requestUploadToken).
-  const filter: Record<string, unknown> = {
+  const isRequestRepo: Record<string, unknown> = {
     $or: [{ isRequest: true }, { requestUploadToken: { $exists: true, $ne: null } }],
   };
 
-  if (q) {
-    const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-    filter.$and = [
-      filter,
-      {
-        $or: [{ name: rx }, { slug: rx }, { shareId: rx }, { requestUploadToken: rx }],
-      },
-    ];
-    delete filter.$or;
-  }
+  // Two fragments, each with its own `$or`, so they go under `$and` rather than being merged — a
+  // bare merge drops one. Built as a fresh object because the previous shape pushed `filter` into
+  // its own `$and` and then deleted the `$or` it had just captured: `$and[0]` ended up pointing at
+  // the filter itself (a cyclic document the driver cannot serialise) with the discriminator gone,
+  // so a search neither narrowed to request repos nor, in fact, ran.
+  const filter: Record<string, unknown> = q
+    ? { $and: [isRequestRepo, { $or: searchClauses(q) }] }
+    : isRequestRepo;
 
   const total = await ProjectModel.countDocuments(filter);
   const items = await ProjectModel.find(filter)

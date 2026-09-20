@@ -21,6 +21,7 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import crypto from "node:crypto";
 
+import { isBlobStoreHost } from "@/lib/blob/serverClientUploadRoute";
 import { recordActivity } from "@/lib/activity/log";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
@@ -39,6 +40,30 @@ export const runtime = "nodejs";
 const DOWNLOAD_TRACK_PER_LINK_LIMIT = 30;
 const DOWNLOAD_TRACK_PER_IP_LIMIT = 120;
 const DOWNLOAD_TRACK_WINDOW_MS = 60_000;
+
+/** Vercel Blob's public CDN, and the bare host on rows written before the store id was pinned. */
+const VERCEL_BLOB_HOST = "blob.vercel-storage.com";
+
+/**
+ * Which stored `Doc.blobUrl` this route is willing to go and *dereference*. The twin of the same
+ * function on `/s/:shareId/pdf`, which carries the full rationale; the short version is that this
+ * route streams `upstream.body` back to an unauthenticated caller, `blobUrl` was owner-supplied
+ * text until recently, and rows poisoned while it was still patchable are a live
+ * arbitrary-outbound-GET-with-body-return until the *read* side refuses them. `isBlobStoreHost` is
+ * the write path's own authority, reused rather than restated so the two cannot drift.
+ */
+function blobFetchUrl(candidate: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  const host = url.hostname.toLowerCase();
+  if (isBlobStoreHost(host)) return url;
+  return host === VERCEL_BLOB_HOST || host.endsWith(`.${VERCEL_BLOB_HOST}`) ? url : null;
+}
 
 function utcDayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -213,6 +238,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
   const blobUrl = typeof doc.blobUrl === "string" ? doc.blobUrl : "";
   if (!blobUrl) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
+  // A pointer we will not dereference is the same answer as no pointer — see `blobFetchUrl`. Here,
+  // beside the empty check and ahead of the analytics writes, so a refused row is never counted as
+  // a download and never escapes this handler as a 500 from an unresolvable host. The owner sees
+  // the viewer's "PDF not available" until the file is re-uploaded through the validated path.
+  const pdfUrl = blobFetchUrl(blobUrl);
+  if (!pdfUrl) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
   // PRD decision 3: the project link's flag governs every document opened through it. A document
   // whose own link allows downloads is still not downloadable to *this* audience unless the sender
@@ -345,7 +376,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
   // Range passes through untouched: pdf.js depends on it, and the limiter above only decided whether
   // this chunk counted, never whether it is served.
-  const upstream = await fetch(blobUrl, { headers: rangeHeader ? { range: rangeHeader } : undefined, cache: "no-store" });
+  const upstream = await fetch(pdfUrl, { headers: rangeHeader ? { range: rangeHeader } : undefined, cache: "no-store" });
 
   const headers = new Headers();
   // Pinned, not copied. These routes serve one thing — the stored PDF — so echoing the upstream

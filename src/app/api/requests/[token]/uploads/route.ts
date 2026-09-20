@@ -247,6 +247,30 @@ export async function POST(
           title,
           status: "draft",
           shareId: newDocShareId(),
+          // Off, explicitly — the document half of the answer `src/app/api/requests/route.ts`
+          // already writes for the repo itself. A submission is something a stranger pushed at the
+          // owner, not something the owner published, and it used to arrive public: the field was
+          // simply absent, the schema default is `true` (src/lib/models/Doc.ts), and `/s/:shareId`
+          // finds no `ShareLink` row, falls back to `Doc.findOne({ shareId })` and has
+          // `ensureDefaultLink` materialise one with `enabled: doc.shareEnabled !== false`
+          // (src/lib/share/links.ts) — enabled, no password, no expiry, no sign-in. The owner could
+          // not even take it down, because the doc page hides `DocSharePanel` for received
+          // documents. `false` makes that lazily-created link born disabled *and*
+          // `disabledByDocSwitch: true`, so `resolveShareLink` refuses it and `setAllLinksEnabled`
+          // could restore it later if the product ever gives the owner that switch.
+          //
+          // The slug still gets written: `Doc.shareId` is unique and every reader expects one. It
+          // just addresses nothing until the owner says otherwise.
+          //
+          // Nothing the owner or the sender actually uses goes through this field — the
+          // request-view link and its PDF route both match on `receivedViaRequestProjectId` plus
+          // `isDeleted`/`isArchived` (src/app/request-view/[token]/page.tsx,
+          // src/app/api/request-view/[token]/docs/[docId]/pdf/route.ts), and the owner's own doc
+          // page is org-scoped. The one behaviour that does change is the Free shared-document cap
+          // (`getWorkspaceUsage` counts `shareEnabled: { $ne: false }`): submissions stop consuming
+          // the owner's three slots, which is the right way round — an outsider should not be able
+          // to spend the owner's cap by uploading.
+          shareEnabled: false,
           projectId,
           projectIds: [projectId],
           receivedViaRequestProjectId: projectId,
