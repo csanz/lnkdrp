@@ -365,6 +365,7 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
   // document it is on — lead to the same page, and left no way to reach the link itself.
   const isLinkRow = item.type.startsWith("share_link.");
   const href = (isLinkRow ? linkMetricsHref : null) ?? hrefFor(item);
+  const readerHref = item.readerHref ?? null;
   const docHref = item.doc?.id && !docGone ? `/doc/${encodeURIComponent(item.doc.id)}` : null;
 
   const linkClass = "font-semibold text-[var(--fg)] hover:underline underline-offset-4";
@@ -421,7 +422,16 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
       <ActorAvatar item={item} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] leading-5 text-[var(--muted)]">
-          <span className="font-medium text-[var(--fg)]">{s.subject}</span>
+          {/* The person, where there is a page about them: a viewer row names someone who opened
+              something, and what they did is a page away. Without this the feed could say Tester
+              Dude read the deck and offer no way to ask what they read. */}
+          {readerHref ? (
+            <Link href={readerHref} className="font-medium text-[var(--fg)] underline-offset-4 hover:underline" title="See what they read">
+              {s.subject}
+            </Link>
+          ) : (
+            <span className="font-medium text-[var(--fg)]">{s.subject}</span>
+          )}
           <span>{s.verb}</span>
           {objectNode}
           {suffixNode}

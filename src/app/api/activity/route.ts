@@ -75,7 +75,38 @@ const RECIPIENT_TYPES: ReadonlySet<string> = new Set([
   "share.downloaded",
   "project.landed",
   "share.unlocked",
+  // An introduction is a recipient's row like any other: it carries their name, it must follow the
+  // identity gate, and the person it names has a reader page worth reaching.
+  "viewer.introduced",
 ]);
+
+/**
+ * The page about the person on a recipient row, when there is one.
+ *
+ * Computed here rather than in the browser because `meta.viewerKey` — the device digest this is
+ * built from — is deleted before the row is sent, and should stay deleted: the client has no use
+ * for a raw identifier, only for the address it points at.
+ *
+ * Which page depends on where the reading is counted, not on which row this is. A document opened
+ * through a project link belongs to the project (`docScope.ts`), and those rows carry a
+ * `projectId`. The key matches how the reader pages are addressed: `u_<userId>` for a signed-in
+ * reader, `a_<digest>` otherwise, with the `<digest>.<docId>` composite a project link writes
+ * reduced back to the person.
+ */
+function readerHrefFor(
+  type: string,
+  meta: Record<string, unknown>,
+  ids: { userId: string | null; docId: string | null; projectId: string | null },
+): string | null {
+  if (!RECIPIENT_TYPES.has(type)) return null;
+  const rawKey = typeof meta.viewerKey === "string" ? meta.viewerKey.trim() : "";
+  const digest = splitProjectViewerKey(rawKey).botIdHash;
+  const key = meta.authenticated === true && ids.userId ? `u_${ids.userId}` : digest ? `a_${digest}` : null;
+  if (!key) return null;
+  if (ids.projectId) return `/project/${encodeURIComponent(ids.projectId)}/metrics/viewer/${key}`;
+  if (ids.docId) return `/doc/${encodeURIComponent(ids.docId)}/metrics/viewer/${key}`;
+  return null;
+}
 
 export async function GET(request: Request) {
   try {
@@ -277,12 +308,23 @@ export async function GET(request: Request) {
       const uid = r.userId && !hideIdentity ? String(r.userId) : null;
       const u = uid ? userById.get(uid) ?? null : null;
       let meta = r.meta && typeof r.meta === "object" ? { ...(r.meta as Record<string, unknown>) } : {};
+      /** Their metrics page, filled in below for recipient rows on a workspace that can see who they are. */
+      let readerHref: string | null = null;
       if (isRecipientRow) {
         const known =
           typeof meta.viewerKey === "string" && typeof meta.shareId === "string"
             ? viewerByKey.get(`${meta.shareId}:${splitProjectViewerKey(meta.viewerKey).botIdHash}`)
             : undefined;
         if (known && !meta.viewerName) meta = { ...meta, viewerName: known.name, viewerEmail: meta.viewerEmail ?? known.email };
+        // Behind the same gate as the name: on Free the row says "Someone", and a link to a reader
+        // page that would identify them is the identity gate with an extra step.
+        if (showViewerIdentity) {
+          readerHref = readerHrefFor(String(r.type), meta, {
+            userId: r.userId ? String(r.userId) : null,
+            docId: r.docId ? String(r.docId) : null,
+            projectId: r.projectId ? String(r.projectId) : null,
+          });
+        }
         delete meta.viewerKey;
         if (hideIdentity) {
           delete meta.viewerName;
@@ -321,6 +363,7 @@ export async function GET(request: Request) {
           : null,
         project: pid ? { id: pid, name: p?.name ?? (isProjectEvent ? r.title ?? null : null) } : null,
         meta,
+        readerHref,
       };
     });
 

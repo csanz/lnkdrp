@@ -68,6 +68,12 @@ export type ActivityItem = {
   doc: { id: string; title: string | null; shareId: string | null; deleted?: boolean } | null;
   project: { id: string; name: string | null } | null;
   meta: Record<string, unknown>;
+  /**
+   * The page about the person this row names, when there is one — the same reader page the metrics
+   * lists lead to. Built by `/api/activity` (from `meta.viewerKey`, which is deleted before the row
+   * is sent) and absent on a workspace that cannot see viewer identities.
+   */
+  readerHref?: string | null;
 };
 
 /** Sentence fragments for one activity row (rendered as `subject verb object`). */

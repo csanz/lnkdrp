@@ -245,6 +245,9 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               title: typeof project.name === "string" ? project.name : null,
               meta: {
                 changed: news.changed,
+                // See `project.landed` below: the person, so the feed can reach their reader page.
+                viewerKey: botIdHash,
+                authenticated: Boolean(viewerUserId),
                 viewerName: introName,
                 viewerEmail: introEmail,
                 shareId,

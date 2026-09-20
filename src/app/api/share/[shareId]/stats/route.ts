@@ -451,6 +451,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               title: typeof (doc as any)?.title === "string" ? String((doc as any).title) : null,
               meta: {
                 changed: identityNews.changed,
+                // The person, so the feed can link their name to their reader page — and so a name
+                // given later renames this row too (the `viewerKey` join in /api/activity).
+                viewerKey: botIdHash,
+                authenticated: Boolean(viewerUserId),
                 viewerName: viewerNameIntro,
                 viewerEmail: viewerEmail,
                 shareId,
