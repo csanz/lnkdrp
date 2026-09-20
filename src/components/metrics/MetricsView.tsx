@@ -195,6 +195,8 @@ type MetricsResponse = {
       projectId: string | null;
       projectName: string | null;
       views: number;
+      /** Distinct pages they reached through the project's link; the badge needs the denominator. */
+      pagesViewed?: number;
       timeSpentMs?: number;
       lastViewedAt: string | null;
       viewerName?: string | null;
@@ -1269,9 +1271,9 @@ const VIEWERS_PAGE_SIZE = 25;
         key: `p:${v.shareId}:${i}`,
         title: name || email || "Anonymous viewer",
         subtitle: name && email ? email : null,
-        stats: countsLine(v.views ?? 0, null, v.timeSpentMs ?? 0),
+        stats: countsLine(v.views ?? 0, v.pagesViewed ?? null, v.timeSpentMs ?? 0),
         timeMs: v.timeSpentMs ?? 0,
-        pages: null,
+        pages: v.pagesViewed ?? null,
         lastSeen: v.lastViewedAt,
         via: v.projectName || "Project",
         href: v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null,
@@ -1334,7 +1336,7 @@ const VIEWERS_PAGE_SIZE = 25;
         via: v.projectName || "Project",
         viaHref: v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null,
         timeMs: v.timeSpentMs ?? 0,
-        pages: null,
+        pages: v.pagesViewed ?? null,
         // No drawer and no page for them here: their reading is recorded against the project, and
         // the project's own metrics is where it can be opened properly.
         onOpen: v.projectId ? () => router.push(`/project/${encodeURIComponent(v.projectId!)}/metrics`) : undefined,
@@ -2341,90 +2343,6 @@ const VIEWERS_PAGE_SIZE = 25;
 
                 Identity follows the same gate as the rest of the page — on Basic the server never
                 sends names, so the counts and the "via <project>" grouping are all this shows. */}
-            {!isProject && projectLinkTraffic ? (
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">THROUGH PROJECT LINKS</div>
-                  <div className="mt-1 text-3xl font-semibold tabular-nums text-[var(--fg)]">
-                    {projectLinkTraffic.views.toLocaleString()}
-                  </div>
-                  <div className="mt-2 text-sm text-[var(--muted)]">
-                    Read by <span className="tabular-nums">{projectLinkTraffic.viewers.toLocaleString()}</span>{" "}
-                    {projectLinkTraffic.viewers === 1 ? "person" : "people"} who opened a project this document is in.
-                    These are counted on the project, not in the numbers above.
-                  </div>
-                </div>
-
-                <div className="mt-4 grid gap-x-6 gap-y-3 border-t border-[var(--border)] pt-4 sm:grid-cols-2">
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                      Which project link
-                    </div>
-                    <ul className="mt-2 space-y-2">
-                      {projectLinkTraffic.links.map((l) => (
-                        <li key={l.shareId} className="flex items-baseline justify-between gap-3 text-[13px]">
-                          {l.href ? (
-                            <Link
-                              href={l.href}
-                              className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
-                            >
-                              {l.projectName ?? l.label ?? "Project link"}
-                            </Link>
-                          ) : (
-                            <span className="min-w-0 truncate text-[var(--muted)]">
-                              {l.projectName ?? l.label ?? "Project link"}
-                            </span>
-                          )}
-                          <span className="shrink-0 whitespace-nowrap tabular-nums text-[var(--muted)]">
-                            {l.views.toLocaleString()} view{l.views === 1 ? "" : "s"} · {relativeAge(l.lastViewedAt)}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  {/* Who they were. Empty on Basic — the server sent no names — so the column is
-                      simply absent there rather than a row of blanks. */}
-                  {deepAnalytics && projectLinkTraffic.viewerRows.some((v) => v.viewerName || v.viewerEmail) ? (
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
-                        Who read it there
-                      </div>
-                      <ul className="mt-2 space-y-2">
-                        {projectLinkTraffic.viewerRows
-                          .filter((v) => v.viewerName || v.viewerEmail)
-                          .slice(0, 5)
-                          .map((v, i) => (
-                            <li key={`${v.shareId}:${v.viewerEmail ?? v.viewerName ?? i}`} className="text-[13px]">
-                              <div className="flex items-baseline justify-between gap-3">
-                                <span className="min-w-0 truncate font-medium text-[var(--fg)]">
-                                  {v.viewerName || v.viewerEmail}
-                                </span>
-                                <span className="shrink-0 whitespace-nowrap text-[var(--muted)]">
-                                  {relativeAge(v.lastViewedAt)}
-                                </span>
-                              </div>
-                              <div className="mt-0.5 flex items-baseline gap-2 text-[12px] text-[var(--muted)]">
-                                {v.projectName ? (
-                                  <span className="min-w-0 truncate rounded-full border border-[var(--border)] px-2 py-0.5">
-                                    via {v.projectName}
-                                  </span>
-                                ) : null}
-                                <span className="shrink-0 tabular-nums">
-                                  {v.views.toLocaleString()} view{v.views === 1 ? "" : "s"}
-                                </span>
-                                {v.timeSpentMs ? (
-                                  <span className="shrink-0 tabular-nums">{formatDurationShort(v.timeSpentMs)}</span>
-                                ) : null}
-                              </div>
-                            </li>
-                          ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
 
             {/* The project's second ranking, directly under LINKS and built to the same pattern:
                 a document's story is told by page, a project's by *document*. "Which file did they

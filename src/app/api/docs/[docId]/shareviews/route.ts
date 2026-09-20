@@ -907,6 +907,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   views: { $sum: 1 },
                   lastSeen: { $max: LAST_ACTIVITY_EXPR },
                   timeSpentMs: { $sum: { $ifNull: ["$timeSpentMs", 0] } },
+                  /**
+                   * How much of the document they reached, through the project's link.
+                   *
+                   * Without it the UI judges a visit by its total alone, and 58 seconds spread
+                   * across nine pages reads like a minute spent on one — a skim labelled as a
+                   * read. Distinct pages, because a reader who returns to page 3 has not seen a
+                   * fourth page.
+                   */
+                  pagesSeen: { $addToSet: "$pagesSeen" },
                   ...(includeViewers
                     ? {
                         viewerName: { $first: "$viewerName" },
@@ -923,6 +932,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               views: number;
               lastSeen?: Date | null;
               timeSpentMs?: number;
+              /** `$addToSet` over an array field: an array of each row's `pagesSeen`. */
+              pagesSeen?: unknown[];
               viewerName?: string | null;
               viewerEmailSnapshot?: string | null;
               viewerEmail?: string | null;
@@ -968,11 +979,20 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               const seen = r.lastSeen ? new Date(r.lastSeen).toISOString() : null;
               if (seen && (!g.lastViewedAt || seen > g.lastViewedAt)) g.lastViewedAt = seen;
               groups.set(shareId, g);
+              // `$addToSet` over an array field gives an array of arrays; flatten and de-duplicate.
+              const pagesViewed = new Set<number>();
+              for (const group of (r.pagesSeen ?? []) as unknown[]) {
+                for (const page of Array.isArray(group) ? group : [group]) {
+                  const n = Number(page);
+                  if (Number.isFinite(n) && n >= 1) pagesViewed.add(Math.floor(n));
+                }
+              }
               viewers.push({
                 shareId,
                 projectId,
                 projectName,
                 views: r.views,
+                pagesViewed: pagesViewed.size,
                 timeSpentMs: Math.max(0, Math.floor(r.timeSpentMs ?? 0)),
                 lastViewedAt: seen,
                 ...(includeViewers
