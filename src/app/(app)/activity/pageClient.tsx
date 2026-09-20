@@ -423,10 +423,19 @@ function ActivityRow({ item, enter = "none" }: { item: ActivityItem; enter?: Row
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[13px] leading-5 text-[var(--muted)]">
           {/* The person, where there is a page about them: a viewer row names someone who opened
-              something, and what they did is a page away. Without this the feed could say Tester
-              Dude read the deck and offer no way to ask what they read. */}
+              something, and what they did is a page away.
+
+              Underlined at rest, not only on hover. It shipped styled exactly like the plain text
+              beside it, which made a working link invisible — reported as "you still don't show the
+              link" while it was already there. A dotted rule is the quiet version of the object
+              links further along the sentence: enough to say this name goes somewhere, not enough
+              to compete with the document title. */}
           {readerHref ? (
-            <Link href={readerHref} className="font-medium text-[var(--fg)] underline-offset-4 hover:underline" title="See what they read">
+            <Link
+              href={readerHref}
+              title="See what they read"
+              className="font-medium text-[var(--fg)] underline decoration-dotted decoration-[var(--muted-2)] underline-offset-4 transition-colors hover:decoration-solid hover:decoration-[var(--fg)]"
+            >
               {s.subject}
             </Link>
           ) : (

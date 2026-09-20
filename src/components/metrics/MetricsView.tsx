@@ -921,10 +921,7 @@ function LockedViewersBlock({
       aria-label="Viewers"
       aria-busy={pending || loading}
     >
-      <div className="flex items-center gap-2 text-sm font-semibold text-[var(--fg)]">
-        Viewers
-        <ReadingLegendButton />
-      </div>
+      <div className="text-sm font-semibold text-[var(--fg)]">Viewers</div>
       {pending || loading ? (
         <div
           className="mt-1.5 h-4 w-64 rounded bg-[var(--panel-hover)] motion-safe:animate-pulse"
@@ -3272,14 +3269,11 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                     They are one list now, newest first, and what distinguishes them travels on the
                     row: the depth badge, the project chip, and whether a name is known. */}
                 <div className="mt-1" id="viewer-lists">
-                  <div className="text-sm font-semibold text-[var(--fg)]">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[var(--fg)]">
                     Viewers
+                    <ReadingLegendButton />
                   </div>
-                  <div className="mt-1 text-sm text-[var(--muted)]">
-                    Everyone who opened this {nounLower} in this window, newest
-                    first. A project chip means they came in through that
-                    project, where the read is counted.
-                  </div>
+                  <div className="mt-1 text-sm text-[var(--muted)]">Everyone who opened it, newest first.</div>
 
                   <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                     {loading ? (
@@ -3409,7 +3403,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
       >
         <div className="text-base font-semibold text-[var(--fg)]">Viewers</div>
         <div className="mt-1 text-sm text-[var(--muted)]">
-          Everyone who opened this {nounLower} in this window, newest first.
+          Everyone who opened it, newest first.
         </div>
         <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
           {!allViewerRows.length ? (
