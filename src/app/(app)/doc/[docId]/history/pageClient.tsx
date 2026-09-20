@@ -160,6 +160,8 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
   const [viewerStatsLoading, setViewerStatsLoading] = useState(false);
   const [viewerStatsError, setViewerStatsError] = useState<string | null>(null);
   const [rerunTierById, setRerunTierById] = useState<Record<string, "basic" | "standard" | "advanced">>({});
+  /** The revision id most recently copied, so the chip can confirm it rather than flash nothing. */
+  const [copiedRevisionId, setCopiedRevisionId] = useState<string | null>(null);
   const [defaultHistoryTier, setDefaultHistoryTier] = useState<"basic" | "standard" | "advanced">("standard");
   const [rerunBusyById, setRerunBusyById] = useState<Record<string, boolean>>({});
   const [rerunErrorById, setRerunErrorById] = useState<Record<string, string>>({});
@@ -681,7 +683,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                   <span className="text-[var(--muted)]">Not compared yet. Expand to run AI compare on this version.</span>
                                 )}
                               </div>
-                              {(uploaderLabel || timeLabel || it.fileLabel) ? (
+                              {(uploaderLabel || timeLabel || it.fileLabel || it.id) ? (
                                 <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--muted)]">
                                   {uploaderLabel ? (
                                     <span>
@@ -698,6 +700,31 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                     <span className="tabular-nums" title="File size (and the change from the previous version)">
                                       {it.fileLabel}
                                     </span>
+                                  ) : null}
+                                  {/*
+                                    The revision's own id. "v5" is the document's count of versions,
+                                    which repeats across every document in the workspace, so it is
+                                    not something you can look a row up by — when a summary reads
+                                    wrong this is the only handle that names the row that produced
+                                    it. Shown as the last six characters because that is enough to
+                                    match one against a log line; the click copies the whole id.
+                                  */}
+                                  {it.id ? (
+                                    <button
+                                      type="button"
+                                      className="font-mono text-[10px] tracking-tight text-[var(--muted-2)] underline decoration-dotted underline-offset-2 hover:text-[var(--fg)]"
+                                      title={`Revision ${it.id} — click to copy`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void navigator.clipboard?.writeText(it.id);
+                                        setCopiedRevisionId(it.id);
+                                        window.setTimeout(() => {
+                                          setCopiedRevisionId((cur) => (cur === it.id ? null : cur));
+                                        }, 1200);
+                                      }}
+                                    >
+                                      {copiedRevisionId === it.id ? "copied" : `#${it.id.slice(-6)}`}
+                                    </button>
                                   ) : null}
                                 </div>
                               ) : null}
