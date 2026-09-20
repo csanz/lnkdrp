@@ -29,6 +29,7 @@ import { Types, type PipelineStage } from "mongoose";
 
 import { projectLinkSlugsForOrg } from "@/lib/analytics/docScope";
 import { loadContributors } from "./contributors";
+import { PROJECT_ANON_KEY_EXPR } from "@/lib/analytics/project/viewerKey";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   activityWindowMatch,
@@ -404,8 +405,11 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   /**
    * Opens, reading time and returning readers, in one scan of the window's visits.
    *
-   * One row per tab session, so `opens` counts events and `readingTimeMs` is time read *inside* the
-   * window rather than the lifetime of the readers who happened to be active in it.
+   * One row per tab session **per document**, which is the detail these two facets turn on. A
+   * project link keys its rows by `<digest>.<docId>` so three files behind one slug do not collide
+   * (`projectViewerKey`), and its `visitIdHash` is stored per link — so one sitting in a data room
+   * that opened two documents is two rows sharing a visit id. `readingTimeMs` is time read *inside*
+   * the window rather than the lifetime of the readers who happened to be active in it.
    *
    * `returning` counts readers, and is counted rather than derived. `opens - views` is the *surplus
    * sessions*, which is a different number and always the larger one: on the seed workspace's 30-day
@@ -414,10 +418,38 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
    * here is the same reader the view and viewer counts are built on.
    */
   const visitFacetStage: Record<string, PipelineStage.FacetPipelineStage[]> = {
-    byDay: [{ $group: { _id: VISIT_DAY_KEY_EXPR, opens: { $sum: 1 }, readingTimeMs: VISIT_TIME_SUM_EXPR } }],
+    /**
+     * Sessions, not rows.
+     *
+     * `$sum: 1` over the rows called one sitting in a data room two opens, because that sitting
+     * wrote a row per document. `docs/METRICS.md` defines Opens as tab sessions, and the project
+     * route already collapses them the same way (`countSessions`) — this was the surface still
+     * answering a different question with the same word. Measured on the launch workspace's
+     * 30-day window: 39 rows, 37 sessions.
+     *
+     * The time is summed across the session's rows rather than deduped with it: each row holds the
+     * time spent in its own document, and the sitting's reading time is their total.
+     *
+     * Grouping by the day of each row means a session straddling midnight is counted on both days,
+     * which is what a per-day series should say.
+     */
+    byDay: [
+      {
+        $group: {
+          _id: { day: VISIT_DAY_KEY_EXPR, shareId: "$shareId", visit: "$visitIdHash" },
+          readingTimeMs: VISIT_TIME_SUM_EXPR,
+        },
+      },
+      { $group: { _id: "$_id.day", opens: { $sum: 1 }, readingTimeMs: { $sum: "$readingTimeMs" } } },
+    ],
     // Same split as the view facet's `byDoc`, and for the same reason: the ranked row's opens and
     // reading time have to come from the document's own links, or a row reconciles on views and
     // disagrees on everything beside them.
+    //
+    // No session collapse here, unlike `byDay` above: a row is already one session *per document*,
+    // and this facet is per document. Deduping on `{docId, shareId, visitIdHash}` changes nothing —
+    // 39 rows, 39 per-document sessions on the same window that has 37 sittings — and a sitting
+    // that opened two documents is genuinely one open of each.
     byDoc: [
       {
         $group: {
@@ -429,9 +461,37 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
         },
       },
     ],
+    /**
+     * Readers who came back: more than one *sitting*, by a person rather than by a stored key.
+     *
+     * Both halves were wrong in the same direction. The key was `LINK_VIEWER_KEY_EXPR`, which on a
+     * project link carries the document (`<digest>.<docId>`), so one reader split into one "reader"
+     * per file they opened — the same mistake `linkReaderKeyExpr` exists to fix a hundred lines
+     * above, with a comment saying so. And the count was of rows, so a single sitting that opened
+     * two documents already looked like a return visit. On the launch workspace both compounded:
+     * 3 readers reported, 2 real.
+     *
+     * Sessions first, then readers with more than one. The reader stays link-scoped, so "a reader"
+     * here is still the reader the view and viewer counts are built on.
+     */
     returning: [
-      { $group: { _id: LINK_VIEWER_KEY_EXPR, opens: { $sum: 1 } } },
-      { $match: { opens: { $gt: 1 } } },
+      {
+        $group: {
+          _id: {
+            shareId: "$shareId",
+            viewer: {
+              $cond: [
+                { $ne: [{ $ifNull: ["$viewerUserId", null] }, null] },
+                { $concat: ["u:", { $toString: "$viewerUserId" }] },
+                { $concat: ["a:", PROJECT_ANON_KEY_EXPR] },
+              ],
+            },
+            visit: "$visitIdHash",
+          },
+        },
+      },
+      { $group: { _id: { shareId: "$_id.shareId", viewer: "$_id.viewer" }, sessions: { $sum: 1 } } },
+      { $match: { sessions: { $gt: 1 } } },
       { $count: "n" },
     ],
   };
