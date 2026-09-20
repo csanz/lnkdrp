@@ -162,6 +162,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
              * the page they are still sitting on is knowable without any new write. Falls back to
              * the segment's own page for a flush that was not a turn (a tab hidden, a reload),
              * where the last page they were on is the best answer there is.
+             *
+             * And falls back once more to the furthest page seen, because a document with ONE page
+             * never produces an event at all — there is nowhere to turn to — so the live half of
+             * the reader page went dark for exactly the documents where it is easiest to be sure.
+             * An exit is evidence and a page seen is an inference, which is why it is last.
              */
             currentPage: (() => {
               const events = Array.isArray(v.pageEvents) ? v.pageEvents : [];
@@ -169,7 +174,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               const to = Number(last?.toPage);
               if (Number.isFinite(to) && to >= 1) return Math.floor(to);
               const on = Number(last?.pageNumber);
-              return Number.isFinite(on) && on >= 1 ? Math.floor(on) : null;
+              if (Number.isFinite(on) && on >= 1) return Math.floor(on);
+              const seen = Array.isArray(v.pagesSeen) ? (v.pagesSeen as number[]).filter((n) => Number.isFinite(n) && n >= 1) : [];
+              return seen.length ? Math.max(...seen) : null;
             })(),
             /** What the viewer reported the document's length to be, for "page 4 of 9". */
             pageCount: Number.isFinite(Number(v.pageCount)) && Number(v.pageCount) > 0 ? Math.floor(Number(v.pageCount)) : null,

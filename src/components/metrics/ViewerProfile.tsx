@@ -128,6 +128,13 @@ export default function ViewerProfile({
     return () => window.clearInterval(id);
   }, [readingAt]);
 
+  // The ticker has to run on a freshly loaded page too, where the answer comes from the sessions
+  // rather than from a frame that has not arrived yet.
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 5_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   /**
    * A refresh the world asked for keeps what is on screen.
    *
@@ -440,7 +447,25 @@ export default function ViewerProfile({
    * shorter window would blink the indicator off between beats of someone who never stopped
    * reading. The interval above re-renders this so it can lapse by itself.
    */
-  const readingNow = readingAt !== null && Date.now() - readingAt < 60_000;
+  /**
+   * When this reader last moved — from a `reading` frame, or from the newest session if none has
+   * arrived yet.
+   *
+   * A frame is the live signal, and there is no frame at the moment the page loads: arriving while
+   * someone is halfway through a document, the page said only "Live" and knew nothing about a
+   * reader until their next heartbeat, up to thirty seconds later. The newest session's last event
+   * is the same fact, already fetched, and it is what makes the reader's document open itself the
+   * moment you land here rather than half a minute in.
+   */
+  const lastMoveAt = useMemo(() => {
+    const fromFrame = readingAt;
+    const newest = visits[0];
+    const fromVisit = parseIsoMs(newest?.lastEventAt ?? newest?.endedAt ?? null);
+    if (fromFrame === null) return fromVisit;
+    if (fromVisit === null) return fromFrame;
+    return Math.max(fromFrame, fromVisit);
+  }, [readingAt, visits]);
+  const readingNow = lastMoveAt !== null && Date.now() - lastMoveAt < 60_000;
   /**
    * Where they are right now, from the newest session.
    *

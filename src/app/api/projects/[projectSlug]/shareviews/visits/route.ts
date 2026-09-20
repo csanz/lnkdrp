@@ -151,11 +151,28 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
        */
       const events = Array.isArray(r.pageEvents) ? (r.pageEvents as Array<Record<string, unknown>>) : [];
       const last = events.length ? events[events.length - 1] : null;
-      if (last && docId) {
+      const seen = Array.isArray(r.pagesSeen) ? (r.pagesSeen as number[]).filter((n) => Number.isFinite(n) && n >= 1) : [];
+      /**
+       * A page event is the usual answer, and a document with one page never produces one.
+       *
+       * The events are exits, so a reader who has nowhere to turn to writes none at all — and the
+       * whole live half of this page went dark for one-page documents: no "on page 1 of 1", no
+       * green row, and nothing for the drill-down to follow. The pages this row has seen are the
+       * fallback, which on a one-page document is exactly the page they are on and on any other is
+       * the furthest they have reached. Only ever the fallback: an exit is evidence, a page they
+       * visited at some point is an inference.
+       */
+      const fromEvent = (() => {
+        if (!last) return null;
         const to = Number(last.toPage);
         const on = Number(last.pageNumber);
         const page = Number.isFinite(to) && to >= 1 ? Math.floor(to) : Number.isFinite(on) && on >= 1 ? Math.floor(on) : null;
-        const at = last.leftAt instanceof Date ? last.leftAt.toISOString() : lastEventAt;
+        if (!page) return null;
+        return { page, at: last.leftAt instanceof Date ? last.leftAt.toISOString() : lastEventAt };
+      })();
+      const here = fromEvent ?? (seen.length ? { page: Math.max(...seen), at: lastEventAt } : null);
+      if (here && docId) {
+        const { page, at } = here;
         if (page && at && (!entry.currentAt || at >= entry.currentAt)) {
           entry.currentAt = at;
           entry.currentDocId = docId;

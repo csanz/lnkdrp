@@ -69,8 +69,16 @@ export default function PageReadingDetail({
 
   return (
     <>
-      <PageTimeChart pages={pagesSeen} msByPage={effectiveByPage} />
-      <ul className="mt-4 grid gap-1.5 border-t border-[var(--divider)] pt-4">
+      {/* One page is not a shape. The chart is a line through the pages, and with a single point
+          it renders as a tall empty box around one dot — several hundred pixels that say less than
+          the bar directly below them. */}
+      {pagesSeen.length > 1 ? <PageTimeChart pages={pagesSeen} msByPage={effectiveByPage} /> : null}
+      <ul
+        className={[
+          "grid gap-1.5",
+          pagesSeen.length > 1 ? "mt-4 border-t border-[var(--divider)] pt-4" : "mt-3",
+        ].join(" ")}
+      >
         {shown.map((row) => (
           <li key={row.page} className="flex items-center gap-3">
             <span className="w-14 shrink-0 text-[12px] tabular-nums text-[var(--muted)]">Page {row.page}</span>
