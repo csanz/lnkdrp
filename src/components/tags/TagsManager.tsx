@@ -14,7 +14,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { ChevronDownIcon, PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 import TagDot from "@/components/tags/TagDot";
 import Modal from "@/components/modals/Modal";
@@ -416,7 +416,7 @@ export default function TagsManager() {
           <tr>
             {/* The four real columns hug the left; a spacer takes the slack so a wide screen does
                 not strand a row's count a thousand pixels from its name. */}
-            <th className="w-12 px-3 py-2 pl-4" aria-label="Colour" />
+            <th className="w-20 whitespace-nowrap px-3 py-2 pl-4 font-semibold">Colour</th>
             <th className="px-3 py-2 font-semibold">Tag</th>
             <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">Items</th>
             <th className="w-full px-0 py-2" aria-hidden="true" />
@@ -440,8 +440,13 @@ export default function TagsManager() {
                       label={`Change colour of ${tag.name}`}
                       align="start"
                       panelWidth={248}
-                      triggerClassName="grid h-7 w-7 place-items-center rounded-full ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--panel-hover)] hover:ring-[var(--fg)]"
-                      trigger={<TagDot color={tag.color} size={11} />}
+                      triggerClassName="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-1.5 py-1 transition-colors hover:border-[var(--fg)] hover:bg-[var(--panel-hover)]"
+                      trigger={
+                        <>
+                          <TagDot color={tag.color} size={11} />
+                          <ChevronDownIcon className="h-3 w-3 text-[var(--muted-2)]" aria-hidden="true" />
+                        </>
+                      }
                     >
                       {(close) => (
                         <div className="grid grid-cols-6 gap-1">
