@@ -256,16 +256,36 @@ export default function MetricsPageClient() {
         ) : (
           <div className="grid gap-6">
             {/* Who opened something in this workspace, newest first, above everything else — the
-                same strip the document and project metrics pages lead with. Named people only:
-                the workspace payload identifies readers by person, and on Free it identifies
-                nobody, so the card simply does not appear there. */}
+                same strip the document and project metrics pages lead with, and now the same
+                behaviour: a reading badge on every row, and a way through to the full list.
+
+                `people.recent`, not `people.items`: the latter is the engagement ranking, already
+                trimmed to eight, so sorting it by recency gave "the most engaged, newest first"
+                under a heading that promises the newest. Someone who opened a document two minutes
+                ago and read a page of it was missing from the strip that exists to show them.
+
+                Named people only: the workspace payload identifies readers by person (an anonymous
+                browser id is nobody a sender can act on — `WORKSPACE_PERSON_KEY_EXPR`), and on Free
+                it identifies nobody, so the card simply does not appear there. The rows do not link
+                anywhere, unlike the document and project strips: a reader page is scoped to one
+                document or one room, and this person may have read several. */}
             <RecentVisitors
-              visitors={data.people.items.map((p) => ({
+              visitors={data.people.recent.map((p) => ({
                 key: p.key,
                 name: (p.name ?? "").trim() || (p.email ?? "").trim() || null,
                 lastSeen: p.lastSeenAt,
                 detail: p.docs > 0 ? `${p.docs} ${p.docs === 1 ? "document" : "documents"}` : null,
+                // No reading badge here, deliberately. The badge needs a denominator to judge
+                // coverage, and a workspace has none: its unit is documents opened, with no page
+                // count behind them. Fed `pages = docs`, every row came out READ — including a
+                // reader the document's own page calls SKIMMED, because there it knows they saw
+                // nine pages in eighty seconds. A word that contradicts the page you reach by
+                // clicking it is worse than no word, so the figures speak for themselves here.
               }))}
+              seeAllLabel="See all readers"
+              onSeeAll={() => {
+                document.getElementById("workspace-people")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
             />
 
             <HeadlineStrip
@@ -294,7 +314,7 @@ export default function MetricsPageClient() {
                 <div className="order-1 min-w-0 lg:order-none">
                   <TopDocsSection docs={data.topDocs} now={now} opensPartial={data.opensPartial} />
                 </div>
-                <div className="order-3 min-w-0 lg:order-none">
+                <div className="order-3 min-w-0 lg:order-none" id="workspace-people">
                   <PeopleSection people={data.people} now={now} />
                 </div>
               </div>

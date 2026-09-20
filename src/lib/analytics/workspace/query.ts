@@ -76,6 +76,7 @@ import {
 } from "./shape";
 import {
   WORKSPACE_PEOPLE_LIMIT,
+  WORKSPACE_RECENT_PEOPLE_LIMIT,
   WORKSPACE_QUIET_DOCS_LIMIT,
   WORKSPACE_TOP_DOCS_LIMIT,
   WORKSPACE_TOP_LINKS_LIMIT,
@@ -186,7 +187,7 @@ function emptyResponse(resolved: ResolvedWorkspaceRange, plan: PlanId, isPro: bo
     docsOpened: { opened: 0, shared: 0, openedOther: 0, returningReaders: 0 },
     topDocs: [],
     topLinks: [],
-    people: { count: 0, items: [], gated: !isPro },
+    people: { count: 0, items: [], recent: [], gated: !isPro },
     quietDocs: [],
     output: { docsShared: 0, linksCreated: 0, uploads: 0 },
     contributors: [],
@@ -787,9 +788,15 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   for (const row of peopleRows) if (typeof row?._id === "string" && row._id) viewPersonByKey.set(row._id, row);
   const trimmed = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-  const people: WorkspacePerson[] = isPro
-    ? rankPeople(
-        (() => {
+  /**
+   * Every named person in the window, before either card trims them.
+   *
+   * Two lists come off this: the engagement ranking ("Most engaged people") and the recency slice
+   * the "Recent visitors" strip needs. Built once because they are the same people asked two
+   * different questions.
+   */
+  const peopleAll: WorkspacePerson[] = isPro
+    ? (() => {
           const rows: WorkspacePerson[] = [];
           const seen = new Set<string>();
           for (const row of visitPeopleRows) {
@@ -822,10 +829,14 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
             });
           }
           return rows;
-        })(),
-        WORKSPACE_PEOPLE_LIMIT,
-      )
+      })()
     : [];
+  const people: WorkspacePerson[] = rankPeople(peopleAll, WORKSPACE_PEOPLE_LIMIT);
+  /** Newest first, and only people who have actually been seen — a null `lastSeenAt` cannot be recent. */
+  const recentPeople: WorkspacePerson[] = [...peopleAll]
+    .filter((p) => Boolean(p.lastSeenAt))
+    .sort((a, b) => new Date(b.lastSeenAt ?? 0).getTime() - new Date(a.lastSeenAt ?? 0).getTime())
+    .slice(0, WORKSPACE_RECENT_PEOPLE_LIMIT);
 
   const firstSharedById = new Map<string, string | null>();
   const lastLiveSharedById = new Map<string, string | null>();
@@ -895,7 +906,7 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
     },
     topDocs: rankTopDocs(topDocCandidates, WORKSPACE_TOP_DOCS_LIMIT),
     topLinks: rankedLinks,
-    people: { count: peopleCount, items: people, gated: !isPro },
+    people: { count: peopleCount, items: people, recent: recentPeople, gated: !isPro },
     quietDocs,
     output: { docsShared, linksCreated: safeCount(linksCreated), uploads: safeCount(uploads) },
     contributors,

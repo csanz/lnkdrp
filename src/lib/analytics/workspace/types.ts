@@ -186,8 +186,19 @@ export type WorkspacePerson = {
 export type WorkspacePeople = {
   /** Distinct named people in the range, on both plans. */
   count: number;
-  /** Always `[]` on Free. */
+  /** Ranked by reading time — the "Most engaged people" card. Always `[]` on Free. */
   items: WorkspacePerson[];
+  /**
+   * The same people, newest first — what the "Recent visitors" strip needs.
+   *
+   * A separate slice because the two answer different questions and `items` is already trimmed to
+   * the card's length: sorting the most *engaged* eight by recency is not the most *recent*, and a
+   * reader who opened something two minutes ago and read a page of it was simply absent from the
+   * strip that exists to show them. Bounded by `WORKSPACE_RECENT_PEOPLE_LIMIT`, and drawn from the
+   * same candidate pool, so a workspace with more than 50 named readers in the window can still
+   * miss someone recent who is far down the engagement ranking.
+   */
+  recent: WorkspacePerson[];
   /** True when the plan withheld the rows (Free), so the UI shows the upsell rather than "nobody". */
   gated: boolean;
 };
@@ -305,5 +316,8 @@ export type WorkspaceMetricsResponse = {
 export const WORKSPACE_TOP_DOCS_LIMIT = 8;
 export const WORKSPACE_TOP_LINKS_LIMIT = 8;
 export const WORKSPACE_PEOPLE_LIMIT = 8;
+
+/** How many rows the "Recent visitors" strip holds — the same five the other metrics pages show. */
+export const WORKSPACE_RECENT_PEOPLE_LIMIT = 5;
 export const WORKSPACE_QUIET_DOCS_LIMIT = 8;
 export const WORKSPACE_CONTRIBUTORS_LIMIT = 8;
