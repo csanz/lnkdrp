@@ -186,7 +186,7 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
             {projectName ? <span className="font-semibold text-white/90">{projectName}</span> : "This data room"} belongs to
             someone who can see who opened it. Right now your visit reads as{" "}
             <span className="font-semibold text-white/90">anonymous</span>: a count on a chart, with nobody to reply to. Add
-            your name and they know who was here — and which files you opened.
+            your name and they know who was here, and which files you opened.
           </div>
         </div>
 
@@ -208,7 +208,7 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-white">{previewName || "Anonymous visitor"}</div>
               <div className="truncate text-xs text-white/50">
-                {previewEmail || "No name, no email — just another arrival on the chart"}
+                {previewEmail || "No name, no email: just another arrival on the chart"}
               </div>
             </div>
           </div>
@@ -293,7 +293,7 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
                   product does not offer. */}
               <span>
                 Change it any time from &ldquo;Viewing as&rdquo; at the top of this page. Clearing it stops this browser
-                sending it again — what you have already shared stays with the owner.
+                sending it again. What you have already shared stays with the owner.
               </span>
             </li>
           </ul>

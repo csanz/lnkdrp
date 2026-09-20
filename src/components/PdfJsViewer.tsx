@@ -2496,7 +2496,7 @@ export function PdfJsViewer({
             <div className="min-w-0">
               <div className="truncate text-sm font-semibold text-white">{introPreviewName || "Anonymous viewer"}</div>
               <div className="truncate text-xs text-white/50">
-                {introPreviewEmail || "No name, no email — just another view on the chart"}
+                {introPreviewEmail || "No name, no email: just another view on the chart"}
               </div>
             </div>
           </div>
