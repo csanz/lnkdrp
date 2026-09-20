@@ -39,7 +39,7 @@ claude mcp add --transport http lnkdrp http://localhost:8787/mcp --header "Autho
 | `MCP_PORT` | `8787` | Listen port. |
 | `MCP_PUBLIC_URL` | `http://localhost:${MCP_PORT}` | Advertised URL (resource metadata, `WWW-Authenticate`). |
 | `NEXT_PUBLIC_REALTIME_URL` | unset | Realtime WebSocket URL. Only used by `lnkdrp_share_pdf` to return the moment processing finishes. |
-| `REALTIME_SECRET` or `NEXTAUTH_SECRET` | unset | Shared secret to sign realtime tickets (same value as the realtime server). |
+| `REALTIME_SECRET` | unset | Shared secret to sign realtime tickets — the same value as the realtime server, and **not** the app's `NEXTAUTH_SECRET`. The code still falls back to `NEXTAUTH_SECRET`; do not rely on that. Whoever holds `NEXTAUTH_SECRET` can forge app sessions, so it lives only on Vercel (DEPLOY.md). |
 | `LNKDRP_API_KEY` | unset | `--stdio` mode only: the key to act as. |
 
 The HTTP mode has no key of its own; each request brings the caller's `lnk_…` key.
@@ -281,8 +281,13 @@ docker run -p 8787:8787 -e LNKDRP_API_URL=https://lnkdrp.com -e MCP_PUBLIC_URL=h
 ```
 
 Put TLS in front (`https://mcp.lnkdrp.com/mcp`), keep one instance (or sticky sessions), and give it
-the same `REALTIME_SECRET`/`NEXTAUTH_SECRET` as the app and the realtime server if you want the
-fast path for `share_pdf`. `/.well-known/oauth-protected-resource` is a placeholder until OAuth
+the same `REALTIME_SECRET` as the realtime server if you want the fast path for `share_pdf`.
+
+**Never set `NEXTAUTH_SECRET` on this host.** The code accepts it in place of `REALTIME_SECRET`, and
+that fallback is a convenience for local development only: `NEXTAUTH_SECRET` signs app sessions, so
+anything holding it can mint a session for any user. It belongs on Vercel and nowhere else, and the
+two values must differ (DEPLOY.md, "Secrets"). The deploy gate is
+`fly secrets list -a lnkdrp-mcp` showing exactly `REALTIME_SECRET`. `/.well-known/oauth-protected-resource` is a placeholder until OAuth
 replaces raw keys.
 
 ## Layout

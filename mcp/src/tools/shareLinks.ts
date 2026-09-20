@@ -89,7 +89,7 @@ export const listShareLinksInputShape = {
     .max(120)
     .optional()
     .describe(
-      "Full-text search this document's links by label/audience instead of listing all of them (mt_9ceLy7DqEr) - ranked by " +
+      "Full-text search this document's links by label/audience instead of listing all of them - ranked by " +
         "relevance, whole-word matches only (not substrings: \"a16z\" matches, \"nest\" does not). Omit to list every link, default first.",
     ),
 };

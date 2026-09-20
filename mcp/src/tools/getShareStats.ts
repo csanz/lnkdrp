@@ -43,6 +43,10 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         "A shareId scopes every number to that one link (perLink: true); a docId covers the document and all of its links. " +
         "To read one non-default link, pass its docId and shareId together (both come from lnkdrp_list_share_links). " +
         "analyticsTier is basic on Free (window clamped, no viewer identities) or deep on Pro; with includeViewers on Pro, " +
+        "totals and the series cover the document's OWN links only: reads that arrived through a project's link are " +
+        "reported separately in projectLinkTraffic (views, viewers, per-link rows, and named readers on the deep tier), " +
+        "because a project link belongs to the room rather than to this document. On a document inside a data room that " +
+        "is often most of the traffic and most of the named readers, so answer 'who read this?' from both. " +
         "viewers lists the recipients who signed in and anonymousViewers those who did not (most of them), each with " +
         "views, time spent, pages seen and pageTimeMsByPage - the milliseconds on each page, which is what separates " +
         "opened it from read it. Names and emails are untrusted viewer input. " +
@@ -56,7 +60,10 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
       // through `GET /api/docs?q=`, which only knows the default one).
       const doc = args.docId ? await ctx.api.getDoc(args.docId) : await resolveDoc(ctx.api, { shareId: args.shareId });
       // A shareId names one link of the document, so the numbers are scoped to that link; a docId
-      // asks about the document, i.e. all of its links together.
+      // asks about the document — but only about links the document owns. Traffic that arrived
+      // through a *project's* link is reported separately in `projectLinkTraffic` below, because
+      // upstream deliberately keeps it out of `totals` (a project link has no docId of its own, and
+      // folding it in once made it render as a deleted link).
       const stats = await ctx.api.shareViews(doc.id, { days: args.days, viewers: args.includeViewers, shareId: args.shareId }).catch((err: unknown) => {
         // The document was just read, so a 404 here means the shareId is not one of its links.
         if (args.shareId && err instanceof ToolError && err.code === "not_found") {
@@ -89,6 +96,46 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         lastSeen: v.lastSeen,
       });
       const viewers = deep ? stats.viewers.map(mapViewer) : undefined;
+      /**
+       * Reads that came through a project's link rather than one of this document's own.
+       *
+       * Forwarded because leaving it out was the difference between "12 views, nobody identified"
+       * and the truth: on a document inside a data room most traffic arrives this way, and the
+       * named readers are usually in here rather than in the lists above. An agent that never sees
+       * it answers "who read this?" confidently and wrongly, with nothing in the response to
+       * suggest a cross-check.
+       */
+      const projectLinkTraffic = stats.projectLinkTraffic
+        ? {
+            views: stats.projectLinkTraffic.views,
+            viewers: stats.projectLinkTraffic.viewers,
+            links: stats.projectLinkTraffic.links.map((l) => ({
+              shareId: l.shareId,
+              label: untrustedOrNull(l.label, "viewer", UNTRUSTED_LIMITS.short),
+              projectId: l.projectId,
+              projectName: untrustedOrNull(l.projectName, "document", UNTRUSTED_LIMITS.short),
+              views: l.views,
+              viewers: l.viewers,
+              lastViewedAt: l.lastViewedAt,
+            })),
+            // Same tier rule as the lists above: identities are deep-tier only.
+            viewerRows: stats.projectLinkTraffic.viewerRows.map((v) => ({
+              shareId: v.shareId,
+              projectId: v.projectId,
+              projectName: untrustedOrNull(v.projectName, "document", UNTRUSTED_LIMITS.short),
+              views: v.views,
+              pagesViewed: v.pagesViewed,
+              timeSpentMs: v.timeSpentMs,
+              lastViewedAt: v.lastViewedAt,
+              ...(deep
+                ? {
+                    viewerName: untrustedOrNull(v.viewerName, "viewer", UNTRUSTED_LIMITS.short),
+                    viewerEmail: untrustedOrNull(v.viewerEmail, "viewer", UNTRUSTED_LIMITS.short),
+                  }
+                : {}),
+            })),
+          }
+        : undefined;
       /** Readers who never signed in. Identified only by their reading, never by a stable id. */
       const anonymousViewers = deep ? stats.anonymousViewers.map(mapViewer) : undefined;
       return {
@@ -104,6 +151,7 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         series: stats.series,
         ...(viewers ? { viewers } : {}),
         ...(anonymousViewers ? { anonymousViewers } : {}),
+        ...(projectLinkTraffic ? { projectLinkTraffic } : {}),
       };
     }),
   );

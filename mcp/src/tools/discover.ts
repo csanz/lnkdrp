@@ -90,7 +90,7 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
       title: "List documents",
       description:
         "Find documents in the workspace. Search by title or by the slug of any of a document's share links (query), or " +
-        "look up specific documents by id (ids). Returns each document's id, default shareId, title, processing status, " +
+        "look up specific documents by id (ids). Returns each document's docId, default shareId, title, processing status, " +
         "current version, one-line AI summary and dates. Page-based: pass page to get the next set; total tells you how many " +
         "match. Use a result's id with lnkdrp_get_share, lnkdrp_list_share_links or lnkdrp_get_share_stats. Archived documents " +
         "are listed only with archived: true (then only archived ones - bring one back with lnkdrp_archive_doc archived: false); " +

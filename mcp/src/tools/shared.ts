@@ -27,7 +27,7 @@ export type DocRef = { docId?: string | undefined; shareId?: string | undefined 
 /** Exactly one of `docId` / `shareId` must be given. */
 export function requireExactlyOneRef(ref: DocRef): DocRef {
   const has = [ref.docId, ref.shareId].filter((v) => typeof v === "string" && v.length > 0).length;
-  if (has !== 1) throw new ToolError("validation", "Pass exactly one of docId or shareId.");
+  if (has !== 1) throw new ToolError("validation", "Pass docId or shareId (at least one; some tools accept both).");
   return ref;
 }
 
@@ -53,7 +53,40 @@ export async function resolveDoc(api: ApiClient, ref: DocRef): Promise<ApiDoc> {
   const exact =
     matches.find((d) => d.shareId === shareId) ?? matches.find((d) => d.shareId?.toLowerCase() === shareId.toLowerCase());
   const hit = exact ?? (matches.length === 1 ? matches[0] : undefined);
-  if (!hit?.id) throw new ToolError("not_found", "No document with that shareId in this workspace.");
+  if (!hit?.id) {
+    /**
+     * Before saying it does not exist, look in the archive.
+     *
+     * `GET /api/docs?q=` lists live documents only, so an archived document's slug fell through to
+     * "No document with that shareId in this workspace" — a false statement, and byte-identical to
+     * a typo or another workspace's slug. An agent has no way to tell "you got the id wrong" from
+     * "this exists and is archived", and the second is recoverable in one call.
+     */
+    const archived = await api
+      .listDocsPage({ q: shareId, limit: 50, archived: true })
+      .then((page) => {
+        const rows = page.docs;
+        return (
+          rows.find((d) => d.shareId === shareId) ??
+          rows.find((d) => d.shareId?.toLowerCase() === shareId.toLowerCase()) ??
+          (rows.length === 1 ? rows[0] : undefined)
+        );
+      })
+      .catch(() => undefined);
+    if (archived?.id) {
+      throw new ToolError(
+        "not_found",
+        `That shareId belongs to an archived document (docId ${archived.id}). Archived documents are not served by ` +
+          "shareId. Use the docId, or bring it back with lnkdrp_archive_doc archived: false and try again.",
+        { status: 404, details: { docId: archived.id, archived: true } },
+      );
+    }
+    throw new ToolError(
+      "not_found",
+      "No document with that shareId in this workspace. Check the slug, or find the link by name with " +
+        "lnkdrp_find_share_link.",
+    );
+  }
   return api.getDoc(hit.id);
 }
 

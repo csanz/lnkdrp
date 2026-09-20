@@ -334,6 +334,40 @@ export type ShareViewsViewer = {
   lastSeen: string | null;
 };
 
+/**
+ * Traffic that reached this document through a link belonging to a *project*, not to the document.
+ *
+ * Kept apart from `totals` rather than folded into it, matching the upstream route: a project
+ * link's rows have no `docId` of their own, and counting them in the document's totals once made
+ * them render as a "Deleted link". But they are real reads by real people — often the only named
+ * ones — so they are reported here instead of being dropped.
+ */
+export type ProjectLinkTraffic = {
+  views: number;
+  viewers: number;
+  links: Array<{
+    shareId: string;
+    label: string | null;
+    projectId: string | null;
+    projectName: string | null;
+    views: number;
+    viewers: number;
+    lastViewedAt: string | null;
+  }>;
+  /** Per-reader rows; names and emails only on the deep tier and only when viewers were asked for. */
+  viewerRows: Array<{
+    shareId: string;
+    projectId: string | null;
+    projectName: string | null;
+    views: number;
+    pagesViewed: number;
+    timeSpentMs: number;
+    lastViewedAt: string | null;
+    viewerName: string | null;
+    viewerEmail: string | null;
+  }>;
+};
+
 export type ShareViews = {
   days: number;
   analyticsDaysLimit: number | null;
@@ -343,6 +377,8 @@ export type ShareViews = {
   series: Array<{ date: string; views: number; opens: number; downloads: number }>;
   viewers: ShareViewsViewer[];
   anonymousViewers: ShareViewsViewer[];
+  /** Present only when project links carried traffic to this document in the window. */
+  projectLinkTraffic: ProjectLinkTraffic | null;
 };
 
 type Query = Record<string, string | number | boolean | undefined>;
@@ -1145,6 +1181,48 @@ export class ApiClient {
       }),
       viewers: Array.isArray(body.viewers) ? body.viewers.map(asViewer) : [],
       anonymousViewers: Array.isArray(body.anonymousViewers) ? body.anonymousViewers.map(asViewer) : [],
+      // Whitelisted like everything else here, which is exactly how it went missing: the route
+      // added this section so that "who read this document" stops answering "nobody" while the
+      // activity feed names someone, and the mapper below silently dropped it.
+      projectLinkTraffic: asProjectLinkTraffic(body.projectLinkTraffic),
     };
   }
+}
+
+/** Normalise the project-link section, or null when the route omitted it (no such traffic). */
+function asProjectLinkTraffic(raw: unknown): ProjectLinkTraffic | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const t = rec(raw);
+  const links = Array.isArray(t.links) ? t.links : [];
+  const viewerRows = Array.isArray(t.viewerRows) ? t.viewerRows : [];
+  return {
+    views: num(t.views),
+    viewers: num(t.viewers),
+    links: links.map((rawLink) => {
+      const l = rec(rawLink);
+      return {
+        shareId: strOrNull(l.shareId) ?? "",
+        label: strOrNull(l.label),
+        projectId: strOrNull(l.projectId),
+        projectName: strOrNull(l.projectName),
+        views: num(l.views),
+        viewers: num(l.viewers),
+        lastViewedAt: strOrNull(l.lastViewedAt),
+      };
+    }),
+    viewerRows: viewerRows.map((rawRow) => {
+      const v = rec(rawRow);
+      return {
+        shareId: strOrNull(v.shareId) ?? "",
+        projectId: strOrNull(v.projectId),
+        projectName: strOrNull(v.projectName),
+        views: num(v.views),
+        pagesViewed: num(v.pagesViewed),
+        timeSpentMs: num(v.timeSpentMs),
+        lastViewedAt: strOrNull(v.lastViewedAt),
+        viewerName: strOrNull(v.viewerName),
+        viewerEmail: strOrNull(v.viewerEmail),
+      };
+    }),
+  };
 }

@@ -23,7 +23,7 @@ import { Types } from "mongoose";
 import { debugError } from "@/lib/debug";
 import { sendViewerIntroducedEmail, sendViewerVerifyEmail } from "@/lib/email/sendViewerVerifyEmail";
 import { viewerEmailVerifyUrl } from "@/lib/share/viewerEmailToken";
-import { cursorBackedAlreadyTold, type AlreadyToldLookup } from "@/lib/share/anonymousNoticeAudience";
+import { queueBackedAlreadyTold, type AlreadyToldLookup } from "@/lib/share/anonymousNoticeAudience";
 import {
   noteVerifyEmailSent,
   recordViewerIntroduction,
@@ -111,8 +111,14 @@ export async function sendViewerIntroductionEmails(
   }
 
   try {
-    const lookup = args.alreadyTold ?? cursorBackedAlreadyTold;
-    const recipients = await lookup({ orgId, viewerFirstSeenAt: args.viewerFirstSeenAt ?? null });
+    const lookup = args.alreadyTold ?? queueBackedAlreadyTold;
+    // `viewerKey` is the whole question now: the queue records which reader each sent email was
+    // about, so without it the lookup can only answer "nobody" and the correction never fires.
+    const recipients = await lookup({
+      orgId,
+      viewerKey: args.viewerKey,
+      viewerFirstSeenAt: args.viewerFirstSeenAt ?? null,
+    });
     for (const recipient of recipients) {
       try {
         await sendViewerIntroducedEmail({

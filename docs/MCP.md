@@ -82,7 +82,7 @@ Env (read from `.env.local`; the same file the app uses):
 | `MCP_PORT` | `8787` | Listen port. |
 | `MCP_PUBLIC_URL` | `http://localhost:${MCP_PORT}` | URL advertised in `/.well-known/oauth-protected-resource`. |
 | `NEXT_PUBLIC_REALTIME_URL` | unset | `ws://localhost:8788` locally. When set, `share_pdf` waits on the socket; unset = polling only. |
-| `REALTIME_SECRET` (falls back to `NEXTAUTH_SECRET`) | unset | Shared HMAC secret so the server can sign its own realtime ticket (`signRealtimeTicket`, `src/lib/realtime/ticket.ts`). Only needed with the line above. |
+| `REALTIME_SECRET` | unset | Shared HMAC secret so the server can sign its own realtime ticket (`signRealtimeTicket`, `src/lib/realtime/ticket.ts`). Only needed with the line above. The code falls back to `NEXTAUTH_SECRET`, but **never set that on an MCP host**: it signs app sessions, so holding it means being able to forge one for any user. It lives only on Vercel, and the two values must differ (DEPLOY.md). |
 | `LNKDRP_API_KEY` | unset | Only for `--stdio` (below): the key the process acts with, because there is no HTTP request to carry a bearer. |
 | `LNKDRP_ALLOW_LOCAL_FILES` | unset | `1` allows `share_pdf`/`replace_pdf`'s `filePath` even when `LNKDRP_API_URL` is not localhost. Only set this on a server that really does run on the caller's machine: `filePath` is read from *this process's* filesystem. |
 | `LNKDRP_GHOSTSCRIPT` | unset | Absolute path to `gs` when it is not on `PATH` (a GUI-launched server often inherits a bare one). Without a working Ghostscript, PDF optimization is skipped and the original bytes are uploaded. |
