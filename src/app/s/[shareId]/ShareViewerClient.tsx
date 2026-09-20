@@ -54,6 +54,15 @@ export default function ShareViewerClient(props: {
   revisionHistoryUrl: string | null;
   /** The workspace that shared this, for the viewer's header. */
   workspace?: ShareWorkspaceBrand | null;
+  /**
+   * Where this document was opened from, when it was opened from somewhere.
+   *
+   * Only a data room sets these. A document link is its own destination and has nothing to go back
+   * to; a document opened out of a room does, and the viewer takes over the window, so browser-back
+   * is not what a reader reaches for.
+   */
+  backHref?: string | null;
+  backLabel?: string | null;
 }) {
   return (
     <PdfJsViewer
@@ -67,6 +76,8 @@ export default function ShareViewerClient(props: {
       revisionHistoryEnabled={props.revisionHistoryEnabled}
       revisionHistoryUrl={props.revisionHistoryUrl}
       workspace={props.workspace ?? null}
+      backHref={props.backHref ?? null}
+      backLabel={props.backLabel ?? null}
     />
   );
 }

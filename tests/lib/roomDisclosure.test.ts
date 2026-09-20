@@ -129,6 +129,26 @@ import ProjectLinkDocumentPage from "@/app/p/[shareId]/[docId]/page";
 import { GET as ogRoute } from "@/app/s/[shareId]/og.png/route";
 
 /** The name of the component a server page returned, so a gate and a viewer are told apart. */
+/**
+ * Props of the first descendant rendered by a component of this name.
+ *
+ * These page tests assert on the element tree the server component returns; nothing renders it, so
+ * a component's own body never runs and props have to be read off the element.
+ */
+function propsOf(node: unknown, name: string): Record<string, unknown> | null {
+  if (!node || typeof node !== "object") return null;
+  const el = node as { type?: unknown; props?: Record<string, unknown> };
+  if (typeof el.type === "function" && (el.type as { name?: string }).name === name) {
+    return el.props ?? {};
+  }
+  const children = (el.props as { children?: unknown } | undefined)?.children;
+  for (const child of Array.isArray(children) ? children : [children]) {
+    const hit = propsOf(child, name);
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function componentName(node: unknown): string {
   const type = (node as { type?: unknown } | null)?.type;
   if (typeof type === "function") return (type as { name?: string }).name ?? "";
@@ -138,6 +158,45 @@ function componentName(node: unknown): string {
 beforeEach(() => {
   vi.clearAllMocks();
   cookieGet.mockReturnValue(undefined);
+});
+
+describe("a document opened out of a room says which room", () => {
+  const openLink = { orgId: "6500000000000000000000aa" };
+  const project = { _id: "6500000000000000000000bb", isRequest: false, name: "Series B data room" };
+
+  beforeEach(() => {
+    resolveProjectLink.mockResolvedValue({ link: openLink, project, refusal: null });
+    findProjectDocument.mockResolvedValue({ _id: MEMBER_DOC, title: "Term sheet", blobUrl: "https://blob/x.pdf" });
+  });
+
+  const render = () =>
+    ProjectLinkDocumentPage({ params: Promise.resolve({ shareId: SHARE_ID, docId: MEMBER_DOC }) } as never);
+
+  test("the viewer is handed the way back, and the room's name to put on it", async () => {
+    /**
+     * `PdfJsViewer` has taken `backHref`/`backLabel` since it was written, with a comment saying
+     * exactly what they are for — "a recipient who clicks a document out of a data room is one
+     * browser-back from the list, and browser-back is exactly what people do not reach for inside a
+     * viewer that has taken over the window". Nothing passed them. A control that is built and
+     * never called is the same as one that does not exist, so this pins the wiring rather than the
+     * rendering.
+     */
+    const props = propsOf(await render(), "ShareViewerClient");
+
+    expect(props).not.toBeNull();
+    expect(props!.backHref).toBe(`/p/${SHARE_ID}`);
+    expect(props!.backLabel).toBe("Series B data room");
+  });
+
+  test("a room with no name gets the arrow, not the word \"undefined\"", async () => {
+    resolveProjectLink.mockResolvedValue({ link: openLink, project: { ...project, name: "" }, refusal: null });
+
+    const props = propsOf(await render(), "ShareViewerClient");
+
+    expect(props!.backHref).toBe(`/p/${SHARE_ID}`);
+    // `PdfJsViewer` falls back to "Back" on null; it must not be handed an empty string to render.
+    expect(props!.backLabel).toBeNull();
+  });
 });
 
 describe("a locked data room does not confirm which documents are inside it", () => {

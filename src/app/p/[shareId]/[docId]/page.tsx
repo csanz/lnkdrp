@@ -114,8 +114,12 @@ export async function generateMetadata(props: { params: Promise<{ shareId: strin
   // upload id — so the card disclosed both to everyone who saw the message the link was pasted
   // into, not only to whoever opened it. `buildShareMetadata` now refuses absolute URLs outright,
   // so passing it would silently fall back to the site image anyway; saying `null` here says so out
-  // loud. The document page has a same-origin proxy for this (`/s/:shareId/og.png`); the project
-  // link has no equivalent yet, and a card showing the generic mark is the safe side to err on.
+  // loud. The document page has a same-origin proxy for this (`/s/:shareId/og.png`). The project
+  // link now has a same-origin preview proxy too (`/p/:shareId/:docId/preview`), but it is not an
+  // unfurl surface: it answers `401` without the share-auth cookie and an unfurl bot carries none,
+  // so a locked room would draw a broken card while an open one would start publishing its first
+  // pages into every channel the link is pasted into. Whether a data room unfurls with a picture is
+  // a product decision, not a plumbing one; until it is made, the generic mark is the safe side.
   return buildShareMetadata({
     title: (typeof doc.title === "string" ? doc.title : "") || "Shared document",
     description: "",
@@ -152,6 +156,9 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
   if (resolvedLink.project.isRequest) notFound();
   const { link } = resolvedLink;
   if (resolvedLink.refusal === "project_gone") notFound();
+  // Kept as this page's own check, and no longer normally reached: `../layout.tsx` refuses a
+  // refused link above the Suspense boundary so the response is a real 404 instead of this screen
+  // under a 200. See the note on the twin in `/p/[shareId]/page.tsx`.
   if (resolvedLink.refusal) return <RefusalNotice kind={resolvedLink.refusal === "expired" ? "expired" : "disabled"} />;
 
   // Who this is from. Read off the link rather than the project: the link is what the recipient
@@ -178,6 +185,21 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
   const base = `/p/${encodeURIComponent(shareId)}/${encodeURIComponent(String(doc._id))}`;
   const allowDownload = Boolean(link.allowDownload);
 
+  /**
+   * The way back to the room.
+   *
+   * We already know where this reader came from: they are on `/p/:shareId/:docId`, so they opened
+   * this out of a data room, and the room's own page is one level up. Without this the way back is
+   * a guess — the viewer takes over the window, and browser-back is not what someone reaches for
+   * inside a document that filled the screen.
+   *
+   * Named, not generic. "Back" tells a reader nothing they did not already know; the room's name is
+   * the thing they recognise, and it is the same name they saw on the page they came from. It falls
+   * back to the bare arrow only when the project has no name.
+   */
+  const backHref = `/p/${encodeURIComponent(shareId)}`;
+  const projectName = typeof resolvedLink.project.name === "string" ? resolvedLink.project.name.trim() : "";
+
   if (blobUrl) {
     return (
       <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
@@ -195,27 +217,52 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
           revisionHistoryEnabled={false}
           revisionHistoryUrl={null}
           workspace={workspace}
+          backHref={backHref}
+          backLabel={projectName || null}
         />
       </main>
     );
   }
 
-  const previewUrl =
-    typeof doc.previewImageUrl === "string" ? doc.previewImageUrl : typeof doc.firstPagePngUrl === "string" ? doc.firstPagePngUrl : null;
+  /**
+   * Whether there is a preview, not where it lives.
+   *
+   * This read the stored value and rendered it as `<img src>`, which is a Vercel Blob URL on a
+   * public, unauthenticated CDN: the recipient walked away with a permanent copy of the first page
+   * (and with the document and upload ids, which are in the path), and nothing the owner did to the
+   * link afterwards could take it back. The bytes come through `/p/:shareId/:docId/preview` now,
+   * which re-proves this link's refusals and password before serving anything.
+   */
+  const hasPreview =
+    Boolean(typeof doc.previewImageUrl === "string" ? doc.previewImageUrl.trim() : "") ||
+    Boolean(typeof doc.firstPagePngUrl === "string" ? doc.firstPagePngUrl.trim() : "");
 
   return (
     <main className="min-h-screen bg-black text-white" style={{ backgroundColor: "#000", color: "#fff" }}>
-      <BrandHeader workspace={workspace} />
+      {/* Same way back as the viewer above: a reader who lands here is just as stuck without it. */}
+      <BrandHeader
+        workspace={workspace}
+        left={
+          <a
+            href={backHref}
+            className="inline-flex h-9 min-w-0 shrink-0 items-center gap-1.5 rounded-2xl border border-white/10 bg-white/5 px-3 text-xs font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+            title={projectName ? `Back to ${projectName}` : "Back"}
+          >
+            <span aria-hidden="true">&larr;</span>
+            <span className="max-w-[160px] truncate">{projectName || "Back"}</span>
+          </a>
+        }
+      />
       <div className="mx-auto w-full max-w-3xl px-6 py-10">
         <div className="text-lg font-semibold tracking-tight text-white/90">Shared document</div>
         <div className="mt-2 text-sm text-white/70">
-          This document is still preparing a PDF viewer. {previewUrl ? "A preview is available below." : "Preview not available yet."}
+          This document is still preparing a PDF viewer. {hasPreview ? "A preview is available below." : "Preview not available yet."}
         </div>
-        {previewUrl ? (
+        {hasPreview ? (
           <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-white/5">
             <div className="h-[70svh] w-full bg-black/40">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={previewUrl} alt="Document preview" className="h-full w-full object-contain" />
+              <img src={`${base}/preview`} alt="Document preview" className="h-full w-full object-contain" />
             </div>
           </div>
         ) : null}
