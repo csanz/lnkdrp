@@ -13,11 +13,15 @@ import { recordActivity } from "@/lib/activity/log";
 import { OrgModel } from "@/lib/models/Org";
 import { sendMemberRemovedEmail } from "@/lib/email/sendMemberRemovedEmail";
 import { debugError } from "@/lib/debug";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request, ctx: { params: Promise<{ orgId: string; userId: string }> }) {
   const actor = await resolveActor(request);
+  // Identity-grade: a key may not remove a member — see forbidApiKey.
+  const keyRefusal = forbidApiKey(actor, "remove a member");
+  if (keyRefusal) return keyRefusal;
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const { orgId: orgIdRaw, userId: targetUserIdRaw } = await ctx.params;

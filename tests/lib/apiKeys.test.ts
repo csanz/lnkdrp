@@ -18,6 +18,16 @@ vi.mock("@/lib/models/ActivityEvent", () => ({ ActivityEventModel: { create: vi.
 let personalOrgOfOwner: Types.ObjectId | null = null;
 const orgFindOne = vi.fn(() => ({ select: () => ({ lean: async () => (personalOrgOfOwner ? { _id: personalOrgOfOwner } : null) }) }));
 vi.mock("@/lib/models/Org", () => ({ OrgModel: { findOne: orgFindOne } }));
+/**
+ * The key's owner is a member of the key's workspace unless a test says otherwise.
+ *
+ * A key acts as the person who created it, so `verifyBearerToken` refuses one whose owner has been
+ * removed from the workspace — without that, removing a member left their automation running with
+ * full access for ever, since nothing expires a key.
+ */
+let ownerIsMember = true;
+const membershipExists = vi.fn(async () => (ownerIsMember ? { _id: new Types.ObjectId() } : null));
+vi.mock("@/lib/models/OrgMembership", () => ({ OrgMembershipModel: { exists: membershipExists } }));
 vi.mock("@/lib/models/ApiKey", () => ({
   API_KEY_SCOPES: ["read", "write"],
   ApiKeyModel: { findOne: apiKeyFindOne, updateOne: apiKeyUpdateOne },
@@ -274,6 +284,58 @@ describe("gating/apiKeyActor.verifyBearerToken", () => {
     resetApiKeyTouchThrottle();
     apiKeyUpdateOne.mockRejectedValueOnce(new Error("mongo down"));
     await expect(touchApiKeyUse({ keyId, client: "Codex" })).resolves.toBeUndefined();
+  });
+});
+
+describe("a key is only as good as its owner's membership", () => {
+  test("a key whose owner was removed from the workspace is refused", async () => {
+    // The session equivalent of this was fixed first; the key path was missed, and a key never
+    // expires — so "remove member" took away the browser and left the automation running.
+    // Fresh ids on purpose: membership answers are cached per (org, user) for a few seconds and
+    // shared with the session resolvers, so reusing this file's ORG/USER would read an entry an
+    // earlier test already warmed and never reach the check under test. In production the
+    // equivalent is `membershipChanged()`, which the revoke route calls the moment it writes.
+    const ORG_GONE = new Types.ObjectId();
+    const USER_GONE = new Types.ObjectId();
+    const plaintext = generateApiKeyPlaintext();
+    apiKeyFindOne.mockReturnValue({
+      select: () => ({
+        lean: async () => ({
+          _id: new Types.ObjectId(),
+          orgId: ORG_GONE,
+          createdByUserId: USER_GONE,
+          name: "CI",
+          prefix: apiKeyPrefix(plaintext),
+          scopes: ["read", "write"],
+          revokedAt: null,
+        }),
+      }),
+    });
+
+    ownerIsMember = false;
+    const refused = await verifyBearerToken(plaintext);
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.code).toBe("owner_removed");
+
+    // The refusal is not cached as a *key* problem: the key was never the issue, and a membership
+    // restored later must work again. (A fresh pair, since the negative answer above is now cached
+    // for this one — the same few seconds a real revocation takes to propagate.)
+    ownerIsMember = true;
+    apiKeyFindOne.mockReturnValue({
+      select: () => ({
+        lean: async () => ({
+          _id: new Types.ObjectId(),
+          orgId: new Types.ObjectId(),
+          createdByUserId: new Types.ObjectId(),
+          name: "CI",
+          prefix: apiKeyPrefix(plaintext),
+          scopes: ["read", "write"],
+          revokedAt: null,
+        }),
+      }),
+    });
+    const allowed = await verifyBearerToken(plaintext);
+    expect(allowed.ok).toBe(true);
   });
 });
 

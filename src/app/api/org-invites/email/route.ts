@@ -16,6 +16,7 @@ import { OrgModel } from "@/lib/models/Org";
 import { resolveActor } from "@/lib/gating/actor";
 import { sendOrgInviteEmail } from "@/lib/email/sendOrgInviteEmail";
 import { recordActivity } from "@/lib/activity/log";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 
@@ -64,6 +65,9 @@ function isValidEmail(email: string): boolean {
 
 export async function POST(request: Request) {
   const actor = await resolveActor(request);
+  // Identity-grade: a key may not invite someone to a workspace — see forbidApiKey.
+  const keyRefusal = forbidApiKey(actor, "invite someone to a workspace");
+  if (keyRefusal) return keyRefusal;
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const body = (await request.json().catch(() => ({}))) as Partial<{

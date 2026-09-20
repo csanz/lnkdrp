@@ -17,6 +17,7 @@ import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { resolveActor } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 
@@ -85,6 +86,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ orgId: stri
 
 export async function PATCH(request: Request, ctx: { params: Promise<{ orgId: string }> }) {
   const actor = await resolveActor(request);
+  // Identity-grade: a key may not rename a workspace — see forbidApiKey.
+  const keyRefusal = forbidApiKey(actor, "rename a workspace");
+  if (keyRefusal) return keyRefusal;
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const { orgId: orgIdRaw } = await ctx.params;
@@ -117,6 +121,9 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ orgId: st
 
 export async function DELETE(request: Request, ctx: { params: Promise<{ orgId: string }> }) {
   const actor = await resolveActor(request);
+  // Identity-grade: a key may not delete a workspace — see forbidApiKey.
+  const keyRefusal = forbidApiKey(actor, "delete a workspace");
+  if (keyRefusal) return keyRefusal;
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
 
   const { orgId: orgIdRaw } = await ctx.params;

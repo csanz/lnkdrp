@@ -28,12 +28,16 @@ import { DocModel } from "@/lib/models/Doc";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { recordActivity } from "@/lib/activity/log";
 import { parseDeletionRequest, purgeAfter } from "@/lib/accounts/deletion";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   return withMongoRequestLogging(request, async () => {
     const actor = await resolveExistingActor(request);
+    // Identity-grade: a key may not delete an account — see forbidApiKey.
+    const keyRefusal = actor ? forbidApiKey(actor, "delete an account") : null;
+    if (keyRefusal) return keyRefusal;
     if (!actor || actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;

@@ -12,6 +12,7 @@ import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { revokeApiKey } from "@/lib/agents/apiKeys";
 import { recordActivity } from "@/lib/activity/log";
 import { errorJson } from "@/lib/http/errorResponse";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,10 @@ export async function DELETE(request: Request, ctx: { params: Promise<{ keyId: s
     if (!Types.ObjectId.isValid(keyId)) return NextResponse.json({ error: "not_found" }, { status: 404, headers: NO_STORE });
 
     const actor = await resolveActorForStats(request);
+    // Identity-grade: a compromised key revoking the *other* keys is how an attacker keeps the
+    // workspace to themselves while the owner believes they are cleaning up.
+    const keyRefusal = forbidApiKey(actor, "create or revoke API keys");
+    if (keyRefusal) return keyRefusal;
     if (actor.kind !== "user") return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: NO_STORE });
     if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400, headers: NO_STORE });
 

@@ -68,6 +68,41 @@ function setCachedMembershipExists(key: string, ok: boolean) {
  * own TTL, so this shortens the window rather than closing it everywhere. That is why it is a
  * companion to the membership check in `tryResolveUserActor`, not a substitute for it.
  */
+/**
+ * Is this person currently a member of this workspace?
+ *
+ * The same short-lived cache the session resolvers use, so `membershipChanged()` invalidates every
+ * path at once. Exported because API keys need the identical question: a key acts *as* the person
+ * who created it, so if they are removed from the workspace the key has to stop working too —
+ * otherwise "remove member" only removes the browser and leaves the automation running.
+ *
+ * Fails CLOSED on a lookup error, unlike the session resolvers, which fall back to the person's own
+ * workspace. A key has no other workspace to fall back to, and refusing one request is recoverable
+ * where granting it is not.
+ */
+export async function isActiveMember(params: { orgId: string; userId: string }): Promise<boolean> {
+  const { orgId, userId } = params;
+  if (!Types.ObjectId.isValid(orgId) || !Types.ObjectId.isValid(userId)) return false;
+  const cacheKey = membershipCacheKey({ orgId, userId });
+  const cached = getCachedMembershipExists(cacheKey);
+  if (typeof cached === "boolean") return cached;
+  try {
+    await connectMongo();
+    const ok = Boolean(
+      await OrgMembershipModel.exists({
+        orgId: new Types.ObjectId(orgId),
+        userId: new Types.ObjectId(userId),
+        isDeleted: { $ne: true },
+      }),
+    );
+    setCachedMembershipExists(cacheKey, ok);
+    return ok;
+  } catch {
+    // Not cached: a blip must not lock a key out for the next ten seconds of requests.
+    return false;
+  }
+}
+
 export function membershipChanged(params: { orgId: string | Types.ObjectId; userId: string | Types.ObjectId }): void {
   try {
     membershipExistsCache?.delete(membershipCacheKey({ orgId: String(params.orgId), userId: String(params.userId) }));

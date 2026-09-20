@@ -19,6 +19,7 @@ import { API_KEY_PREFIX, hashApiKey, looksLikeApiKey, touchApiKeyUse } from "@/l
 import { agentFromRequest, agentLabel } from "@/lib/activity/log";
 import { guardApiKeyRequest } from "@/lib/gating/actorRateLimit";
 import type { Actor } from "@/lib/gating/actor";
+import { isActiveMember } from "@/lib/gating/actor";
 
 /** Client label stored on a key when the request carries no agent identification. */
 export const UNKNOWN_AGENT_CLIENT = "API key";
@@ -35,7 +36,7 @@ export type VerifiedApiKey = {
   lastUsedClient: string | null;
 };
 
-export type VerifyBearerFailureCode = "unauthorized" | "key_revoked";
+export type VerifyBearerFailureCode = "unauthorized" | "key_revoked" | "owner_removed";
 
 export type VerifyBearerResult =
   | { ok: true; actor: Extract<Actor, { kind: "user" }>; key: VerifiedApiKey }
@@ -76,6 +77,19 @@ export async function verifyBearerToken(token: string | null | undefined): Promi
   // route that widens to legacy org-less data when `orgId === personalOrgId` did that for every
   // key - including a team workspace's key, which then saw its creator's old personal projects
   // and documents. "" when the owner has no personal org (never equal to a real orgId).
+  /**
+   * The key is only as good as its owner's membership.
+   *
+   * A key carries an `orgId` and the id of whoever created it, and it acts as that person. Checking
+   * `revokedAt` alone meant removing someone from a workspace took away their browser session and
+   * left their automation running with full access — indefinitely, since nothing expires a key.
+   * That made "remove member" cosmetic for anyone who had ever created one.
+   *
+   * Cached with the session resolvers' membership cache, so revoking a membership invalidates this
+   * too (`membershipChanged`) rather than leaving a ten-second window.
+   */
+  if (!(await isActiveMember({ orgId, userId }))) return { ok: false, code: "owner_removed" };
+
   const personalOrg = await OrgModel.findOne({ personalForUserId: new Types.ObjectId(userId) }).select({ _id: 1 }).lean();
   const personalOrgId = personalOrg ? String(personalOrg._id) : "";
 
@@ -130,8 +144,8 @@ export async function verifyBearer(request: Request): Promise<VerifyBearerResult
  */
 export class ApiKeyAuthError extends Error {
   status: number;
-  code: "unauthorized" | "key_revoked" | "forbidden";
-  constructor(code: "unauthorized" | "key_revoked" | "forbidden", message: string) {
+  code: "unauthorized" | "key_revoked" | "owner_removed" | "forbidden";
+  constructor(code: "unauthorized" | "key_revoked" | "owner_removed" | "forbidden", message: string) {
     super(message);
     this.name = "ApiKeyAuthError";
     this.code = code;
@@ -156,7 +170,15 @@ export async function tryResolveApiKeyActor(request: Request): Promise<Actor | n
   if (!token || !token.startsWith(API_KEY_PREFIX)) return null;
   const result = await verifyBearer(request);
   if (!result.ok) {
-    throw new ApiKeyAuthError(result.code, result.code === "key_revoked" ? "This API key was revoked." : "Invalid API key.");
+    // Distinct message per cause: an agent told "invalid key" when the real answer is "the person
+    // who made this key is no longer in the workspace" will retry forever with a good key.
+    const message =
+      result.code === "key_revoked"
+        ? "This API key was revoked."
+        : result.code === "owner_removed"
+          ? "The member who created this API key is no longer in this workspace."
+          : "Invalid API key.";
+    throw new ApiKeyAuthError(result.code, message);
   }
   const method = (request.method || "GET").toUpperCase();
   if (MUTATING.has(method) && !result.key.scopes.includes("write")) {
