@@ -14,6 +14,7 @@ import { Types } from "mongoose";
 
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 import { UploadModel } from "@/lib/models/Upload";
 import { triggerUploadProcessing } from "@/lib/uploads/internalProcess";
 
@@ -26,9 +27,29 @@ const RERUNNABLE = new Set(["skipped", "failed"]);
 
 /**
  * Queue a summary-only rerun for `uploadId` and trigger processing.
- * `orgId`, when given, must match the document's workspace (the caller's authorization).
+ *
+ * `orgId` is the caller's authorization: the document must belong to that workspace. The check used
+ * to read `if (params.orgId && doc.orgId && ...)`, and the middle conjunct was the hole — a document
+ * with no `orgId` (every document that predates workspaces; `Doc.orgId` defaults to null) skipped
+ * the comparison entirely, so any signed-in member of any workspace could name someone else's legacy
+ * upload and have its summary rewritten. The credit is not even billed to the caller: processing
+ * resolves the billing workspace from the *upload's* owner, so the spend lands on the victim, and
+ * `aiOutput` is cleared before the run starts, so a refusal downstream still destroys what was there.
+ *
+ * It now asks `buildDocMatch`, which is the one rule for "which document may this actor act on" and
+ * already says that a legacy document resolves only for its owner, and only from that owner's own
+ * workspace. Callers that cannot answer "whose personal workspace is this" simply do not get the
+ * legacy branch — a rerun refused is recoverable, a rerun on the wrong document is not.
  */
-export async function queueSummaryRerun(params: { uploadId: string; origin: string; orgId?: string | null }): Promise<SummaryRerunResult> {
+export async function queueSummaryRerun(params: {
+  uploadId: string;
+  origin: string;
+  orgId?: string | null;
+  /** The caller, for the legacy (org-less document) branch. Omit and that branch is refused. */
+  userId?: string | null;
+  /** The caller's own workspace, for the same branch. */
+  personalOrgId?: string | null;
+}): Promise<SummaryRerunResult> {
   if (!Types.ObjectId.isValid(params.uploadId)) return { ok: false, status: 404, code: "not_found", error: "Upload not found" };
   await connectMongo();
   const uploadId = new Types.ObjectId(params.uploadId);
@@ -44,13 +65,24 @@ export async function queueSummaryRerun(params: { uploadId: string; origin: stri
   } | null;
   if (!upload?.docId) return { ok: false, status: 404, code: "not_found", error: "Upload not found" };
 
-  const doc = (await DocModel.findOne({ _id: upload.docId, isDeleted: { $ne: true } })
+  const callerOrgId = typeof params.orgId === "string" && Types.ObjectId.isValid(params.orgId) ? params.orgId : null;
+  const callerUserId = typeof params.userId === "string" && Types.ObjectId.isValid(params.userId) ? params.userId : null;
+  const allowLegacyByUserId = Boolean(
+    callerOrgId && callerUserId && params.personalOrgId && callerOrgId === params.personalOrgId,
+  );
+  const docMatch = callerOrgId
+    ? buildDocMatch(
+        upload.docId,
+        new Types.ObjectId(callerOrgId),
+        new Types.ObjectId(callerUserId ?? callerOrgId),
+        allowLegacyByUserId,
+      )
+    : // No workspace given at all: an internal caller that has already done its own scoping.
+      { _id: upload.docId, isDeleted: { $ne: true } };
+  const doc = (await DocModel.findOne(docMatch)
     .select({ orgId: 1, currentUploadId: 1, uploadId: 1 })
     .lean()) as { orgId?: Types.ObjectId | null; currentUploadId?: Types.ObjectId | null; uploadId?: Types.ObjectId | null } | null;
   if (!doc) return { ok: false, status: 404, code: "not_found", error: "Document not found" };
-  if (params.orgId && doc.orgId && String(doc.orgId) !== String(params.orgId)) {
-    return { ok: false, status: 404, code: "not_found", error: "Upload not found" };
-  }
   const current = doc.currentUploadId ?? doc.uploadId ?? null;
   if (!current || String(current) !== String(uploadId)) {
     return { ok: false, status: 409, code: "not_current", error: "Only the current version's summary can be written" };

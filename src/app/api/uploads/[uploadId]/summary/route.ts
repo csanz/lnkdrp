@@ -43,7 +43,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ uploadId: 
     // Best-effort preflight; the reservation inside the job is the real gate.
   }
 
-  const res = await queueSummaryRerun({ uploadId, origin: new URL(request.url).origin, orgId: actor.orgId });
+  const res = await queueSummaryRerun({
+    uploadId,
+    origin: new URL(request.url).origin,
+    orgId: actor.orgId,
+    // Passed so a document that predates workspaces still resolves for its own owner — see the
+    // note on `queueSummaryRerun`. Without them that branch is refused rather than waved through.
+    userId: actor.userId,
+    personalOrgId: actor.personalOrgId,
+  });
   if (!res.ok) {
     return applyTempUserHeaders(NextResponse.json({ error: res.error, code: res.code }, { status: res.status }), actor);
   }

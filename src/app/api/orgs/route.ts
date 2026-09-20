@@ -11,7 +11,7 @@ import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { debugError, debugLog } from "@/lib/debug";
-import { resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
+import { activeOrgCandidateOrder, resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 
 export const runtime = "nodejs";
@@ -111,23 +111,27 @@ export async function GET(request: Request) {
         ? String(orgs.find((o) => Boolean((o as unknown as { personalForUserId?: unknown }).personalForUserId))!._id)
         : "") ||
       "";
-    // Source-of-truth priority, the same order the API actor resolvers use:
-    // 1) server-issued active-org cookie (but only if the user has a membership for it)
-    // 2) JWT claim activeOrgId (but only if the user has a membership for it)
-    // 3) User.metadata.activeOrgId, read only when 1 and 2 are missing
-    // 4) personal org
-    // Step 3 used to be skipped: with no cookie (a new device, a cleared cookie) the switcher said
-    // "Personal" while billing, credits and uploads acted on the saved workspace.
-    let activeOrgId =
-      (cookieActiveOrgId && membershipByOrgId.has(cookieActiveOrgId) ? cookieActiveOrgId : "") ||
-      (claimActiveOrgId && membershipByOrgId.has(claimActiveOrgId) ? claimActiveOrgId : "");
-    if (!activeOrgId) {
+    // Which workspace is active is decided in exactly one place — `activeOrgCandidateOrder` in
+    // src/lib/gating/actor.ts — and confirmed here against the membership map this route has
+    // already built, rather than with a second round of lookups.
+    //
+    // The order used to be written out again here, with the JWT claim ranked *above* the stored
+    // workspace. A JWT is issued at sign-in and lives for weeks, so on a device with no cookie the
+    // switcher named the workspace the token remembered while `POST /api/docs` — which goes through
+    // the resolver — created the document in the workspace the person had actually last chosen, and
+    // published a live share link for it there. The comment above this block claimed the two agreed.
+    const savedActiveOrgId = await (async () => {
       const u = (await UserModel.findOne({ _id: userId }).select({ "metadata.activeOrgId": 1 }).lean()) as {
         metadata?: { activeOrgId?: unknown };
       } | null;
-      const saved = typeof u?.metadata?.activeOrgId === "string" ? u.metadata.activeOrgId.trim() : "";
-      if (saved && membershipByOrgId.has(saved)) activeOrgId = saved;
-    }
+      return typeof u?.metadata?.activeOrgId === "string" ? u.metadata.activeOrgId.trim() : "";
+    })();
+    let activeOrgId =
+      activeOrgCandidateOrder({
+        cookieOrgId: cookieActiveOrgId,
+        metadataOrgId: savedActiveOrgId,
+        claimOrgId: claimActiveOrgId,
+      }).find((candidate) => candidate === personalOrgId || membershipByOrgId.has(candidate)) ?? "";
     if (!activeOrgId) activeOrgId = personalOrgId || (orgs[0]?._id ? String(orgs[0]._id) : "");
 
     // Guardrail: if there are multiple personal orgs for this user (shouldn't happen),

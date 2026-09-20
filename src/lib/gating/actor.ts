@@ -167,6 +167,29 @@ export function activeOrgChanged(userId: string | Types.ObjectId): void {
  * accepted, so a database blip narrows access to the person's own workspace instead of widening it
  * to one they may no longer belong to.
  */
+/**
+ * The order alone, with no opinion about how a candidate is confirmed.
+ *
+ * It is split out because two callers answer "is this person a member" from different places and
+ * must still answer *which workspace* the same way. `resolveActiveOrgId` below confirms each
+ * candidate with `isActiveMember`; `GET /api/orgs` — the endpoint the workspace switcher renders
+ * from — already holds a complete membership map and confirms against that. They had drifted: the
+ * switcher ranked the JWT claim above the stored workspace, which is the reverse of this, so on a
+ * device with no cookie the switcher named one workspace while `POST /api/docs` created the
+ * document (with a live public link) in another.
+ *
+ * Invalid and empty ids are dropped here so neither caller has to remember to.
+ */
+export function activeOrgCandidateOrder(params: {
+  cookieOrgId: string | null | undefined;
+  metadataOrgId: string | null | undefined;
+  claimOrgId: string | null | undefined;
+}): string[] {
+  return [params.cookieOrgId, params.metadataOrgId, params.claimOrgId]
+    .map((c) => (typeof c === "string" ? c.trim() : ""))
+    .filter((c) => Boolean(c) && Types.ObjectId.isValid(c));
+}
+
 async function resolveActiveOrgId(params: {
   request: Request;
   userId: string;
@@ -178,8 +201,12 @@ async function resolveActiveOrgId(params: {
   const cookieRaw = readCookie(cookieHeader, ACTIVE_ORG_COOKIE);
   const cookieOrgId = typeof cookieRaw === "string" ? cookieRaw.trim() : "";
 
-  for (const candidate of [cookieOrgId, await readActiveOrgMetadata(userId), claimOrgId]) {
-    if (!candidate || !Types.ObjectId.isValid(candidate)) continue;
+  const candidates = activeOrgCandidateOrder({
+    cookieOrgId,
+    metadataOrgId: await readActiveOrgMetadata(userId),
+    claimOrgId,
+  });
+  for (const candidate of candidates) {
     // Their own workspace needs no membership round-trip: it is theirs by construction.
     if (personalOrgId && candidate === personalOrgId) return candidate;
     if (await isActiveMember({ orgId: candidate, userId })) return candidate;

@@ -15,6 +15,9 @@ import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
 import { debugError, debugLog } from "@/lib/debug";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
+import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { liveProjectByIdMatch } from "@/lib/projects/scope";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 
 export const runtime = "nodejs";
 /**
@@ -42,6 +45,13 @@ export async function POST(
       );
     }
 
+    // A `viewer` seat is the read-only one handed to outside reviewers, and this route decides what
+    // the review agent reads as context for every future upload into the repo. The rule is stated
+    // once in src/lib/orgs/requireOrgEditor.ts — "every handler that creates or changes workspace
+    // data must reject viewer members" — and this handler was simply not following it.
+    const forbidden = await forbidUnlessOrgRole(actor);
+    if (forbidden) return forbidden;
+
     const body = (await request.json().catch(() => ({}))) as Partial<{ docId: string }>;
     const docId = typeof body.docId === "string" ? body.docId.trim() : "";
     if (!docId || !Types.ObjectId.isValid(docId)) {
@@ -53,20 +63,19 @@ export async function POST(
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
 
+    // Both halves of this filter wanted to be a top-level `$or`, and the second one won — so the
+    // workspace bound was deleted before the query was sent, and from a personal workspace (the
+    // default state for most accounts) any request repo in any tenant resolved here. `$and` keeps
+    // them apart, and `liveProjectByIdMatch` is the same rule the project routes use.
     const project = await ProjectModel.findOne({
-      _id: new Types.ObjectId(requestId),
-      ...(allowLegacyByUserId
-        ? {
-            $or: [
-              { orgId },
-              { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-            ],
-          }
-        : { orgId }),
-      isDeleted: { $ne: true },
-      $or: [
-        { isRequest: true },
-        { requestUploadToken: { $exists: true, $nin: [null, ""] } },
+      $and: [
+        liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId),
+        {
+          $or: [
+            { isRequest: true },
+            { requestUploadToken: { $exists: true, $nin: [null, ""] } },
+          ],
+        },
       ],
     })
       .select({ _id: 1, isRequest: 1, requestUploadToken: 1, requestReviewGuideDocId: 1 })
@@ -86,17 +95,7 @@ export async function POST(
       const hasToken = typeof tokenRaw === "string" && tokenRaw.trim();
       if (!persistedIsRequest && hasToken) {
         await ProjectModel.updateOne(
-          {
-            _id: new Types.ObjectId(requestId),
-            ...(allowLegacyByUserId
-              ? {
-                  $or: [
-                    { orgId },
-                    { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-                  ],
-                }
-              : { orgId }),
-          },
+          liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId),
           { $set: { isRequest: true } },
         );
       }
@@ -121,33 +120,13 @@ export async function POST(
     if (!doc) return NextResponse.json({ error: "Doc not found" }, { status: 404 });
 
     await ProjectModel.updateOne(
-      {
-        _id: new Types.ObjectId(requestId),
-        ...(allowLegacyByUserId
-          ? {
-              $or: [
-                { orgId },
-                { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-              ],
-            }
-          : { orgId }),
-      },
+      liveProjectByIdMatch(new Types.ObjectId(requestId), orgId, legacyUserId, allowLegacyByUserId),
       { $set: { requestReviewGuideDocId: new Types.ObjectId(docId) } },
     );
 
     // Link the guide doc back to this request repo (durable doc-level pointer).
     await DocModel.updateOne(
-      {
-        _id: new Types.ObjectId(docId),
-        ...(allowLegacyByUserId
-          ? {
-              $or: [
-                { orgId },
-                { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-              ],
-            }
-          : { orgId }),
-      },
+      buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId),
       { $set: { guideForRequestProjectId: new Types.ObjectId(requestId) } },
     );
 
@@ -156,16 +135,10 @@ export async function POST(
     if (prevGuideDocId && String(prevGuideDocId) !== String(docId)) {
       await DocModel.updateOne(
         {
-          _id: prevGuideDocId,
-          ...(allowLegacyByUserId
-            ? {
-                $or: [
-                  { orgId },
-                  { userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-                ],
-              }
-            : { orgId }),
-          guideForRequestProjectId: new Types.ObjectId(requestId),
+          $and: [
+            buildDocMatch(new Types.ObjectId(String(prevGuideDocId)), orgId, legacyUserId, allowLegacyByUserId),
+            { guideForRequestProjectId: new Types.ObjectId(requestId) },
+          ],
         },
         { $set: { guideForRequestProjectId: null } },
       );

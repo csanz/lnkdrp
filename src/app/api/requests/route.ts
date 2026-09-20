@@ -102,7 +102,21 @@ export async function GET(request: Request) {
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
 
     // IMPORTANT: skip backfill/migration work for `sidebar=1` callers (the left sidebar polls frequently).
-    if (!sidebar) {
+    //
+    // Two things had to be true for this to be safe, and neither was.
+    //
+    // 1. **The tenancy clause was being deleted before the query ran.** The filter spread a `$or`
+    //    for the workspace and then declared a second `$or` literal for `isRequest`; in a JS object
+    //    literal the later key replaces the earlier one, so in the legacy branch the workspace bound
+    //    simply was not there and this `updateMany` swept every tenant's projects. The read filter
+    //    directly below already had the right shape — `requestOnly` inside `$and` — which is why
+    //    only the write drifted. It now uses `$and` too, so no key can replace another.
+    // 2. **An unauthenticated caller reached it.** `resolveActor` mints a temp user when nothing
+    //    authenticates, and a temp actor's `orgId` is its own fresh personal org, so
+    //    `allowLegacyByUserId` was unconditionally true for a stranger — the one branch where the
+    //    clobbered filter had no workspace bound at all. A migration write is workspace maintenance;
+    //    it belongs to someone who signed in.
+    if (!sidebar && actor.kind === "user") {
       // Backfill: ensure `isRequest=true` is persisted for any repo that already has a token.
       // This is idempotent and makes the discriminator reliable for downstream UIs/queries.
       await ProjectModel.updateMany(
@@ -116,7 +130,7 @@ export async function GET(request: Request) {
               }
             : { orgId }),
           requestUploadToken: { $exists: true, $nin: [null, ""] },
-          $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }],
+          $and: [{ $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }] }],
         },
         { $set: { isRequest: true } },
       );
