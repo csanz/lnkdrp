@@ -14,7 +14,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDownIcon, PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
+import { CheckIcon, PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 import TagDot from "@/components/tags/TagDot";
 import Modal from "@/components/modals/Modal";
@@ -439,16 +439,16 @@ export default function TagsManager() {
                     <OverflowMenu
                       label={`Change colour of ${tag.name}`}
                       align="start"
-                      panelWidth={248}
-                      triggerClassName="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-1.5 py-1 transition-colors hover:border-[var(--fg)] hover:bg-[var(--panel-hover)]"
-                      trigger={
-                        <>
-                          <TagDot color={tag.color} size={11} />
-                          <ChevronDownIcon className="h-3 w-3 text-[var(--muted-2)]" aria-hidden="true" />
-                        </>
-                      }
+                      panelClassName="fixed z-[1000] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 shadow-lg"
+                      panelWidth={212}
+                      triggerClassName="grid h-7 w-7 place-items-center rounded-full ring-1 ring-[var(--border)] transition hover:ring-2 hover:ring-[var(--fg)]"
+                      trigger={<TagDot color={tag.color} size={13} />}
                     >
                       {(close) => (
+                        // Every colour at once, in a grid you can hit: this is the picker, not a
+                        // menu that happens to contain colours. Two rows of six, each swatch its
+                        // own target, the current one carrying a tick so the panel says what is
+                        // set as well as what is available.
                         <div className="grid grid-cols-6 gap-1">
                           {TAG_COLOR_KEYS.map((key) => (
                             <button
@@ -456,20 +456,25 @@ export default function TagsManager() {
                               type="button"
                               disabled={busy}
                               aria-label={TAG_COLORS[key].label}
+                              aria-pressed={key === tag.color}
                               title={TAG_COLORS[key].label}
                               onClick={() => {
                                 close();
                                 if (key === tag.color) return;
                                 void patch(tag, { color: key });
                               }}
-                              className={[
-                                "grid h-9 w-9 place-items-center rounded-lg transition-colors",
-                                key === tag.color
-                                  ? "bg-[var(--panel-hover)] ring-1 ring-[var(--fg)]"
-                                  : "hover:bg-[var(--panel-hover)]",
-                              ].join(" ")}
+                              className="grid h-8 w-8 place-items-center rounded-full transition hover:bg-[var(--panel-hover)]"
                             >
-                              <TagDot color={key} size={14} />
+                              <span className="relative grid place-items-center">
+                                <TagDot color={key} size={18} />
+                                {key === tag.color ? (
+                                  <CheckIcon
+                                    className="absolute h-3.5 w-3.5 text-black/80"
+                                    strokeWidth={3}
+                                    aria-hidden="true"
+                                  />
+                                ) : null}
+                              </span>
                             </button>
                           ))}
                         </div>
