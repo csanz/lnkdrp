@@ -127,8 +127,6 @@ and do not link to or announce the site until the Announce step in G.
 
 **E. MCP on Fly (7)**
 
-- [ ] First: add the missing `COPY src/lib/limits/uploads.ts` to `mcp/Dockerfile`, or the machine
-      dies on start in a restart loop (7, 12).
 - [ ] MCP: `fly launch`, `REALTIME_SECRET`, `fly deploy --ha=false`, **exactly one machine**,
       `/healthz` on the `fly.dev` host, the startup log shows the realtime URL, cert, DNS-only
       CNAME, `fly certs check`, `/healthz` on `mcp.lnkdrp.com` (7).
@@ -242,7 +240,7 @@ openssl rand -hex 32      # CRON_MONITOR_SECRET (read-only; for the uptime monit
 copying, and drop the quotes before putting a line in a `fly secrets import` file.
 
 `NEXTAUTH_SECRET` lives only on Vercel. Never set it on the realtime or MCP hosts, even though both
-accept it in place of `REALTIME_SECRET` (and `mcp/README.md` still says so): whoever holds it can
+accept it in place of `REALTIME_SECRET`: whoever holds it can
 forge a session for any user, admins included, and sign the internal processing token.
 `REALTIME_SECRET` must be set on Vercel too and must differ from `NEXTAUTH_SECRET`; if it is unset
 there, the app signs tickets with `NEXTAUTH_SECRET` and the services would need that value.
@@ -1016,10 +1014,10 @@ Same host class as the realtime server; on Fly, from the repository root (6.2). 
 Atlas, so it needs no egress IP for the Atlas allowlist. It does need one for the Vercel Firewall
 rule in 12; allocate it in 0 G, before that rule.
 
-**`mcp/Dockerfile` must copy `src/lib/limits/uploads.ts` first (12).** The server imports it
-(`mcp/src/main.ts`, `tools/sharePdf.ts`, `tools/replacePdf.ts`) for the upload ceilings in 4.4, and
-the Dockerfile's `COPY` list still names only `ticket.ts`, `schedule.ts` and `types.ts`. The build
-succeeds — nothing type-checks the image — and the container then dies on start with
+**`mcp/Dockerfile` copies `src/lib/limits/uploads.ts` (12) — done, keep it that way.** The server
+imports it (`mcp/src/main.ts`, `tools/sharePdf.ts`, `tools/replacePdf.ts`) for the upload ceilings
+in 4.4. The `COPY` is at `mcp/Dockerfile:41`; before it was added the build succeeded — nothing
+type-checks the image — and the container then died on start with
 `Cannot find module '../../src/lib/limits/uploads'`, which on Fly is a machine restarting in a
 loop and `/healthz` never answering. Add the line next to the other three `COPY`s, or the block
 below cannot finish:
@@ -1583,11 +1581,11 @@ monitor is in 12.
 - Stripe live catalog and webhook do not exist yet; only the sandbox is configured.
 - Neither service is deployed yet. Fly.io is the chosen host (section 6.1), configs are in
   `deploy/fly/`; DNS for `mcp.lnkdrp.com` and `realtime.lnkdrp.com` still has to be created.
-- **Blocking: `mcp/Dockerfile` does not copy `src/lib/limits/uploads.ts`,** which the server
-  imports. The image builds and then dies on start with
-  `Cannot find module '../../src/lib/limits/uploads'`, so the MCP cannot be deployed until the
-  `COPY` line is added (7). Nothing catches this before a deploy: no type check runs against the
-  image and the build itself succeeds.
+- **Resolved: `mcp/Dockerfile` copies `src/lib/limits/uploads.ts`** (`mcp/Dockerfile:41`). Without
+  it the image built and then died on start with `Cannot find module '../../src/lib/limits/uploads'`.
+  The underlying hazard remains: nothing checks that the `COPY` list covers what `mcp/src` imports
+  out of `src/lib`, no type check runs against the image, and the build succeeds either way — so
+  the next such import breaks the image the same silent way.
 - **The 50 MB inline upload limit is not reachable on Vercel.** `src/lib/limits/uploads.ts` sets
   `UPLOAD_MAX_BYTES` to 50 MB for both `import-url` and `import-bytes`, and every message and MCP
   tool description quotes it, but Vercel Functions cap a request body at about 4.5 MB, so the
@@ -1669,9 +1667,6 @@ monitor is in 12.
   OpenAI call passes `store: false`; `errorJson` and `sendTextEmail` log a redacted line without
   `DEBUG_LEVEL`; realtime `/healthz` reports stream health and the process exits on a dead stream.
 - **Code and config changes still open** (this runbook works around each one until it lands):
-  - `mcp/Dockerfile`: add `COPY src/lib/limits/uploads.ts ./src/lib/limits/uploads.ts` (above,
-    blocking). Nothing checks that the `COPY` list covers what `mcp/src` imports out of `src/lib`;
-    the next such import will break the image the same silent way.
   - `mcp/Dockerfile`, `realtime/Dockerfile`: exact direct versions, but still `npm install` with no
     lockfile (transitive dependencies float), and nothing checks the pins against the root lockfile.
     The base image is pinned to `node:22.23.2-alpine`. Commit a `package.json` and
