@@ -1072,6 +1072,15 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    * replace them in place.
    */
   const silentRefreshRef = useRef(false);
+  /**
+   * Whether the identities have ever arrived on this page.
+   *
+   * The strip waits for them before its first paint, so it is drawn once with what it will keep
+   * saying. It must not wait again: every refresh clears `viewersLoaded` while the second request
+   * is back in flight, and gating on that turned each one into the card vanishing and returning —
+   * trading a flicker on load for a flicker every twenty seconds. A latch, not a state.
+   */
+  const viewersEverLoadedRef = useRef(false);
   const [rangeOpen, setRangeOpen] = useState(false);
   // Choosing a link happens on the Links page, which is the full per-link table; this page shows
   // one link (`?shareId=`) or the document. A picker and a comparison table lived here once and
@@ -1438,10 +1447,22 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
           `${apiBase}/shareviews?days=${encodeURIComponent(String(days))}&viewers=1&viewersOnly=1${linkFilterParam}`,
           { cache: "no-store" },
         );
-        if (!res.ok) return;
+        // Settled either way: "we asked and this is all there is" is what the flag has to mean,
+        // or a failed request leaves every surface waiting on it blank for the life of the page.
+        if (!res.ok) {
+          if (!cancelled) {
+            setViewersLoaded(true);
+            viewersEverLoadedRef.current = true;
+          }
+          return;
+        }
         const json = (await res.json().catch(() => null)) as any;
         if (cancelled) return;
-        if (!json || typeof json !== "object" || json.ok !== true) return;
+        if (!json || typeof json !== "object" || json.ok !== true) {
+          setViewersLoaded(true);
+          viewersEverLoadedRef.current = true;
+          return;
+        }
         setData((prev) => {
           if (!prev || typeof prev !== "object") return prev as any;
           const next = { ...(prev as any) };
@@ -1467,6 +1488,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
           return next as MetricsResponse;
         });
         setViewersLoaded(true);
+        viewersEverLoadedRef.current = true;
       } finally {
         if (!cancelled) setViewersLoading(false);
       }
@@ -2629,16 +2651,25 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
             ) : null}
 
             {/* Who opened it, newest first — above the tiles, because "did they read it yet" is the
-                question this page is opened to answer and it used to be several screens down. */}
-            <RecentVisitors
-              visitors={recentVisitors}
-              className="mb-5"
-              onSeeAll={() => {
-                document
-                  .getElementById("viewer-lists")
-                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
-            />
+                question this page is opened to answer and it used to be several screens down.
+
+                Held back until the identities land. This page makes two requests: a light one that
+                carries project-link readers, and a second that carries everyone else. Rendering on
+                the first meant the card painted one list — twelve project readers — and then
+                repainted a different one a moment later when the other twenty arrived, re-sorted by
+                recency. That is the flicker; the fix is to draw it once, when what it says is
+                settled. On Free there is no second request and nothing to wait for. */}
+            {deepAnalytics && !viewersLoaded && !viewersEverLoadedRef.current ? null : (
+              <RecentVisitors
+                visitors={recentVisitors}
+                className="mb-5"
+                onSeeAll={() => {
+                  document
+                    .getElementById("viewer-lists")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+              />
+            )}
 
             <div className="grid gap-5 sm:grid-cols-2">
               {/* Views card */}
@@ -3299,7 +3330,9 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                     Viewers
                     <ReadingLegendButton />
                   </div>
-                  <div className="mt-1 text-sm text-[var(--muted)]">Everyone who opened it, newest first.</div>
+                  <div className="mt-1 text-sm text-[var(--muted)]">
+                    Everyone who opened it, newest first.
+                  </div>
 
                   <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                     {loading ? (
