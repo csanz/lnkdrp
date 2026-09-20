@@ -30,18 +30,29 @@ export default function AppPageHeader({
 }) {
   return (
     <header className={`shrink-0 border-b border-[var(--border)] bg-[var(--panel)] ${APP_PAGE_GUTTER} pb-5 pt-6`}>
-      {/* `h-8`, not `min-h-8`: a badge or an action taller than the title used to grow this row, which
-          moved the title off the line the sidebar logo sits on — the one horizontal rule every page
-          shares. Anything taller than 32px now centres inside it instead of pushing it down. */}
-      <div className="flex h-8 flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:flex-nowrap">
-        <div className="flex min-w-0 items-center gap-2.5">
-          <Icon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-          <h1 className="truncate text-lg font-semibold tracking-tight text-[var(--fg)]">{title}</h1>
-          {badge}
+      {/* The actions sit beside the title *and* its description, centred against both, which is
+          where the document page has always put them and the alignment every other page is judged
+          against. Inside the title row they centred on that one line and sat 13px higher, so the
+          same controls moved as you walked between a page and its sub-pages. `SubPageHeader` lays
+          out identically. */}
+      <div className="md:flex md:items-center md:justify-between md:gap-x-4">
+        <div className="min-w-0 md:flex-1">
+          {/* `h-8`, not `min-h-8`: a badge taller than the title used to grow this row, which moved
+              the title off the line the sidebar logo sits on — the one horizontal rule every page
+              shares. Anything taller than 32px centres inside it instead of pushing it down. */}
+          <div className="flex h-8 flex-wrap items-center justify-between gap-x-4 gap-y-2 sm:flex-nowrap">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Icon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+              <h1 className="truncate text-lg font-semibold tracking-tight text-[var(--fg)]">{title}</h1>
+              {badge}
+            </div>
+            {/* Narrow screens keep them on the title line: there is no second column to sit beside. */}
+            {actions ? <div className="shrink-0 md:hidden">{actions}</div> : null}
+          </div>
+          {description ? <p className="mt-1.5 max-w-3xl text-[13px] leading-5 text-[var(--muted-2)]">{description}</p> : null}
         </div>
-        {actions ? <div className="shrink-0">{actions}</div> : null}
+        {actions ? <div className="hidden shrink-0 md:block">{actions}</div> : null}
       </div>
-      {description ? <p className="mt-1.5 max-w-3xl text-[13px] leading-5 text-[var(--muted-2)]">{description}</p> : null}
       {children ? <div className="mt-5">{children}</div> : null}
     </header>
   );
