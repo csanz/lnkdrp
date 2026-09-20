@@ -20,7 +20,7 @@ import { z } from "zod";
 
 import type { ApiTag } from "../api";
 import type { ToolContext } from "../context";
-import { handleTool } from "../errors";
+import { handleTool, ToolError } from "../errors";
 import { docIdSchema, SAFETY_TAIL } from "./shared";
 import { tagSlug } from "../../../src/lib/tags/slug";
 
@@ -46,14 +46,25 @@ const targetShape = {
 };
 
 /** One target, never two, never none — the error says which, rather than guessing. */
-function resolveTarget(args: { docId?: string | undefined; projectId?: string | undefined }): {
+function resolveTarget(
+  args: { docId?: string | undefined; projectId?: string | undefined },
+  /** The verb, so untag stops telling the caller what to pass "to tag". */
+  verb: "tag" | "untag",
+): {
   targetKind: "doc" | "project";
   targetId: string;
 } {
   const doc = (args.docId ?? "").trim();
   const project = (args.projectId ?? "").trim();
-  if (doc && project) throw new Error("Give either docId or projectId, not both.");
-  if (!doc && !project) throw new Error("Give a docId or a projectId to tag.");
+  // ToolError, not Error: a bare throw is mapped to code "upstream" by the handler, which tells an
+  // agent the server had a problem and invites a retry of a call that can only fail again. The
+  // caller's mistake is a `validation` fault everywhere else on this surface.
+  if (doc && project) {
+    throw new ToolError("validation", `Give either docId or projectId, not both — ${verb} acts on one thing at a time.`);
+  }
+  if (!doc && !project) {
+    throw new ToolError("validation", `Give a docId or a projectId to ${verb}.`);
+  }
   return doc ? { targetKind: "doc", targetId: doc } : { targetKind: "project", targetId: project };
 }
 
@@ -103,7 +114,7 @@ export function registerTagTool(server: McpServer, ctx: ToolContext): void {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const target = resolveTarget(args);
+      const target = resolveTarget(args, "tag");
       const names = [...new Set(args.tags.map((t) => t.trim()).filter(Boolean))];
       const created: string[] = [];
       let tags: ApiTag[] = [];
@@ -141,7 +152,7 @@ export function registerUntagTool(server: McpServer, ctx: ToolContext): void {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const target = resolveTarget(args);
+      const target = resolveTarget(args, "untag");
       // Folded with the same function the server files tags under, because `lnkdrp_tag` promises
       // exactly that: "case, accents and punctuation are folded". Removing was only lowercasing, so
       // untagging "Serie A" from an item carrying "Série A" — or "fund raising" where the tag is

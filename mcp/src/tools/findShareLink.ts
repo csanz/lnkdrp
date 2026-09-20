@@ -55,9 +55,36 @@ export function registerFindShareLinkTool(server: McpServer, ctx: ToolContext): 
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const hits = await ctx.api.findShareLinks(args.query, args.limit);
+      /**
+       * The index is OR; the question is AND.
+       *
+       * `GET /api/share-links` runs a Mongo text search, which returns a row when *any* term hits.
+       * So "Sequoia diligence" came back with a link matching only "Sequoia" and another matching
+       * only a word in an unrelated label, ranked as though both were answers — and a query of two
+       * specific words is a caller narrowing down, not widening out.
+       *
+       * Rather than change what the index does, the hits are narrowed here to those carrying every
+       * term. When nothing matches all of them the OR results are returned anyway, with a warning
+       * that says so: an empty answer to "find the Sequoia diligence link" is less useful than a
+       * near miss the human can recognise, as long as it is labelled a near miss.
+       */
+      const raw = await ctx.api.findShareLinks(args.query, Math.min((args.limit ?? 10) * 4, 50));
+      const terms = args.query.toLowerCase().split(/\s+/).filter((t) => t.length > 1);
+      const haystack = (h: (typeof raw)[number]) =>
+        [h.label, h.audience, h.docTitle, h.projectName, h.shareId].filter(Boolean).join(" ").toLowerCase();
+      const all = terms.length > 1 ? raw.filter((h) => terms.every((t) => haystack(h).includes(t))) : raw;
+      const narrowed = all.length > 0;
+      const hits = (narrowed ? all : raw).slice(0, args.limit ?? 10);
       return {
         query: args.query,
+        ...(terms.length > 1 && !narrowed && hits.length
+          ? {
+              warnings: [
+                `No link matches every word of "${args.query}". These match at least one, ranked by relevance — check ` +
+                  "the label and audience before using one.",
+              ],
+            }
+          : {}),
         links: hits.map((h) => ({
           // A project link opens a data room at /p/<shareId>, not a document at /s/<shareId>, and
           // has no docId: handing back the /s/ form gave the human a URL that resolves to nothing.

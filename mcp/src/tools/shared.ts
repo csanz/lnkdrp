@@ -27,7 +27,19 @@ export type DocRef = { docId?: string | undefined; shareId?: string | undefined 
 /** Exactly one of `docId` / `shareId` must be given. */
 export function requireExactlyOneRef(ref: DocRef): DocRef {
   const has = [ref.docId, ref.shareId].filter((v) => typeof v === "string" && v.length > 0).length;
-  if (has !== 1) throw new ToolError("validation", "Pass docId or shareId (at least one; some tools accept both).");
+  // Two faults, two messages. One string for both meant an agent that passed *both* ids read "at
+  // least one" — it had passed two — and "some tools accept both", which is exactly what it had
+  // tried. It had no way to learn that this tool is not one of them.
+  if (has === 0) {
+    throw new ToolError("validation", "Pass docId or shareId. This tool needs one of them to know which document you mean.");
+  }
+  if (has > 1) {
+    throw new ToolError(
+      "validation",
+      "Pass docId or shareId, not both — this tool takes exactly one. Use the shareId alone to ask about a link, or the " +
+        "docId alone to ask about the document. (lnkdrp_get_share_stats is the tool that accepts the pair.)",
+    );
+  }
   return ref;
 }
 

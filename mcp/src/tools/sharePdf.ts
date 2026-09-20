@@ -199,9 +199,33 @@ export async function prepareInlineUpload(source: InlinePdfSource, opts: { optim
   if (source.kind === "file") {
     bytes = await readLocalPdf(source.filePath);
   } else {
-    bytes = Buffer.from(source.base64, "base64");
+    /**
+     * Three different mistakes used to share one message.
+     *
+     * "did not decode to a PDF" is true of a JPEG, of a string that is not base64 at all, and of a
+     * correct PDF still wearing its `data:` prefix — but only the first is what the sentence
+     * describes, so the other two sent the caller looking at the wrong thing. The data-URI case is
+     * not even an error: it is what every browser API hands you, so it is stripped rather than
+     * refused.
+     */
+    const withoutDataUri = source.base64.replace(/^data:[^;,]*;base64,/i, "");
+    if (!/^[A-Za-z0-9+/\r\n=_-]*$/.test(withoutDataUri)) {
+      throw new ToolError(
+        "validation",
+        "fileBase64 is not base64 — it contains characters outside the base64 alphabet. Re-encode the file, or pass " +
+          "sourceUrl (an https link to the PDF) instead.",
+      );
+    }
+    bytes = Buffer.from(withoutDataUri, "base64");
+    if (!bytes.length) {
+      throw new ToolError("validation", "fileBase64 decoded to nothing. Check the string was not truncated in transit.");
+    }
     if (!looksLikePdf(bytes)) {
-      throw new ToolError("unsupported_content_type", 'fileBase64 did not decode to a PDF (the bytes do not start with "%PDF-").');
+      throw new ToolError(
+        "unsupported_content_type",
+        'fileBase64 decoded, but the bytes are not a PDF (they do not start with "%PDF-"). lnkdrp shares PDFs only — ' +
+          "convert the file first.",
+      );
     }
   }
 
@@ -372,7 +396,24 @@ export function validateSourceUrl(raw: string, apiUrl: string): string {
   if (unsupported) throw new ToolError("validation", unsupported);
   if (url.protocol === "https:") return url.toString();
   if (url.protocol === "http:" && url.origin === new URL(apiUrl).origin) return url.toString();
-  throw new ToolError("validation", "sourceUrl must use https (http is only accepted for the lnkdrp app itself).");
+  // Each scheme fails for its own reason, and only `http:` is the near-miss the old single message
+  // described. `file:` in particular has a real answer — it is what `filePath` is for — and being
+  // told to "use https" sends the caller to fix the wrong thing.
+  if (url.protocol === "http:") {
+    throw new ToolError("validation", "sourceUrl must use https (http is only accepted for the lnkdrp app itself).");
+  }
+  if (url.protocol === "file:") {
+    throw new ToolError(
+      "validation",
+      "sourceUrl cannot be a file:// URL. Pass the absolute path as filePath instead, which the server reads from disk " +
+        "when it runs on your machine, or send the bytes as fileBase64.",
+    );
+  }
+  throw new ToolError(
+    "validation",
+    `sourceUrl must be an https URL; this one uses "${url.protocol}". Give a direct https link to the PDF, or pass the ` +
+      "file as filePath or fileBase64.",
+  );
 }
 
 /** File name to record on the upload; import-url replaces it with the real one. */
