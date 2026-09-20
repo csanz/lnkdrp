@@ -535,11 +535,23 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
 
       const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "share_pdf", args.idempotencyKey), run, {
         fingerprint: fingerprintArgs(args),
+        // A document the human deleted between the two calls is not a document to hand back.
+        stillExists: async (cached) => Boolean(await api.getDoc(cached.docId)),
       });
       if (!replayed) return value;
       // A replay returns the same document; refresh the status so a retry after a timeout is useful.
+      // `replayed: true` is on the result for the same reason lnkdrp_create_project carries it: the
+      // description promises a retry returns the same document rather than a second one, and that
+      // promise is only actionable if the caller can tell which of the two just happened.
       const fresh = await api.getDoc(value.docId).catch(() => null);
-      return fresh ? { ...value, status: fresh.status, ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}) } : value;
+      return fresh
+        ? {
+            ...value,
+            status: fresh.status,
+            ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}),
+            replayed: true,
+          }
+        : { ...value, replayed: true };
     }),
   );
 }

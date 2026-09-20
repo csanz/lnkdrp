@@ -222,6 +222,9 @@ export function registerCreateProjectTool(server: McpServer, ctx: ToolContext): 
       };
       const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "create_project", args.idempotencyKey), run, {
         fingerprint: fingerprintArgs(args),
+        // A project deleted between the two calls is not a project to hand back — replaying it
+        // returned publicPageEnabled: true and a /p/ URL that resolves to nothing.
+        stillExists: async (cached) => Boolean(await ctx.api.getProjectDocs(cached.project.id, { limit: 1 }).catch(() => null)),
       });
       // A new project's public page is on (the model default); the create route just does not echo it.
       const created: ApiProject = { ...value.project, shareEnabled: value.project.shareEnabled ?? true };
