@@ -363,9 +363,11 @@ this was done.
   recipient by a page that is working as designed, spells out both ids — and every other artifact
   hangs off the same prefix. This is the one finding from the 2026-09-20 review still live. It needs
   signed URLs or a proxy in front of the store; it is not a patch.
-- **Redirects on the blob fetch.** `fetch` follows redirects by default, so an allowlisted blob URL
-  that 3xx's to an internal address is still dereferenced. Closing it means `redirect: "manual"`
-  plus re-validating `location`, in all five routes that dereference a stored URL.
+- **Two routes still hold a local copy of the blob allowlist.** `fetchStoredBlob`
+  (`src/lib/blob/fetchStoredBlob.ts`) is the one place that validates a stored URL and follows its
+  redirects, re-checking the host on every hop. Three of the five call sites use it;
+  `/s/:shareId/pdf` and `/p/:shareId/:docId/preview` still carry their own predicate and a bare
+  `fetch`, so they remain redirect-followers until they are converted.
 - **No audit of already-stored URLs.** `blobUrl` and `previewImageUrl` were patchable once. The
   read-side allowlist makes a poisoned row harmless, but nothing has counted whether any exists, and
   an affected owner would see a permanent "PDF not available".
