@@ -293,13 +293,24 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
     },
     handleTool(async (args) => {
       const res = await loadProject(ctx.api, args, { q: args.query, page: args.page, limit: args.limit, archived: args.archived });
+      // The project's own tags, and each listed document's, in two reads rather than one per row.
+      // Best-effort: tags are how a workspace files things, not part of what a project *is*.
+      const [projectTags, docTags] = await Promise.all([
+        ctx.api.tagsForTarget({ targetKind: "project", targetId: res.project.id }).catch(() => []),
+        ctx.api.tagsForTargets({ targetKind: "doc", ids: res.docs.map((d) => d.id) }).catch(() => new Map()),
+      ]);
+      const asTagRows = (list: { name: string; slug: string; color: string }[]) =>
+        list.map((t) => ({ name: t.name, slug: t.slug, color: t.color }));
       return {
         // Without a query the route's total is the project's cached document count.
-        project: projectView(
-          ctx.api,
-          // docCount is the live count; the route's total is only that without a query or the archive view.
-          await withListedMeta(ctx.api, args.query || args.archived ? { ...res.project, docCount: null } : { ...res.project, docCount: res.total }),
-        ),
+        project: {
+          ...projectView(
+            ctx.api,
+            // docCount is the live count; the route's total is only that without a query or the archive view.
+            await withListedMeta(ctx.api, args.query || args.archived ? { ...res.project, docCount: null } : { ...res.project, docCount: res.total }),
+          ),
+          tags: asTagRows(projectTags),
+        },
         total: res.total,
         page: res.page,
         limit: res.limit,
@@ -314,6 +325,7 @@ export function registerGetProjectTool(server: McpServer, ctx: ToolContext): voi
           previewImageUrl: d.previewImageUrl,
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
+          tags: asTagRows(docTags.get(d.id) ?? []),
         })),
       };
     }),

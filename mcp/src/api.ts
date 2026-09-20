@@ -824,6 +824,48 @@ export class ApiClient {
   }
 
   /** `GET /api/tags/assignments` — the tags on one document or project. */
+  /**
+   * The tags on many things in one read — `GET /api/tags/targets`.
+   *
+   * The per-target endpoint above answers for one item; a list of twenty documents would be twenty
+   * round trips, which is why the sidebar has this and why the list tools use it.
+   */
+  async tagsForTargets(input: { targetKind: "doc" | "project"; ids: string[] }): Promise<Map<string, ApiTag[]>> {
+    const out = new Map<string, ApiTag[]>();
+    const ids = [...new Set(input.ids.filter(Boolean))];
+    if (!ids.length) return out;
+    // The route caps at 200 ids; page rather than silently losing the tail.
+    for (let i = 0; i < ids.length; i += 200) {
+      const body = rec(
+        await this.request("GET", "/api/tags/targets", {
+          query: { targetKind: input.targetKind, ids: ids.slice(i, i + 200).join(",") },
+        }),
+      );
+      const map = rec(body.tags);
+      for (const [targetId, list] of Object.entries(map)) {
+        out.set(targetId, (Array.isArray(list) ? list : []).map(asTag));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Everything carrying one tag — `GET /api/tags/by-slug/:slug/items`.
+   *
+   * Documents and projects together, because "fundraising" is one idea even when it is spread
+   * across both. The slug is folded by the route, so any spelling of the name reaches the tag.
+   */
+  async itemsForTag(slug: string): Promise<{ tag: ApiTag; docIds: string[]; projectIds: string[] }> {
+    const body = rec(await this.request("GET", `/api/tags/by-slug/${encodeURIComponent(slug)}/items`));
+    const docs = Array.isArray(body.docs) ? body.docs : [];
+    const projects = Array.isArray(body.projects) ? body.projects : [];
+    return {
+      tag: asTag(body.tag),
+      docIds: docs.map((d) => strOrNull(rec(d).id) ?? "").filter(Boolean),
+      projectIds: projects.map((p) => strOrNull(rec(p).id) ?? "").filter(Boolean),
+    };
+  }
+
   async tagsForTarget(input: { targetKind: "doc" | "project"; targetId: string }): Promise<ApiTag[]> {
     const body = rec(
       await this.request("GET", "/api/tags/assignments", {

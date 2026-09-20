@@ -95,6 +95,9 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
         "match. Use a result's id with lnkdrp_get_share, lnkdrp_list_share_links or lnkdrp_get_share_stats. Archived documents " +
         "are listed only with archived: true (then only archived ones - bring one back with lnkdrp_archive_doc archived: false); " +
         "deleted documents never are. With ids, any that did not resolve come back in notFound - which includes archived documents unless you also pass archived: true, so an id there means 'not live' rather than 'never existed'. " +
+        "Pass tag to list only the documents carrying that tag - the name as a human writes it, matched loosely, so " +
+        "'Fundraising' and 'fundraising' reach the same tag (lnkdrp_list_tags shows what the workspace uses). Every row " +
+        "carries its own tags, so you can see how something is filed without a second call. " +
         SAFETY_TAIL,
       inputSchema: {
         query: z.string().trim().max(200).optional().describe("Match against document titles and share-link slugs, case-insensitively. Omit to list everything."),
@@ -102,11 +105,43 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
         page: z.number().int().min(1).default(1).describe("1-based page number."),
         limit: z.number().int().min(1).max(50).default(25).describe("Documents per page (1-50)."),
         archived: z.boolean().default(false).describe("true lists archived documents (the Archive view) instead of live ones."),
+        tag: z
+          .string()
+          .trim()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe(
+            'Only documents carrying this tag, by name ("Fundraising"). Case, accents and punctuation are folded, so ' +
+              "any spelling of the name finds it. Combines with query and archived; ignored when ids is given.",
+          ),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     handleTool(async (args) => {
-      const page = await ctx.api.listDocsPage({ q: args.query, ids: args.ids, page: args.page, limit: args.limit, archived: args.archived });
+      /**
+       * `tag:` is resolved to a set of ids and then handed to the ordinary listing.
+       *
+       * The tag endpoint answers "what carries this", and `GET /api/docs` answers "tell me about
+       * these", so the filter is the intersection rather than a second listing with its own rules.
+       * An unknown tag is an empty result, not an error: "nothing is filed under that" is an
+       * answer, and a workspace that has not used a tag yet has not done anything wrong.
+       */
+      let ids = args.ids;
+      if (!ids && args.tag) {
+        const carried = await ctx.api.itemsForTag(args.tag).catch(() => null);
+        if (!carried || !carried.docIds.length) {
+          return { total: 0, page: 1, limit: args.limit, hasMore: false, docs: [], tag: args.tag, tagMatched: Boolean(carried) };
+        }
+        ids = carried.docIds.slice(0, 50);
+      }
+      const page = await ctx.api.listDocsPage({ q: args.query, ids, page: args.page, limit: args.limit, archived: args.archived });
+
+      // One read for every row's tags rather than one per row; an empty map is fine, tags are
+      // optional and a workspace that files nothing gets empty arrays.
+      const tagsByDoc = await ctx.api
+        .tagsForTargets({ targetKind: "doc", ids: page.docs.map((d) => d.id) })
+        .catch(() => new Map<string, Awaited<ReturnType<typeof ctx.api.listTags>>[number]>() as never);
       // Ids that did not resolve (unknown, deleted, archived, or not a document id at all) used to
       // vanish without a trace, so an agent could not tell "not found" from "not returned".
       //
@@ -135,6 +170,8 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
           previewImageUrl: d.previewImageUrl,
           createdDate: d.createdDate,
           updatedDate: d.updatedDate,
+          // How this document is filed. Workspace-authored, never shown to recipients.
+          tags: (tagsByDoc.get(d.id) ?? []).map((t) => ({ name: t.name, slug: t.slug, color: t.color })),
         })),
       };
     }),
