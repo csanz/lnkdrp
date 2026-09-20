@@ -146,8 +146,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
        * Where this row leaves the reader, and whether it is the freshest thing in the session.
        *
        * A project session spans documents, so "the page they are on" is only meaningful together
-       * with the document it belongs to. The newest page event across the session's rows is the
-       * one that answers both, and page 3 of the deck is not page 3 of the term sheet.
+       * with the document it belongs to — page 3 of the deck is not page 3 of the term sheet.
+       *
+       * Two questions, and they are not answered by the same field. *Which document* is the one
+       * with the most recent activity, which is `lastEventAt`: every stats post moves it, starting
+       * with the one the viewer sends the moment a document is opened. *Which page of it* is the
+       * newest page event, which is an exit and so is written only when they leave a page.
+       *
+       * Asking the event both questions is what made switching documents lag. A reader moving back
+       * to a file they had already read brought an event stamped when they last *left* it, so the
+       * room's freshest event still belonged to the document they had just walked away from, and
+       * "the document they are in" stayed wrong until they turned a page in the new one — up to a
+       * whole heartbeat, and for ever on a document with one page. Recency comes from the row,
+       * the page number comes from the event, and only the page number falls back.
        */
       const events = Array.isArray(r.pageEvents) ? (r.pageEvents as Array<Record<string, unknown>>) : [];
       const last = events.length ? events[events.length - 1] : null;
@@ -162,18 +173,18 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
        * the furthest they have reached. Only ever the fallback: an exit is evidence, a page they
        * visited at some point is an inference.
        */
-      const fromEvent = (() => {
+      const pageFromEvent = (() => {
         if (!last) return null;
         const to = Number(last.toPage);
         const on = Number(last.pageNumber);
-        const page = Number.isFinite(to) && to >= 1 ? Math.floor(to) : Number.isFinite(on) && on >= 1 ? Math.floor(on) : null;
-        if (!page) return null;
-        return { page, at: last.leftAt instanceof Date ? last.leftAt.toISOString() : lastEventAt };
+        return Number.isFinite(to) && to >= 1 ? Math.floor(to) : Number.isFinite(on) && on >= 1 ? Math.floor(on) : null;
       })();
-      const here = fromEvent ?? (seen.length ? { page: Math.max(...seen), at: lastEventAt } : null);
-      if (here && docId) {
-        const { page, at } = here;
-        if (page && at && (!entry.currentAt || at >= entry.currentAt)) {
+      const page = pageFromEvent ?? (seen.length ? Math.max(...seen) : null);
+      const at = lastEventAt;
+      if (page && at && docId) {
+        // Strictly newer. The rows arrive sorted newest-first, so a tie must leave the sort's
+        // answer standing rather than let an older row overwrite it.
+        if (!entry.currentAt || at > entry.currentAt) {
           entry.currentAt = at;
           entry.currentDocId = docId;
           entry.currentDocTitle = titleById.get(docId) ?? null;
