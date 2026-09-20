@@ -17,6 +17,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { CheckIcon, PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 import TagDot from "@/components/tags/TagDot";
+import Modal from "@/components/modals/Modal";
 import DataTable from "@/components/ui/DataTable";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { TAG_COLOR_KEYS, TAG_COLORS, type TagColorKey } from "@/lib/tags/palette";
@@ -43,6 +44,7 @@ export default function TagsManager() {
   const [page, setPage] = useState(1);
   /** Which row has its palette open; only one at a time, so the table does not grow six rows at once. */
   const [colorFor, setColorFor] = useState("");
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -145,6 +147,10 @@ export default function TagsManager() {
       const json = (await res.json().catch(() => null)) as { error?: string } | null;
       if (!res.ok) throw new Error(json?.error || "Could not create the tag");
       setNewName("");
+      // Only on success: a name the server refused (a duplicate, most likely) stays in the dialog
+      // with the error beside it, rather than closing and leaving the person to work out what
+      // happened from a list that did not change.
+      setAdding(false);
       await load();
       window.dispatchEvent(new Event("lnkdrp:tags-changed"));
     } catch (e) {
@@ -160,16 +166,74 @@ export default function TagsManager() {
     <div>
       {error ? <div className="mb-3 text-[12px] font-medium text-red-600">{error}</div> : null}
 
-      {/* Tags are normally made by typing one onto a document; this is for the times you are
-          setting up a scheme before there is anything to put in it. */}
+      {/* One bar: search takes the width because it is used constantly, and creating a tag is a
+          button because it is not. Two full-width fields stacked on top of each other read as one
+          control that had been duplicated, and put the rare action above the common one.
+
+          Tags are normally made by typing one onto a document; this page is for setting up a
+          scheme before there is anything to put in it, which is exactly the case that does not
+          deserve a permanently empty text field. */}
       <div className="mb-3 flex items-center gap-2">
         <input
+          value={filter}
+          placeholder={sorted.length > 8 ? `Search ${sorted.length} tags` : "Search tags"}
+          aria-label="Search tags"
+          className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
+          onChange={(e) => {
+            setFilter(e.target.value);
+            setPage(1);
+          }}
+        />
+        {filter ? (
+          <button
+            type="button"
+            onClick={() => {
+              setFilter("");
+              setPage(1);
+            }}
+            className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-2 text-[13px] text-[var(--muted)] hover:text-[var(--fg)]"
+          >
+            Clear
+          </button>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            setNewName(filter.trim());
+            setAdding(true);
+          }}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary-bg)] px-3 py-2 text-[13px] font-semibold text-[var(--primary-fg)] transition-colors hover:bg-[var(--primary-hover-bg)]"
+        >
+          <PlusIcon className="h-4 w-4" aria-hidden="true" />
+          New tag
+        </button>
+      </div>
+
+      {/* A dialog for one field, because the alternative was that field sitting empty on the page
+          forever. Opens carrying whatever is in the search box: searching for a tag and not finding
+          it is the most likely reason anyone presses this. */}
+      <Modal
+        open={adding}
+        onClose={() => {
+          if (!creating) setAdding(false);
+        }}
+        ariaLabel="New tag"
+        width={420}
+        contentClassName="px-6 pb-6 pt-5"
+      >
+        <div className="text-base font-semibold text-[var(--fg)]">New tag</div>
+        <p className="mt-1.5 text-[13px] leading-5 text-[var(--muted)]">
+          Tags are private to this workspace — recipients never see them. A colour is picked for you
+          and you can change it afterwards.
+        </p>
+        <input
+          autoFocus
           value={newName}
           maxLength={60}
           disabled={creating}
-          placeholder="New tag"
+          placeholder="Fundraising"
           aria-label="New tag name"
-          className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
+          className="mt-4 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
           onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -178,47 +242,31 @@ export default function TagsManager() {
             }
           }}
         />
-        <button
-          type="button"
-          disabled={creating || !newName.trim()}
-          onClick={() => void create()}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-[var(--primary-bg)] px-3 py-2 text-[13px] font-semibold text-[var(--primary-fg)] transition-colors hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
-        >
-          <PlusIcon className="h-4 w-4" aria-hidden="true" />
-          Add
-        </button>
-      </div>
+        {error && adding ? <div className="mt-3 text-[12px] font-medium text-red-600">{error}</div> : null}
 
-      {sorted.length > 8 ? (
-        <div className="mb-3 flex items-center gap-2">
-          <input
-            value={filter}
-            placeholder={`Search ${sorted.length} tags`}
-            aria-label="Search tags"
-            className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
-            onChange={(e) => {
-              setFilter(e.target.value);
-              setPage(1);
-            }}
-          />
-          {filter ? (
-            <button
-              type="button"
-              onClick={() => {
-                setFilter("");
-                setPage(1);
-              }}
-              className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-2 text-[13px] text-[var(--muted)] hover:text-[var(--fg)]"
-            >
-              Clear
-            </button>
-          ) : null}
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            disabled={creating}
+            onClick={() => setAdding(false)}
+            className="rounded-lg border border-[var(--border)] px-3 py-2 text-[13px] font-semibold text-[var(--fg)] transition-colors hover:bg-[var(--panel-hover)] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={creating || !newName.trim()}
+            onClick={() => void create()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--primary-bg)] px-3 py-2 text-[13px] font-semibold text-[var(--primary-fg)] transition-colors hover:bg-[var(--primary-hover-bg)] disabled:opacity-50"
+          >
+            {creating ? "Adding…" : "Add tag"}
+          </button>
         </div>
-      ) : null}
+      </Modal>
 
       {!sorted.length ? (
         <div className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center text-[13px] text-[var(--muted)]">
-          No tags yet. Type one above, or add one from any document or project.
+          No tags yet. Use New tag above, or add one from any document or project.
         </div>
       ) : null}
 
