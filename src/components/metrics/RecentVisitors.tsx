@@ -15,7 +15,8 @@
  */
 "use client";
 
-import { ClockIcon, UserIcon } from "@heroicons/react/24/outline";
+import Link from "next/link";
+import { ClockIcon, FolderIcon, UserIcon } from "@heroicons/react/24/outline";
 
 import DepthBadge from "@/components/metrics/DepthBadge";
 
@@ -34,8 +35,10 @@ export type RecentVisitor = {
   pages?: number | null;
   /** The document's page count, so one page of nine is not called a read. */
   totalPages?: number | null;
-  /** Which link they came through, when the scope knows. */
+  /** The project this read came through, when it came through one. */
   via?: string | null;
+  /** Where that project's own metrics live, so the chip is a way there and not just a label. */
+  viaHref?: string | null;
   /** Opens this person's drawer — the same one the viewer tables open. */
   onOpen?: () => void;
 };
@@ -114,13 +117,16 @@ export default function RecentVisitors({
           const isFresh = (v.ago?.hours ?? Infinity) <= FRESH_HOURS;
           return (
             <li key={v.key}>
+              {/* The row is a button and the project chip is a link, so they cannot nest: the
+                  clickable body stops before the chip, and the chip carries its own destination. */}
+              <span className="-mx-2 flex w-[calc(100%+16px)] items-center gap-2 rounded-lg px-2 py-1">
               <button
                 type="button"
                 onClick={v.onOpen}
                 disabled={!v.onOpen}
                 title={v.onOpen ? "See what they read" : undefined}
                 className={[
-                  "-mx-2 flex w-[calc(100%+16px)] items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors",
+                  "-mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-1 text-left transition-colors",
                   v.onOpen ? "hover:bg-[var(--panel-hover)]" : "cursor-default",
                 ].join(" ")}
               >
@@ -145,12 +151,33 @@ export default function RecentVisitors({
                       worth opening. Silent when there is no clock to judge with. */}
                   <DepthBadge timeMs={v.timeMs} pages={v.pages} totalPages={v.totalPages} />
                 </span>
-                {v.detail || v.via ? (
-                  <span className="block truncate text-[12px] text-[var(--muted-2)]">
-                    {[v.detail, v.via].filter(Boolean).join(" · ")}
-                  </span>
+                {v.detail ? (
+                  <span className="block truncate text-[12px] text-[var(--muted-2)]">{v.detail}</span>
                 ) : null}
               </span>
+
+              </button>
+
+              {/* Where they came in from, beside the name rather than buried in the line under it:
+                  a read through a project is a different fact about a person than a read of the
+                  document's own link, and the chip goes to the project that owns it. */}
+              {v.via ? (
+                v.viaHref ? (
+                  <Link
+                    href={v.viaHref}
+                    className="inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--fg)]"
+                    title={`Opened through ${v.via} — see that project's metrics`}
+                  >
+                    <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{v.via}</span>
+                  </Link>
+                ) : (
+                  <span className="inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted-2)]">
+                    <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{v.via}</span>
+                  </span>
+                )
+              ) : null}
 
               <span
                 className={[
@@ -161,7 +188,7 @@ export default function RecentVisitors({
               >
                 {v.ago?.label}
               </span>
-              </button>
+              </span>
             </li>
           );
         })}

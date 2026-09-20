@@ -1241,7 +1241,8 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         name: label,
         lastSeen: v.lastViewedAt,
         detail: describe({ timeSpentMs: v.timeSpentMs, views: v.views }),
-        via: v.projectName ? `via ${v.projectName}` : "via a project",
+        via: v.projectName || "Project",
+        viaHref: v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null,
         timeMs: v.timeSpentMs ?? 0,
         pages: null,
         // No drawer and no page for them here: their reading is recorded against the project, and
