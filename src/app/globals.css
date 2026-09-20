@@ -70,7 +70,11 @@
   --row-leaving-fg: #0a0a0a;
   /* A paid plan that is cancelled and running out its period. */
   --plan-ending-bg: rgba(217, 119, 6, 0.16);
-  --plan-ending-fg: #b45309;
+  /* Measured on the wash above rather than on the surface under it, which is the only ground this
+     text ever has: #b45309 read 4.22:1 there on a card and 3.74:1 on a tile, under the 4.5:1 its
+     11px type needs. The pill says a paid plan is running out — the one notice in the product a
+     reader must not have to squint at. */
+  --plan-ending-fg: #9c4707;
   /* Stepped down with `--bg`: at #fafafa/#f4f4f5 against a white page these were a 1.04:1 and a
      1.10:1 band, so a filter bar or a stat tile drawn on `--panel-2` had no visible surface. */
   /*
