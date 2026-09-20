@@ -765,13 +765,18 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
           ...scopeMatch,
           // Arrivals always stamp `lastViewedAt`, so the window needs no `$or` over other dates.
           lastViewedAt: { $gte: start },
-          // Both `$or`s go through `$and`, and the single-reader filter belongs here too: this is
-          // the second source `anonymousViewers` is built from, so without it a reader page asking
-          // for one person still received every visitor who landed and opened nothing.
-          $and: [
-            { $or: [{ viewerName: { $nin: [null, ""] } }, { viewerEmailSnapshot: { $nin: [null, ""] } }] },
-            ...(oneViewerMatch ? [oneViewerMatch] : []),
-          ],
+          /**
+           * Named arrivals only — except when one reader is asked for by name.
+           *
+           * The list drops unnamed arrivals on purpose: a browser id is nobody a sender can act
+           * on, and a data room's viewer list would otherwise fill with rows that say nothing. But
+           * when a page asks for *this* reader, that reasoning is gone — somebody clicked them,
+           * usually from an activity row that says "Someone opened Lite Data Room", and the answer
+           * has to be what that person did, not "no reader by that id in this window".
+           */
+          $and: oneViewerMatch
+            ? [oneViewerMatch]
+            : [{ $or: [{ viewerName: { $nin: [null, ""] } }, { viewerEmailSnapshot: { $nin: [null, ""] } }] }],
         })
           .select({ botIdHash: 1, viewerUserId: 1, viewerName: 1, viewerEmailSnapshot: 1, firstViewedAt: 1, lastViewedAt: 1, visits: 1 })
           .sort({ lastViewedAt: -1 })
