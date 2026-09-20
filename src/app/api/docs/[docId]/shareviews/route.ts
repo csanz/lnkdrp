@@ -70,6 +70,7 @@ import { toShareLinkDTO } from "@/lib/share/links";
 import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
 import { ProjectModel } from "@/lib/models/Project";
 import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
+import { splitProjectViewerKey } from "@/lib/share/projectPublic";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   shareIdClause,
@@ -916,6 +917,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                    * fourth page.
                    */
                   pagesSeen: { $addToSet: "$pagesSeen" },
+                  /**
+                   * Who this is, in the form the project's own reader page is addressed by.
+                   *
+                   * Without it the only thing a row could link to was the project's metrics index
+                   * — so clicking a person on this page took you to a list of everyone, which is
+                   * not what clicking a person means anywhere else in the app.
+                   */
+                  viewerUserId: { $first: "$viewerUserId" },
                   ...(includeViewers
                     ? {
                         viewerName: { $first: "$viewerName" },
@@ -937,6 +946,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               viewerName?: string | null;
               viewerEmailSnapshot?: string | null;
               viewerEmail?: string | null;
+              viewerUserId?: unknown;
             }>;
             if (!rows.length) return null;
 
@@ -987,10 +997,26 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                   if (Number.isFinite(n) && n >= 1) pagesViewed.add(Math.floor(n));
                 }
               }
+              /**
+               * The project's address for this reader: `u_<userId>` signed in, `a_<digest>` not.
+               *
+               * A project-link row stores `botIdHash` as `<digest>.<docId>` (`projectViewerKey`)
+               * so three documents behind one link do not collide; the project's viewer page is
+               * keyed on the digest alone, so the suffix comes off here.
+               */
+              const viewerKey = r.viewerUserId
+                ? `u_${String(r.viewerUserId)}`
+                : (() => {
+                    const digest = splitProjectViewerKey(String(r._id.viewer ?? "")).botIdHash;
+                    return digest ? `a_${digest}` : null;
+                  })();
+
               viewers.push({
                 shareId,
                 projectId,
                 projectName,
+                /** Where this person's reading is recorded — their page in that project. */
+                viewerHref: projectId && viewerKey ? `/project/${encodeURIComponent(projectId)}/metrics/viewer/${viewerKey}` : null,
                 views: r.views,
                 pagesViewed: pagesViewed.size,
                 timeSpentMs: Math.max(0, Math.floor(r.timeSpentMs ?? 0)),

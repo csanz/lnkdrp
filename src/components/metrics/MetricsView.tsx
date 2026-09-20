@@ -199,6 +199,8 @@ type MetricsResponse = {
       pagesViewed?: number;
       timeSpentMs?: number;
       lastViewedAt: string | null;
+      /** Their page inside the project that counts this reading, when it can be addressed. */
+      viewerHref?: string | null;
       viewerName?: string | null;
       viewerEmail?: string | null;
     }>;
@@ -1266,7 +1268,8 @@ const VIEWERS_PAGE_SIZE = 25;
       });
     }
 
-    // Project readers have no page of their own here; their row goes to the project that counts it.
+    // A project reader's page lives in the project that counts the reading, not here — so the row
+    // links straight there rather than dropping you on that project's index to find them again.
     for (const [i, v] of (data?.projectLinkTraffic?.viewerRows ?? []).entries()) {
       const name = (v.viewerName ?? "").trim();
       const email = (v.viewerEmail ?? "").trim();
@@ -1279,8 +1282,10 @@ const VIEWERS_PAGE_SIZE = 25;
         pages: v.pagesViewed ?? null,
         lastSeen: v.lastViewedAt,
         via: v.projectName || "Project",
-        href: v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null,
-        hint: `Counted with ${v.projectName || "that project"} — see its metrics`,
+        href: v.viewerHref ?? (v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null),
+        hint: v.viewerHref
+          ? `See what they read — counted with ${v.projectName || "that project"}`
+          : `Counted with ${v.projectName || "that project"} — see its metrics`,
       });
     }
 
@@ -1318,7 +1323,7 @@ const VIEWERS_PAGE_SIZE = 25;
         totalPages: docTotalPages,
         // Straight to the reader's own page — no intermediate peek. The row and the tables below
         // now lead to the same address rather than to two different depths of the same story.
-        onOpen: () => router.push(`${basePath}/metrics/viewer/${viewerRouteKey("authed", v.userId)}`),
+        href: `${basePath}/metrics/viewer/${viewerRouteKey("authed", v.userId)}`,
       });
     }
     /**
@@ -1340,9 +1345,18 @@ const VIEWERS_PAGE_SIZE = 25;
         viaHref: v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null,
         timeMs: v.timeSpentMs ?? 0,
         pages: v.pagesViewed ?? null,
-        // No drawer and no page for them here: their reading is recorded against the project, and
-        // the project's own metrics is where it can be opened properly.
-        onOpen: v.projectId ? () => router.push(`/project/${encodeURIComponent(v.projectId!)}/metrics`) : undefined,
+        /**
+         * The same denominator the list below uses.
+         *
+         * Without it the two lists disagreed about the same person in the same window: this strip
+         * called Steve READ and the Viewers table called him STARTED, off one reading of one page
+         * of a nine-page deck — because coverage is only judged when the page count is known, and
+         * only this loop was leaving it out.
+         */
+        totalPages: docTotalPages,
+        // Their reading is recorded against the project, so their page is the one over there.
+        href: v.viewerHref ?? (v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null),
+        hint: v.viewerHref ? "See what they read" : `See ${v.projectName || "that project"}'s metrics`,
       });
     }
 
@@ -1356,11 +1370,11 @@ const VIEWERS_PAGE_SIZE = 25;
         timeMs: v.timeSpentMs ?? 0,
         pages: scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0),
         totalPages: docTotalPages,
-        onOpen: () => router.push(`${basePath}/metrics/viewer/${viewerRouteKey("anon", v.botIdHash)}`),
+        href: `${basePath}/metrics/viewer/${viewerRouteKey("anon", v.botIdHash)}`,
       });
     }
     return rows;
-  }, [data?.viewers, data?.anonymousViewers, data?.projectLinkTraffic, scope.kind, docTotalPages, basePath, router]);
+  }, [data?.viewers, data?.anonymousViewers, data?.projectLinkTraffic, scope.kind, docTotalPages, basePath]);
 
   const recentlyOpenedLinks = useMemo(
     () =>
