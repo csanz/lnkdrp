@@ -15,6 +15,7 @@ import { UserModel } from "@/lib/models/User";
 import { debugError, debugLog } from "@/lib/debug";
 import { resolveActor, tryResolveUserActorFast } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
+import { activeOrgChanged } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +62,10 @@ export async function POST(request: Request) {
       { _id: new Types.ObjectId(actor.userId) },
       { $set: { "metadata.activeOrgId": orgId, lastLoginAt: new Date() } },
     );
+    // The resolvers cache this value for a minute, so the switch has to say it moved. In this
+    // browser the cookie set alongside it wins anyway; on the person's *other* device the metadata
+    // is the only signal, and without this the switch would look like it had not taken.
+    activeOrgChanged(actor.userId);
 
     const res = NextResponse.json({ ok: true, activeOrgId: orgId }, { headers: { "cache-control": "no-store" } });
     res.cookies.set(ACTIVE_ORG_COOKIE, orgId, {

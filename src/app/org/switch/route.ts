@@ -18,6 +18,7 @@ import { resolveActor } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
 import { LOADING_OVERLAY_TITLE_TO_DOTS_GAP_PX } from "@/lib/loadingOverlay";
 import { LOADING_OVERLAY_SHOW_TEXT_DEFAULT } from "@/lib/loadingOverlay";
+import { activeOrgChanged } from "@/lib/gating/actor";
 
 export const runtime = "nodejs";
 
@@ -132,6 +133,10 @@ export async function GET(request: Request) {
     { _id: new Types.ObjectId(actor.userId) },
     { $set: { "metadata.activeOrgId": orgId, lastLoginAt: new Date() } },
   );
+  // The resolvers cache this value for a minute, so the switch has to say it moved. In this
+  // browser the cookie set alongside it wins anyway; on the person's *other* device the metadata
+  // is the only signal, and without this the switch would look like it had not taken.
+  activeOrgChanged(actor.userId);
 
   // If the requested return target is a doc route, only allow it when the doc belongs to the target org.
   let redirectTo = returnTo;

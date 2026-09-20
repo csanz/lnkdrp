@@ -112,14 +112,22 @@ describe("tryResolveUserActor: the JWT's workspace claim", () => {
     expect(asked).not.toContain(PERSONAL_ORG_ID);
   });
 
-  test("a membership lookup that fails does not lock a real member out", async () => {
+  test("a membership lookup that fails narrows access rather than widening it", async () => {
     membershipExists.mockRejectedValue(new Error("mongo is having a moment"));
 
     const actor = await tryResolveUserActor(requestWithTeamClaim());
 
-    // An outage is not a revocation: the claim stands rather than dumping them into a workspace
-    // that is not the one they were working in.
-    expect(actor?.orgId).toBe(TEAM_ORG_ID);
+    /**
+     * This used to assert the opposite — that the claim stood, on the reasoning that an outage is
+     * not a revocation. It was changed deliberately when the three resolvers were unified.
+     *
+     * "Not confirmed" is now treated as not confirmed. A blip drops the person into their own
+     * workspace for one request, which is visible and harmless; the alternative is handing someone
+     * a workspace they may have been removed from, which is neither. The failure is not cached
+     * (see `isActiveMember`), so the next request asks again and they are back where they were.
+     */
+    expect(actor?.orgId).toBe(PERSONAL_ORG_ID);
+    expect(actor?.kind).toBe("user");
   });
 });
 
