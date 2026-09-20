@@ -414,10 +414,13 @@ export default function TagsManager() {
       <DataTable containerClassName="bg-[var(--panel-2)]">
         <thead className="bg-[var(--panel)] text-[12px] font-semibold text-[var(--muted-2)]">
           <tr>
-            <th className="w-16 px-3 py-2.5">Colour</th>
-            <th className="px-3 py-2.5">Tag</th>
-            <th className="w-24 px-3 py-2.5 text-right">Items</th>
-            <th className="w-44 px-3 py-2.5 text-right">Actions</th>
+            {/* The four real columns hug the left; a spacer takes the slack so a wide screen does
+                not strand a row's count a thousand pixels from its name. */}
+            <th className="w-12 px-3 py-2 pl-4" aria-label="Colour" />
+            <th className="px-3 py-2 font-semibold">Tag</th>
+            <th className="whitespace-nowrap px-3 py-2 text-right font-semibold">Items</th>
+            <th className="w-full px-0 py-2" aria-hidden="true" />
+            <th className="whitespace-nowrap px-3 py-2 pr-4 text-right font-semibold">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -429,19 +432,19 @@ export default function TagsManager() {
             return (
               <Fragment key={tag.id}>
                 <tr className={`group border-t border-[var(--divider)] ${open ? "" : "hover:bg-[var(--panel-hover)]"}`}>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-1.5 pl-4">
                     {/* A picker anchored to its own swatch. It used to open as an extra table row,
                         which read as belonging to the tag underneath it and shoved every row below
                         down the page. Portalled, because the table clips its own overflow. */}
                     <OverflowMenu
                       label={`Change colour of ${tag.name}`}
                       align="start"
-                      panelWidth={212}
+                      panelWidth={248}
                       triggerClassName="grid h-7 w-7 place-items-center rounded-full ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--panel-hover)] hover:ring-[var(--fg)]"
                       trigger={<TagDot color={tag.color} size={11} />}
                     >
                       {(close) => (
-                        <div className="flex items-center gap-1">
+                        <div className="grid grid-cols-6 gap-1">
                           {TAG_COLOR_KEYS.map((key) => (
                             <button
                               key={key}
@@ -455,13 +458,13 @@ export default function TagsManager() {
                                 void patch(tag, { color: key });
                               }}
                               className={[
-                                "grid h-8 w-8 place-items-center rounded-full transition-colors",
+                                "grid h-9 w-9 place-items-center rounded-lg transition-colors",
                                 key === tag.color
-                                  ? "ring-1 ring-[var(--fg)]"
+                                  ? "bg-[var(--panel-hover)] ring-1 ring-[var(--fg)]"
                                   : "hover:bg-[var(--panel-hover)]",
                               ].join(" ")}
                             >
-                              <TagDot color={key} size={12} />
+                              <TagDot color={key} size={14} />
                             </button>
                           ))}
                         </div>
@@ -469,7 +472,7 @@ export default function TagsManager() {
                     </OverflowMenu>
                   </td>
 
-                  <td className="px-3 py-2">
+                  <td className="max-w-[420px] px-3 py-1.5">
                     {editing ? (
                       <input
                         autoFocus
@@ -510,17 +513,25 @@ export default function TagsManager() {
                     )}
                   </td>
 
-                  <td className="px-3 py-2 text-right text-[12px] tabular-nums text-[var(--muted-2)]">
+                  <td
+                    className={`whitespace-nowrap px-3 py-1.5 text-right text-[12px] tabular-nums ${
+                      (tag.count ?? 0) > 0 ? "text-[var(--fg)]" : "text-[var(--muted-2)]/60"
+                    }`}
+                  >
                     {tag.count ?? 0}
                   </td>
 
-                  <td className="px-3 py-2">
+                  {/* The slack. Nothing lives here; it is what keeps the columns either side of it
+                      next to the things they describe. */}
+                  <td className="px-0 py-1.5" />
+
+                  <td className="px-3 py-1.5 pr-4">
                     {/* Twenty-four rows meant twenty-four Merge buttons and twenty-four bins
                         competing with the names. They are one keystroke or one hover away instead,
                         and stay put once a row is open so a panel never loses its own controls. */}
                     <div
                       className={`flex items-center justify-end gap-1.5 transition-opacity focus-within:opacity-100 group-hover:opacity-100 ${
-                        open ? "opacity-100" : "opacity-0"
+                        open ? "opacity-100" : "opacity-45"
                       }`}
                     >
                       <button
@@ -554,7 +565,7 @@ export default function TagsManager() {
 
                 {confirmDelete?.id === tag.id ? (
                   <tr className="bg-[var(--panel)]">
-                    <td colSpan={4} className="px-3 pb-3 pt-0">
+                    <td colSpan={5} className="px-3 pb-3 pt-0">
                       <div className="text-[13px] text-[var(--fg)]">
                         Delete &ldquo;{tag.name}&rdquo;?{" "}
                         <span className="text-[var(--muted)]">

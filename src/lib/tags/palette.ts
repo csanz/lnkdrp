@@ -8,11 +8,33 @@
  * list as the service that assigns it. Colours are stored by key, never as hex, so a shade can be
  * retuned here without a data migration.
  *
- * The five are chosen to stay apart at 6px — the size of a sidebar dot — and to avoid the two
- * meanings this product already spends colour on: amber is starred, and emerald alone reads as the
- * live/positive tone used by charts and status pills, so the green here is a cooler jade.
+ * Chosen to stay apart at 6px — the size of a sidebar dot — and to avoid the two meanings this
+ * product already spends colour on: amber is starred, and emerald alone reads as the live/positive
+ * tone used by charts and status pills, so the green here is a cooler jade.
+ *
+ * Twelve rather than the original six. Six is enough to tell four tags apart and nothing at all
+ * once a workspace files properly: at two hundred tags it is thirty-three to a colour, and a colour
+ * thirty-three things share has stopped saying anything. Twelve is the most that still reads as
+ * distinct hues at dot size rather than as shades of each other — past that the picker is choosing
+ * between two blues, which is worse than having fewer.
+ *
+ * Order matters: `nextTagColor` walks this list, so the first six are the originals and an existing
+ * workspace keeps assigning what it always did until it runs out.
  */
-export const TAG_COLOR_KEYS = ["jade", "sky", "amber", "rose", "violet", "slate"] as const;
+export const TAG_COLOR_KEYS = [
+  "jade",
+  "sky",
+  "amber",
+  "rose",
+  "violet",
+  "slate",
+  "teal",
+  "indigo",
+  "fuchsia",
+  "orange",
+  "lime",
+  "red",
+] as const;
 
 export type TagColorKey = (typeof TAG_COLOR_KEYS)[number];
 
@@ -30,6 +52,12 @@ export const TAG_COLORS: Record<TagColorKey, { dark: string; light: string; labe
   rose: { dark: "#f472b6", light: "#be185d", label: "Rose" },
   violet: { dark: "#a78bfa", light: "#6d28d9", label: "Violet" },
   slate: { dark: "#94a3b8", light: "#475569", label: "Slate" },
+  teal: { dark: "#2dd4bf", light: "#0f766e", label: "Teal" },
+  indigo: { dark: "#818cf8", light: "#4338ca", label: "Indigo" },
+  fuchsia: { dark: "#e879f9", light: "#a21caf", label: "Fuchsia" },
+  orange: { dark: "#fb923c", light: "#c2410c", label: "Orange" },
+  lime: { dark: "#a3e635", light: "#4d7c0f", label: "Lime" },
+  red: { dark: "#f87171", light: "#b91c1c", label: "Red" },
 };
 
 /** Narrow an unknown stored value to a palette key. */
