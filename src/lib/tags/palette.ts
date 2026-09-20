@@ -24,7 +24,7 @@ export const DEFAULT_TAG_COLOR: TagColorKey = "slate";
  * the app has a light theme, and a colour tuned only for one looks muddy in the other.
  */
 export const TAG_COLORS: Record<TagColorKey, { dark: string; light: string; label: string }> = {
-  jade: { dark: "#34d399", light: "#0f9b6c", label: "Jade" },
+  jade: { dark: "#34d399", light: "#0c7a55", label: "Jade" },
   sky: { dark: "#60a5fa", light: "#2563eb", label: "Sky" },
   amber: { dark: "#f59e0b", light: "#b45309", label: "Amber" },
   rose: { dark: "#f472b6", light: "#be185d", label: "Rose" },

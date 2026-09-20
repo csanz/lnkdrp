@@ -27,11 +27,18 @@ function untitled(kind: EntityKind): string {
  * One definition, so the pulse is the same width and weight wherever a header is still waiting.
  */
 export function HeaderNameSkeleton({ kind }: { kind: EntityKind }) {
+  const label = `Loading ${kind === "project" ? "project" : "document"} name`;
   return (
-    <span
-      className="block h-5 w-40 animate-pulse rounded bg-[var(--panel-hover)]"
-      aria-label={`Loading ${kind === "project" ? "project" : "document"} name`}
-    />
+    <>
+      {/* `SubPageHeader` may wrap the title in a `<Link>`, and ARIA ignores `aria-label` on a
+          generic `<span>` — so the label has to be real text, hidden visually. Same fix, and the
+          same reason, as `CrumbSkeleton`. */}
+      <span className="sr-only">{label}</span>
+      <span
+        className="block h-5 w-40 animate-pulse rounded bg-[var(--panel-hover)]"
+        aria-hidden="true"
+      />
+    </>
   );
 }
 

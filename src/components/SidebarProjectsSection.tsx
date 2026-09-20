@@ -186,7 +186,7 @@ export default function SidebarProjectsSection({
                       // `pl-3 pr-12`, so a row that stops at 100% leaves a 36px strip of unhighlighted
                       // gutter on the right and reads as a narrower row than its neighbours.
                       "block box-border w-[calc(100%+36px)] -mr-9 cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
-                      isActive ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
+                      isActive ? "bg-[var(--sidebar-active)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                     ].join(" ")}
                     onClick={() => {
                       if (!p.slug) return;

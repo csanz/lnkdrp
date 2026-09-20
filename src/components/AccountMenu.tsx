@@ -39,7 +39,7 @@ const initials = initialsFromNameOrEmail;
 function OrgAvatar({ name, avatarUrl }: { name: string; avatarUrl?: string | null }) {
   const fallback = initials(name || "Org");
   return (
-    <WorkspaceIcon avatarUrl={avatarUrl} fallback={fallback} className="h-6 w-6 rounded-md" fallbackClassName="bg-[var(--panel-hover)] text-[11px] text-[var(--fg)]" />
+    <WorkspaceIcon avatarUrl={avatarUrl} fallback={fallback} className="h-6 w-6" fallbackClassName="bg-[var(--panel-hover)] text-[11px] text-[var(--fg)]" />
   );
 }
 

@@ -25,6 +25,11 @@ import {
 } from "@/components/admin";
 import { ADMIN_DASH, toneTextStyle } from "@/lib/admin/ui";
 import { cronStatsFigures, formatCronStatsLine, type CronHealthItem } from "@/lib/admin/cronHealth";
+import {
+  queueDepthFigures,
+  summarizeNotificationQueue,
+  type NotificationQueueSummary,
+} from "@/lib/admin/emailsAdmin";
 import { buildCronRows, cronStateLabel, cronStateTone, since, type CronRow } from "@/lib/admin/cronSchedule";
 import { fmtDuration } from "@/lib/admin/format";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
@@ -32,12 +37,22 @@ import { fetchJson } from "@/lib/http/fetchJson";
 
 const COLUMN_COUNT = 7;
 
+/**
+ * The one job whose heartbeat is not the whole story.
+ *
+ * `notification-emails` drains a queue, so "the last run sent 3 emails" says nothing about the
+ * four hundred still owed or the two that gave up. Its row carries the queue's depth as well
+ * (docs/prds/lnkdrp-notification-queue.md, M4).
+ */
+const NOTIFICATION_JOB_KEY = "notification-emails";
+
 /** The cron health board: one row per job, failures called out above the table. */
 export default function CronHealthAdminPage() {
   const access = useAdminAccess();
   const canUseAdmin = access.canUseAdmin;
 
   const [health, setHealth] = useState<CronHealthItem[]>([]);
+  const [queue, setQueue] = useState<NotificationQueueSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,11 +69,18 @@ export default function CronHealthAdminPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchJson<{ items?: unknown }>("/api/admin/cron-health?limit=50", { method: "GET" });
+      const data = await fetchJson<{ items?: unknown; notificationQueue?: unknown }>(
+        "/api/admin/cron-health?limit=50",
+        { method: "GET" },
+      );
       setHealth(Array.isArray(data.items) ? (data.items as CronHealthItem[]) : []);
+      // Narrowed, not cast: a deployment without the queue read returns nothing here, and the
+      // row has to fall back to its heartbeat rather than claim an empty queue.
+      setQueue(summarizeNotificationQueue(data.notificationQueue));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load cron health");
       setHealth([]);
+      setQueue(null);
     } finally {
       setLoading(false);
     }
@@ -151,6 +173,9 @@ export default function CronHealthAdminPage() {
               const item = byKey.get(row.jobKey);
               const stats = item ? formatCronStatsLine(item) : null;
               const figures = item ? cronStatsFigures(item) : [];
+              // Shown whatever the row's state is: a job that is late or failing is exactly when
+              // the backlog it is not draining matters most.
+              const queueFigures = row.jobKey === NOTIFICATION_JOB_KEY ? queueDepthFigures(queue) : [];
               return (
                 <AdminTr key={row.jobKey}>
                   {/* Two lines here on purpose: a job key alone says nothing about what stopping it
@@ -190,6 +215,8 @@ export default function CronHealthAdminPage() {
                   <AdminTd align="right" numeric>
                     {fmtDuration(row.lastDurationMs) || ADMIN_DASH}
                   </AdminTd>
+                  {/* Two lines for the one job that drains a queue: what the last tick did, and
+                      what is still owed. Same shape as the Job cell's second line. */}
                   <AdminTd truncate="max-w-[420px]">
                     {row.state === "error" || row.state === "stuck" || row.state === "late" || row.state === "never" ? (
                       <span
@@ -212,6 +239,25 @@ export default function CronHealthAdminPage() {
                     ) : (
                       <span className="text-[var(--muted-2)]">{row.detail}</span>
                     )}
+                    {queueFigures.length ? (
+                      <span
+                        className="block truncate text-[12px] leading-4 text-[var(--muted-2)]"
+                        title="The notification queue as it stands now — emails owed, not emails the last run sent."
+                      >
+                        <span className="mr-2 font-medium">Queue</span>
+                        {queueFigures.map((f) => (
+                          <span key={f.label} className="mr-2.5 inline-flex items-baseline gap-1">
+                            <span>{f.label}</span>
+                            <span
+                              className="tabular-nums text-[var(--fg)]"
+                              style={f.tone ? toneTextStyle(f.tone) : undefined}
+                            >
+                              {f.value}
+                            </span>
+                          </span>
+                        ))}
+                      </span>
+                    ) : null}
                   </AdminTd>
                 </AdminTr>
               );

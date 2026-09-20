@@ -38,7 +38,7 @@ import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
 import RecentVisitors, { type RecentVisitor } from "@/components/metrics/RecentVisitors";
 import { viewerRouteKey } from "@/components/metrics/ViewerProfile";
-import DepthBadge from "@/components/metrics/DepthBadge";
+import DepthBadge, { ReadingLegendButton } from "@/components/metrics/DepthBadge";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
@@ -585,8 +585,8 @@ export function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: 
         <AreaChart width={width} height={144} data={data} margin={{ top: 18, right: 10, bottom: 0, left: 10 }}>
           <defs>
             <linearGradient id="lnkdrpViewerPageTime" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="rgb(16 185 129)" stopOpacity={0.24} />
-              <stop offset="100%" stopColor="rgb(16 185 129)" stopOpacity={0.02} />
+              <stop offset="0%" stopColor="var(--chart-views)" stopOpacity={0.24} />
+              <stop offset="100%" stopColor="var(--chart-views)" stopOpacity={0.02} />
             </linearGradient>
           </defs>
           <YAxis hide domain={[0, "dataMax"]} />
@@ -609,7 +609,7 @@ export function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: 
           <Area
             type="monotone"
             dataKey="ms"
-            stroke="rgb(16 185 129)"
+            stroke="var(--chart-views)"
             strokeWidth={1.5}
             fill="url(#lnkdrpViewerPageTime)"
             fillOpacity={1}
@@ -734,7 +734,10 @@ function LockedViewersBlock({
 
   return (
     <section className="mt-1" aria-label="Viewers" aria-busy={pending || loading}>
-      <div className="text-sm font-semibold text-[var(--fg)]">Viewers</div>
+      <div className="flex items-center gap-2 text-sm font-semibold text-[var(--fg)]">
+        Viewers
+        <ReadingLegendButton />
+      </div>
       {pending || loading ? (
         <div className="mt-1.5 h-4 w-64 rounded bg-[var(--panel-hover)] motion-safe:animate-pulse" aria-hidden="true" />
       ) : (
@@ -2138,7 +2141,7 @@ const VIEWERS_PAGE_SIZE = 25;
                     <MiniLineChartSingle
                       series={chartSeries}
                       values={viewsSeries}
-                      stroke="rgb(16 185 129)"
+                      stroke="var(--chart-views)"
                       fillId="lnkdrpMetricsPageFillViews"
                       fillStops={{ topOpacity: 0.22, bottomOpacity: 0 }}
                     />
@@ -2158,7 +2161,7 @@ const VIEWERS_PAGE_SIZE = 25;
                     <MiniLineChartSingle
                       series={chartSeries}
                       values={downloadsSeries}
-                      stroke="rgb(34 197 94)"
+                      stroke="var(--chart-downloads)"
                       fillId="lnkdrpMetricsPageFillDownloads"
                       fillStops={{ topOpacity: 0.18, bottomOpacity: 0 }}
                     />
@@ -2283,7 +2286,7 @@ const VIEWERS_PAGE_SIZE = 25;
                             </div>
                             <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
                               <div
-                                className="h-full rounded-full bg-[rgb(16_185_129)]"
+                                className="h-full rounded-full bg-[var(--chart-views)]"
                                 style={{ width: `${Math.max(4, (r.viewers / maxTopLinkViewers) * 100)}%` }}
                               />
                             </div>
@@ -2428,7 +2431,7 @@ const VIEWERS_PAGE_SIZE = 25;
                             </div>
                             <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
                               <div
-                                className="h-full rounded-full bg-[rgb(16_185_129)]"
+                                className="h-full rounded-full bg-[var(--chart-views)]"
                                 style={{ width: `${Math.max(4, (r.viewers / maxTopDocViewers) * 100)}%` }}
                               />
                             </div>
@@ -2862,7 +2865,7 @@ const VIEWERS_PAGE_SIZE = 25;
                               </div>
                               <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
                                 <div
-                                  className="h-full rounded-full bg-[rgb(16_185_129)]"
+                                  className="h-full rounded-full bg-[var(--chart-views)]"
                                   style={{ width: `${Math.max(4, (d.timeSpentMs / maxDocMs) * 100)}%` }}
                                 />
                               </div>
@@ -2897,7 +2900,7 @@ const VIEWERS_PAGE_SIZE = 25;
                             </span>
                             <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--panel-2)]">
                               <span
-                                className="block h-full rounded-full bg-emerald-500/70"
+                                className="block h-full rounded-full bg-[var(--chart-views)]"
                                 style={{ width: `${Math.max(2, Math.round((row.ms / maxPageMs) * 100))}%` }}
                               />
                             </span>

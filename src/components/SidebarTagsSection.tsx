@@ -180,7 +180,7 @@ export default function SidebarTagsSection() {
                   className={[
                     "flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors",
                     active
-                      ? "bg-[var(--sidebar-hover)] font-medium text-[var(--fg)]"
+                      ? "bg-[var(--sidebar-active)] font-medium text-[var(--fg)]"
                       : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]",
                   ].join(" ")}
                   title={typeof tag.count === "number" ? `${tag.name} · ${tag.count}` : tag.name}

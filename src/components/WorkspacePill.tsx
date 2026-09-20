@@ -59,7 +59,7 @@ export default function WorkspacePill({
           avatarUrl={avatarUrl && !avatarErrored ? avatarUrl : null}
           fallback={avatarFallbackText}
           onError={onAvatarError}
-          className="mr-2 h-5 w-5 rounded-[6px]"
+          className="mr-2 h-5 w-5"
           fallbackClassName="bg-[var(--panel-hover)] text-[8px] text-[var(--fg)]"
         />
         <span className="min-w-0 truncate">{name}</span>

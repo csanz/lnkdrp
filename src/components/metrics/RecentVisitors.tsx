@@ -18,7 +18,7 @@
 import Link from "next/link";
 import { ClockIcon, FolderIcon, UserIcon } from "@heroicons/react/24/outline";
 
-import DepthBadge from "@/components/metrics/DepthBadge";
+import DepthBadge, { ReadingLegendButton } from "@/components/metrics/DepthBadge";
 
 /** Inside this many hours a visit is news, not history. */
 const FRESH_HOURS = 6;
@@ -95,7 +95,10 @@ export default function RecentVisitors({
         "rounded-2xl border bg-[var(--panel)] px-5 py-4",
         // A fresh visit is the one thing on this page worth a second look, so the card says so
         // with its edge rather than with a colour that would compete with the charts.
-        fresh ? "border-emerald-300/40" : "border-[var(--border)]",
+        // emerald-300 at 40% composites to #c5f5e2 on a white card — 1.20:1, *fainter* than the
+        // plain border it replaces, so in light the fresh state was a downgrade. The badge beside
+        // it already carries a light value; the edge never got one.
+        fresh ? "border-emerald-700/40 dark:border-emerald-300/40" : "border-[var(--border)]",
         className ?? "",
       ].join(" ")}
     >
@@ -103,6 +106,10 @@ export default function RecentVisitors({
         <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">
           <ClockIcon className="h-3.5 w-3.5" aria-hidden="true" />
           Recent visitors
+          {/* The legend lives here rather than on the badges: the words that need explaining are
+              inside rows that navigate, and a 10px target inside a link is a mis-click waiting to
+              happen. A heading has room, and nothing around it goes anywhere. */}
+          <ReadingLegendButton />
         </div>
         {fresh ? (
           <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-300">

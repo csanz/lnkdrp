@@ -20,7 +20,7 @@ export default function ShareWorkspaceBrand({ brand }: { brand: Brand | null }) 
       <WorkspaceIcon
         avatarUrl={brand.avatarUrl}
         fallback={brandInitials(brand.name)}
-        className="h-6 w-6 rounded-md text-[10px]"
+        className="h-6 w-6 text-[10px]"
         fallbackClassName="bg-white/10 text-white/80"
       />
       <span className="min-w-0 truncate text-[13px] font-medium text-white/80 max-sm:hidden" title={brand.name}>

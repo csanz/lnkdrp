@@ -166,21 +166,47 @@ export async function GET(request: Request) {
         } catch {}
       })();
     </script>
+    <script>
+      // This overlay is a standalone document, so next-themes is not here to stamp the theme for it.
+      // It used to theme off prefers-color-scheme alone, which meant a user on a dark OS who had
+      // explicitly chosen Light got a near-black full-viewport flash mid-navigation and then landed
+      // back on a light app — the exact bug the @custom-variant at the top of globals.css exists to
+      // prevent. Read the same stored choice next-themes writes and stamp it ourselves.
+      (function () {
+        try {
+          var t = window.localStorage && localStorage.getItem("theme");
+          if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+        } catch {}
+      })();
+    </script>
     <style>
+      /* Light is the bare :root default and dark is the override, mirroring globals.css — and the
+         five values below are the app's real tokens, so the overlay matches the screens it sits
+         between instead of approximating them. */
       :root {
+        color-scheme: light;
+        --bg: #f9f9fa;
+        --panel: #ffffff;
+        --border: #d6d6dc;
+        --fg: #1c1c20;
+        --muted-2: #5b5b64;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
         --bg: #0b0b0c;
         --panel: #111113;
         --border: #2a2a31;
         --fg: #e7e7ea;
         --muted-2: #8b8b96;
       }
-      @media (prefers-color-scheme: light) {
-        :root {
-          --bg: #fafafa;
-          --panel: #ffffff;
-          --border: rgba(0, 0, 0, 0.10);
-          --fg: rgba(0, 0, 0, 0.90);
-          --muted-2: rgba(0, 0, 0, 0.62);
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme]) {
+          color-scheme: dark;
+          --bg: #0b0b0c;
+          --panel: #111113;
+          --border: #2a2a31;
+          --fg: #e7e7ea;
+          --muted-2: #8b8b96;
         }
       }
       body {

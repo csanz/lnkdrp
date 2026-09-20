@@ -589,7 +589,7 @@ export default function TeamsManager() {
               </div>
               <div className="h-px bg-[var(--border)]" />
 
-              {membersError ? <div className="px-3 py-3 text-[12px] text-red-500 sm:px-4">{membersError}</div> : null}
+              {membersError ? <div className="px-3 py-3 text-[12px] text-red-600 dark:text-red-500 sm:px-4">{membersError}</div> : null}
 
               {membersBusy ? (
                 <div className="px-3 py-3 text-[12px] text-[var(--muted-2)] sm:px-4">Loading…</div>
@@ -696,7 +696,7 @@ export default function TeamsManager() {
               )}
             </div>
 
-            {inviteError ? <div className="text-[12px] text-red-500">{inviteError}</div> : null}
+            {inviteError ? <div className="text-[12px] text-red-600 dark:text-red-500">{inviteError}</div> : null}
 
             {canInvite && inviteBlockedByPlan ? (
               <div
@@ -745,7 +745,7 @@ export default function TeamsManager() {
                       placeholder="name@company.com"
                       disabled={inviteEmailBusy || inviteBlockedByPlan}
                     />
-                    {inviteEmailError ? <div className="mt-1 text-[12px] text-red-500">{inviteEmailError}</div> : null}
+                    {inviteEmailError ? <div className="mt-1 text-[12px] text-red-600 dark:text-red-500">{inviteEmailError}</div> : null}
                     {inviteEmailSentTo ? (
                       <div className="mt-1 text-[12px] text-[var(--muted-2)]">Invite email sent to {inviteEmailSentTo}.</div>
                     ) : null}
@@ -820,7 +820,7 @@ export default function TeamsManager() {
               </button>
             </div>
 
-            {existingInvitesError ? <div className="text-[12px] text-red-500">{existingInvitesError}</div> : null}
+            {existingInvitesError ? <div className="text-[12px] text-red-600 dark:text-red-500">{existingInvitesError}</div> : null}
 
             <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
               <div className="overflow-x-auto">

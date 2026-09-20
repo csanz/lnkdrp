@@ -125,8 +125,13 @@ export function SubPageAction({
       aria-current={active ? "page" : undefined}
       className={[
         "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors",
+        // The active chip used to be `--panel-hover`, the same fill `hover:` gives an inactive one,
+        // so hovering any icon made it look like the page you were on. The solid inversion is what
+        // DocHeaderActions and ProjectHeaderActions — rendered right beside this rail — already use.
+        // Dark keeps its old fill: this pass was light-only, and the same collision there is a
+        // separate call for the owner to make.
         active
-          ? "border-[var(--border)] bg-[var(--panel-hover)] text-[var(--fg)]"
+          ? "border-transparent bg-[var(--fg)] text-[var(--bg)] dark:border-[var(--border)] dark:bg-[var(--panel-hover)] dark:text-[var(--fg)]"
           : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
       ].join(" ")}
     >

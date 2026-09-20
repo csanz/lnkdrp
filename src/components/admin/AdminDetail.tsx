@@ -48,7 +48,7 @@ export default function DetailPanel({
 }: DetailPanelProps) {
   return (
     <section
-      className={cn("min-w-0 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]", className)}
+      className={cn("min-w-0 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)]", className)}
     >
       <header className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--panel-2)] px-3 py-2">
         <div className="min-w-0">

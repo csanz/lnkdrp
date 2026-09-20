@@ -11,28 +11,54 @@
   /* Light (day) */
   color-scheme: light;
 
-  --bg: #ffffff;
-  --fg: #0a0a0a;
+  /*
+    Light used to be `--bg: #ffffff` with `--panel: #ffffff` — the same hex. Dark earns a card's
+    elevation by making the panel *lighter* than the page (#111113 on #0b0b0c); white has nothing
+    above it, so in light the lift was simply absent and a 1.27:1 hairline was the only thing
+    separating a card from the page. The light equivalent is to drop the ground instead of raising
+    the panel, so `--panel` below stays #ffffff and finally means something. The `--fg`/`--bg` pair
+    also sat at pure black on pure white (19.8:1), the maximum-glare corner of the gamut, while dark
+    deliberately softened both ends (see the comment on the dark block); 16.1:1 here matches dark's
+    15.94:1 and is still far above AA.
+  */
+  --bg: #f9f9fa;
+  --fg: #1c1c20;
 
   --panel: #ffffff;
 
-  --chart-views: #059669; /* single-series chart stroke; validated per surface */
-  /* Activity header donut: who did the work. Three categorical hues (people, then agent clients in
-     volume order) plus a grey for the folded tail. Validated as a set against this surface — all
-     pairs clear the CVD and normal-vision floors; the aqua slot sits under 3:1, which the legend's
-     visible labels and counts relieve. */
+  /* Card elevation. Dark gets its lift from the panel being lighter than the ground, so there it is
+     `none`; a white card on a near-white page still wants a real shadow. */
+  --shadow-card: 0 1px 2px rgba(16, 16, 20, 0.05), 0 1px 3px rgba(16, 16, 20, 0.06);
+
+  --chart-views: #047857; /* single-series chart stroke; validated per surface */
   /* Activity's actor donut. One family, not a categorical palette: people take the neutral the app
-     already uses for "not the subject", agents the chart emerald and a lighter step of it. */
-  --chart-actor-1: #9aa2ad;
-  --chart-actor-2: #059669;
-  --chart-actor-3: #34b98a;
-  --chart-actor-rest: #cbd0d6;
+     already uses for "not the subject", agents the chart emerald and a lighter step of it.
+     These were previously the dark hues nudged by eye, which left five of the six series under the
+     3:1 floor a non-text mark needs on this ground (the folded-tail grey at 1.49:1 read as a gap in
+     the ring rather than a slice). Re-derived against #ffffff. */
+  --chart-actor-1: #6b7280;
+  --chart-actor-2: #047857;
+  --chart-actor-3: #1f9e78;
+  --chart-actor-rest: #a3a9b4;
   /* Activity's work lines: one per tile, emerald first (the app's chart colour), then hues that
-     stay apart on the dark panel without turning the card into a rainbow. */
-  --chart-work-2: #7c8cf8;
-  --chart-work-3: #d99a2b;
+     stay apart on the dark panel without turning the card into a rainbow. Same re-derivation:
+     work-2/3/5 were 2.3-2.9:1 on a light panel. */
+  --chart-work-2: #5b66d6;
+  --chart-work-3: #a86a12;
   --chart-work-4: #c2596b;
-  --chart-work-5: #4aa3c7;
+  --chart-work-5: #2b7f9f;
+  /* Downloads: a second green that has to hold up on both grounds. Charts used to hardcode
+     green-500 here, which had nowhere to be tuned per theme. */
+  --chart-downloads: #0d7a52;
+  /* Chart gridlines and the hover cursor. Both used to be drawn as `--border` at 16%/25% opacity,
+     which over a light panel composites to roughly #fcfcfc — not there at all. Own tokens so a
+     stronger card border does not turn the plots into graph paper. */
+  --chart-grid: #e5e5eb;
+  --chart-cursor: #b8b8c0;
+  /* A failure that has to be readable, not decorative: red-400/red-500 were picked on the dark
+     panel and land at 2.5-3.8:1 on a light one. */
+  --danger-fg: #b91c1c;
+  --danger-bar: #dc2626;
   /* Activity feed: tint + edge bar for a row that just arrived live (neutral, not a status colour). */
   --feed-new-bg: rgba(37, 99, 235, 0.06);
   --feed-new-bar: rgba(37, 99, 235, 0.5);
@@ -42,31 +68,48 @@
   /* A paid plan that is cancelled and running out its period. */
   --plan-ending-bg: rgba(217, 119, 6, 0.16);
   --plan-ending-fg: #b45309;
-  --panel-2: #fafafa;
-  --panel-hover: #f4f4f5;
+  /* Stepped down with `--bg`: at #fafafa/#f4f4f5 against a white page these were a 1.04:1 and a
+     1.10:1 band, so a filter bar or a stat tile drawn on `--panel-2` had no visible surface. */
+  --panel-2: #f3f3f5;
+  --panel-hover: #eaeaee;
 
   /* ChatGPT-like surfaces */
-  --sidebar-bg: #f7f7f8;
-  --sidebar-hover: #ededee;
+  --sidebar-bg: #f1f1f4;
+  --sidebar-hover: #e4e4e9;
+  /* The current row. It used to paint `--sidebar-hover`, the same token `hover:` uses, so selected
+     and hovered were indistinguishable and whichever row the pointer was over read as the page you
+     were on. */
+  --sidebar-active: #d7d7de;
   --code-bg: #f6f6f7;
   --code-border: #e7e7ea;
   --diff-add-bg: #e8f7ef;
   --diff-del-bg: #fdecec;
   --diff-hunk-bg: #f2efff;
 
-  --border: #e4e4e7;
+  /* Was #e4e4e7: 1.27:1 on white, and with `--panel` equal to `--bg` it was the *only* cue drawing
+     a card, where dark has it as the second cue on top of a panel step. ~1.45:1 gives it the same
+     perceptual weight (ΔL* ~14) its dark counterpart has. */
+  --border: #d6d6dc;
 
   /* Tag palette (src/lib/tags/palette.ts owns the keys; these are the light-theme shades). */
-  --tag-jade: #0f9b6c;
+  /* jade was #0f9b6c — 3.31:1 on the sidebar, where the 6px dot lives, while every sibling had
+     room and its dark twin had 3x the headroom. */
+  --tag-jade: #0c7a55;
   --tag-sky: #2563eb;
   --tag-amber: #b45309;
   --tag-rose: #be185d;
   --tag-violet: #6d28d9;
   --tag-slate: #475569;
   /* Rules *inside* a card (between its header and sections). --border is tuned for card outlines
-     against the page; on a --panel-2 card in dark mode it was nearly invisible as an inner rule. */
-  --divider: #e4e4e7;
-  --ring: color-mix(in srgb, #000000 16%, transparent);
+     against the page; on a --panel-2 card in dark mode it was nearly invisible as an inner rule.
+     This was byte-identical to `--border`, so the distinction the token was created for existed
+     only in dark: an inner rule looked exactly like a card outline. */
+  --divider: #c9c9d1;
+  /* Was `#000 16%`, which resolves to ~#d6d6d6 over white — a 1.45:1 focus indicator, and every
+     consumer pairs it with `outline-none` so there is no UA fallback. WCAG 2.4.11 wants 3:1.
+     A real colour rather than an alpha wash; this is the fix src/lib/admin/ui.ts had to route
+     around for the admin area alone. */
+  --ring: #52525b;
 
   /* Muted text on white/near-white. Kept darker than zinc-500/600 so 11-12px labels
      (sidebar sections, meters, breadcrumbs) stay legible: ~7.5:1 and ~5.9:1 on #fff. */
@@ -77,9 +120,17 @@
   --primary-bg: #000000;
   --primary-fg: #ffffff;
   --primary-hover-bg: #18181b;
-  --primary-ring: color-mix(in srgb, #000000 18%, transparent);
+  /* Same problem as `--ring`: black at 18% over white is a 1.5:1 halo, and the CTA sets
+     `outline-none` beside it. */
+  --primary-ring: #3f3f46;
   --primary-border: color-mix(in srgb, #000000 12%, transparent);
   --primary-shadow: color-mix(in srgb, #000000 10%, transparent);
+
+  /* How much of a toned chip's hue survives the mix toward `--fg` (src/lib/admin/ui.ts).
+     One weight cannot serve both themes: mixing 38% of a near-black `--fg` into a mid-tone hue
+     darkens it far less than mixing 38% of a near-white `--fg` lightens it, so at dark's 62% the
+     light amber chip landed at 4.39:1 — under AA for the 11px type it carries. */
+  --tone-text-mix: 74%;
 
   /* Backwards-compat */
   --background: var(--bg);
@@ -101,6 +152,11 @@
 
   --panel: #111113;
 
+  /* Dark gets its card lift from the panel being lighter than the ground, so no shadow. Written as
+     a transparent shadow rather than `none`: Tailwind composites `--tw-shadow` into a comma list
+     with the ring layers, and a `none` inside that list invalidates the whole declaration. */
+  --shadow-card: 0 0 #0000;
+
   --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
   /* Activity header donut, stepped for the dark surface (same hues, validated separately). */
   --chart-actor-1: #7d8590;
@@ -111,6 +167,13 @@
   --chart-work-3: #e0a53c;
   --chart-work-4: #d4707f;
   --chart-work-5: #5cb3d6;
+  --chart-downloads: #34b98a;
+  /* Same composite the charts drew before these tokens existed (`--border` at 16% / 25%), so dark
+     is unchanged; only the light values needed rescuing. */
+  --chart-grid: rgba(42, 42, 49, 0.16);
+  --chart-cursor: rgba(42, 42, 49, 0.25);
+  --danger-fg: #f87171;
+  --danger-bar: rgba(239, 68, 68, 0.7);
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
   --row-leaving-bg: rgba(255, 255, 255, 0.14);
@@ -123,6 +186,9 @@
   /* ChatGPT-like surfaces (dark) */
   --sidebar-bg: #0e0e10;
   --sidebar-hover: #1a1a1e;
+  /* Dark held its own step badly too, but the brief for this pass was light-only and a token's dark
+     value stays exactly what it rendered before: here, `--sidebar-hover`. Worth its own step later. */
+  --sidebar-active: #1a1a1e;
   --code-bg: #0f0f12;
   --code-border: #24242a;
   --diff-add-bg: rgba(16, 185, 129, 0.12);
@@ -151,6 +217,9 @@
   --primary-ring: color-mix(in srgb, #ffffff 28%, transparent);
   --primary-border: color-mix(in srgb, #ffffff 18%, transparent);
   --primary-shadow: color-mix(in srgb, #ffffff 14%, transparent);
+
+  /* Dark's original weight — mixing toward a near-white `--fg` already lightens the hue plenty. */
+  --tone-text-mix: 62%;
 }
 
 @theme inline {
@@ -173,6 +242,10 @@
 
     --panel: #111113;
 
+    /* Dark gets its card lift from the panel being lighter than the ground, so no shadow (see the
+       explicit dark block for why this is a transparent shadow rather than `none`). */
+    --shadow-card: 0 0 #0000;
+
     --chart-views: #0f9f6e; /* single-series chart stroke; validated per surface */
     /* Activity header donut, stepped for the dark surface (same hues, validated separately). */
     --chart-actor-1: #7d8590;
@@ -183,6 +256,13 @@
     --chart-work-3: #e0a53c;
     --chart-work-4: #d4707f;
     --chart-work-5: #5cb3d6;
+    --chart-downloads: #34b98a;
+    /* Same composite the charts drew before these tokens existed (`--border` at 16% / 25%), so dark
+       is unchanged; only the light values needed rescuing. */
+    --chart-grid: rgba(42, 42, 49, 0.16);
+    --chart-cursor: rgba(42, 42, 49, 0.25);
+    --danger-fg: #f87171;
+    --danger-bar: rgba(239, 68, 68, 0.7);
   --feed-new-bg: rgba(96, 165, 250, 0.1);
   --feed-new-bar: rgba(96, 165, 250, 0.55);
   --row-leaving-bg: rgba(255, 255, 255, 0.14);
@@ -195,6 +275,8 @@
     /* ChatGPT-like surfaces (dark) */
     --sidebar-bg: #0e0e10;
     --sidebar-hover: #1a1a1e;
+    /* See the note on the explicit dark block: same value as hover, deliberately, for now. */
+    --sidebar-active: #1a1a1e;
     --code-bg: #0f0f12;
     --code-border: #24242a;
     --diff-add-bg: rgba(16, 185, 129, 0.12);
@@ -223,6 +305,9 @@
     --primary-ring: color-mix(in srgb, #ffffff 28%, transparent);
     --primary-border: color-mix(in srgb, #ffffff 18%, transparent);
     --primary-shadow: color-mix(in srgb, #ffffff 14%, transparent);
+
+    /* Dark's original weight — mixing toward a near-white `--fg` already lightens the hue plenty. */
+    --tone-text-mix: 62%;
   }
 }
 

@@ -6,6 +6,10 @@
  * message. Everything else leaves run-level counters or nothing, and the page says which rather
  * than implying a send log that does not exist.
  *
+ * The notification queue section is the one place that answers the other half of the question —
+ * what is *owed* right now, and what gave up trying (docs/prds/lnkdrp-notification-queue.md, M4).
+ * Its counts are live, not from a run, which is why it sits above the last-run panel.
+ *
  * The previews are real bodies from the real builders, and there are a dozen of them — they open
  * on demand rather than all at once, so the catalog above them stays the thing you land on.
  */
@@ -36,10 +40,17 @@ import {
   RowActions,
 } from "@/components/admin";
 import { fmtDuration } from "@/lib/admin/format";
-import { sendStateLabel, traceLabel } from "@/lib/admin/emailsAdmin";
+import {
+  sendStateLabel,
+  summarizeNotificationQueue,
+  toDeadNotificationRows,
+  traceLabel,
+} from "@/lib/admin/emailsAdmin";
 import type {
+  DeadNotificationRow,
   EmailCatalogRow,
   EmailTrace,
+  NotificationQueueSummary,
   NotificationRunSummary,
   PlanLimitsRunSummary,
   SendOutcome,
@@ -71,7 +82,13 @@ type SnapshotRow = {
 
 type OverviewPayload = {
   catalog: EmailCatalogRow[];
-  notification: { snapshot: SnapshotRow; run: NotificationRunSummary | null };
+  notification: {
+    snapshot: SnapshotRow;
+    run: NotificationRunSummary | null;
+    /** What the queue holds now. Null when the collection could not be read. */
+    queue: NotificationQueueSummary | null;
+    dead: DeadNotificationRow[];
+  };
   planLimits: { snapshot: SnapshotRow; run: PlanLimitsRunSummary | null };
 };
 
@@ -105,6 +122,7 @@ type DownloadRequestRow = {
 const CATALOG_COLUMNS = 7;
 const BUCKET_COLUMNS = 8;
 const REQUEST_COLUMNS = 7;
+const DEAD_COLUMNS = 6;
 
 /** A cron job's state. `ok` is the boring case; only a failure gets a hue. */
 function jobTone(status: string | null): AdminTone {
@@ -236,9 +254,17 @@ export default function AdminEmailsPage() {
             method: "GET",
           }),
         ]);
+        const notification = (overviewData.notification ?? {}) as OverviewPayload["notification"];
         setOverview({
           catalog: Array.isArray(overviewData.catalog) ? (overviewData.catalog as EmailCatalogRow[]) : [],
-          notification: overviewData.notification as OverviewPayload["notification"],
+          // The queue block is narrowed rather than cast: it is newer than the route's other
+          // fields, so a response without it has to render as "no counts" and not as an
+          // empty queue — the two mean opposite things.
+          notification: {
+            ...notification,
+            queue: summarizeNotificationQueue(notification.queue),
+            dead: toDeadNotificationRows(notification.dead),
+          },
           planLimits: overviewData.planLimits as OverviewPayload["planLimits"],
         });
         setPreviews(Array.isArray(previewData.previews) ? (previewData.previews as PreviewRow[]) : []);
@@ -319,6 +345,8 @@ export default function AdminEmailsPage() {
   const catalog = overview?.catalog ?? [];
   const notificationRun = overview?.notification?.run ?? null;
   const planLimitsRun = overview?.planLimits?.run ?? null;
+  const queue = overview?.notification?.queue ?? null;
+  const dead = overview?.notification?.dead ?? [];
 
   return (
     <div className="min-h-[100svh] bg-[var(--bg)] text-[var(--fg)]">
@@ -438,6 +466,144 @@ export default function AdminEmailsPage() {
             ))
           )}
         </AdminTable>
+        </AdminSection>
+
+        {/* --------------------------------------------------- notification queue */}
+        {/* Above the last-run panel on purpose: "what is owed" is the question this page could
+            never answer, and the run counters below are only what one tick happened to do. */}
+        <AdminSection
+          title="Notification queue"
+          description="One row is one email owed to one person, written down when the thing happened. These counts are live, not from a run: pending is what the next tick will try, dead gave up after five attempts and stays until someone deals with it."
+        >
+          <Panel padding="md" rounded="xl" className="min-w-0">
+            {queue ? (
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
+                <Fact label="Pending">
+                  <span className="tabular-nums">{queue.pending}</span>{" "}
+                  <span className="text-[var(--muted-2)]" title="Pending rows whose next attempt is already due">
+                    ({queue.due} due)
+                  </span>
+                </Fact>
+                <Fact label="Sending">
+                  {queue.sending ? (
+                    <StatusPill
+                      tone="info"
+                      title="Claimed by a runner right now. A count that stays up belongs to a run that died mid-send; the stale sweep hands those back after ten minutes."
+                    >
+                      {String(queue.sending)}
+                    </StatusPill>
+                  ) : (
+                    <span className="tabular-nums">0</span>
+                  )}
+                </Fact>
+                <Fact label="Sent (24h)">
+                  {/* A window, not a total: sent rows expire after 30 days, so a lifetime count
+                      would fall over time and read as mail going missing. */}
+                  <span className="tabular-nums" title="Rows marked sent in the last 24 hours">
+                    {queue.sent24h}
+                  </span>
+                </Fact>
+                <Fact label="Dead">
+                  {queue.dead ? (
+                    <StatusPill tone="danger" title="Used up every attempt. Never retried automatically.">
+                      {String(queue.dead)}
+                    </StatusPill>
+                  ) : (
+                    <span className="tabular-nums">0</span>
+                  )}
+                </Fact>
+                <Fact label="Skipped">
+                  <span className="tabular-nums" title="Never sent on purpose: the member had it off, or the thing is gone.">
+                    {queue.skipped}
+                  </span>
+                </Fact>
+                <Fact label="Oldest pending">
+                  {/* Event time, not insert time: this is how far behind delivery actually is. */}
+                  <span className="tabular-nums">
+                    <TimeCell value={queue.oldestPendingAt} />
+                  </span>
+                </Fact>
+              </dl>
+            ) : (
+              <p className={ADMIN_NOTE}>
+                No queue counts on this response — the collection could not be read. That is not the same as an empty
+                queue.
+              </p>
+            )}
+          </Panel>
+
+          <AdminTable
+            className="mt-3"
+            ariaLabel="Dead notifications"
+            head={
+              <>
+                {/* Both times, because the gap between them is the answer to "how long has this
+                    been failing?" — the event, then the attempt that gave up on it. */}
+                <AdminTh align="right" width="w-[150px]">
+                  Occurred
+                </AdminTh>
+                <AdminTh align="right" width="w-[150px]">
+                  Gave up
+                </AdminTh>
+                <AdminTh width="w-[150px]">Kind</AdminTh>
+                <AdminTh align="right" width="w-[84px]">
+                  Attempts
+                </AdminTh>
+                <AdminTh width="w-[280px]">Queue row</AdminTh>
+                <AdminTh width="w-full">Last error</AdminTh>
+              </>
+            }
+          >
+            {loading && dead.length === 0 ? (
+              <AdminTableMessage colSpan={DEAD_COLUMNS}>Loading dead letters…</AdminTableMessage>
+            ) : dead.length === 0 ? (
+              <AdminTableEmpty
+                colSpan={DEAD_COLUMNS}
+                title="Nothing has given up"
+                hint="A row goes dead after five failed attempts, and keeps the error it died on."
+              />
+            ) : (
+              dead.map((row) => (
+                <AdminTr key={row.id}>
+                  <AdminTd align="right" numeric>
+                    <TimeCell value={row.occurredAt} />
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    <TimeCell value={row.failedAt} />
+                  </AdminTd>
+                  <AdminTd primary truncate="max-w-[150px]">
+                    <span title={row.kind}>{row.kind}</span>
+                  </AdminTd>
+                  <AdminTd align="right" numeric>
+                    {row.attempts}
+                  </AdminTd>
+                  {/* The dedupe key is the whole identity of the mail: kind, recipient and the
+                      source row it is about. What the email would have said is not here and is
+                      not fetched — see src/lib/admin/docPrivacy.ts. */}
+                  <AdminTd mono truncate="max-w-[280px]">
+                    <span title={row.dedupeKey}>{row.dedupeKey}</span>
+                  </AdminTd>
+                  <AdminTd truncate="w-full max-w-0">
+                    {row.lastError ? (
+                      <span style={toneTextStyle("danger")} title={row.lastError}>
+                        {row.lastError}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--muted-2)]" title="The row died without an error being recorded.">
+                        {ADMIN_DASH}
+                      </span>
+                    )}
+                  </AdminTd>
+                </AdminTr>
+              ))
+            )}
+          </AdminTable>
+
+          {queue && queue.dead > dead.length ? (
+            <p className={ADMIN_NOTE}>
+              Showing the {dead.length} most recent of {queue.dead} dead rows.
+            </p>
+          ) : null}
         </AdminSection>
 
         {/* ------------------------------------------- notification job last run */}

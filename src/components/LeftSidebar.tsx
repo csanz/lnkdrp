@@ -1987,11 +1987,11 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname.startsWith("/search")
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -2012,11 +2012,11 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname.startsWith("/metrics")
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -2037,13 +2037,13 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group relative w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group relative w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname === "/" || pathname.startsWith("/upload")
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
-                isAddNewDropActive ? "bg-[var(--sidebar-hover)] text-[var(--fg)]" : "",
+                isAddNewDropActive ? "bg-[var(--sidebar-active)] text-[var(--fg)]" : "",
               ].join(" ")}
               onClick={() => openAddNewPicker()}
               onDragEnter={(e) => {
@@ -2087,7 +2087,7 @@ export default function LeftSidebar({
 
               {isAddNewDropActive ? (
                 <div className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-10 -translate-x-1/2">
-                  <div className="whitespace-nowrap rounded-full bg-[var(--panel)]/90 px-3 py-1 text-[13px] font-semibold text-[var(--fg)] shadow-sm ring-1 ring-black/5 backdrop-blur">
+                  <div className="whitespace-nowrap rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-3 py-1 text-[13px] font-semibold text-[var(--fg)] shadow-sm">
                     Drop to upload
                   </div>
                 </div>
@@ -2098,11 +2098,11 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname === "/activity"
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -2126,11 +2126,11 @@ export default function LeftSidebar({
               type="button"
               disabled={navLocked}
               className={[
-                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-24 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-24 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                 navLocked
                   ? "cursor-not-allowed opacity-50"
                   : pathname.startsWith("/connect")
-                    ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                    ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                     : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
               ].join(" ")}
               onClick={() => {
@@ -2157,7 +2157,7 @@ export default function LeftSidebar({
                 type="button"
                 // `right-0.5` against its own px-1.5: the two cancel to the same right edge every
                 // other item in this column sits on. (`right-2` put the words 6px inside it.)
-                className="absolute right-0.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-normal text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                className="absolute right-0.5 top-1/2 flex -translate-y-1/2 items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-normal text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                 onClick={(e) => {
                   e.stopPropagation();
                   router.push(agentStatus.connected ? "/activity?who=agents" : "/connect");
@@ -2183,7 +2183,7 @@ export default function LeftSidebar({
                   <li key={c.client}>
                     <button
                       type="button"
-                      className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-[11px] text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20"
+                      className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-[11px] text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                       onClick={() => router.push("/connect")}
                       title={`${c.client} · ${formatRelative(c.lastUsedAt)}${agentStatus.isPersonalOrg ? "" : ` · ${c.by.join(", ")}`}`}
                     >
@@ -2205,7 +2205,7 @@ export default function LeftSidebar({
                 type="button"
                 disabled={navLocked}
                 className={[
-                  "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black/20",
+                  "group w-full cursor-pointer overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
                   navLocked ? "cursor-not-allowed opacity-50" : "text-[var(--fg)] hover:bg-[var(--sidebar-hover)]",
                 ].join(" ")}
                 onClick={() => {
@@ -2241,7 +2241,7 @@ export default function LeftSidebar({
                     setStarredCollapsed((v) => !v);
                   }}
                 >
-                  <StarIcon className="h-3.5 w-3.5 text-amber-400" filled />
+                  <StarIcon className="h-3.5 w-3.5 text-[var(--tag-amber)]" filled />
                   <span>Starred</span>
                 </button>
                 <IconButton
@@ -2329,13 +2329,13 @@ export default function LeftSidebar({
                             // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
                             "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
-                            activeDocId === d.id ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
+                            activeDocId === d.id ? "bg-[var(--sidebar-active)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                         >
                           {/* `pr-6` reserves the row menu's column, exactly as the Docs rows do, so
                               the version chip lands in the same place in both lists. */}
                           <div className="flex min-w-0 items-center gap-2 pr-9 leading-normal">
-                            <StarIcon className="h-3.5 w-3.5 shrink-0 text-amber-400 opacity-70" />
+                            <StarIcon className="h-3.5 w-3.5 shrink-0 text-[var(--tag-amber)] opacity-70" />
                             <span className="block min-w-0 max-w-[220px] flex-1 truncate text-[var(--fg)]">
                               {title}
                             </span>
@@ -2729,7 +2729,7 @@ export default function LeftSidebar({
                             // (Sidebar nav uses `pl-3 pr-12`, so we extend into the right padding by 36px = pr-12 - pl-3.)
                             // IMPORTANT: `box-border` so padding does not increase the effective width.
                             "block box-border w-[calc(100%+36px)] -mr-9 overflow-hidden rounded-xl pl-3 pr-2 py-1.5 text-left text-[14px]",
-                            activeDocId === d.id ? "bg-[var(--sidebar-hover)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
+                            activeDocId === d.id ? "bg-[var(--sidebar-active)] font-medium" : "hover:bg-[var(--sidebar-hover)]",
                           ].join(" ")}
                           title={when ? `Updated ${when}` : undefined}
                         >

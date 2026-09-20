@@ -18,6 +18,9 @@ export default function Panel({
       className={cn(
         rounded === "2xl" ? "rounded-2xl" : "rounded-xl",
         "border border-[var(--border)]",
+        // A panel is white on a near-white page in light, so a border alone is a weak lift; dark
+        // gets its lift from the panel being *lighter* than the ground, and resolves this to `none`.
+        "shadow-[var(--shadow-card)]",
         variant === "panel" ? "bg-[var(--panel)]" : "bg-[var(--panel-2)]",
         padding === "none" ? "p-0" : padding === "sm" ? "p-3" : padding === "lg" ? "p-6" : "p-5",
         className,

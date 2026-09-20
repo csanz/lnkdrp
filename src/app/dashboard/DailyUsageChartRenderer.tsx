@@ -79,7 +79,7 @@ export default function DailyUsageChartRenderer({
     <div ref={wrapRef} className="h-56 w-full">
       {!size ? null : (
         <BarChart width={size.w} height={size.h} data={chartData} margin={{ top: 18, right: 24, bottom: 6, left: 6 }}>
-          <CartesianGrid stroke="var(--border)" strokeOpacity={0.16} vertical={false} />
+          <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
           <XAxis
             dataKey="day"
             ticks={[left, mid, right].filter(Boolean)}
@@ -116,7 +116,7 @@ export default function DailyUsageChartRenderer({
             <Bar
               dataKey="total"
               name={metric === "spend" ? "Spend" : "Credits"}
-              fill="rgb(56 189 248)"
+              fill="var(--chart-work-5)"
               radius={[4, 4, 0, 0]}
               isAnimationActive={false}
             >

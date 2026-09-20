@@ -83,7 +83,7 @@ function BilledWorkspaceHeader({
         <WorkspaceIcon
           avatarUrl={workspace?.avatarUrl}
           fallback={workspace ? initial : ""}
-          className="h-11 w-11 rounded-xl"
+          className="h-11 w-11"
           fallbackClassName="bg-[var(--panel-hover)] text-base text-[var(--fg)]"
         />
         <div className="min-w-0 flex-1">

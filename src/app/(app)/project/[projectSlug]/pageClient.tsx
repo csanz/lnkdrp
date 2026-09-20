@@ -31,6 +31,7 @@ import { upload as blobUpload } from "@vercel/blob/client";
 import { BLOB_HANDLE_UPLOAD_URL, buildDocBlobPathname } from "@/lib/blob/clientUpload";
 import { notifyProjectsChanged, refreshSidebarCache } from "@/lib/sidebarCache";
 import { forgetEntityTitle, rememberEntityTitle, rememberEntityTitles, useEntityTitle } from "@/lib/client/entityTitles";
+import { noteEntityName } from "@/lib/client/entityIdentity";
 
 type DocListItem = {
   id: string;
@@ -576,6 +577,9 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
         setNameDraft(json.project.name ?? "");
       } else {
         setProject((p) => (p ? { ...p, name: next } : p));
+        // Same as the document rename: correct the session-long identity cache the sub-page
+        // headers read, or Links and Metrics show the old name until their own read lands.
+        noteEntityName("project", projectSlug, next);
         setDraftName(next);
         setNameDraft(next);
       }
@@ -1136,8 +1140,11 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                                       type="button"
                                       className={[
                                         "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors",
+                                        // amber-300 on a 15% tint is a dark-ground value: 1.44:1 on
+                                        // the white --panel row, so the starred state — the whole
+                                        // point of the control — was a faint smudge in light.
                                         starred
-                                          ? "border-amber-300/40 bg-amber-500/15 text-amber-300 hover:bg-amber-500/20"
+                                          ? "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-300 dark:hover:bg-amber-500/20"
                                           : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]",
                                       ].join(" ")}
                                       aria-label={starred ? "Unstar document" : "Star document"}
@@ -1155,7 +1162,7 @@ export default function ProjectPageClient({ projectSlug }: { projectSlug: string
                                       )}
                                     </button>
                                   ) : starred ? (
-                                    <span className="shrink-0 text-amber-500" aria-label="Starred">
+                                    <span className="shrink-0 text-amber-600 dark:text-amber-500" aria-label="Starred">
                                       <SmallStarIcon filled />
                                     </span>
                                   ) : null}

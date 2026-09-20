@@ -252,7 +252,7 @@ function UploadProgressRow({ item, leaving = false }: { item: InFlightUpload; le
         <div
           className={[
             "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg ring-1 ring-[var(--border)]",
-            failed ? "bg-[var(--panel-hover)] text-red-400" : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
+            failed ? "bg-[var(--panel-hover)] text-[var(--danger-fg)]" : "bg-[var(--panel-hover)] text-[var(--muted-2)]",
           ].join(" ")}
         >
           <Icon className="h-4 w-4" aria-hidden="true" />
@@ -270,7 +270,9 @@ function UploadProgressRow({ item, leaving = false }: { item: InFlightUpload; le
             <span
               className={[
                 "ml-auto shrink-0 text-[12px] font-semibold tabular-nums",
-                failed ? "text-red-400" : "text-[var(--fg)]",
+                // red-400 was picked on the dark panel: 2.52:1 on a light one, on the one word that says
+                // an upload broke. `--danger-fg` keeps the dark value and gives light its own.
+                failed ? "text-[var(--danger-fg)]" : "text-[var(--fg)]",
               ].join(" ")}
             >
               {failed ? "Failed" : `${percent}%`}
@@ -289,7 +291,7 @@ function UploadProgressRow({ item, leaving = false }: { item: InFlightUpload; le
             <div
               className={[
                 "h-full rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
-                failed ? "bg-red-500/70" : done ? "bg-[var(--chart-views)]" : "bg-[var(--fg)]",
+                failed ? "bg-[var(--danger-bar)]" : done ? "bg-[var(--chart-views)]" : "bg-[var(--fg)]",
               ].join(" ")}
               style={{ width: `${failed ? Math.max(percent, 4) : percent}%` }}
             />

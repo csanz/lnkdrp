@@ -109,8 +109,10 @@ export default function AdminLeftSidebar() {
                             href={item.href}
                             className={[
                               "block rounded-lg py-1.5 pl-5 pr-2 text-left text-[13px] font-medium transition-colors",
+                              // The current page used to paint the same token `hover:` uses, so
+                              // hovering any of the fourteen rows erased which page you were on.
                               active
-                                ? "bg-[var(--sidebar-hover)] text-[var(--fg)]"
+                                ? "bg-[var(--sidebar-active)] text-[var(--fg)]"
                                 : "text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]",
                             ].join(" ")}
                           >

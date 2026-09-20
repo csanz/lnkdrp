@@ -41,6 +41,7 @@ import { forgetEntityTitle, rememberEntityTitle, useEntityTitle } from "@/lib/cl
 // The same pulse the sub-page headers draw: one shape for one document's name, so the bar does not
 // change size or baseline when you walk from the document into its Links or Metrics page.
 import { HeaderNameSkeleton } from "@/components/HeaderIdentity";
+import { noteEntityName } from "@/lib/client/entityIdentity";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { dispatchOutOfCredits, outOfCreditsReasonFromCode } from "@/lib/client/outOfCredits";
 
@@ -697,9 +698,16 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
 
     // `displayDocName` now carries the remembered name before hydration, so starring a document
     // the instant the page opens records what it is actually called rather than the placeholder
-    // the header used to be showing at that moment. An empty name is left to `toggleStarredDoc`'s
-    // own fallback rather than invented here.
+    // the header used to be showing at that moment.
+    //
+    // With no name at all there is nothing safe to write: `toggleStarredDoc` substitutes the
+    // literal "Document" for an empty title and POSTs it to `/api/starred`, which makes that
+    // placeholder the document's name in the sidebar on every device — and `recallEntityTitle`
+    // reads the starred list, so it would come back as the remembered name and paint "Document"
+    // as the title on every later navigation. The buttons are disabled for that window instead
+    // (`DocIdentityRow` guards its own star the same way).
     const nextTitle = displayDocName.trim();
+    if (!nextTitle) return;
     const res = toggleStarredDoc({ id: doc.id, title: nextTitle });
     setStarred(res.starred);
   }
@@ -1249,8 +1257,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
       // Before the server answers, the remembered name stands in. Never the word "Document":
       // a placeholder shaped like a name is exactly the flash this removes.
       if (!hasHydratedFromServer) return rememberedDocName || "";
-      // Hydrated, and the document genuinely has no title of its own.
-      return rememberedDocName || "Document";
+      // Hydrated, and the document genuinely has no title of its own. "Untitled document" is what
+      // `HeaderIdentity`, `/api/docs`, `/api/sidebar` and every list surface call it; saying
+      // "Document" only here made the title rename itself on the walk into Links or Metrics.
+      return rememberedDocName || "Untitled document";
     },
     [doc.title, hasHydratedFromServer, rememberedDocName],
   );
@@ -1330,6 +1340,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
           ? res.doc.title
           : next;
       setDoc((d) => ({ ...d, title: patchedTitle }));
+      // The shared identity cache outlives this page; without this the next sub-page would paint
+      // the old name from it before its own read lands.
+      noteEntityName("doc", doc.id, patchedTitle);
       setTitleDraft(patchedTitle);
       setEditingTitle(false);
       // Best-effort: keep the left sidebar's cached "recent docs" title in sync immediately.
@@ -2049,8 +2062,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             "hover:bg-[var(--panel-hover)]",
                             navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
                           ].join(" ")}
-                          disabled={navLockActive && !isReceivedViaRequest}
-                          aria-disabled={navLockActive && !isReceivedViaRequest}
+                          disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
+                          aria-disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
                           aria-label={starred ? "Unstar document" : "Star document"}
                           title={
                             navLockActive && !isReceivedViaRequest
@@ -2088,7 +2101,9 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           }}
                           aria-label="Rename document"
                           className={[
-                            "min-w-0 flex-1 rounded-md border bg-[var(--panel)] px-2 py-1 text-sm font-semibold text-[var(--fg)]",
+                            // The project page's rename field is the title's own size; this one was
+                            // `text-sm`, so clicking the name shrank it before you typed.
+                            "min-w-0 flex-1 rounded-md border bg-[var(--panel)] px-2 py-0.5 text-lg font-semibold tracking-tight text-[var(--fg)]",
                             "border-[var(--border)] focus:outline-none focus:ring-2 focus:ring-black/10",
                             titleSaveBusy ? "opacity-70" : "",
                           ].join(" ")}
@@ -2116,8 +2131,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                           "hover:bg-[var(--panel-hover)]",
                           navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
                         ].join(" ")}
-                        disabled={navLockActive && !isReceivedViaRequest}
-                        aria-disabled={navLockActive && !isReceivedViaRequest}
+                        disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
+                        aria-disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
                         aria-label={starred ? "Unstar document" : "Star document"}
                         title={
                           navLockActive && !isReceivedViaRequest
@@ -2169,6 +2184,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                         <DocumentTextIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
                       </span>
                       <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+                        {/* An `<h1>`, like `AppPageHeader` and `SubPageHeader` give every other page:
+                            the document page was the only one named after a single file with no
+                            heading in the outline. `contents` keeps the flex layout unchanged. */}
+                        <h1 className="contents">
                         <button
                           type="button"
                           disabled={navLockActive}
@@ -2190,6 +2209,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             <HeaderNameSkeleton kind="doc" />
                           )}
                         </button>
+                        </h1>
                         {/* After the name, not before it: the name is what the page is, and two
                             controls in front of it pushed the one thing you read into third
                             place. */}
@@ -2202,8 +2222,8 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             "hover:bg-[var(--panel-hover)]",
                             navLockActive && !isReceivedViaRequest ? "cursor-not-allowed opacity-50 hover:bg-transparent" : "",
                           ].join(" ")}
-                          disabled={navLockActive && !isReceivedViaRequest}
-                          aria-disabled={navLockActive && !isReceivedViaRequest}
+                          disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
+                          aria-disabled={(navLockActive && !isReceivedViaRequest) || !displayDocName}
                           aria-label={starred ? "Unstar document" : "Star document"}
                           title={
                             navLockActive && !isReceivedViaRequest
@@ -2776,22 +2796,26 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               ? String((out as any).relevancy)
                               : null;
 
+                          // Each tone carries both branches. The 200-level foregrounds below are
+                          // dark-ground values — on the white --panel card they measured 1.25-1.45:1,
+                          // so the pill labels were unreadable in light. Same shape as the status
+                          // pill above, which got its light branch long ago.
                           const pillBase =
                             "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold";
                           const stagePill =
                             stageMatch === true
-                              ? `${pillBase} border-emerald-300/40 bg-emerald-500/15 text-emerald-200`
+                              ? `${pillBase} border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-200`
                               : stageMatch === false
-                                ? `${pillBase} border-red-300/40 bg-red-500/15 text-red-200`
+                                ? `${pillBase} border-red-200 bg-red-50 text-red-800 dark:border-red-300/40 dark:bg-red-500/15 dark:text-red-200`
                                 : `${pillBase} border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)]`;
                           const relKey = (relevancy ?? "").toLowerCase();
                           const relPill =
                             relKey === "high"
-                              ? `${pillBase} border-emerald-300/40 bg-emerald-500/15 text-emerald-200`
+                              ? `${pillBase} border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-200`
                               : relKey === "medium"
-                                ? `${pillBase} border-amber-300/40 bg-amber-500/15 text-amber-200`
+                                ? `${pillBase} border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-200`
                                 : relKey === "low"
-                                  ? `${pillBase} border-red-300/40 bg-red-500/15 text-red-200`
+                                  ? `${pillBase} border-red-200 bg-red-50 text-red-800 dark:border-red-300/40 dark:bg-red-500/15 dark:text-red-200`
                                   : `${pillBase} border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted)]`;
 
                           const show = stageMatch !== null || Boolean(relevancy);

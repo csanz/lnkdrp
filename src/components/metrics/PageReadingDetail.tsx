@@ -55,7 +55,7 @@ export default function PageReadingDetail({
             <span className="w-14 shrink-0 text-[12px] tabular-nums text-[var(--muted)]">Page {row.page}</span>
             <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--panel-2)]">
               <span
-                className="block h-full rounded-full bg-emerald-500/70"
+                className="block h-full rounded-full bg-[var(--chart-views)]"
                 style={{ width: `${Math.max(2, Math.round((row.ms / max) * 100))}%` }}
               />
             </span>

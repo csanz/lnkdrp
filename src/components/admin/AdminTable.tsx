@@ -80,7 +80,7 @@ export default function AdminTable({ head, children, ariaLabel, className }: Adm
 
   return (
     <div
-      className={cn("relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]", className)}
+      className={cn("relative overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)]", className)}
     >
       <div ref={scrollerRef} className="overflow-x-auto">
         <table aria-label={ariaLabel} className="min-w-full border-collapse text-left">

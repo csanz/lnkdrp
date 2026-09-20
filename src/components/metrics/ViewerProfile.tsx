@@ -27,7 +27,7 @@ import {
   parseIsoMs,
   relativeAge,
 } from "@/components/metrics/MetricsView";
-import DepthBadge from "@/components/metrics/DepthBadge";
+import DepthBadge, { ReadingLegendButton } from "@/components/metrics/DepthBadge";
 import PageReadingDetail from "@/components/metrics/PageReadingDetail";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
@@ -299,6 +299,7 @@ export default function ViewerProfile({
               pages={scopeKind === "doc" ? viewer.pagesViewed ?? pagesSeen.length : viewer.docs?.length ?? 0}
               totalPages={scopeKind === "doc" ? identity?.pages ?? null : null}
             />
+            <ReadingLegendButton />
           </div>
           <div className="mt-1 truncate text-sm text-[var(--muted)]">
             {viewer.email && name !== viewer.email ? `${viewer.email} · ` : ""}
@@ -357,7 +358,7 @@ export default function ViewerProfile({
                       </span>
                       <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[var(--panel-2)]">
                         <span
-                          className="block h-full rounded-full bg-emerald-500/70"
+                          className="block h-full rounded-full bg-[var(--chart-views)]"
                           style={{ width: `${Math.max(2, Math.round((d.timeSpentMs / max) * 100))}%` }}
                         />
                       </span>
