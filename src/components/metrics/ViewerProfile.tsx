@@ -48,10 +48,13 @@ function parseRouteKey(raw: string): { kind: "authed" | "anon"; key: string } | 
 type Visit = {
   visitId: string;
   startedAt: string | null;
-  endedAt: string | null;
+  endedAt?: string | null;
+  lastEventAt?: string | null;
   timeSpentMs: number;
   pagesSeen?: number[];
   pageTimeMsByPage?: Record<string, number>;
+  /** Project scope: which documents this one tab session touched, longest first. */
+  docs?: Array<{ docId: string; title: string | null; timeSpentMs: number; pagesSeen: number[] }>;
 };
 
 type ViewerRow = {
@@ -93,7 +96,7 @@ export default function ViewerProfile({
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [visits, setVisits] = useState<Visit[]>([]);
-  const [visitsLoading, setVisitsLoading] = useState(scopeKind === "doc");
+  const [visitsLoading, setVisitsLoading] = useState(true);
 
   const load = useCallback(async () => {
     if (!who) {
@@ -129,11 +132,13 @@ export default function ViewerProfile({
   // Sessions are a document idea: a tab session on a project spans documents, so its page sequence
   // has no project meaning and the documents list below carries what does.
   const loadVisits = useCallback(async () => {
-    if (scopeKind !== "doc" || !who) return;
+    if (!who) return;
     setVisitsLoading(true);
     try {
       const params = new URLSearchParams({ kind: who.kind, limit: "50" });
       params.set(who.kind === "authed" ? "userId" : "botIdHash", who.key);
+      // Both scopes answer this now. A project's sessions are grouped across the documents one tab
+      // session touched, which is why it has a route of its own rather than a per-document loop.
       const res = await fetchWithTempUser(`${apiBase}/shareviews/visits?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) return;
       const json = (await res.json()) as { visits?: Visit[] };
@@ -143,7 +148,7 @@ export default function ViewerProfile({
     } finally {
       setVisitsLoading(false);
     }
-  }, [apiBase, scopeKind, who]);
+  }, [apiBase, who]);
 
   useEffect(() => {
     void loadVisits();
@@ -409,8 +414,10 @@ export default function ViewerProfile({
         </section>
       )}
 
-      {scopeKind === "doc" ? (
-        <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
+      {/* Sessions, on both scopes. On a document a session is a page sequence; on a project it is
+          the documents that one sitting touched, which is the sequence that matters there — what
+          they opened first, and what they never came back to. */}
+      <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">
               Sessions{visits.length ? ` · ${visits.length >= 50 ? "50+" : visits.length}` : ""}
@@ -433,10 +440,29 @@ export default function ViewerProfile({
                       <span className="text-[13px] text-[var(--fg)]">{formatDateTime(v.startedAt)}</span>
                       <span className="text-[12px] tabular-nums text-[var(--muted)]">
                         {v.timeSpentMs > 0 ? formatDurationShort(v.timeSpentMs) : "—"}
-                        {v.pagesSeen?.length ? ` · ${v.pagesSeen.length === 1 ? "page" : "pages"} ${formatPageRanges(v.pagesSeen)}` : ""}
+                        {v.docs?.length
+                          ? ` · ${v.docs.length} ${v.docs.length === 1 ? "document" : "documents"}`
+                          : v.pagesSeen?.length
+                            ? ` · ${v.pagesSeen.length === 1 ? "page" : "pages"} ${formatPageRanges(v.pagesSeen)}`
+                            : ""}
                       </span>
                     </div>
-                    {v.pageTimeMsByPage && Object.keys(v.pageTimeMsByPage).length ? (
+                    {v.docs?.length ? (
+                      // A project session: which documents, longest first.
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {v.docs.map((d) => (
+                          <span
+                            key={d.docId}
+                            className="inline-flex max-w-[220px] items-center gap-1 rounded-md bg-[var(--panel)] px-2 py-0.5 text-[11px] text-[var(--muted)] ring-1 ring-[var(--border)]"
+                            title={d.title ?? undefined}
+                          >
+                            <DocumentTextIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{d.title || "Untitled"}</span>
+                            <span className="tabular-nums">{d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}</span>
+                          </span>
+                        ))}
+                      </div>
+                    ) : v.pageTimeMsByPage && Object.keys(v.pageTimeMsByPage).length ? (
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {Object.entries(v.pageTimeMsByPage)
                           .map(([page, ms]) => ({ page: Number(page), ms: Number(ms) }))
@@ -456,8 +482,7 @@ export default function ViewerProfile({
                 ))}
             </ul>
           )}
-        </section>
-      ) : null}
+      </section>
       </div>
 
       <div className="text-[11px] text-[var(--muted-2)]">
