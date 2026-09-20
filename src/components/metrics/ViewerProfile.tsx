@@ -30,7 +30,7 @@ import {
 import DepthBadge, { ReadingLegendButton } from "@/components/metrics/DepthBadge";
 import PageReadingDetail from "@/components/metrics/PageReadingDetail";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
-import { subscribeRealtime } from "@/lib/client/realtime";
+import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { useEntityIdentity } from "@/lib/client/entityIdentity";
 
 /** `u_<userId>` for a signed-in reader, `a_<botIdHash>` for a device. Readable in a URL. */
@@ -97,14 +97,43 @@ export default function ViewerProfile({
   const [notFound, setNotFound] = useState(false);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [visitsLoading, setVisitsLoading] = useState(true);
+  /** Whether this tab's realtime channel is open — the difference between live and merely loaded. */
+  const [connected, setConnected] = useState(false);
+  /** When this reader last moved, as told by a `reading` frame. Null until one arrives. */
+  const [readingAt, setReadingAt] = useState<number | null>(null);
+  /** Re-renders the indicator so "reading now" can lapse without another frame arriving. */
+  const [, setTick] = useState(0);
 
-  const load = useCallback(async () => {
+  useEffect(() => {
+    const sync = () => setConnected(realtimeState() === "open");
+    sync();
+    window.addEventListener(REALTIME_STATE_EVENT, sync);
+    return () => window.removeEventListener(REALTIME_STATE_EVENT, sync);
+  }, []);
+
+  // While someone is reading, the indicator has to be able to go quiet on its own: the last frame
+  // is the last thing that will arrive, so nothing else would clear "reading now".
+  useEffect(() => {
+    if (readingAt === null) return;
+    const id = window.setInterval(() => setTick((n) => n + 1), 5_000);
+    return () => window.clearInterval(id);
+  }, [readingAt]);
+
+  /**
+   * A refresh the world asked for keeps what is on screen.
+   *
+   * This page reloads while you watch it, and the loader used to open by putting it back into its
+   * loading state — so every few seconds of someone else's reading blanked six stat tiles, a chart
+   * and a session list to skeletons. The figures up are a second stale, not wrong: they stay, and
+   * the new ones replace them in place. Same rule the metrics page uses.
+   */
+  const load = useCallback(async (silent = false) => {
     if (!who) {
       setNotFound(true);
       setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       // The same viewers-only read the metrics page makes: one definition of a reader, one query.
       const res = await fetchWithTempUser(`${apiBase}/shareviews?days=${days}&viewers=1&viewersOnly=1`, {
@@ -116,10 +145,16 @@ export default function ViewerProfile({
         who.kind === "authed"
           ? (json.viewers ?? []).find((v) => String(v.userId ?? "") === who.key)
           : (json.anonymousViewers ?? []).find((v) => String(v.botIdHash ?? "") === who.key);
-      setViewer(row ?? null);
-      setNotFound(!row);
+      // A silent refresh keeps what it has when the answer comes back empty. The row can be
+      // missing for reasons that are not "this reader does not exist" — a request that raced a
+      // range change, a flaky response, an upstream 402 — and swapping a full page of someone's
+      // reading for "No reader by that id in this window" on any of them is a lie told loudly.
+      if (row || !silent) {
+        setViewer(row ?? null);
+        setNotFound(!row);
+      }
     } catch {
-      setNotFound(true);
+      if (!silent) setNotFound(true);
     } finally {
       setLoading(false);
     }
@@ -131,9 +166,9 @@ export default function ViewerProfile({
 
   // Sessions are a document idea: a tab session on a project spans documents, so its page sequence
   // has no project meaning and the documents list below carries what does.
-  const loadVisits = useCallback(async () => {
+  const loadVisits = useCallback(async (silent = false) => {
     if (!who) return;
-    setVisitsLoading(true);
+    if (!silent) setVisitsLoading(true);
     try {
       const params = new URLSearchParams({ kind: who.kind, limit: "50" });
       params.set(who.kind === "authed" ? "userId" : "botIdHash", who.key);
@@ -157,32 +192,73 @@ export default function ViewerProfile({
   /**
    * Live, while they are still reading.
    *
-   * The share-view and project-link-view change streams both broadcast `viewer` frames, and a
-   * recipient who introduces themselves mid-visit broadcasts one too — so the same subscription
-   * covers "they turned three more pages" and "the anonymous device now has a name". Debounced,
-   * because a fast reader produces a frame per page and this page makes two requests per refresh.
+   * Three sources, one refresh. `reading` frames are the new one and the point of this page: the
+   * server broadcasts one when a reader's visit clock, page clock or page set moves, throttled to
+   * a few seconds so a fast page-turner does not become a refetch storm. `viewer` frames cover an
+   * arrival and a name given mid-visit. Activity `share.*` rows are the belt to that braces — a
+   * download or an unlock also changes what this page says.
+   *
+   * A `reading` frame is filtered to this person: everyone's reading is broadcast to the
+   * workspace, and a page about one reader has no business refetching for another. The comparison
+   * is on the bare digest, which is what the frame carries and what this page is addressed by.
    */
   useEffect(() => {
     let timer: number | undefined;
     const refresh = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
-        void load();
-        void loadVisits();
+        void load(true);
+        void loadVisits(true);
       }, 1200);
     };
-    const stopViewer = subscribeRealtime("viewer", refresh);
+    const stopReading = subscribeRealtime("reading", (frame) => {
+      if (frame.type !== "reading" || !who) return;
+      const mine =
+        who.kind === "authed" ? frame.reading.viewerUserId === who.key : frame.reading.viewerKey === who.key;
+      if (!mine) return;
+      // They are reading *now* — the one fact this page could never show, because it only ever
+      // knew when they were last seen at the moment it loaded.
+      setReadingAt(Date.now());
+      refresh();
+    });
+    // Identity frames carry no viewer key, so the only filter available is the document — which
+    // is still worth applying: every rename anywhere in the workspace used to refetch this page.
+    const stopViewer = subscribeRealtime("viewer", (frame) => {
+      if (frame.type !== "viewer") return;
+      if (scopeKind === "doc" && frame.viewer.docId && frame.viewer.docId !== scopeId) return;
+      refresh();
+    });
     const stopActivity = subscribeRealtime("activity", (frame) => {
       const type = frame.type === "activity" ? (frame.event?.type ?? "") : "";
       if (type.startsWith("share.")) refresh();
     });
     return () => {
       window.clearTimeout(timer);
+      stopReading();
       stopViewer();
       stopActivity();
     };
-  }, [load, loadVisits]);
+  }, [load, loadVisits, who, scopeKind, scopeId]);
 
+
+  /**
+   * No socket, no silence.
+   *
+   * Realtime was this page's only refresh path, so a deployment without `NEXT_PUBLIC_REALTIME_URL`
+   * — or any tab whose connection dropped — sat on the figures it loaded with, for ever, with no
+   * way to tell. This is the fallback the rest of the app already carries: poll only while the tab
+   * is visible and the channel is not open, at a cadence that is cheap next to the 30-second
+   * heartbeat it is chasing.
+   */
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (realtimeState() === "open") return;
+      if (document.visibilityState !== "visible") return;
+      void load(true);
+      void loadVisits(true);
+    }, 20_000);
+    return () => window.clearInterval(id);
+  }, [load, loadVisits]);
 
   /**
    * Following one person into one document.
@@ -252,6 +328,14 @@ export default function ViewerProfile({
   const timeMs = Math.max(0, viewer?.timeSpentMs ?? 0);
   const sessions = scopeKind === "doc" ? visits.length || viewer?.views || 0 : viewer?.sessions || (viewer?.docs?.length ?? 0);
   const longest = pageRows.find((r) => r.ms > 0) ?? null;
+  /**
+   * Whether this reader moved inside the last minute.
+   *
+   * A minute, not five seconds: a reader on a long page writes on a 30-second heartbeat, so a
+   * shorter window would blink the indicator off between beats of someone who never stopped
+   * reading. The interval above re-renders this so it can lapse by itself.
+   */
+  const readingNow = readingAt !== null && Date.now() - readingAt < 60_000;
 
   const stat = (label: string, value: string) => (
     <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-4">
@@ -300,6 +384,29 @@ export default function ViewerProfile({
               totalPages={scopeKind === "doc" ? identity?.pages ?? null : null}
             />
             <ReadingLegendButton />
+            {/* Two different claims, and the stronger one wins.
+                "Reading now" is about this person: a `reading` frame arrived for them inside the
+                last minute, which is as close to watching someone read as a server can get. "Live"
+                is only about the connection — this page will update itself when something happens.
+                Neither is shown when the channel is down, because a still page that says Live is
+                worse than a still page. */}
+            {readingNow ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700 dark:border-emerald-300/40 dark:text-emerald-300"
+                title="A page turn or heartbeat arrived from this reader in the last minute"
+              >
+                <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse dark:bg-emerald-400" />
+                Reading now
+              </span>
+            ) : connected ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]"
+                title="Updates arrive over the realtime connection"
+              >
+                <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--chart-views)]" />
+                Live
+              </span>
+            ) : null}
           </div>
           <div className="mt-1 truncate text-sm text-[var(--muted)]">
             {viewer.email && name !== viewer.email ? `${viewer.email} · ` : ""}

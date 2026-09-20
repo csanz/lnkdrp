@@ -37,6 +37,7 @@ import mongoose from "mongoose";
 import { WebSocketServer, WebSocket } from "ws";
 
 import { verifyRealtimeTicket } from "../src/lib/realtime/ticket";
+import { splitProjectViewerKey } from "../src/lib/share/projectPublic";
 
 const PORT = Number(process.env.REALTIME_PORT || 8788);
 const MONGODB_URI = (process.env.MONGODB_URI || "").trim();
@@ -245,17 +246,53 @@ async function main() {
   // reload. Reported as "the metrics pages need to be realtime dynamic... it didn't show me as a
   // new visitor".
   //
-  // The update half stays narrow. "Introduce yourself" is asked once per browser and then
-  // remembered, so the interesting case is the second answer: someone fixes a typo or adds a
-  // surname, the app writes it through to that person's rows (`propagateViewerIdentity`), and an
-  // owner watching should see the name correct itself. Matching on the two identity fields keeps
-  // every other `shareviews` update off the channel — and there are a great many of them, since
-  // each heartbeat from each open reader touches this collection several times a minute.
+  // The update half carries two different events now. An identity change is the second answer to
+  // "introduce yourself" — someone fixes a typo or adds a surname, the app writes it through to
+  // that person's rows (`propagateViewerIdentity`), and an owner watching should see the name
+  // correct itself. A progress change is someone reading: the visit clock, the page clock, the
+  // pages they have reached.
+  //
+  // Progress used to be excluded outright, because a reader's heartbeat touches this collection
+  // repeatedly and the channel would carry every beat of it. What makes it affordable is that a
+  // frame is not a beat: `progressThrottle` collapses one reader's writes into at most one frame
+  // every few seconds, which is the resolution a person watching a page can perceive anyway.
   //
   // Owner previews are broadcast too, deliberately. They are excluded from every figure on the
   // page (`RECIPIENT_ONLY_MATCH`) but counted in `totals.ownerPreviews`, which the page shows —
   // so an owner opening their own link to test it sees that number move, instead of a page that
   // looks broken because it correctly refused to count them.
+  /**
+   * One frame per reader per few seconds, however hard they are reading.
+   *
+   * A reader writes on a 30-second heartbeat (`HEARTBEAT_MS`) and again on every page turn, so
+   * someone flipping through a deck can write several times a second. Each frame asks every open
+   * metrics page in that workspace to refetch, so the flood is not the channel's problem — it is
+   * the refetch storm behind it.
+   *
+   * Keyed per (workspace, document, person), so two people reading at once are not throttled into
+   * one, and pruned on a timer: the map holds only readers seen in the last few minutes, which
+   * bounds it by concurrent readers rather than by readers ever seen. Losing a frame costs
+   * nothing — the next beat is seconds away, and the page refetches the whole truth each time.
+   */
+  const progressThrottle = (() => {
+    const MIN_GAP_MS = 3_000;
+    const PRUNE_AFTER_MS = 60_000;
+    const seen = new Map<string, number>();
+    setInterval(() => {
+      const cutoff = Date.now() - PRUNE_AFTER_MS;
+      for (const [key, at] of seen) if (at < cutoff) seen.delete(key);
+    }, PRUNE_AFTER_MS).unref();
+    return {
+      allow(key: string): boolean {
+        const now = Date.now();
+        const last = seen.get(key) ?? 0;
+        if (now - last < MIN_GAP_MS) return false;
+        seen.set(key, now);
+        return true;
+      },
+    };
+  })();
+
   const shareViews = db.collection("shareviews").watch(
     [
       {
@@ -267,6 +304,12 @@ async function main() {
               $or: [
                 { "updateDescription.updatedFields.viewerName": { $exists: true } },
                 { "updateDescription.updatedFields.viewerEmailSnapshot": { $exists: true } },
+                // Reading in progress: the heartbeat's visit clock, the page clock, and the set of
+                // pages reached. These are the writes the filter used to exclude on purpose — see
+                // `progressThrottle` below for what changed and why it is now affordable.
+                { "updateDescription.updatedFields.timeSpentMs": { $exists: true } },
+                { "updateDescription.updatedFields.pagesSeen": { $exists: true } },
+                { "updateDescription.updatedFields.pageTimeMsByPage": { $exists: true } },
               ],
             },
           ],
@@ -276,15 +319,63 @@ async function main() {
     { fullDocument: "updateLookup" },
   );
   shareViews.on("change", (change) => {
-    const doc = (change as { fullDocument?: { orgId?: unknown; docId?: unknown; shareId?: unknown; viewerName?: unknown } })
-      .fullDocument;
+    const c = change as {
+      operationType?: string;
+      updateDescription?: { updatedFields?: Record<string, unknown> };
+      fullDocument?: {
+        orgId?: unknown;
+        docId?: unknown;
+        shareId?: unknown;
+        botIdHash?: unknown;
+        viewerUserId?: unknown;
+        viewerName?: unknown;
+        isOwnerPreview?: unknown;
+      };
+    };
+    const doc = c.fullDocument;
     if (!doc?.orgId) return;
-    broadcast(String(doc.orgId), {
-      type: "viewer",
-      viewer: {
-        docId: doc.docId ? String(doc.docId) : null,
+    const orgId = String(doc.orgId);
+    const changed = c.updateDescription?.updatedFields ?? {};
+    const isUpdate = c.operationType === "update";
+
+    // An arrival, or a name: the frame every metrics surface already listens on.
+    const identityChanged = "viewerName" in changed || "viewerEmailSnapshot" in changed;
+    if (!isUpdate || identityChanged) {
+      broadcast(orgId, {
+        type: "viewer",
+        viewer: {
+          docId: doc.docId ? String(doc.docId) : null,
+          shareId: typeof doc.shareId === "string" ? doc.shareId : null,
+          name: typeof doc.viewerName === "string" ? doc.viewerName : null,
+        },
+      });
+    }
+
+    // Progress: they are reading right now, and a page watching them should say so.
+    const progressed = "timeSpentMs" in changed || "pagesSeen" in changed || "pageTimeMsByPage" in changed;
+    if (!isUpdate || !progressed) return;
+    // The owner checking their own link is recorded and counted nowhere, so a frame for it would
+    // ask every open page to refetch and find nothing changed.
+    if (doc.isOwnerPreview === true) return;
+
+    const docId = doc.docId ? String(doc.docId) : null;
+    // The PERSON: a project link stores `<digest>.<docId>` so three files behind one slug do not
+    // collide, and the reader pages are addressed by the digest alone.
+    const viewerKey = typeof doc.botIdHash === "string" ? splitProjectViewerKey(doc.botIdHash).botIdHash : null;
+    const viewerUserId = doc.viewerUserId ? String(doc.viewerUserId) : null;
+    if (!progressThrottle.allow(`${orgId}:${docId}:${viewerUserId ?? viewerKey}`)) return;
+
+    broadcast(orgId, {
+      type: "reading",
+      reading: {
+        docId,
+        // No project here on purpose: a `ShareView` has no `projectId` (the link does), so a field
+        // for it could only ever be null. A client that needs the room knows it from its own
+        // address, and the document is enough to decide whether this frame is about it.
         shareId: typeof doc.shareId === "string" ? doc.shareId : null,
-        name: typeof doc.viewerName === "string" ? doc.viewerName : null,
+        viewerKey,
+        viewerUserId,
+        at: new Date().toISOString(),
       },
     });
   });

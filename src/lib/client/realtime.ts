@@ -35,6 +35,25 @@ export type RealtimeFrame =
       orgId: string;
       viewer: { docId: string | null; shareId: string | null; name: string | null };
     }
+  /**
+   * Someone is reading, right now — the visit clock, the page clock or the pages they have reached
+   * just moved. Throttled server-side to at most one frame per reader per few seconds, so a fast
+   * page-turner does not become a refetch storm.
+   *
+   * `viewerKey` is the PERSON (the bare digest), never the `<digest>.<docId>` composite a project
+   * link stores, so a page can compare it with the key in its own address.
+   */
+  | {
+      type: "reading";
+      orgId: string;
+      reading: {
+        docId: string | null;
+        shareId: string | null;
+        viewerKey: string | null;
+        viewerUserId: string | null;
+        at: string;
+      };
+    }
   | { type: "ping" };
 
 type Handler = (frame: RealtimeFrame) => void;
