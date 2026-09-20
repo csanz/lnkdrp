@@ -165,10 +165,16 @@ deployment.
 ### Discovery (`lnkdrp_list_docs`, `lnkdrp_get_activity`)
 How an agent finds documents it was not handed, and reads what happened in the workspace.
 
-- list_docs — In `{ query?, ids? (1–50), page? = 1, limit? = 25 }` → `GET /api/docs?q=&ids=&page=&limit=` →
-  `{ total, page, limit, hasMore, docs: [{ docId, shareId, shareUrl, title, oneLiner, status, version, previewImageUrl,
-  createdDate, updatedDate }] }`. `query` matches a title or any share-link slug; `ids` is a direct lookup. Page-based
-  because the route is. Archived/deleted documents excluded.
+- list_docs — In `{ query?, ids? (1–50), page? = 1, limit? = 25, archived? = false, tag? }` →
+  `GET /api/docs?q=&ids=&page=&limit=` → `{ total, page, limit, hasMore, notFound?, docs: [{ docId, shareId, shareUrl,
+  title, oneLiner, status, version, previewImageUrl, createdDate, updatedDate, tags }] }`. `query` matches a title or any
+  share-link slug; `ids` is a direct lookup and reports what it could not resolve in `notFound` (always present when
+  `ids` was given, empty or not). Page-based because the route is. `archived: true` swaps the list for the Archive;
+  deleted documents are never listed.
+  `tag` filters to the documents carrying that tag, by name — folded, so any spelling reaches it. It resolves through
+  `GET /api/tags/by-slug/:slug/items` and then lists those ids, so an unknown tag is an empty result rather than an
+  error: "nothing is filed under that" is an answer. Every row carries its own `tags` (name, slug, colour), batched
+  through `GET /api/tags/targets` rather than one call per row, so filing is visible without a second request.
 - get_activity — In `{ limit? = 40 (≤100), cursor?, types? (enum of every event), docId?, who?: "me"|"team"|"agents" }` →
   `GET /api/activity` → `{ nextCursor, items: [{ id, type, at, actor, agent|null, doc|null, project|null, meta }] }`.
   `who: "agents"` = rows with agent attribution, whoever owns the key. Names, titles and `meta`'s free-text keys are
@@ -357,7 +363,11 @@ downloadCount }` — no `allowRevisionHistory`, and `shareUrl` is `/p/<shareId>`
   where the handle actually is: there is nothing to revoke by `linkId`, and the way to close the page is
   `lnkdrp_update_project { publicPageEnabled: false }` (fef3e14).
 - update_project_link — In `{ linkId, projectId | projectSlug, label?, audience?, enabled?, allowDownload?, password?,
-  expiresAt? }` (≥1 setting) → `PATCH /api/projects/:id/links/:linkId` → `{ project, link, shareUrl }`. Disabling
+  expiresAt? }` (≥1 setting) → `PATCH /api/projects/:id/links/:linkId` → `{ project, link, shareUrl, warnings? }`.
+  `warnings` appears when enabling this link republished the project's page and so restored the links that the page
+  switch had taken down: the page is derived from "at least one active link", so turning one on turns the room on, and
+  the links it had disabled come back with it. Links revoked individually are not restored and are not mentioned.
+  Disabling
   revokes that recipient's access to the whole project at once and keeps every number — the documents, their own
   links and the other recipients' project links are untouched — which is how a project link is revoked without losing
   its analytics. Editing is not a plan decision: a workspace that has dropped to Free can still edit, disable and

@@ -92,6 +92,7 @@ Env (read from `.env.local`; the same file the app uses):
 | `REALTIME_SECRET` | unset | Shared HMAC secret so the server can sign its own realtime ticket (`signRealtimeTicket`, `src/lib/realtime/ticket.ts`). Only needed with the line above. The code falls back to `NEXTAUTH_SECRET`, but **never set that on an MCP host**: it signs app sessions, so holding it means being able to forge one for any user. It lives only on Vercel, and the two values must differ (DEPLOY.md). |
 | `LNKDRP_API_KEY` | unset | Only for `--stdio` (below): the key the process acts with, because there is no HTTP request to carry a bearer. |
 | `LNKDRP_ALLOW_LOCAL_FILES` | unset | `1` allows `share_pdf`/`replace_pdf`'s `filePath` even when `LNKDRP_API_URL` is not localhost. Only set this on a server that really does run on the caller's machine: `filePath` is read from *this process's* filesystem. |
+| `LNKDRP_SKIP_CONFIRMATIONS` | unset | `1`/`true`/`yes` skips the human confirmation on destructive tools, **and only when `LNKDRP_API_URL` is localhost**. For test loops against a dev database, where confirming fifty deletes of rows that existed for four seconds is the whole cost of testing. Gated on the *data* rather than on where the process runs: a local server pointed at production is a supported setup (it is how `filePath` works) and a delete there is a real delete. Set against any other API URL it is ignored, and the server says so at startup — a silently disregarded safety switch is worse than none. |
 | `LNKDRP_GHOSTSCRIPT` | unset | Absolute path to `gs` when it is not on `PATH` (a GUI-launched server often inherits a bare one). Without a working Ghostscript, PDF optimization is skipped and the original bytes are uploaded. |
 
 Endpoints:
@@ -227,13 +228,15 @@ Which workspace, plan and key the session is using. Call it first when in doubt.
 
 How an agent finds a document it was not handed. Wraps `GET /api/docs`.
 
-- In: `{ query? (≤200), ids? (1–50 doc ids), page? = 1, limit? = 25 (1–50), archived? = false }`.
+- In: `{ query? (≤200), ids? (1–50 doc ids), page? = 1, limit? = 25 (1–50), archived? = false, tag? (≤60) }`.
   `query` matches a title or the slug of *any* share link on the document, case-insensitively;
   `ids` is a direct lookup that ignores `query` and `page`.
 - Out: `{ total, page, limit, hasMore, notFound?, docs: [{ docId, shareId, shareUrl, title, oneLiner, status,
-  version, previewImageUrl, createdDate, updatedDate }] }`, newest first. `title` and `oneLiner` are
-  wrapped as untrusted document text. `notFound` is present only when `ids` was passed and lists the
-  ids that did not come back — unknown, deleted, or archived while `archived` was left `false`.
+  version, previewImageUrl, createdDate, updatedDate, tags }] }`, newest first. `title` and `oneLiner` are
+  wrapped as untrusted document text. `notFound` is present whenever `ids` was passed — empty when
+  everything resolved — and lists the ids that did not come back: unknown, deleted, or archived while
+  `archived` was left `false`. Ids are matched case-insensitively, so an uppercase id no longer comes
+  back in `docs` and `notFound` at the same time.
   It exists because ids that resolved to nothing used to vanish from the response, so an agent could
   not tell "not found" from "not returned".
 - `archived` is a **view switch, not an inclusion flag**: `false` (the default) lists live documents
@@ -242,6 +245,15 @@ How an agent finds a document it was not handed. Wraps `GET /api/docs`.
   existing archived document looked up by id with the default `archived: false` comes back in
   `notFound`, indistinguishable there from one that was deleted — re-run with `archived: true` to
   tell them apart, and `lnkdrp_archive_doc { archived: false }` brings it back.
+- `tags` on each row is how the workspace has filed that document: `[{ name, slug, color }]`, empty when
+  nothing is on it. Tags are private to the workspace — recipients never see them. Fetched for the whole
+  page in one call to `GET /api/tags/targets` rather than one per row.
+- `tag` filters to the documents carrying one tag, given by name as a human writes it. Folded before
+  matching (case, accents and punctuation), so `Série A`, `serie a` and `SERIE-A` all reach the same
+  tag. It resolves through `GET /api/tags/by-slug/:slug/items` and then lists those ids, which has two
+  consequences worth knowing: a tag nothing carries — and a tag that does not exist — is an empty
+  result rather than an error, and the filter is ignored when `ids` is given, since `ids` is already an
+  exact list. Combines with `query` and `archived`.
 - Page-based (not cursor-based) because that is the route's contract; the tool mirrors it rather than
   inventing a second pagination shape.
 
@@ -689,6 +701,14 @@ session that did not set it (mt_GOKLLvF4-v).
 - In: `{ linkId, docId, confirm?: boolean }`.
 - Out: `{ ok: true, deleted: { linkId, shareId, label }, severity }`. The link stops resolving at
   once and cannot be brought back; its analytics rows are kept in the document's totals.
+- **A deleted link is deleted to every other tool**, which was not always true and is worth stating
+  because the failures were silent. Its slug no longer resolves a document, so `lnkdrp_get_share`
+  answers `not_found` instead of quietly describing the document's *default* link under the dead
+  slug. `lnkdrp_get_share_stats` answers `not_found` — by `shareId` alone and by `docId` + `shareId`
+  together, which is the form the description recommends — rather than a `perLink: true` success
+  full of zeroes, which reads as "this link exists and nobody opened it". And its password is gone
+  with it: `lnkdrp_get_share_link_password` refuses, and `lnkdrp_verify_share_password` refuses
+  rather than answering `matches: true` about a link that opens nothing.
 - **Confirms with the human before acting** — see "Destructive tools" below.
 - Errors: `validation` (the default link cannot be deleted - disable it instead; or the user did
   not confirm), `not_found`.
