@@ -1,9 +1,9 @@
 /**
  * Cron route: `GET|POST /api/cron/notification-emails`
  *
- * Sends workspace notification emails based on saved preferences:
- * - doc update emails (replacement diffs)
- * - repo link request emails (new completed uploads into request repos)
+ * Drains the notification queue (docs/prds/lnkdrp-notification-queue.md): view emails, doc update
+ * emails and repo link request emails, each row one email owed to one member, sent according to
+ * that member's preference at the moment it is claimed.
  *
  * The route is intended to be invoked by Vercel Cron (see `vercel.json` + `docs/CRON.md`).
  * Vercel sends `GET` + `Authorization: Bearer $CRON_SECRET`; `POST` is kept for manual runs.
@@ -50,8 +50,6 @@ async function handle(request: Request) {
   const userId = (url.searchParams.get("userId") ?? "").trim() || null;
   const limitMembers = asPositiveInt(url.searchParams.get("limitMembers"));
   const limitEventsPerMember = asPositiveInt(url.searchParams.get("limitEventsPerMember"));
-  const limitEventsPerOrg = asPositiveInt(url.searchParams.get("limitEventsPerOrg"));
-  const defaultLookbackDays = asPositiveInt(url.searchParams.get("defaultLookbackDays"));
 
   const lease = await acquireCronLease({ jobKey, ttlMs: LEASE_TTL_MS });
   if (!lease) {
@@ -67,16 +65,7 @@ async function handle(request: Request) {
           status: "running",
           lastStartedAt: startedAt,
           lastRunAt: startedAt,
-          lastParams: {
-            dryRun,
-            forceDigest,
-            workspaceId,
-            userId,
-            limitMembers,
-            limitEventsPerMember,
-            limitEventsPerOrg,
-            defaultLookbackDays,
-          },
+          lastParams: { dryRun, forceDigest, workspaceId, userId, limitMembers, limitEventsPerMember },
           lastError: null,
         },
       },
@@ -94,8 +83,6 @@ async function handle(request: Request) {
       userId,
       ...(limitMembers ? { limitMembers } : {}),
       ...(limitEventsPerMember ? { limitEventsPerMember } : {}),
-      ...(limitEventsPerOrg ? { limitEventsPerOrg } : {}),
-      ...(defaultLookbackDays ? { defaultLookbackDays } : {}),
     });
 
     const finishedAt = new Date();

@@ -14,7 +14,7 @@ function chain(rows: unknown[]) {
   return q;
 }
 
-const { shareViewFind, shareVisitFind, shareVisitAggregate, shareLinkFind, docFind, userFind, userFindOne, cursorFind, cursorBulkWrite, cursorUpdateOne, getWorkspacePlan, membershipFind, docChangeFind, uploadFind, projectFind, sendTextEmail } =
+const { shareViewFind, shareVisitFind, shareVisitAggregate, shareLinkFind, docFind, userFind, cursorFind, cursorBulkWrite, cursorUpdateOne, getWorkspacePlan } =
   vi.hoisted(() => ({
     shareViewFind: vi.fn(),
     shareVisitFind: vi.fn(),
@@ -22,16 +22,10 @@ const { shareViewFind, shareVisitFind, shareVisitAggregate, shareLinkFind, docFi
     shareLinkFind: vi.fn(),
     docFind: vi.fn(),
     userFind: vi.fn(),
-    userFindOne: vi.fn(),
     cursorFind: vi.fn(),
     cursorBulkWrite: vi.fn(async (..._args: unknown[]) => ({})),
     cursorUpdateOne: vi.fn(async (..._args: unknown[]) => ({})),
     getWorkspacePlan: vi.fn(async (): Promise<string> => "free"),
-    membershipFind: vi.fn(),
-    docChangeFind: vi.fn(),
-    uploadFind: vi.fn(),
-    projectFind: vi.fn(),
-    sendTextEmail: vi.fn(async (..._args: unknown[]) => undefined),
   }));
 
 vi.mock("@/lib/mongodb", () => ({ connectMongo: vi.fn(async () => undefined) }));
@@ -39,20 +33,14 @@ vi.mock("@/lib/models/ShareView", () => ({ ShareViewModel: { find: shareViewFind
 vi.mock("@/lib/models/ShareVisit", () => ({ ShareVisitModel: { find: shareVisitFind, aggregate: shareVisitAggregate } }));
 vi.mock("@/lib/models/ShareLink", () => ({ ShareLinkModel: { find: shareLinkFind } }));
 vi.mock("@/lib/models/Doc", () => ({ DocModel: { find: docFind } }));
-vi.mock("@/lib/models/User", () => ({ UserModel: { find: userFind, findOne: userFindOne } }));
+vi.mock("@/lib/models/User", () => ({ UserModel: { find: userFind } }));
 vi.mock("@/lib/models/NotificationEmailCursor", () => ({
   NotificationEmailCursorModel: { find: cursorFind, bulkWrite: cursorBulkWrite, updateOne: cursorUpdateOne },
 }));
-vi.mock("@/lib/models/OrgMembership", () => ({ OrgMembershipModel: { find: membershipFind } }));
-vi.mock("@/lib/models/DocChange", () => ({ DocChangeModel: { find: docChangeFind } }));
-vi.mock("@/lib/models/Upload", () => ({ UploadModel: { find: uploadFind } }));
-vi.mock("@/lib/models/Project", () => ({ ProjectModel: { find: projectFind } }));
-vi.mock("@/lib/email/sendTextEmail", () => ({ sendTextEmail }));
 vi.mock("@/lib/billing/planLimits", () => ({ getWorkspacePlan }));
 vi.mock("@/lib/debug", () => ({ debugError: vi.fn(), debugLog: vi.fn(), debugWarn: vi.fn() }));
 
 const vn = await import("@/lib/notifications/viewNotifications");
-const { sendNotificationEmails } = await import("@/lib/notifications/sendNotificationEmails");
 const { verifyViewEmailsOffToken } = await import("@/lib/notifications/viewEmailToken");
 
 type NewViewerEvent = import("@/lib/notifications/viewNotifications").NewViewerEvent;
@@ -1092,299 +1080,6 @@ describe("runViewNotificationsForOrg", () => {
       expect(d.send).not.toHaveBeenCalled();
       expect(d.upsertCursor).not.toHaveBeenCalled();
     }
-  });
-});
-
-describe("sendNotificationEmails (view block wiring)", () => {
-  const NOW = new Date("2026-09-16T12:00:00.000Z");
-  const D1 = new Types.ObjectId();
-
-  type MembershipRow = {
-    _id: Types.ObjectId;
-    orgId: Types.ObjectId;
-    userId: Types.ObjectId;
-    docUpdateEmailMode?: string;
-    repoLinkRequestEmailMode?: string;
-    viewEmailMode?: string;
-  };
-
-  /** Membership `find` that honours `_id: { $gt }`, sort by `_id` and limit. */
-  function membershipsFind(rows: MembershipRow[]) {
-    const sorted = [...rows].sort((a, b) => String(a._id).localeCompare(String(b._id)));
-    return (filter: Record<string, any>) => {
-      let lim = Number.POSITIVE_INFINITY;
-      const q = {
-        sort: () => q,
-        select: () => q,
-        limit: (n: number) => {
-          lim = n;
-          return q;
-        },
-        lean: async () => sorted.filter((r) => !filter._id || String(r._id) > String(filter._id.$gt)).slice(0, lim),
-      };
-      return q;
-    };
-  }
-
-  function membership(orgId: Types.ObjectId, overrides: Partial<MembershipRow> = {}): MembershipRow {
-    return {
-      _id: new Types.ObjectId(),
-      orgId,
-      userId: new Types.ObjectId(),
-      docUpdateEmailMode: "off",
-      repoLinkRequestEmailMode: "off",
-      viewEmailMode: "off",
-      ...overrides,
-    };
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    getWorkspacePlan.mockResolvedValue("free");
-    shareLinkFind.mockReturnValue(chain([{ _id: new Types.ObjectId(), shareId: "shareA", label: "Sequoia", audience: null, isDefault: false, createdDate: new Date("2026-01-01") }]));
-    docFind.mockReturnValue(chain([{ _id: D1, title: "Doc One", slideNodes: [] }]));
-    shareVisitFind.mockReturnValue(chain([]));
-    shareVisitAggregate.mockResolvedValue([]);
-    docChangeFind.mockReturnValue(chain([]));
-    uploadFind.mockReturnValue(chain([]));
-    projectFind.mockReturnValue(chain([]));
-    cursorFind.mockReturnValue(chain([]));
-    shareViewFind.mockReturnValue(chain([]));
-    sendTextEmail.mockResolvedValue(undefined);
-  });
-
-  function usersFor(rows: MembershipRow[]) {
-    userFind.mockReturnValue(chain(rows.map((m) => ({ _id: m.userId, email: `${String(m.userId)}@x.com`, name: "Member" }))));
-  }
-
-  function recentView(orgId: Types.ObjectId) {
-    return {
-      _id: new Types.ObjectId(),
-      orgId,
-      shareId: "shareA",
-      docId: D1,
-      botIdHash: "reader",
-      createdDate: new Date(NOW.getTime() - 5 * 60_000),
-      pagesSeen: [1],
-      timeSpentMs: 1000,
-    };
-  }
-
-  test("scans every live membership in _id pages, with no mode filter, and reports a cut-off", async () => {
-    const org = new Types.ObjectId();
-    const rows = Array.from({ length: 2500 }, () => membership(org));
-    membershipFind.mockImplementation(membershipsFind(rows));
-    usersFor([]);
-
-    const res = await sendNotificationEmails({ now: NOW });
-    expect(res.membersProcessed).toBe(2500);
-    expect(res.membersTruncated).toBe(false);
-    expect(membershipFind).toHaveBeenCalledTimes(3);
-    const first = (membershipFind.mock.calls[0] as unknown[])[0] as Record<string, unknown>;
-    expect(first).toEqual({ isDeleted: { $ne: true } });
-    const second = (membershipFind.mock.calls[1] as unknown[])[0] as Record<string, any>;
-    expect(String(second._id.$gt)).toBe(String([...rows].sort((a, b) => String(a._id).localeCompare(String(b._id)))[999]._id));
-    // All three kinds off: every member still gets its share_views cursor moved.
-    expect(bulkOps().length).toBe(2500);
-    expect(res.views.off.members).toBe(2500);
-
-    vi.clearAllMocks();
-    membershipFind.mockImplementation(membershipsFind(rows));
-    const cut = await sendNotificationEmails({ now: NOW, limitMembers: 3 });
-    expect(cut.membersProcessed).toBe(3);
-    expect(cut.membersTruncated).toBe(true);
-  });
-
-  test("passes the membership _id into the off link and the html through to the transport", async () => {
-    const org = new Types.ObjectId();
-    const m = membership(org, { viewEmailMode: "immediate" });
-    membershipFind.mockImplementation(membershipsFind([m]));
-    usersFor([m]);
-    cursorFind.mockImplementation((filter: Record<string, unknown>) =>
-      filter.key === "share_views" ? chain([{ userId: m.userId, lastNotifiedAt: new Date(NOW.getTime() - 30 * 60_000) }]) : chain([]),
-    );
-    shareViewFind.mockReturnValue(chain([recentView(org)]));
-
-    const res = await sendNotificationEmails({ now: NOW });
-    expect(sendTextEmail).toHaveBeenCalledTimes(1);
-    const arg = (sendTextEmail.mock.calls[0] as unknown[])[0] as {
-      to: string;
-      subject: string;
-      text: string;
-      html?: string;
-      headers?: Record<string, string>;
-    };
-    expect(arg.to).toBe(`${String(m.userId)}@x.com`);
-    expect(arg.subject).toBe('Sequoia opened "Doc One"');
-    expect(arg.html).toContain("<!doctype html>");
-    const token = arg.text.match(/\/api\/notifications\/views\/off\?t=(\S+)/)?.[1] ?? "";
-    expect(verifyViewEmailsOffToken(token, { now: NOW })).toEqual({ ok: true, membershipId: String(m._id) });
-    // RFC 8058 one-click unsubscribe headers reach the transport, pointing at the same signed off URL.
-    expect(arg.headers?.["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
-    const headerUrl = arg.headers?.["List-Unsubscribe"]?.match(/^<(.+)>$/)?.[1] ?? "";
-    expect(headerUrl).toMatch(/\/api\/notifications\/views\/off\?t=/);
-    expect(verifyViewEmailsOffToken(new URL(headerUrl).searchParams.get("t") ?? "", { now: NOW })).toEqual({
-      ok: true,
-      membershipId: String(m._id),
-    });
-    expect(res.views.immediate.emails).toBe(1);
-    // The cursor write goes through the shared upsert with the share_views key.
-    const upsert = cursorUpdateOne.mock.calls.find((c) => ((c as unknown[])[0] as { key: string }).key === "share_views");
-    expect(upsert).toBeTruthy();
-  });
-
-  test("a view block that throws for one workspace does not stop the next workspace", async () => {
-    const orgA = new Types.ObjectId();
-    const orgB = new Types.ObjectId();
-    const a = membership(orgA, { viewEmailMode: "immediate" });
-    const b = membership(orgB, { viewEmailMode: "immediate" });
-    // Keep org A first in scan order.
-    if (String(a._id) > String(b._id)) [a._id, b._id] = [b._id, a._id];
-    membershipFind.mockImplementation(membershipsFind([a, b]));
-    usersFor([a, b]);
-    cursorFind.mockImplementation((filter: Record<string, any>) => {
-      if (filter.key !== "share_views") return chain([]);
-      if (String(filter.orgId) === String(orgA)) throw new Error("cursor read failed");
-      return chain([{ userId: b.userId, lastNotifiedAt: new Date(NOW.getTime() - 30 * 60_000) }]);
-    });
-    shareViewFind.mockReturnValue(chain([recentView(orgB)]));
-
-    const res = await sendNotificationEmails({ now: NOW });
-    expect(res.workspacesProcessed).toBe(2);
-    expect(res.views.errors).toBe(1);
-    expect(sendTextEmail).toHaveBeenCalledTimes(1);
-    expect(((sendTextEmail.mock.calls[0] as unknown[])[0] as { to: string }).to).toBe(`${String(b.userId)}@x.com`);
-  });
-
-  test("dry run sends nothing and writes no cursor in any block, but still counts", async () => {
-    const org = new Types.ObjectId();
-    const m = membership(org, { viewEmailMode: "immediate", docUpdateEmailMode: "immediate" });
-    const off = membership(org);
-    membershipFind.mockImplementation(membershipsFind([m, off]));
-    usersFor([m, off]);
-    cursorFind.mockImplementation((filter: Record<string, unknown>) =>
-      filter.key === "share_views" ? chain([{ userId: m.userId, lastNotifiedAt: new Date(NOW.getTime() - 30 * 60_000) }]) : chain([]),
-    );
-    shareViewFind.mockReturnValue(chain([recentView(org)]));
-    docChangeFind.mockReturnValue(
-      chain([{ _id: new Types.ObjectId(), docId: D1, toVersion: 2, diff: { summary: "Updated" }, createdDate: new Date(NOW.getTime() - 60_000) }]),
-    );
-
-    const res = await sendNotificationEmails({ now: NOW, dryRun: true });
-    expect(sendTextEmail).not.toHaveBeenCalled();
-    expect(cursorUpdateOne).not.toHaveBeenCalled();
-    expect(cursorBulkWrite).not.toHaveBeenCalled();
-    expect(res.docUpdate.immediate.emails).toBe(1);
-    expect(res.views.immediate.emails).toBe(1);
-    expect(res.views.off.members).toBe(1);
-  });
-
-  test("email links are absolute without NEXT_PUBLIC_SITE_URL (fallbacks), and never relative in production", async () => {
-    const org = new Types.ObjectId();
-    const m = membership(org, { viewEmailMode: "immediate" });
-    const setup = () => {
-      membershipFind.mockImplementation(membershipsFind([m]));
-      usersFor([m]);
-      cursorFind.mockImplementation((filter: Record<string, unknown>) =>
-        filter.key === "share_views" ? chain([{ userId: m.userId, lastNotifiedAt: new Date(NOW.getTime() - 30 * 60_000) }]) : chain([]),
-      );
-      shareViewFind.mockReturnValue(chain([recentView(org)]));
-    };
-    const links = () => {
-      const arg = (sendTextEmail.mock.calls[0] as unknown[])[0] as { text: string; html: string };
-      return {
-        text: arg.text,
-        hrefs: Array.from(arg.html.matchAll(/href="([^"]+)"/g)).map((x) => x[1]),
-      };
-    };
-    try {
-      for (const k of ["NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_APP_URL", "NEXTAUTH_URL", "VERCEL_URL"]) vi.stubEnv(k, "");
-
-      // 1) NEXT_PUBLIC_APP_URL stands in for a missing NEXT_PUBLIC_SITE_URL.
-      vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://app.lnkdrp.test/");
-      setup();
-      await sendNotificationEmails({ now: NOW });
-      let l = links();
-      expect(l.hrefs.length).toBeGreaterThanOrEqual(3);
-      for (const h of l.hrefs) expect(h.startsWith("https://app.lnkdrp.test/")).toBe(true);
-      expect(l.text).toContain(`See what they read: https://app.lnkdrp.test/doc/${String(D1)}/metrics?shareId=shareA`);
-      expect(l.text).toContain("Turn off these emails: https://app.lnkdrp.test/api/notifications/views/off?t=");
-      expect(l.text).toContain("Change how often: https://app.lnkdrp.test/dashboard?tab=account#email-preferences");
-
-      // 2) Nothing configured outside production: the local dev server.
-      vi.clearAllMocks();
-      vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
-      setup();
-      await sendNotificationEmails({ now: NOW });
-      l = links();
-      for (const h of l.hrefs) expect(h.startsWith("http://localhost:3001/")).toBe(true);
-
-      // 3) Nothing configured in production: no view email with dead links, the error is counted,
-      //    and no send cursor moves.
-      vi.clearAllMocks();
-      vi.stubEnv("NODE_ENV", "production");
-      vi.stubEnv("NEXTAUTH_SECRET", "test-secret");
-      setup();
-      const res = await sendNotificationEmails({ now: NOW });
-      expect(sendTextEmail).not.toHaveBeenCalled();
-      expect(res.views.errors).toBe(1);
-      expect(cursorUpdateOne).not.toHaveBeenCalled();
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  test("the returns-only digest write sets returnsNotifiedAt and the digest day, never lastNotifiedAt", async () => {
-    const org = new Types.ObjectId();
-    const m = membership(org, { viewEmailMode: "immediate" });
-    membershipFind.mockImplementation(membershipsFind([m]));
-    usersFor([m]);
-    const earlier = new Date(NOW.getTime() - 3 * 60 * 60_000);
-    cursorFind.mockImplementation((filter: Record<string, unknown>) =>
-      filter.key === "share_views"
-        ? chain([{ userId: m.userId, lastNotifiedAt: new Date(NOW.getTime() - 2 * 60_000), returnsNotifiedAt: earlier, lastDigestDay: null }])
-        : chain([]),
-    );
-    shareViewFind.mockImplementation((filter: Record<string, unknown>) =>
-      filter.createdDate ? chain([]) : chain([{ shareId: "shareA", botIdHash: "reader", createdDate: new Date(NOW.getTime() - 24 * 60 * 60_000) }]),
-    );
-    shareVisitFind.mockReturnValue(
-      chain([{ _id: new Types.ObjectId(), shareId: "shareA", docId: D1, botIdHash: "reader", createdDate: new Date(NOW.getTime() - 60 * 60_000), pagesSeen: [1] }]),
-    );
-    shareVisitAggregate.mockResolvedValue([{ _id: { shareId: "shareA", botIdHash: "reader" }, first: new Date(NOW.getTime() - 24 * 60 * 60_000) }]);
-
-    const res = await sendNotificationEmails({ now: NOW, forceDigest: true });
-    expect(res.views.daily).toMatchObject({ emails: 1, returns: 1 });
-    const digestArg = (sendTextEmail.mock.calls[0] as unknown[])[0] as { subject: string; headers?: Record<string, string> };
-    expect(digestArg.subject).toBe("1 person came back to your documents today");
-    expect(digestArg.headers?.["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
-    expect(digestArg.headers?.["List-Unsubscribe"]).toMatch(/^<.+\/api\/notifications\/views\/off\?t=.+>$/);
-    const upserts = cursorUpdateOne.mock.calls.filter((c) => ((c as unknown[])[0] as { key: string }).key === "share_views");
-    expect(upserts).toHaveLength(1);
-    const update = (upserts[0] as unknown[])[1] as { $set: Record<string, unknown> };
-    expect(update.$set).toEqual({ returnsNotifiedAt: new Date(NOW.getTime() - vn.VIEW_EVENT_SETTLE_MS), lastDigestDay: "2026-09-16" });
-  });
-
-  test("a failed transport send is counted and the view cursor stops just before the failed open", async () => {
-    const org = new Types.ObjectId();
-    const m = membership(org, { viewEmailMode: "immediate" });
-    membershipFind.mockImplementation(membershipsFind([m]));
-    usersFor([m]);
-    cursorFind.mockImplementation((filter: Record<string, unknown>) =>
-      filter.key === "share_views" ? chain([{ userId: m.userId, lastNotifiedAt: new Date(NOW.getTime() - 30 * 60_000) }]) : chain([]),
-    );
-    shareViewFind.mockReturnValue(chain([recentView(org)]));
-    sendTextEmail.mockRejectedValue(new Error("bad RESEND_API_KEY"));
-
-    const view = recentView(org);
-    shareViewFind.mockReturnValue(chain([view]));
-    const res = await sendNotificationEmails({ now: NOW });
-    expect(res.sendFailures).toBe(1);
-    expect(res.views.immediate.failed).toBe(1);
-    // Retried next tick: the cursor sits 1 ms before the open that failed to send.
-    expect(cursorUpdateOne).toHaveBeenCalledTimes(1);
-    const update = (cursorUpdateOne.mock.calls[0] as unknown[])[1] as { $set: { lastNotifiedAt: Date } };
-    expect(update.$set.lastNotifiedAt).toEqual(new Date(view.createdDate.getTime() - 1));
   });
 });
 

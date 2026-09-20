@@ -1,5 +1,17 @@
 /**
- * NotificationEmailCursor model.
+ * NotificationEmailCursor model. DEPRECATED — see docs/prds/lnkdrp-notification-queue.md.
+ *
+ * Delivery no longer reconstructs "what needs sending" by scanning collections against these
+ * high-water marks; `NotificationQueue` records one row per email owed at the moment the event
+ * happens (`src/lib/notifications/queue.ts`). The model and its collection stay in the tree for one
+ * release so work in flight against them keeps importing, but the send path neither reads nor
+ * writes them. "Has this member already been told?" is now `wasNotified()` from that module, and
+ * "which members were told about this reader?" is `sentNotificationsForViewer()`; both give an
+ * exact answer instead of a timestamp comparison. Nothing reads these rows any more — the last
+ * caller (`src/lib/share/anonymousNoticeAudience.ts`) moved to the queue — so a cursor here is
+ * frozen at whatever the cursor model left, and is evidence of nothing.
+ *
+ * Do not add callers. Historical behaviour follows.
  *
  * Stores per-user cursors for background email notifications so cron runs can be:
  * - idempotent (no duplicates)

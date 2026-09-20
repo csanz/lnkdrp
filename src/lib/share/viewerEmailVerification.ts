@@ -54,47 +54,18 @@ export function shouldSendVerifyEmail(
 }
 
 /**
- * Whether the *sender* needs an email about this introduction.
+ * `ownerNeedsIntroductionEmail` used to live here: a heuristic that decided whether the owner had
+ * already been sent an anonymous "someone opened your document" mail about a reader, by comparing
+ * a member's `share_views` cursor against that reader's first view — and guarding against a cursor
+ * created *after* them, which is evidence of nothing.
  *
- * The view notifications already mail the owner when someone opens a document, and when the
- * introduction arrives with the first view — the usual case, because the dialog is the first thing
- * on a data room's front page — that mail has not gone out yet and will simply carry the name. An
- * extra "and here is who it was" on top of it is noise about something the owner is about to be
- * told anyway.
- *
- * The case that does need one is the opposite order: the anonymous "someone opened your document"
- * mail is already in the owner's inbox, and the reader said who they were afterwards. Without this
- * the first mail stays wrong forever and the correction lives only in the activity feed.
- *
- * `notifiedThroughAt` is how far a member's `share_views` cursor has advanced: if it is at or past
- * the moment this reader first showed up, they were included in a mail that had no name for them.
- *
- * `cursorCreatedAt` is the other half, and without it this is wrong. A cursor that does not exist
- * yet is created at the current time and **nothing is sent for anything before it** — no backfill.
- * So a workspace whose notification job has never run gets twelve cursors stamped `now`, every view
- * recorded before that moment becomes permanently un-emailable, and a cursor sitting far in advance
- * of an old reading is evidence of nothing. Comparing timestamps alone would read that as "they
- * were emailed" and send a correction for a mail that was never sent.
- *
- * A cursor is only evidence about a reader it *predates*: it had to exist before they arrived for
- * the run that advanced it to have covered them.
+ * Deleted with the notification queue (docs/prds/lnkdrp-notification-queue.md). Every line of it
+ * existed to squeeze an answer out of a high-water mark; the queue records which reader each member
+ * was actually told about, so `sentNotificationsForViewer()` is the answer rather than an inference
+ * about it. Keeping the heuristic on top of a record would have been strictly worse, and would have
+ * looked deliberate to whoever read it next.
  */
-export function ownerNeedsIntroductionEmail(params: {
-  /** When this reader first appeared in the workspace's analytics. */
-  viewerFirstSeenAt: Date | null;
-  /** How far this member's `share_views` cursor has advanced, or null if they have none. */
-  notifiedThroughAt: Date | null;
-  /** When that cursor row was created. Null is treated as "cannot prove it predates them". */
-  cursorCreatedAt?: Date | null;
-}): boolean {
-  const { viewerFirstSeenAt, notifiedThroughAt, cursorCreatedAt } = params;
-  if (!viewerFirstSeenAt || !notifiedThroughAt) return false;
-  if (!cursorCreatedAt) return false;
-  // Created after they arrived: their reading fell before this cursor's first tick and no run ever
-  // looked at it.
-  if (cursorCreatedAt.getTime() > viewerFirstSeenAt.getTime()) return false;
-  return notifiedThroughAt.getTime() >= viewerFirstSeenAt.getTime();
-}
+
 
 /**
  * Remember that this address was volunteered here, and report what we knew about it before.

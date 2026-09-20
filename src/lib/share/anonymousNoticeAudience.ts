@@ -1,20 +1,20 @@
 /**
  * "Which members have already been emailed about this reader, without a name attached?"
  *
- * One question, one file, deliberately. It is the only thing the viewer-introduction emails need to
- * know about the notification system, and the notification system is being replaced: the per-member
- * cursor scan is becoming a Mongo-backed queue with retries, where a row records *what* was sent
- * rather than only a high-water mark. When that lands, this file is swapped and nothing else moves.
+ * One question, one file, deliberately — and the swap this file was written to anticipate has now
+ * happened. The per-member cursor scan is gone: `NotificationEmailCursor` is no longer written by
+ * anything (docs/prds/lnkdrp-notification-queue.md, decision 7), so the old implementation here
+ * read timestamps that will never advance again and answered "nobody" for every reader forever,
+ * which silently switched the correction email off for the whole product.
  *
- * The rule that consumes this answer (`ownerNeedsIntroductionEmail`) stays pure and stays where it
- * is; this is only the lookup that feeds it.
+ * The queue answers it exactly instead of inferring it: a `share_views` row records *which reader*
+ * a given member was told about, and only a `sent` row counts (decision 9).
  */
 import { Types } from "mongoose";
 
-import { NotificationEmailCursorModel } from "@/lib/models/NotificationEmailCursor";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { UserModel } from "@/lib/models/User";
-import { ownerNeedsIntroductionEmail } from "@/lib/share/viewerEmailVerification";
+import { sentNotificationsForViewer } from "@/lib/notifications/queue";
 
 /**
  * A horizon this question has, under either implementation, and which the caller should not fight.
@@ -32,7 +32,22 @@ import { ownerNeedsIntroductionEmail } from "@/lib/share/viewerEmailVerification
  */
 export type AlreadyToldQuery = {
   orgId: Types.ObjectId;
-  /** When this reader first appeared in the workspace's analytics. */
+  /**
+   * The reader themselves — the bare viewer digest, or a project link's `<digest>.<docId>`
+   * composite, which the queue normalises either way.
+   *
+   * Optional only so the in-flight caller keeps compiling; the answer is exact with it and empty
+   * without it, so it is the field that matters.
+   */
+  viewerKey?: string | null;
+  /**
+   * When this reader first appeared in the workspace's analytics.
+   *
+   * No longer consulted: it existed to make a high-water mark say something about one person, and
+   * the queue records the person. Kept on the query because the caller passes it and because the
+   * horizon above is still real — a send older than the queue's 30-day retention is invisible here
+   * whatever this says.
+   */
   viewerFirstSeenAt: Date | null;
 };
 
@@ -40,20 +55,33 @@ export type AlreadyToldQuery = {
 export type AlreadyToldLookup = (query: AlreadyToldQuery) => Promise<{ email: string }[]>;
 
 /**
- * The cursor-backed implementation, which is an *inference* rather than a record.
+ * The queue-backed implementation: a record, not an inference.
  *
- * A `share_views` cursor is a high-water mark: it says how far a member's notifications have run,
- * not which readers were in them. Two facts have to line up before it is evidence about a
- * particular person — the cursor has to have advanced past them, and it has to have existed before
- * they arrived, because a cursor created later covers nothing behind it (there is no backfill).
- * See `ownerNeedsIntroductionEmail` for why the second half matters.
+ * `sentNotificationsForViewer` returns the members a `share_views` email covering **this reader**
+ * actually reached, and when. That is the whole question, so there is no cursor arithmetic left:
+ * no high-water mark to compare against, and no "did the cursor exist before they arrived?" second
+ * half to get wrong.
  *
- * The queue-backed replacement will answer this exactly instead of inferring it.
+ * Without a viewer key there is no exact answer and this returns nobody. Deliberately: the
+ * alternative is the inference this replaced — "they were emailed about *something* after this
+ * reader showed up" — and the cost of getting that wrong is a correction email about a mail that
+ * was never sent, to someone who was never confused.
+ *
+ * A member on `off` is filtered out before the queue is asked, because their rows are `skipped`
+ * rather than `sent` and a correction to someone who hears nothing is noise.
  */
-export const cursorBackedAlreadyTold: AlreadyToldLookup = async ({ orgId, viewerFirstSeenAt }) => {
-  if (!viewerFirstSeenAt) return [];
+export const queueBackedAlreadyTold: AlreadyToldLookup = async ({ orgId, viewerKey }) => {
+  const key = (viewerKey ?? "").trim();
+  if (!key) return [];
 
-  const memberships = (await OrgMembershipModel.find({ orgId, isDeleted: { $ne: true } })
+  const told = await sentNotificationsForViewer({ orgId, viewerKey: key });
+  if (!told.length) return [];
+
+  const memberships = (await OrgMembershipModel.find({
+    orgId,
+    isDeleted: { $ne: true },
+    userId: { $in: told.map((t) => new Types.ObjectId(t.userId)) },
+  })
     .select({ userId: 1, viewEmailMode: 1 })
     .lean()) as Array<{ userId: Types.ObjectId; viewEmailMode?: string | null }>;
 
@@ -61,33 +89,7 @@ export const cursorBackedAlreadyTold: AlreadyToldLookup = async ({ orgId, viewer
   const wanting = memberships.filter((m) => (m.viewEmailMode ?? "daily") !== "off");
   if (!wanting.length) return [];
 
-  const cursors = (await NotificationEmailCursorModel.find({
-    orgId,
-    key: "share_views",
-    userId: { $in: wanting.map((m) => m.userId) },
-  })
-    .select({ userId: 1, lastNotifiedAt: 1, createdDate: 1 })
-    .lean()) as Array<{ userId: Types.ObjectId; lastNotifiedAt?: Date | null; createdDate?: Date | null }>;
-
-  const cursorByUser = new Map<string, { notifiedThroughAt: Date | null; createdAt: Date | null }>();
-  for (const c of cursors) {
-    cursorByUser.set(String(c.userId), {
-      notifiedThroughAt: c.lastNotifiedAt ? new Date(c.lastNotifiedAt) : null,
-      createdAt: c.createdDate ? new Date(c.createdDate) : null,
-    });
-  }
-
-  const told = wanting.filter((m) => {
-    const cursor = cursorByUser.get(String(m.userId));
-    return ownerNeedsIntroductionEmail({
-      viewerFirstSeenAt,
-      notifiedThroughAt: cursor?.notifiedThroughAt ?? null,
-      cursorCreatedAt: cursor?.createdAt ?? null,
-    });
-  });
-  if (!told.length) return [];
-
-  const users = (await UserModel.find({ _id: { $in: told.map((m) => m.userId) }, isActive: { $ne: false } })
+  const users = (await UserModel.find({ _id: { $in: wanting.map((m) => m.userId) }, isActive: { $ne: false } })
     .select({ email: 1 })
     .lean()) as Array<{ email?: string | null }>;
 
@@ -96,3 +98,11 @@ export const cursorBackedAlreadyTold: AlreadyToldLookup = async ({ orgId, viewer
     .filter((e): e is string => Boolean(e))
     .map((email) => ({ email }));
 };
+
+/**
+ * @deprecated The name, not the behaviour: nothing writes `NotificationEmailCursor` any more, so
+ * this is the queue-backed lookup. Kept because `viewerIntroductionEmails.ts` imports it by name;
+ * that import should move to `queueBackedAlreadyTold` and pass the reader's `viewerKey`, which it
+ * already holds — until it does, this answers nobody (see the note on `viewerKey` below).
+ */
+export const cursorBackedAlreadyTold: AlreadyToldLookup = queueBackedAlreadyTold;

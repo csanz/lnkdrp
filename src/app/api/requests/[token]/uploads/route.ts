@@ -282,6 +282,20 @@ export async function POST(
       request,
     });
 
+    /**
+     * No notification is enqueued here, deliberately.
+     *
+     * It used to be: PRD decision 1's table said "on receipt", so the row was written the moment
+     * the Doc and Upload were created. But at this point the Upload is `uploading` and no bytes
+     * exist — a recipient who opens the picker and abandons it owed the whole workspace an email
+     * about a file that never landed. The scan this replaces matched `{version: 1, status:
+     * "completed"}`, and the queue field is documented as "the completed upload that landed in a
+     * request repo"; receipt was the odd one out.
+     *
+     * The enqueue lives in the upload processor's first-version branch instead, where the file is
+     * actually on disk. See `repo_link_requests` in src/app/api/uploads/[uploadId]/process/route.ts.
+     */
+
     return NextResponse.json(
       {
         request: {

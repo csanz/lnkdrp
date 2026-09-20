@@ -15,6 +15,8 @@ import { DocModel } from "@/lib/models/Doc";
 import { ProjectModel } from "@/lib/models/Project";
 import { ReviewModel } from "@/lib/models/Review";
 import { DocChangeModel } from "@/lib/models/DocChange";
+import { OrgMembershipModel } from "@/lib/models/OrgMembership";
+import { enqueueNotification, notificationDedupeKey } from "@/lib/notifications/queue";
 import {
   buildDocExtractedTextPathname,
   buildDocPreviewPngPathname,
@@ -2531,8 +2533,14 @@ export async function POST(
       }
       // IMPORTANT: for replacement uploads, never overwrite the existing doc on failures.
       // Only flip the doc over once we have enough artifacts to consider the replacement successful.
+      //
+      // The answer is kept: `false` means the document is gone or a newer upload is already its
+      // current one, which is also the answer to "does this version owe anyone an email?" — a
+      // deleted document has nothing to link to, and a superseded version is announced by the
+      // version that beat it rather than twice. See the `doc_updates` enqueue below.
+      let docWriteLanded = false;
       if (!isReplacement || !failed) {
-        await updateDocUnlessSuperseded(docId, upload, docUpdate);
+        docWriteLanded = await updateDocUnlessSuperseded(docId, upload, docUpdate);
       }
 
       // Last frame of the run: forced past the throttle so the bar always finishes, rather than
@@ -2596,6 +2604,107 @@ export async function POST(
             meta: { version: uploadVersion, code: aiState.code, creditsNeeded: aiState.creditsNeeded },
             request,
           });
+        }
+
+        /**
+         * The mail this replacement owes, written down as the pipeline finishes (PRD decision 1)
+         * rather than rediscovered at the tick by scanning `DocChange` against a per-member
+         * high-water mark.
+         *
+         * Three gates, each for its own reason. `isReplacement`, because a first version is the
+         * upload itself and nobody is subscribed to their own uploads. `!summaryRerun`, for the
+         * same reason the feed labels a rerun "wrote the AI summary" — the file did not change, so
+         * there is no update to announce. `docWriteLanded`, because a document that is gone or
+         * already superseded is not what this email would be about.
+         *
+         * Fan-out to the whole workspace happens here, one row per member; `docUpdateEmailMode` is
+         * resolved at send (decision 2). Best-effort and `void`, like `recordActivity` above: the
+         * replacement is already on disk and must not be failed by a queue write.
+         */
+        if (isReplacement && !summaryRerun && docWriteLanded) {
+          void (async () => {
+            try {
+              const members = (await OrgMembershipModel.find({
+                orgId: existingDocOrgId,
+                isDeleted: { $ne: true },
+              })
+                .select({ userId: 1 })
+                .lean()) as Array<{ userId?: unknown }>;
+              // Awaited, not fired and forgotten: the rows are the mail, and this handler can be
+              // torn down the moment it returns. `enqueueNotification` still never throws, so the
+              // gather above is the only thing the try is guarding.
+              await Promise.all(
+                members.map(async (m) => {
+                  const memberUserId = m?.userId ? String(m.userId) : "";
+                  if (!Types.ObjectId.isValid(memberUserId)) return;
+                  await enqueueNotification({
+                    orgId: existingDocOrgId,
+                    userId: memberUserId,
+                    kind: "doc_updates",
+                    // The upload row is the event's own identity. This route is re-entered for one
+                    // upload more often than any other in the product — a client retry, the
+                    // internal trigger, a re-claim after a stale `processing` — and every one of
+                    // those would otherwise be another email about the same version.
+                    dedupeKey: notificationDedupeKey("doc_updates", memberUserId, uploadId),
+                    // The document and the version travel on the row. The sender reads them from
+                    // here rather than from `DocChange`, which is not written for a replacement
+                    // with no extractable text (a scanned PDF) and would drop the mail silently.
+                    event: { docId, uploadId, version: uploadVersion },
+                  });
+                }),
+              );
+            } catch (e) {
+              debugError(1, "[process] doc_updates enqueue failed", {
+                uploadId,
+                message: e instanceof Error ? e.message : String(e),
+              });
+            }
+          })();
+        }
+
+        /**
+         * The first version of a file a recipient dropped into a request inbox.
+         *
+         * Enqueued here rather than in `POST /api/requests/:token/uploads`, which is where it used
+         * to be: that route runs at receipt, when the Upload is still `uploading` and no bytes
+         * exist, so somebody who opened the file picker and thought better of it owed the whole
+         * workspace an email about a file that never arrived. Here the file is on disk.
+         *
+         * `viaUploadSecret` is what makes it a drop-off rather than an ordinary upload: the secret
+         * is only minted for request links (see `Upload.uploadSecret`). `!isReplacement` keeps it
+         * to the arrival — a recipient replacing their own submission is not a second arrival.
+         */
+        if (!isReplacement && docWriteLanded && viaUploadSecret) {
+          void (async () => {
+            try {
+              const members = (await OrgMembershipModel.find({
+                orgId: existingDocOrgId,
+                isDeleted: { $ne: true },
+              })
+                .select({ userId: 1 })
+                .lean()) as Array<{ userId?: unknown }>;
+              await Promise.all(
+                members.map(async (m) => {
+                  const memberUserId = m?.userId ? String(m.userId) : "";
+                  if (!Types.ObjectId.isValid(memberUserId)) return;
+                  await enqueueNotification({
+                    orgId: existingDocOrgId,
+                    userId: memberUserId,
+                    kind: "repo_link_requests",
+                    // Same identity the receipt site used, so a row written by the old code path
+                    // before this moved is recognised as the same debt rather than duplicated.
+                    dedupeKey: notificationDedupeKey("repo_link_requests", memberUserId, uploadId),
+                    event: { docId, uploadId, requestId: uploadId },
+                  });
+                }),
+              );
+            } catch (e) {
+              debugError(1, "[process] repo_link_requests enqueue failed", {
+                uploadId,
+                message: e instanceof Error ? e.message : String(e),
+              });
+            }
+          })();
         }
       }
 

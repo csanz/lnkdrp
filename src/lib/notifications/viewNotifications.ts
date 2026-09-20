@@ -1002,6 +1002,47 @@ function createdDateRangeFilter(
   };
 }
 
+/** The fields a `NewViewerEvent` is built from, so both loaders read the same row shape. */
+const SHARE_VIEW_EVENT_FIELDS = {
+  _id: 1,
+  shareId: 1,
+  docId: 1,
+  shareLinkId: 1,
+  botIdHash: 1,
+  createdDate: 1,
+  pagesSeen: 1,
+  timeSpentMs: 1,
+  viewerUserId: 1,
+  viewerEmail: 1,
+  viewerName: 1,
+  viewerEmailSnapshot: 1,
+} as const;
+
+/** One `ShareView` row as an event, or null when it is missing something the email needs. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toNewViewerEvent(r: any): NewViewerEvent | null {
+  const id = idString(r?._id);
+  const docId = idString(r?.docId);
+  const shareId = str(r?.shareId);
+  const at = dateOf(r?.createdDate);
+  if (!id || !docId || !shareId || !at) return null;
+  return {
+    kind: "view",
+    id,
+    docId,
+    shareId,
+    shareLinkId: idString(r?.shareLinkId),
+    botIdHash: str(r?.botIdHash) ?? "",
+    at,
+    pagesSeen: distinctPages(r?.pagesSeen),
+    timeSpentMs: nonNegative(r?.timeSpentMs),
+    viewerUserId: idString(r?.viewerUserId),
+    viewerName: str(r?.viewerName),
+    viewerEmail: str(r?.viewerEmailSnapshot) ?? str(r?.viewerEmail),
+    viewerUserName: null,
+  };
+}
+
 /**
  * Recipient views created in (since, until], oldest first. Loaded in pages until the range is
  * covered; only the `maxRows` safety cap can cut it, at a timestamp boundary (`cutLoadAtBoundary`).
@@ -1014,20 +1055,7 @@ export async function loadNewViewerEvents(params: LoadRangeParams): Promise<Load
       ShareViewModel.find(createdDateRangeFilter(params, after))
         .sort({ createdDate: 1, _id: 1 })
         .limit(limit)
-        .select({
-          _id: 1,
-          shareId: 1,
-          docId: 1,
-          shareLinkId: 1,
-          botIdHash: 1,
-          createdDate: 1,
-          pagesSeen: 1,
-          timeSpentMs: 1,
-          viewerUserId: 1,
-          viewerEmail: 1,
-          viewerName: 1,
-          viewerEmailSnapshot: 1,
-        })
+        .select(SHARE_VIEW_EVENT_FIELDS)
         .lean(),
     pageSize,
     maxRows,
@@ -1035,28 +1063,43 @@ export async function loadNewViewerEvents(params: LoadRangeParams): Promise<Load
 
   const events: NewViewerEvent[] = [];
   for (const r of rows) {
-    const id = idString(r?._id);
-    const docId = idString(r?.docId);
-    const shareId = str(r?.shareId);
-    const at = dateOf(r?.createdDate);
-    if (!id || !docId || !shareId || !at) continue;
-    events.push({
-      kind: "view",
-      id,
-      docId,
-      shareId,
-      shareLinkId: idString(r?.shareLinkId),
-      botIdHash: str(r?.botIdHash) ?? "",
-      at,
-      pagesSeen: distinctPages(r?.pagesSeen),
-      timeSpentMs: nonNegative(r?.timeSpentMs),
-      viewerUserId: idString(r?.viewerUserId),
-      viewerName: str(r?.viewerName),
-      viewerEmail: str(r?.viewerEmailSnapshot) ?? str(r?.viewerEmail),
-      viewerUserName: null,
-    });
+    const event = toNewViewerEvent(r);
+    if (event) events.push(event);
   }
   return cutLoadAtBoundary(events, rawTimes, maxRows);
+}
+
+/**
+ * The same recipient views, addressed by id instead of by window.
+ *
+ * The notification queue names the `ShareView` row each email is owed for (M3 drains rows rather
+ * than scanning a time range), but that row is still what knows how far the reader got, so the
+ * email cannot be rendered from the queue entry alone. Owner previews are filtered here as well as
+ * at enqueue: a view flagged as a preview after the fact must not go out as "someone opened it".
+ *
+ * A row that no longer exists is simply absent from the result — what a notification about a
+ * deleted view means is the caller's decision, not the loader's.
+ */
+export async function loadNewViewerEventsByIds(
+  orgId: Types.ObjectId,
+  shareViewIds: readonly string[],
+): Promise<Map<string, NewViewerEvent>> {
+  const out = new Map<string, NewViewerEvent>();
+  const ids = Array.from(new Set(shareViewIds)).filter((id) => Types.ObjectId.isValid(id));
+  for (const part of chunk(ids, 500)) {
+    const rows = await ShareViewModel.find({
+      _id: { $in: part.map((id) => new Types.ObjectId(id)) },
+      orgId,
+      ...RECIPIENT_ONLY_MATCH,
+    })
+      .select(SHARE_VIEW_EVENT_FIELDS)
+      .lean();
+    for (const r of rows as any[]) {
+      const event = toNewViewerEvent(r);
+      if (event) out.set(event.id, event);
+    }
+  }
+  return out;
 }
 
 /**
@@ -1120,7 +1163,7 @@ export async function loadVisitEvents(params: LoadRangeParams): Promise<LoadedEv
   const loaded = cutLoadAtBoundary(events, rawTimes, maxRows);
   if (!loaded.batch.length) return loaded;
 
-  const pairKey = (shareId: string, botIdHash: string) => `${shareId} ${botIdHash}`;
+  const pairKey = (shareId: string, botIdHash: string) => `${shareId}\u0000${botIdHash}`;
   const pairs = new Map<string, { shareId: string; botIdHash: string }>();
   for (const e of loaded.batch) pairs.set(pairKey(e.shareId, e.botIdHash), { shareId: e.shareId, botIdHash: e.botIdHash });
 
@@ -1290,7 +1333,13 @@ async function setCursors(orgId: Types.ObjectId, entries: ReadonlyArray<CursorAd
 }
 
 // ---------------------------------------------------------------------------------------------
-// Orchestration
+// Orchestration — DEPRECATED, no longer called by the send path
+//
+// `sendNotificationEmails` drains the notification queue instead of scanning behind these cursors
+// (docs/prds/lnkdrp-notification-queue.md, M3). Everything below — the totals, the cursor loads and
+// `runViewNotificationsForOrg` — is kept for one release for the same reason the cursor model is
+// (decision 7): work in flight against it must not break at import time. Nothing calls it; do not
+// wire it back up. The composition and loaders above are what the queue reader reuses.
 // ---------------------------------------------------------------------------------------------
 
 export type ViewNotificationTotals = {

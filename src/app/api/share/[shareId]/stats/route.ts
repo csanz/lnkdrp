@@ -17,6 +17,8 @@ import { DocModel } from "@/lib/models/Doc";
 import { resolveShareLink, touchShareLink } from "@/lib/share/links";
 import { projectLinkPasswordEnabled, projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
 import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerIdentity";
+import { enqueueNotification, notificationDedupeKey } from "@/lib/notifications/queue";
+import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
@@ -370,7 +372,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           // The one write that means "someone read this". `updatedDate` cannot carry it: Mongoose
           // stamps that on every update query, so a backfill or a metrics-page read moved it too
           // and "Last viewed" reported the maintenance instant (see `ShareView.lastViewedAt`).
-          setFields.lastViewedAt = new Date();
+          // Held in a local because the notification queued below records the same instant as its
+          // `occurredAt`, and a digest that sorts on a second reading of the clock is a digest
+          // whose order drifts from the analytics it is reporting.
+          const viewedAt = new Date();
+          setFields.lastViewedAt = viewedAt;
           // Recorded, not counted: the owner's own opens stay visible to anyone debugging a link
           // and stay out of every figure the owner reads (`RECIPIENT_ONLY_MATCH`). `$set` on every
           // heartbeat, so a row first written while signed out self-heals once they sign in.
@@ -402,6 +408,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           // used to abort the whole analytics block — losing this heartbeat's pages and time too —
           // because the outer catch swallowed it. A duplicate key just means "the row exists".
           let created = false;
+          /**
+           * The `_id` of the row this POST inserted, and the identity the notification's
+           * `dedupeKey` is built from — one reading, one email owed, whatever replays this request.
+           * Only ever set on the insert; a returning viewer's heartbeat leaves it null because it
+           * owes nothing new.
+           */
+          let createdShareViewId: Types.ObjectId | null = null;
           try {
             const upsert = await ShareViewModel.updateOne(
               { shareId, botIdHash },
@@ -417,6 +430,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               { upsert: true },
             );
             created = Boolean((upsert as any)?.upsertedCount);
+            const upsertedId = (upsert as { upsertedId?: unknown } | null)?.upsertedId;
+            createdShareViewId =
+              created && upsertedId && Types.ObjectId.isValid(String(upsertedId))
+                ? new Types.ObjectId(String(upsertedId))
+                : null;
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             if (!/E11000|duplicate key/i.test(msg)) throw e;
@@ -543,8 +561,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             // the document's own page could ever show. The activity feed below still records the
             // view: the read happened, it is just the data room's.
             if (!projectTarget) await DocModel.updateOne({ _id: docId }, { $inc: { numberOfViews: 1 } });
-            // Activity feed: one "viewed" event per new viewer of this share (not per page/visit).
-            void (async () => {
+            // Activity feed: one "viewed" event per new viewer of this share (not per page/visit),
+            // and the notification rows that reading owes.
+            //
+            // Awaited rather than `void`-ed: everything here already runs inside `after()`, so the
+            // response has gone out and nothing is waiting on it — but `after()` only keeps the
+            // lambda alive for work it is awaiting, and a fire-and-forget insert on the busiest
+            // write path in the product is one a freeze can drop. The block still swallows its own
+            // errors, so the best-effort contract is unchanged.
+            await (async () => {
               try {
                 const ownerUserId = (doc as any)?.userId ? new Types.ObjectId(String((doc as any).userId)) : null;
                 const docOrgId = (doc as any)?.orgId
@@ -586,6 +611,58 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                   },
                   request,
                 });
+
+                /**
+                 * The mail this reading owes, written down here rather than rediscovered at the
+                 * next tick (PRD decision 1). Same block and same condition as the activity row
+                 * above — `created && !ownerPreview` — because "a new recipient opened this" is the
+                 * event both of them are about.
+                 *
+                 * Fan-out to the whole workspace happens now, one row per member, so a retry, a
+                 * preference and a failure are all per recipient. `viewEmailMode` is deliberately
+                 * NOT read here (decision 2): resolving it at send is what lets a member who turns
+                 * view emails on today hear about the readings from yesterday, which the cursor
+                 * model could never do.
+                 */
+                if (createdShareViewId) {
+                  const members = (await OrgMembershipModel.find({
+                    orgId: new Types.ObjectId(docOrgId),
+                    isDeleted: { $ne: true },
+                  })
+                    .select({ userId: 1 })
+                    .lean()) as Array<{ userId?: unknown }>;
+                  // Awaited, unlike the `void` on `recordActivity` above, and the difference
+                  // matters here: this whole block runs inside `after()`, which keeps the lambda
+                  // alive only for work it is awaiting. An un-awaited insert on the busiest write
+                  // path in the product is one a freeze can cut off mid-flight — and losing this
+                  // row is not losing a feed entry, it is losing the email, which is the exact
+                  // failure the queue exists to remove.
+                  await Promise.all(
+                    members.map(async (m) => {
+                      const memberUserId = m?.userId ? String(m.userId) : "";
+                      if (!Types.ObjectId.isValid(memberUserId)) return;
+                      await enqueueNotification({
+                        orgId: docOrgId,
+                        userId: memberUserId,
+                        kind: "share_views",
+                        dedupeKey: notificationDedupeKey("share_views", memberUserId, createdShareViewId),
+                        event: {
+                          docId: String(docId),
+                          projectId: projectTarget ? String(projectTarget.project._id) : null,
+                          shareId,
+                          // The PERSON, so `viewerBotIdHash` and never `botIdHash` (decision 9): on
+                          // a project link the latter is the `<digest>.<docId>` composite, and the
+                          // document already has its own field on the row. Three bugs this month
+                          // came from those two shapes being compared literally.
+                          viewerKey: viewerBotIdHash,
+                          viewerName: viewerNameIntro ?? null,
+                          viewerEmail: viewerEmail ?? null,
+                        },
+                        occurredAt: viewedAt,
+                      });
+                    }),
+                  );
+                }
               } catch {
                 // best-effort
               }
