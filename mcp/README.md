@@ -173,7 +173,9 @@ How an agent finds documents it was not handed, and reads what happened in the w
   deleted documents are never listed.
   `tag` filters to the documents carrying that tag, by name — folded, so any spelling reaches it. It resolves through
   `GET /api/tags/by-slug/:slug/items` and then lists those ids, so an unknown tag is an empty result rather than an
-  error: "nothing is filed under that" is an answer. Every row carries its own `tags` (name, slug, colour), batched
+  error: "nothing is filed under that" is an answer — and the response echoes `{ tag, tagMatched }` so the two zeroes
+  can be told apart, `tagMatched: false` meaning no such tag rather than an empty one. Every row carries its own
+  `tags` (name, slug, colour), batched
   through `GET /api/tags/targets` rather than one call per row, so filing is visible without a second request.
 - get_activity — In `{ limit? = 40 (≤100), cursor?, types? (enum of every event), docId?, who?: "me"|"team"|"agents" }` →
   `GET /api/activity` → `{ nextCursor, items: [{ id, type, at, actor, agent|null, doc|null, project|null, meta }] }`.

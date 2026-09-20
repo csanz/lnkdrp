@@ -251,9 +251,12 @@ How an agent finds a document it was not handed. Wraps `GET /api/docs`.
 - `tag` filters to the documents carrying one tag, given by name as a human writes it. Folded before
   matching (case, accents and punctuation), so `Série A`, `serie a` and `SERIE-A` all reach the same
   tag. It resolves through `GET /api/tags/by-slug/:slug/items` and then lists those ids, which has two
-  consequences worth knowing: a tag nothing carries — and a tag that does not exist — is an empty
-  result rather than an error, and the filter is ignored when `ids` is given, since `ids` is already an
-  exact list. Combines with `query` and `archived`.
+  consequences worth knowing: a tag with nothing on it and a tag that does not exist both come back
+  as an empty list rather than an error, and the filter is ignored when `ids` is given, since `ids` is
+  already an exact list. Combines with `query` and `archived`.
+  Whenever the filter runs the response echoes `{ tag, tagMatched }`, on a full page as well as an
+  empty one. `tagMatched` separates those two zeroes: `false` means no tag by that name exists (a
+  typo, or one to create), `true` with no documents means the tag is real and nothing carries it.
 - Page-based (not cursor-based) because that is the route's contract; the tool mirrors it rather than
   inventing a second pagination shape.
 

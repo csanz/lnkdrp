@@ -128,10 +128,21 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
        * answer, and a workspace that has not used a tag yet has not done anything wrong.
        */
       let ids = args.ids;
+      /**
+       * `tagMatched` separates the two zeroes.
+       *
+       * "No such tag" and "that tag is on nothing" both come back as an empty list, and an agent
+       * acting on them does different things: the first is a typo or a tag it should create, the
+       * second is a correct answer about an empty shelf. It is reported whenever a tag filter ran —
+       * true, false, or on a full page — rather than only on the empty one, because a field that
+       * appears only sometimes is a field nobody can rely on.
+       */
+      let tagMatched: boolean | null = null;
       if (!ids && args.tag) {
         const carried = await ctx.api.itemsForTag(args.tag).catch(() => null);
+        tagMatched = Boolean(carried);
         if (!carried || !carried.docIds.length) {
-          return { total: 0, page: 1, limit: args.limit, hasMore: false, docs: [], tag: args.tag, tagMatched: Boolean(carried) };
+          return { total: 0, page: 1, limit: args.limit, hasMore: false, docs: [], tag: args.tag, tagMatched };
         }
         ids = carried.docIds.slice(0, 50);
       }
@@ -151,6 +162,7 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
       const found = new Set(page.docs.map((d) => d.id.toLowerCase()));
       const notFound = args.ids ? [...new Set(args.ids)].filter((id) => !found.has(id.toLowerCase())) : [];
       return {
+        ...(tagMatched === null ? {} : { tag: args.tag, tagMatched }),
         total: page.total,
         page: page.page,
         limit: page.limit,
