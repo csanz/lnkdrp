@@ -21,8 +21,8 @@
     deliberately softened both ends (see the comment on the dark block); 16.1:1 here matches dark's
     15.94:1 and is still far above AA.
   */
-  --bg: #f9f9fa;
-  --fg: #1c1c20;
+  --bg: #f9f9f9;
+  --fg: #1c1c1c;
 
   --panel: #ffffff;
 
@@ -38,7 +38,7 @@
      the ring rather than a slice). Re-derived against #ffffff. */
   --chart-actor-1: #6b7280;
   --chart-actor-2: #047857;
-  --chart-actor-3: #1f9e78;
+  --chart-actor-3: #1c9472;
   --chart-actor-rest: #a3a9b4;
   /* Activity's work lines: one per tile, emerald first (the app's chart colour), then hues that
      stay apart on the dark panel without turning the card into a rainbow. Same re-derivation:
@@ -53,8 +53,8 @@
   /* Chart gridlines and the hover cursor. Both used to be drawn as `--border` at 16%/25% opacity,
      which over a light panel composites to roughly #fcfcfc — not there at all. Own tokens so a
      stronger card border does not turn the plots into graph paper. */
-  --chart-grid: #e5e5eb;
-  --chart-cursor: #b8b8c0;
+  --chart-grid: #e5e5e5;
+  --chart-cursor: #b9b9b9;
   /* A failure that has to be readable, not decorative: red-400/red-500 were picked on the dark
      panel and land at 2.5-3.8:1 on a light one. */
   --danger-fg: #b91c1c;
@@ -70,18 +70,30 @@
   --plan-ending-fg: #b45309;
   /* Stepped down with `--bg`: at #fafafa/#f4f4f5 against a white page these were a 1.04:1 and a
      1.10:1 band, so a filter bar or a stat tile drawn on `--panel-2` had no visible surface. */
-  --panel-2: #f3f3f5;
-  --panel-hover: #eaeaee;
+  /*
+   * Neutral means neutral here.
+   *
+   * Every gray in this block used to sit at LCH hue ~290 — the same hue as `--tag-sky` — with its
+   * chroma rising as the surface darkened, up to C* 5.5 on `--muted-2`, the text read most often.
+   * The dark theme is tinted identically and looks right, because at L* 3-17 there is nothing on
+   * screen at zero chroma to compare it against. Light paints those same neutrals beside `--panel`
+   * #ffffff and `--primary-bg` #000000, the only two zero-chroma things in the product, and the
+   * eye reads the difference as colour rather than as gray. Hence "the dark is perfect, the light
+   * grays feel off" being true of one hue in two contexts. Lightness is unchanged wherever the
+   * comments below argue from it; only the cast is gone.
+   */
+  --panel-2: #efefef;
+  --panel-hover: #e9e9e9;
 
   /* ChatGPT-like surfaces */
-  --sidebar-bg: #f1f1f4;
-  --sidebar-hover: #e4e4e9;
+  --sidebar-bg: #f1f1f1;
+  --sidebar-hover: #e4e4e4;
   /* The current row. It used to paint `--sidebar-hover`, the same token `hover:` uses, so selected
      and hovered were indistinguishable and whichever row the pointer was over read as the page you
      were on. */
-  --sidebar-active: #d7d7de;
-  --code-bg: #f6f6f7;
-  --code-border: #e7e7ea;
+  --sidebar-active: #dcdcdc;
+  --code-bg: #f6f6f6;
+  --code-border: #e7e7e7;
   --diff-add-bg: #e8f7ef;
   --diff-del-bg: #fdecec;
   --diff-hunk-bg: #f2efff;
@@ -89,7 +101,7 @@
   /* Was #e4e4e7: 1.27:1 on white, and with `--panel` equal to `--bg` it was the *only* cue drawing
      a card, where dark has it as the second cue on top of a panel step. ~1.45:1 gives it the same
      perceptual weight (ΔL* ~14) its dark counterpart has. */
-  --border: #d6d6dc;
+  --border: #d6d6d6;
 
   /* Tag palette (src/lib/tags/palette.ts owns the keys; these are the light-theme shades). */
   /* jade was #0f9b6c — 3.31:1 on the sidebar, where the 6px dot lives, while every sibling had
@@ -104,25 +116,25 @@
      against the page; on a --panel-2 card in dark mode it was nearly invisible as an inner rule.
      This was byte-identical to `--border`, so the distinction the token was created for existed
      only in dark: an inner rule looked exactly like a card outline. */
-  --divider: #c9c9d1;
+  --divider: #cacaca;
   /* Was `#000 16%`, which resolves to ~#d6d6d6 over white — a 1.45:1 focus indicator, and every
      consumer pairs it with `outline-none` so there is no UA fallback. WCAG 2.4.11 wants 3:1.
      A real colour rather than an alpha wash; this is the fix src/lib/admin/ui.ts had to route
      around for the admin area alone. */
-  --ring: #52525b;
+  --ring: #535353;
 
   /* Muted text on white/near-white. Kept darker than zinc-500/600 so 11-12px labels
      (sidebar sections, meters, breadcrumbs) stay legible: ~7.5:1 and ~5.9:1 on #fff. */
-  --muted: #3f3f46;
-  --muted-2: #5b5b64;
+  --muted: #404040;
+  --muted-2: #5c5c5c;
 
   /* Primary CTA */
   --primary-bg: #000000;
   --primary-fg: #ffffff;
-  --primary-hover-bg: #18181b;
+  --primary-hover-bg: #181818;
   /* Same problem as `--ring`: black at 18% over white is a 1.5:1 halo, and the CTA sets
      `outline-none` beside it. */
-  --primary-ring: #3f3f46;
+  --primary-ring: #404040;
   --primary-border: color-mix(in srgb, #000000 12%, transparent);
   --primary-shadow: color-mix(in srgb, #000000 10%, transparent);
 
