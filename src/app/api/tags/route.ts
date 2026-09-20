@@ -14,7 +14,7 @@ import { NextResponse } from "next/server";
 
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
-import { findOrCreateTag, listTags } from "@/lib/tags/service";
+import { findOrCreateTag, listTags, listTagsPage } from "@/lib/tags/service";
 import { isUsableTagName } from "@/lib/tags/slug";
 import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 
@@ -28,9 +28,35 @@ export async function GET(request: Request) {
       return applyTempUserHeaders(NextResponse.json({ error: "Unauthorized" }, { status: 401 }), actor);
     }
     try {
+      /**
+       * Paged only when asked. The sidebar, the tag input's autocomplete and the MCP all want the
+       * whole list and have since this route existed; the manage screen is the one caller that
+       * cannot, because a workspace that files properly ends up with hundreds. So `?limit=` opts
+       * in, and everything else keeps the response it was written against.
+       */
+      const url = new URL(request.url);
+      const wantsPage = url.searchParams.has("limit") || url.searchParams.has("page") || url.searchParams.has("q");
+      if (wantsPage) {
+        const asInt = (v: string | null) => {
+          const n = Number(v);
+          return Number.isFinite(n) ? Math.trunc(n) : null;
+        };
+        const paged = await listTagsPage({
+          orgId: actor.orgId,
+          q: url.searchParams.get("q"),
+          page: asInt(url.searchParams.get("page")),
+          limit: asInt(url.searchParams.get("limit")),
+          withCounts: true,
+        });
+        return applyTempUserHeaders(
+          NextResponse.json({ ok: true, ...paged }, { headers: { "cache-control": "no-store" } }),
+          actor,
+        );
+      }
+
       const tags = await listTags({ orgId: actor.orgId, withCounts: true });
       return applyTempUserHeaders(
-        NextResponse.json({ ok: true, tags }, { headers: { "cache-control": "no-store" } }),
+        NextResponse.json({ ok: true, tags, total: tags.length }, { headers: { "cache-control": "no-store" } }),
         actor,
       );
     } catch (err) {

@@ -48,66 +48,94 @@ export default function TagsManager() {
   const [page, setPage] = useState(1);
   const [adding, setAdding] = useState(false);
   const [mergeQuery, setMergeQuery] = useState("");
+  /** Debounced `filter`; what the server is actually asked. */
+  const [query, setQuery] = useState("");
+  const [total, setTotal] = useState(0);
 
+  /**
+   * One page from the server, searched there too.
+   *
+   * This used to fetch every tag and page in the browser, which made the pager a costume: the
+   * response still carried the whole workspace and the server still counted every tag to build it.
+   * `?q=&page=&limit=` is the real thing — the query goes to Mongo, the counts are computed for the
+   * page only, and a workspace with three thousand tags sends twenty-four.
+   */
   const load = useCallback(async () => {
     try {
-      const res = await fetchWithTempUser("/api/tags", { cache: "no-store" });
+      const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
+      if (query.trim()) params.set("q", query.trim());
+      const res = await fetchWithTempUser(`/api/tags?${params.toString()}`, { cache: "no-store" });
       if (!res.ok) {
         setTags([]);
+        setTotal(0);
         return;
       }
-      const json = (await res.json()) as { tags?: Tag[] };
+      const json = (await res.json()) as { tags?: Tag[]; total?: number };
       setTags(Array.isArray(json.tags) ? json.tags : []);
+      setTotal(typeof json.total === "number" ? json.total : 0);
     } catch {
       setTags([]);
+      setTotal(0);
     }
-  }, []);
+  }, [page, query]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const sorted = useMemo(
+  /**
+   * Typing is debounced into `query`; `filter` is what the box shows. Without the gap every
+   * keystroke is a database query, and the answer to the half-typed word is never the one wanted.
+   */
+  useEffect(() => {
+    const id = setTimeout(() => {
+      setQuery(filter);
+      setPage(1);
+    }, 250);
+    return () => clearTimeout(id);
+  }, [filter]);
+
+  /** Server order is by name; the page is re-sorted by use, which is how people look for a tag. */
+  const visible = useMemo(
     () => [...(tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.name.localeCompare(b.name)),
     [tags],
   );
 
-  /**
-   * Filter before paging, so searching looks through every tag rather than the page you are on.
-   * Folded loosely on purpose — someone hunting "Série A" should find it by typing "serie".
-   */
-  const matching = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return sorted;
-    const fold = (v: string) => v.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    const folded = fold(needle);
-    return sorted.filter((t) => fold(t.name).includes(folded) || t.slug.includes(folded));
-  }, [sorted, filter]);
-
-  /**
-   * Who this tag can be merged into: every other tag, searched and capped. The cap is what makes
-   * this survive a workspace with thousands — the dialog renders a list you can read, not one you
-   * scroll for a minute.
-   */
-  const mergeAll = useMemo(() => {
-    if (!mergeFrom) return [];
-    const needle = mergeQuery.trim().toLowerCase();
-    const fold = (v: string) => v.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    const folded = fold(needle);
-    return sorted.filter(
-      (t) => t.id !== mergeFrom.id && (!folded || fold(t.name).includes(folded) || t.slug.includes(folded)),
-    );
-  }, [sorted, mergeFrom, mergeQuery]);
-  const mergeCandidates = mergeAll.slice(0, MERGE_LIST_CAP);
-  const mergeTruncated = mergeAll.length > MERGE_LIST_CAP;
-
-  const pageCount = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
-  // A filter that shortens the list can strand you past the end; clamp rather than show nothing.
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const current = Math.min(page, pageCount);
-  const visible = useMemo(
-    () => matching.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE),
-    [matching, current],
-  );
+
+  /**
+   * Merge targets come from their own search, for the same reason the table does: the dialog
+   * cannot hold a workspace's worth of tags and should not try.
+   */
+  const [mergeOptions, setMergeOptions] = useState<Tag[]>([]);
+  const [mergeTotal, setMergeTotal] = useState(0);
+  useEffect(() => {
+    if (!mergeFrom) return;
+    let cancelled = false;
+    const id = setTimeout(() => {
+      const params = new URLSearchParams({ page: "1", limit: String(MERGE_LIST_CAP) });
+      if (mergeQuery.trim()) params.set("q", mergeQuery.trim());
+      void fetchWithTempUser(`/api/tags?${params.toString()}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((json: { tags?: Tag[]; total?: number } | null) => {
+          if (cancelled) return;
+          setMergeOptions(Array.isArray(json?.tags) ? json.tags : []);
+          setMergeTotal(typeof json?.total === "number" ? json.total : 0);
+        })
+        .catch(() => {
+          if (!cancelled) setMergeOptions([]);
+        });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [mergeFrom, mergeQuery]);
+
+  const mergeCandidates = mergeOptions.filter((t) => t.id !== mergeFrom?.id);
+  // `total` counts the tag being merged away as well, hence the -1.
+  const mergeTruncated = mergeTotal - 1 > mergeCandidates.length;
 
   /** Every write goes through here: one busy row at a time, one error line, one refresh. */
   async function patch(tag: Tag, body: Record<string, unknown>, onDone?: () => void) {
@@ -196,7 +224,7 @@ export default function TagsManager() {
       <div className="mb-3 flex items-center gap-2">
         <input
           value={filter}
-          placeholder={sorted.length > 8 ? `Search ${sorted.length} tags` : "Search tags"}
+          placeholder={total > 0 && !query ? `Search ${total} tags` : "Search tags"}
           aria-label="Search tags"
           className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
           onChange={(e) => {
@@ -362,15 +390,17 @@ export default function TagsManager() {
         </div>
       </Modal>
 
-      {!sorted.length ? (
+      {/* Two different emptinesses: a workspace that has never made a tag, and a search that found
+          none. They need different sentences — the first is an invitation, the second a dead end. */}
+      {!visible.length && !query ? (
         <div className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center text-[13px] text-[var(--muted)]">
           No tags yet. Use New tag above, or add one from any document or project.
         </div>
       ) : null}
 
-      {sorted.length && !matching.length ? (
+      {!visible.length && query ? (
         <div className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center text-[13px] text-[var(--muted)]">
-          No tag matches &ldquo;{filter}&rdquo;.
+          No tag matches &ldquo;{query}&rdquo;.
         </div>
       ) : null}
 
@@ -564,8 +594,8 @@ export default function TagsManager() {
       {pageCount > 1 ? (
         <div className="mt-4 flex items-center justify-between gap-3 text-[13px]">
           <span className="text-[var(--muted)]">
-            {(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, matching.length)} of {matching.length}
-            {filter ? ` matching` : ""}
+            {(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, total)} of {total}
+            {query ? ` matching` : ""}
           </span>
           <div className="flex items-center gap-2">
             <button

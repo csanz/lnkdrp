@@ -116,6 +116,62 @@ export async function listTags(params: {
 }
 
 /**
+ * One page of tags, searched, with counts for that page only.
+ *
+ * `listTags` above returns the whole workspace, which is what the sidebar, the autocomplete and the
+ * MCP want and what the manage screen could not keep wanting: a workspace that files properly ends
+ * up with hundreds, and paging them in the browser still ships every one of them down the wire and
+ * counts every one of them on the server.
+ *
+ * The counting is the part that mattered most. `listTags` with `withCounts` reads every assignment
+ * row in the workspace to count tags the caller may never show; here the count is asked only about
+ * the page being returned, so the work is bounded by the page size rather than by how much the
+ * workspace has filed.
+ *
+ * Search folds through `tagSlug`, so it matches the way tags are stored and the way people type
+ * them — "serie" finds "Série A" — rather than the way they happen to be capitalised.
+ */
+export async function listTagsPage(params: {
+  orgId: string | Types.ObjectId;
+  /** Free text; folded before matching. Omit for everything. */
+  q?: string | null;
+  /** 1-based. */
+  page?: number | null;
+  limit?: number | null;
+  withCounts?: boolean;
+}): Promise<{ tags: TagDTO[]; total: number; page: number; limit: number }> {
+  await connectMongo();
+  const orgId = orgObjectId(params.orgId);
+  const limit = Math.min(Math.max(Math.trunc(params.limit ?? 50) || 50, 1), 200);
+  const page = Math.max(Math.trunc(params.page ?? 1) || 1, 1);
+
+  const filter: Record<string, unknown> = { orgId };
+  const needle = tagSlug(String(params.q ?? ""));
+  if (needle) {
+    // Matched against the slug, which is already the folded form, so the caller's spelling does not
+    // have to match the stored one. Escaped: a tag search is user input and `.` is a legal thing to
+    // type.
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+    filter.slug = { $regex: escaped, $options: "i" };
+  }
+
+  const [total, rows] = await Promise.all([
+    TagModel.countDocuments(filter),
+    TagModel.find(filter)
+      .sort({ name: 1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .lean() as unknown as Promise<Tag[]>,
+  ]);
+
+  if (!params.withCounts || !rows.length) {
+    return { tags: rows.map((t) => toTagDTO(t)), total, page, limit };
+  }
+  const byId = await countLiveAssignments({ orgId, tagIds: rows.map((t) => t._id) });
+  return { tags: rows.map((t) => toTagDTO(t, byId.get(String(t._id)) ?? 0)), total, page, limit };
+}
+
+/**
  * How many *live* things carry each tag.
  *
  * Counting the assignment rows themselves was wrong, and visibly so: a tag whose only document had

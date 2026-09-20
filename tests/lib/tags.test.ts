@@ -76,3 +76,36 @@ describe("tags/palette", () => {
     expect(nextTagColor({})).toBe(TAG_COLOR_KEYS[0]);
   });
 });
+
+/**
+ * The search a paged tag list runs.
+ *
+ * `listTagsPage` matches against the stored slug, which is already the folded form, so what a
+ * person types never has to match how the tag was capitalised or accented. The escaping matters
+ * because a tag name is user input: "Q3 (draft)" is a legal name, and its parentheses must not
+ * reach Mongo as a regex group.
+ */
+describe("tags/search folding", () => {
+  /** What the route does to a query before it becomes a `$regex`. */
+  const needle = (q: string) => tagSlug(q).replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+
+  test("a differently spelled query reaches the same tag", () => {
+    // Stored slug for "Série A" is "serie-a"; each of these folds into a prefix of it.
+    for (const typed of ["Série", "serie", "SERIE", "  série  "]) {
+      expect(tagSlug("Série A").includes(needle(typed))).toBe(true);
+    }
+  });
+
+  test("regex metacharacters in a query are escaped, not executed", () => {
+    // "q3-draft" must not be matched by a pattern built from "(draft)" as a group.
+    expect(needle("Q3 (draft)")).toBe(String.raw`q3-draft`);
+    expect(needle("a.b")).toBe("a-b");
+    // A name that folds to nothing searchable yields nothing to match on.
+    expect(needle("!!!")).toBe("");
+  });
+
+  test("an empty query is not a filter", () => {
+    expect(needle("")).toBe("");
+    expect(needle("   ")).toBe("");
+  });
+});
