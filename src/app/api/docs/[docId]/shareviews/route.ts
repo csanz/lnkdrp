@@ -70,7 +70,7 @@ import { toShareLinkDTO } from "@/lib/share/links";
 import { docOnlyShareIdMatch } from "@/lib/analytics/docScope";
 import { ProjectModel } from "@/lib/models/Project";
 import { projectLinkMetricsHref } from "@/lib/analytics/workspace/shape";
-import { splitProjectViewerKey } from "@/lib/share/projectPublic";
+import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   shareIdClause,
@@ -190,6 +190,30 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();
       const wantsViewers = url.searchParams.get("viewers") === "1";
       const viewersOnly = url.searchParams.get("viewersOnly") === "1";
+      /**
+       * One reader, by the key their page is addressed with.
+       *
+       * The reader page used to fetch the whole viewer list and pick its row out in the browser.
+       * Both lists are capped at 100, so past a hundred readers in the window the hundred-and-first
+       * person's permalink rendered "No reader by that id in this window" — indistinguishable from
+       * a bad link, on a page that exists. It also pulled tens of kilobytes to render one row.
+       *
+       * Both filters match on the same fields the aggregates already group by, so they narrow the
+       * existing pipelines rather than adding a query shape.
+       */
+      const viewerUserIdParam = (url.searchParams.get("viewerUserId") ?? "").trim();
+      const viewerBotIdHashParam = (url.searchParams.get("botIdHash") ?? "").trim();
+      const oneViewerMatch: Record<string, unknown> | null = viewerUserIdParam
+        ? Types.ObjectId.isValid(viewerUserIdParam)
+          ? { viewerUserId: new Types.ObjectId(viewerUserIdParam) }
+          : // Not an id at all: match nothing. `viewerUserId: null` would have meant "the rows with
+            // no signed-in user", which is every anonymous reader — so a malformed key in the URL
+            // answered with somebody else's reading.
+            { viewerUserId: { $in: [] } }
+        : viewerBotIdHashParam
+          ? // A project link stores `<digest>.<docId>`, so the person is a prefix, not an equality.
+            { $or: viewerKeyMatchClause(viewerBotIdHashParam) }
+          : null;
 
       await connectMongo();
 
@@ -648,7 +672,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         ? await Promise.all([
             ShareViewModel.aggregate([
               // Same window as `viewerCount`: people active in `days`, last seen by real view activity.
-              { $match: { ...scopeMatch, viewerUserId: { $ne: null }, ...activityWindowMatch(start) } },
+              {
+                $match: {
+                  ...scopeMatch,
+                  viewerUserId: { $ne: null },
+                  ...activityWindowMatch(start),
+                  // `?viewerUserId=` / `?botIdHash=`: one reader, for their own page. Through
+                  // `$and`, so it narrows this match rather than replacing a key it shares.
+                  ...(oneViewerMatch ? { $and: [oneViewerMatch] } : {}),
+                },
+              },
               // Ensure we pick the most recent denormalized viewerName/email snapshots.
               { $sort: { updatedDate: -1 } },
               {
@@ -713,8 +746,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
               {
                 $match: {
                   ...scopeMatch,
-                  // `activityWindowMatch` is itself an `$or`, so the two conditions go through `$and`.
-                  $and: [{ $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] }, activityWindowMatch(start)],
+                  // `activityWindowMatch` is itself an `$or`, so the conditions go through `$and`.
+                  // So does the single-reader filter, whose anonymous form is an `$or` over the
+                  // bare digest and the `<digest>.<docId>` composite a project link writes.
+                  $and: [
+                    { $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] },
+                    activityWindowMatch(start),
+                    ...(oneViewerMatch ? [oneViewerMatch] : []),
+                  ],
                 },
               },
               { $sort: { updatedDate: -1 } },
@@ -909,7 +948,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
        * document metrics page that had always rendered into a 400. A missing section degrades; a
        * 400 does not.
        */
-      const projectLinkTraffic = foreignShareIds.length && !link
+      // Skipped for a single-reader request: that page renders one person, never the document's
+      // project traffic, and this is three aggregations to build it.
+      const projectLinkTraffic = foreignShareIds.length && !link && !oneViewerMatch
         ? await (async () => {
             const match = {
               docId: docObjectId,

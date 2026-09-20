@@ -41,7 +41,7 @@
  *   reported as `totals.ownerPreviews` so the exclusion is visible.
  */
 import { NextResponse } from "next/server";
-import type { PipelineStage } from "mongoose";
+import { Types, type PipelineStage } from "mongoose";
 
 import { applyTempUserHeaders } from "@/lib/gating/actor";
 import { connectMongo } from "@/lib/mongodb";
@@ -71,7 +71,7 @@ import {
   type RawLandingRollup,
 } from "@/lib/analytics/project/pipelines";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
-import { splitProjectViewerKey } from "@/lib/share/projectPublic";
+import { splitProjectViewerKey, viewerKeyMatchClause } from "@/lib/share/projectPublic";
 import { DocModel } from "@/lib/models/Doc";
 import { accessProjectForLinks, linkErrorResponse } from "../links/shared";
 
@@ -162,6 +162,22 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     const shareIdFilter = (url.searchParams.get("shareId") ?? "").trim();
     const wantsViewers = url.searchParams.get("viewers") === "1";
     const viewersOnly = url.searchParams.get("viewersOnly") === "1";
+    /**
+     * One reader, for their own page — the same narrowing the document route does, and for the
+     * same reason: both viewer lists stop at 100, so a reader page that filtered the list in the
+     * browser told the hundred-and-first person they do not exist.
+     */
+    const viewerUserIdParam = (url.searchParams.get("viewerUserId") ?? "").trim();
+    const viewerBotIdHashParam = (url.searchParams.get("botIdHash") ?? "").trim();
+    const oneViewerMatch: Record<string, unknown> | null = viewerUserIdParam
+      ? Types.ObjectId.isValid(viewerUserIdParam)
+        ? { viewerUserId: new Types.ObjectId(viewerUserIdParam) }
+        : // Not an id at all: match nothing, rather than "the rows with no signed-in user" —
+          // which is every anonymous reader.
+          { viewerUserId: { $in: [] } }
+      : viewerBotIdHashParam
+        ? { $or: viewerKeyMatchClause(viewerBotIdHashParam) }
+        : null;
 
     await connectMongo();
 
@@ -586,15 +602,28 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     const [viewersAgg, anonymousAgg] = includeViewers
       ? ((await Promise.all([
           ShareViewModel.aggregate([
-            { $match: { ...scopeMatch, viewerUserId: { $ne: null }, ...activityWindowMatch(start) } },
+            {
+              $match: {
+                ...scopeMatch,
+                viewerUserId: { $ne: null },
+                ...activityWindowMatch(start),
+                // Through `$and`: a top-level spread would replace `viewerUserId` above.
+                ...(oneViewerMatch ? { $and: [oneViewerMatch] } : {}),
+              },
+            },
             ...viewerGroupStages("$viewerUserId"),
           ]),
           ShareViewModel.aggregate([
             {
               $match: {
                 ...scopeMatch,
-                // `activityWindowMatch` is itself an `$or`, so the two conditions go through `$and`.
-                $and: [{ $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] }, activityWindowMatch(start)],
+                // `activityWindowMatch` is itself an `$or`, so the conditions go through `$and` —
+                // and so does the single-reader filter, which is an `$or` for an anonymous key.
+                $and: [
+                  { $or: [{ viewerUserId: { $exists: false } }, { viewerUserId: null }] },
+                  activityWindowMatch(start),
+                  ...(oneViewerMatch ? [oneViewerMatch] : []),
+                ],
               },
             },
             ...viewerGroupStages(PROJECT_ANON_KEY_EXPR),
@@ -736,7 +765,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
           ...scopeMatch,
           // Arrivals always stamp `lastViewedAt`, so the window needs no `$or` over other dates.
           lastViewedAt: { $gte: start },
-          $or: [{ viewerName: { $nin: [null, ""] } }, { viewerEmailSnapshot: { $nin: [null, ""] } }],
+          // Both `$or`s go through `$and`, and the single-reader filter belongs here too: this is
+          // the second source `anonymousViewers` is built from, so without it a reader page asking
+          // for one person still received every visitor who landed and opened nothing.
+          $and: [
+            { $or: [{ viewerName: { $nin: [null, ""] } }, { viewerEmailSnapshot: { $nin: [null, ""] } }] },
+            ...(oneViewerMatch ? [oneViewerMatch] : []),
+          ],
         })
           .select({ botIdHash: 1, viewerUserId: 1, viewerName: 1, viewerEmailSnapshot: 1, firstViewedAt: 1, lastViewedAt: 1, visits: 1 })
           .sort({ lastViewedAt: -1 })

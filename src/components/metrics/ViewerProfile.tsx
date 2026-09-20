@@ -135,8 +135,21 @@ export default function ViewerProfile({
     }
     if (!silent) setLoading(true);
     try {
-      // The same viewers-only read the metrics page makes: one definition of a reader, one query.
-      const res = await fetchWithTempUser(`${apiBase}/shareviews?days=${days}&viewers=1&viewersOnly=1`, {
+      /**
+       * This one reader, asked for by name.
+       *
+       * It used to fetch the whole viewers payload and find the row in the browser. Both lists are
+       * capped at 100 server-side, so once a document had more than a hundred readers in the
+       * window, the hundred-and-first person's own page said "No reader by that id in this window"
+       * — a page that exists, telling you it does not, and indistinguishable from a bad link. It
+       * also pulled every reader's pages and page times across the wire to render one row, on a
+       * page that refetches every few seconds while someone is reading.
+       *
+       * The filter narrows the same aggregation the list uses, so this is still one definition of
+       * a reader.
+       */
+      const who_ = who.kind === "authed" ? `viewerUserId=${encodeURIComponent(who.key)}` : `botIdHash=${encodeURIComponent(who.key)}`;
+      const res = await fetchWithTempUser(`${apiBase}/shareviews?days=${days}&viewers=1&viewersOnly=1&${who_}`, {
         cache: "no-store",
       });
       if (!res.ok) throw new Error(String(res.status));
@@ -333,6 +346,22 @@ export default function ViewerProfile({
   const sessions = scopeKind === "doc" ? visits.length || viewer?.views || 0 : viewer?.sessions || (viewer?.docs?.length ?? 0);
   const longest = pageRows.find((r) => r.ms > 0) ?? null;
   /**
+   * The pages whose time was actually measured — the only ones "average" can be taken over.
+   *
+   * There are two clocks on a reading and they answer different questions. The visit clock
+   * (`timeSpentMs`) accrues from a 30-second heartbeat: how long the tab was open on this
+   * document. The page clock (`pageTimeMsByPage`) accrues only when a reader *leaves* a page, so
+   * the page they are on right now, and every page of a reader still reading, carries nothing yet.
+   * Their sum is therefore always less than or equal to the visit clock.
+   *
+   * Dividing the visit clock by a page count and printing it beside a maximum taken from the page
+   * clock was comparing the two — and could print an average larger than the largest, which is not
+   * a rounding artefact but an impossibility rendered side by side. Both tiles read the page clock
+   * now, so the average cannot exceed the maximum by construction.
+   */
+  const timedPages = useMemo(() => pageRows.filter((r) => r.ms > 0), [pageRows]);
+  const timedTotalMs = useMemo(() => timedPages.reduce((n, r) => n + r.ms, 0), [timedPages]);
+  /**
    * Whether this reader moved inside the last minute.
    *
    * A minute, not five seconds: a reader on a long page writes on a 30-second heartbeat, so a
@@ -436,8 +465,21 @@ export default function ViewerProfile({
         {stat(
           scopeKind === "doc" ? "Avg per page" : "Avg per doc",
           (() => {
-            const n = scopeKind === "doc" ? viewer.pagesViewed || pagesSeen.length : viewer.docs?.length ?? 0;
-            return timeMs > 0 && n > 0 ? formatDurationShort(Math.round(timeMs / n)) : "—";
+            // A project's documents carry the same clock as its total, so the plain average holds.
+            if (scopeKind !== "doc") {
+              const n = viewer.docs?.length ?? 0;
+              return timeMs > 0 && n > 0 ? formatDurationShort(Math.round(timeMs / n)) : "—";
+            }
+            return timedPages.length > 0 ? formatDurationShort(Math.round(timedTotalMs / timedPages.length)) : "—";
+          })(),
+          // Why this average times the page count does not equal "Time spent": the pages they have
+          // not left yet have no measured time. Shown only when the two actually differ, so a
+          // finished reading says nothing extra.
+          (() => {
+            if (scopeKind !== "doc") return null;
+            const seen = viewer.pagesViewed || pagesSeen.length;
+            if (!timedPages.length || !seen || timedPages.length >= seen) return null;
+            return `${timedPages.length} of ${seen} pages timed`;
           })(),
         )}
         {/* A project's unit is documents, not pages.
