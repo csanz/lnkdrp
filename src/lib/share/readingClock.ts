@@ -11,6 +11,12 @@
  * - Five minutes without input while visible ends the segment at `lastInputAt + 5 min` (reason `idle`),
  *   so a tab left open overnight is not read as hours on one page.
  * - No flush ever carries a zero or negative interval.
+ * - The heartbeat reports the current page's time as it goes, and never as an exit. See
+ *   `pageReportedMs`: the page clock used to move only when the page did, which meant a document
+ *   with **one page** — a one-pager, a signed letter, a term sheet — recorded no per-page time at
+ *   all until the tab was closed. The owner watching the reader live saw a visit clock climbing
+ *   past a minute beside "time per page wasn't recorded", which is the one document where the two
+ *   numbers are the same number.
  */
 
 export const IDLE_AFTER_MS = 300_000;
@@ -24,7 +30,15 @@ export type FlushReason = "turn" | "hidden" | "pagehide" | "unmount" | "heartbea
 export type Flush = {
   reason: FlushReason;
   durationMs: number | null;
-  page: { pageNumber: number; enteredAtMs: number; leftAtMs: number; pageDurationMs: number } | null;
+  /**
+   * `exit` is the difference between "they have left this page" and "they are still on it".
+   *
+   * Only an exit carries `enteredAtMs`/`leftAtMs` onto the wire, because those bounds are what the
+   * server reads as an exit (`isPageExit`) — a page segment, a revisit tick, and the `toPage` that
+   * tells a live metrics page which page they turned to. A heartbeat's segment is time on a page
+   * they have not left yet, so it moves the clock and nothing else.
+   */
+  page: { pageNumber: number; enteredAtMs: number; leftAtMs: number; pageDurationMs: number; exit: boolean } | null;
   toPage?: number;
 };
 
@@ -34,6 +48,15 @@ export class ReadingClock {
   private page: number;
   private visitStart: number | null;
   private pageStart: number | null;
+  /**
+   * How much of the current page's dwell has already been sent.
+   *
+   * The heartbeat reports the page as it goes, so without a ledger the exit flush would send the
+   * whole dwell again — seconds already counted included. That exact double count is why the
+   * heartbeat stopped carrying a page number in the first place; this is the same feature with the
+   * accounting it was missing. Reset to zero wherever `pageStart` is, and only there.
+   */
+  private pageReportedMs = 0;
   private lastInputAt: number;
   private lastFlushAt = 0;
   private isIdle = false;
@@ -44,7 +67,25 @@ export class ReadingClock {
     this.page = opts.page;
     this.visitStart = opts.now;
     this.pageStart = opts.now;
+    this.pageReportedMs = 0;
     this.lastInputAt = opts.now;
+  }
+
+  /**
+   * What is left of the current page's dwell that has not been sent yet.
+   *
+   * Never rounded up. A page turn landing in the same millisecond as a heartbeat has nothing left
+   * to send and so writes no exit event — a real, if vanishingly rare, loss. The alternative was a
+   * one-millisecond floor, and that breaks the invariant the fuzz test holds: reported page time
+   * must never exceed reported visit time, because every second on a page is a second of the
+   * visit. A property that catches double counting is worth more than a page event lost once in a
+   * thirty-second window.
+   */
+  private unreportedPageMs(until: number): number {
+    if (this.pageStart === null) return 0;
+    const total = until - this.pageStart;
+    if (total < 1) return 0;
+    return Math.max(0, total - this.pageReportedMs);
   }
 
   private checkIdle(now: number): Flush[] {
@@ -53,16 +94,17 @@ export class ReadingClock {
     const deadline = this.lastInputAt + IDLE_AFTER_MS;
     const out: Flush[] = [];
     const chunk = this.visitStart === null ? 0 : deadline - this.visitStart;
-    const pageDur = this.pageStart === null ? 0 : deadline - this.pageStart;
+    const pageDur = this.unreportedPageMs(deadline);
     const durationMs = chunk >= 1 ? chunk : null;
     const page =
       pageDur >= 1 && this.pageStart !== null
-        ? { pageNumber: this.page, enteredAtMs: this.pageStart, leftAtMs: deadline, pageDurationMs: pageDur }
+        ? { pageNumber: this.page, enteredAtMs: this.pageStart, leftAtMs: deadline, pageDurationMs: pageDur, exit: true }
         : null;
     if (durationMs !== null || page !== null) out.push({ reason: "idle", durationMs, page });
     this.isIdle = true;
     this.visitStart = null;
     this.pageStart = null;
+    this.pageReportedMs = 0;
     this.lastFlushAt = deadline;
     return out;
   }
@@ -73,6 +115,7 @@ export class ReadingClock {
       this.isIdle = false;
       this.visitStart = now;
       this.pageStart = now;
+      this.pageReportedMs = 0;
     }
   }
 
@@ -85,25 +128,31 @@ export class ReadingClock {
         this.isIdle = false;
         this.visitStart = now;
         this.pageStart = now;
+        this.pageReportedMs = 0;
       }
       return idleFlushes;
     }
     const pageStart = this.pageStart ?? now;
+    // The gate is the *whole* dwell, as it always was — a page held for 20 seconds is a page they
+    // read, whether or not a heartbeat already reported 19 of them. Only what goes on the wire is
+    // net of what has been sent.
     const pageDur = now - pageStart;
     const chunk = now - (this.visitStart ?? now);
+    const unreported = this.unreportedPageMs(now);
     this.visitStart = now;
     this.lastFlushAt = now;
     const out: Flush[] = [];
-    if (pageDur >= MIN_CHUNK_MS) {
+    if (pageDur >= MIN_CHUNK_MS && unreported >= 1) {
       out.push({
         reason: "turn",
         durationMs: chunk >= 1 ? chunk : null,
-        page: { pageNumber: this.page, enteredAtMs: pageStart, leftAtMs: now, pageDurationMs: pageDur },
+        page: { pageNumber: this.page, enteredAtMs: pageStart, leftAtMs: now, pageDurationMs: unreported, exit: true },
         toPage,
       });
     }
     this.page = toPage;
     this.pageStart = now;
+    this.pageReportedMs = 0;
     this.lastInputAt = now;
     return out;
   }
@@ -115,9 +164,23 @@ export class ReadingClock {
     if (this.lastFlushAt && now - this.lastFlushAt < ANTI_STORM_MS) return [];
     const chunk = now - this.visitStart;
     if (chunk < MIN_CHUNK_MS) return [];
+    /**
+     * The page's share of the same seconds, sent alongside and marked as not an exit.
+     *
+     * These are two counters over one interval, which is the whole reason `shareTiming` exists:
+     * `durationMs` feeds the visit clock, `pageDurationMs` feeds the page clock, and neither ever
+     * reads the other's number. What makes it safe this time is the ledger — the exit flush sends
+     * only what is left, so the page turn no longer replays seconds already counted.
+     */
+    const unreported = this.unreportedPageMs(now);
+    const page =
+      unreported >= 1 && this.pageStart !== null
+        ? { pageNumber: this.page, enteredAtMs: this.pageStart, leftAtMs: now, pageDurationMs: unreported, exit: false }
+        : null;
+    if (page) this.pageReportedMs += unreported;
     this.visitStart = now;
     this.lastFlushAt = now;
-    return [{ reason: "heartbeat", durationMs: chunk, page: null }];
+    return [{ reason: "heartbeat", durationMs: chunk, page }];
   }
 
   tick(now: number): Flush[] {
@@ -135,6 +198,7 @@ export class ReadingClock {
     this.lastInputAt = now;
     this.visitStart = now;
     this.pageStart = now;
+    this.pageReportedMs = 0;
   }
 
   pagehide(now: number): Flush[] {
@@ -185,15 +249,16 @@ export class ReadingClock {
     }
     const out: Flush[] = [];
     const chunk = this.visitStart === null ? 0 : now - this.visitStart;
-    const pageDur = this.pageStart === null ? 0 : now - this.pageStart;
+    const pageDur = this.unreportedPageMs(now);
     const durationMs = chunk >= 1 ? chunk : null;
     const page =
       pageDur >= 1 && this.pageStart !== null
-        ? { pageNumber: this.page, enteredAtMs: this.pageStart, leftAtMs: now, pageDurationMs: pageDur }
+        ? { pageNumber: this.page, enteredAtMs: this.pageStart, leftAtMs: now, pageDurationMs: pageDur, exit: true }
         : null;
     if (durationMs !== null || page !== null) out.push({ reason, durationMs, page });
     this.visitStart = null;
     this.pageStart = null;
+    this.pageReportedMs = 0;
     this.lastFlushAt = now;
     this.markFinal(reason);
     return out;
@@ -215,8 +280,11 @@ export function buildTimingPayload(
       ? {
           pageNumber: Math.floor(f.page.pageNumber),
           pageDurationMs: Math.floor(f.page.pageDurationMs),
-          enteredAtMs: Math.floor(f.page.enteredAtMs),
-          leftAtMs: Math.floor(f.page.leftAtMs),
+          // Bounds are the exit signal (`isPageExit`), so a heartbeat's segment carries none: it
+          // moves `pageTimeMsByPage` and writes no `pageEvents` entry and no revisit tick.
+          ...(f.page.exit
+            ? { enteredAtMs: Math.floor(f.page.enteredAtMs), leftAtMs: Math.floor(f.page.leftAtMs) }
+            : {}),
         }
       : {}),
     ...(f.toPage ? { toPage: Math.floor(f.toPage) } : {}),

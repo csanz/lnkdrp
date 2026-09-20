@@ -23,8 +23,29 @@ export default function PageReadingDetail({
   totalTimeMs?: number;
   limit?: number;
 }) {
+  /**
+   * A one-page document, where the two clocks are the same clock.
+   *
+   * The page clock only moves for a page the reader has *left*, so a document with nothing to turn
+   * to used to show "time per page wasn't recorded" beside a visit worth a minute and a half — on
+   * the one document where the visit total *is* the page total, by definition. The clock itself
+   * now reports as it goes (`readingClock`, `pageReportedMs`), which fixes it at the source; this
+   * covers the rest: every reading already recorded, and the first thirty seconds of a live one,
+   * before the first heartbeat lands.
+   *
+   * Deliberately only at one page. With two it would be a guess about which of them the time
+   * belongs to, and a plausible guess printed as a measurement is worse than an honest blank.
+   */
+  const effectiveByPage =
+    pagesSeen.length === 1 &&
+    typeof totalTimeMs === "number" &&
+    totalTimeMs > 0 &&
+    !(msByPage[String(pagesSeen[0])] > 0)
+      ? { [String(pagesSeen[0])]: totalTimeMs }
+      : msByPage;
+
   const rows = pagesSeen
-    .map((page) => ({ page, ms: msByPage[String(page)] ?? 0 }))
+    .map((page) => ({ page, ms: effectiveByPage[String(page)] ?? 0 }))
     .sort((a, b) => b.ms - a.ms || a.page - b.page);
   const timed = rows.some((r) => r.ms > 0);
   const max = Math.max(1, ...rows.map((r) => r.ms));
@@ -48,7 +69,7 @@ export default function PageReadingDetail({
 
   return (
     <>
-      <PageTimeChart pages={pagesSeen} msByPage={msByPage} />
+      <PageTimeChart pages={pagesSeen} msByPage={effectiveByPage} />
       <ul className="mt-4 grid gap-1.5 border-t border-[var(--divider)] pt-4">
         {shown.map((row) => (
           <li key={row.page} className="flex items-center gap-3">

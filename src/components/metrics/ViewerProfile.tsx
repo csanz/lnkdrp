@@ -28,6 +28,7 @@ import {
   relativeAge,
 } from "@/components/metrics/MetricsView";
 import DepthBadge, { ReadingLegendButton } from "@/components/metrics/DepthBadge";
+import IntroducedBadge from "@/components/metrics/IntroducedBadge";
 import PageReadingDetail from "@/components/metrics/PageReadingDetail";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
@@ -365,9 +366,37 @@ export default function ViewerProfile({
     openDocRef.current = openDoc;
   }, [openDoc]);
 
+  /** The cache, readable from the auto-open effect without making it rerun on every refresh. */
+  const docDetailRef = useRef(docDetail);
+  useEffect(() => {
+    docDetailRef.current = docDetail;
+  }, [docDetail]);
+
+  /**
+   * The panel this page opened by itself, and the one the owner shut on purpose.
+   *
+   * Both are refs rather than state: the effect below reads them to decide, and nothing renders
+   * from them, so making them state would only add renders and a stale-closure trap.
+   */
+  const autoOpenedRef = useRef<string | null>(null);
+  const dismissedRef = useRef<string | null>(null);
+
   const openDocDetail = useCallback(
     async (docId: string) => {
-      setOpenDoc((cur) => (cur === docId ? null : docId));
+      let closing = false;
+      setOpenDoc((cur) => {
+        closing = cur === docId;
+        return closing ? null : docId;
+      });
+      // Shutting the panel for the document they are in right now is an instruction, not an
+      // accident: without this, the effect below would reopen it on the reader's next page turn
+      // and the owner could not close it at all.
+      if (closing) {
+        if (autoOpenedRef.current === docId) autoOpenedRef.current = null;
+        dismissedRef.current = docId;
+      } else if (dismissedRef.current === docId) {
+        dismissedRef.current = null;
+      }
       if (docDetail[docId]) return;
       await loadDocDetail(docId);
     },
@@ -437,6 +466,38 @@ export default function ViewerProfile({
     }
     return { page, of: newest?.pageCount ?? identity?.pages ?? null, docId: null, docTitle: null };
   }, [scopeKind, readingNow, visits, identity?.pages]);
+
+  /**
+   * The drill-down follows the reader.
+   *
+   * The whole point of this page while someone is on it is to watch them read, and the pages they
+   * are turning live one click down — so the owner had to open the panel by hand, on the right
+   * row, and remember to close it and open the next one when the reader moved to another file. The
+   * page already knows which document they are in; it can do that itself.
+   *
+   * Three rules keep it from fighting the person using it:
+   *   - it opens only what the reader is actually in, never a second row;
+   *   - it closes only what it opened. A panel the owner opened to read history stays open;
+   *   - a panel the owner deliberately closed is not reopened while they are still in that
+   *     document (`dismissedRef`), or the close button would do nothing.
+   */
+  const liveDocId = scopeKind === "project" ? live?.docId ?? null : null;
+  useEffect(() => {
+    if (scopeKind !== "project") return;
+    if (liveDocId) {
+      if (dismissedRef.current === liveDocId) return;
+      if (openDocRef.current === liveDocId) return;
+      autoOpenedRef.current = liveDocId;
+      setOpenDoc(liveDocId);
+      void loadDocDetail(liveDocId, Boolean(docDetailRef.current[liveDocId]));
+      return;
+    }
+    // They are out of every document — back on the room's front page, or gone. The dismissal is
+    // cleared too, so opening a document later behaves like the first time.
+    dismissedRef.current = null;
+    if (autoOpenedRef.current && openDocRef.current === autoOpenedRef.current) setOpenDoc(null);
+    autoOpenedRef.current = null;
+  }, [liveDocId, scopeKind, loadDocDetail]);
 
   const stat = (label: string, value: string, sub?: string | null) => (
     <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-4">
@@ -519,9 +580,18 @@ export default function ViewerProfile({
               </span>
             ) : null}
           </div>
-          <div className="mt-1 truncate text-sm text-[var(--muted)]">
-            {viewer.email && name !== viewer.email ? `${viewer.email} · ` : ""}
-            Last seen {relativeAge(viewer.lastSeen ?? null)}
+          {/* A name on a device-keyed row was typed in by the person behind the device — nothing
+              else can put one there. So the chip is shown exactly when there is an identity and no
+              account behind it, and never for a signed-in reader, whose name is their account's. */}
+          <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm text-[var(--muted)]">
+            {viewer.email && name !== viewer.email ? (
+              <>
+                <span className="truncate">{viewer.email}</span>
+                <span aria-hidden="true" className="text-[var(--muted-2)]">·</span>
+              </>
+            ) : null}
+            {who?.kind === "anon" && (name || viewer.email) ? <IntroducedBadge /> : null}
+            <span className="whitespace-nowrap">Last seen {relativeAge(viewer.lastSeen ?? null)}</span>
           </div>
         </div>
       </div>
@@ -571,9 +641,6 @@ export default function ViewerProfile({
         {stat("Avg per session", sessions > 0 && timeMs > 0 ? formatDurationShort(Math.round(timeMs / sessions)) : "—")}
       </div>
 
-      {/* Two columns once the window allows it: the reading shape on the left, the visits on the
-          right, instead of a metre of white space beside each. */}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)] xl:items-start">
       {scopeKind === "doc" ? (
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
           <div className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">Time on each page</div>
@@ -635,39 +702,51 @@ export default function ViewerProfile({
                       </span>
                     </button>
 
-                    {expanded ? (
-                      <div className="border-t border-[var(--divider)] px-3 pb-3 pt-2.5">
-                        {detail === "loading" || !detail ? (
-                          <div className="text-[12px] text-[var(--muted)]">Loading pages…</div>
-                        ) : detail.pagesSeen.length ? (
-                          <>
-                            <div className="text-[12px] text-[var(--muted-2)]">
-                              {detail.sessions > 0
-                                ? `${detail.sessions} ${detail.sessions === 1 ? "session" : "sessions"} · `
-                                : ""}
-                              {detail.pagesSeen.length} {detail.pagesSeen.length === 1 ? "page" : "pages"}
-                              {detail.timeSpentMs > 0 ? ` · ${formatDurationShort(detail.timeSpentMs)}` : ""}
-                            </div>
-                            {/* The same component the document side uses: chart and ranked pages,
-                                never one without the other. */}
+                    {/* Opened and closed on a grid row rather than a height, because nothing here
+                        knows how tall a chart plus nine page rows is — `0fr → 1fr` animates to the
+                        content's own height. The panel stays mounted once it has been opened so the
+                        close animates too, and `inert` keeps its link out of the tab order while it
+                        is shut. `motion-reduce` turns the whole thing into a cut. */}
+                    {expanded || detail ? (
+                      <div
+                        className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
+                        style={{ gridTemplateRows: expanded ? "1fr" : "0fr" }}
+                      >
+                        <div className="overflow-hidden" inert={!expanded}>
+                          <div className="border-t border-[var(--divider)] px-3 pb-3 pt-2.5">
+                            {detail === "loading" || !detail ? (
+                              <div className="text-[12px] text-[var(--muted)]">Loading pages…</div>
+                            ) : detail.pagesSeen.length ? (
+                              <>
+                                <div className="text-[12px] text-[var(--muted-2)]">
+                                  {detail.sessions > 0
+                                    ? `${detail.sessions} ${detail.sessions === 1 ? "session" : "sessions"} · `
+                                    : ""}
+                                  {detail.pagesSeen.length} {detail.pagesSeen.length === 1 ? "page" : "pages"}
+                                  {detail.timeSpentMs > 0 ? ` · ${formatDurationShort(detail.timeSpentMs)}` : ""}
+                                </div>
+                                {/* The same component the document side uses: chart and ranked pages,
+                                    never one without the other. */}
+                                <div className="mt-2">
+                                  <PageReadingDetail
+                                    pagesSeen={detail.pagesSeen}
+                                    msByPage={detail.pageTimeMsByPage}
+                                    totalTimeMs={detail.timeSpentMs}
+                                  />
+                                </div>
+                              </>
+                            ) : (
+                              <div className="text-[12px] text-[var(--muted)]">No pages recorded for this document.</div>
+                            )}
                             <div className="mt-2">
-                              <PageReadingDetail
-                                pagesSeen={detail.pagesSeen}
-                                msByPage={detail.pageTimeMsByPage}
-                                totalTimeMs={detail.timeSpentMs}
-                              />
+                              <Link
+                                href={`/doc/${encodeURIComponent(d.docId)}/metrics`}
+                                className="text-[12px] font-medium text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
+                              >
+                                This document&apos;s own metrics →
+                              </Link>
                             </div>
-                          </>
-                        ) : (
-                          <div className="text-[12px] text-[var(--muted)]">No pages recorded for this document.</div>
-                        )}
-                        <div className="mt-2">
-                          <Link
-                            href={`/doc/${encodeURIComponent(d.docId)}/metrics`}
-                            className="text-[12px] font-medium text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
-                          >
-                            This document&apos;s own metrics →
-                          </Link>
+                          </div>
                         </div>
                       </div>
                     ) : null}
@@ -685,7 +764,12 @@ export default function ViewerProfile({
 
       {/* Sessions, on both scopes. On a document a session is a page sequence; on a project it is
           the documents that one sitting touched, which is the sequence that matters there — what
-          they opened first, and what they never came back to. */}
+          they opened first, and what they never came back to.
+
+          Full width, below the reading detail, rather than a narrow column beside it. The reading
+          detail is a chart with nine page rows under it; squeezed into 1.6 of 2.6 columns its bars
+          were shorter than the sessions panel was empty, and one session — the common case — left
+          most of that right-hand column blank. Stacked, each gets the whole width it can use. */}
       <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">
@@ -752,7 +836,6 @@ export default function ViewerProfile({
             </ul>
           )}
       </section>
-      </div>
 
       <div className="text-[11px] text-[var(--muted-2)]">
         First seen {formatDateTime(viewer.firstSeen ?? null)}
