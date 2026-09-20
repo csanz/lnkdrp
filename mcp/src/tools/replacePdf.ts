@@ -150,8 +150,8 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "version, uploadId, optimized, warnings, creditsRemaining }. " +
         "The document's status flips to preparing the moment this call starts, before the new file is even fetched - " +
         "recipients opening a link in that window see 'preparing', same as during the first upload. If import or " +
-        "processing then fails, the document is left in that state rather than rolled back to the old file; call " +
-        "lnkdrp_get_share to check, or run lnkdrp_replace_pdf again with a working sourceUrl or fileBase64 to finish the update. " +
+        "processing then fails, the document goes back to its previous version and to ready - it is not left stuck in " +
+        "preparing, and there is nothing to clean up; fix the source and call again when you have one that works. " +
         "Nothing is ever deleted - the previous version's file and analytics are not affected by a failed attempt. " +
         "By default waits up to timeoutSeconds for status ready|failed; if it times out, poll lnkdrp_get_share. " +
         "Each replacement's AI summary costs credits, or nothing when you pass summary and keyPoints (write them " +

@@ -204,7 +204,7 @@ export function toProjectLinkDTO(link: ShareLink, stats?: ShareLinkStats | null)
  */
 export async function ensureDefaultProjectLink(
   project: ProjectLike,
-  opts: { createdVia?: "web" | "api" | "mcp" } = {},
+  opts: { createdVia?: "web" | "api" | "mcp" | "default" } = {},
 ): Promise<ShareLink | null> {
   await connectMongo();
   const existing = await ShareLinkModel.findOne({ projectId: project._id, isDefault: true }).lean<ShareLink>();
@@ -249,8 +249,10 @@ export async function ensureDefaultProjectLink(
       allowRevisionHistory: false,
       expiresAt: null,
       createdByUserId: project.userId ?? null,
-      // Only a deliberate create knows who made it; every lazy backfill is a migration.
-      createdVia: opts.createdVia ?? "migration",
+      // Only a deliberate create knows who made it. Everything else here is this project's own
+      // default link being materialised on first read — `default`, not `migration`, which belongs
+      // to rows the backfill script brought forward from before the link model existed.
+      createdVia: opts.createdVia ?? "default",
     });
     if (project.shareId !== shareId) await ProjectModel.updateOne({ _id: project._id }, { $set: { shareId } });
     return created.toObject() as ShareLink;

@@ -45,7 +45,7 @@ import {
 import { registerSharePdfTool } from "./tools/sharePdf";
 import { registerListTagsTool, registerTagTool, registerUntagTool } from "./tools/tags";
 import { registerListStarredTool, registerStarDocsTool } from "./tools/starred";
-import { registerWhoamiTool } from "./tools/whoami";
+import { buildWhoamiPayload, registerWhoamiTool } from "./tools/whoami";
 
 /**
  * The instructions block sent at `initialize`.
@@ -203,9 +203,11 @@ export function createMcpServer(ctx: ToolContext): McpServer {
     "lnkdrp://workspace",
     { title: "lnkdrp workspace", description: "The workspace and plan this API key acts on (whoami JSON).", mimeType: "application/json" },
     async (uri) => {
-      const whoami = await ctx.api.whoami();
-      ctx.setWhoami(whoami);
-      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(whoami, null, 2) }] };
+      // The same payload lnkdrp_whoami returns, from the same builder. This used to call
+      // `api.whoami()` directly and hand back eleven of its nineteen fields — no credits, no
+      // capabilities, no costs — while calling itself "whoami JSON".
+      const payload = await buildWhoamiPayload(ctx);
+      return { contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(payload, null, 2) }] };
     },
   );
 
