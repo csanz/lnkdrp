@@ -36,9 +36,13 @@ import {
 } from "@heroicons/react/24/outline";
 import { APP_PAGE_GUTTER } from "@/components/AppPageHeader";
 import SubPageHeader from "@/components/SubPageHeader";
-import RecentVisitors, { type RecentVisitor } from "@/components/metrics/RecentVisitors";
+import RecentVisitors, {
+  type RecentVisitor,
+} from "@/components/metrics/RecentVisitors";
 import { viewerRouteKey } from "@/components/metrics/ViewerProfile";
-import DepthBadge, { ReadingLegendButton } from "@/components/metrics/DepthBadge";
+import DepthBadge, {
+  ReadingLegendButton,
+} from "@/components/metrics/DepthBadge";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
@@ -48,13 +52,25 @@ import Button from "@/components/ui/Button";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { usePlan } from "@/lib/client/usePlan";
-import { Area, AreaChart, CartesianGrid, LabelList, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  LabelList,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { formatDayKey } from "@/lib/format/date";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
 import { buildPublicProjectUrl, buildPublicShareUrl } from "@/lib/urls";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { rememberEntityTitle } from "@/lib/client/entityTitles";
-import EntityCrumbLabel, { CrumbSkeleton, EntityHeaderName, useHeaderName } from "@/components/HeaderIdentity";
+import EntityCrumbLabel, {
+  CrumbSkeleton,
+  EntityHeaderName,
+  useHeaderName,
+} from "@/components/HeaderIdentity";
 import { useEntityIdentity } from "@/lib/client/entityIdentity";
 
 /** Free = basic (totals, chart, unique viewer count); Pro = deep (identities, per-page time, visits). */
@@ -144,6 +160,11 @@ type MetricsResponse = {
     landings?: number;
     /** Project scope: visitors who reached the file list and opened nothing. Absent ≠ zero. */
     landedWithoutOpening?: number;
+    /**
+     * Opens the owner generated themselves. Recorded, excluded from every other figure here, and
+     * printed under the Views card so the exclusion is visible rather than merely correct.
+     */
+    ownerPreviews?: number;
     authenticatedViewers: number;
     anonymousViewers?: number;
   };
@@ -167,7 +188,11 @@ type MetricsResponse = {
     isDefault?: boolean;
   }>;
   /** Traffic on links no live row owns (one summary, never a list) — see `deletedLinkResidual` on the route. */
-  deletedLinkResidual?: { count: number; viewers: number; downloads: number } | null;
+  deletedLinkResidual?: {
+    count: number;
+    viewers: number;
+    downloads: number;
+  } | null;
   /**
    * Document scope: readings that came in through a project link — the data room's front door,
    * which has one slug for every document inside it. Deliberately *not* part of `totals`: a
@@ -199,6 +224,10 @@ type MetricsResponse = {
       pagesViewed?: number;
       timeSpentMs?: number;
       lastViewedAt: string | null;
+      /** The pages themselves, so a reader met through two links merges by union, not by sum. */
+      pagesSeen?: number[];
+      /** `u_<id>` / `a_<digest>` — the key that identifies this reader across links. */
+      viewerKey?: string | null;
       /** Their page inside the project that counts this reading, when it can be addressed. */
       viewerHref?: string | null;
       viewerName?: string | null;
@@ -211,7 +240,12 @@ type MetricsResponse = {
    * (`topDocs=5`), and unlike `byLink` it **follows** `?shareId=`, because "which files did this
    * recipient group open" is exactly the question a single-link view is asking.
    */
-  byDoc?: Array<{ docId: string; title: string | null; viewers: number; lastViewedAt: string | null }>;
+  byDoc?: Array<{
+    docId: string;
+    title: string | null;
+    viewers: number;
+    lastViewedAt: string | null;
+  }>;
   /** Project scope only: live documents in the project, whether or not anyone has opened them. */
   docsTotal?: number;
   /** The resolved link, only when `?shareId=` named one. */
@@ -301,7 +335,12 @@ type ShareViewerVisitDetailResponse = {
     revisitedPages: number[];
     pageTimeMsByPage: Record<string, number>;
     pageVisitCountByPage: Record<string, number>;
-    events: Array<{ pageNumber: number; enteredAt: string | null; leftAt: string | null; durationMs: number }>;
+    events: Array<{
+      pageNumber: number;
+      enteredAt: string | null;
+      leftAt: string | null;
+      durationMs: number;
+    }>;
   };
 };
 
@@ -309,7 +348,10 @@ export function formatDateTime(iso: string | null): string {
   if (!iso) return "-";
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return "-";
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(d);
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(d);
 }
 
 /** "12 Sep 2026" for the scoped link's expiry — `formatDateTime` above is for viewer timestamps. */
@@ -317,7 +359,11 @@ function formatDateShort(iso: string | null): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return "";
-  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(d);
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(d);
 }
 
 /** "3h ago" / "12 Sep" for the LINKS card's mini lists, matching `QuickStats`. */
@@ -391,7 +437,10 @@ function ViewerCounts({
   );
 }
 
-export function formatShortId(id: string | null | undefined, { head = 4, tail = 4 }: { head?: number; tail?: number } = {}): string {
+export function formatShortId(
+  id: string | null | undefined,
+  { head = 4, tail = 4 }: { head?: number; tail?: number } = {},
+): string {
   const raw = typeof id === "string" ? id.trim() : "";
   if (!raw) return "";
   if (raw.length <= head + tail + 1) return raw;
@@ -399,7 +448,13 @@ export function formatShortId(id: string | null | undefined, { head = 4, tail = 
 }
 
 export function formatPageRanges(pages: number[]): string {
-  const sorted = Array.from(new Set(pages.filter((n) => typeof n === "number" && Number.isFinite(n) && n >= 1)))
+  const sorted = Array.from(
+    new Set(
+      pages.filter(
+        (n) => typeof n === "number" && Number.isFinite(n) && n >= 1,
+      ),
+    ),
+  )
     .map((n) => Math.floor(n))
     .sort((a, b) => a - b);
   if (!sorted.length) return "";
@@ -420,7 +475,6 @@ export function formatPageRanges(pages: number[]): string {
   return parts.join(", ");
 }
 
-
 export function parseIsoMs(iso: string | null | undefined): number | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -429,7 +483,10 @@ export function parseIsoMs(iso: string | null | undefined): number | null {
 }
 
 export function formatDurationShort(msRaw: number | null | undefined): string {
-  const ms = typeof msRaw === "number" && Number.isFinite(msRaw) ? Math.max(0, Math.floor(msRaw)) : 0;
+  const ms =
+    typeof msRaw === "number" && Number.isFinite(msRaw)
+      ? Math.max(0, Math.floor(msRaw))
+      : 0;
   if (ms <= 0) return "";
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
   const h = Math.floor(totalSeconds / 3600);
@@ -441,7 +498,10 @@ export function formatDurationShort(msRaw: number | null | undefined): string {
 }
 
 function formatDurationTiny(msRaw: number | null | undefined): string {
-  const ms = typeof msRaw === "number" && Number.isFinite(msRaw) ? Math.max(0, Math.floor(msRaw)) : 0;
+  const ms =
+    typeof msRaw === "number" && Number.isFinite(msRaw)
+      ? Math.max(0, Math.floor(msRaw))
+      : 0;
   if (ms <= 0) return "";
   const totalSeconds = Math.max(1, Math.round(ms / 1000));
   if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -464,8 +524,13 @@ function MiniLineChartSingle({
   fillId: string;
   fillStops: { topOpacity: number; bottomOpacity: number };
 }) {
-  const safeValues = values.map((v) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0));
-  const data = series.map((s, idx) => ({ date: s.date, value: safeValues[idx] ?? 0 }));
+  const safeValues = values.map((v) =>
+    typeof v === "number" && Number.isFinite(v) ? Math.max(0, v) : 0,
+  );
+  const data = series.map((s, idx) => ({
+    date: s.date,
+    value: safeValues[idx] ?? 0,
+  }));
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
 
@@ -492,16 +557,33 @@ function MiniLineChartSingle({
     <div className="w-full">
       <div ref={wrapRef} className="h-56 w-full">
         {!size ? null : (
-          <AreaChart width={size.w} height={size.h} data={data} margin={{ top: 18, right: 8, bottom: 4, left: 8 }}>
+          <AreaChart
+            width={size.w}
+            height={size.h}
+            data={data}
+            margin={{ top: 18, right: 8, bottom: 4, left: 8 }}
+          >
             <defs>
               <linearGradient id={fillId} x1="0" x2="0" y1="0" y2="1">
-                <stop offset="0%" stopColor={stroke} stopOpacity={fillStops.topOpacity} />
-                <stop offset="100%" stopColor={stroke} stopOpacity={fillStops.bottomOpacity} />
+                <stop
+                  offset="0%"
+                  stopColor={stroke}
+                  stopOpacity={fillStops.topOpacity}
+                />
+                <stop
+                  offset="100%"
+                  stopColor={stroke}
+                  stopOpacity={fillStops.bottomOpacity}
+                />
               </linearGradient>
             </defs>
 
             <YAxis hide domain={[0, "dataMax"]} />
-            <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
+            <CartesianGrid
+              stroke="var(--border)"
+              strokeOpacity={0.18}
+              vertical={false}
+            />
             <Tooltip
               cursor={{ stroke: "var(--border)", strokeOpacity: 0.25 }}
               contentStyle={{
@@ -513,7 +595,10 @@ function MiniLineChartSingle({
                 color: "var(--fg)",
               }}
               labelStyle={{ color: "var(--muted-2)" }}
-              formatter={(v: any) => [typeof v === "number" ? v.toLocaleString() : String(v), ""]}
+              formatter={(v: any) => [
+                typeof v === "number" ? v.toLocaleString() : String(v),
+                "",
+              ]}
               labelFormatter={(label: any) => String(label ?? "")}
             />
             <Area
@@ -527,7 +612,10 @@ function MiniLineChartSingle({
               activeDot={{ r: 2.25, strokeWidth: 1.15 }}
               isAnimationActive={false}
             >
-              <LabelList dataKey="value" content={valueLabels({ values: safeValues })} />
+              <LabelList
+                dataKey="value"
+                content={valueLabels({ values: safeValues })}
+              />
             </Area>
           </AreaChart>
         )}
@@ -546,9 +634,14 @@ function MiniLineChartSingle({
             if (n > 1 && i % step !== 0 && i !== n - 1) return null;
             if (n > 1 && i !== n - 1 && n - 1 - i < step / 2) return null;
             const pct = n > 1 ? (i / (n - 1)) * 100 : 50;
-            const shift = n > 1 && i === 0 ? "0%" : n > 1 && i === n - 1 ? "-100%" : "-50%";
+            const shift =
+              n > 1 && i === 0 ? "0%" : n > 1 && i === n - 1 ? "-100%" : "-50%";
             return (
-              <span key={`tick:${s.date}`} className="absolute top-0 whitespace-nowrap" style={{ left: `${pct}%`, transform: `translateX(${shift})` }}>
+              <span
+                key={`tick:${s.date}`}
+                className="absolute top-0 whitespace-nowrap"
+                style={{ left: `${pct}%`, transform: `translateX(${shift})` }}
+              >
                 {formatDayKey(s.date)}
               </span>
             );
@@ -563,7 +656,13 @@ function MiniLineChartSingle({
  * Time on each page for one viewer: a smooth area across page numbers with the seconds printed on the
  * pages that matter, the same chart language as the Views chart. Unseen pages sit at zero.
  */
-export function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: Record<string, number> }) {
+export function PageTimeChart({
+  pages,
+  msByPage,
+}: {
+  pages: number[];
+  msByPage: Record<string, number>;
+}) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
@@ -578,21 +677,50 @@ export function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: 
   const maxPage = Math.max(1, ...pages);
   const data = Array.from({ length: maxPage }, (_, i) => {
     const raw = msByPage[String(i + 1)];
-    return { page: i + 1, ms: typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0 };
+    return {
+      page: i + 1,
+      ms:
+        typeof raw === "number" && Number.isFinite(raw)
+          ? Math.max(0, Math.floor(raw))
+          : 0,
+    };
   });
   const interval = Math.max(0, Math.ceil(data.length / 12) - 1);
   return (
     <div ref={wrapRef} className="h-36 w-full">
       {width > 0 ? (
-        <AreaChart width={width} height={144} data={data} margin={{ top: 18, right: 10, bottom: 0, left: 10 }}>
+        <AreaChart
+          width={width}
+          height={144}
+          data={data}
+          margin={{ top: 18, right: 10, bottom: 0, left: 10 }}
+        >
           <defs>
-            <linearGradient id="lnkdrpViewerPageTime" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor="var(--chart-views)" stopOpacity={0.24} />
-              <stop offset="100%" stopColor="var(--chart-views)" stopOpacity={0.02} />
+            <linearGradient
+              id="lnkdrpViewerPageTime"
+              x1="0"
+              x2="0"
+              y1="0"
+              y2="1"
+            >
+              <stop
+                offset="0%"
+                stopColor="var(--chart-views)"
+                stopOpacity={0.24}
+              />
+              <stop
+                offset="100%"
+                stopColor="var(--chart-views)"
+                stopOpacity={0.02}
+              />
             </linearGradient>
           </defs>
           <YAxis hide domain={[0, "dataMax"]} />
-          <CartesianGrid stroke="var(--border)" strokeOpacity={0.18} vertical={false} />
+          <CartesianGrid
+            stroke="var(--border)"
+            strokeOpacity={0.18}
+            vertical={false}
+          />
           <XAxis
             dataKey="page"
             interval={interval}
@@ -603,10 +731,22 @@ export function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: 
           />
           <Tooltip
             cursor={{ stroke: "var(--border)", strokeOpacity: 0.35 }}
-            contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 10, padding: "6px 8px", fontSize: 12, color: "var(--fg)" }}
+            contentStyle={{
+              background: "var(--panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 10,
+              padding: "6px 8px",
+              fontSize: 12,
+              color: "var(--fg)",
+            }}
             labelStyle={{ color: "var(--muted-2)" }}
             labelFormatter={(label: unknown) => `Page ${String(label ?? "")}`}
-            formatter={(v: unknown) => [typeof v === "number" && v > 0 ? formatDurationShort(v) : "Not viewed", ""]}
+            formatter={(v: unknown) => [
+              typeof v === "number" && v > 0
+                ? formatDurationShort(v)
+                : "Not viewed",
+              "",
+            ]}
           />
           <Area
             type="monotone"
@@ -619,7 +759,13 @@ export function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: 
             activeDot={{ r: 3, strokeWidth: 1.5 }}
             isAnimationActive={false}
           >
-            <LabelList dataKey="ms" content={valueLabels({ values: data.map((d) => d.ms), format: (n) => formatDurationTiny(n) })} />
+            <LabelList
+              dataKey="ms"
+              content={valueLabels({
+                values: data.map((d) => d.ms),
+                format: (n) => formatDurationTiny(n),
+              })}
+            />
           </Area>
         </AreaChart>
       ) : null}
@@ -628,12 +774,21 @@ export function PageTimeChart({ pages, msByPage }: { pages: number[]; msByPage: 
 }
 
 /** "Viewed 9 pages in 29s over 2 sessions, most time on page 3." — the one-line read of a viewer. */
-export function viewerSummary(pagesViewed: number, timeMs: number, sessions: number, msByPage: Record<string, number>): string {
-  const parts = [`Viewed ${pagesViewed} ${pagesViewed === 1 ? "page" : "pages"}`];
+export function viewerSummary(
+  pagesViewed: number,
+  timeMs: number,
+  sessions: number,
+  msByPage: Record<string, number>,
+): string {
+  const parts = [
+    `Viewed ${pagesViewed} ${pagesViewed === 1 ? "page" : "pages"}`,
+  ];
   if (timeMs > 0) parts.push(`in ${formatDurationShort(timeMs)}`);
   let text = parts.join(" ");
   if (sessions > 1) text += ` over ${sessions} sessions`;
-  const entries = Object.entries(msByPage).filter(([, v]) => typeof v === "number" && v > 0) as Array<[string, number]>;
+  const entries = Object.entries(msByPage).filter(
+    ([, v]) => typeof v === "number" && v > 0,
+  ) as Array<[string, number]>;
   if (entries.length >= 2) {
     const [topPage, topMs] = entries.reduce((a, b) => (b[1] > a[1] ? b : a));
     const avg = entries.reduce((sum, [, v]) => sum + v, 0) / entries.length;
@@ -678,16 +833,42 @@ export function projectViewerSummary(
 
 function ChevronDown() {
   return (
-    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true" className="text-[var(--muted-2)]">
-      <path d="M6 8l4 4 4-4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 20 20"
+      fill="none"
+      aria-hidden="true"
+      className="text-[var(--muted-2)]"
+    >
+      <path
+        d="M6 8l4 4 4-4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
 function Check() {
   return (
-    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true" className="text-[var(--muted-2)]">
-      <path d="M16 6l-7 8-3-3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 20 20"
+      fill="none"
+      aria-hidden="true"
+      className="text-[var(--muted-2)]"
+    >
+      <path
+        d="M16 6l-7 8-3-3"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -735,13 +916,20 @@ function LockedViewersBlock({
         : `${count.toLocaleString()} people opened ${subject} in the last ${days} days.`;
 
   return (
-    <section className="mt-1" aria-label="Viewers" aria-busy={pending || loading}>
+    <section
+      className="mt-1"
+      aria-label="Viewers"
+      aria-busy={pending || loading}
+    >
       <div className="flex items-center gap-2 text-sm font-semibold text-[var(--fg)]">
         Viewers
         <ReadingLegendButton />
       </div>
       {pending || loading ? (
-        <div className="mt-1.5 h-4 w-64 rounded bg-[var(--panel-hover)] motion-safe:animate-pulse" aria-hidden="true" />
+        <div
+          className="mt-1.5 h-4 w-64 rounded bg-[var(--panel-hover)] motion-safe:animate-pulse"
+          aria-hidden="true"
+        />
       ) : (
         <div className="mt-1 text-sm text-[var(--muted)]">{countLine}</div>
       )}
@@ -755,14 +943,25 @@ function LockedViewersBlock({
           ].join(" ")}
         >
           {LOCKED_ROW_WIDTHS.map(([name, email, views, seen], idx) => (
-            <li key={`locked:${idx}`} className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4">
+            <li
+              key={`locked:${idx}`}
+              className="grid gap-1 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start sm:gap-x-4"
+            >
               <div className="min-w-0">
-                <div className={`h-4 max-w-full rounded bg-[var(--panel-hover)] ${name}`} />
-                <div className={`mt-1.5 h-3 max-w-full rounded bg-[var(--panel-hover)] ${email}`} />
+                <div
+                  className={`h-4 max-w-full rounded bg-[var(--panel-hover)] ${name}`}
+                />
+                <div
+                  className={`mt-1.5 h-3 max-w-full rounded bg-[var(--panel-hover)] ${email}`}
+                />
               </div>
               <div className="shrink-0">
-                <div className={`h-3 rounded bg-[var(--panel-hover)] sm:ml-auto ${views}`} />
-                <div className={`mt-1.5 h-3 rounded bg-[var(--panel-hover)] sm:ml-auto ${seen}`} />
+                <div
+                  className={`h-3 rounded bg-[var(--panel-hover)] sm:ml-auto ${views}`}
+                />
+                <div
+                  className={`mt-1.5 h-3 rounded bg-[var(--panel-hover)] sm:ml-auto ${seen}`}
+                />
               </div>
             </li>
           ))}
@@ -771,11 +970,20 @@ function LockedViewersBlock({
         {pending ? null : (
           <div className="absolute inset-0 flex items-center justify-center p-4">
             <div className="max-w-md rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 text-center shadow-lg">
-              <LockClosedIcon className="mx-auto h-5 w-5 text-[var(--muted-2)]" aria-hidden="true" />
+              <LockClosedIcon
+                className="mx-auto h-5 w-5 text-[var(--muted-2)]"
+                aria-hidden="true"
+              />
               <p className="mt-2 text-sm text-[var(--muted)]">
-                See who they are, how long they spent on each page, and the full history on Pro
+                See who they are, how long they spent on each page, and the full
+                history on Pro
               </p>
-              <Button variant="solid" size="sm" className="mt-3" onClick={onUpgrade}>
+              <Button
+                variant="solid"
+                size="sm"
+                className="mt-3"
+                onClick={onUpgrade}
+              >
                 Upgrade
               </Button>
             </div>
@@ -795,7 +1003,8 @@ function LockedViewersBlock({
  */
 export default function MetricsView({ scope }: { scope: MetricsScope }) {
   const router = useRouter();
-  const { kind, noun, nounLower, basePath, apiBase, supportsPageDetail } = scope;
+  const { kind, noun, nounLower, basePath, apiBase, supportsPageDetail } =
+    scope;
   /** Landings, the per-document ranking and the DOCUMENTS card exist only on the project scope. */
   const isProject = kind === "project";
   /**
@@ -806,9 +1015,15 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    * "Document" or "Project" until it landed. The remembered name (`entityTitles`) covers that gap;
    * the payload still overwrites it when it arrives.
    */
-  const { name: remembered } = useHeaderName(scope.kind === "project" ? "project" : "doc", scope.id);
+  const { name: remembered } = useHeaderName(
+    scope.kind === "project" ? "project" : "doc",
+    scope.id,
+  );
   // The same shared read the header uses, for its page count: coverage needs a denominator.
-  const { identity: docIdentity } = useEntityIdentity(scope.kind === "project" ? "project" : "doc", scope.id);
+  const { identity: docIdentity } = useEntityIdentity(
+    scope.kind === "project" ? "project" : "doc",
+    scope.id,
+  );
   const [resourceTitle, setResourceTitle] = useState<string>("");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [liveLoading, setLoading] = useState(false);
@@ -845,11 +1060,21 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
   const [anonViewersModalPage, setAnonViewersModalPage] = useState(0);
   const [days, setDays] = useState(15);
   /**
-   * Bumped when a recipient's volunteered identity changes under this page (see the realtime
-   * effect below). It is a dependency of the loader, so a bump refetches both payloads — the
-   * cheapest correct answer, given that a rename moves names, counts and groupings at once.
+   * Bumped when someone arrives under this page, or a reader here changes their name (see the
+   * realtime effect below). It is a dependency of the loader, so a bump refetches both payloads —
+   * the cheapest correct answer, given that either event moves names, counts and groupings at once.
    */
   const [identityNonce, setIdentityNonce] = useState(0);
+  /**
+   * Whether the refetch now in flight was asked for by the page or by the world.
+   *
+   * A realtime refresh runs the same loader, and the loader opens by putting the page back into
+   * its loading state — which on a live page meant every chart and list blanked to a skeleton each
+   * time someone opened the document. The numbers on screen are a few hundred milliseconds stale,
+   * not wrong; they stay up, the thin progress bar says work is happening, and the new values
+   * replace them in place.
+   */
+  const silentRefreshRef = useRef(false);
   const [rangeOpen, setRangeOpen] = useState(false);
   // Choosing a link happens on the Links page, which is the full per-link table; this page shows
   // one link (`?shareId=`) or the document. A picker and a comparison table lived here once and
@@ -877,11 +1102,16 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
   /** Set when a filtered request 404s because the link was deleted elsewhere; the scope then resets. */
   const [filterDroppedNotice, setFilterDroppedNotice] = useState(false);
   /** The scoped link's public URL: what the recipient was actually sent. */
-  const publicUrl = useMemo(() => (shareId ? scope.publicUrl(shareId) : ""), [shareId, scope]);
+  const publicUrl = useMemo(
+    () => (shareId ? scope.publicUrl(shareId) : ""),
+    [shareId, scope],
+  );
   const [urlCopied, setUrlCopied] = useState(false);
 
   /** `&shareId=…` for the selected link, or "" for "All links". */
-  const linkFilterParam = shareId ? `&shareId=${encodeURIComponent(shareId)}` : "";
+  const linkFilterParam = shareId
+    ? `&shareId=${encodeURIComponent(shareId)}`
+    : "";
   const rangeLabel = useMemo(() => `Last ${days} days`, [days]);
   const { openUpgrade } = useUpgradeModal();
   const { plan } = usePlan();
@@ -898,7 +1128,9 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
   const deepAnalytics = analyticsTier === "deep";
   // Free workspaces are clamped server-side; the response says so and the picker follows.
   const analyticsDaysLimit =
-    typeof data?.analyticsDaysLimit === "number" && Number.isFinite(data.analyticsDaysLimit) && data.analyticsDaysLimit > 0
+    typeof data?.analyticsDaysLimit === "number" &&
+    Number.isFinite(data.analyticsDaysLimit) &&
+    data.analyticsDaysLimit > 0
       ? Math.floor(data.analyticsDaysLimit)
       : null;
   const rangeOptions = useMemo(
@@ -908,35 +1140,35 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
         { label: "Last 7 days", value: 7 },
         { label: "Last 15 days", value: 15 },
         { label: "Last 30 days", value: 30 },
-      ].filter((opt) => analyticsDaysLimit === null || opt.value <= analyticsDaysLimit),
+      ].filter(
+        (opt) => analyticsDaysLimit === null || opt.value <= analyticsDaysLimit,
+      ),
     [analyticsDaysLimit],
   );
 
   useEffect(() => {
     // Snap the selected range to the plan window so the label and the data agree.
-    if (analyticsDaysLimit !== null && days > analyticsDaysLimit) setDays(analyticsDaysLimit);
+    if (analyticsDaysLimit !== null && days > analyticsDaysLimit)
+      setDays(analyticsDaysLimit);
   }, [analyticsDaysLimit, days]);
-  const [viewerDetail, setViewerDetail] = useState<
-    | null
-    | {
-        kind: "authed" | "anon";
-        key: string;
-        title: string;
-        subtitle?: string;
-        views: number;
-        pagesViewed: number;
-        pagesSeen: number[];
-        timeSpentMs: number;
-        timeOpenMs: number;
-        pageTimeMsByPage: Record<string, number>;
-        /** Project scope: the documents this person opened, longest read first. Empty on a document. */
-        docs: Array<{ docId: string; title: string | null; timeSpentMs: number }>;
-        /** Project scope: tab sessions, straight from the payload — a project has no visits route. */
-        sessions: number;
-        firstSeen: string | null;
-        lastSeen: string | null;
-      }
-  >(null);
+  const [viewerDetail, setViewerDetail] = useState<null | {
+    kind: "authed" | "anon";
+    key: string;
+    title: string;
+    subtitle?: string;
+    views: number;
+    pagesViewed: number;
+    pagesSeen: number[];
+    timeSpentMs: number;
+    timeOpenMs: number;
+    pageTimeMsByPage: Record<string, number>;
+    /** Project scope: the documents this person opened, longest read first. Empty on a document. */
+    docs: Array<{ docId: string; title: string | null; timeSpentMs: number }>;
+    /** Project scope: tab sessions, straight from the payload — a project has no visits route. */
+    sessions: number;
+    firstSeen: string | null;
+    lastSeen: string | null;
+  }>(null);
 
   /**
    * Drilled into one document from a project viewer's drawer.
@@ -946,56 +1178,82 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    * axis — page 3 of the term sheet is not page 3 of the deck). Clicking a document goes back for
    * the one row that was merged, which is where "which pages, for how long" still lives.
    */
-  const [viewerDoc, setViewerDoc] = useState<
-    | null
-    | {
-        docId: string;
-        /** Whose reading this is — see the guard in `openViewerDoc`. */
-        viewerKey: string;
-        title: string | null;
-        loading: boolean;
-        error: boolean;
-        data: {
-          pagesSeen: number[];
-          pageTimeMsByPage: Record<string, number>;
-          pagesViewed: number;
-          timeSpentMs: number;
-          sessions: number;
-          views: number;
-          lastSeen: string | null;
-        } | null;
-      }
-  >(null);
+  const [viewerDoc, setViewerDoc] = useState<null | {
+    docId: string;
+    /** Whose reading this is — see the guard in `openViewerDoc`. */
+    viewerKey: string;
+    title: string | null;
+    loading: boolean;
+    error: boolean;
+    data: {
+      pagesSeen: number[];
+      pageTimeMsByPage: Record<string, number>;
+      pagesViewed: number;
+      timeSpentMs: number;
+      sessions: number;
+      views: number;
+      lastSeen: string | null;
+    } | null;
+  }>(null);
 
   const [visitsModalOpen, setVisitsModalOpen] = useState(false);
   const [visitsLoading, setVisitsLoading] = useState(false);
   const [visitsError, setVisitsError] = useState<string | null>(null);
   const [visits, setVisits] = useState<ShareViewerVisitSummary[]>([]);
-  const [visitDetail, setVisitDetail] = useState<ShareViewerVisitDetailResponse["visit"] | null>(null);
+  const [visitDetail, setVisitDetail] = useState<
+    ShareViewerVisitDetailResponse["visit"] | null
+  >(null);
   const [visitDetailLoading, setVisitDetailLoading] = useState(false);
   const [visitDetailError, setVisitDetailError] = useState<string | null>(null);
 
-  const viewerTimeTotalMs = viewerDetail ? (viewerDetail.timeSpentMs > 0 ? viewerDetail.timeSpentMs : viewerDetail.timeOpenMs) : 0;
-  const viewerTimeApproxPrefix = viewerDetail ? (viewerDetail.timeSpentMs > 0 ? "" : "~") : "";
+  const viewerTimeTotalMs = viewerDetail
+    ? viewerDetail.timeSpentMs > 0
+      ? viewerDetail.timeSpentMs
+      : viewerDetail.timeOpenMs
+    : 0;
+  const viewerTimeApproxPrefix = viewerDetail
+    ? viewerDetail.timeSpentMs > 0
+      ? ""
+      : "~"
+    : "";
   const viewerAvgTimeMs =
-    viewerDetail && viewerTimeTotalMs > 0 ? Math.round(viewerTimeTotalMs / Math.max(1, viewerDetail.views)) : 0;
+    viewerDetail && viewerTimeTotalMs > 0
+      ? Math.round(viewerTimeTotalMs / Math.max(1, viewerDetail.views))
+      : 0;
   const viewerAvgPageMs =
     viewerDetail && viewerTimeTotalMs > 0
-      ? Math.round(viewerTimeTotalMs / Math.max(1, viewerDetail.pagesViewed || viewerDetail.pagesSeen.length || 1))
+      ? Math.round(
+          viewerTimeTotalMs /
+            Math.max(
+              1,
+              viewerDetail.pagesViewed || viewerDetail.pagesSeen.length || 1,
+            ),
+        )
       : 0;
-  const viewerHasRealPerPageTime =
-    viewerDetail ? Object.values(viewerDetail.pageTimeMsByPage ?? {}).some((v) => typeof v === "number" && Number.isFinite(v) && v > 0) : false;
+  const viewerHasRealPerPageTime = viewerDetail
+    ? Object.values(viewerDetail.pageTimeMsByPage ?? {}).some(
+        (v) => typeof v === "number" && Number.isFinite(v) && v > 0,
+      )
+    : false;
   const viewerTrackedTimeTotalMs = viewerDetail ? viewerDetail.timeSpentMs : 0;
   const viewerTrackedAvgPerViewMs =
-    viewerDetail && viewerDetail.timeSpentMs > 0 ? Math.round(viewerDetail.timeSpentMs / Math.max(1, viewerDetail.views)) : 0;
+    viewerDetail && viewerDetail.timeSpentMs > 0
+      ? Math.round(viewerDetail.timeSpentMs / Math.max(1, viewerDetail.views))
+      : 0;
   const viewerTrackedAvgPerPageMs =
     viewerDetail && viewerDetail.timeSpentMs > 0
-      ? Math.round(viewerDetail.timeSpentMs / Math.max(1, viewerDetail.pagesViewed || viewerDetail.pagesSeen.length || 1))
+      ? Math.round(
+          viewerDetail.timeSpentMs /
+            Math.max(
+              1,
+              viewerDetail.pagesViewed || viewerDetail.pagesSeen.length || 1,
+            ),
+        )
       : 0;
 
   /** Rows in the viewers card before it defers to the full list. */
-const VIEWERS_SHOWN = 8;
-const VIEWERS_PAGE_SIZE = 25;
+  const VIEWERS_SHOWN = 8;
+  const VIEWERS_PAGE_SIZE = 25;
 
   // Doc title now comes back as part of /shareviews to avoid an extra API call on load.
 
@@ -1003,7 +1261,8 @@ const VIEWERS_PAGE_SIZE = 25;
     function onPointerDown(e: MouseEvent | PointerEvent) {
       const el = rootRef.current;
       if (!el) return;
-      if (e.target instanceof Node && !el.contains(e.target)) setRangeOpen(false);
+      if (e.target instanceof Node && !el.contains(e.target))
+        setRangeOpen(false);
     }
 
     function onKeyDown(e: KeyboardEvent) {
@@ -1022,10 +1281,14 @@ const VIEWERS_PAGE_SIZE = 25;
     let cancelled = false;
 
     async function loadMetrics() {
-      setLoading(true);
+      // A live refresh keeps what is on screen; only a first load or a deliberate change (a new
+      // range, a different link) is allowed to take the page back to skeletons.
+      const silent = silentRefreshRef.current;
+      silentRefreshRef.current = false;
+      if (!silent) setLoading(true);
       setError(null);
       setViewersLoading(false);
-      setViewersLoaded(false);
+      if (!silent) setViewersLoaded(false);
       try {
         const res = await fetchWithTempUser(
           // `byLink=1&topLinks=5`, unconditionally: the ranking and `linksTotal` are document-wide
@@ -1059,18 +1322,34 @@ const VIEWERS_PAGE_SIZE = 25;
         }
         const json = (await res.json()) as unknown;
         if (cancelled) return;
-        if (!json || typeof json !== "object" || !(json as { ok?: unknown }).ok) {
+        if (
+          !json ||
+          typeof json !== "object" ||
+          !(json as { ok?: unknown }).ok
+        ) {
           throw new Error("Invalid response");
         }
         const parsed = json as MetricsResponse;
         setData(parsed);
-        const t = (typeof parsed?.docTitle === "string" ? parsed.docTitle : parsed?.projectName ?? "").trim();
+        // A silent refresh left `viewersLoaded` alone so the list would not blink out; clearing it
+        // here, once the new payload is in hand, is what makes the list follow it.
+        if (silent) setViewersLoaded(false);
+        const t = (
+          typeof parsed?.docTitle === "string"
+            ? parsed.docTitle
+            : (parsed?.projectName ?? "")
+        ).trim();
         if (!cancelled && t) {
           setResourceTitle(t);
-          rememberEntityTitle(scope.kind === "project" ? "project" : "doc", scope.id, t);
+          rememberEntityTitle(
+            scope.kind === "project" ? "project" : "doc",
+            scope.id,
+            t,
+          );
         }
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load metrics");
+        if (!cancelled)
+          setError(e instanceof Error ? e.message : "Failed to load metrics");
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -1080,13 +1359,25 @@ const VIEWERS_PAGE_SIZE = 25;
     return () => {
       cancelled = true;
     };
-  }, [apiBase, basePath, days, isProject, linkFilterParam, router, identityNonce]);
+  }, [
+    apiBase,
+    basePath,
+    days,
+    isProject,
+    linkFilterParam,
+    router,
+    identityNonce,
+  ]);
 
   /**
-   * A reader who re-answers "introduce yourself" renames themselves on a page someone may be
-   * watching right now. The app writes the new name through to that person's rows, the realtime
-   * server sees those two fields change and sends a `viewer` frame, and this is where the page
-   * acts on it — so the owner sees "Michael J" become "Michael Jay" without reloading.
+   * Someone arrived, or someone here renamed themselves — either way the page moves on its own.
+   *
+   * The arrival is the event this page is left open for: a `shareviews` (or `projectlinkviews`)
+   * row is inserted the first time a person opens the link, the realtime server broadcasts it, and
+   * the refetch here puts them at the top of Recent visitors while the owner is watching. The
+   * rename is the other half: a reader who re-answers "introduce yourself" has their new name
+   * written through to their rows (`propagateViewerIdentity`), and "Michael J" becomes "Michael
+   * Jay" without a reload.
    *
    * One rename touches every row this person owns here, so the frames arrive in a burst; the
    * timer collapses them into a single refetch. On the project scope the frame's document is not
@@ -1097,9 +1388,13 @@ const VIEWERS_PAGE_SIZE = 25;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const off = subscribeRealtime("viewer", (frame) => {
       if (frame.type !== "viewer") return;
-      if (!isProject && frame.viewer.docId && frame.viewer.docId !== scope.id) return;
+      if (!isProject && frame.viewer.docId && frame.viewer.docId !== scope.id)
+        return;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => setIdentityNonce((n) => n + 1), 400);
+      timer = setTimeout(() => {
+        silentRefreshRef.current = true;
+        setIdentityNonce((n) => n + 1);
+      }, 400);
     });
     return () => {
       if (timer) clearTimeout(timer);
@@ -1132,17 +1427,20 @@ const VIEWERS_PAGE_SIZE = 25;
             authenticatedViewers:
               typeof json?.totals?.authenticatedViewers === "number"
                 ? json.totals.authenticatedViewers
-                : (prev as any)?.totals?.authenticatedViewers ?? 0,
+                : ((prev as any)?.totals?.authenticatedViewers ?? 0),
             anonymousViewers:
               typeof json?.totals?.anonymousViewers === "number"
                 ? json.totals.anonymousViewers
-                : (prev as any)?.totals?.anonymousViewers ?? 0,
+                : ((prev as any)?.totals?.anonymousViewers ?? 0),
           };
           next.viewers = Array.isArray(json.viewers) ? json.viewers : [];
-          next.anonymousViewers = Array.isArray(json.anonymousViewers) ? json.anonymousViewers : [];
+          next.anonymousViewers = Array.isArray(json.anonymousViewers)
+            ? json.anonymousViewers
+            : [];
           // This response is the one that asked for identities, so its project-link rows carry
           // names where the first (lite) payload's could not. Take it whenever it is present.
-          if (json.projectLinkTraffic) next.projectLinkTraffic = json.projectLinkTraffic;
+          if (json.projectLinkTraffic)
+            next.projectLinkTraffic = json.projectLinkTraffic;
           return next as MetricsResponse;
         });
         setViewersLoaded(true);
@@ -1164,13 +1462,17 @@ const VIEWERS_PAGE_SIZE = 25;
    * Name slots — the breadcrumb, the line under the link's address — take this one and wait when it
    * is null, because "this link" is a phrase for a sentence, not something anyone named a link.
    */
-  const selectedLinkName = useMemo(() => (shareId ? (data?.link?.label ?? null) : null), [shareId, data]);
+  const selectedLinkName = useMemo(
+    () => (shareId ? (data?.link?.label ?? null) : null),
+    [shareId, data],
+  );
   /**
    * What a name slot shows for the link: its label, a pulse while the payload is out, and the bare
    * noun once it has come back without one — a request that failed must not leave a bar pulsing at
    * the top of the page forever.
    */
-  const selectedLinkSlot = selectedLinkName ?? (data || error ? "Link" : <CrumbSkeleton />);
+  const selectedLinkSlot =
+    selectedLinkName ?? (data || error ? "Link" : <CrumbSkeleton />);
   /** The same label for prose, where a sentence still has to say *something* about its subject. */
   const selectedLinkLabel = shareId ? (selectedLinkName ?? "this link") : null;
 
@@ -1182,11 +1484,17 @@ const VIEWERS_PAGE_SIZE = 25;
    * against the others, which is a different question than the one this card answers.
    */
   const topLinksByViewers = useMemo(
-    () => [...(data?.byLink ?? [])].sort((a, b) => b.viewers - a.viewers || b.views - a.views).slice(0, 3),
+    () =>
+      [...(data?.byLink ?? [])]
+        .sort((a, b) => b.viewers - a.viewers || b.views - a.views)
+        .slice(0, 3),
     [data],
   );
   /** Longest bar = 100%, so the bars read relative to each other, not to some absolute scale. */
-  const maxTopLinkViewers = useMemo(() => Math.max(1, ...topLinksByViewers.map((r) => r.viewers)), [topLinksByViewers]);
+  const maxTopLinkViewers = useMemo(
+    () => Math.max(1, ...topLinksByViewers.map((r) => r.viewers)),
+    [topLinksByViewers],
+  );
   /**
    * The recent-visitor strip's rows: named viewers and anonymous ones in one list, newest first.
    *
@@ -1199,7 +1507,8 @@ const VIEWERS_PAGE_SIZE = 25;
    * The denominator for coverage: how many pages this document has. Documents only — a project's
    * unit is documents opened, which has no fixed total worth dividing by.
    */
-  const docTotalPages = scope.kind === "doc" ? docIdentity?.pages ?? null : null;
+  const docTotalPages =
+    scope.kind === "doc" ? (docIdentity?.pages ?? null) : null;
 
   /**
    * Every reader of this resource in one list: signed in, anonymous, and arrived through a project.
@@ -1209,178 +1518,275 @@ const VIEWERS_PAGE_SIZE = 25;
    * looking. What actually differs between them is carried on the row instead: whether a name is
    * known, the depth badge, and the project chip.
    */
-  const allViewerRows = useMemo(() => {
-    type Row = {
+  /**
+   * Every reader of this resource, one row per person — whichever links they used.
+   *
+   * Both lists on this page read from here, which is the point. They were two builders walking the
+   * same three arrays, and they drifted: the strip forgot to pass the document's page count, so the
+   * same reading was READ in one list and STARTED in the other.
+   *
+   * Merging matters beyond tidiness. A recipient sent a data room and then a direct link to one
+   * file in it writes rows under two keys — a project row is stored as `<digest>.<docId>`, a
+   * document row as the bare `<digest>` — and the document's figures deliberately exclude project
+   * slugs (`docScope.ts`). Left alone, one person appears twice, under the same name, with two
+   * different verdicts and two different destinations, on the page built to answer "who read
+   * this?". They are one person here, keyed by user id, then email, then device digest, with their
+   * pages unioned rather than added: someone who read pages 1-3 through both links read three
+   * pages, not six.
+   */
+  const people = useMemo(() => {
+    type Person = {
       key: string;
-      title: string;
-      subtitle: string | null;
-      stats: string;
+      name: string | null;
+      email: string | null;
+      views: number;
       timeMs: number;
-      pages: number | null;
+      /** Doc scope: the pages themselves, so two reads merge by union. Project scope: unused. */
+      pages: Set<number>;
+      /** Doc scope, when only a count came back. Project scope: documents opened. */
+      pageCount: number;
+      firstSeen: string | null;
       lastSeen: string | null;
-      via: string | null;
+      /** The projects they came through, if any — one chip each, deduped. */
+      vias: Array<{ name: string; href: string | null }>;
+      /** Their page here, preferred over a project's when they read this document's own links. */
       href: string | null;
-      hint?: string;
+      /** Their page inside a project, used when this document has nothing of its own to show. */
+      viaViewerHref: string | null;
+      openedNothing: boolean;
     };
-    const rows: Row[] = [];
-    const countsLine = (views: number, pages: number | null, timeMs: number) =>
-      [
-        `${views.toLocaleString()} ${views === 1 ? "view" : "views"}`,
-        pages && pages > 0 ? `${pages} ${pages === 1 ? "page" : "pages"}` : null,
-        timeMs > 0 ? formatDurationShort(timeMs) : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
+    const byKey = new Map<string, Person>();
+    const blank = (key: string): Person => ({
+      key,
+      name: null,
+      email: null,
+      views: 0,
+      timeMs: 0,
+      pages: new Set<number>(),
+      pageCount: 0,
+      firstSeen: null,
+      lastSeen: null,
+      vias: [],
+      href: null,
+      viaViewerHref: null,
+      openedNothing: false,
+    });
+    /**
+     * Who this row belongs to, across links and devices.
+     *
+     * Signed in, they are their account. Otherwise an email joins the same person on two devices —
+     * the identity a sender actually recognises, and the same rule the workspace list uses. Failing
+     * both, the browser digest, which is per-device by construction.
+     */
+    const identify = (
+      userId?: string | null,
+      email?: string | null,
+      digest?: string | null,
+    ): string | null => {
+      const id = (userId ?? "").trim();
+      if (id) return `u:${id}`;
+      const mail = (email ?? "").trim().toLowerCase();
+      if (mail) return `e:${mail}`;
+      const key = (digest ?? "").trim();
+      return key ? `a:${key}` : null;
+    };
+    const absorb = (
+      key: string,
+      patch: Partial<Person> & { pagesSeen?: number[] | null },
+    ) => {
+      const p = byKey.get(key) ?? blank(key);
+      p.name = p.name || patch.name || null;
+      p.email = p.email || patch.email || null;
+      p.views += patch.views ?? 0;
+      p.timeMs += patch.timeMs ?? 0;
+      for (const page of patch.pagesSeen ?? [])
+        if (Number.isFinite(page)) p.pages.add(Math.floor(page));
+      p.pageCount = Math.max(p.pageCount, patch.pageCount ?? 0);
+      if (patch.firstSeen && (!p.firstSeen || patch.firstSeen < p.firstSeen))
+        p.firstSeen = patch.firstSeen;
+      if (patch.lastSeen && (!p.lastSeen || patch.lastSeen > p.lastSeen))
+        p.lastSeen = patch.lastSeen;
+      for (const via of patch.vias ?? [])
+        if (!p.vias.some((v) => v.name === via.name)) p.vias.push(via);
+      p.href = p.href ?? patch.href ?? null;
+      p.viaViewerHref = p.viaViewerHref ?? patch.viaViewerHref ?? null;
+      p.openedNothing = p.openedNothing || Boolean(patch.openedNothing);
+      byKey.set(key, p);
+    };
 
     for (const v of data?.viewers ?? []) {
-      const name = (v.name ?? "").trim();
-      const email = (v.email ?? "").trim();
-      const pages = scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0);
-      rows.push({
-        key: `u:${v.userId}`,
-        title: name || email || "Signed-in user",
-        subtitle: name && email ? email : null,
-        stats: countsLine(v.views ?? 0, pages, v.timeSpentMs ?? 0),
+      const key = identify(v.userId, v.email, null);
+      if (!key) continue;
+      absorb(key, {
+        name: (v.name ?? "").trim() || null,
+        email: (v.email ?? "").trim() || null,
+        views: v.views ?? 0,
         timeMs: v.timeSpentMs ?? 0,
-        pages,
+        pagesSeen: scope.kind === "project" ? null : (v.pagesSeen ?? null),
+        pageCount:
+          scope.kind === "project"
+            ? (v.docsOpened ?? 0)
+            : (v.pagesViewed ?? v.pagesSeen?.length ?? 0),
         lastSeen: v.lastSeen,
-        via: null,
+        openedNothing: Boolean(v.openedNothing),
         href: `${basePath}/metrics/viewer/${viewerRouteKey("authed", v.userId)}`,
-        hint: "See what they read",
       });
     }
 
     for (const v of data?.anonymousViewers ?? []) {
-      const name = (v.name ?? "").trim();
-      const email = (v.email ?? "").trim();
-      const pages = scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0);
-      rows.push({
-        key: `a:${v.botIdHash}`,
-        title: name || email || "Anonymous viewer",
-        subtitle: name && email ? email : v.firstSeen ? `First seen ${formatDateTime(v.firstSeen)}` : null,
-        stats: countsLine(v.views ?? 0, pages, v.timeSpentMs ?? 0),
+      const key = identify(null, v.email, v.botIdHash);
+      if (!key) continue;
+      absorb(key, {
+        name: (v.name ?? "").trim() || null,
+        email: (v.email ?? "").trim() || null,
+        views: v.views ?? 0,
         timeMs: v.timeSpentMs ?? 0,
-        pages,
+        pagesSeen: scope.kind === "project" ? null : (v.pagesSeen ?? null),
+        pageCount:
+          scope.kind === "project"
+            ? (v.docsOpened ?? 0)
+            : (v.pagesViewed ?? v.pagesSeen?.length ?? 0),
+        firstSeen: v.firstSeen ?? null,
         lastSeen: v.lastSeen,
-        via: null,
+        openedNothing: Boolean(v.openedNothing),
         href: `${basePath}/metrics/viewer/${viewerRouteKey("anon", v.botIdHash)}`,
-        hint: "See what they read",
       });
     }
 
-    // A project reader's page lives in the project that counts the reading, not here — so the row
-    // links straight there rather than dropping you on that project's index to find them again.
-    for (const [i, v] of (data?.projectLinkTraffic?.viewerRows ?? []).entries()) {
-      const name = (v.viewerName ?? "").trim();
-      const email = (v.viewerEmail ?? "").trim();
-      rows.push({
-        key: `p:${v.shareId}:${i}`,
-        title: name || email || "Anonymous viewer",
-        subtitle: name && email ? email : null,
-        stats: countsLine(v.views ?? 0, v.pagesViewed ?? null, v.timeSpentMs ?? 0),
-        timeMs: v.timeSpentMs ?? 0,
-        pages: v.pagesViewed ?? null,
-        lastSeen: v.lastViewedAt,
-        via: v.projectName || "Project",
-        href: v.viewerHref ?? (v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null),
-        hint: v.viewerHref
-          ? `See what they read — counted with ${v.projectName || "that project"}`
-          : `Counted with ${v.projectName || "that project"} — see its metrics`,
-      });
-    }
-
-    return rows.sort((a, b) => new Date(b.lastSeen ?? 0).getTime() - new Date(a.lastSeen ?? 0).getTime());
-  }, [data?.viewers, data?.anonymousViewers, data?.projectLinkTraffic, scope.kind, basePath]);
-
-  const recentVisitors = useMemo(() => {
-    const rows: RecentVisitor[] = [];
-    const describe = (v: {
-      pagesViewed?: number;
-      docsOpened?: number;
-      timeSpentMs?: number;
-      views?: number;
-      openedNothing?: boolean;
-    }): string | null => {
-      if (v.openedNothing) return "opened nothing";
-      const parts: string[] = [];
-      if (scope.kind === "project" && typeof v.docsOpened === "number" && v.docsOpened > 0) {
-        parts.push(`${v.docsOpened} ${v.docsOpened === 1 ? "document" : "documents"}`);
-      } else if (typeof v.pagesViewed === "number" && v.pagesViewed > 0) {
-        parts.push(`${v.pagesViewed} ${v.pagesViewed === 1 ? "page" : "pages"}`);
-      }
-      if (typeof v.timeSpentMs === "number" && v.timeSpentMs > 0) parts.push(formatDurationShort(v.timeSpentMs));
-      return parts.length ? parts.join(" · ") : null;
-    };
-
-    for (const v of data?.viewers ?? []) {
-      rows.push({
-        key: `u:${v.userId}`,
-        name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
-        lastSeen: v.lastSeen,
-        detail: describe(v),
-        timeMs: v.timeSpentMs ?? 0,
-        pages: scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0),
-        totalPages: docTotalPages,
-        // Straight to the reader's own page — no intermediate peek. The row and the tables below
-        // now lead to the same address rather than to two different depths of the same story.
-        href: `${basePath}/metrics/viewer/${viewerRouteKey("authed", v.userId)}`,
-      });
-    }
     /**
      * Readers who came through a project link belong in this list too.
      *
      * Their reads are attributed to the project, which is why they are absent from `viewers` — but
      * "who read this document" answered without them is a lie by omission: Tester Dude read this
-     * deck, through a project, and was nowhere on its page. They are marked with the project they
-     * came through, since that is where their numbers are counted.
+     * deck, through a project, and was nowhere on its page. The chip says where the reading is
+     * counted; the row is still one person.
      */
     for (const v of data?.projectLinkTraffic?.viewerRows ?? []) {
-      const label = (v.viewerName ?? "").trim() || (v.viewerEmail ?? "").trim() || null;
-      rows.push({
-        key: `p:${v.shareId}:${label ?? "anon"}:${v.lastViewedAt ?? ""}`,
-        name: label,
-        lastSeen: v.lastViewedAt,
-        detail: describe({ timeSpentMs: v.timeSpentMs, views: v.views }),
-        via: v.projectName || "Project",
-        viaHref: v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null,
+      // `u_<id>` / `a_<digest>` — the same digest a document link stores bare, so the two halves
+      // of one reader meet here rather than becoming two rows.
+      const routeKey = (v.viewerKey ?? "").trim();
+      const key =
+        identify(
+          routeKey.startsWith("u_") ? routeKey.slice(2) : null,
+          v.viewerEmail,
+          routeKey.startsWith("a_") ? routeKey.slice(2) : null,
+        ) ?? `p:${v.shareId}`;
+      absorb(key, {
+        name: (v.viewerName ?? "").trim() || null,
+        email: (v.viewerEmail ?? "").trim() || null,
+        views: v.views ?? 0,
         timeMs: v.timeSpentMs ?? 0,
-        pages: v.pagesViewed ?? null,
-        /**
-         * The same denominator the list below uses.
-         *
-         * Without it the two lists disagreed about the same person in the same window: this strip
-         * called Steve READ and the Viewers table called him STARTED, off one reading of one page
-         * of a nine-page deck — because coverage is only judged when the page count is known, and
-         * only this loop was leaving it out.
-         */
-        totalPages: docTotalPages,
-        // Their reading is recorded against the project, so their page is the one over there.
-        href: v.viewerHref ?? (v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null),
-        hint: v.viewerHref ? "See what they read" : `See ${v.projectName || "that project"}'s metrics`,
+        pagesSeen: scope.kind === "project" ? null : (v.pagesSeen ?? null),
+        pageCount: scope.kind === "project" ? 0 : (v.pagesViewed ?? 0),
+        lastSeen: v.lastViewedAt,
+        vias: [
+          {
+            name: v.projectName || "Project",
+            href: v.projectId
+              ? `/project/${encodeURIComponent(v.projectId)}/metrics`
+              : null,
+          },
+        ],
+        viaViewerHref: v.viewerHref ?? null,
       });
     }
 
-    for (const v of data?.anonymousViewers ?? []) {
-      rows.push({
-        // A volunteered name on an anonymous device is still a name worth showing.
-        key: `a:${v.botIdHash}`,
-        name: (v.name ?? "").trim() || (v.email ?? "").trim() || null,
-        lastSeen: v.lastSeen,
-        detail: describe(v),
-        timeMs: v.timeSpentMs ?? 0,
-        pages: scope.kind === "project" ? v.docsOpened ?? 0 : v.pagesViewed ?? (v.pagesSeen?.length ?? 0),
-        totalPages: docTotalPages,
-        href: `${basePath}/metrics/viewer/${viewerRouteKey("anon", v.botIdHash)}`,
-      });
-    }
-    return rows;
-  }, [data?.viewers, data?.anonymousViewers, data?.projectLinkTraffic, scope.kind, docTotalPages, basePath]);
+    return [...byKey.values()]
+      .map((p) => ({
+        ...p,
+        /** Pages actually reached, unioned where the arrays came back and counted where they did not. */
+        pagesViewed: p.pages.size > 0 ? p.pages.size : p.pageCount,
+      }))
+      .sort(
+        (a, b) =>
+          new Date(b.lastSeen ?? 0).getTime() -
+          new Date(a.lastSeen ?? 0).getTime(),
+      );
+  }, [
+    data?.viewers,
+    data?.anonymousViewers,
+    data?.projectLinkTraffic,
+    scope.kind,
+    basePath,
+  ]);
+
+  /** Every reader in one table, newest first — the list under the charts. */
+  const allViewerRows = useMemo(() => {
+    const countsLine = (views: number, pages: number | null, timeMs: number) =>
+      [
+        `${views.toLocaleString()} ${views === 1 ? "view" : "views"}`,
+        pages && pages > 0
+          ? scope.kind === "project"
+            ? `${pages} ${pages === 1 ? "document" : "documents"}`
+            : `${pages} ${pages === 1 ? "page" : "pages"}`
+          : null,
+        timeMs > 0 ? formatDurationShort(timeMs) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+    return people.map((p) => {
+      const title =
+        p.name ||
+        p.email ||
+        (p.key.startsWith("u:") ? "Signed-in user" : "Anonymous viewer");
+      return {
+        key: p.key,
+        title,
+        subtitle:
+          p.email && title !== p.email
+            ? p.email
+            : p.firstSeen
+              ? `First seen ${formatDateTime(p.firstSeen)}`
+              : null,
+        stats: countsLine(p.views, p.pagesViewed, p.timeMs),
+        timeMs: p.timeMs,
+        pages: p.pagesViewed,
+        lastSeen: p.lastSeen,
+        vias: p.vias,
+        href: p.href ?? p.viaViewerHref ?? p.vias[0]?.href ?? null,
+        hint: p.href || p.viaViewerHref ? "See what they read" : undefined,
+      };
+    });
+  }, [people, scope.kind]);
+
+  /** The same people, shaped for the strip at the top of the page. */
+  const recentVisitors = useMemo(
+    (): RecentVisitor[] =>
+      people.map((p) => {
+        const parts: string[] = [];
+        if (p.openedNothing) parts.push("opened nothing");
+        else if (p.pagesViewed > 0) {
+          parts.push(
+            scope.kind === "project"
+              ? `${p.pagesViewed} ${p.pagesViewed === 1 ? "document" : "documents"}`
+              : `${p.pagesViewed} ${p.pagesViewed === 1 ? "page" : "pages"}`,
+          );
+        }
+        if (p.timeMs > 0) parts.push(formatDurationShort(p.timeMs));
+        return {
+          key: p.key,
+          name: p.name || p.email || null,
+          lastSeen: p.lastSeen,
+          detail: parts.length ? parts.join(" · ") : null,
+          timeMs: p.timeMs,
+          pages: p.pagesViewed,
+          totalPages: docTotalPages,
+          vias: p.vias,
+          href: p.href ?? p.viaViewerHref ?? p.vias[0]?.href ?? null,
+          hint: p.href || p.viaViewerHref ? "See what they read" : undefined,
+        };
+      }),
+    [people, scope.kind, docTotalPages],
+  );
 
   const recentlyOpenedLinks = useMemo(
     () =>
       [...(data?.byLink ?? [])]
         .filter((r) => Boolean(r.lastViewedAt))
-        .sort((a, b) => Date.parse(b.lastViewedAt!) - Date.parse(a.lastViewedAt!))
+        .sort(
+          (a, b) => Date.parse(b.lastViewedAt!) - Date.parse(a.lastViewedAt!),
+        )
         .slice(0, 3),
     [data],
   );
@@ -1393,15 +1799,23 @@ const VIEWERS_PAGE_SIZE = 25;
    * Unlike the links lists this one survives a `?shareId=` filter (see `byDoc` above).
    */
   const topDocsByViewers = useMemo(
-    () => [...(data?.byDoc ?? [])].sort((a, b) => b.viewers - a.viewers).slice(0, 3),
+    () =>
+      [...(data?.byDoc ?? [])]
+        .sort((a, b) => b.viewers - a.viewers)
+        .slice(0, 3),
     [data],
   );
-  const maxTopDocViewers = useMemo(() => Math.max(1, ...topDocsByViewers.map((r) => r.viewers)), [topDocsByViewers]);
+  const maxTopDocViewers = useMemo(
+    () => Math.max(1, ...topDocsByViewers.map((r) => r.viewers)),
+    [topDocsByViewers],
+  );
   const recentlyOpenedDocs = useMemo(
     () =>
       [...(data?.byDoc ?? [])]
         .filter((r) => Boolean(r.lastViewedAt))
-        .sort((a, b) => Date.parse(b.lastViewedAt!) - Date.parse(a.lastViewedAt!))
+        .sort(
+          (a, b) => Date.parse(b.lastViewedAt!) - Date.parse(a.lastViewedAt!),
+        )
         .slice(0, 3),
     [data],
   );
@@ -1432,7 +1846,10 @@ const VIEWERS_PAGE_SIZE = 25;
    * document, distinct documents for a project. One variable, because the tile prints it in one
    * place and only the noun beside it changes.
    */
-  const pagesViewed = (supportsPageDetail ? data?.totals?.pagesViewed : data?.totals?.docsOpened) ?? 0;
+  const pagesViewed =
+    (supportsPageDetail
+      ? data?.totals?.pagesViewed
+      : data?.totals?.docsOpened) ?? 0;
   const authedViewers = data?.totals?.authenticatedViewers ?? 0;
   const anonViewers = data?.totals?.anonymousViewers ?? 0;
   // Unique people in the window; the basic tier's only per-viewer fact. Older responses lack it.
@@ -1443,7 +1860,9 @@ const VIEWERS_PAGE_SIZE = 25;
   const downloadsEnabled = Boolean(data?.downloadsEnabled);
   const series = Array.isArray(data?.series) ? data!.series : [];
   const hasData = Boolean(data && data.ok);
-  const anonymousViewersList = Array.isArray(data?.anonymousViewers) ? data!.anonymousViewers : [];
+  const anonymousViewersList = Array.isArray(data?.anonymousViewers)
+    ? data!.anonymousViewers
+    : [];
   /**
    * Readings that arrived through a project link. Kept out of every total on this page on purpose
    * (see the field's comment on `MetricsResponse`) — which is exactly why it has to be *said*
@@ -1452,9 +1871,13 @@ const VIEWERS_PAGE_SIZE = 25;
    */
   const projectLinkTraffic = data?.projectLinkTraffic ?? null;
   const chartSeries = series.map((s) => ({ date: s.date }));
-  const viewsSeries = series.map((s) => (typeof s.views === "number" && Number.isFinite(s.views) ? s.views : 0));
+  const viewsSeries = series.map((s) =>
+    typeof s.views === "number" && Number.isFinite(s.views) ? s.views : 0,
+  );
   const downloadsSeries = series.map((s) =>
-    typeof s.downloads === "number" && Number.isFinite(s.downloads) ? s.downloads : 0,
+    typeof s.downloads === "number" && Number.isFinite(s.downloads)
+      ? s.downloads
+      : 0,
   );
 
   const authedViewersList = Array.isArray(data?.viewers) ? data!.viewers : [];
@@ -1462,43 +1885,85 @@ const VIEWERS_PAGE_SIZE = 25;
   const anonViewersTop = anonymousViewersList.slice(0, 5);
 
   const authedModalTotal = authedViewersList.length;
-  const authedModalPages = Math.max(1, Math.ceil(authedModalTotal / VIEWERS_PAGE_SIZE));
-  const authedModalPageSafe = Math.min(Math.max(0, authedViewersModalPage), authedModalPages - 1);
-  const authedModalStart = authedModalTotal ? authedModalPageSafe * VIEWERS_PAGE_SIZE : 0;
-  const authedModalEnd = authedModalTotal ? Math.min(authedModalStart + VIEWERS_PAGE_SIZE, authedModalTotal) : 0;
-  const authedModalItems = authedViewersList.slice(authedModalStart, authedModalEnd);
+  const authedModalPages = Math.max(
+    1,
+    Math.ceil(authedModalTotal / VIEWERS_PAGE_SIZE),
+  );
+  const authedModalPageSafe = Math.min(
+    Math.max(0, authedViewersModalPage),
+    authedModalPages - 1,
+  );
+  const authedModalStart = authedModalTotal
+    ? authedModalPageSafe * VIEWERS_PAGE_SIZE
+    : 0;
+  const authedModalEnd = authedModalTotal
+    ? Math.min(authedModalStart + VIEWERS_PAGE_SIZE, authedModalTotal)
+    : 0;
+  const authedModalItems = authedViewersList.slice(
+    authedModalStart,
+    authedModalEnd,
+  );
 
   const anonModalTotal = anonymousViewersList.length;
-  const anonModalPages = Math.max(1, Math.ceil(anonModalTotal / VIEWERS_PAGE_SIZE));
-  const anonModalPageSafe = Math.min(Math.max(0, anonViewersModalPage), anonModalPages - 1);
-  const anonModalStart = anonModalTotal ? anonModalPageSafe * VIEWERS_PAGE_SIZE : 0;
-  const anonModalEnd = anonModalTotal ? Math.min(anonModalStart + VIEWERS_PAGE_SIZE, anonModalTotal) : 0;
-  const anonModalItems = anonymousViewersList.slice(anonModalStart, anonModalEnd);
+  const anonModalPages = Math.max(
+    1,
+    Math.ceil(anonModalTotal / VIEWERS_PAGE_SIZE),
+  );
+  const anonModalPageSafe = Math.min(
+    Math.max(0, anonViewersModalPage),
+    anonModalPages - 1,
+  );
+  const anonModalStart = anonModalTotal
+    ? anonModalPageSafe * VIEWERS_PAGE_SIZE
+    : 0;
+  const anonModalEnd = anonModalTotal
+    ? Math.min(anonModalStart + VIEWERS_PAGE_SIZE, anonModalTotal)
+    : 0;
+  const anonModalItems = anonymousViewersList.slice(
+    anonModalStart,
+    anonModalEnd,
+  );
 
   function openAuthedViewerDetail(v: MetricsResponse["viewers"][number]) {
     const name = typeof v.name === "string" ? v.name.trim() : "";
     const email = typeof v.email === "string" ? v.email.trim() : "";
     const title = name || email || "Signed-in user";
     const shortId = formatShortId(v.userId);
-    const subtitle = name && email ? email : !email && shortId ? `User ID ${shortId}` : undefined;
+    const subtitle =
+      name && email
+        ? email
+        : !email && shortId
+          ? `User ID ${shortId}`
+          : undefined;
     const pagesSeen = Array.isArray(v.pagesSeen)
       ? v.pagesSeen
-          .filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1)
+          .filter(
+            (n): n is number =>
+              typeof n === "number" && Number.isFinite(n) && n >= 1,
+          )
           .map((n) => Math.floor(n))
           .sort((a, b) => a - b)
       : [];
     const pagesViewed =
-      typeof v.pagesViewed === "number" && Number.isFinite(v.pagesViewed) ? Math.max(0, Math.floor(v.pagesViewed)) : pagesSeen.length;
+      typeof v.pagesViewed === "number" && Number.isFinite(v.pagesViewed)
+        ? Math.max(0, Math.floor(v.pagesViewed))
+        : pagesSeen.length;
     const timeSpentMs =
-      typeof v.timeSpentMs === "number" && Number.isFinite(v.timeSpentMs) ? Math.max(0, Math.floor(v.timeSpentMs)) : 0;
+      typeof v.timeSpentMs === "number" && Number.isFinite(v.timeSpentMs)
+        ? Math.max(0, Math.floor(v.timeSpentMs))
+        : 0;
     const firstSeenIso = v.firstSeen ?? null;
     const lastSeenIso = v.lastSeen ?? null;
     const firstMs = parseIsoMs(firstSeenIso);
     const lastMs = parseIsoMs(lastSeenIso);
     const timeOpenMs =
-      timeSpentMs > 0 || firstMs === null || lastMs === null ? 0 : Math.max(0, Math.min(24 * 60 * 60 * 1000, lastMs - firstMs));
+      timeSpentMs > 0 || firstMs === null || lastMs === null
+        ? 0
+        : Math.max(0, Math.min(24 * 60 * 60 * 1000, lastMs - firstMs));
     const pageTimeMsByPage =
-      v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object" ? (v.pageTimeMsByPage as Record<string, number>) : {};
+      v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object"
+        ? (v.pageTimeMsByPage as Record<string, number>)
+        : {};
     // The drill-down belongs to whoever's drawer is open; a new one starts at the top.
     setViewerDoc(null);
     setViewerDetail({
@@ -1506,7 +1971,10 @@ const VIEWERS_PAGE_SIZE = 25;
       key: v.userId,
       title,
       subtitle,
-      views: typeof v.views === "number" && Number.isFinite(v.views) ? Math.max(0, Math.floor(v.views)) : 0,
+      views:
+        typeof v.views === "number" && Number.isFinite(v.views)
+          ? Math.max(0, Math.floor(v.views))
+          : 0,
       pagesViewed,
       pagesSeen,
       timeSpentMs,
@@ -1514,7 +1982,10 @@ const VIEWERS_PAGE_SIZE = 25;
       pageTimeMsByPage,
       // Project-only, and empty on a document: the drawer swaps the per-page chart for these.
       docs: Array.isArray(v.docs) ? v.docs : [],
-      sessions: typeof v.sessions === "number" && Number.isFinite(v.sessions) ? Math.max(0, Math.floor(v.sessions)) : 0,
+      sessions:
+        typeof v.sessions === "number" && Number.isFinite(v.sessions)
+          ? Math.max(0, Math.floor(v.sessions))
+          : 0,
       firstSeen: firstSeenIso,
       lastSeen: lastSeenIso,
     });
@@ -1537,7 +2008,14 @@ const VIEWERS_PAGE_SIZE = 25;
      * cannot have.
      */
     const viewerKey = viewerDetail.key;
-    setViewerDoc({ docId: d.docId, viewerKey, title: d.title, loading: true, error: false, data: null });
+    setViewerDoc({
+      docId: d.docId,
+      viewerKey,
+      title: d.title,
+      loading: true,
+      error: false,
+      data: null,
+    });
     const who =
       viewerDetail.kind === "authed"
         ? `userId=${encodeURIComponent(viewerKey)}`
@@ -1557,51 +2035,82 @@ const VIEWERS_PAGE_SIZE = 25;
                 loading: false,
                 title: typeof json.title === "string" ? json.title : prev.title,
                 data: {
-                  pagesSeen: Array.isArray(json.pagesSeen) ? json.pagesSeen.filter((n: unknown) => typeof n === "number") : [],
+                  pagesSeen: Array.isArray(json.pagesSeen)
+                    ? json.pagesSeen.filter(
+                        (n: unknown) => typeof n === "number",
+                      )
+                    : [],
                   pageTimeMsByPage:
-                    json.pageTimeMsByPage && typeof json.pageTimeMsByPage === "object" ? json.pageTimeMsByPage : {},
-                  pagesViewed: typeof json.pagesViewed === "number" ? json.pagesViewed : 0,
-                  timeSpentMs: typeof json.timeSpentMs === "number" ? json.timeSpentMs : 0,
-                  sessions: typeof json.sessions === "number" ? json.sessions : 0,
+                    json.pageTimeMsByPage &&
+                    typeof json.pageTimeMsByPage === "object"
+                      ? json.pageTimeMsByPage
+                      : {},
+                  pagesViewed:
+                    typeof json.pagesViewed === "number" ? json.pagesViewed : 0,
+                  timeSpentMs:
+                    typeof json.timeSpentMs === "number" ? json.timeSpentMs : 0,
+                  sessions:
+                    typeof json.sessions === "number" ? json.sessions : 0,
                   views: typeof json.views === "number" ? json.views : 0,
-                  lastSeen: typeof json.lastSeen === "string" ? json.lastSeen : null,
+                  lastSeen:
+                    typeof json.lastSeen === "string" ? json.lastSeen : null,
                 },
               }
             : prev,
         );
       } catch {
         setViewerDoc((prev) =>
-          prev && prev.docId === d.docId && prev.viewerKey === viewerKey ? { ...prev, loading: false, error: true } : prev,
+          prev && prev.docId === d.docId && prev.viewerKey === viewerKey
+            ? { ...prev, loading: false, error: true }
+            : prev,
         );
       }
     })();
   }
 
-  function openAnonViewerDetail(v: NonNullable<MetricsResponse["anonymousViewers"]>[number]) {
+  function openAnonViewerDetail(
+    v: NonNullable<MetricsResponse["anonymousViewers"]>[number],
+  ) {
     const botIdHash = typeof v.botIdHash === "string" ? v.botIdHash : "";
     const shortId = formatShortId(botIdHash);
-    const name = typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
-    const email = typeof (v as any).email === "string" ? String((v as any).email).trim() : "";
+    const name =
+      typeof (v as any).name === "string" ? String((v as any).name).trim() : "";
+    const email =
+      typeof (v as any).email === "string"
+        ? String((v as any).email).trim()
+        : "";
     const title = name || email || "Anonymous viewer";
-    const subtitle = name && email ? email : shortId ? `Device ${shortId}` : undefined;
+    const subtitle =
+      name && email ? email : shortId ? `Device ${shortId}` : undefined;
     const pagesSeen = Array.isArray(v.pagesSeen)
       ? v.pagesSeen
-          .filter((n): n is number => typeof n === "number" && Number.isFinite(n) && n >= 1)
+          .filter(
+            (n): n is number =>
+              typeof n === "number" && Number.isFinite(n) && n >= 1,
+          )
           .map((n) => Math.floor(n))
           .sort((a, b) => a - b)
       : [];
     const pagesViewed =
-      typeof v.pagesViewed === "number" && Number.isFinite(v.pagesViewed) ? Math.max(0, Math.floor(v.pagesViewed)) : pagesSeen.length;
+      typeof v.pagesViewed === "number" && Number.isFinite(v.pagesViewed)
+        ? Math.max(0, Math.floor(v.pagesViewed))
+        : pagesSeen.length;
     const timeSpentMs =
-      typeof v.timeSpentMs === "number" && Number.isFinite(v.timeSpentMs) ? Math.max(0, Math.floor(v.timeSpentMs)) : 0;
+      typeof v.timeSpentMs === "number" && Number.isFinite(v.timeSpentMs)
+        ? Math.max(0, Math.floor(v.timeSpentMs))
+        : 0;
     const firstSeenIso = v.firstSeen ?? null;
     const lastSeenIso = v.lastSeen ?? null;
     const firstMs = parseIsoMs(firstSeenIso);
     const lastMs = parseIsoMs(lastSeenIso);
     const timeOpenMs =
-      timeSpentMs > 0 || firstMs === null || lastMs === null ? 0 : Math.max(0, Math.min(24 * 60 * 60 * 1000, lastMs - firstMs));
+      timeSpentMs > 0 || firstMs === null || lastMs === null
+        ? 0
+        : Math.max(0, Math.min(24 * 60 * 60 * 1000, lastMs - firstMs));
     const pageTimeMsByPage =
-      v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object" ? (v.pageTimeMsByPage as Record<string, number>) : {};
+      v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object"
+        ? (v.pageTimeMsByPage as Record<string, number>)
+        : {};
     // The drill-down belongs to whoever's drawer is open; a new one starts at the top.
     setViewerDoc(null);
     setViewerDetail({
@@ -1609,7 +2118,10 @@ const VIEWERS_PAGE_SIZE = 25;
       key: botIdHash || "anon",
       title,
       subtitle,
-      views: typeof v.views === "number" && Number.isFinite(v.views) ? Math.max(0, Math.floor(v.views)) : 0,
+      views:
+        typeof v.views === "number" && Number.isFinite(v.views)
+          ? Math.max(0, Math.floor(v.views))
+          : 0,
       pagesViewed,
       pagesSeen,
       timeSpentMs,
@@ -1617,7 +2129,10 @@ const VIEWERS_PAGE_SIZE = 25;
       pageTimeMsByPage,
       // Project-only, and empty on a document: the drawer swaps the per-page chart for these.
       docs: Array.isArray(v.docs) ? v.docs : [],
-      sessions: typeof v.sessions === "number" && Number.isFinite(v.sessions) ? Math.max(0, Math.floor(v.sessions)) : 0,
+      sessions:
+        typeof v.sessions === "number" && Number.isFinite(v.sessions)
+          ? Math.max(0, Math.floor(v.sessions))
+          : 0,
       firstSeen: firstSeenIso,
       lastSeen: lastSeenIso,
     });
@@ -1627,7 +2142,9 @@ const VIEWERS_PAGE_SIZE = 25;
     const m = visit.pageVisitCountByPage ?? {};
     return (visit.pagesSeen ?? []).reduce((acc, p) => {
       const c = m[String(p)];
-      return acc + (typeof c === "number" && Number.isFinite(c) && c >= 2 ? 1 : 0);
+      return (
+        acc + (typeof c === "number" && Number.isFinite(c) && c >= 2 ? 1 : 0)
+      );
     }, 0);
   }
 
@@ -1652,13 +2169,22 @@ const VIEWERS_PAGE_SIZE = 25;
     if (shareId) params.set("shareId", shareId);
     void (async () => {
       try {
-        const res = await fetchWithTempUser(`${apiBase}/shareviews/visits?${params.toString()}`, { cache: "no-store" });
+        const res = await fetchWithTempUser(
+          `${apiBase}/shareviews/visits?${params.toString()}`,
+          { cache: "no-store" },
+        );
         if (!res.ok) throw new Error(`Request failed (${res.status})`);
-        const json = (await res.json().catch(() => null)) as ShareViewerVisitsResponse | null;
-        if (!json || json.ok !== true || !Array.isArray(json.visits)) throw new Error("Invalid response");
+        const json = (await res
+          .json()
+          .catch(() => null)) as ShareViewerVisitsResponse | null;
+        if (!json || json.ok !== true || !Array.isArray(json.visits))
+          throw new Error("Invalid response");
         if (!cancelled) setVisits(json.visits);
       } catch (e) {
-        if (!cancelled) setVisitsError(e instanceof Error ? e.message : "Failed to load sessions");
+        if (!cancelled)
+          setVisitsError(
+            e instanceof Error ? e.message : "Failed to load sessions",
+          );
       } finally {
         if (!cancelled) setVisitsLoading(false);
       }
@@ -1666,7 +2192,14 @@ const VIEWERS_PAGE_SIZE = 25;
     return () => {
       cancelled = true;
     };
-  }, [viewerKind, viewerKey, deepAnalytics, supportsPageDetail, apiBase, shareId]);
+  }, [
+    viewerKind,
+    viewerKey,
+    deepAnalytics,
+    supportsPageDetail,
+    apiBase,
+    shareId,
+  ]);
 
   async function openVisitsForViewer() {
     if (!viewerDetail) return;
@@ -1685,17 +2218,27 @@ const VIEWERS_PAGE_SIZE = 25;
       const params = new URLSearchParams();
       params.set("kind", viewerDetail.kind);
       params.set("limit", "50");
-      if (viewerDetail.kind === "authed") params.set("userId", viewerDetail.key);
+      if (viewerDetail.kind === "authed")
+        params.set("userId", viewerDetail.key);
       else params.set("botIdHash", viewerDetail.key);
       // Follow the page's link filter, like every other request here. Without it the modal listed
       // this viewer's sessions through every link while the tiles above showed one link's numbers.
       if (shareId) params.set("shareId", shareId);
-      const res = await fetchWithTempUser(`${apiBase}/shareviews/visits?${params.toString()}`, {
-        cache: "no-store",
-      });
+      const res = await fetchWithTempUser(
+        `${apiBase}/shareviews/visits?${params.toString()}`,
+        {
+          cache: "no-store",
+        },
+      );
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
       const json = (await res.json().catch(() => null)) as any;
-      if (!json || typeof json !== "object" || json.ok !== true || !Array.isArray(json.visits)) throw new Error("Invalid response");
+      if (
+        !json ||
+        typeof json !== "object" ||
+        json.ok !== true ||
+        !Array.isArray(json.visits)
+      )
+        throw new Error("Invalid response");
       setVisits((json as ShareViewerVisitsResponse).visits);
     } catch (e) {
       setVisitsError(e instanceof Error ? e.message : "Failed to load visits");
@@ -1721,10 +2264,13 @@ const VIEWERS_PAGE_SIZE = 25;
       );
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
       const json = (await res.json().catch(() => null)) as any;
-      if (!json || typeof json !== "object" || json.ok !== true || !json.visit) throw new Error("Invalid response");
+      if (!json || typeof json !== "object" || json.ok !== true || !json.visit)
+        throw new Error("Invalid response");
       setVisitDetail((json as ShareViewerVisitDetailResponse).visit);
     } catch (e) {
-      setVisitDetailError(e instanceof Error ? e.message : "Failed to load visit details");
+      setVisitDetailError(
+        e instanceof Error ? e.message : "Failed to load visit details",
+      );
     } finally {
       setVisitDetailLoading(false);
     }
@@ -1739,11 +2285,16 @@ const VIEWERS_PAGE_SIZE = 25;
 
   // Keep modal pagination in-bounds if the list size changes.
   useEffect(() => {
-    if (authedViewersModalOpen && authedViewersModalPage !== authedModalPageSafe) setAuthedViewersModalPage(authedModalPageSafe);
+    if (
+      authedViewersModalOpen &&
+      authedViewersModalPage !== authedModalPageSafe
+    )
+      setAuthedViewersModalPage(authedModalPageSafe);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authedViewersModalOpen, authedModalPageSafe]);
   useEffect(() => {
-    if (anonViewersModalOpen && anonViewersModalPage !== anonModalPageSafe) setAnonViewersModalPage(anonModalPageSafe);
+    if (anonViewersModalOpen && anonViewersModalPage !== anonModalPageSafe)
+      setAnonViewersModalPage(anonModalPageSafe);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anonViewersModalOpen, anonModalPageSafe]);
 
@@ -1788,11 +2339,21 @@ const VIEWERS_PAGE_SIZE = 25;
             // A link's metrics is titled with the resource the link points at. Same rule as the
             // identity rows: the name, or a skeleton — never the bare noun, which under a
             // `?shareId=` filter used to stand here for as long as the whole aggregation took.
-            <EntityHeaderName kind={scope.kind === "project" ? "project" : "doc"} id={scope.id} name={resourceTitle} />
+            <EntityHeaderName
+              kind={scope.kind === "project" ? "project" : "doc"}
+              id={scope.id}
+              name={resourceTitle}
+            />
           ) : scope.kind === "doc" ? (
-            <DocIdentityRow docId={scope.id} fallbackTitle={resourceTitle || remembered || ""} />
+            <DocIdentityRow
+              docId={scope.id}
+              fallbackTitle={resourceTitle || remembered || ""}
+            />
           ) : (
-            <ProjectIdentityRow projectId={scope.id} name={resourceTitle || remembered || ""} />
+            <ProjectIdentityRow
+              projectId={scope.id}
+              name={resourceTitle || remembered || ""}
+            />
           )
         }
         titleHref={shareId ? basePath : undefined}
@@ -1810,9 +2371,15 @@ const VIEWERS_PAGE_SIZE = 25;
           // The parent page's own cluster, from the same component it renders, so the controls
           // never move between a resource and its sub-pages.
           scope.kind === "project" ? (
-            <ProjectHeaderActions projectSlug={scope.id} current={shareId ? "links" : "metrics"} />
+            <ProjectHeaderActions
+              projectSlug={scope.id}
+              current={shareId ? "links" : "metrics"}
+            />
           ) : (
-            <DocHeaderActions docId={scope.id} current={shareId ? "links" : "metrics"} />
+            <DocHeaderActions
+              docId={scope.id}
+              current={shareId ? "links" : "metrics"}
+            />
           )
         }
       />
@@ -1835,7 +2402,9 @@ const VIEWERS_PAGE_SIZE = 25;
                 {shareId && publicUrl ? (
                   <>
                     <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">
-                      {scope.kind === "project" ? "Project link" : "Document link"}
+                      {scope.kind === "project"
+                        ? "Project link"
+                        : "Document link"}
                     </div>
                     <div className="mt-1 flex min-w-0 items-center gap-2">
                       <a
@@ -1863,7 +2432,10 @@ const VIEWERS_PAGE_SIZE = 25;
                             try {
                               await navigator.clipboard.writeText(publicUrl);
                               setUrlCopied(true);
-                              window.setTimeout(() => setUrlCopied(false), 1600);
+                              window.setTimeout(
+                                () => setUrlCopied(false),
+                                1600,
+                              );
                             } catch {
                               // Clipboard can be refused (permissions, insecure origin); the address
                               // is still selectable in the anchor above.
@@ -1871,11 +2443,17 @@ const VIEWERS_PAGE_SIZE = 25;
                           })();
                         }}
                       >
-                        {urlCopied ? <ClipboardDocumentCheckIcon className="h-4 w-4" /> : <Square2StackIcon className="h-4 w-4" />}
+                        {urlCopied ? (
+                          <ClipboardDocumentCheckIcon className="h-4 w-4" />
+                        ) : (
+                          <Square2StackIcon className="h-4 w-4" />
+                        )}
                       </button>
                     </div>
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-[var(--muted)]">
-                      <span className="max-w-[280px] truncate font-medium text-[var(--fg)]">{selectedLinkSlot}</span>
+                      <span className="max-w-[280px] truncate font-medium text-[var(--fg)]">
+                        {selectedLinkSlot}
+                      </span>
                       <span aria-hidden="true">·</span>
                       <button
                         type="button"
@@ -1889,7 +2467,8 @@ const VIEWERS_PAGE_SIZE = 25;
                 ) : (
                   <div className="flex flex-wrap items-baseline gap-x-2 text-base font-semibold text-[var(--fg)]">
                     <span>Metrics</span>
-                    {typeof data?.linksTotal === "number" && data.linksTotal > 1 ? (
+                    {typeof data?.linksTotal === "number" &&
+                    data.linksTotal > 1 ? (
                       // A pill, not a trailing clause: this is the top-level, every-link view, and
                       // the count is the one fact that says so at a glance.
                       <span className="inline-flex items-center rounded-full bg-[var(--panel-hover)] px-2.5 py-0.5 text-[12px] font-semibold text-[var(--fg)] ring-1 ring-inset ring-[var(--border)]">
@@ -1900,21 +2479,44 @@ const VIEWERS_PAGE_SIZE = 25;
                 )}
                 {selectedLinkLabel && data?.link ? (
                   <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-[var(--muted)]">
-                    {data.link.audience ? <SettingItem label="Audience" value={data.link.audience} /> : null}
+                    {data.link.audience ? (
+                      <SettingItem
+                        label="Audience"
+                        value={data.link.audience}
+                      />
+                    ) : null}
                     {/* On a project link "Download on" could be read as "download the whole room";
                         there is no bulk download, so say what it actually permits. */}
                     <SettingItem
                       label="Download"
                       value={
-                        data.link.allowDownload ? (scope.kind === "project" ? "each document" : "on") : "off"
+                        data.link.allowDownload
+                          ? scope.kind === "project"
+                            ? "each document"
+                            : "on"
+                          : "off"
                       }
                     />
-                    <SettingItem label="Password" value={data.link.passwordEnabled ? "set" : "none"} />
+                    <SettingItem
+                      label="Password"
+                      value={data.link.passwordEnabled ? "set" : "none"}
+                    />
                     {scope.showRevisionHistory ? (
-                      <SettingItem label="Version history" value={data.link.allowRevisionHistory ? "on" : "off"} />
+                      <SettingItem
+                        label="Version history"
+                        value={data.link.allowRevisionHistory ? "on" : "off"}
+                      />
                     ) : null}
-                    <SettingItem label="Expires" value={data.link.expiresAt ? formatDateShort(data.link.expiresAt) : "Never"} />
-                    {typeof data.linksTotal === "number" && data.linksTotal > 1 ? (
+                    <SettingItem
+                      label="Expires"
+                      value={
+                        data.link.expiresAt
+                          ? formatDateShort(data.link.expiresAt)
+                          : "Never"
+                      }
+                    />
+                    {typeof data.linksTotal === "number" &&
+                    data.linksTotal > 1 ? (
                       <>
                         <span aria-hidden="true">·</span>
                         <Link
@@ -1927,7 +2529,9 @@ const VIEWERS_PAGE_SIZE = 25;
                     ) : null}
                   </div>
                 ) : null}
-                <div className="mt-1 text-sm text-[var(--muted)]">{dateRangeLabel}</div>
+                <div className="mt-1 text-sm text-[var(--muted)]">
+                  {dateRangeLabel}
+                </div>
                 {analyticsDaysLimit !== null ? (
                   <div className="mt-1 text-xs text-[var(--muted-2)]">
                     Free shows the last {analyticsDaysLimit} days ·{" "}
@@ -1969,7 +2573,9 @@ const VIEWERS_PAGE_SIZE = 25;
                             }}
                             className={[
                               "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm",
-                              active ? "bg-[var(--panel-hover)] text-[var(--fg)]" : "text-[var(--fg)] hover:bg-[var(--panel-hover)]",
+                              active
+                                ? "bg-[var(--panel-hover)] text-[var(--fg)]"
+                                : "text-[var(--fg)] hover:bg-[var(--panel-hover)]",
                             ].join(" ")}
                           >
                             <span>{opt.label}</span>
@@ -1986,7 +2592,8 @@ const VIEWERS_PAGE_SIZE = 25;
             {filterDroppedNotice ? (
               <div className="flex items-start justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-2.5 text-[13px] text-[var(--fg)]">
                 <span>
-                  That link was deleted — showing all links, so every number below is the whole {scope.nounLower} now.
+                  That link was deleted — showing all links, so every number
+                  below is the whole {scope.nounLower} now.
                 </span>
                 <button
                   type="button"
@@ -2004,7 +2611,9 @@ const VIEWERS_PAGE_SIZE = 25;
               visitors={recentVisitors}
               className="mb-5"
               onSeeAll={() => {
-                document.getElementById("viewer-lists")?.scrollIntoView({ behavior: "smooth", block: "start" });
+                document
+                  .getElementById("viewer-lists")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
               }}
             />
 
@@ -2012,19 +2621,29 @@ const VIEWERS_PAGE_SIZE = 25;
               {/* Views card */}
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">VIEWS</div>
+                  <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">
+                    VIEWS
+                  </div>
 
                   {loading ? (
-                    <div className="mt-1 h-9 w-16 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                    <div
+                      className="mt-1 h-9 w-16 animate-pulse rounded bg-[var(--panel-hover)]"
+                      aria-hidden="true"
+                    />
                   ) : error ? (
                     <div className="mt-1 text-sm text-red-700">{error}</div>
                   ) : (
-                    <div className="mt-1 text-3xl font-semibold text-[var(--fg)] tabular-nums">{views}</div>
+                    <div className="mt-1 text-3xl font-semibold text-[var(--fg)] tabular-nums">
+                      {views}
+                    </div>
                   )}
 
                   <div className="mt-2 text-sm text-[var(--muted)]">
                     {loading ? (
-                      <div className="h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                      <div
+                        className="h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]"
+                        aria-hidden="true"
+                      />
                     ) : (
                       <>
                         {/* Opens first: it is the fact the big number above cannot carry. That
@@ -2032,11 +2651,13 @@ const VIEWERS_PAGE_SIZE = 25;
                             week is one view — the returns only show up here. */}
                         {opens !== null ? (
                           <>
-                            <span className="tabular-nums">{opens}</span> open{opens === 1 ? "" : "s"}
+                            <span className="tabular-nums">{opens}</span> open
+                            {opens === 1 ? "" : "s"}
                             {opens > views ? (
                               <span className="text-[var(--muted-2)]">
                                 {" "}
-                                ({(opens - views).toLocaleString()} return{opens - views === 1 ? "" : "s"})
+                                ({(opens - views).toLocaleString()} return
+                                {opens - views === 1 ? "" : "s"})
                               </span>
                             ) : null}{" "}
                             ·{" "}
@@ -2056,37 +2677,55 @@ const VIEWERS_PAGE_SIZE = 25;
                             without opening a document" reads as furniture. */}
                         {landedWithoutOpening ? (
                           <>
-                            <span className="tabular-nums">{landedWithoutOpening}</span> landed without opening a
-                            document ·{" "}
+                            <span className="tabular-nums">
+                              {landedWithoutOpening}
+                            </span>{" "}
+                            landed without opening a document ·{" "}
                           </>
                         ) : null}
                         {analyticsTier === null ? (
                           <span className="inline-flex items-center gap-1.5">
-                            <span className="h-3 w-12 rounded bg-[var(--panel-hover)] motion-safe:animate-pulse" aria-hidden="true" />
+                            <span
+                              className="h-3 w-12 rounded bg-[var(--panel-hover)] motion-safe:animate-pulse"
+                              aria-hidden="true"
+                            />
                             <span>viewers</span>
                           </span>
                         ) : !deepAnalytics ? (
                           <>
-                            <span className="tabular-nums">{viewerCount}</span> {viewerCount === 1 ? "person" : "people"}
+                            <span className="tabular-nums">{viewerCount}</span>{" "}
+                            {viewerCount === 1 ? "person" : "people"}
                           </>
                         ) : viewersLoading ? (
                           <span className="inline-flex items-center gap-1.5">
-                            <span className="h-3 w-12 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                            <span
+                              className="h-3 w-12 animate-pulse rounded bg-[var(--panel-hover)]"
+                              aria-hidden="true"
+                            />
                             <span>authenticated viewers</span>
                           </span>
                         ) : viewersLoaded ? (
                           <>
-                            <span className="tabular-nums">{authedViewers}</span> authenticated viewers
-                            {typeof data?.totals?.anonymousViewers === "number" ? (
+                            <span className="tabular-nums">
+                              {authedViewers}
+                            </span>{" "}
+                            authenticated viewers
+                            {typeof data?.totals?.anonymousViewers ===
+                            "number" ? (
                               <>
                                 {" "}
-                                · <span className="tabular-nums">{anonViewers}</span> anonymous viewers
+                                ·{" "}
+                                <span className="tabular-nums">
+                                  {anonViewers}
+                                </span>{" "}
+                                anonymous viewers
                               </>
                             ) : null}
                           </>
                         ) : (
                           <>
-                            <span className="tabular-nums">—</span> authenticated viewers
+                            <span className="tabular-nums">—</span>{" "}
+                            authenticated viewers
                           </>
                         )}
                       </>
@@ -2098,8 +2737,30 @@ const VIEWERS_PAGE_SIZE = 25;
                       trusting the number and thinking views went missing. */}
                   {!loading && projectLinkTraffic ? (
                     <div className="mt-1 text-sm text-[var(--muted)]">
-                      <span className="tabular-nums">+{projectLinkTraffic.views.toLocaleString()}</span> view
-                      {projectLinkTraffic.views === 1 ? "" : "s"} came through project links, counted with the project
+                      <span className="tabular-nums">
+                        +{projectLinkTraffic.views.toLocaleString()}
+                      </span>{" "}
+                      view
+                      {projectLinkTraffic.views === 1 ? "" : "s"} came through
+                      project links, counted with the project
+                    </div>
+                  ) : null}
+
+                  {/* Your own opens, said out loud.
+                      They are recorded and deliberately never counted — "4 views · 1 person" on a
+                      deck no investor has opened is worse than no number — but silence about them
+                      has its own failure: open your own link to check it, watch nothing move, and
+                      the page reads as broken rather than as correct. The exclusion is the feature;
+                      this is the receipt. */}
+                  {!loading && (data?.totals?.ownerPreviews ?? 0) > 0 ? (
+                    <div className="mt-1 text-sm text-[var(--muted-2)]">
+                      <span className="tabular-nums">
+                        {(data?.totals?.ownerPreviews ?? 0).toLocaleString()}
+                      </span>{" "}
+                      {(data?.totals?.ownerPreviews ?? 0) === 1
+                        ? "open"
+                        : "opens"}{" "}
+                      by you, not counted
                     </div>
                   ) : null}
                 </div>
@@ -2108,27 +2769,42 @@ const VIEWERS_PAGE_SIZE = 25;
               {/* Downloads card */}
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">DOWNLOADS</div>
+                  <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">
+                    DOWNLOADS
+                  </div>
 
                   {loading ? (
-                    <div className="mt-1 h-9 w-20 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                    <div
+                      className="mt-1 h-9 w-20 animate-pulse rounded bg-[var(--panel-hover)]"
+                      aria-hidden="true"
+                    />
                   ) : error ? (
                     <div className="mt-1 text-sm text-red-700">{error}</div>
                   ) : downloadsKnown ? (
                     // Real downloads stay visible after downloads are turned off: they happened.
-                    <div className="mt-1 text-3xl font-semibold text-[var(--fg)] tabular-nums">{downloads}</div>
+                    <div className="mt-1 text-3xl font-semibold text-[var(--fg)] tabular-nums">
+                      {downloads}
+                    </div>
                   ) : (
-                    <div className="mt-1 h-9 w-20 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                    <div
+                      className="mt-1 h-9 w-20 animate-pulse rounded bg-[var(--panel-hover)]"
+                      aria-hidden="true"
+                    />
                   )}
 
                   <div className="mt-2 text-sm text-[var(--muted)]">
                     {loading ? (
-                      <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                      <div
+                        className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]"
+                        aria-hidden="true"
+                      />
                     ) : downloadsEnabled ? (
                       <span className="text-[var(--muted)]">PDF downloads</span>
                     ) : downloadsKnown && downloads > 0 ? (
                       <span className="text-[var(--muted)]">
-                        {selectedLinkLabel ? `Downloads are now off for ${selectedLinkLabel}.` : "Downloads are now off on every link."}
+                        {selectedLinkLabel
+                          ? `Downloads are now off for ${selectedLinkLabel}.`
+                          : "Downloads are now off on every link."}
                       </span>
                     ) : (
                       // "this share link" named one link on a surface that aggregates all of them,
@@ -2147,10 +2823,15 @@ const VIEWERS_PAGE_SIZE = 25;
             {/* Two separate charts (Views + Downloads) */}
             <div className="grid gap-5 lg:grid-cols-2">
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
-                <div className="text-sm font-semibold text-[var(--fg)]">Views</div>
+                <div className="text-sm font-semibold text-[var(--fg)]">
+                  Views
+                </div>
                 <div className="mt-3 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
                   {loading ? (
-                    <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                    <div
+                      className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <MiniLineChartSingle
                       series={chartSeries}
@@ -2165,12 +2846,21 @@ const VIEWERS_PAGE_SIZE = 25;
 
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold text-[var(--fg)]">Downloads</div>
-                  {!loading && !downloadsEnabled ? <div className="text-xs font-medium text-[var(--muted)]">Downloads off</div> : null}
+                  <div className="text-sm font-semibold text-[var(--fg)]">
+                    Downloads
+                  </div>
+                  {!loading && !downloadsEnabled ? (
+                    <div className="text-xs font-medium text-[var(--muted)]">
+                      Downloads off
+                    </div>
+                  ) : null}
                 </div>
                 <div className="mt-3 min-h-[280px] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
                   {loading ? (
-                    <div className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                    <div
+                      className="h-[224px] w-full animate-pulse rounded bg-[var(--panel-hover)]"
+                      aria-hidden="true"
+                    />
                   ) : (
                     <MiniLineChartSingle
                       series={chartSeries}
@@ -2191,7 +2881,9 @@ const VIEWERS_PAGE_SIZE = 25;
 
                 "Projects" is the product's word for these. A workspace may call one of them a data
                 room; that is its name for one project, not a rename of the feature. */}
-            {!loading && projectLinkTraffic && projectLinkTraffic.links.length ? (
+            {!loading &&
+            projectLinkTraffic &&
+            projectLinkTraffic.links.length ? (
               <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--muted-2)]">
@@ -2215,7 +2907,10 @@ const VIEWERS_PAGE_SIZE = 25;
                 <ul className="mt-3 grid gap-1.5 border-t border-[var(--divider)] pt-3">
                   {projectLinkTraffic.links.slice(0, 5).map((l) => (
                     <li key={l.shareId} className="flex items-center gap-3">
-                      <FolderIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                      <FolderIcon
+                        className="h-4 w-4 shrink-0 text-[var(--muted-2)]"
+                        aria-hidden="true"
+                      />
                       <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--fg)]">
                         {l.projectId ? (
                           <Link
@@ -2227,10 +2922,16 @@ const VIEWERS_PAGE_SIZE = 25;
                         ) : (
                           l.projectName || "Project"
                         )}
-                        {l.label ? <span className="text-[var(--muted-2)]"> · {l.label}</span> : null}
+                        {l.label ? (
+                          <span className="text-[var(--muted-2)]">
+                            {" "}
+                            · {l.label}
+                          </span>
+                        ) : null}
                       </span>
                       <span className="shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
-                        {l.views.toLocaleString()} {l.views === 1 ? "view" : "views"}
+                        {l.views.toLocaleString()}{" "}
+                        {l.views === 1 ? "view" : "views"}
                       </span>
                       <span className="w-20 shrink-0 text-right text-[12px] text-[var(--muted-2)]">
                         {l.lastViewedAt ? relativeAge(l.lastViewedAt) : "—"}
@@ -2248,12 +2949,19 @@ const VIEWERS_PAGE_SIZE = 25;
                 a different question than the one the reader is asking. Ranked and bounded to a
                 handful of rows (`topLinksByViewers`/`recentlyOpenedLinks`, from the server's
                 already-bounded `byLink`), never every link — see `LinksManager` for that. */}
-            {!selectedLinkLabel && data && typeof data.linksTotal === "number" && data.linksTotal > 0 ? (
+            {!selectedLinkLabel &&
+            data &&
+            typeof data.linksTotal === "number" &&
+            data.linksTotal > 0 ? (
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">LINKS</div>
-                    <div className="mt-1 text-3xl font-semibold tabular-nums text-[var(--fg)]">{data.linksTotal}</div>
+                    <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">
+                      LINKS
+                    </div>
+                    <div className="mt-1 text-3xl font-semibold tabular-nums text-[var(--fg)]">
+                      {data.linksTotal}
+                    </div>
                     <div className="mt-2 text-sm text-[var(--muted)]">
                       {data.linksTotal === 1
                         ? "One link, shown above"
@@ -2290,18 +2998,24 @@ const VIEWERS_PAGE_SIZE = 25;
                                   {r.label}
                                 </Link>
                               ) : (
-                                <span className="min-w-0 truncate text-[var(--muted)]" title="This link was deleted; its traffic is still counted above">
+                                <span
+                                  className="min-w-0 truncate text-[var(--muted)]"
+                                  title="This link was deleted; its traffic is still counted above"
+                                >
                                   Deleted link
                                 </span>
                               )}
                               <span className="shrink-0 tabular-nums text-[var(--muted)]">
-                                {r.viewers.toLocaleString()} viewer{r.viewers === 1 ? "" : "s"}
+                                {r.viewers.toLocaleString()} viewer
+                                {r.viewers === 1 ? "" : "s"}
                               </span>
                             </div>
                             <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
                               <div
                                 className="h-full rounded-full bg-[var(--chart-views)]"
-                                style={{ width: `${Math.max(4, (r.viewers / maxTopLinkViewers) * 100)}%` }}
+                                style={{
+                                  width: `${Math.max(4, (r.viewers / maxTopLinkViewers) * 100)}%`,
+                                }}
                               />
                             </div>
                           </li>
@@ -2309,10 +3023,15 @@ const VIEWERS_PAGE_SIZE = 25;
                       </ul>
                     </div>
                     <div className="min-w-0">
-                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">Recently opened</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted-2)]">
+                        Recently opened
+                      </div>
                       <ul className="mt-1.5 space-y-1.5">
                         {recentlyOpenedLinks.map((r) => (
-                          <li key={r.shareId} className="flex items-baseline justify-between gap-3 text-[13px]">
+                          <li
+                            key={r.shareId}
+                            className="flex items-baseline justify-between gap-3 text-[13px]"
+                          >
                             {r.label ? (
                               <Link
                                 href={`${basePath}/metrics?shareId=${encodeURIComponent(r.shareId)}`}
@@ -2321,11 +3040,16 @@ const VIEWERS_PAGE_SIZE = 25;
                                 {r.label}
                               </Link>
                             ) : (
-                              <span className="min-w-0 truncate text-[var(--muted)]" title="This link was deleted; its traffic is still counted above">
+                              <span
+                                className="min-w-0 truncate text-[var(--muted)]"
+                                title="This link was deleted; its traffic is still counted above"
+                              >
                                 Deleted link
                               </span>
                             )}
-                            <span className="shrink-0 whitespace-nowrap text-[var(--muted)]">{relativeAge(r.lastViewedAt)}</span>
+                            <span className="shrink-0 whitespace-nowrap text-[var(--muted)]">
+                              {relativeAge(r.lastViewedAt)}
+                            </span>
                           </li>
                         ))}
                       </ul>
@@ -2339,10 +3063,15 @@ const VIEWERS_PAGE_SIZE = 25;
                 {data.deletedLinkResidual ? (
                   <div className="mt-3 border-t border-[var(--border)] pt-3 text-[12px] text-[var(--muted)]">
                     <span className="font-medium text-[var(--fg)]">
-                      {data.deletedLinkResidual.count === 1 ? "1 deleted link" : `${data.deletedLinkResidual.count} deleted links`}
+                      {data.deletedLinkResidual.count === 1
+                        ? "1 deleted link"
+                        : `${data.deletedLinkResidual.count} deleted links`}
                     </span>{" "}
-                    still carr{data.deletedLinkResidual.count === 1 ? "ies" : "y"} {data.deletedLinkResidual.viewers.toLocaleString()}{" "}
-                    viewer{data.deletedLinkResidual.viewers === 1 ? "" : "s"} in the totals above.
+                    still carr
+                    {data.deletedLinkResidual.count === 1 ? "ies" : "y"}{" "}
+                    {data.deletedLinkResidual.viewers.toLocaleString()} viewer
+                    {data.deletedLinkResidual.viewers === 1 ? "" : "s"} in the
+                    totals above.
                   </div>
                 ) : null}
               </div>
@@ -2373,8 +3102,12 @@ const VIEWERS_PAGE_SIZE = 25;
               <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">DOCUMENTS</div>
-                    <div className="mt-1 text-3xl font-semibold tabular-nums text-[var(--fg)]">{data.docsTotal}</div>
+                    <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">
+                      DOCUMENTS
+                    </div>
+                    <div className="mt-1 text-3xl font-semibold tabular-nums text-[var(--fg)]">
+                      {data.docsTotal}
+                    </div>
                     <div className="mt-2 text-sm text-[var(--muted)]">
                       {/* `pagesViewed` (= `totals.docsOpened`) counts distinct documents in the
                           analytics rows, which include documents since removed from the project or
@@ -2386,7 +3119,8 @@ const VIEWERS_PAGE_SIZE = 25;
                         ? "No documents shared in this project yet."
                         : pagesViewed === 0
                           ? `None opened in the last ${days} days`
-                          : Math.min(pagesViewed, data.docsTotal) >= data.docsTotal
+                          : Math.min(pagesViewed, data.docsTotal) >=
+                              data.docsTotal
                             ? `Every one of them opened in the last ${days} days`
                             : `${Math.min(pagesViewed, data.docsTotal)} of them opened in the last ${days} days`}
                     </div>
@@ -2446,7 +3180,9 @@ const VIEWERS_PAGE_SIZE = 25;
                             <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
                               <div
                                 className="h-full rounded-full bg-[var(--chart-views)]"
-                                style={{ width: `${Math.max(4, (r.viewers / maxTopDocViewers) * 100)}%` }}
+                                style={{
+                                  width: `${Math.max(4, (r.viewers / maxTopDocViewers) * 100)}%`,
+                                }}
                               />
                             </div>
                           </li>
@@ -2459,7 +3195,10 @@ const VIEWERS_PAGE_SIZE = 25;
                       </div>
                       <ul className="mt-1.5 space-y-1.5">
                         {recentlyOpenedDocs.map((r) => (
-                          <li key={r.docId} className="flex items-baseline justify-between gap-3 text-[13px]">
+                          <li
+                            key={r.docId}
+                            className="flex items-baseline justify-between gap-3 text-[13px]"
+                          >
                             {r.title ? (
                               /* `/doc/:id`, not `/doc/:id/metrics` — same reason as the ranking
                                  above: the document's own metrics page excludes every read made
@@ -2495,15 +3234,20 @@ const VIEWERS_PAGE_SIZE = 25;
                   <div className="mt-3 border-t border-[var(--border)] pt-3 text-[12px] text-[var(--muted)]">
                     {topDocsByViewers.length > 1 ? (
                       <>
-                        Someone who opened two documents appears in both rows, so these add up to more than the{" "}
-                        <span className="font-medium text-[var(--fg)]">Views</span> above.{" "}
+                        Someone who opened two documents appears in both rows,
+                        so these add up to more than the{" "}
+                        <span className="font-medium text-[var(--fg)]">
+                          Views
+                        </span>{" "}
+                        above.{" "}
                       </>
                     ) : null}
                     {/* Says out loud what the hrefs above now assume: this reading is counted here
                         and nowhere else, so a document whose only traffic came through this project
                         shows zero on its own metrics page. Without the sentence that page reads as
                         a contradiction rather than a different scope. */}
-                    These reads are counted on this project. A document&rsquo;s own page counts only its own links.
+                    These reads are counted on this project. A document&rsquo;s
+                    own page counts only its own links.
                   </div>
                 ) : null}
               </div>
@@ -2528,25 +3272,41 @@ const VIEWERS_PAGE_SIZE = 25;
                     They are one list now, newest first, and what distinguishes them travels on the
                     row: the depth badge, the project chip, and whether a name is known. */}
                 <div className="mt-1" id="viewer-lists">
-                  <div className="text-sm font-semibold text-[var(--fg)]">Viewers</div>
+                  <div className="text-sm font-semibold text-[var(--fg)]">
+                    Viewers
+                  </div>
                   <div className="mt-1 text-sm text-[var(--muted)]">
-                    Everyone who opened this {nounLower} in this window, newest first. A project chip means they
-                    came in through that project, where the read is counted.
+                    Everyone who opened this {nounLower} in this window, newest
+                    first. A project chip means they came in through that
+                    project, where the read is counted.
                   </div>
 
                   <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
                     {loading ? (
                       <div className="p-4">
-                        <div className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                        <div className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
-                        <div className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]" aria-hidden="true" />
+                        <div
+                          className="h-4 w-56 animate-pulse rounded bg-[var(--panel-hover)]"
+                          aria-hidden="true"
+                        />
+                        <div
+                          className="mt-3 h-4 w-72 animate-pulse rounded bg-[var(--panel-hover)]"
+                          aria-hidden="true"
+                        />
+                        <div
+                          className="mt-3 h-4 w-64 animate-pulse rounded bg-[var(--panel-hover)]"
+                          aria-hidden="true"
+                        />
                       </div>
                     ) : error ? (
                       <div className="p-4 text-sm text-red-700">{error}</div>
                     ) : viewersLoading && !allViewerRows.length ? (
-                      <div className="p-4 text-sm text-[var(--muted)]">Loading viewers…</div>
+                      <div className="p-4 text-sm text-[var(--muted)]">
+                        Loading viewers…
+                      </div>
                     ) : !allViewerRows.length ? (
-                      <div className="p-4 text-sm text-[var(--muted)]">No viewers yet.</div>
+                      <div className="p-4 text-sm text-[var(--muted)]">
+                        No viewers yet.
+                      </div>
                     ) : (
                       <ul className="divide-y divide-[var(--border)]">
                         {allViewerRows.slice(0, VIEWERS_SHOWN).map((row) => {
@@ -2554,24 +3314,47 @@ const VIEWERS_PAGE_SIZE = 25;
                             <>
                               <div className="min-w-0 flex-1">
                                 <div className="flex min-w-0 items-center gap-2">
-                                  <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                                  <span className="truncate text-sm font-semibold text-[var(--fg)]">{row.title}</span>
-                                  <DepthBadge timeMs={row.timeMs} pages={row.pages} totalPages={docTotalPages} />
-                                  {row.via ? (
-                                    <span className="inline-flex max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]">
-                                      <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-                                      <span className="truncate">{row.via}</span>
+                                  <UserIcon
+                                    className="h-5 w-5 shrink-0 text-[var(--muted-2)]"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="truncate text-sm font-semibold text-[var(--fg)]">
+                                    {row.title}
+                                  </span>
+                                  <DepthBadge
+                                    timeMs={row.timeMs}
+                                    pages={row.pages}
+                                    totalPages={docTotalPages}
+                                  />
+                                  {row.vias.map((via) => (
+                                    <span
+                                      key={via.name}
+                                      className="inline-flex max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]"
+                                    >
+                                      <FolderIcon
+                                        className="h-3 w-3 shrink-0"
+                                        aria-hidden="true"
+                                      />
+                                      <span className="truncate">
+                                        {via.name}
+                                      </span>
                                     </span>
-                                  ) : null}
+                                  ))}
                                 </div>
                                 {row.subtitle ? (
-                                  <div className="mt-0.5 truncate pl-7 text-xs text-[var(--muted-2)]">{row.subtitle}</div>
+                                  <div className="mt-0.5 truncate pl-7 text-xs text-[var(--muted-2)]">
+                                    {row.subtitle}
+                                  </div>
                                 ) : null}
                               </div>
                               <div className="shrink-0 text-right">
-                                <div className="text-xs font-medium tabular-nums text-[var(--muted-2)]">{row.stats}</div>
+                                <div className="text-xs font-medium tabular-nums text-[var(--muted-2)]">
+                                  {row.stats}
+                                </div>
                                 <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
-                                  {row.lastSeen ? relativeAge(row.lastSeen) : "—"}
+                                  {row.lastSeen
+                                    ? relativeAge(row.lastSeen)
+                                    : "—"}
                                 </div>
                               </div>
                             </>
@@ -2581,7 +3364,11 @@ const VIEWERS_PAGE_SIZE = 25;
                           return (
                             <li key={row.key}>
                               {row.href ? (
-                                <Link href={row.href} className={rowClass} title={row.hint}>
+                                <Link
+                                  href={row.href}
+                                  className={rowClass}
+                                  title={row.hint}
+                                >
                                   {body}
                                 </Link>
                               ) : (
@@ -2615,14 +3402,20 @@ const VIEWERS_PAGE_SIZE = 25;
       </div>
 
       {/* The same list, all of it. One modal now, because there is one list. */}
-      <Modal open={authedViewersModalOpen} onClose={() => setAuthedViewersModalOpen(false)} ariaLabel="Viewers">
+      <Modal
+        open={authedViewersModalOpen}
+        onClose={() => setAuthedViewersModalOpen(false)}
+        ariaLabel="Viewers"
+      >
         <div className="text-base font-semibold text-[var(--fg)]">Viewers</div>
         <div className="mt-1 text-sm text-[var(--muted)]">
           Everyone who opened this {nounLower} in this window, newest first.
         </div>
         <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
           {!allViewerRows.length ? (
-            <div className="p-4 text-sm text-[var(--muted)]">No viewers yet.</div>
+            <div className="p-4 text-sm text-[var(--muted)]">
+              No viewers yet.
+            </div>
           ) : (
             <ul className="max-h-[min(60vh,560px)] divide-y divide-[var(--border)] overflow-auto">
               {allViewerRows.map((row) => {
@@ -2630,33 +3423,58 @@ const VIEWERS_PAGE_SIZE = 25;
                   <>
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
-                        <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                        <span className="truncate text-sm font-semibold text-[var(--fg)]">{row.title}</span>
-                        <DepthBadge timeMs={row.timeMs} pages={row.pages} totalPages={docTotalPages} />
-                        {row.via ? (
-                          <span className="inline-flex max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]">
-                            <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-                            <span className="truncate">{row.via}</span>
+                        <UserIcon
+                          className="h-5 w-5 shrink-0 text-[var(--muted-2)]"
+                          aria-hidden="true"
+                        />
+                        <span className="truncate text-sm font-semibold text-[var(--fg)]">
+                          {row.title}
+                        </span>
+                        <DepthBadge
+                          timeMs={row.timeMs}
+                          pages={row.pages}
+                          totalPages={docTotalPages}
+                        />
+                        {row.vias.map((via) => (
+                          <span
+                            key={via.name}
+                            className="inline-flex max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]"
+                          >
+                            <FolderIcon
+                              className="h-3 w-3 shrink-0"
+                              aria-hidden="true"
+                            />
+                            <span className="truncate">{via.name}</span>
                           </span>
-                        ) : null}
+                        ))}
                       </div>
                       {row.subtitle ? (
-                        <div className="mt-0.5 truncate pl-7 text-xs text-[var(--muted-2)]">{row.subtitle}</div>
+                        <div className="mt-0.5 truncate pl-7 text-xs text-[var(--muted-2)]">
+                          {row.subtitle}
+                        </div>
                       ) : null}
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-xs font-medium tabular-nums text-[var(--muted-2)]">{row.stats}</div>
+                      <div className="text-xs font-medium tabular-nums text-[var(--muted-2)]">
+                        {row.stats}
+                      </div>
                       <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
                         {row.lastSeen ? relativeAge(row.lastSeen) : "—"}
                       </div>
                     </div>
                   </>
                 );
-                const rowClass = "flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--panel-hover)]";
+                const rowClass =
+                  "flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--panel-hover)]";
                 return (
                   <li key={row.key}>
                     {row.href ? (
-                      <Link href={row.href} className={rowClass} title={row.hint} onClick={() => setAuthedViewersModalOpen(false)}>
+                      <Link
+                        href={row.href}
+                        className={rowClass}
+                        title={row.hint}
+                        onClick={() => setAuthedViewersModalOpen(false)}
+                      >
                         {body}
                       </Link>
                     ) : (
@@ -2679,349 +3497,496 @@ const VIEWERS_PAGE_SIZE = 25;
         ariaLabel="Viewer details"
         width={720}
       >
-        {!viewerDetail ? null : (
-          (() => {
-            // On a document, sessions come from the `/visits` route; on a project they arrive on
-            // the payload, de-duplicated across the documents one tab session touched.
-            const sessions = supportsPageDetail
-              ? visits.length || viewerDetail.views
-              : viewerDetail.sessions || viewerDetail.docs.length;
-            const maxDocMs = Math.max(1, ...viewerDetail.docs.map((d) => d.timeSpentMs));
-            const recent = [...visits]
-              .sort((a, b) => (parseIsoMs(b.startedAt) ?? 0) - (parseIsoMs(a.startedAt) ?? 0))
-              .slice(0, 3);
-            const initial = (viewerDetail.kind === "anon" && viewerDetail.title === "Anonymous viewer" ? "" : viewerDetail.title.trim()[0] ?? "").toUpperCase();
-            /**
-             * Every page this reader opened, longest first.
-             *
-             * The chart above it answers "how did they move through it" and this answers "how long
-             * on which page", which is the question people actually arrive with. Sorted by time
-             * rather than by page number for the same reason: page 14 holding them for two minutes
-             * is the finding, and in page order it is the eleventh row down.
-             */
-            const pageRows = viewerDetail.pagesSeen
-              .map((page) => ({ page, ms: viewerDetail.pageTimeMsByPage[String(page)] ?? 0 }))
-              .sort((a, b) => b.ms - a.ms || a.page - b.page);
-            const longestPage = pageRows.find((r) => r.ms > 0) ?? null;
-            const maxPageMs = Math.max(1, ...pageRows.map((r) => r.ms));
-            const stat = (label: string, value: string) => (
-              <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
-                <div className="truncate text-[11px] font-medium text-[var(--muted-2)]">{label}</div>
-                <div className="mt-0.5 truncate text-base font-semibold tabular-nums text-[var(--fg)]">{value}</div>
-              </div>
-            );
-            return (
-              <>
-                {/* Who, and when they were last here — no device hash in the headline. */}
-                <div className="flex items-center gap-3 pr-10">
-                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] text-sm font-semibold text-[var(--fg)]">
-                    {initial || <UserIcon className="h-5 w-5 text-[var(--muted)]" aria-hidden="true" />}
+        {!viewerDetail
+          ? null
+          : (() => {
+              // On a document, sessions come from the `/visits` route; on a project they arrive on
+              // the payload, de-duplicated across the documents one tab session touched.
+              const sessions = supportsPageDetail
+                ? visits.length || viewerDetail.views
+                : viewerDetail.sessions || viewerDetail.docs.length;
+              const maxDocMs = Math.max(
+                1,
+                ...viewerDetail.docs.map((d) => d.timeSpentMs),
+              );
+              const recent = [...visits]
+                .sort(
+                  (a, b) =>
+                    (parseIsoMs(b.startedAt) ?? 0) -
+                    (parseIsoMs(a.startedAt) ?? 0),
+                )
+                .slice(0, 3);
+              const initial = (
+                viewerDetail.kind === "anon" &&
+                viewerDetail.title === "Anonymous viewer"
+                  ? ""
+                  : (viewerDetail.title.trim()[0] ?? "")
+              ).toUpperCase();
+              /**
+               * Every page this reader opened, longest first.
+               *
+               * The chart above it answers "how did they move through it" and this answers "how long
+               * on which page", which is the question people actually arrive with. Sorted by time
+               * rather than by page number for the same reason: page 14 holding them for two minutes
+               * is the finding, and in page order it is the eleventh row down.
+               */
+              const pageRows = viewerDetail.pagesSeen
+                .map((page) => ({
+                  page,
+                  ms: viewerDetail.pageTimeMsByPage[String(page)] ?? 0,
+                }))
+                .sort((a, b) => b.ms - a.ms || a.page - b.page);
+              const longestPage = pageRows.find((r) => r.ms > 0) ?? null;
+              const maxPageMs = Math.max(1, ...pageRows.map((r) => r.ms));
+              const stat = (label: string, value: string) => (
+                <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
+                  <div className="truncate text-[11px] font-medium text-[var(--muted-2)]">
+                    {label}
                   </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-base font-semibold text-[var(--fg)]">{viewerDetail.title}</div>
-                    <div className="truncate text-[13px] text-[var(--muted)]">
-                      {viewerDetail.subtitle && !viewerDetail.subtitle.startsWith("Device ") ? `${viewerDetail.subtitle} · ` : ""}
-                      Last seen {relativeAge(viewerDetail.lastSeen)}
-                    </div>
+                  <div className="mt-0.5 truncate text-base font-semibold tabular-nums text-[var(--fg)]">
+                    {value}
                   </div>
                 </div>
-
-                <p className="mt-4 text-[14px] leading-6 text-[var(--fg)]">
-                  {supportsPageDetail
-                    ? viewerSummary(
-                        viewerDetail.pagesViewed || viewerDetail.pagesSeen.length,
-                        viewerTimeTotalMs,
-                        sessions,
-                        viewerDetail.pageTimeMsByPage,
-                      )
-                    : projectViewerSummary(viewerDetail.docs, viewerTimeTotalMs, sessions)}
-                </p>
-
-                <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                  {stat(
-                    "Sessions",
-                    supportsPageDetail && visitsLoading && !visits.length
-                      ? "…"
-                      : supportsPageDetail && visits.length >= 50
-                        ? "50+"
-                        : String(sessions),
-                  )}
-                  {stat("Time spent", viewerTimeTotalMs > 0 ? `${viewerTimeApproxPrefix}${formatDurationShort(viewerTimeTotalMs)}` : "—")}
-                  {/* Same four tiles, same order; only the unit under the scope's own noun changes. */}
-                  {supportsPageDetail
-                    ? stat("Pages viewed", String(viewerDetail.pagesViewed || viewerDetail.pagesSeen.length))
-                    : stat("Documents", String(viewerDetail.docs.length))}
-                  {supportsPageDetail
-                    ? stat("Avg per page", viewerTrackedAvgPerPageMs > 0 ? formatDurationShort(viewerTrackedAvgPerPageMs) : "—")
-                    : stat(
-                        "Avg per doc",
-                        viewerTimeTotalMs > 0 && viewerDetail.docs.length
-                          ? formatDurationShort(Math.round(viewerTimeTotalMs / viewerDetail.docs.length))
-                          : "—",
+              );
+              return (
+                <>
+                  {/* Who, and when they were last here — no device hash in the headline. */}
+                  <div className="flex items-center gap-3 pr-10">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-[var(--border)] bg-[var(--panel-2)] text-sm font-semibold text-[var(--fg)]">
+                      {initial || (
+                        <UserIcon
+                          className="h-5 w-5 text-[var(--muted)]"
+                          aria-hidden="true"
+                        />
                       )}
-                  {/* The two that answer "where did their attention actually go": the page that
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-semibold text-[var(--fg)]">
+                        {viewerDetail.title}
+                      </div>
+                      <div className="truncate text-[13px] text-[var(--muted)]">
+                        {viewerDetail.subtitle &&
+                        !viewerDetail.subtitle.startsWith("Device ")
+                          ? `${viewerDetail.subtitle} · `
+                          : ""}
+                        Last seen {relativeAge(viewerDetail.lastSeen)}
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="mt-4 text-[14px] leading-6 text-[var(--fg)]">
+                    {supportsPageDetail
+                      ? viewerSummary(
+                          viewerDetail.pagesViewed ||
+                            viewerDetail.pagesSeen.length,
+                          viewerTimeTotalMs,
+                          sessions,
+                          viewerDetail.pageTimeMsByPage,
+                        )
+                      : projectViewerSummary(
+                          viewerDetail.docs,
+                          viewerTimeTotalMs,
+                          sessions,
+                        )}
+                  </p>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {stat(
+                      "Sessions",
+                      supportsPageDetail && visitsLoading && !visits.length
+                        ? "…"
+                        : supportsPageDetail && visits.length >= 50
+                          ? "50+"
+                          : String(sessions),
+                    )}
+                    {stat(
+                      "Time spent",
+                      viewerTimeTotalMs > 0
+                        ? `${viewerTimeApproxPrefix}${formatDurationShort(viewerTimeTotalMs)}`
+                        : "—",
+                    )}
+                    {/* Same four tiles, same order; only the unit under the scope's own noun changes. */}
+                    {supportsPageDetail
+                      ? stat(
+                          "Pages viewed",
+                          String(
+                            viewerDetail.pagesViewed ||
+                              viewerDetail.pagesSeen.length,
+                          ),
+                        )
+                      : stat("Documents", String(viewerDetail.docs.length))}
+                    {supportsPageDetail
+                      ? stat(
+                          "Avg per page",
+                          viewerTrackedAvgPerPageMs > 0
+                            ? formatDurationShort(viewerTrackedAvgPerPageMs)
+                            : "—",
+                        )
+                      : stat(
+                          "Avg per doc",
+                          viewerTimeTotalMs > 0 && viewerDetail.docs.length
+                            ? formatDurationShort(
+                                Math.round(
+                                  viewerTimeTotalMs / viewerDetail.docs.length,
+                                ),
+                              )
+                            : "—",
+                        )}
+                    {/* The two that answer "where did their attention actually go": the page that
                       held them longest, and what a typical visit was worth. An average across
                       pages hides both — nine seconds a page reads the same whether they skimmed
                       evenly or stopped dead on the pricing slide. */}
-                  {stat(
-                    "Longest page",
-                    longestPage ? `p${longestPage.page} · ${formatDurationShort(longestPage.ms)}` : "—",
-                  )}
-                  {stat(
-                    "Avg per session",
-                    sessions > 0 && viewerTimeTotalMs > 0
-                      ? formatDurationShort(Math.round(viewerTimeTotalMs / sessions))
-                      : "—",
-                  )}
-                </div>
+                    {stat(
+                      "Longest page",
+                      longestPage
+                        ? `p${longestPage.page} · ${formatDurationShort(longestPage.ms)}`
+                        : "—",
+                    )}
+                    {stat(
+                      "Avg per session",
+                      sessions > 0 && viewerTimeTotalMs > 0
+                        ? formatDurationShort(
+                            Math.round(viewerTimeTotalMs / sessions),
+                          )
+                        : "—",
+                    )}
+                  </div>
 
-                {/* The project's substitute for the per-page chart. A project link has no single
+                  {/* The project's substitute for the per-page chart. A project link has no single
                     page-number namespace — page 3 of the term sheet and page 3 of the deck are not
                     the same axis — so the question that *does* have an answer here is which files
                     this person opened and which one held them. Same card frame, same emerald bars
                     as the rankings above, so the drawer still reads as one page. */}
-                {!supportsPageDetail && viewerDoc ? (
-                  /* Drilled into one file. Same frame, one level down: the reader is still the
+                  {!supportsPageDetail && viewerDoc ? (
+                    /* Drilled into one file. Same frame, one level down: the reader is still the
                      subject, the document has become the scope. */
-                  <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setViewerDoc(null)}
-                        className="-ml-1 inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[12px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
-                      >
-                        <span aria-hidden="true">←</span> All documents
-                      </button>
-                    </div>
-                    <div className="mt-1.5 truncate text-[13px] font-semibold text-[var(--fg)]">
-                      {viewerDoc.title || "Deleted document"}
-                    </div>
+                    <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setViewerDoc(null)}
+                          className="-ml-1 inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[12px] font-medium text-[var(--muted)] hover:bg-[var(--panel-hover)] hover:text-[var(--fg)]"
+                        >
+                          <span aria-hidden="true">←</span> All documents
+                        </button>
+                      </div>
+                      <div className="mt-1.5 truncate text-[13px] font-semibold text-[var(--fg)]">
+                        {viewerDoc.title || "Deleted document"}
+                      </div>
 
-                    {viewerDoc.loading ? (
-                      <div className="mt-3 h-24 animate-pulse rounded-xl bg-[var(--panel-hover)]" aria-hidden="true" />
-                    ) : viewerDoc.error ? (
-                      <div className="mt-2 text-[13px] text-[var(--muted)]">Couldn&apos;t load this reading.</div>
-                    ) : viewerDoc.data ? (
-                      <>
-                        <div className="mt-3 grid grid-cols-3 gap-2">
-                          {stat("Sessions", String(viewerDoc.data.sessions || 1))}
-                          {stat("Time spent", viewerDoc.data.timeSpentMs > 0 ? formatDurationShort(viewerDoc.data.timeSpentMs) : "—")}
-                          {stat("Pages", viewerDoc.data.pagesViewed ? String(viewerDoc.data.pagesViewed) : "—")}
+                      {viewerDoc.loading ? (
+                        <div
+                          className="mt-3 h-24 animate-pulse rounded-xl bg-[var(--panel-hover)]"
+                          aria-hidden="true"
+                        />
+                      ) : viewerDoc.error ? (
+                        <div className="mt-2 text-[13px] text-[var(--muted)]">
+                          Couldn&apos;t load this reading.
                         </div>
-                        <div className="mt-3 text-[13px] font-semibold text-[var(--fg)]">Time on each page</div>
-                        {(() => {
-                          const msByPage = viewerDoc.data.pageTimeMsByPage;
-                          const pages = viewerDoc.data.pagesSeen;
-                          const hasRealTime = Object.values(msByPage).some((ms) => ms > 0);
-                          if (hasRealTime && pages.length === 1) {
+                      ) : viewerDoc.data ? (
+                        <>
+                          <div className="mt-3 grid grid-cols-3 gap-2">
+                            {stat(
+                              "Sessions",
+                              String(viewerDoc.data.sessions || 1),
+                            )}
+                            {stat(
+                              "Time spent",
+                              viewerDoc.data.timeSpentMs > 0
+                                ? formatDurationShort(
+                                    viewerDoc.data.timeSpentMs,
+                                  )
+                                : "—",
+                            )}
+                            {stat(
+                              "Pages",
+                              viewerDoc.data.pagesViewed
+                                ? String(viewerDoc.data.pagesViewed)
+                                : "—",
+                            )}
+                          </div>
+                          <div className="mt-3 text-[13px] font-semibold text-[var(--fg)]">
+                            Time on each page
+                          </div>
+                          {(() => {
+                            const msByPage = viewerDoc.data.pageTimeMsByPage;
+                            const pages = viewerDoc.data.pagesSeen;
+                            const hasRealTime = Object.values(msByPage).some(
+                              (ms) => ms > 0,
+                            );
+                            if (hasRealTime && pages.length === 1) {
+                              return (
+                                <div className="mt-2 text-[13px] text-[var(--muted)]">
+                                  {`Spent ${formatDurationShort(msByPage[String(pages[0])] ?? 0)} on page ${pages[0]}.`}
+                                </div>
+                              );
+                            }
+                            if (hasRealTime) {
+                              return (
+                                <div className="mt-2">
+                                  <PageTimeChart
+                                    pages={pages}
+                                    msByPage={msByPage}
+                                  />
+                                </div>
+                              );
+                            }
+                            if (pages.length) {
+                              return (
+                                <div className="mt-2 text-[13px] text-[var(--muted)]">
+                                  Opened pages {formatPageRanges(pages)}. Time
+                                  per page wasn&apos;t recorded for this
+                                  reading.
+                                </div>
+                              );
+                            }
                             return (
                               <div className="mt-2 text-[13px] text-[var(--muted)]">
-                                {`Spent ${formatDurationShort(msByPage[String(pages[0])] ?? 0)} on page ${pages[0]}.`}
+                                No page activity recorded in this range.
                               </div>
                             );
-                          }
-                          if (hasRealTime) {
-                            return (
-                              <div className="mt-2">
-                                <PageTimeChart pages={pages} msByPage={msByPage} />
-                              </div>
-                            );
-                          }
-                          if (pages.length) {
-                            return (
-                              <div className="mt-2 text-[13px] text-[var(--muted)]">
-                                Opened pages {formatPageRanges(pages)}. Time per page wasn&apos;t recorded for this reading.
-                              </div>
-                            );
-                          }
-                          return (
-                            <div className="mt-2 text-[13px] text-[var(--muted)]">
-                              No page activity recorded in this range.
-                            </div>
-                          );
-                        })()}
-                      </>
-                    ) : null}
-                  </div>
-                ) : !supportsPageDetail ? (
-                  <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-                    <div className="text-[13px] font-semibold text-[var(--fg)]">Documents opened</div>
-                    {viewerDetail.docs.length ? (
-                      <ul className="mt-2.5 space-y-2.5">
-                        {viewerDetail.docs.map((d) => (
-                          <li key={d.docId}>
-                            {/* The whole row opens this person's reading of this file — which pages,
+                          })()}
+                        </>
+                      ) : null}
+                    </div>
+                  ) : !supportsPageDetail ? (
+                    <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+                      <div className="text-[13px] font-semibold text-[var(--fg)]">
+                        Documents opened
+                      </div>
+                      {viewerDetail.docs.length ? (
+                        <ul className="mt-2.5 space-y-2.5">
+                          {viewerDetail.docs.map((d) => (
+                            <li key={d.docId}>
+                              {/* The whole row opens this person's reading of this file — which pages,
                                 for how long — rather than only the file. The document's own metrics
                                 page is one click further on and does not count this reading at all,
                                 so it is the wrong destination for a row inside a viewer's drawer. */}
-                            <button
-                              type="button"
-                              onClick={() => openViewerDoc(d)}
-                              className="group w-full rounded-lg px-1.5 py-1 text-left hover:bg-[var(--panel-hover)]"
-                              title={d.title ? `See which pages ${viewerDetail.title} read` : undefined}
-                            >
-                              <div className="flex items-baseline justify-between gap-3 text-[13px]">
-                                {d.title ? (
-                                  <span className="min-w-0 truncate font-medium text-[var(--fg)] group-hover:underline">
-                                    {d.title}
+                              <button
+                                type="button"
+                                onClick={() => openViewerDoc(d)}
+                                className="group w-full rounded-lg px-1.5 py-1 text-left hover:bg-[var(--panel-hover)]"
+                                title={
+                                  d.title
+                                    ? `See which pages ${viewerDetail.title} read`
+                                    : undefined
+                                }
+                              >
+                                <div className="flex items-baseline justify-between gap-3 text-[13px]">
+                                  {d.title ? (
+                                    <span className="min-w-0 truncate font-medium text-[var(--fg)] group-hover:underline">
+                                      {d.title}
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="min-w-0 truncate text-[var(--muted)]"
+                                      title="This document was deleted; this viewer's time on it is still counted"
+                                    >
+                                      Deleted document
+                                    </span>
+                                  )}
+                                  <span className="shrink-0 tabular-nums text-[12px] text-[var(--muted)]">
+                                    {d.timeSpentMs > 0
+                                      ? formatDurationShort(d.timeSpentMs)
+                                      : "—"}
                                   </span>
-                                ) : (
-                                  <span
-                                    className="min-w-0 truncate text-[var(--muted)]"
-                                    title="This document was deleted; this viewer's time on it is still counted"
-                                  >
-                                    Deleted document
-                                  </span>
-                                )}
-                                <span className="shrink-0 tabular-nums text-[12px] text-[var(--muted)]">
-                                  {d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}
-                                </span>
-                              </div>
-                              <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
-                                <div
-                                  className="h-full rounded-full bg-[var(--chart-views)]"
-                                  style={{ width: `${Math.max(4, (d.timeSpentMs / maxDocMs) * 100)}%` }}
-                                />
-                              </div>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="mt-2 text-[13px] text-[var(--muted)]">No documents opened yet.</div>
-                    )}
-                  </div>
-                ) : (
-                <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-                  <div className="text-[13px] font-semibold text-[var(--fg)]">Time on each page</div>
-                  {viewerHasRealPerPageTime && viewerDetail.pagesSeen.length === 1 ? (
-                    // One page is a dot, not a chart.
-                    <div className="mt-2 text-[13px] text-[var(--muted)]">
-                      {`Spent ${formatDurationShort(viewerDetail.pageTimeMsByPage[String(viewerDetail.pagesSeen[0])] ?? 0)} on page ${viewerDetail.pagesSeen[0]}.`}
+                                </div>
+                                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-[var(--panel-hover)]">
+                                  <div
+                                    className="h-full rounded-full bg-[var(--chart-views)]"
+                                    style={{
+                                      width: `${Math.max(4, (d.timeSpentMs / maxDocMs) * 100)}%`,
+                                    }}
+                                  />
+                                </div>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="mt-2 text-[13px] text-[var(--muted)]">
+                          No documents opened yet.
+                        </div>
+                      )}
                     </div>
-                  ) : viewerHasRealPerPageTime ? (
-                    <>
-                      <div className="mt-2">
-                        <PageTimeChart pages={viewerDetail.pagesSeen} msByPage={viewerDetail.pageTimeMsByPage} />
+                  ) : (
+                    <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
+                      <div className="text-[13px] font-semibold text-[var(--fg)]">
+                        Time on each page
                       </div>
-                      {/* The same numbers as the chart, ranked — a shape tells you they slowed
+                      {viewerHasRealPerPageTime &&
+                      viewerDetail.pagesSeen.length === 1 ? (
+                        // One page is a dot, not a chart.
+                        <div className="mt-2 text-[13px] text-[var(--muted)]">
+                          {`Spent ${formatDurationShort(viewerDetail.pageTimeMsByPage[String(viewerDetail.pagesSeen[0])] ?? 0)} on page ${viewerDetail.pagesSeen[0]}.`}
+                        </div>
+                      ) : viewerHasRealPerPageTime ? (
+                        <>
+                          <div className="mt-2">
+                            <PageTimeChart
+                              pages={viewerDetail.pagesSeen}
+                              msByPage={viewerDetail.pageTimeMsByPage}
+                            />
+                          </div>
+                          {/* The same numbers as the chart, ranked — a shape tells you they slowed
                           down somewhere, a list tells you where. */}
-                      <ul className="mt-3 grid gap-1 border-t border-[var(--divider)] pt-3">
-                        {pageRows.slice(0, 8).map((row) => (
-                          <li key={row.page} className="flex items-center gap-3">
-                            <span className="w-12 shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
-                              Page {row.page}
-                            </span>
-                            <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--panel-2)]">
-                              <span
-                                className="block h-full rounded-full bg-[var(--chart-views)]"
-                                style={{ width: `${Math.max(2, Math.round((row.ms / maxPageMs) * 100))}%` }}
-                              />
-                            </span>
-                            <span className="w-14 shrink-0 text-right text-[12px] tabular-nums text-[var(--fg)]">
-                              {row.ms > 0 ? formatDurationShort(row.ms) : "—"}
-                            </span>
-                          </li>
-                        ))}
-                        {pageRows.length > 8 ? (
-                          <li className="pt-1 text-[12px] text-[var(--muted-2)]">
-                            and {pageRows.length - 8} more {pageRows.length - 8 === 1 ? "page" : "pages"}
-                          </li>
-                        ) : null}
-                      </ul>
-                    </>
-                  ) : viewerDetail.pagesSeen.length ? (
-                    <div className="mt-2">
-                      <div className="text-[13px] text-[var(--muted)]">
-                        Opened {viewerDetail.pagesSeen.length === 1 ? "page" : "pages"}{" "}
-                        {formatPageRanges(viewerDetail.pagesSeen)}
-                        {viewerTimeTotalMs > 0
-                          ? `, ${viewerTimeApproxPrefix}${formatDurationShort(viewerTimeTotalMs)} in total.`
-                          : "."}
-                      </div>
-                      {/* Per-page timing only exists for visits recorded since the reading clock
+                          <ul className="mt-3 grid gap-1 border-t border-[var(--divider)] pt-3">
+                            {pageRows.slice(0, 8).map((row) => (
+                              <li
+                                key={row.page}
+                                className="flex items-center gap-3"
+                              >
+                                <span className="w-12 shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
+                                  Page {row.page}
+                                </span>
+                                <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--panel-2)]">
+                                  <span
+                                    className="block h-full rounded-full bg-[var(--chart-views)]"
+                                    style={{
+                                      width: `${Math.max(2, Math.round((row.ms / maxPageMs) * 100))}%`,
+                                    }}
+                                  />
+                                </span>
+                                <span className="w-14 shrink-0 text-right text-[12px] tabular-nums text-[var(--fg)]">
+                                  {row.ms > 0
+                                    ? formatDurationShort(row.ms)
+                                    : "—"}
+                                </span>
+                              </li>
+                            ))}
+                            {pageRows.length > 8 ? (
+                              <li className="pt-1 text-[12px] text-[var(--muted-2)]">
+                                and {pageRows.length - 8} more{" "}
+                                {pageRows.length - 8 === 1 ? "page" : "pages"}
+                              </li>
+                            ) : null}
+                          </ul>
+                        </>
+                      ) : viewerDetail.pagesSeen.length ? (
+                        <div className="mt-2">
+                          <div className="text-[13px] text-[var(--muted)]">
+                            Opened{" "}
+                            {viewerDetail.pagesSeen.length === 1
+                              ? "page"
+                              : "pages"}{" "}
+                            {formatPageRanges(viewerDetail.pagesSeen)}
+                            {viewerTimeTotalMs > 0
+                              ? `, ${viewerTimeApproxPrefix}${formatDurationShort(viewerTimeTotalMs)} in total.`
+                              : "."}
+                          </div>
+                          {/* Per-page timing only exists for visits recorded since the reading clock
                           shipped. Saying which pages, and what the whole visit was worth, is what
                           this reader's data can support — the rest would be invented. */}
-                      <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-                        Time per page wasn&apos;t recorded for this viewer
-                        {sessions > 1 ? `, across ${sessions} sessions` : ""}.
-                      </div>
+                          <div className="mt-1 text-[12px] text-[var(--muted-2)]">
+                            Time per page wasn&apos;t recorded for this viewer
+                            {sessions > 1
+                              ? `, across ${sessions} sessions`
+                              : ""}
+                            .
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-[13px] text-[var(--muted)]">
+                          No page activity recorded yet.
+                        </div>
+                      )}
                     </div>
-                  ) : (
-                    <div className="mt-2 text-[13px] text-[var(--muted)]">No page activity recorded yet.</div>
                   )}
-                </div>
-                )}
 
-                {/* Sessions list: document scope only. A "session" on a project spans documents, so
+                  {/* Sessions list: document scope only. A "session" on a project spans documents, so
                     its page sequence — the whole content of this card and of the modal behind it —
                     has no project meaning; the documents card above carries what does. */}
-                {!supportsPageDetail ? null : (
-                <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
-                  <div className="flex items-center justify-between gap-3 px-4 pt-3.5">
-                    <div className="text-[13px] font-semibold text-[var(--fg)]">Recent sessions</div>
-                    {visits.length > recent.length ? (
-                      <button
-                        type="button"
-                        onClick={() => void openVisitsForViewer()}
-                        className="text-[12px] font-medium text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
-                      >
-                        All {visits.length >= 50 ? "50+" : visits.length} sessions →
-                      </button>
-                    ) : null}
-                  </div>
-                  {visitsLoading && !visits.length ? (
-                    <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">Loading…</div>
-                  ) : visitsError ? (
-                    <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">Couldn&apos;t load sessions.</div>
-                  ) : !recent.length ? (
-                    <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">No sessions recorded yet.</div>
-                  ) : (
-                    <ul className="mt-1.5 divide-y divide-[var(--border)]">
-                      {recent.map((v) => (
-                        <li key={v.visitId}>
+                  {!supportsPageDetail ? null : (
+                    <div className="mt-4 rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                      <div className="flex items-center justify-between gap-3 px-4 pt-3.5">
+                        <div className="text-[13px] font-semibold text-[var(--fg)]">
+                          Recent sessions
+                        </div>
+                        {visits.length > recent.length ? (
                           <button
                             type="button"
-                            onClick={() => void openVisitDetail(v.visitId)}
-                            className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-[var(--panel-hover)]"
-                            title="See this session page by page"
+                            onClick={() => void openVisitsForViewer()}
+                            className="text-[12px] font-medium text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
                           >
-                            <span className="min-w-0 truncate text-[13px] text-[var(--fg)]">{formatDateTime(v.startedAt)}</span>
-                            <span className="shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
-                              {v.timeSpentMs > 0 ? formatDurationShort(v.timeSpentMs) : "—"}
-                              {v.pagesSeen?.length ? ` · ${v.pagesSeen.length === 1 ? "page" : "pages"} ${formatPageRanges(v.pagesSeen)}` : ""}
-                            </span>
+                            All {visits.length >= 50 ? "50+" : visits.length}{" "}
+                            sessions →
                           </button>
-                        </li>
-                      ))}
-                    </ul>
+                        ) : null}
+                      </div>
+                      {visitsLoading && !visits.length ? (
+                        <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">
+                          Loading…
+                        </div>
+                      ) : visitsError ? (
+                        <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">
+                          Couldn&apos;t load sessions.
+                        </div>
+                      ) : !recent.length ? (
+                        <div className="px-4 pb-4 pt-2 text-[13px] text-[var(--muted)]">
+                          No sessions recorded yet.
+                        </div>
+                      ) : (
+                        <ul className="mt-1.5 divide-y divide-[var(--border)]">
+                          {recent.map((v) => (
+                            <li key={v.visitId}>
+                              <button
+                                type="button"
+                                onClick={() => void openVisitDetail(v.visitId)}
+                                className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left hover:bg-[var(--panel-hover)]"
+                                title="See this session page by page"
+                              >
+                                <span className="min-w-0 truncate text-[13px] text-[var(--fg)]">
+                                  {formatDateTime(v.startedAt)}
+                                </span>
+                                <span className="shrink-0 text-[12px] tabular-nums text-[var(--muted)]">
+                                  {v.timeSpentMs > 0
+                                    ? formatDurationShort(v.timeSpentMs)
+                                    : "—"}
+                                  {v.pagesSeen?.length
+                                    ? ` · ${v.pagesSeen.length === 1 ? "page" : "pages"} ${formatPageRanges(v.pagesSeen)}`
+                                    : ""}
+                                </span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   )}
-                </div>
-                )}
 
-                <div className="mt-3 text-[11px] text-[var(--muted-2)]">
-                  First seen {formatDateTime(viewerDetail.firstSeen)}
-                  {viewerDetail.kind === "anon" && viewerDetail.key !== "anon" ? ` · Device ${formatShortId(viewerDetail.key)}` : ""}
-                </div>
-              </>
-            );
-          })()
-        )}
+                  <div className="mt-3 text-[11px] text-[var(--muted-2)]">
+                    First seen {formatDateTime(viewerDetail.firstSeen)}
+                    {viewerDetail.kind === "anon" && viewerDetail.key !== "anon"
+                      ? ` · Device ${formatShortId(viewerDetail.key)}`
+                      : ""}
+                  </div>
+                </>
+              );
+            })()}
       </Modal>
 
-      <Modal open={visitsModalOpen} onClose={() => setVisitsModalOpen(false)} ariaLabel="Viewer visits">
+      <Modal
+        open={visitsModalOpen}
+        onClose={() => setVisitsModalOpen(false)}
+        ariaLabel="Viewer visits"
+      >
         <div className="text-base font-semibold text-[var(--fg)]">Visits</div>
         <div className="mt-1 text-sm text-[var(--muted)]">
-          Per-tab visits (best-effort). A “visit” is scoped to a single browser tab session.
+          Per-tab visits (best-effort). A “visit” is scoped to a single browser
+          tab session.
         </div>
 
         <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
           {visitsLoading ? (
-            <div className="p-4 text-sm text-[var(--muted)]">Loading visits…</div>
+            <div className="p-4 text-sm text-[var(--muted)]">
+              Loading visits…
+            </div>
           ) : visitsError ? (
             <div className="p-4 text-sm text-red-700">{visitsError}</div>
           ) : !visits.length ? (
-            <div className="p-4 text-sm text-[var(--muted)]">No visit data yet.</div>
+            <div className="p-4 text-sm text-[var(--muted)]">
+              No visit data yet.
+            </div>
           ) : (
             <ul className="divide-y divide-[var(--border)]">
               {visits.map((v) => {
@@ -3038,10 +4003,12 @@ const VIEWERS_PAGE_SIZE = 25;
                     >
                       <div className="min-w-0">
                         <div className="truncate text-sm font-semibold text-[var(--fg)]">
-                          {formatDateTime(startedAt)} → {formatDateTime(lastEventAt)}
+                          {formatDateTime(startedAt)} →{" "}
+                          {formatDateTime(lastEventAt)}
                         </div>
                         <div className="mt-0.5 truncate text-xs text-[var(--muted-2)]">
-                          {v.pagesSeen?.length ?? 0} pages · {revisited} revisited
+                          {v.pagesSeen?.length ?? 0} pages · {revisited}{" "}
+                          revisited
                         </div>
                       </div>
                       <div className="shrink-0 sm:text-right">
@@ -3058,14 +4025,23 @@ const VIEWERS_PAGE_SIZE = 25;
         </div>
 
         <div className="mt-3 flex justify-end">
-          <Button variant="ghost" size="sm" onClick={() => void openVisitsForViewer()} disabled={visitsLoading}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => void openVisitsForViewer()}
+            disabled={visitsLoading}
+          >
             Refresh
           </Button>
         </div>
       </Modal>
 
       <Modal
-        open={Boolean(visitDetail) || visitDetailLoading || Boolean(visitDetailError)}
+        open={
+          Boolean(visitDetail) ||
+          visitDetailLoading ||
+          Boolean(visitDetailError)
+        }
         onClose={() => {
           setVisitDetail(null);
           setVisitDetailError(null);
@@ -3073,7 +4049,9 @@ const VIEWERS_PAGE_SIZE = 25;
         }}
         ariaLabel="Visit details"
       >
-        <div className="text-base font-semibold text-[var(--fg)]">Visit details</div>
+        <div className="text-base font-semibold text-[var(--fg)]">
+          Visit details
+        </div>
         {visitDetailLoading ? (
           <div className="mt-2 text-sm text-[var(--muted)]">Loading…</div>
         ) : visitDetailError ? (
@@ -3083,38 +4061,63 @@ const VIEWERS_PAGE_SIZE = 25;
         ) : (
           <div className="mt-4 grid gap-4">
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-              <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">SUMMARY</div>
+              <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">
+                SUMMARY
+              </div>
               <div className="mt-2 text-sm text-[var(--muted)]">
-                {formatDateTime(visitDetail.startedAt)} → {formatDateTime(visitDetail.lastEventAt)}
+                {formatDateTime(visitDetail.startedAt)} →{" "}
+                {formatDateTime(visitDetail.lastEventAt)}
               </div>
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                <span className="tabular-nums text-[var(--fg)]">Time spent {formatDurationShort(visitDetail.timeSpentMs)}</span>
-                <span className="tabular-nums text-[var(--fg)]">{visitDetail.pagesSeen.length} pages</span>
-                <span className="tabular-nums text-[var(--fg)]">{visitDetail.revisitedPages.length} revisited</span>
+                <span className="tabular-nums text-[var(--fg)]">
+                  Time spent {formatDurationShort(visitDetail.timeSpentMs)}
+                </span>
+                <span className="tabular-nums text-[var(--fg)]">
+                  {visitDetail.pagesSeen.length} pages
+                </span>
+                <span className="tabular-nums text-[var(--fg)]">
+                  {visitDetail.revisitedPages.length} revisited
+                </span>
               </div>
               {visitDetail.pagesSeen.length ? (
-                <div className="mt-2 text-xs text-[var(--muted)]">Pages: {formatPageRanges(visitDetail.pagesSeen)}</div>
+                <div className="mt-2 text-xs text-[var(--muted)]">
+                  Pages: {formatPageRanges(visitDetail.pagesSeen)}
+                </div>
               ) : null}
               {visitDetail.revisitedPages.length ? (
-                <div className="mt-1 text-xs text-[var(--muted)]">Revisited: {formatPageRanges(visitDetail.revisitedPages)}</div>
+                <div className="mt-1 text-xs text-[var(--muted)]">
+                  Revisited: {formatPageRanges(visitDetail.revisitedPages)}
+                </div>
               ) : null}
             </div>
 
             <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4">
-              <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">PAGE SEQUENCE</div>
+              <div className="text-xs font-semibold tracking-wide text-[var(--muted-2)]">
+                PAGE SEQUENCE
+              </div>
               {!visitDetail.events.length ? (
-                <div className="mt-2 text-sm text-[var(--muted)]">No sequence data yet.</div>
+                <div className="mt-2 text-sm text-[var(--muted)]">
+                  No sequence data yet.
+                </div>
               ) : (
                 <div className="mt-3 max-h-[340px] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--panel-2)]">
                   <ul className="divide-y divide-[var(--border)]">
                     {visitDetail.events.slice(0, 250).map((e, idx) => (
-                      <li key={`${visitDetail.visitId}:ev:${idx}`} className="px-3 py-2">
+                      <li
+                        key={`${visitDetail.visitId}:ev:${idx}`}
+                        className="px-3 py-2"
+                      >
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm font-semibold text-[var(--fg)] tabular-nums">Page {e.pageNumber}</div>
-                          <div className="text-xs text-[var(--muted-2)] tabular-nums">{formatDurationTiny(e.durationMs)}</div>
+                          <div className="text-sm font-semibold text-[var(--fg)] tabular-nums">
+                            Page {e.pageNumber}
+                          </div>
+                          <div className="text-xs text-[var(--muted-2)] tabular-nums">
+                            {formatDurationTiny(e.durationMs)}
+                          </div>
                         </div>
                         <div className="mt-0.5 text-xs text-[var(--muted)]">
-                          {formatDateTime(e.enteredAt)} → {formatDateTime(e.leftAt)}
+                          {formatDateTime(e.enteredAt)} →{" "}
+                          {formatDateTime(e.leftAt)}
                         </div>
                       </li>
                     ))}
@@ -3128,5 +4131,3 @@ const VIEWERS_PAGE_SIZE = 25;
     </div>
   );
 }
-
-

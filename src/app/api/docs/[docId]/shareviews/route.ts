@@ -1015,6 +1015,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
                 shareId,
                 projectId,
                 projectName,
+                /**
+                 * This reader's key, so the page can tell that the person who read through the
+                 * project is the same person who later opened the document's own link. Both rows
+                 * carry the same digest — a project row just stores it with the document appended.
+                 */
+                viewerKey,
+                /** The pages themselves, not just how many: two reads merge by union, not by sum. */
+                pagesSeen: [...pagesViewed].sort((a, b) => a - b),
                 /** Where this person's reading is recorded — their page in that project. */
                 viewerHref: projectId && viewerKey ? `/project/${encodeURIComponent(projectId)}/metrics/viewer/${viewerKey}` : null,
                 views: r.views,

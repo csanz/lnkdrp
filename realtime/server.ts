@@ -235,24 +235,40 @@ async function main() {
   });
   watchHealth("uploads", uploads);
 
-  // A recipient's volunteered identity, the moment it changes.
+  // Someone new opened it, or someone already here said who they are.
   //
-  // "Introduce yourself" is asked once per browser and then remembered there, so the interesting
-  // case is the *second* answer: someone fixes a typo or adds a surname, the app writes it through
-  // to that person's rows (see `propagateViewerIdentity`), and an owner watching the document's
-  // metrics page should see the name correct itself rather than sit on the old one until a reload.
+  // Two events, one frame. The insert is the arrival: a `shareviews` row is written once per
+  // (link, reader) — and once per document behind a project link — so it fires when a person
+  // appears for the first time and never again while they read. That is the event an owner is
+  // actually watching the page for, and it was the one the channel did not carry: the metrics page
+  // only moved when a *name* changed, so a new reader arriving left it completely still until a
+  // reload. Reported as "the metrics pages need to be realtime dynamic... it didn't show me as a
+  // new visitor".
   //
-  // Matching on the two identity fields keeps every other `shareviews` write off the channel —
-  // and there are a great many of them: each heartbeat from each open reader touches this
-  // collection several times a minute.
+  // The update half stays narrow. "Introduce yourself" is asked once per browser and then
+  // remembered, so the interesting case is the second answer: someone fixes a typo or adds a
+  // surname, the app writes it through to that person's rows (`propagateViewerIdentity`), and an
+  // owner watching should see the name correct itself. Matching on the two identity fields keeps
+  // every other `shareviews` update off the channel — and there are a great many of them, since
+  // each heartbeat from each open reader touches this collection several times a minute.
+  //
+  // Owner previews are broadcast too, deliberately. They are excluded from every figure on the
+  // page (`RECIPIENT_ONLY_MATCH`) but counted in `totals.ownerPreviews`, which the page shows —
+  // so an owner opening their own link to test it sees that number move, instead of a page that
+  // looks broken because it correctly refused to count them.
   const shareViews = db.collection("shareviews").watch(
     [
       {
         $match: {
-          operationType: "update",
           $or: [
-            { "updateDescription.updatedFields.viewerName": { $exists: true } },
-            { "updateDescription.updatedFields.viewerEmailSnapshot": { $exists: true } },
+            { operationType: "insert" },
+            {
+              operationType: "update",
+              $or: [
+                { "updateDescription.updatedFields.viewerName": { $exists: true } },
+                { "updateDescription.updatedFields.viewerEmailSnapshot": { $exists: true } },
+              ],
+            },
           ],
         },
       },
@@ -274,18 +290,22 @@ async function main() {
   });
   watchHealth("shareviews", shareViews);
 
-  // The same identity, on the row a visitor writes when they open a data room and read nothing.
-  // Without this, someone who introduces themselves on the room's front page and opens no document
-  // changes nothing the metrics page can see until it is reloaded — which is exactly the visitor
-  // this collection exists to record.
+  // The same two events on the row a visitor writes when they open a data room and read nothing.
+  // The arrival is the whole point of this collection — someone landed and opened no document —
+  // and without the insert it reached the metrics page only on the next reload.
   const projectLinkViews = db.collection("projectlinkviews").watch(
     [
       {
         $match: {
-          operationType: "update",
           $or: [
-            { "updateDescription.updatedFields.viewerName": { $exists: true } },
-            { "updateDescription.updatedFields.viewerEmailSnapshot": { $exists: true } },
+            { operationType: "insert" },
+            {
+              operationType: "update",
+              $or: [
+                { "updateDescription.updatedFields.viewerName": { $exists: true } },
+                { "updateDescription.updatedFields.viewerEmailSnapshot": { $exists: true } },
+              ],
+            },
           ],
         },
       },

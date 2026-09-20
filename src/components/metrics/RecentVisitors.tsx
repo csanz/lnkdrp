@@ -37,10 +37,13 @@ export type RecentVisitor = {
   pages?: number | null;
   /** The document's page count, so one page of nine is not called a read. */
   totalPages?: number | null;
-  /** The project this read came through, when it came through one. */
-  via?: string | null;
-  /** Where that project's own metrics live, so the chip is a way there and not just a label. */
-  viaHref?: string | null;
+  /**
+   * The projects this person came through, if any — one chip each.
+   *
+   * A list rather than a single value because one person can reach the same document through two
+   * data rooms, and the row is one person.
+   */
+  vias?: Array<{ name: string; href: string | null }>;
   /** This person's own page. A row without one is a row you cannot click. */
   href?: string | null;
   /** The row's tooltip — what clicking the person will show you. */
@@ -199,32 +202,34 @@ export default function RecentVisitors({
                     pages={v.pages}
                     totalPages={v.totalPages}
                   />
-                  {v.via ? (
-                    v.viaHref ? (
+                  {(v.vias ?? []).map((via) =>
+                    via.href ? (
                       <Link
-                        href={v.viaHref}
-                        title={`Opened through ${v.via} — see that project's metrics`}
+                        key={via.name}
+                        href={via.href}
+                        title={`Opened through ${via.name} — see that project's metrics`}
                         className="relative z-10 inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--muted-2)] hover:text-[var(--fg)]"
                       >
                         <FolderIcon
                           className="h-3 w-3 shrink-0"
                           aria-hidden="true"
                         />
-                        <span className="truncate">{v.via}</span>
+                        <span className="truncate">{via.name}</span>
                       </Link>
                     ) : (
                       <span
+                        key={via.name}
                         className="inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]"
-                        title={`Opened through ${v.via}`}
+                        title={`Opened through ${via.name}`}
                       >
                         <FolderIcon
                           className="h-3 w-3 shrink-0"
                           aria-hidden="true"
                         />
-                        <span className="truncate">{v.via}</span>
+                        <span className="truncate">{via.name}</span>
                       </span>
-                    )
-                  ) : null}
+                    ),
+                  )}
                 </span>
                 {v.detail ? (
                   <span className="block truncate text-[12px] text-[var(--muted-2)]">
