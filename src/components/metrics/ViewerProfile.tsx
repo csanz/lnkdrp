@@ -20,7 +20,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeftIcon, DocumentTextIcon, UserIcon } from "@heroicons/react/24/outline";
 
 import {
-  PageTimeChart,
   formatDateTime,
   formatDurationShort,
   formatPageRanges,
@@ -29,6 +28,7 @@ import {
   relativeAge,
 } from "@/components/metrics/MetricsView";
 import DepthBadge from "@/components/metrics/DepthBadge";
+import PageReadingDetail from "@/components/metrics/PageReadingDetail";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { subscribeRealtime } from "@/lib/client/realtime";
 import { useEntityIdentity } from "@/lib/client/entityIdentity";
@@ -244,8 +244,6 @@ export default function ViewerProfile({
     () => pagesSeen.map((page) => ({ page, ms: msByPage[String(page)] ?? 0 })).sort((a, b) => b.ms - a.ms || a.page - b.page),
     [pagesSeen, msByPage],
   );
-  const hasPerPageTime = pageRows.some((r) => r.ms > 0);
-  const maxPageMs = Math.max(1, ...pageRows.map((r) => r.ms));
   const timeMs = Math.max(0, viewer?.timeSpentMs ?? 0);
   const sessions = scopeKind === "doc" ? visits.length || viewer?.views || 0 : viewer?.sessions || (viewer?.docs?.length ?? 0);
   const longest = pageRows.find((r) => r.ms > 0) ?? null;
@@ -327,38 +325,9 @@ export default function ViewerProfile({
       {scopeKind === "doc" ? (
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
           <div className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">Time on each page</div>
-          {hasPerPageTime ? (
-            <>
-              <div className="mt-3">
-                <PageTimeChart pages={pagesSeen} msByPage={msByPage} />
-              </div>
-              {/* The chart says they slowed down somewhere; the list says where. */}
-              <ul className="mt-4 grid gap-1.5 border-t border-[var(--divider)] pt-4">
-                {pageRows.map((row) => (
-                  <li key={row.page} className="flex items-center gap-3">
-                    <span className="w-14 shrink-0 text-[12px] tabular-nums text-[var(--muted)]">Page {row.page}</span>
-                    <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--panel-2)]">
-                      <span
-                        className="block h-full rounded-full bg-emerald-500/70"
-                        style={{ width: `${Math.max(2, Math.round((row.ms / maxPageMs) * 100))}%` }}
-                      />
-                    </span>
-                    <span className="w-16 shrink-0 text-right text-[12px] tabular-nums text-[var(--fg)]">
-                      {row.ms > 0 ? formatDurationShort(row.ms) : "—"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : pagesSeen.length ? (
-            <div className="mt-2 text-[13px] text-[var(--muted)]">
-              Opened {pagesSeen.length === 1 ? "page" : "pages"} {formatPageRanges(pagesSeen)}
-              {timeMs > 0 ? `, ${formatDurationShort(timeMs)} in total.` : "."} Time per page wasn&apos;t recorded for this
-              reader.
-            </div>
-          ) : (
-            <div className="mt-2 text-[13px] text-[var(--muted)]">No page activity recorded yet.</div>
-          )}
+          <div className="mt-3">
+            <PageReadingDetail pagesSeen={pagesSeen} msByPage={msByPage} totalTimeMs={timeMs} />
+          </div>
         </section>
       ) : (
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
@@ -405,15 +374,15 @@ export default function ViewerProfile({
                               {detail.pagesSeen.length} {detail.pagesSeen.length === 1 ? "page" : "pages"}
                               {detail.timeSpentMs > 0 ? ` · ${formatDurationShort(detail.timeSpentMs)}` : ""}
                             </div>
-                            {Object.keys(detail.pageTimeMsByPage).length ? (
-                              <div className="mt-2">
-                                <PageTimeChart pages={detail.pagesSeen} msByPage={detail.pageTimeMsByPage} />
-                              </div>
-                            ) : (
-                              <div className="mt-1 text-[12px] text-[var(--muted-2)]">
-                                Opened {formatPageRanges(detail.pagesSeen)}; time per page wasn&apos;t recorded.
-                              </div>
-                            )}
+                            {/* The same component the document side uses: chart and ranked pages,
+                                never one without the other. */}
+                            <div className="mt-2">
+                              <PageReadingDetail
+                                pagesSeen={detail.pagesSeen}
+                                msByPage={detail.pageTimeMsByPage}
+                                totalTimeMs={detail.timeSpentMs}
+                              />
+                            </div>
                           </>
                         ) : (
                           <div className="text-[12px] text-[var(--muted)]">No pages recorded for this document.</div>
