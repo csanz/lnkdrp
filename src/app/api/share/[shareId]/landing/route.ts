@@ -203,8 +203,17 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               // Claim the sentinel: whoever sets it is the first landing, whether or not this
               // write created the row.
               try {
+                /**
+                 * `landedAt: null` matches a row that has never landed, whether the field is
+                 * missing or explicitly null — and it is always explicitly null, because the model
+                 * declares `landedAt: { type: Date, default: null }` and the upsert above therefore
+                 * creates every row with it set. `{ $exists: false }` could only ever match rows
+                 * written before the field was added to the schema, so the sentinel was never
+                 * claimed, `firstLanding` was never true, and a project link has not announced an
+                 * arrival since: `projectlinkviews` filled up while the activity feed stayed empty.
+                 */
                 const claim = await ProjectLinkViewModel.updateOne(
-                  { shareId, botIdHash, landedAt: { $exists: false } },
+                  { shareId, botIdHash, landedAt: null },
                   { $set: { landedAt: now } },
                 );
                 firstLanding = Boolean((claim as { modifiedCount?: number } | null)?.modifiedCount);
