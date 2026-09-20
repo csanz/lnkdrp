@@ -18,6 +18,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { applyTempUserHeaders, resolveActor, type Actor } from "@/lib/gating/actor";
 import { requireOrgRole, type OrgRole } from "@/lib/orgs/requireOrgRole";
+import { liveProjectByIdMatch } from "@/lib/projects/scope";
 
 export { linkErrorResponse, planWarningOf, type PlanWarning } from "@/app/api/docs/[docId]/links/shared";
 
@@ -59,16 +60,7 @@ export async function accessProjectForLinks(
   const orgId = new Types.ObjectId(actor.orgId);
   const legacyUserId = new Types.ObjectId(actor.userId);
   const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-  const match = allowLegacyByUserId
-    ? {
-        $or: [
-          { _id: projectId, orgId },
-          { _id: projectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-        ],
-      }
-    : { _id: projectId, orgId };
-
-  const project = (await ProjectModel.findOne({ ...match, isDeleted: { $ne: true } })
+  const project = (await ProjectModel.findOne(liveProjectByIdMatch(projectId, orgId, legacyUserId, allowLegacyByUserId))
     .select({ _id: 1, orgId: 1, name: 1 })
     .lean()) as { _id: Types.ObjectId; orgId?: Types.ObjectId | null; name?: string | null } | null;
   if (!project) {

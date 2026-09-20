@@ -134,6 +134,9 @@ export async function GET(request: Request) {
             ],
           }
         : { orgId }),
+      // Same rule as the sidebar and `/api/projects`: a request repo an admin retired is not listed,
+      // because every route that opens one now refuses it.
+      isDeleted: { $ne: true },
       $and: [
         requestOnly,
         ...(q

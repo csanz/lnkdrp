@@ -15,6 +15,7 @@ import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { resolveShareLink, shareLinkUnlocked, touchShareLink } from "@/lib/share/links";
 import { recordActivity } from "@/lib/activity/log";
+import { isOwnerSideViewer } from "@/lib/share/ownerSide";
 
 export const runtime = "nodejs";
 
@@ -99,6 +100,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
       .lean();
     if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+    // The one path that never asked. `/s/:shareId/pdf` and the stats ingest both flag the owning
+    // side; this route did not, so a teammate — or the owner — who filed a download request and
+    // approved it wrote a `ShareView` row with no `isOwnerPreview` field at all. Absent reads as
+    // "recipient" to every downstream `{ $ne: true }`, and because this row is keyed on the
+    // approved person rather than a browser botId, nothing later ever corrects it: the miscount is
+    // permanent. Unlike the public route this one has a signed-in actor by construction, so the
+    // answer is not best-effort here.
+    const ownerPreview = await isOwnerSideViewer(doc as { orgId?: unknown; userId?: unknown }, actor.userId);
+
     const blobUrl = (doc as { blobUrl?: unknown }).blobUrl;
     if (typeof blobUrl !== "string" || !blobUrl) {
       return NextResponse.json({ error: "PDF not available" }, { status: 404 });
@@ -134,7 +144,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     // The owner asked to be told when this person downloads; before, an approved download was
     // invisible in both the link's counters and the activity feed.
     if (upstream.ok) {
-      void touchShareLink(resolved.link.shareId, "download");
+      if (!ownerPreview) void touchShareLink(resolved.link.shareId, "download");
       // ...and record it on the analytics rows, which are what every surface now counts. Touching
       // only the link's counter made `ShareLink.downloadCount` read 4 where the rows summed to 3,
       // and pushed the link's "Last viewed" ahead of any view that had actually happened. Both
@@ -158,6 +168,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
                 ...((doc as { orgId?: unknown }).orgId ? { orgId: new Types.ObjectId(String((doc as { orgId: unknown }).orgId)) } : {}),
                 ...(requesterEmail ? { viewerEmail: requesterEmail, viewerEmailSnapshot: requesterEmail } : {}),
                 ...(actor.userId && Types.ObjectId.isValid(actor.userId) ? { viewerUserId: new Types.ObjectId(actor.userId) } : {}),
+                // Recorded, never counted — the same rule every other ingest applies.
+                isOwnerPreview: ownerPreview,
                 lastViewedAt: new Date(),
               },
               $inc: { downloads: 1, [`downloadsByDay.${day}`]: 1 },
@@ -169,7 +181,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
         }
       })();
       const orgIdForActivity = (doc as { orgId?: unknown }).orgId ? String((doc as { orgId: unknown }).orgId) : null;
-      if (orgIdForActivity) {
+      // "Someone downloaded this" about yourself is noise in your own feed, and it is the same
+      // event the counter above already declines to count.
+      if (orgIdForActivity && !ownerPreview) {
         void recordActivity({
           orgId: orgIdForActivity,
           userId: actor.userId,

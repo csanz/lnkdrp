@@ -154,8 +154,12 @@ export async function GET(request: Request) {
     };
 
     // Projects (non-request)
+    // Deleted rows are excluded here for the same reason `/api/projects` excludes them: a row the
+    // sidebar lists but every project route refuses is a dead end. The page's own 404 branch calls
+    // `refreshSidebarCache` to prune exactly this, which only worked if the list agreed.
     const projectsFilter: Record<string, unknown> = {
       ...scopedOr,
+      isDeleted: { $ne: true },
       $and: [
         { $or: [{ isRequest: { $exists: false } }, { isRequest: { $ne: true } }] },
         { $or: [{ requestUploadToken: { $exists: false } }, { requestUploadToken: null }, { requestUploadToken: "" }] },
@@ -196,6 +200,7 @@ export async function GET(request: Request) {
     const requestOnly = { $or: [{ isRequest: true }, { requestUploadToken: { $exists: true, $nin: [null, ""] } }] };
     const requestsFilter: Record<string, unknown> = {
       ...scopedOr,
+      isDeleted: { $ne: true },
       $and: [requestOnly],
     };
     const [requestsTotal, requestsRaw] = await Promise.all([

@@ -10,6 +10,7 @@ import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logg
 import { debugError } from "@/lib/debug";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
+import { buildDocMatch } from "@/lib/docs/docMatch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -120,14 +121,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const docObjectId = new Types.ObjectId(docId);
-    const docMatch = allowLegacyByUserId
-      ? {
-          $or: [
-            { _id: docObjectId, orgId },
-            { _id: docObjectId, userId: legacyUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
-          ],
-        }
-      : { _id: docObjectId, orgId };
+    // Was a hand-rolled copy of this filter that omitted `isDeleted` entirely, so a password could
+    // be set on — or cleared from — a document already in the trash, and the write-through re-armed
+    // its default link. `buildDocMatch` is the one rule; see src/lib/docs/docMatch.ts.
+    const docMatch = buildDocMatch(docObjectId, orgId, legacyUserId, allowLegacyByUserId);
     if (password === null) {
       // Remove password.
       await connectMongo();
@@ -258,21 +255,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     const orgId = new Types.ObjectId(actor.orgId);
     const legacyUserId = new Types.ObjectId(actor.userId);
     const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
-    const doc = await DocModel.findOne({
-      ...(allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } },
-              {
-                _id: new Types.ObjectId(docId),
-                userId: legacyUserId,
-                isDeleted: { $ne: true },
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
-    })
+    const doc = await DocModel.findOne(
+      buildDocMatch(new Types.ObjectId(docId), orgId, legacyUserId, allowLegacyByUserId),
+    )
       // The encrypted material is not selected, so this handler cannot leak it however it changes.
       .select({ sharePasswordHash: 1 })
       .lean();

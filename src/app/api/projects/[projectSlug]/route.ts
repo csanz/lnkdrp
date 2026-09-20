@@ -16,6 +16,7 @@ import { recordActivity } from "@/lib/activity/log";
 import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
 import { setAllProjectLinksEnabled } from "@/lib/share/projectLinks";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
+import { liveProjectByIdMatch } from "@/lib/projects/scope";
 
 export const runtime = "nodejs";
 
@@ -170,18 +171,7 @@ export async function PATCH(
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
     const project = await ProjectModel.findOne(
-      allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: new Types.ObjectId(projectIdParam), orgId },
-              {
-                _id: new Types.ObjectId(projectIdParam),
-                userId: legacyUserId,
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: new Types.ObjectId(projectIdParam), orgId },
+      liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId),
     );
     if (!project) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
@@ -383,18 +373,7 @@ export async function DELETE(
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
     }
     const project = await ProjectModel.findOne(
-      allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: new Types.ObjectId(projectIdParam), orgId },
-              {
-                _id: new Types.ObjectId(projectIdParam),
-                userId: legacyUserId,
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: new Types.ObjectId(projectIdParam), orgId },
+      liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId),
     );
     if (!project) {
       return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);

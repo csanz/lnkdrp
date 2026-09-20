@@ -16,6 +16,7 @@ import crypto from "node:crypto";
 import { randomBase62 } from "@/lib/crypto/randomBase62";
 import { authOrRateLimitResponse } from "@/lib/http/errorResponse";
 import { ensureDefaultProjectLink } from "@/lib/share/projectLinks";
+import { liveProjectByIdMatch } from "@/lib/projects/scope";
 
 export const runtime = "nodejs";
 /**
@@ -84,18 +85,7 @@ export async function GET(
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const project = await ProjectModel.findOne(
-      allowLegacyByUserId
-        ? {
-            $or: [
-              { _id: new Types.ObjectId(projectIdParam), orgId },
-              {
-                _id: new Types.ObjectId(projectIdParam),
-                userId: legacyUserId,
-                $or: [{ orgId: { $exists: false } }, { orgId: null }],
-              },
-            ],
-          }
-        : { _id: new Types.ObjectId(projectIdParam), orgId },
+      liveProjectByIdMatch(new Types.ObjectId(projectIdParam), orgId, legacyUserId, allowLegacyByUserId),
     )
       .select({
         _id: 1,
