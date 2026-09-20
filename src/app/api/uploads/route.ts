@@ -58,7 +58,14 @@ export async function GET(request: Request) {
 
     if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      const matchingDocs = await DocModel.find({ title: rx })
+      // Scoped to this actor's documents. Unscoped, the 100-row cap was filled from every
+      // workspace in the database, so a common word could push the caller's own matching documents
+      // out of the list entirely and their uploads would simply not be found. The upload filter
+      // below is already owner-scoped, so this never leaked another tenant's rows — it lost yours.
+      const matchingDocs = await DocModel.find({
+        title: rx,
+        $or: [{ orgId: new Types.ObjectId(actor.orgId) }, { userId: new Types.ObjectId(actor.userId) }],
+      })
         .select({ _id: 1 })
         .limit(100)
         .lean();

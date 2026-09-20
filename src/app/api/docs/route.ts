@@ -162,7 +162,25 @@ export async function GET(request: Request) {
         .limit(50)
         .lean<Array<{ docId: Types.ObjectId }>>();
       const linkDocIds = linkHits.map((l) => l.docId).filter(Boolean);
-      filter.$or = [{ title: rx }, { shareId: rx }, ...(linkDocIds.length ? [{ _id: { $in: linkDocIds } }] : [])];
+      /**
+       * `$and`, never `filter.$or = …`.
+       *
+       * The tenancy clause above is itself an `$or` whenever `allowLegacyByUserId` holds — which is
+       * every account sitting in its own personal workspace, i.e. the default. Assigning `$or` here
+       * replaced it outright, and the query that reached Mongo carried no workspace filter at all:
+       * `{isDeleted, isArchived, $or: [{title: rx}, …]}`. Any signed-in user could search every
+       * document in the database by title or slug and read the titles, slugs and summaries back.
+       *
+       * Combining through `$and` keeps both conditions: still this workspace, and matching the
+       * query. It also survives a future third clause being added to either side.
+       */
+      const searchClauses: Array<Record<string, unknown>> = [
+        { title: rx },
+        { shareId: rx },
+        ...(linkDocIds.length ? [{ _id: { $in: linkDocIds } }] : []),
+      ];
+      const existingAnd = Array.isArray(filter.$and) ? (filter.$and as Array<Record<string, unknown>>) : [];
+      filter.$and = [...existingAnd, { $or: searchClauses }];
     }
 
     const useIds = Boolean(ids.length);
