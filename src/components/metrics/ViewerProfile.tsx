@@ -179,6 +179,60 @@ export default function ViewerProfile({
   }, [load, loadVisits]);
 
 
+  /**
+   * Following one person into one document.
+   *
+   * A project link writes one row per (viewer, document), and the room's aggregate merges them —
+   * which is right for "they opened three documents in nine minutes" and useless for "which pages
+   * of the term sheet". `/shareviews/viewer-doc` goes back for the single row that was merged, so
+   * this page can answer both questions without pretending a project has page numbers.
+   *
+   * It is a drill-down rather than a link to the document's own metrics on purpose: a read through
+   * a project link belongs to the project, so that person may not appear in the document's own
+   * viewer list at all (docs/METRICS.md, `docScope.ts`). Sending someone there would show them an
+   * empty page and call it the truth.
+   */
+  const [openDoc, setOpenDoc] = useState<string | null>(null);
+  const [docDetail, setDocDetail] = useState<
+    Record<string, { pagesSeen: number[]; pageTimeMsByPage: Record<string, number>; timeSpentMs: number; sessions: number } | "loading">
+  >({});
+
+  const openDocDetail = useCallback(
+    async (docId: string) => {
+      setOpenDoc((cur) => (cur === docId ? null : docId));
+      if (docDetail[docId] || !who) return;
+      setDocDetail((d) => ({ ...d, [docId]: "loading" }));
+      try {
+        const params = new URLSearchParams({ docId, days: String(days) });
+        params.set(who.kind === "authed" ? "userId" : "botIdHash", who.key);
+        const res = await fetchWithTempUser(`${apiBase}/shareviews/viewer-doc?${params.toString()}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(String(res.status));
+        const json = (await res.json()) as {
+          pagesSeen?: number[];
+          pageTimeMsByPage?: Record<string, number>;
+          timeSpentMs?: number;
+          sessions?: number;
+        };
+        setDocDetail((d) => ({
+          ...d,
+          [docId]: {
+            pagesSeen: Array.isArray(json.pagesSeen) ? json.pagesSeen : [],
+            pageTimeMsByPage: json.pageTimeMsByPage ?? {},
+            timeSpentMs: typeof json.timeSpentMs === "number" ? json.timeSpentMs : 0,
+            sessions: typeof json.sessions === "number" ? json.sessions : 0,
+          },
+        }));
+      } catch {
+        setDocDetail((d) => {
+          const next = { ...d };
+          delete next[docId];
+          return next;
+        });
+      }
+    },
+    [apiBase, days, docDetail, who],
+  );
+
   const name = (viewer?.name ?? "").trim() || (viewer?.email ?? "").trim();
   const title = name || (who?.kind === "anon" ? "Anonymous visitor" : "Signed-in reader");
   const pagesSeen = useMemo(
@@ -313,24 +367,67 @@ export default function ViewerProfile({
             <ul className="mt-3 grid gap-1.5">
               {viewer.docs.map((d) => {
                 const max = Math.max(1, ...(viewer.docs ?? []).map((x) => x.timeSpentMs));
+                const detail = docDetail[d.docId];
+                const expanded = openDoc === d.docId;
                 return (
-                  <li key={d.docId} className="flex items-center gap-3">
-                    <DocumentTextIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                    <Link
-                      href={`/doc/${encodeURIComponent(d.docId)}/metrics`}
-                      className="min-w-0 flex-1 truncate text-[13px] text-[var(--fg)] hover:underline underline-offset-4"
+                  <li key={d.docId} className="rounded-xl border border-transparent transition-colors data-[open=true]:border-[var(--border)] data-[open=true]:bg-[var(--panel-2)]" data-open={expanded}>
+                    <button
+                      type="button"
+                      onClick={() => void openDocDetail(d.docId)}
+                      className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-[var(--panel-hover)]"
+                      title="See which pages they read in this document"
                     >
-                      {d.title || "Untitled document"}
-                    </Link>
-                    <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[var(--panel-2)]">
-                      <span
-                        className="block h-full rounded-full bg-emerald-500/70"
-                        style={{ width: `${Math.max(2, Math.round((d.timeSpentMs / max) * 100))}%` }}
-                      />
-                    </span>
-                    <span className="w-16 shrink-0 text-right text-[12px] tabular-nums text-[var(--muted)]">
-                      {d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}
-                    </span>
+                      <DocumentTextIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--fg)]">
+                        {d.title || "Untitled document"}
+                      </span>
+                      <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[var(--panel-2)]">
+                        <span
+                          className="block h-full rounded-full bg-emerald-500/70"
+                          style={{ width: `${Math.max(2, Math.round((d.timeSpentMs / max) * 100))}%` }}
+                        />
+                      </span>
+                      <span className="w-16 shrink-0 text-right text-[12px] tabular-nums text-[var(--muted)]">
+                        {d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}
+                      </span>
+                    </button>
+
+                    {expanded ? (
+                      <div className="border-t border-[var(--divider)] px-3 pb-3 pt-2.5">
+                        {detail === "loading" || !detail ? (
+                          <div className="text-[12px] text-[var(--muted)]">Loading pages…</div>
+                        ) : detail.pagesSeen.length ? (
+                          <>
+                            <div className="text-[12px] text-[var(--muted-2)]">
+                              {detail.sessions > 0
+                                ? `${detail.sessions} ${detail.sessions === 1 ? "session" : "sessions"} · `
+                                : ""}
+                              {detail.pagesSeen.length} {detail.pagesSeen.length === 1 ? "page" : "pages"}
+                              {detail.timeSpentMs > 0 ? ` · ${formatDurationShort(detail.timeSpentMs)}` : ""}
+                            </div>
+                            {Object.keys(detail.pageTimeMsByPage).length ? (
+                              <div className="mt-2">
+                                <PageTimeChart pages={detail.pagesSeen} msByPage={detail.pageTimeMsByPage} />
+                              </div>
+                            ) : (
+                              <div className="mt-1 text-[12px] text-[var(--muted-2)]">
+                                Opened {formatPageRanges(detail.pagesSeen)}; time per page wasn&apos;t recorded.
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-[12px] text-[var(--muted)]">No pages recorded for this document.</div>
+                        )}
+                        <div className="mt-2">
+                          <Link
+                            href={`/doc/${encodeURIComponent(d.docId)}/metrics`}
+                            className="text-[12px] font-medium text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
+                          >
+                            This document&apos;s own metrics →
+                          </Link>
+                        </div>
+                      </div>
+                    ) : null}
                   </li>
                 );
               })}
