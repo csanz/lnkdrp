@@ -34,6 +34,15 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Set once the answer is stored, which turns the modal into a confirmation rather than closing it.
+   *
+   * Closing on save was the whole acknowledgement: the recipient handed over their name and the
+   * box vanished, which reads as a form that may or may not have worked. Someone who has just
+   * decided to stop being anonymous is owed the other half of the exchange — what the owner will
+   * now see, in the words they typed — before being sent back to what they were reading.
+   */
+  const [saved, setSaved] = useState<{ name: string | null; email: string } | null>(null);
 
   // Hydrated in an effect, not at first render: the server has no localStorage, and a button that
   // says "Introduce yourself" on the server and "Viewing as Michael" in the browser is a hydration
@@ -73,10 +82,18 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
           // rides along with the next request this browser makes.
         });
       }
-      setOpen(false);
+      setSaved({ name: cleanName, email: cleanEmail });
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Dismiss the modal and forget the confirmation, so the next open starts on the form. */
+  function dismiss() {
+    if (busy) return;
+    setOpen(false);
+    setError(null);
+    setSaved(null);
   }
 
   return (
@@ -106,15 +123,63 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
 
       <Modal
         open={open}
-        onClose={() => {
-          if (busy) return;
-          setOpen(false);
-          setError(null);
-        }}
+        onClose={dismiss}
         ariaLabel="Introduce yourself"
         panelClassName="w-[min(680px,calc(100vw-32px))] border-white/15 bg-black/95 text-white ring-white/15"
         contentClassName="px-6 pb-6 pt-5"
       >
+        {saved ? (
+          <>
+            <div className="pr-10">
+              <div className="text-base font-semibold text-white">Thank you</div>
+              <div className="mt-2 text-sm leading-6 text-white/70">
+                {projectName ? (
+                  <>
+                    The owner of <span className="font-semibold text-white/90">{projectName}</span> can see who is here
+                    now.
+                  </>
+                ) : (
+                  "The owner of this data room can see who is here now."
+                )}{" "}
+                Everything you open from here is attributed to you.
+              </div>
+            </div>
+
+            {/* The same row the form previewed, now as fact rather than a preview. Showing the
+                identity back in their own words is the acknowledgement — "saved" on its own does
+                not tell them which of the two fields the owner actually sees. */}
+            <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3.5">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/45">You show up as</div>
+              <div className="mt-2.5 flex items-center gap-3">
+                <span
+                  aria-hidden="true"
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white text-[13px] font-semibold text-black"
+                >
+                  {(saved.name ?? saved.email).trim().charAt(0).toUpperCase()}
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-white">{saved.name || saved.email}</div>
+                  {saved.name ? <div className="truncate text-xs text-white/50">{saved.email}</div> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 text-xs leading-5 text-white/55">
+              You can change it or clear it any time from &ldquo;Viewing as&rdquo; at the top of this page.
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={dismiss}
+                className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black hover:bg-white/90"
+              >
+                Back to the documents
+              </button>
+            </div>
+          </>
+        ) : (
+        <>
         <div className="pr-10">
           <div className="text-base font-semibold text-white">Introduce yourself</div>
           <div className="mt-2 text-sm leading-6 text-white/70">
@@ -273,6 +338,8 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
             {busy ? "Saving…" : "Save"}
           </button>
         </div>
+        </>
+        )}
       </Modal>
     </>
   );
