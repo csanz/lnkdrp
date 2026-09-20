@@ -57,6 +57,10 @@ type Visit = {
   currentPage?: number | null;
   /** The document's length as the viewer reported it, for "page 4 of 9". */
   pageCount?: number | null;
+  /** Project scope: which document that page belongs to, since a session spans several. */
+  currentDocId?: string | null;
+  currentDocTitle?: string | null;
+  currentPageCount?: number | null;
   /** Project scope: which documents this one tab session touched, longest first. */
   docs?: Array<{ docId: string; title: string | null; timeSpentMs: number; pagesSeen: number[] }>;
 };
@@ -382,11 +386,21 @@ export default function ViewerProfile({
    * because it is the viewer's own report of what it rendered.
    */
   const live = useMemo(() => {
-    if (scopeKind !== "doc" || !readingNow) return null;
+    if (!readingNow) return null;
     const newest = visits[0];
     const page = newest?.currentPage ?? null;
     if (!page) return null;
-    return { page, of: newest?.pageCount ?? identity?.pages ?? null };
+    // A project session spans documents, so the page is only meaningful with the document it is
+    // in — "on page 4 of 9" says nothing in a room of three files.
+    if (scopeKind === "project") {
+      return {
+        page,
+        of: newest?.currentPageCount ?? null,
+        docId: newest?.currentDocId ?? null,
+        docTitle: newest?.currentDocTitle ?? null,
+      };
+    }
+    return { page, of: newest?.pageCount ?? identity?.pages ?? null, docId: null, docTitle: null };
   }, [scopeKind, readingNow, visits, identity?.pages]);
 
   const stat = (label: string, value: string, sub?: string | null) => (
@@ -456,7 +470,9 @@ export default function ViewerProfile({
                 title="A page turn or heartbeat arrived from this reader in the last minute"
               >
                 <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse dark:bg-emerald-400" />
-                {live ? `On page ${live.page}${live.of ? ` of ${live.of}` : ""}` : "Reading now"}
+                {live
+                  ? `On page ${live.page}${live.of ? ` of ${live.of}` : ""}${live.docTitle ? ` · ${live.docTitle}` : ""}`
+                  : "Reading now"}
               </span>
             ) : connected ? (
               <span
@@ -539,8 +555,21 @@ export default function ViewerProfile({
                 const max = Math.max(1, ...(viewer.docs ?? []).map((x) => x.timeSpentMs));
                 const detail = docDetail[d.docId];
                 const expanded = openDoc === d.docId;
+                // The one they are in right now. A room's list is otherwise a ranking by time, and
+                // the document someone has open this second is the only row on this page that is
+                // news rather than history.
+                const live_ = live?.docId === d.docId;
                 return (
-                  <li key={d.docId} className="rounded-xl border border-transparent transition-colors data-[open=true]:border-[var(--border)] data-[open=true]:bg-[var(--panel-2)]" data-open={expanded}>
+                  <li
+                    key={d.docId}
+                    data-open={expanded}
+                    className={[
+                      "rounded-xl border transition-colors data-[open=true]:bg-[var(--panel-2)]",
+                      live_
+                        ? "border-emerald-600/40 bg-emerald-500/5 dark:border-emerald-300/40"
+                        : "border-transparent data-[open=true]:border-[var(--border)]",
+                    ].join(" ")}
+                  >
                     <button
                       type="button"
                       onClick={() => void openDocDetail(d.docId)}
@@ -551,6 +580,15 @@ export default function ViewerProfile({
                       <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--fg)]">
                         {d.title || "Untitled document"}
                       </span>
+                      {live_ ? (
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-emerald-700 dark:border-emerald-300/40 dark:text-emerald-300"
+                          title="They have this open right now"
+                        >
+                          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse dark:bg-emerald-400" />
+                          {live?.page ? `Page ${live.page}${live.of ? `/${live.of}` : ""}` : "Open now"}
+                        </span>
+                      ) : null}
                       <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[var(--panel-2)]">
                         <span
                           className="block h-full rounded-full bg-[var(--chart-views)]"
