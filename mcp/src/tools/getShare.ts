@@ -60,6 +60,9 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
         .tagsForTarget({ targetKind: "doc", targetId: doc.id })
         .then((list) => list.map((t) => ({ name: t.name, slug: t.slug, color: t.color })))
         .catch(() => []);
+      // Read once, above the branch, for the same reason.
+      const allLinks = await ctx.api.listShareLinks(doc.id).catch(() => []);
+      const anyLinkActive = allLinks.some((l) => l.enabled && l.active);
 
       // Asked about one link by its slug: answer about *that* link. The document-level fields
       // (`shareUrl`, download, password, revision history) are the default link's, so an agent
@@ -89,6 +92,10 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
             },
             ...(summaryStale ? { summaryStale } : {}),
             tags,
+            // Same reason `tags` is here: a document's key set should not depend on which of its
+            // slugs you named it by. This one is about the *document* — whether any link of it is
+            // live — so it is as true on this branch as on the default one.
+            anyLinkActive,
             warnings,
           };
         }

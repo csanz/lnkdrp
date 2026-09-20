@@ -171,15 +171,37 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
          * one, then sliced for the requested page. The route is asked only for the page's rows.
          */
         let docIds = carried?.docIds ?? [];
-        if (docIds.length && args.query) {
-          // The route's own search, over the same workspace, then kept only where the two agree.
-          const matching = await ctx.api.listDocsPage({
-            q: args.query,
-            limit: 50,
-            archived: args.archived,
-          });
-          const byQuery = new Set(matching.docs.map((d) => d.id));
-          docIds = docIds.filter((id) => byQuery.has(id));
+        /**
+         * `archived` narrows the ids too, not only the rows.
+         *
+         * The tag endpoint answers "what carries this" across live *and* archived documents, so a
+         * count taken straight from it described a different set from the one the route then
+         * returned: a tag whose only document was archived reported `total: 1` beside an empty
+         * `docs`, which reads as data the caller cannot see, and `hasMore` inherited the same lie
+         * and sent an agent to fetch a page that does not exist. Only the `query` branch narrowed,
+         * which is why adding a query appeared to "fix" the count.
+         *
+         * One listing, asked with the same `archived` the caller gave, decides which ids survive.
+         */
+        if (docIds.length) {
+          /**
+           * Two narrowings, two calls, because they cannot share one.
+           *
+           * `GET /api/docs` treats `ids` as an override and ignores `q` alongside it — the very
+           * behaviour this whole branch exists to work around. Asking for both in one call
+           * therefore silently drops the query, which is how `{tag, query}` went back to returning
+           * the whole tag the first time this narrowing was added. So `archived` is applied by an
+           * ids lookup and `query` by a search, and an id has to survive both.
+           */
+          const [byArchived, byQuery] = await Promise.all([
+            ctx.api.listDocsPage({ ids: docIds.slice(0, 50), archived: args.archived }),
+            args.query
+              ? ctx.api.listDocsPage({ q: args.query, limit: 50, archived: args.archived })
+              : Promise.resolve(null),
+          ]);
+          const live = new Set(byArchived.docs.map((d) => d.id));
+          const matched = byQuery ? new Set(byQuery.docs.map((d) => d.id)) : null;
+          docIds = docIds.filter((id) => live.has(id) && (!matched || matched.has(id)));
         }
         const start = (args.page - 1) * args.limit;
         tagged = { total: docIds.length, pageIds: docIds.slice(start, start + args.limit) };

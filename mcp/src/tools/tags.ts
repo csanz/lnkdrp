@@ -46,6 +46,28 @@ const targetShape = {
 };
 
 /** One target, never two, never none — the error says which, rather than guessing. */
+/**
+ * Re-word a not-found so it names what the caller actually passed.
+ *
+ * These tools reach the API at `/api/tags/assignments`, so the generic mapper — which infers the
+ * noun from the request path — says "document" for every failure, including a call that supplied
+ * only a projectId. The tool knows which target it was given; the mapper cannot.
+ */
+async function withTargetNoun<T>(target: { targetKind: "doc" | "project" }, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    if (err instanceof ToolError && err.code === "not_found" && target.targetKind === "project") {
+      throw new ToolError(
+        "not_found",
+        "No such project in this workspace. lnkdrp_list_projects lists the projects you can use, with their ids and slugs.",
+        { status: 404 },
+      );
+    }
+    throw err;
+  }
+}
+
 function resolveTarget(
   args: { docId?: string | undefined; projectId?: string | undefined },
   /** The verb, so untag stops telling the caller what to pass "to tag". */
@@ -121,7 +143,7 @@ export function registerTagTool(server: McpServer, ctx: ToolContext): void {
       // One at a time rather than in a batch: the API's find-or-create is per name, and a partial
       // failure this way leaves the tags that did land rather than losing all of them.
       for (const name of names) {
-        const result = await ctx.api.attachTag({ ...target, name });
+        const result = await withTargetNoun(target, () => ctx.api.attachTag({ ...target, name }));
         tags = result.tags;
         if (result.created) created.push(name);
       }
@@ -161,7 +183,7 @@ export function registerUntagTool(server: McpServer, ctx: ToolContext): void {
       // that refuses.
       const wanted = [...new Set(args.tags.map((t) => tagSlug(t)).filter(Boolean))];
 
-      let tags = await ctx.api.tagsForTarget(target);
+      let tags = await withTargetNoun(target, () => ctx.api.tagsForTarget(target));
       const removed: string[] = [];
       const notTagged: string[] = [];
       for (const name of wanted) {
@@ -173,7 +195,7 @@ export function registerUntagTool(server: McpServer, ctx: ToolContext): void {
           notTagged.push(name);
           continue;
         }
-        tags = await ctx.api.detachTag({ ...target, tagId: match.id });
+        tags = await withTargetNoun(target, () => ctx.api.detachTag({ ...target, tagId: match.id }));
         removed.push(match.name);
       }
       return {
