@@ -2693,6 +2693,70 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
                     </div>
                   ) : null}
                 </div>
+
+                {/* And the readers who came through a project.
+                    They are absent from both lists above by design — their reads are attributed to
+                    the project — so a page that answers "who read this document" has to name them
+                    here or not at all. Each row says which project, and goes to it, because that is
+                    where their reading is counted and where it can be opened in full. */}
+                {projectLinkTraffic && projectLinkTraffic.viewerRows.length ? (
+                  <div className="mt-6">
+                    <div className="text-sm font-semibold text-[var(--fg)]">Readers through projects</div>
+                    <div className="mt-1 text-sm text-[var(--muted)]">
+                      Opened this document from inside a project. Counted with that project, not with this
+                      document.
+                    </div>
+
+                    <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
+                      <ul className="divide-y divide-[var(--border)]">
+                        {projectLinkTraffic.viewerRows.slice(0, 8).map((v, i) => {
+                          const label = (v.viewerName ?? "").trim() || (v.viewerEmail ?? "").trim() || "Anonymous viewer";
+                          const href = v.projectId ? `/project/${encodeURIComponent(v.projectId)}/metrics` : null;
+                          const body = (
+                            <>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <UserIcon className="h-5 w-5 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
+                                  <span className="truncate text-sm font-semibold text-[var(--fg)]">{label}</span>
+                                  <DepthBadge timeMs={v.timeSpentMs ?? 0} pages={null} />
+                                  <span className="inline-flex max-w-[200px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel-2)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]">
+                                    <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                                    <span className="truncate">{v.projectName || "Project"}</span>
+                                  </span>
+                                </div>
+                                {v.viewerEmail && v.viewerName ? (
+                                  <div className="mt-0.5 truncate pl-7 text-xs text-[var(--muted-2)]">{v.viewerEmail}</div>
+                                ) : null}
+                              </div>
+                              <div className="shrink-0 text-right">
+                                <div className="text-xs font-medium tabular-nums text-[var(--muted-2)]">
+                                  {v.views.toLocaleString()} {v.views === 1 ? "view" : "views"}
+                                  {v.timeSpentMs ? ` · ${formatDurationShort(v.timeSpentMs)}` : ""}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-[var(--muted-2)]">
+                                  {v.lastViewedAt ? relativeAge(v.lastViewedAt) : "—"}
+                                </div>
+                              </div>
+                            </>
+                          );
+                          const rowClass =
+                            "flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-[var(--panel-hover)]";
+                          return (
+                            <li key={`${v.shareId}-${i}`}>
+                              {href ? (
+                                <Link href={href} className={rowClass} title={`See ${v.projectName || "this project"}'s metrics`}>
+                                  {body}
+                                </Link>
+                              ) : (
+                                <div className={rowClass}>{body}</div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  </div>
+                ) : null}
               </>
             )}
           </div>
