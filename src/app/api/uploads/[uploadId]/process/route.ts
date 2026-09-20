@@ -46,6 +46,7 @@ import { agentSummaryToAnalysis, readStoredAgentSummary } from "@/lib/ai/agentSu
 import { findRaiseAmount, resolveAsk } from "@/lib/ai/askFromText";
 import { INTERNAL_PROCESS_HEADER, verifyInternalProcessToken } from "@/lib/uploads/internalProcess";
 import { createUploadProgressReporter } from "@/lib/uploads/progressWriter";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 // PDF rasterization + AI passes can take minutes for large decks (Vercel Pro/Enterprise cap).
@@ -920,6 +921,11 @@ export async function POST(
     // Viewers must not trigger owner-billed processing.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    const queued = await forbidWaitlisted(actor, "process a document");
+    if (queued) return queued;
 
     // Authorization: upload must belong to the actor.
     const allowed = await UploadModel.exists({

@@ -16,6 +16,7 @@ import { debugError, debugLog } from "@/lib/debug";
 import { membershipChanged, resolveActor } from "@/lib/gating/actor";
 import { UserModel } from "@/lib/models/User";
 import { approveUser } from "@/lib/waitlist/waitlist";
+import { accessStatusChanged } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 
@@ -138,6 +139,9 @@ export async function POST(request: Request) {
     // takes them out of the early-access queue, if they were ever in it. Doing it here rather than
     // at sign-in is what makes it a *vouch* — the token had to be valid first.
     await approveUser({ userId: actor.userId });
+    // Accepting an invite is an approval: clear the cached answer so the very next request from
+    // this person is allowed, rather than bouncing them for up to 15 seconds after they joined.
+    accessStatusChanged(actor.userId);
 
     // The membership is live from here, so the cached "is this person a member" answer must not be
     // the stale `false` from the moment before they joined (see `membershipChanged`).

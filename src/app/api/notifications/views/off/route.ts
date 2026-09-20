@@ -6,19 +6,34 @@
  * (`@/lib/notifications/viewEmailToken`) is the authority, because the email is usually
  * opened on a phone where the member is not signed in.
  *
- * - Valid token: set that membership's `viewEmailMode` to `off` and confirm. Idempotent.
+ * **GET never writes.** It used to: one GET of a valid token set `viewEmailMode` to `off`. But this
+ * URL is not only in the `List-Unsubscribe` header, it is rendered into the visible footer of every
+ * view email (plain text and as an anchor), so anything that opens links in a mail body — a
+ * corporate link scanner, an antivirus proxy, a prefetching client, a forwarded copy of the mail —
+ * silently disabled a member's view notifications, and nothing in the app said why they had stopped.
+ * GET now renders the state plus a confirm button that POSTs; the write lives on POST alone.
+ *
+ * - Valid token: show the current mode and a confirm form (already `off`: just say so). No write.
  * - Expired but correctly signed: change nothing, show the current state and the preferences link.
  * - Malformed / bad signature / wrong purpose: a neutral "not valid" page, status 400.
  *
  * The page only ever shows the token's own membership (its workspace name and mode), nothing
- * about other members. HEAD never writes, so link scanners that probe with HEAD are harmless.
+ * about other members. HEAD writes nothing either, so HEAD probes stay harmless.
+ *
+ * What the confirm step does *not* fix: the token is still a bearer credential with no revocation,
+ * so someone holding a forwarded email can press the button themselves until it expires. Revoking
+ * an issued link needs a counter on the membership, carried in the token payload and bumped
+ * whenever the member changes `viewEmailMode` from the dashboard — an OrgMembership schema change,
+ * not a change to this route. The confirm step is what stops a *machine* from doing it by accident.
  *
  * POST is RFC 8058 one-click unsubscribe: the email's `List-Unsubscribe` header points here and
  * `List-Unsubscribe-Post: List-Unsubscribe=One-Click` makes the mail provider (Gmail, Yahoo, Apple
  * Mail) POST that body, form-encoded, with the token still in the query string. The provider shows
  * its own confirmation, so the answer is a bodyless status: 200 once the mode is `off` (idempotent),
  * 400 for a body that is not the one-click form or a token that is not valid (an expired token
- * changes nothing, as on GET), 500 on a server failure.
+ * changes nothing, as on GET), 500 on a server failure. The confirm button on the GET page posts
+ * that same one-click body, so the human path and the provider path share one write; a submission
+ * that arrives from a browser (it accepts HTML) gets the confirmation page instead of a blank one.
  */
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
@@ -61,13 +76,36 @@ type PageContent = {
   heading: string;
   /** Pre-escaped HTML lines under the headline. */
   lines: string[];
+  /**
+   * When set, the page shows the button that actually turns view emails off. It posts back to this
+   * same URL with the RFC 8058 one-click body, so the human click and the mail provider's
+   * `List-Unsubscribe-Post` land on exactly one write path (`POST`, below).
+   */
+  confirm?: { token: string; label: string };
 };
+
+/** Primary action look, shared by the confirm button and the preferences link when it stands alone. */
+const PRIMARY_STYLE =
+  "display:inline-block;padding:11px 16px;border-radius:10px;background:#fafafa;color:#0a0a0b;font-size:14px;font-weight:600;text-decoration:none;border:0;cursor:pointer;font-family:inherit;";
+/** Secondary look for the preferences link once the confirm button owns the primary slot. */
+const SECONDARY_STYLE =
+  "display:inline-block;margin-top:14px;font-size:14px;font-weight:600;color:#a1a1aa;text-decoration:underline;";
 
 /** Render the self-contained confirmation page (inline styles only, no external assets). */
 function renderPage(content: PageContent, status: number): Response {
   const lineHtml = content.lines
     .map((l) => `<p style="margin:12px 0 0;font-size:15px;line-height:1.55;color:#a1a1aa;">${l}</p>`)
     .join("");
+
+  // The action keeps the token in the query string, where the POST handler reads it from; the token
+  // is base64url plus a dot, but escape it anyway rather than trusting that to stay true.
+  const actionHtml = content.confirm
+    ? `<form method="post" action="?t=${escapeHtml(encodeURIComponent(content.confirm.token))}" style="margin:22px 0 0;">` +
+      `<input type="hidden" name="List-Unsubscribe" value="One-Click">` +
+      `<button type="submit" style="${PRIMARY_STYLE}">${escapeHtml(content.confirm.label)}</button>` +
+      `</form>` +
+      `<div><a href="${PREFERENCES_PATH}" style="${SECONDARY_STYLE}">Change how often instead</a></div>`
+    : `<a href="${PREFERENCES_PATH}" style="margin-top:22px;${PRIMARY_STYLE}">Change how often</a>`;
 
   const html = `<!doctype html>
 <html lang="en">
@@ -86,7 +124,7 @@ function renderPage(content: PageContent, status: number): Response {
 <div style="margin-top:14px;padding:24px 22px;border:1px solid #27272a;border-radius:16px;background:#131316;">
 <h1 style="margin:0;font-size:21px;line-height:1.3;font-weight:600;color:#fafafa;">${escapeHtml(content.heading)}</h1>
 ${lineHtml}
-<a href="${PREFERENCES_PATH}" style="display:inline-block;margin-top:22px;padding:11px 16px;border-radius:10px;background:#fafafa;color:#0a0a0b;font-size:14px;font-weight:600;text-decoration:none;">Change how often</a>
+${actionHtml}
 </div>
 <p style="margin:14px 2px 0;font-size:12px;line-height:1.5;color:#52525b;">Other email preferences are not affected.</p>
 </div>
@@ -102,7 +140,9 @@ ${lineHtml}
       "x-robots-tag": "noindex, nofollow",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
-      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      // `form-action 'self'`, not 'none': the confirm button posts back to this same route. Nothing
+      // else is allowed to load or be posted to, and the page still cannot be framed.
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     },
   });
 }
@@ -191,24 +231,48 @@ async function handle(request: Request, opts: { write: boolean }): Promise<Respo
       );
     }
 
-    // Expired (or a HEAD probe): report the current state without changing it.
+    // Read-only pass: a GET, or a HEAD probe, or an expired-but-signed link. Report the current
+    // state and change nothing.
     const membership = await OrgMembershipModel.findOne(notDeleted).select({ orgId: 1, viewEmailMode: 1 }).lean();
     if (!membership) return invalidPage();
     const mode = normalizeMode((membership as { viewEmailMode?: unknown }).viewEmailMode);
     const name = await loadWorkspaceName((membership as { orgId?: unknown }).orgId);
-    const lines = [`${escapeHtml(MODE_SENTENCE[mode])} for ${workspaceLabel(name)}.`];
-    if (!verified.ok) {
-      lines.push(
-        mode === "off"
-          ? "This link has expired, but there is nothing to change."
-          : "Nothing was changed. You can turn them off from your email preferences.",
+    const stateLine = `${escapeHtml(MODE_SENTENCE[mode])} for ${workspaceLabel(name)}.`;
+
+    if (verified.ok) {
+      // A live link opened in a browser: ask. This is the branch that used to write on sight, which
+      // is why a link scanner fetching the footer URL could turn a member's notifications off.
+      if (mode === "off") {
+        return renderPage(
+          {
+            title: "View emails are off",
+            heading: "View emails are off",
+            lines: [`You won't get emails when someone opens a document in ${workspaceLabel(name)}.`],
+          },
+          200,
+        );
+      }
+      return renderPage(
+        {
+          title: "Turn off view emails",
+          heading: "Turn off these emails?",
+          lines: [stateLine, "Confirm below and you'll stop hearing when someone opens a document there."],
+          confirm: { token, label: "Turn off view emails" },
+        },
+        200,
       );
     }
+
     return renderPage(
       {
         title: mode === "off" ? "View emails are off" : "Link expired",
-        heading: mode === "off" ? "View emails are off" : verified.ok ? MODE_SENTENCE[mode] : "This link has expired",
-        lines,
+        heading: mode === "off" ? "View emails are off" : "This link has expired",
+        lines: [
+          stateLine,
+          mode === "off"
+            ? "This link has expired, but there is nothing to change."
+            : "Nothing was changed. You can turn them off from your email preferences.",
+        ],
       },
       200,
     );
@@ -218,9 +282,23 @@ async function handle(request: Request, opts: { write: boolean }): Promise<Respo
   }
 }
 
-/** One-click off from the email link. */
+/**
+ * The link from the email body. Read-only on purpose: see the note at the top of this file — the
+ * URL sits in the visible footer of every view email, so anything that merely fetches links in mail
+ * would otherwise turn a member's notifications off for them. The page it renders carries the
+ * confirm button, and that button's POST is the only thing that writes.
+ */
 export async function GET(request: Request): Promise<Response> {
-  return handle(request, { write: true });
+  return handle(request, { write: false });
+}
+
+/**
+ * Did this POST come from a person in a browser rather than a mail provider's one-click machinery?
+ * Providers show their own confirmation and want a bodyless status; a browser has navigated here and
+ * needs a page to land on, so answer it with the same HTML `handle` renders.
+ */
+function wantsHtml(request: Request): boolean {
+  return (request.headers.get("accept") ?? "").toLowerCase().includes("text/html");
 }
 
 /** Bodyless answer for the one-click POST; the mail provider shows its own confirmation. */
@@ -248,7 +326,14 @@ async function isOneClickBody(request: Request): Promise<boolean> {
 
 /** RFC 8058 one-click unsubscribe (`List-Unsubscribe-Post`) posts to the same URL. */
 export async function POST(request: Request): Promise<Response> {
-  if (!(await isOneClickBody(request))) return oneClickStatus(400);
+  // Read the body first either way: it is a one-shot stream, and `handle` below never touches it.
+  const oneClick = await isOneClickBody(request);
+  const fromBrowser = wantsHtml(request);
+  if (!oneClick) return fromBrowser ? invalidPage() : oneClickStatus(400);
+
+  // The confirm button on the GET page: same write, but the person gets a page back rather than a
+  // blank tab. `handle` re-verifies the token itself, so nothing is trusted from the form.
+  if (fromBrowser) return handle(request, { write: true });
 
   const token = new URL(request.url).searchParams.get("t") ?? "";
   let verified: ReturnType<typeof verifyViewEmailsOffToken>;
@@ -276,7 +361,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 }
 
-/** Link scanners and previewers often probe with HEAD; answer without writing. */
+/** Link scanners and previewers often probe with HEAD; answer with GET's status and no body. */
 export async function HEAD(request: Request): Promise<Response> {
   const res = await handle(request, { write: false });
   return new Response(null, { status: res.status, headers: res.headers });

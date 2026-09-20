@@ -55,6 +55,28 @@ function rangeStartsAfterFirstByte(raw: string | null): boolean {
   return Number(m[1]) > 0;
 }
 
+/**
+ * True when this request is a client *taking* the file, rather than the room's viewer reading it.
+ *
+ * The twin of the same helper on `/s/:shareId/pdf`, and duplicated for the same reason the rest of
+ * this file's small helpers are: the two routes share a shape, not a module.
+ *
+ * `Sec-Fetch-Site` and `Sec-Fetch-Dest` are stamped by the browser and cannot be set from page
+ * script. The viewer's loads are always `same-origin` and land on `empty` (pdf.js fetch/XHR) or
+ * `iframe` (the native-PDF fallback frame); a bare navigation reports `none`, a foreign embed
+ * `cross-site`, and a top-level open `dest: document`. A request with no Fetch Metadata at all is
+ * served on purpose — old browsers omit the headers, as does the product's own server-side
+ * importer, and refusing them would break real reads to inconvenience a client that can send
+ * whatever headers it chooses. See the long note on the document route for what this does and does
+ * not close.
+ */
+function isRawFileRequest(request: Request): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (!site) return false;
+  if (site !== "same-origin") return true;
+  return request.headers.get("sec-fetch-dest") === "document";
+}
+
 /** Minimal cookie read: the share-auth value is opaque hex and needs no decoding. */
 function getCookie(request: Request, name: string): string | null {
   const raw = request.headers.get("cookie");
@@ -171,7 +193,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   // PRD decision 3: the project link's flag governs every document opened through it. A document
   // whose own link allows downloads is still not downloadable to *this* audience unless the sender
   // said so on this link.
-  if (wantsDownload && !link.allowDownload) return new Response("Download disabled", { status: 403 });
+  //
+  // The gate read `wantsDownload && !link.allowDownload`, so the lock was a query parameter the
+  // caller supplies: dropping `?download=1` handed over the same bytes with an inline disposition,
+  // and every document in a no-download data room could be walked off with one URL at a time.
+  // `?download=1` picks the disposition header and nothing else, so the gate asks what the request
+  // *is* instead (`isRawFileRequest`); the room's viewer fetches are untouched.
+  if (!link.allowDownload && (wantsDownload || isRawFileRequest(request))) {
+    return new Response("Download disabled", { status: 403 });
+  }
 
   const downloadSession = wantsDownload ? await tryResolveAuthUserId(request) : null;
   const ownerPreview = wantsDownload ? await isOwnerSideViewer(doc as { orgId?: unknown; userId?: unknown }, downloadSession?.userId ?? null) : false;

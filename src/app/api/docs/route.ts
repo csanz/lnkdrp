@@ -19,6 +19,7 @@ import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { ensureDefaultLink } from "@/lib/share/links";
 import { DOC_LINK_FILTER, ShareLinkModel } from "@/lib/models/ShareLink";
 import { createdViaFor } from "@/lib/share/createdVia";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -414,6 +415,11 @@ export async function POST(request: Request) {
     // Viewers can read a workspace but must not create docs in it.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    const queued = await forbidWaitlisted(actor, "create a document");
+    if (queued) return queued;
     await connectMongo();
 
     const body = (await request.json().catch(() => ({}))) as Partial<{

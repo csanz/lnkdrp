@@ -44,6 +44,27 @@ export const runtime = "nodejs";
 
 /** Public ingest budget per IP per minute (viewer heartbeats are a few per page). */
 const STATS_POST_LIMIT = 120;
+
+/**
+ * How many *first sightings of a new reader* one link may turn into mail in a day.
+ *
+ * `STATS_POST_LIMIT` bounds requests per address, which is the wrong unit for this: the expensive
+ * thing is not a request, it is a request that creates a `ShareView` row nobody has seen before,
+ * because each of those fans out to one queued email per member of the workspace. `botId` comes
+ * from the caller, so a new one is free — rotate it per request and every single call is a brand
+ * new reader, from any number of addresses.
+ *
+ * What an owner actually saw: a deck sent to twelve colleagues, and a stranger with the link
+ * turning that into thousands of messages naming readers who do not exist, in twelve mailboxes.
+ *
+ * The ceiling is per link per day and deliberately generous — a genuine send to a large list is
+ * well under it, and the number is about the tail, not the ordinary case. Past it the reading is
+ * still recorded: the `ShareView` row is written, the metrics page still counts it, and only the
+ * two fan-out side effects (the activity row and the mail) are skipped. Suppressing what the owner
+ * is *told* while keeping what they can *look up* is the safe direction — the opposite would hide
+ * real traffic.
+ */
+const NEW_VIEWER_FANOUT_PER_LINK_PER_DAY = 200;
 const STATS_POST_WINDOW_MS = 60 * 1000;
 export const dynamic = "force-dynamic";
 /**
@@ -489,7 +510,19 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             if (!/E11000|duplicate key/i.test(msg)) throw e;
           }
 
-          if ((identityNews.isNew || identityNews.changed) && !ownerPreview && shareOrgId) {
+          // Charged once per brand-new reader, never on a repeat visit by someone already known,
+          // so an ordinary audience never touches it however often they come back.
+          const fanOutAllowed = created
+            ? (
+                await rateLimit({
+                  key: `viewfanout:${shareId}`,
+                  limit: NEW_VIEWER_FANOUT_PER_LINK_PER_DAY,
+                  windowMs: 24 * 60 * 60 * 1000,
+                })
+              ).ok
+            : true;
+
+          if ((identityNews.isNew || identityNews.changed) && !ownerPreview && shareOrgId && fanOutAllowed) {
             void recordActivity({
               orgId: String(shareOrgId),
               userId: null,
@@ -677,7 +710,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                  * view emails on today hear about the readings from yesterday, which the cursor
                  * model could never do.
                  */
-                if (createdShareViewId) {
+                if (createdShareViewId && fanOutAllowed) {
                   const members = (await OrgMembershipModel.find({
                     orgId: new Types.ObjectId(docOrgId),
                     isDeleted: { $ne: true },

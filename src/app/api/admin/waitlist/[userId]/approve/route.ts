@@ -15,6 +15,7 @@ import { requireAdmin } from "@/lib/gating/requireAdmin";
 import { approveUser } from "@/lib/waitlist/waitlist";
 import { sendWaitlistApprovedEmail } from "@/lib/email/sendWaitlistApprovedEmail";
 import { debugError } from "@/lib/debug";
+import { accessStatusChanged } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +29,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ userId: st
   if (!userId) return NextResponse.json({ error: "Invalid userId" }, { status: 400 });
 
   const result = await approveUser({ userId, approvedByUserId: gate.userId });
+  // The API gate caches "is this account queued" for 15 seconds. Without this, Approve appears to
+  // do nothing for a quarter of a minute — the person is let in by the row but still refused by the
+  // gate — which reads as a broken button rather than a stale cache.
+  accessStatusChanged(userId);
   if (!result.ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   let emailed = false;

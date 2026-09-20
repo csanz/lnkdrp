@@ -148,11 +148,39 @@ function rangeStartsAfterFirstByte(raw: string | null): boolean {
 }
 
 /**
+ * True when this request is a client *taking* the file, rather than the share viewer reading it.
+ *
+ * `Sec-Fetch-Site` and `Sec-Fetch-Dest` are stamped by the browser and cannot be set from page
+ * script, so they are the one signal available in this handler that separates "pdf.js is fetching
+ * the document it is rendering" from "someone pasted the PDF URL into the address bar". The
+ * viewer's own loads are always `same-origin`, landing on `empty` (pdf.js fetch/XHR) or `iframe`
+ * (the native-PDF fallback frame). A bare navigation reports `none`, another site's embed reports
+ * `cross-site`, and a top-level open — including "open in new tab" from the share page — reports
+ * `dest: document`.
+ *
+ * A request carrying no Fetch Metadata at all is served, deliberately. Browsers that predate the
+ * headers omit them, and so does the product's own server-side importer, which fetches
+ * `/s/:shareId/pdf` to pull a deck in (`/api/uploads/:uploadId/import-url`); refusing those would
+ * break real reads in order to inconvenience a client that can simply choose to send whichever
+ * header it likes. So this raises the bar on the everyday grab — address bar, bookmark, open in a
+ * new tab, a foreign page's `<embed>` — and does not pretend to stop a determined recipient, who
+ * has the bytes in their browser either way. Actually closing that means never handing a
+ * no-download viewer the original file (the per-page images in `Upload.slideNodes` exist for it),
+ * which is a change to what the recipient sees, not to this route.
+ */
+function isRawFileRequest(request: Request): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (!site) return false;
+  if (site !== "same-origin") return true;
+  return request.headers.get("sec-fetch-dest") === "document";
+}
+
+/**
  * Same-origin PDF proxy for `/s/:shareId`.
  *
  * - Supports Range requests (PDF.js uses them).
  * - If password-protected, requires the share auth cookie.
- * - If `?download=1`, enforces `doc.shareAllowPdfDownload` and sets attachment headers.
+ * - Enforces the link's `allowDownload`, and sets attachment headers for `?download=1`.
  */
 /** Activity feed: "downloaded" event for the owner's workspace (best-effort, never blocks the download). */
 async function recordDownloadActivity(
@@ -242,8 +270,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
     }
   }
 
-  // Download permission is per link: the same document may be downloadable on one link and not on another.
-  if (wantsDownload && !link.allowDownload) {
+  // Download permission is per link: the same document may be downloadable on one link and not on
+  // another. The gate read `wantsDownload && !link.allowDownload`, which made a query parameter the
+  // lock — drop `?download=1` and the identical bytes came back with `content-disposition: inline`,
+  // so a recipient the sender had explicitly marked no-download took the whole original PDF by
+  // editing the address bar. `?download=1` only ever chose the disposition header; it was never a
+  // fact about the request, and a client picks it.
+  //
+  // What the flag can honestly mean in this handler is "this file is for reading here, not for
+  // taking away", so the gate now asks what the request *is* (see `isRawFileRequest`) instead of
+  // what it says it is. The viewer's own fetches are untouched.
+  if (!link.allowDownload && (wantsDownload || isRawFileRequest(request))) {
     return new Response("Download disabled", { status: 403 });
   }
 

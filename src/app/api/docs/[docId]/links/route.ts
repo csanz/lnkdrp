@@ -19,6 +19,7 @@ import { createShareLink, listShareLinksPage, shareLinkStatsByShareId, toShareLi
 import { accessDocForLinks, linkErrorResponse, planWarningOf } from "./shared";
 import { planLimitResponse } from "@/lib/billing/planLimits";
 import { createdViaFor } from "@/lib/share/createdVia";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -86,6 +87,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
   if (!gate.ok) return gate.response;
   const { actor, docId: docObjectId, orgId, title } = gate.access;
   try {
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    const queued = await forbidWaitlisted(actor, "share a document");
+    if (queued) return queued;
     const body = (await request.json().catch(() => ({}))) as Partial<{
       label: string;
       audience: string | null;

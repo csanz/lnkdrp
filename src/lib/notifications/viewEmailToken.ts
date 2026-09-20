@@ -1,11 +1,13 @@
 /**
  * Signed one-click "turn off view emails" tokens.
  *
- * Every view notification email carries a link that sets the recipient member's
+ * Every view notification email carries a link that lets the recipient member set their
  * `OrgMembership.viewEmailMode` to `off` without a sign-in (the email is often opened on a
  * phone where the user is not signed in; see docs/prds/lnkdrp-view-notifications.md, decision 8).
  * The link therefore carries its own authority: a token binding a membership id, a purpose and
- * an expiry, signed with HMAC-SHA256.
+ * an expiry, signed with HMAC-SHA256. Opening the link only shows a page; the write happens when
+ * the member confirms (or when their mail provider posts RFC 8058 one-click). See the TTL note
+ * below for what that authority is and is not.
  *
  * Format: `<payload>.<signature>`, both base64url.
  * - payload: JSON `{ v: 1, p: "view_emails_off", m: <membershipId>, e: <expiry epoch ms> }`
@@ -18,7 +20,20 @@ import crypto from "node:crypto";
 
 export const VIEW_EMAILS_OFF_PURPOSE = "view_emails_off";
 
-/** Default token lifetime: 30 days. */
+/**
+ * Default token lifetime: 30 days.
+ *
+ * This token is a bearer credential in a URL: the payload is `{ v, p, m, e }` and nothing else, so
+ * it is joined to no server state and there is no way to revoke an issued one — the expiry is the
+ * only bound on a link that leaks (a forwarded email, a mail archive, a shared screenshot). It is
+ * kept at 30 days deliberately: an unsubscribe link people may come back to weeks later should
+ * still work, and every view email ships a fresh one anyway. What makes that acceptable is that
+ * holding the token is no longer enough to act — the route (`/api/notifications/views/off`) only
+ * writes on an explicit POST (a person pressing the confirm button, or a mail provider's RFC 8058
+ * one-click), never on a GET. To make these revocable rather than merely short-lived, the payload
+ * needs a counter kept on the membership (see the note in the route) which is bumped whenever the
+ * member changes `viewEmailMode` themselves; that is an OrgMembership schema change.
+ */
 export const VIEW_EMAILS_OFF_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 const TOKEN_VERSION = 1;

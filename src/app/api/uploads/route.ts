@@ -23,6 +23,7 @@ import {
   UNSUPPORTED_FILE_TYPE_CODE,
 } from "@/lib/blob/serverClientUploadRoute";
 import { buildDocMatch } from "@/lib/docs/docMatch";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -178,6 +179,11 @@ export async function POST(request: Request) {
     // Viewers can read a workspace but must not add uploads to it.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    const queued = await forbidWaitlisted(actor, "upload a document");
+    if (queued) return queued;
     const body = (await request.json().catch(() => ({}))) as Partial<{
       docId: string;
       originalFileName: string;

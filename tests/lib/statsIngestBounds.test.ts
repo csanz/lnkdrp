@@ -116,9 +116,17 @@ vi.mock("@/lib/notifications/queue", () => ({
   enqueueNotification,
   notificationDedupeKey: (...parts: unknown[]) => parts.map(String).join(":"),
 }));
+/** Bucket key prefixes a test wants to report as spent. Reset in `beforeEach`. */
+const exhaustedBuckets: string[] = [];
+
 vi.mock("@/lib/http/rateLimit", () => ({
   clientIpFromRequest: () => "203.0.113.7",
-  rateLimit: async () => ({ ok: true }),
+  // Buckets default to open; a test names the prefixes it wants exhausted.
+  rateLimit: async ({ key }: { key: string }) => ({
+    ok: !exhaustedBuckets.some((prefix) => key.startsWith(prefix)),
+    remaining: 0,
+    retryAfterSeconds: 60,
+  }),
   rateLimitedResponse: () => new Response("rate limited", { status: 429 }),
 }));
 
@@ -196,6 +204,7 @@ function pagesAdded(): unknown[] {
 }
 
 beforeEach(() => {
+  exhaustedBuckets.length = 0;
   vi.clearAllMocks();
   afterCallbacks.length = 0;
   resolveShareLink.mockResolvedValue({ link: link(), doc: doc(), refusal: null });
@@ -370,5 +379,71 @@ describe("pageNumber bounds", () => {
     await drainAfter();
 
     expect(pagesAdded()).toContain(7);
+  });
+});
+
+/**
+ * A reading that the owner is *told* about costs one queued email per member of the workspace, and
+ * the thing that decides "is this a new reader" is `botId` — which comes from the request body. A
+ * stranger with the link who rotates it per request is a stranger who mints an unbounded number of
+ * first-time readers, each fanning out to every mailbox in the workspace.
+ *
+ * `viewfanout:<shareId>` is the ceiling: per link, per day, counted only when a brand-new
+ * `ShareView` row is actually created. What is pinned here is the *shape* of the response to
+ * hitting it — the reading is still recorded, and only the two things that reach a person are
+ * skipped. Suppressing what the owner can look up would hide real traffic; suppressing what is
+ * pushed at them does not.
+ */
+describe("the ceiling on new readers per link", () => {
+  const fresh = {
+    botId: "bot-never-seen-before",
+    visitId: "visit-9",
+    pageNumber: 1,
+    introduced: true,
+    viewerName: "Someone New",
+    viewerEmail: "new@example.com",
+  };
+
+  test("an ordinary first-time reader is recorded and announced", async () => {
+    resolveShareLink.mockResolvedValue({ link: link(), doc: doc(), refresh: null, refusal: null });
+
+    await post(fresh);
+    await drainAfter();
+
+    expect(shareViewUpdateOne).toHaveBeenCalled();
+    expect(enqueueNotification).toHaveBeenCalled();
+  });
+
+  test("past the ceiling the reading is still recorded", async () => {
+    exhaustedBuckets.push("viewfanout:");
+    resolveShareLink.mockResolvedValue({ link: link(), doc: doc(), refresh: null, refusal: null });
+
+    await post(fresh);
+    await drainAfter();
+
+    // The metrics page must keep telling the truth, whatever the mail does.
+    expect(shareViewUpdateOne).toHaveBeenCalled();
+  });
+
+  test("past the ceiling nobody's mailbox is touched", async () => {
+    exhaustedBuckets.push("viewfanout:");
+    resolveShareLink.mockResolvedValue({ link: link(), doc: doc(), refresh: null, refusal: null });
+
+    await post(fresh);
+    await drainAfter();
+
+    expect(enqueueNotification).not.toHaveBeenCalled();
+  });
+
+  test("the ceiling is per link, so one link under attack does not mute another", async () => {
+    // Keyed on the slug, not on the workspace or the address: a bucket keyed any wider would let
+    // one hammered link silence notifications for every other link the owner has.
+    exhaustedBuckets.push("viewfanout:some-other-slug");
+    resolveShareLink.mockResolvedValue({ link: link(), doc: doc(), refresh: null, refusal: null });
+
+    await post(fresh);
+    await drainAfter();
+
+    expect(enqueueNotification).toHaveBeenCalled();
   });
 });

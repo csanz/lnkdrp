@@ -17,8 +17,22 @@ import { tryResolveUserActor } from "@/lib/gating/actor";
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { recordActivity } from "@/lib/activity/log";
 import { checkRecipientUploadCap, RECIPIENT_UPLOAD_LIMIT_CODE } from "@/lib/uploads/recipientCaps";
+import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 
 export const runtime = "nodejs";
+
+/**
+ * Burst brake for the public side of a request link.
+ *
+ * This route creates a Doc and an Upload and hands back a capability secret, on nothing but an
+ * `x-lnkdrp-botid` string the caller makes up — and it had no limiter of its own, so the only
+ * thing between a stranger and the owner's workspace was a daily cap read from a count. A real
+ * recipient picks one file at a time and then waits out an upload and a parse, so a handful a
+ * minute is far more than the flow needs while still collapsing a parallel flood to a trickle.
+ * Keyed per IP, which a shared office NAT does share — hence the headroom over "one at a time".
+ */
+const START_UPLOAD_PER_IP_LIMIT = 10;
+const START_UPLOAD_WINDOW_MS = 60_000;
 
 /**
  * Generate a short public identifier for `/s/:shareId`.
@@ -130,6 +144,19 @@ export async function POST(
     }
 
     debugLog(1, "[api/requests/:token/uploads] POST", { token: "[redacted]" });
+
+    // Before any lookup or write: the daily caps below are now atomic, but they are still a cap of
+    // twenty-odd, and nothing else stopped one client from spending them in a single round trip.
+    const ip = clientIpFromRequest(request);
+    const burst = await rateLimit({
+      key: `recipient-upload:ip:${ip}`,
+      limit: START_UPLOAD_PER_IP_LIMIT,
+      windowMs: START_UPLOAD_WINDOW_MS,
+    });
+    if (!burst.ok) {
+      return rateLimitedResponse(burst, "Too many uploads from this connection. Please try again in a minute.");
+    }
+
     await connectMongo();
 
     const project = await ProjectModel.findOne({ requestUploadToken: requestToken })

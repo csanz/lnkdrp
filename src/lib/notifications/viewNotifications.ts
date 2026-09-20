@@ -41,6 +41,10 @@
  *   preferred to a lost one. A transport outage fails the first send, so it repeats nothing.
  * - Identity is Pro-only (decision 4). A Free email never names the viewer or says how far they read,
  *   in the subject, the text or the html.
+ * - An immediate email names at most `IMMEDIATE_MAX_VIEWERS` readers and turns the rest into a
+ *   count, the same shape the digest has for documents. The per-reader lines are built from fields
+ *   an anonymous viewer supplied, so their number must not be the attacker's to choose — see the
+ *   constant for the whole chain.
  * - All user content (titles, labels, audience, viewer names) is escaped in HTML and stripped of
  *   line breaks in subjects.
  * - Every email carries RFC 8058 one-click unsubscribe headers pointing at the signed off URL, and a
@@ -115,6 +119,31 @@ export const VIEW_LOAD_MAX_ROWS = 20_000;
 
 /** A digest lists at most this many documents; the counts in the subject still cover them all. */
 export const DIGEST_MAX_DOCUMENTS = 50;
+
+/**
+ * An immediate email names at most this many readers; the rest become a count line.
+ *
+ * The digest has had `DIGEST_MAX_DOCUMENTS` since it shipped, but the immediate body had no
+ * equivalent and rendered one block per claimed row — and every one of those blocks is built from
+ * fields a stranger wrote. `POST /api/share/:shareId/stats` takes `viewerName` and `viewerEmail`
+ * from the anonymous request body and stamps them on the `ShareView` row, and a fresh `botId`
+ * mints a fresh row, so a burst of forged readers arrived here as a burst of attacker-authored
+ * lines in one message to every member of the workspace. How many was set by the sender's
+ * `limitEventsPerMember` (20 by default but up to 200), not by anything the owner controls.
+ *
+ * Capping the list bounds one forged burst to a fixed amount of stranger-written text per email.
+ * It deliberately truncates rather than dropping the email: a genuine mailshot that really is
+ * opened by thirty people in one tick still gets its notification, with the overflow as a count and
+ * the metrics page one click away. The headline count and the subject still cover everyone, so
+ * nothing the owner is told becomes wrong — only shorter.
+ *
+ * Matched to the sender's default `limitEventsPerMember` so ordinary ticks never truncate at all.
+ *
+ * This is a blast-radius bound on the mail, not the fix for the forgery itself: what stops the
+ * burst existing is a ceiling on *new viewer identities* per link, which lives on the write path in
+ * `src/app/api/share/[shareId]/stats/route.ts`.
+ */
+export const IMMEDIATE_MAX_VIEWERS = 20;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -770,10 +799,16 @@ export function composeImmediateEmail(params: {
   } else {
     blocks.push({ kind: "heading", text: `${events.length} people opened "${title}"` });
     const when = eventTimeFormatter(events);
+    // Only the first `IMMEDIATE_MAX_VIEWERS` readers get a line of their own. `events` is oldest
+    // first here (the loaders and `groupByDocument` both sort that way), so the slice keeps the
+    // same end the digest's document slice does. The heading above and the subject still count
+    // every reader — the cap shortens the list, it does not hide anyone from the totals.
+    const listed = events.slice(0, IMMEDIATE_MAX_VIEWERS);
+    const overflow = events.length - listed.length;
     if (shareIds.length === 1) {
       // Every viewer came through the same link: say it once, then one line per viewer.
       blocks.push({ kind: "rows", rows: linkRows(links.get(shareIds[0])) });
-      for (const ev of events) {
+      for (const ev of listed) {
         const parts: string[] = [];
         const name = pro ? viewerDisplayName(ev) : null;
         if (name) parts.push(name);
@@ -782,7 +817,7 @@ export function composeImmediateEmail(params: {
         blocks.push({ kind: "subheading", text: parts.join(" · "), compact: true });
       }
     } else {
-      for (const ev of events) {
+      for (const ev of listed) {
         const link = links.get(ev.shareId);
         const name = pro ? viewerDisplayName(ev) : null;
         blocks.push({ kind: "subheading", text: [...(name ? [name] : []), linkDisplayName(link), when(ev.at)].join(" · ") });
@@ -792,6 +827,12 @@ export function composeImmediateEmail(params: {
         if (pro) rows.push(["How far", formatHowFar(ev, doc.pageCount) ?? "Just opened"]);
         if (rows.length) blocks.push({ kind: "rows", rows });
       }
+    }
+    if (overflow > 0) {
+      blocks.push({
+        kind: "muted",
+        text: `${overflow} more ${overflow === 1 ? "reader is" : "readers are"} included in the count above; see them all on the metrics page.`,
+      });
     }
   }
 
