@@ -2175,30 +2175,13 @@ export default function LeftSidebar({
               </button>
             ) : null}
             </div>
-            {/* Most recent connected clients (up to 3) under the Agents entry; each row opens /connect.
-                In shared workspaces the owner's name is shown so a team sees whose agent it is. */}
-            {agentStatus?.connected && agentStatus.clients.length > 0 && !navLocked ? (
-              <ul className="mb-1 mt-0.5 space-y-0.5 pl-9 pr-2" aria-label="Connected clients">
-                {agentStatus.clients.slice(0, 3).map((c) => (
-                  <li key={c.client}>
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-2 rounded-md px-1.5 py-0.5 text-left text-[11px] text-[var(--muted)] hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-                      onClick={() => router.push("/connect")}
-                      title={`${c.client} · ${formatRelative(c.lastUsedAt)}${agentStatus.isPersonalOrg ? "" : ` · ${c.by.join(", ")}`}`}
-                    >
-                      <span className="min-w-0 truncate">
-                        {c.client}
-                        {!agentStatus.isPersonalOrg && c.by.length > 0 ? (
-                          <span className="text-[var(--muted-2)]"> · {c.by.length === 1 ? c.by[0] : `${c.by.length} members`}</span>
-                        ) : null}
-                      </span>
-                      <span className="shrink-0 text-[var(--muted-2)]">{formatRelative(c.lastUsedAt)}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            {/* No per-client rows under Agents.
+                This used to list up to three connected clients, each as "<client> · <owner> ·
+                <when>". The client name is whatever the MCP client reports about itself, which is
+                often a single letter or a version string, so the sidebar carried a row reading
+                "V · Christian Sanz · 4 hrs ago" — three facts, none of them the one being asked.
+                The entry above already answers it ("1 connected"), the full list is in its tooltip,
+                and /connect is one click away for the detail. */}
 
             {FEATURE_REQUESTS_ENABLED ? (
               <button
