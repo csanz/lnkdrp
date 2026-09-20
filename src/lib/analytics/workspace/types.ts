@@ -194,7 +194,13 @@ export type WorkspacePerson = {
    * — a reader who opened one document — is simply that one. `null` when nothing can be judged:
    * no visit rows, or a document whose page count was never recorded.
    */
-  depthSample: { timeMs: number; pages: number; totalPages: number | null } | null;
+  depthSample: { docId: string; timeMs: number; pages: number; totalPages: number | null } | null;
+  /**
+   * This person's reader page for the reading their badge is about, or `null` when there is
+   * nowhere honest to send a click: a reading that happened through a project link lives on the
+   * project's pages, not the document's, and an unaddressable reader has no page at all.
+   */
+  readerHref: string | null;
 };
 
 export type WorkspacePeople = {

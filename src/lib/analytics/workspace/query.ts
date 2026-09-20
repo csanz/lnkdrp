@@ -29,7 +29,7 @@ import { Types, type PipelineStage } from "mongoose";
 
 import { projectLinkSlugsForOrg } from "@/lib/analytics/docScope";
 import { loadContributors } from "./contributors";
-import { PROJECT_ANON_KEY_EXPR } from "@/lib/analytics/project/viewerKey";
+import { PROJECT_ANON_KEY_EXPR, splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
 import {
   ACTIVITY_DAY_KEY_EXPR,
   activityWindowMatch,
@@ -153,7 +153,10 @@ type PersonRow = {
   name?: string | null;
   email?: string | null;
   /** Pages reached in each document they opened — the grain the reading badge has to be judged at. */
-  perDoc?: Array<{ docId?: unknown; pages?: unknown }>;
+  perDoc?: Array<{ docId?: unknown; pages?: unknown; ownReads?: unknown; projectSlug?: unknown }>;
+  /** Their identity in URL terms, for the link from a row to their reader page. */
+  viewerUserId?: unknown;
+  botIdHash?: unknown;
 };
 /** The same person, from the window's visits: the only source of a range-scoped reading time. */
 type VisitPersonRow = {
@@ -415,6 +418,15 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           // scope where a page number means anything: page 3 of the deck is not page 3 of the term
           // sheet, so a union across documents would be a number about nothing.
           pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
+          // Who they are in a URL, and whether this reading can be reached on the document's own
+          // reader page — a read through a project link belongs to the project, so the document's
+          // page would answer "no reader by that id" for it.
+          viewerUserId: { $max: "$viewerUserId" },
+          botIdHash: { $max: "$botIdHash" },
+          ownReads: { $sum: ownOnly("$shareId", 1, 0) },
+          // The project link they came through, when they came through one: their reading lives on
+          // that project's pages, so that is where a click on their row belongs.
+          projectSlug: { $max: ownOnly("$shareId", null, "$shareId") },
         },
       },
       { $match: { "_id.key": { $ne: null } } },
@@ -437,7 +449,9 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           email: { $max: "$email" },
           // One entry per document this person opened, so the reading badge can be judged the way
           // the document's own page judges it rather than by a workspace-wide average.
-          perDoc: { $push: { docId: "$_id.docId", pages: "$pages" } },
+          perDoc: { $push: { docId: "$_id.docId", pages: "$pages", ownReads: "$ownReads", projectSlug: "$projectSlug" } },
+          viewerUserId: { $max: "$viewerUserId" },
+          botIdHash: { $max: "$botIdHash" },
         },
       },
       { $sort: { views: -1, lastSeen: -1 } },
@@ -870,10 +884,37 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
     }
     if (!best || best.timeMs <= 0) return null;
     return {
+      docId: best.docId,
       timeMs: best.timeMs,
       pages: pagesByDoc.get(best.docId) ?? 0,
       totalPages: pagesByDocId.get(best.docId) ?? null,
     };
+  };
+
+  /**
+   * Where a row goes: this person's page for the reading its badge is about.
+   *
+   * Two guards, because a link that lands on "No reader by that id in this window" is worse than
+   * no link. The reading has to have happened on the document's *own* links — a read through a
+   * project link belongs to the project, and the document's reader page excludes it by design —
+   * and the person has to be addressable, which an anonymous reader is only through the device
+   * digest a project key stores with a document appended.
+   */
+  const readerHrefFor = (viewRow: PersonRow | undefined, sample: WorkspacePerson["depthSample"]): string | null => {
+    if (!sample?.docId) return null;
+    const entry = ((viewRow?.perDoc ?? []) as Array<{ docId?: unknown; ownReads?: unknown; projectSlug?: unknown }>).find(
+      (e) => String(e?.docId ?? "") === sample.docId,
+    );
+    const userId = viewRow?.viewerUserId ? String(viewRow.viewerUserId) : "";
+    const digest = viewRow?.botIdHash ? splitProjectViewerKey(String(viewRow.botIdHash)).botIdHash : "";
+    const key = userId ? `u_${userId}` : digest ? `a_${digest}` : null;
+    if (!key) return null;
+    // Read on the document's own link: the document's reader page holds it.
+    if (safeCount(entry?.ownReads)) return `/doc/${encodeURIComponent(sample.docId)}/metrics/viewer/${key}`;
+    // Read through a project link: the project's reader page holds it, and the document's would
+    // answer "no reader by that id" because it excludes project traffic by design.
+    const projectId = entry?.projectSlug ? projectIdBySlug.get(String(entry.projectSlug)) : null;
+    return projectId ? `/project/${encodeURIComponent(projectId)}/metrics/viewer/${key}` : null;
   };
 
   /**
@@ -883,6 +924,20 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
    * the "Recent visitors" strip needs. Built once because they are the same people asked two
    * different questions.
    */
+  /**
+   * Project link slug -> the project it opens, so a reader who came through one can be sent to the
+   * pages that actually hold their reading. Bounded by the workspace's project links.
+   */
+  const projectIdBySlug = new Map<string, string>();
+  if (isPro && projectShareIds.length) {
+    const rows = (await ShareLinkModel.find({ orgId, shareId: { $in: projectShareIds } })
+      .select({ _id: 0, shareId: 1, projectId: 1 })
+      .lean()) as Array<{ shareId?: string; projectId?: unknown }>;
+    for (const r of rows) {
+      if (r?.shareId && r?.projectId) projectIdBySlug.set(String(r.shareId), String(r.projectId));
+    }
+  }
+
   const peopleAll: WorkspacePerson[] = isPro
     ? (() => {
           const rows: WorkspacePerson[] = [];
@@ -902,7 +957,11 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
               // described by their visits instead.
               docs: view ? safeCount(view.docs) : safeCount(row.docs),
               lastSeenAt: toIsoOrNull(view?.lastSeen ?? row.lastSeen),
-              depthSample: depthSampleFor(view, row),
+              depthSample: (() => depthSampleFor(view, row))(),
+              readerHref: (() => {
+                const sample = depthSampleFor(view, row);
+                return readerHrefFor(view, sample);
+              })(),
             });
           }
           for (const row of peopleRows) {
@@ -916,8 +975,9 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
               docs: safeCount(row.docs),
               lastSeenAt: toIsoOrNull(row.lastSeen),
               // No visit rows: their traffic predates the reading clock, so there is no reading to
-              // judge and the row carries figures without a word.
+              // judge and the row carries figures without a word, and nowhere to send a click.
               depthSample: null,
+              readerHref: null,
             });
           }
           return rows;

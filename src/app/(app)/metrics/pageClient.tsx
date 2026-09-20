@@ -296,7 +296,14 @@ export default function MetricsPageClient() {
                 timeMs: p.depthSample?.timeMs ?? null,
                 pages: p.depthSample?.pages ?? null,
                 totalPages: p.depthSample?.totalPages ?? null,
+                // The same destination the badge is about: their page for the document they spent
+                // longest in. Null when that reading came through a project link, whose readers
+                // live on the project's pages rather than the document's.
+                href: p.readerHref,
+                hint: p.readerHref ? "See what they read" : undefined,
               }))}
+              // The payload trims the recency slice to five, so the true count comes separately.
+              total={data.people.count}
               seeAllLabel="See all readers"
               onSeeAll={() => {
                 document.getElementById("workspace-people")?.scrollIntoView({ behavior: "smooth", block: "start" });

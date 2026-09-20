@@ -83,6 +83,7 @@ export default function RecentVisitors({
   className,
   onSeeAll,
   seeAllLabel = "See all visitors",
+  total,
 }: {
   visitors: RecentVisitor[];
   limit?: number;
@@ -90,6 +91,15 @@ export default function RecentVisitors({
   /** Takes the reader to the full viewer lists further down the page. */
   onSeeAll?: () => void;
   seeAllLabel?: string;
+  /**
+   * How many readers there are in total, when the caller hands over only the recent few.
+   *
+   * The document and project pages pass every viewer and let this component take the newest five,
+   * so `visitors.length` is the true total. The workspace page cannot: its payload trims the
+   * recency slice server-side, so without this the footer compared five against five and never
+   * appeared — the card silently lost its way through to the full list.
+   */
+  total?: number;
 }) {
   const rows = visitors
     .filter((v) => v.lastSeen)
@@ -256,13 +266,13 @@ export default function RecentVisitors({
 
       {/* Five is the glance; everyone else is in the tables further down, so this jumps there
           rather than making the card grow into a second copy of them. */}
-      {onSeeAll && visitors.length > rows.length ? (
+      {onSeeAll && Math.max(total ?? 0, visitors.length) > rows.length ? (
         <button
           type="button"
           onClick={onSeeAll}
           className="mt-3 text-[12px] font-medium text-[var(--muted)] underline-offset-4 transition-colors hover:text-[var(--fg)] hover:underline"
         >
-          {seeAllLabel} ({visitors.length}) ↓
+          {seeAllLabel} ({Math.max(total ?? 0, visitors.length)}) ↓
         </button>
       ) : null}
     </section>
