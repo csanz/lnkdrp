@@ -164,6 +164,14 @@ and do not link to or announce the site until the Announce step in G.
 - [ ] Uptime monitor with a named alert recipient on `/api/health` and both `/healthz`; Vercel Log
       Drain with alerts; Stripe webhook failure emails to a watched inbox (11, Health and Logs).
 - [ ] Read 12 and decide each open item, or accept it in writing.
+- [ ] **Decide who gets in.** Unset, `WAITLIST_ENABLED` lets every new account straight into the
+      product (5 step 3). On, new accounts sign in and wait on the queue page until an admin
+      approves them at `/a/waitlist`, which sends `waitlist_approved`. It is read per request, so
+      it can be turned on or off at any point with no redeploy — but decide before announcing,
+      because the first people through the door see whichever answer is live, and put your own
+      addresses in `WAITLIST_ALLOW_EMAILS` either way so you are never queued behind your own
+      launch. If it is on, watch `/a/waitlist` from the announcement: nobody in the queue can do
+      anything until someone approves them.
 - [ ] **Announce / open to users.**
 
 **H. Watch (11) — first week**
@@ -556,6 +564,12 @@ it before deploying, not after:
    full body, and download-request emails carry live Approve, Deny and claim URLs that work without
    sign-in, so in production those tokens would land in Vercel logs and any Log Drain. Without
    `RESEND_API_KEY`, sending throws.
+4. Look at every template once, as the admin, at `/a/emails` — it renders each one from the
+   catalog and flags any without a preview, which is the only way to notice a template that was
+   added without one. Two are recent and have never been sent from production: `member_removed`
+   (to the person removed from a workspace) and `waitlist_approved` (the welcome, sent by the
+   approve button in `/a/waitlist`). Both quote workspace and product names, so read them with the
+   live `NOTIFICATION_EMAIL_FROM` in place rather than assuming the copy is fine.
 
 ## 5. Web app on Vercel
 
@@ -603,6 +617,8 @@ it before deploying, not after:
 | `STRIPE_SUCCESS_URL`, `STRIPE_CANCEL_URL` | optional; leave unset. They apply only when both are set; one alone is ignored and both redirects come from `NEXT_PUBLIC_APP_URL` |
 | `NEXT_PUBLIC_FEATURE_REQUESTS` | leave unset at launch. `1` turns Requests on; it is build-time, so it needs a fresh build, the two Requests backfills in 5.2 first, and the same value on MCP (`fly secrets set NEXT_PUBLIC_FEATURE_REQUESTS=1 -a lnkdrp-mcp`, or `[env]` in `deploy/fly/mcp.fly.toml` plus `fly deploy`) |
 | `NEXT_PUBLIC_FEATURE_CREDITS` | optional; credits UI is on by default, `0` hides it — including every "Add more credits" button, so the only way to `/credits` is typing the URL |
+| `WAITLIST_ENABLED` | optional; unset means every new account is approved on sign-up. `1`/`true`/`on`/`yes` queues **new** accounts instead: they sign in, land on the queue page and can do nothing else until an admin approves them (`/a/waitlist`, which sends the `waitlist_approved` email). Read at request time, so turning it on or off takes effect on the next request with no redeploy. Existing accounts are never queued, and neither are admins |
+| `WAITLIST_ALLOW_EMAILS`, `WAITLIST_ALLOW_DOMAINS` | optional; comma- or space-separated. Addresses and domains that skip the queue while it is on — your own team, an investor, a design partner. Domains are bare (`lnkdrp.com`, not `@lnkdrp.com`), matching is case-insensitive, and both are ignored when `WAITLIST_ENABLED` is unset |
 | other `ERROR_LOGGING_*` | optional; see `docs/ERROR_LOGGING.md` |
 
 `NEXT_PUBLIC_*` values are inlined at build time into the browser bundle and the server routes
@@ -829,6 +845,14 @@ const want = {
   projectlinkviews: ["shareId_1_botIdHash_1"],
   starredDocs: ["orgId_1_userId_1_docId_1"],
   reviews: ["docId_1_version_1"],
+  // Tags. Both indexes are unique and both carry a guarantee the UI depends on: one tag per name
+  // per workspace, and tagging the same thing twice being the same fact rather than two rows.
+  tags: ["orgId_1_slug_1"],
+  tagassignments: ["tagId_1_targetKind_1_targetId_1"],
+  // Notification dedupe: without it the same view can be emailed twice.
+  notificationqueues: ["dedupeKey_1"],
+  // One verified address per person per workspace.
+  sharevieweremails: ["orgId_1_email_1"],
 };
 for (const [c, names] of Object.entries(want)) {
   let have;
@@ -938,7 +962,7 @@ fly secrets list -a lnkdrp-realtime                 # exactly MONGODB_URI and RE
 fly deploy --ha=false --config deploy/fly/realtime.fly.toml --dockerfile realtime/Dockerfile \
   --image-label "$(git rev-parse --short=7 HEAD)"
 fly scale show -a lnkdrp-realtime                   # expect one machine
-curl https://lnkdrp-realtime.fly.dev/healthz        # 200, "ok":true, all seven "streams" true; proves the service before DNS
+curl https://lnkdrp-realtime.fly.dev/healthz        # 200, "ok":true, "mongo":"connected", "draining":false, all seven "streams" true
 fly certs add realtime.lnkdrp.com -a lnkdrp-realtime
 # CNAME realtime → lnkdrp-realtime.fly.dev, DNS-only (not proxied); CAA, if any, must allow letsencrypt.org
 fly certs check realtime.lnkdrp.com -a lnkdrp-realtime  # repeat until the certificate is issued
@@ -947,6 +971,12 @@ curl https://realtime.lnkdrp.com/healthz
 
 The comments at the top of `deploy/fly/*.fly.toml` point here and hold no commands; this block and
 the one in 7 are the only copies.
+
+`/healthz` answers 503, not 200, while the machine is draining on SIGTERM and whenever the Mongo
+connection is down, so the named fields say which of the three facts is false. A missing ticket
+secret is refused at boot with `REALTIME_SECRET (or NEXTAUTH_SECRET) is required` — the process
+used to start, report healthy, and die on the first browser that connected, so a crash loop whose
+first log line is a stack trace from a request is the old symptom, not the current one.
 
 - Fly outbound IPs change unless allocated as above, and without an allocation `fly ips list`
   shows only inbound addresses. With a strict allowlist, add the egress IP to Atlas before the
@@ -1019,8 +1049,17 @@ imports it (`mcp/src/main.ts`, `tools/sharePdf.ts`, `tools/replacePdf.ts`) for t
 in 4.4. The `COPY` is at `mcp/Dockerfile:41`; before it was added the build succeeded — nothing
 type-checks the image — and the container then died on start with
 `Cannot find module '../../src/lib/limits/uploads'`, which on Fly is a machine restarting in a
-loop and `/healthz` never answering. Add the line next to the other three `COPY`s, or the block
-below cannot finish:
+loop and `/healthz` never answering. `tests/lib/imageImportClosure` now fails the local gate when
+either image's `COPY` list stops covering what its entrypoint imports, so this is caught before a
+deploy rather than by one — but the test can only check the list, so add the line next to the
+other three `COPY`s, or the block below cannot finish:
+
+**Redeploy the MCP whenever its tool list changes.** The server registers its tools at start, and
+a client caches the list it was given, so a tool added since the running image was built does not
+exist to any agent — with no error to see, because the tool is simply absent. The tag tools
+(`lnkdrp_list_tags`, `lnkdrp_tag`, `lnkdrp_untag`) are the most recent additions; after the deploy,
+confirm they are there by listing tools from a client rather than with `curl`, which sees a
+per-client cache (`docs/MCP.md`).
 
 ```
 fly launch --no-deploy --copy-config --config deploy/fly/mcp.fly.toml --dockerfile mcp/Dockerfile --name lnkdrp-mcp
@@ -1581,11 +1620,14 @@ monitor is in 12.
 - Stripe live catalog and webhook do not exist yet; only the sandbox is configured.
 - Neither service is deployed yet. Fly.io is the chosen host (section 6.1), configs are in
   `deploy/fly/`; DNS for `mcp.lnkdrp.com` and `realtime.lnkdrp.com` still has to be created.
-- **Resolved: `mcp/Dockerfile` copies `src/lib/limits/uploads.ts`** (`mcp/Dockerfile:41`). Without
-  it the image built and then died on start with `Cannot find module '../../src/lib/limits/uploads'`.
-  The underlying hazard remains: nothing checks that the `COPY` list covers what `mcp/src` imports
-  out of `src/lib`, no type check runs against the image, and the build succeeds either way — so
-  the next such import breaks the image the same silent way.
+- **Resolved: the `COPY` lists are checked by a test.** `mcp/Dockerfile` had to be taught to copy
+  `src/lib/limits/uploads.ts`, and the hazard behind it — nothing checking that a `COPY` list
+  covers what the entrypoint imports, with the build succeeding either way — recurred exactly as
+  predicted: the realtime server gained an import of `share/projectPublic`, which could not simply
+  be copied because it drags mongoose models behind it. `tests/lib/imageImportClosure` now walks
+  the import graph from both entrypoints and fails when anything it reaches is missing from that
+  image's `COPY` list, or when either image would pull in a database model. `import type` is
+  ignored, since it is erased before the code runs. Run it with the other suites in the 0 A gate.
 - **The 50 MB inline upload limit is not reachable on Vercel.** `src/lib/limits/uploads.ts` sets
   `UPLOAD_MAX_BYTES` to 50 MB for both `import-url` and `import-bytes`, and every message and MCP
   tool description quotes it, but Vercel Functions cap a request body at about 4.5 MB, so the
