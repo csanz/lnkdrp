@@ -691,6 +691,12 @@ session that did not set it (mt_GOKLLvF4-v).
   nothing. Prefer `lnkdrp_verify_share_password` when you only need to confirm a password you
   already hold.
 
+- **An API key cannot do this.** Since the security pass, revealing a share password is refused for
+  key-authenticated callers (`forbidApiKey`), and every MCP connection is a key — so this answers
+  `forbidden` with "Sign in and do it from the app". Reading a secret back out is deliberately not
+  something a bearer credential may do. `lnkdrp_verify_share_password` is unaffected and is what
+  answers the question people actually ask: does this password open the link?
+
 ### `lnkdrp_update_share_link` (write)
 
 - In: `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?: string|null,

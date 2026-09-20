@@ -289,8 +289,11 @@ lastViewedAt, viewCount, downloadCount }`. `label`/`audience` are private to the
   random shareId are not searched here. Archived/deleted documents' links excluded.
 - confirm a password — `lnkdrp_verify_share_password` `{docId, linkId, password}` -> `{passwordEnabled, matches}`. Never uses the
   recipient's unlock route, so it sets no cookie, records no view, and cannot spend the recipient's 10-per-5-min budget.
-- read a password back — `lnkdrp_get_share_link_password` `{docId, linkId}` -> `{passwordEnabled, password}`, plain text, owner/admin,
-  and every read lands in the activity feed. Prefer verify when you only need to check one you already have.
+- read a password back — `lnkdrp_get_share_link_password` `{docId, linkId}` -> `{passwordEnabled, password}`, plain text,
+  owner/admin, and every read lands in the activity feed. **Refused for API-key callers** since the security pass
+  (`forbidApiKey`, "reveal a share password"), and every MCP connection is an API key — so over MCP this answers
+  `forbidden` and tells the human to sign in to the app. Reading a secret back out is deliberately not something a
+  bearer credential may do. Verify is unaffected and is what answers the question people actually ask.
 - update — In `{ linkId, docId, label?, audience?, enabled?, allowDownload?, password?, expiresAt?, allowRevisionHistory? }`
   (≥1 setting) → `PATCH /api/docs/:id/links/:linkId` → `{ link, shareUrl, planWarning?, planNote? }`.
 - delete — In `{ linkId, docId, confirm? }` → confirms with the human first (below) → `DELETE /api/docs/:id/links/:linkId`

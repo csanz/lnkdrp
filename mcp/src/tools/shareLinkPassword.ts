@@ -17,6 +17,14 @@
  * Both are admin-or-owner on the key's own workspace, one step above the `member` that editing a
  * link takes: reading a secret out is not the same permission as setting one.
  *
+ * Since the security pass in `fccecc3`, reading one out is not something an API key may do at all
+ * (`forbidApiKey`, "reveal a share password"), and every MCP connection is an API key. So the read
+ * tool now answers `forbidden` in practice and its description says so first, rather than promising
+ * a plaintext it cannot deliver and failing after the agent has told its human it can. Verify is
+ * untouched and is the tool that actually answers the question people ask. The read tool is kept
+ * rather than removed because "an API key cannot do this, sign in" is a better answer to "what is
+ * the password?" than no tool and a guess.
+ *
  * Verify deliberately does not go through the recipient's unlock route. That route sets a share
  * auth cookie, records a view, and spends the recipient's budget of 10 attempts per IP per share
  * per 5 minutes — so an agent testing a password would put fake traffic on the link and could lock
@@ -52,12 +60,15 @@ export function registerGetShareLinkPasswordTool(server: McpServer, ctx: ToolCon
     {
       title: "Show a link's password",
       description:
-        "Return the password set on one share link, in plain text, so you can tell the human what it is at any time - not " +
-        "only in the turn where you set it. Use this when they ask what a link's password is. When you only need to " +
-        "confirm a password they already gave you, prefer lnkdrp_verify_share_password, which answers without handing the " +
-        "secret back. Returns { passwordEnabled, password }: password is null when the link has none, and also when the " +
-        "link is old enough that only its hash survives, which passwordEnabled tells apart. Owner or admin of the key's " +
-        "own workspace. Every read is written to the workspace activity feed, so the owner can see that it happened. " +
+        "Return the password set on one share link, in plain text. IMPORTANT: this refuses when called with an API key, " +
+        "which is how every MCP connection authenticates - so in practice it will answer forbidden and tell the human to " +
+        "sign in to the app. Reading a secret back out is deliberately not something a bearer key can do. Reach for " +
+        "lnkdrp_verify_share_password instead: it confirms whether a password a human already gave you opens the link, " +
+        "it works over MCP, and it is the answer to almost every question this tool looks like it answers. Use this one " +
+        "only to tell a human what is blocking them. When it does run (a signed-in caller), it returns " +
+        "{ passwordEnabled, password }: password is null when the link has none, and also when the link is old enough " +
+        "that only its hash survives, which passwordEnabled tells apart. Owner or admin, and every read is written to " +
+        "the workspace activity feed. " +
         SAFETY_TAIL,
       inputSchema: getShareLinkPasswordInputShape,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
