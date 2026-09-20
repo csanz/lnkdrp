@@ -217,7 +217,19 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
         });
       }
       if (FETCH_BLOCKED_RE.test(errorText)) {
-        return new ToolError("fetch_blocked", `lnkdrp could not fetch the source URL: ${errorText}`, { status, details: { error: errorText } });
+        /**
+         * The upstream text says what went wrong and never what to do instead — "URL is not
+         * allowed" on its own leaves an agent with a failed call and no next move, so it retries
+         * the same URL. The remedies are short and they are always the same three, so they are
+         * appended rather than left for the agent to infer.
+         */
+        return new ToolError(
+          "fetch_blocked",
+          `lnkdrp could not fetch the source URL: ${errorText}. The URL must be a direct https link that returns the ` +
+            "PDF bytes with no sign-in — a Google Docs/Slides/Sheets or OneDrive page is a viewer, not a file. Use that " +
+            "service's export or download link, or send the bytes yourself with fileBase64.",
+          { status, details: { error: errorText } },
+        );
       }
       if (TOO_LARGE_RE.test(errorText)) {
         return new ToolError("too_large", errorText, { status });
@@ -262,12 +274,24 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
       return outOfCreditsError(status, body, bodyCode, siteUrl);
     }
     case 413:
-      return new ToolError("too_large", message || "The file is too large.", { status });
+      // Naming sourceUrl as the way out was wrong: the ceiling is the document's, not the
+      // transport's, so the same file refused as bytes is refused as a URL.
+      return new ToolError(
+        "too_large",
+        `${message || "The file is too large."} That ceiling is on the document, so sending the same file a different ` +
+          "way will not get past it — shrink the PDF instead (fewer pages, or downsampled images) and try again.",
+        { status },
+      );
     case 415:
-      return new ToolError("unsupported_content_type", message || "Only PDF files are supported.", {
-        status,
-        details: bodyCode ? { code: bodyCode } : undefined,
-      });
+      return new ToolError(
+        "unsupported_content_type",
+        `${message || "Only PDF files are supported."} lnkdrp shares PDFs only: convert the file first, and check the ` +
+          "URL returns the PDF itself rather than a page that displays one.",
+        {
+          status,
+          details: bodyCode ? { code: bodyCode } : undefined,
+        },
+      );
     case 429:
       return new ToolError("rate_limited", message || "Too many requests; slow down and retry.", { status });
     default:
