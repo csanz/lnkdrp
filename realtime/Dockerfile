@@ -31,6 +31,8 @@ RUN printf '%s\n' \
 
 COPY tsconfig.json ./tsconfig.json
 COPY src/lib/realtime/ticket.ts ./src/lib/realtime/ticket.ts
+# The project-link key rule. Import-free on purpose — see the note on `splitProjectViewerKey`.
+COPY src/lib/analytics/project/viewerKey.ts ./src/lib/analytics/project/viewerKey.ts
 COPY realtime ./realtime
 
 USER node

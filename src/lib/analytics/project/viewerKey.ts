@@ -18,6 +18,31 @@
  * correct as it stands for document links and must not learn about this.
  */
 
+/**
+ * Separator between the viewer key and the document id in a project-link analytics row.
+ *
+ * `.` is not produced by either half (a sha256 hex digest and an ObjectId hex string), so the
+ * composite splits unambiguously.
+ */
+export const PROJECT_VIEW_KEY_SEP = ".";
+
+/**
+ * The person at the head of a stored key, and the document behind it.
+ *
+ * The string form of the rule this file's expressions encode for Mongo, kept beside them and
+ * deliberately free of imports: the realtime server is a standalone process with its own
+ * `package.json` (see `realtime/Dockerfile`), and anything it imports must not drag a mongoose
+ * model into that image. It lived in `share/projectPublic.ts`, which does, and the container
+ * exited on `ERR_MODULE_NOT_FOUND` before `main()` ever ran. `projectPublic` re-exports these, so
+ * every existing import keeps working and there is still one definition of the rule.
+ */
+export function splitProjectViewerKey(key: string): { botIdHash: string; docId: string | null } {
+  const value = String(key ?? "");
+  const at = value.indexOf(PROJECT_VIEW_KEY_SEP);
+  if (at < 0) return { botIdHash: value, docId: null };
+  return { botIdHash: value.slice(0, at), docId: value.slice(at + PROJECT_VIEW_KEY_SEP.length) || null };
+}
+
 /** The 64-character digest at the head of a project-link `botIdHash` — the browser, not the document. */
 export const PROJECT_ANON_KEY_EXPR = { $substrCP: [{ $ifNull: ["$botIdHash", ""] }, 0, 64] } as const;
 

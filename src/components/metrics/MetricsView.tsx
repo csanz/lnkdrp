@@ -64,7 +64,7 @@ import {
 import { formatDayKey } from "@/lib/format/date";
 import { valueLabels } from "@/components/charts/ChartValueLabel";
 import { buildPublicProjectUrl, buildPublicShareUrl } from "@/lib/urls";
-import { subscribeRealtime } from "@/lib/client/realtime";
+import { realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { rememberEntityTitle } from "@/lib/client/entityTitles";
 import EntityCrumbLabel, {
   CrumbSkeleton,
@@ -1383,6 +1383,13 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
    */
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const bump = () => {
+      silentRefreshRef.current = true;
+      setIdentityNonce((n) => n + 1);
+    };
+    // A reconnection means a gap: the streams keep no resume token, so anything that happened
+    // while this tab was disconnected was never delivered and never will be.
+    const offHello = subscribeRealtime("hello", bump);
     const off = subscribeRealtime("viewer", (frame) => {
       if (frame.type !== "viewer") return;
       if (!isProject && frame.viewer.docId && frame.viewer.docId !== scope.id)
@@ -1395,9 +1402,28 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
     });
     return () => {
       if (timer) clearTimeout(timer);
+      offHello();
       off();
     };
   }, [isProject, scope.id]);
+
+  /**
+   * The fallback for a tab with no socket.
+   *
+   * Realtime was this page's only refresh path — no poll, no refetch on focus — so a workspace
+   * behind a proxy that blocks the upgrade, or a deployment with no realtime host at all, showed
+   * numbers frozen at page load with nothing to say so. Only while the tab is visible and the
+   * channel is not open, so it costs nothing in the normal case.
+   */
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      if (realtimeState() === "open") return;
+      if (document.visibilityState !== "visible") return;
+      silentRefreshRef.current = true;
+      setIdentityNonce((n) => n + 1);
+    }, 30_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   // Auto-load the viewers list after the lightweight payload returns (no button). Basic tier gets
   // no identities back, so the request is skipped entirely there.

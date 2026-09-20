@@ -211,6 +211,9 @@ export default function ViewerProfile({
         void loadVisits(true);
       }, 1200);
     };
+    // Reconnected: whatever happened while the socket was down never arrived, so start again from
+    // the server's truth rather than from what this page happened to have when it lost touch.
+    const stopHello = subscribeRealtime("hello", refresh);
     const stopReading = subscribeRealtime("reading", (frame) => {
       if (frame.type !== "reading" || !who) return;
       const mine =
@@ -234,6 +237,7 @@ export default function ViewerProfile({
     });
     return () => {
       window.clearTimeout(timer);
+      stopHello();
       stopReading();
       stopViewer();
       stopActivity();

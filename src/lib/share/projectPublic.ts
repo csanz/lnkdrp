@@ -22,18 +22,20 @@
  */
 import { Types } from "mongoose";
 
+import { PROJECT_VIEW_KEY_SEP } from "@/lib/analytics/project/viewerKey";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { isExpired } from "./links";
 import { resolveProjectLink, type ProjectLike, type ResolvedProjectLink } from "./projectLinks";
 
 /**
- * Separator between the viewer key and the document id in a project-link analytics row.
+ * The separator and the split live in `analytics/project/viewerKey`, which has no imports.
  *
- * `.` is not produced by either half (a sha256 hex digest and an ObjectId hex string), so the
- * composite splits unambiguously.
+ * They are re-exported here because this is where they were and where the rule is documented, and
+ * because the realtime server — a standalone process with its own dependency list — needs the
+ * split without this module's mongoose models coming with it.
  */
-export const PROJECT_VIEW_KEY_SEP = ".";
+export { PROJECT_VIEW_KEY_SEP, splitProjectViewerKey } from "@/lib/analytics/project/viewerKey";
 
 /**
  * The `botIdHash` a project-link `ShareView` / `ShareVisit` row is written under.
@@ -93,17 +95,6 @@ export function viewerKeyPrefixPattern(viewerKey: string): string {
   return "^" + viewerKey + "\\" + PROJECT_VIEW_KEY_SEP;
 }
 
-/**
- * Split a stored key back into its viewer and its document.
- *
- * `docId` is null for a document link's row (a bare digest), which is how a caller tells the two
- * apart without consulting the link.
- */
-export function splitProjectViewerKey(key: string): { botIdHash: string; docId: string | null } {
-  const at = key.indexOf(PROJECT_VIEW_KEY_SEP);
-  if (at < 0) return { botIdHash: key, docId: null };
-  return { botIdHash: key.slice(0, at), docId: key.slice(at + PROJECT_VIEW_KEY_SEP.length) || null };
-}
 
 /** The fields the public project page and the document cards on it render. */
 export const PROJECT_DOC_LIST_FIELDS = {
