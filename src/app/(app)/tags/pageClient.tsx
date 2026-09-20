@@ -19,10 +19,11 @@ export default function TagsPageClient() {
         description="Every tag in this workspace, and what carries it. Renaming or merging changes it everywhere."
       />
 
-      <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">
-        <div className={`w-full max-w-4xl py-6 ${APP_PAGE_GUTTER}`}>
-          <TagsManager />
-        </div>
+      {/* Full width, like Metrics, Connect and Requests. A tag row is a name, a count, six colour
+          swatches and two actions — it fits in a column half the page wide, and capping the page at
+          max-w-4xl left two thirds of a wide screen empty while the list itself scrolled. */}
+      <div className={`min-h-0 flex-1 overflow-auto bg-[var(--bg)] ${APP_PAGE_GUTTER} py-6`}>
+        <TagsManager />
       </div>
     </div>
   );

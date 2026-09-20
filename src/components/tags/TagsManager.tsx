@@ -22,6 +22,12 @@ import { TAG_COLOR_KEYS, TAG_COLORS, type TagColorKey } from "@/lib/tags/palette
 
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
 
+/**
+ * Tags per page. A workspace that files properly ends up with dozens, and the page was rendering
+ * every one of them into a single scroll.
+ */
+const PAGE_SIZE = 24;
+
 export default function TagsManager() {
   const [tags, setTags] = useState<Tag[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +38,8 @@ export default function TagsManager() {
   const [confirmDelete, setConfirmDelete] = useState<Tag | null>(null);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [filter, setFilter] = useState("");
+  const [page, setPage] = useState(1);
 
   const load = useCallback(async () => {
     try {
@@ -54,6 +62,26 @@ export default function TagsManager() {
   const sorted = useMemo(
     () => [...(tags ?? [])].sort((a, b) => (b.count ?? 0) - (a.count ?? 0) || a.name.localeCompare(b.name)),
     [tags],
+  );
+
+  /**
+   * Filter before paging, so searching looks through every tag rather than the page you are on.
+   * Folded loosely on purpose — someone hunting "Série A" should find it by typing "serie".
+   */
+  const matching = useMemo(() => {
+    const needle = filter.trim().toLowerCase();
+    if (!needle) return sorted;
+    const fold = (v: string) => v.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const folded = fold(needle);
+    return sorted.filter((t) => fold(t.name).includes(folded) || t.slug.includes(folded));
+  }, [sorted, filter]);
+
+  const pageCount = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
+  // A filter that shortens the list can strand you past the end; clamp rather than show nothing.
+  const current = Math.min(page, pageCount);
+  const visible = useMemo(
+    () => matching.slice((current - 1) * PAGE_SIZE, current * PAGE_SIZE),
+    [matching, current],
   );
 
   /** Every write goes through here: one busy row at a time, one error line, one refresh. */
@@ -158,14 +186,49 @@ export default function TagsManager() {
         </button>
       </div>
 
+      {sorted.length > PAGE_SIZE ? (
+        <div className="mb-3 flex items-center gap-2">
+          <input
+            value={filter}
+            placeholder={`Filter ${sorted.length} tags`}
+            aria-label="Filter tags"
+            className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] text-[var(--fg)] outline-none placeholder:text-[var(--muted-2)] focus:ring-2 focus:ring-[var(--ring)]"
+            onChange={(e) => {
+              setFilter(e.target.value);
+              setPage(1);
+            }}
+          />
+          {filter ? (
+            <button
+              type="button"
+              onClick={() => {
+                setFilter("");
+                setPage(1);
+              }}
+              className="shrink-0 rounded-lg border border-[var(--border)] px-3 py-2 text-[13px] text-[var(--muted)] hover:text-[var(--fg)]"
+            >
+              Clear
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       {!sorted.length ? (
         <div className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center text-[13px] text-[var(--muted)]">
           No tags yet. Type one above, or add one from any document or project.
         </div>
       ) : null}
 
-      <ul className="grid gap-1.5">
-        {sorted.map((tag) => {
+      {sorted.length && !matching.length ? (
+        <div className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center text-[13px] text-[var(--muted)]">
+          No tag matches &ldquo;{filter}&rdquo;.
+        </div>
+      ) : null}
+
+      {/* Two columns once there is room: a tag row needs about half a wide screen, and one column
+          on a 2,000px page was mostly empty space beside a list that still had to be scrolled. */}
+      <ul className="grid gap-1.5 xl:grid-cols-2">
+        {visible.map((tag) => {
           const busy = busyId === tag.id;
           const editing = editingId === tag.id;
           const merging = mergeFrom?.id === tag.id;
@@ -330,6 +393,36 @@ export default function TagsManager() {
           );
         })}
       </ul>
+
+      {pageCount > 1 ? (
+        <div className="mt-4 flex items-center justify-between gap-3 text-[13px]">
+          <span className="text-[var(--muted)]">
+            {(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, matching.length)} of {matching.length}
+            {filter ? ` matching` : ""}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={current <= 1}
+              onClick={() => setPage(current - 1)}
+              className="rounded-lg border border-[var(--border)] px-3 py-1.5 font-medium text-[var(--fg)] disabled:opacity-40"
+            >
+              Previous
+            </button>
+            <span className="text-[var(--muted)]">
+              {current} / {pageCount}
+            </span>
+            <button
+              type="button"
+              disabled={current >= pageCount}
+              onClick={() => setPage(current + 1)}
+              className="rounded-lg border border-[var(--border)] px-3 py-1.5 font-medium text-[var(--fg)] disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <p className="mt-3 text-[12px] leading-5 text-[var(--muted-2)]">
         Renaming keeps every document and project that carries the tag. Merging moves them onto the tag you pick and
