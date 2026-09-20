@@ -15,7 +15,6 @@ import {
   linkStateFilterFragment,
   linkStateLabel,
   pickDocTitle,
-  publicLinkPath,
 } from "@/lib/admin/linksAdmin";
 
 const NOW = new Date("2026-09-17T12:00:00.000Z");
@@ -132,24 +131,6 @@ describe("admin/linksAdmin isAdminLinkStateFilter", () => {
   });
 });
 
-describe("admin/linksAdmin publicLinkPath", () => {
-  test("document links resolve at /s/:shareId", () => {
-    expect(publicLinkPath("doc", "abc123")).toBe("/s/abc123");
-  });
-
-  test("a legacy row with no kind is a document link", () => {
-    expect(publicLinkPath(null, "abc123")).toBe("/s/abc123");
-  });
-
-  test("project links resolve at /p/:shareId", () => {
-    expect(publicLinkPath("project", "abc123")).toBe("/p/abc123");
-  });
-
-  test("a missing slug has no path", () => {
-    expect(publicLinkPath("doc", null)).toBeNull();
-    expect(publicLinkPath("doc", "")).toBeNull();
-  });
-});
 
 describe("admin/linksAdmin pickDocTitle", () => {
   test("prefers the owner's title", () => {

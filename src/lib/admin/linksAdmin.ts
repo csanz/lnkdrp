@@ -106,11 +106,11 @@ export function linkStateFilterFragment(state: AdminLinkStateFilter, now: Date):
   }
 }
 
-/** The public URL path a link resolves at, or null for a row whose slug is missing. */
-export function publicLinkPath(kind: string | null | undefined, shareId: string | null | undefined): string | null {
-  if (!shareId) return null;
-  return kind === "project" ? `/p/${shareId}` : `/s/${shareId}`;
-}
+// `publicLinkPath` used to live here, building `/s/:shareId` and `/p/:shareId` for the links
+// board. It is deliberately gone: admin must never offer a one-click path into a customer's
+// document, and an exported helper that builds one is an invitation to add the column back. The
+// admin surface shows the slug; anyone who genuinely needs the page can paste it. Guarded by
+// tests/lib/adminDocPrivacy.test.ts.
 
 /** The three places a document's name can live, in the order the app itself prefers them. */
 export type DocTitleSource = { title?: string | null; docName?: string | null; fileName?: string | null };

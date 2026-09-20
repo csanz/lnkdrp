@@ -38,7 +38,7 @@ import {
 } from "@/components/admin";
 import { ADMIN_DASH, ADMIN_FOCUS_RING, fmtAdminDateFull, type AdminTone } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
-import { linkStateLabel, publicLinkPath, type AdminLinkState } from "@/lib/admin/linksAdmin";
+import { linkStateLabel, type AdminLinkState } from "@/lib/admin/linksAdmin";
 import { fetchJson } from "@/lib/http/fetchJson";
 
 type LinkRow = {
@@ -264,7 +264,6 @@ export default function AdminDataLinksPage() {
             />
           ) : (
             items.map((l) => {
-              const path = publicLinkPath(l.kind, l.shareId);
               const target = l.kind === "project" ? l.projectName : l.docTitle;
               const stateLabel = linkStateLabel(l.state, { disabledByDocSwitch: l.disabledByDocSwitch });
               // Audience has no column of its own — it is a short tag that was mostly empty and cost
@@ -342,7 +341,20 @@ export default function AdminDataLinksPage() {
                     <TimeCell value={l.createdDate} />
                   </AdminTd>
                   <AdminTd>
-                    <IdCell value={l.shareId} label="share id" head={8} tail={4} href={path ?? undefined} />
+                    {/* The slug, never a link to it. Yesterday's privacy pass removed every
+                        admin→content link and missed this page, the one whose whole subject is
+                        share links — so it was the last surviving way to open a customer's
+                        document from the admin board in one click.
+
+                        Opening it did more than read: an admin is not a member of that workspace,
+                        so `isOwnerSideViewer` is false, the view is not flagged `isOwnerPreview`,
+                        and the click writes a real recipient view — bumping `numberOfViews`, the
+                        link counters and the customer's activity feed. Staff browsing this board
+                        were manufacturing views in a paying customer's analytics.
+
+                        The shareId is the diagnostic; anyone who genuinely needs to open the page
+                        can paste it. */}
+                    <IdCell value={l.shareId} label="share id" head={8} tail={4} />
                   </AdminTd>
                   <AdminTd align="right" sticky actions>
                     {/* Links had no right-hand affordance at all, and no cue that a row opened
