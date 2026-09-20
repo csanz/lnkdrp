@@ -24,12 +24,17 @@ describe("ReadingClock", () => {
     expect(c.snapshot().page).toBe(2);
   });
 
-  test("(b) a flip under 1.5s sends nothing and restarts both clocks", () => {
+  test("(b) a flip under 1.5s sends nothing, and the visit clock keeps running through it", () => {
     const c = clock();
     expect(c.turn(S + 1000, 2)).toEqual([]);
     const out = c.turn(S + 4000, 3);
     expect(out).toHaveLength(1);
-    expect(out[0].durationMs).toBe(3000);
+    // Four seconds of visit, not three: the second spent on the page they flipped past is time
+    // they were here. A suppressed turn used to reset the visit clock and lose it, which cost a
+    // skimmer through fifty pages the better part of a minute.
+    expect(out[0].durationMs).toBe(4000);
+    // The page clock does restart, so page 2 is credited only with its own three seconds, and
+    // page 1's second is dropped — below the minimum is below the minimum.
     expect(out[0].page).toMatchObject({ pageNumber: 2, pageDurationMs: 3000 });
   });
 

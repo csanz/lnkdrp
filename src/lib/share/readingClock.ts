@@ -74,12 +74,11 @@ export class ReadingClock {
   /**
    * What is left of the current page's dwell that has not been sent yet.
    *
-   * Never rounded up. A page turn landing in the same millisecond as a heartbeat has nothing left
-   * to send and so writes no exit event — a real, if vanishingly rare, loss. The alternative was a
-   * one-millisecond floor, and that breaks the invariant the fuzz test holds: reported page time
-   * must never exceed reported visit time, because every second on a page is a second of the
-   * visit. A property that catches double counting is worth more than a page event lost once in a
-   * thirty-second window.
+   * Never rounded up. A one-millisecond floor would break the invariant the fuzz test holds —
+   * reported page time must never exceed reported visit time, because every second on a page is a
+   * second of the visit — and a property that catches double counting is worth more than the one
+   * page segment this costs, in the millisecond where a turn lands on top of a heartbeat. The turn
+   * itself still goes out; see `turn`.
    */
   private unreportedPageMs(until: number): number {
     if (this.pageStart === null) return 0;
@@ -139,17 +138,30 @@ export class ReadingClock {
     const pageDur = now - pageStart;
     const chunk = now - (this.visitStart ?? now);
     const unreported = this.unreportedPageMs(now);
-    this.visitStart = now;
-    this.lastFlushAt = now;
     const out: Flush[] = [];
-    if (pageDur >= MIN_CHUNK_MS && unreported >= 1) {
-      out.push({
-        reason: "turn",
-        durationMs: chunk >= 1 ? chunk : null,
-        page: { pageNumber: this.page, enteredAtMs: pageStart, leftAtMs: now, pageDurationMs: unreported, exit: true },
-        toPage,
-      });
+    // Nothing left on either clock happens when a heartbeat landed a millisecond ago: it took the
+    // visit chunk and the page's remainder with it. The same rule every other flush follows — no
+    // flush ever carries a zero interval — so there is nothing to post.
+    const durationMs = chunk >= 1 ? chunk : null;
+    const page =
+      unreported >= 1
+        ? { pageNumber: this.page, enteredAtMs: pageStart, leftAtMs: now, pageDurationMs: unreported, exit: true }
+        : null;
+    if (pageDur >= MIN_CHUNK_MS && (durationMs !== null || page !== null)) {
+      out.push({ reason: "turn", durationMs, page, toPage });
+      this.visitStart = now;
+      this.lastFlushAt = now;
     }
+    /**
+     * A suppressed turn leaves the visit clock running rather than resetting it.
+     *
+     * It used to reset unconditionally, so every flip under a second and a half silently threw
+     * away the visit time since the last flush. A skimmer going through fifty pages at 300ms each
+     * lost fifteen seconds that way — real reading time, in the counter the owner reads as "how
+     * long were they here". The minimum chunk is there to stop a fast page-turner becoming a POST
+     * storm, and holding the chunk over to the next flush obeys it without paying for it: one
+     * post, all the seconds.
+     */
     this.page = toPage;
     this.pageStart = now;
     this.pageReportedMs = 0;

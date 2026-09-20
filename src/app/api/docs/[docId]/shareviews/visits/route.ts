@@ -19,6 +19,7 @@ import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 import { RECIPIENT_ONLY_MATCH, shareIdClause } from "@/lib/analytics/shareViewAggregates";
+import { currentPageFromRow } from "@/lib/analytics/reading/currentPage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -157,27 +158,12 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             /**
              * The page this session is on, as far as the ingest knows.
              *
-             * Page time is only written when a reader *leaves* a page, and a `turn` segment carries
-             * `toPage` — the page they went to. So the newest event names where they are now, and
-             * the page they are still sitting on is knowable without any new write. Falls back to
-             * the segment's own page for a flush that was not a turn (a tab hidden, a reload),
-             * where the last page they were on is the best answer there is.
-             *
-             * And falls back once more to the furthest page seen, because a document with ONE page
-             * never produces an event at all — there is nowhere to turn to — so the live half of
-             * the reader page went dark for exactly the documents where it is easiest to be sure.
-             * An exit is evidence and a page seen is an inference, which is why it is last.
+             * The rule — newest page event, then the page that event ended on, then the furthest
+             * page seen — is `currentPageFromRow`, shared with the project scope. It lived in both
+             * files once, and the copies drifted: only one of them knew that a document with one
+             * page never writes an event at all.
              */
-            currentPage: (() => {
-              const events = Array.isArray(v.pageEvents) ? v.pageEvents : [];
-              const last = events.length ? events[events.length - 1] : null;
-              const to = Number(last?.toPage);
-              if (Number.isFinite(to) && to >= 1) return Math.floor(to);
-              const on = Number(last?.pageNumber);
-              if (Number.isFinite(on) && on >= 1) return Math.floor(on);
-              const seen = Array.isArray(v.pagesSeen) ? (v.pagesSeen as number[]).filter((n) => Number.isFinite(n) && n >= 1) : [];
-              return seen.length ? Math.max(...seen) : null;
-            })(),
+            currentPage: currentPageFromRow(v),
             /** What the viewer reported the document's length to be, for "page 4 of 9". */
             pageCount: Number.isFinite(Number(v.pageCount)) && Number(v.pageCount) > 0 ? Math.floor(Number(v.pageCount)) : null,
           })),

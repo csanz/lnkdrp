@@ -30,9 +30,28 @@ import {
 import DepthBadge, { ReadingLegendButton } from "@/components/metrics/DepthBadge";
 import IntroducedBadge from "@/components/metrics/IntroducedBadge";
 import PageReadingDetail from "@/components/metrics/PageReadingDetail";
+import ReaderDocuments, { type DocDetail } from "@/components/metrics/ReaderDocuments";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { REALTIME_STATE_EVENT, realtimeState, subscribeRealtime } from "@/lib/client/realtime";
 import { useEntityIdentity } from "@/lib/client/entityIdentity";
+
+/**
+ * The latest value of something, readable from a callback that must not be rebuilt to see it.
+ *
+ * Three things on this page are needed by handlers that outlive the render they were made in — a
+ * socket subscription that would have to tear down and resubscribe, and an effect that would rerun
+ * on every refetch. Each grew its own mirror effect; this is the one of them, named.
+ *
+ * Written in an effect rather than during render on purpose: a render can be thrown away, and a
+ * ref written by one that was would be describing a screen nobody saw.
+ */
+function useLatestRef<T>(value: T) {
+  const ref = useRef(value);
+  useEffect(() => {
+    ref.current = value;
+  }, [value]);
+  return ref;
+}
 
 /** `u_<userId>` for a signed-in reader, `a_<botIdHash>` for a device. Readable in a URL. */
 export function viewerRouteKey(kind: "authed" | "anon", key: string): string {
@@ -120,16 +139,15 @@ export default function ViewerProfile({
     return () => window.removeEventListener(REALTIME_STATE_EVENT, sync);
   }, []);
 
-  // While someone is reading, the indicator has to be able to go quiet on its own: the last frame
-  // is the last thing that will arrive, so nothing else would clear "reading now".
-  useEffect(() => {
-    if (readingAt === null) return;
-    const id = window.setInterval(() => setTick((n) => n + 1), 5_000);
-    return () => window.clearInterval(id);
-  }, [readingAt]);
-
-  // The ticker has to run on a freshly loaded page too, where the answer comes from the sessions
-  // rather than from a frame that has not arrived yet.
+  /**
+   * "Reading now" has to be able to go quiet on its own.
+   *
+   * It is a comparison against the clock, and the last frame to arrive is the last thing that will
+   * arrive — so without something re-rendering, a reader who stopped an hour ago would still be
+   * described in the present tense. Unconditional, because the claim can also come from a session
+   * that was already loaded, before any frame: a ticker that waited for one would never start on
+   * the page where someone lands mid-read.
+   */
   useEffect(() => {
     const id = window.setInterval(() => setTick((n) => n + 1), 5_000);
     return () => window.clearInterval(id);
@@ -218,8 +236,26 @@ export default function ViewerProfile({
     void loadVisits();
   }, [loadVisits]);
 
-  /** Which document's panel is open, readable from the realtime handler without resubscribing. */
-  const openDocRef = useRef<string | null>(null);
+  /**
+   * Following one person into one document.
+   *
+   * A project link writes one row per (viewer, document), and the room's aggregate merges them —
+   * which is right for "they opened three documents in nine minutes" and useless for "which pages
+   * of the term sheet". `/shareviews/viewer-doc` goes back for the single row that was merged, so
+   * this page can answer both questions without pretending a project has page numbers.
+   *
+   * It is a drill-down rather than a link to the document's own metrics on purpose: a read through
+   * a project link belongs to the project, so that person may not appear in the document's own
+   * viewer list at all (docs/METRICS.md, `docScope.ts`). Sending someone there would show them an
+   * empty page and call it the truth.
+   */
+  const [openDoc, setOpenDoc] = useState<string | null>(null);
+  const [docDetail, setDocDetail] = useState<Record<string, DocDetail>>({});
+
+  /** Read by the realtime handler, which must not resubscribe every time a panel opens. */
+  const openDocRef = useLatestRef(openDoc);
+  /** Read by the auto-open effect, which must not rerun every time a refresh lands. */
+  const docDetailRef = useLatestRef(docDetail);
 
   /**
    * One document's pages, for the panel that opens under it.
@@ -352,34 +388,6 @@ export default function ViewerProfile({
   }, [load, loadVisits, loadDocDetail]);
 
   /**
-   * Following one person into one document.
-   *
-   * A project link writes one row per (viewer, document), and the room's aggregate merges them —
-   * which is right for "they opened three documents in nine minutes" and useless for "which pages
-   * of the term sheet". `/shareviews/viewer-doc` goes back for the single row that was merged, so
-   * this page can answer both questions without pretending a project has page numbers.
-   *
-   * It is a drill-down rather than a link to the document's own metrics on purpose: a read through
-   * a project link belongs to the project, so that person may not appear in the document's own
-   * viewer list at all (docs/METRICS.md, `docScope.ts`). Sending someone there would show them an
-   * empty page and call it the truth.
-   */
-  const [openDoc, setOpenDoc] = useState<string | null>(null);
-  const [docDetail, setDocDetail] = useState<
-    Record<string, { pagesSeen: number[]; pageTimeMsByPage: Record<string, number>; timeSpentMs: number; sessions: number } | "loading">
-  >({});
-
-  useEffect(() => {
-    openDocRef.current = openDoc;
-  }, [openDoc]);
-
-  /** The cache, readable from the auto-open effect without making it rerun on every refresh. */
-  const docDetailRef = useRef(docDetail);
-  useEffect(() => {
-    docDetailRef.current = docDetail;
-  }, [docDetail]);
-
-  /**
    * The panel this page opened by itself, and the one the owner shut on purpose.
    *
    * Both are refs rather than state: the effect below reads them to decide, and nothing renders
@@ -388,26 +396,33 @@ export default function ViewerProfile({
   const autoOpenedRef = useRef<string | null>(null);
   const dismissedRef = useRef<string | null>(null);
 
+  /**
+   * The row was clicked: open this document's panel, or shut it if it was the open one.
+   *
+   * Read from the refs rather than from a `setOpenDoc` updater. An updater has to be pure — React
+   * is free to call it twice — and deciding "was this a close?" inside one, then acting on that
+   * outside it, is exactly the kind of thing a double invocation gets wrong.
+   *
+   * It refreshes even when the document is already in the cache, silently. The cache is a snapshot
+   * of whenever the panel was last looked at, and reopening a document you watched someone read
+   * five minutes ago should not show you five-minute-old pages while it waits for the next frame.
+   */
   const openDocDetail = useCallback(
-    async (docId: string) => {
-      let closing = false;
-      setOpenDoc((cur) => {
-        closing = cur === docId;
-        return closing ? null : docId;
-      });
+    (docId: string) => {
+      const closing = openDocRef.current === docId;
+      setOpenDoc(closing ? null : docId);
       // Shutting the panel for the document they are in right now is an instruction, not an
       // accident: without this, the effect below would reopen it on the reader's next page turn
       // and the owner could not close it at all.
       if (closing) {
         if (autoOpenedRef.current === docId) autoOpenedRef.current = null;
         dismissedRef.current = docId;
-      } else if (dismissedRef.current === docId) {
-        dismissedRef.current = null;
+        return;
       }
-      if (docDetail[docId]) return;
-      await loadDocDetail(docId);
+      if (dismissedRef.current === docId) dismissedRef.current = null;
+      void loadDocDetail(docId, Boolean(docDetailRef.current[docId]));
     },
-    [docDetail, loadDocDetail],
+    [loadDocDetail],
   );
 
   const name = (viewer?.name ?? "").trim() || (viewer?.email ?? "").trim();
@@ -416,7 +431,9 @@ export default function ViewerProfile({
     () => (Array.isArray(viewer?.pagesSeen) ? viewer!.pagesSeen!.filter((n) => Number.isFinite(n) && n >= 1).sort((a, b) => a - b) : []),
     [viewer],
   );
-  const msByPage = viewer?.pageTimeMsByPage ?? {};
+  // Memoised for its identity, not its cost: `?? {}` minted a new object every render, and the
+  // memo below takes it as a dependency, so every render recomputed the page table.
+  const msByPage = useMemo(() => viewer?.pageTimeMsByPage ?? {}, [viewer]);
   const pageRows = useMemo(
     () => pagesSeen.map((page) => ({ page, ms: msByPage[String(page)] ?? 0 })).sort((a, b) => b.ms - a.ms || a.page - b.page),
     [pagesSeen, msByPage],
@@ -676,114 +693,14 @@ export default function ViewerProfile({
       ) : (
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
           <div className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">Documents they opened</div>
-          {viewer.docs?.length ? (
-            <ul className="mt-3 grid gap-1.5">
-              {viewer.docs.map((d) => {
-                const max = Math.max(1, ...(viewer.docs ?? []).map((x) => x.timeSpentMs));
-                const detail = docDetail[d.docId];
-                const expanded = openDoc === d.docId;
-                // The one they are in right now. A room's list is otherwise a ranking by time, and
-                // the document someone has open this second is the only row on this page that is
-                // news rather than history.
-                const live_ = live?.docId === d.docId;
-                return (
-                  <li
-                    key={d.docId}
-                    data-open={expanded}
-                    className={[
-                      "rounded-xl border transition-colors data-[open=true]:bg-[var(--panel-2)]",
-                      live_
-                        ? "border-emerald-600/40 bg-emerald-500/5 dark:border-emerald-300/40"
-                        : "border-transparent data-[open=true]:border-[var(--border)]",
-                    ].join(" ")}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => void openDocDetail(d.docId)}
-                      className="flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-left transition-colors hover:bg-[var(--panel-hover)]"
-                      title="See which pages they read in this document"
-                    >
-                      <DocumentTextIcon className="h-4 w-4 shrink-0 text-[var(--muted-2)]" aria-hidden="true" />
-                      <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--fg)]">
-                        {d.title || "Untitled document"}
-                      </span>
-                      {live_ ? (
-                        <span
-                          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.1em] text-emerald-700 dark:border-emerald-300/40 dark:text-emerald-300"
-                          title="They have this open right now"
-                        >
-                          <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse dark:bg-emerald-400" />
-                          {live?.page ? `Page ${live.page}${live.of ? `/${live.of}` : ""}` : "Open now"}
-                        </span>
-                      ) : null}
-                      <span className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-[var(--panel-2)]">
-                        <span
-                          className="block h-full rounded-full bg-[var(--chart-views)]"
-                          style={{ width: `${Math.max(2, Math.round((d.timeSpentMs / max) * 100))}%` }}
-                        />
-                      </span>
-                      <span className="w-16 shrink-0 text-right text-[12px] tabular-nums text-[var(--muted)]">
-                        {d.timeSpentMs > 0 ? formatDurationShort(d.timeSpentMs) : "—"}
-                      </span>
-                    </button>
-
-                    {/* Opened and closed on a grid row rather than a height, because nothing here
-                        knows how tall a chart plus nine page rows is — `0fr → 1fr` animates to the
-                        content's own height. The panel stays mounted once it has been opened so the
-                        close animates too, and `inert` keeps its link out of the tab order while it
-                        is shut. `motion-reduce` turns the whole thing into a cut. */}
-                    {expanded || detail ? (
-                      <div
-                        className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
-                        style={{ gridTemplateRows: expanded ? "1fr" : "0fr" }}
-                      >
-                        <div className="overflow-hidden" inert={!expanded}>
-                          <div className="border-t border-[var(--divider)] px-3 pb-3 pt-2.5">
-                            {detail === "loading" || !detail ? (
-                              <div className="text-[12px] text-[var(--muted)]">Loading pages…</div>
-                            ) : detail.pagesSeen.length ? (
-                              <>
-                                <div className="text-[12px] text-[var(--muted-2)]">
-                                  {detail.sessions > 0
-                                    ? `${detail.sessions} ${detail.sessions === 1 ? "session" : "sessions"} · `
-                                    : ""}
-                                  {detail.pagesSeen.length} {detail.pagesSeen.length === 1 ? "page" : "pages"}
-                                  {detail.timeSpentMs > 0 ? ` · ${formatDurationShort(detail.timeSpentMs)}` : ""}
-                                </div>
-                                {/* The same component the document side uses: chart and ranked pages,
-                                    never one without the other. */}
-                                <div className="mt-2">
-                                  <PageReadingDetail
-                                    pagesSeen={detail.pagesSeen}
-                                    msByPage={detail.pageTimeMsByPage}
-                                    totalTimeMs={detail.timeSpentMs}
-                                  />
-                                </div>
-                              </>
-                            ) : (
-                              <div className="text-[12px] text-[var(--muted)]">No pages recorded for this document.</div>
-                            )}
-                            <div className="mt-2">
-                              <Link
-                                href={`/doc/${encodeURIComponent(d.docId)}/metrics`}
-                                className="text-[12px] font-medium text-[var(--muted)] underline-offset-4 hover:text-[var(--fg)] hover:underline"
-                              >
-                                This document&apos;s own metrics →
-                              </Link>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <div className="mt-2 text-[13px] text-[var(--muted)]">
-              {viewer.openedNothing ? "They arrived and opened nothing." : "No documents opened yet."}
-            </div>
-          )}
+          <ReaderDocuments
+            docs={viewer.docs ?? []}
+            openedNothing={viewer.openedNothing}
+            openDocId={openDoc}
+            detailByDocId={docDetail}
+            live={live}
+            onToggle={openDocDetail}
+          />
         </section>
       )}
 

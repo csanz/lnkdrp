@@ -27,6 +27,7 @@ import { ShareVisitModel } from "@/lib/models/ShareVisit";
 import { accessProjectForLinks } from "../../links/shared";
 import { projectShareIds } from "@/lib/share/projectLinks";
 import { projectViewerKey } from "@/lib/share/projectPublic";
+import { currentPageFromRow } from "@/lib/analytics/reading/currentPage";
 import { RECIPIENT_ONLY_MATCH } from "@/lib/analytics/shareViewAggregates";
 
 export const runtime = "nodejs";
@@ -150,36 +151,17 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
        *
        * Two questions, and they are not answered by the same field. *Which document* is the one
        * with the most recent activity, which is `lastEventAt`: every stats post moves it, starting
-       * with the one the viewer sends the moment a document is opened. *Which page of it* is the
-       * newest page event, which is an exit and so is written only when they leave a page.
+       * with the one the viewer sends the moment a document is opened. *Which page of it* is
+       * `currentPageFromRow`, which reads the newest page event and falls back from there — the
+       * same rule the document scope uses, which is why it lives in a module and not here.
        *
        * Asking the event both questions is what made switching documents lag. A reader moving back
        * to a file they had already read brought an event stamped when they last *left* it, so the
        * room's freshest event still belonged to the document they had just walked away from, and
        * "the document they are in" stayed wrong until they turned a page in the new one — up to a
-       * whole heartbeat, and for ever on a document with one page. Recency comes from the row,
-       * the page number comes from the event, and only the page number falls back.
+       * whole heartbeat, and for ever on a document with one page.
        */
-      const events = Array.isArray(r.pageEvents) ? (r.pageEvents as Array<Record<string, unknown>>) : [];
-      const last = events.length ? events[events.length - 1] : null;
-      const seen = Array.isArray(r.pagesSeen) ? (r.pagesSeen as number[]).filter((n) => Number.isFinite(n) && n >= 1) : [];
-      /**
-       * A page event is the usual answer, and a document with one page never produces one.
-       *
-       * The events are exits, so a reader who has nowhere to turn to writes none at all — and the
-       * whole live half of this page went dark for one-page documents: no "on page 1 of 1", no
-       * green row, and nothing for the drill-down to follow. The pages this row has seen are the
-       * fallback, which on a one-page document is exactly the page they are on and on any other is
-       * the furthest they have reached. Only ever the fallback: an exit is evidence, a page they
-       * visited at some point is an inference.
-       */
-      const pageFromEvent = (() => {
-        if (!last) return null;
-        const to = Number(last.toPage);
-        const on = Number(last.pageNumber);
-        return Number.isFinite(to) && to >= 1 ? Math.floor(to) : Number.isFinite(on) && on >= 1 ? Math.floor(on) : null;
-      })();
-      const page = pageFromEvent ?? (seen.length ? Math.max(...seen) : null);
+      const page = currentPageFromRow(r);
       const at = lastEventAt;
       if (page && at && docId) {
         // Strictly newer. The rows arrive sorted newest-first, so a tie must leave the sort's
