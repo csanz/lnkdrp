@@ -53,6 +53,10 @@ type Visit = {
   timeSpentMs: number;
   pagesSeen?: number[];
   pageTimeMsByPage?: Record<string, number>;
+  /** The page this session is on, from the newest page event's `toPage`. Null when unknowable. */
+  currentPage?: number | null;
+  /** The document's length as the viewer reported it, for "page 4 of 9". */
+  pageCount?: number | null;
   /** Project scope: which documents this one tab session touched, longest first. */
   docs?: Array<{ docId: string; title: string | null; timeSpentMs: number; pagesSeen: number[] }>;
 };
@@ -369,6 +373,21 @@ export default function ViewerProfile({
    * reading. The interval above re-renders this so it can lapse by itself.
    */
   const readingNow = readingAt !== null && Date.now() - readingAt < 60_000;
+  /**
+   * Where they are right now, from the newest session.
+   *
+   * Only claimed while `readingNow` holds: a page number from an hour ago is where somebody
+   * stopped, not where they are, and printing it in the present tense would be the page telling a
+   * small lie every time it is left open. The document's length comes from the same session,
+   * because it is the viewer's own report of what it rendered.
+   */
+  const live = useMemo(() => {
+    if (scopeKind !== "doc" || !readingNow) return null;
+    const newest = visits[0];
+    const page = newest?.currentPage ?? null;
+    if (!page) return null;
+    return { page, of: newest?.pageCount ?? identity?.pages ?? null };
+  }, [scopeKind, readingNow, visits, identity?.pages]);
 
   const stat = (label: string, value: string, sub?: string | null) => (
     <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-4">
@@ -437,7 +456,7 @@ export default function ViewerProfile({
                 title="A page turn or heartbeat arrived from this reader in the last minute"
               >
                 <span aria-hidden="true" className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse dark:bg-emerald-400" />
-                Reading now
+                {live ? `On page ${live.page}${live.of ? ` of ${live.of}` : ""}` : "Reading now"}
               </span>
             ) : connected ? (
               <span

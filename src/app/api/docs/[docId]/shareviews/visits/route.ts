@@ -130,6 +130,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
         pagesSeen: 1,
         pageTimeMsByPage: 1,
         pageVisitCountByPage: 1,
+        // The last two segments are enough to say where the reader is: a `turn` records the page
+        // they left and `toPage` the one they went to, so the newest event names the page they are
+        // on now. Only the tail is read; the array itself is capped by the ingest.
+        pageEvents: 1,
+        pageCount: 1,
       })
       .lean();
 
@@ -149,6 +154,25 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
             pagesSeen: Array.isArray(v.pagesSeen) ? v.pagesSeen : [],
             pageTimeMsByPage: v.pageTimeMsByPage && typeof v.pageTimeMsByPage === "object" ? v.pageTimeMsByPage : {},
             pageVisitCountByPage: v.pageVisitCountByPage && typeof v.pageVisitCountByPage === "object" ? v.pageVisitCountByPage : {},
+            /**
+             * The page this session is on, as far as the ingest knows.
+             *
+             * Page time is only written when a reader *leaves* a page, and a `turn` segment carries
+             * `toPage` — the page they went to. So the newest event names where they are now, and
+             * the page they are still sitting on is knowable without any new write. Falls back to
+             * the segment's own page for a flush that was not a turn (a tab hidden, a reload),
+             * where the last page they were on is the best answer there is.
+             */
+            currentPage: (() => {
+              const events = Array.isArray(v.pageEvents) ? v.pageEvents : [];
+              const last = events.length ? events[events.length - 1] : null;
+              const to = Number(last?.toPage);
+              if (Number.isFinite(to) && to >= 1) return Math.floor(to);
+              const on = Number(last?.pageNumber);
+              return Number.isFinite(on) && on >= 1 ? Math.floor(on) : null;
+            })(),
+            /** What the viewer reported the document's length to be, for "page 4 of 9". */
+            pageCount: Number.isFinite(Number(v.pageCount)) && Number(v.pageCount) > 0 ? Math.floor(Number(v.pageCount)) : null,
           })),
         },
         { headers: { "cache-control": "no-store" } },
