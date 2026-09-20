@@ -86,13 +86,22 @@ vi.mock("@/lib/share/links", () => ({
   resolveShareLink: vi.fn(async () => ({ refusal: null, link, doc })),
   touchShareLink: (...a: unknown[]) => (touchShareLink as never as (...x: unknown[]) => unknown)(...a),
 }));
-vi.mock("@/lib/share/projectPublic", () => ({
-  resolveProjectDocument: vi.fn(async () => ({
+// Two seams where there used to be one. `/p/:shareId/:docId/pdf` was reordered to close a data-room
+// inventory oracle (tests/lib/projectPdfOracle.test.ts): it no longer resolves link and document in
+// a single `resolveProjectDocument` call, it takes the link from `resolveProjectLink` and only asks
+// `findProjectDocument` whether the room holds this id once the password gate is behind it. Mocking
+// `resolveProjectDocument` alone left the route falling through to the real `resolveProjectLink`,
+// which reaches for `MONGODB_URI`. The factory closes over the same mutable `link` object, so a test
+// flipping `link.allowDownload` before the call still governs the gate under test.
+vi.mock("@/lib/share/projectLinks", () => ({
+  resolveProjectLink: vi.fn(async () => ({
     refusal: null,
     link,
     project: { _id: PROJECT, name: "Data room", orgId: ORG, isRequest: false },
-    doc,
   })),
+}));
+vi.mock("@/lib/share/projectPublic", () => ({
+  findProjectDocument: vi.fn(async () => doc),
   projectLinkPasswordEnabled: () => false,
   projectViewerKey: (hash: string, docId: unknown) => `${hash}:${String(docId)}`,
 }));

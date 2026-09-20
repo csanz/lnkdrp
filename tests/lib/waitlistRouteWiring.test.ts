@@ -22,13 +22,27 @@ import { describe, expect, test } from "vitest";
 
 const REPO_ROOT = path.resolve(__dirname, "../..");
 
-/** Every route that creates workspace content or spends credits, and the action each names. */
+/**
+ * Every route that creates workspace content or spends credits, and the action each names.
+ *
+ * The first five were the first pass, and a review of it found three more: the list was written
+ * from the routes the *dashboard* calls to make a document, which is not the same set as the routes
+ * that mint a public link or bill the operator. `/api/requests` creates a project carrying two live
+ * capability tokens — an upload URL and a view URL, both public to whoever holds them — and the
+ * summary and compare reruns reserve AI credits exactly as `/api/uploads/:id/process` does (those
+ * three files are now every caller of `reserveCreditsOrThrow`/`queueSummaryRerun`). Anything added to
+ * the product that creates or spends belongs here on the day it is written, not on the day someone
+ * reads the queue's enforcement again.
+ */
 const GATED_ROUTES: Array<[string, string]> = [
   ["src/app/api/docs/route.ts", "create a document"],
   ["src/app/api/uploads/route.ts", "upload a document"],
   ["src/app/api/uploads/[uploadId]/process/route.ts", "process a document"],
   ["src/app/api/docs/[docId]/links/route.ts", "share a document"],
   ["src/app/api/projects/route.ts", "create a project"],
+  ["src/app/api/requests/route.ts", "create a request folder"],
+  ["src/app/api/uploads/[uploadId]/summary/route.ts", "write a summary"],
+  ["src/app/api/docs/[docId]/changes/[changeId]/rerun/route.ts", "rerun a comparison"],
 ];
 
 /** Approvals that must clear the gate's cache, or the button looks broken for 15 seconds. */
@@ -66,7 +80,19 @@ describe("the queue is enforced where things are created", () => {
     expect(gate).toBeGreaterThan(-1);
     // A write must come after the gate. A refusal that lands after the row exists is an error
     // message, not a gate.
-    for (const write of [".create(", "insertMany(", "findOneAndUpdate("]) {
+    //
+    // `insertOne(` is here because `/api/requests` writes with a raw `collection.insertOne` to dodge
+    // a stale Mongoose schema in dev, so a list of Mongoose model methods matched nothing in it and
+    // this assertion passed by finding no write at all. The two spend calls are on the list for the
+    // same reason a write is: a reservation the operator pays for is a thing that already happened.
+    for (const write of [
+      ".create(",
+      "insertMany(",
+      "findOneAndUpdate(",
+      "insertOne(",
+      "reserveCreditsOrThrow(",
+      "queueSummaryRerun(",
+    ]) {
       const at = handler.indexOf(write);
       if (at === -1) continue;
       expect(at).toBeGreaterThan(gate);

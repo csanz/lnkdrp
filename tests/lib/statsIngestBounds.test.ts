@@ -351,13 +351,37 @@ describe("pageNumber bounds", () => {
     expect(docUpdateOne).not.toHaveBeenCalledWith(expect.anything(), { $inc: { numberOfPagesViewed: 1 } });
   });
 
-  test("a page past the end of the deck is not a reading, even inside the 5000 ceiling", async () => {
-    // Three real pages; 4000 parses fine and is pure invention.
+  test("a page past the end of the deck is still recorded, because the deck's length is not reliable", async () => {
+    /**
+     * This asserted the opposite for about an hour, and the narrowing it pinned was removed.
+     *
+     * The idea was sound — a page number past the last page is not a reading — but the only page
+     * count available here is `Doc.slideNodes`, a render artifact. When a replacement upload's
+     * slide pass fails, the *previous* version's nodes are deliberately kept while `blobUrl` moves
+     * on, so a nine-page v1 can sit on a thirty-page v2. Recipients then read the thirty-page PDF
+     * and every genuine reading past page nine was being thrown away: no `pagesSeen`, no heatmap,
+     * no "read to page N" in the owner's mail.
+     *
+     * Silently discarding real readings is a worse failure than the one the narrowing was added
+     * for, and it was not the finding anyway — the finding was that `pageNumber` was *unbounded*
+     * and could grow the per-page maps without limit. The 1..5000 parse above is that bound, and
+     * it stays.
+     */
     await post(heartbeat(4000));
     await drainAfter();
 
+    // Two writes name the page — the row's `pagesSeen` and the per-page maps — which is what a
+    // real reading looks like here.
+    expect(new Set(pagesAdded())).toEqual(new Set([4000]));
+    expect(pagesAdded().length).toBeGreaterThan(0);
+  });
+
+  test("the 1..5000 parse is still the bound that stops the maps growing without limit", async () => {
+    await post(heartbeat(500000));
+    await drainAfter();
+
     expect(pagesAdded()).toEqual([]);
-    expect(docUpdateOne).not.toHaveBeenCalledWith(expect.anything(), { $inc: { numberOfPagesViewed: 1 } });
+    expect(incKeys().some((k) => k.startsWith("pageTimeMsByPage."))).toBe(false);
   });
 
   test("the visit is still recorded: a bad page number skips the page, not the reader", async () => {

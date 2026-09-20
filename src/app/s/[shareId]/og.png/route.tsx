@@ -61,16 +61,54 @@ function previewFetchUrl(candidate: string): URL | null {
 }
 
 /**
- * `private`, never `public` — the same rule the recipient history endpoint states at
- * `/s/[shareId]/changes/route.ts`. The refusal and password checks below run per request, but a
- * shared/CDN cache is keyed on the URL alone and never re-asks: the previous
- * `public, s-maxage=3600, stale-while-revalidate=86400` meant that once any unfurl bot had warmed
- * an edge entry, the document's title and a picture of its first page kept being served for up to
- * 25 hours after the owner disabled, expired, archived or password-protected the link — i.e. the
- * revocation controls silently stopped applying to the one surface that needs no cookie to reach.
- * The short `max-age` still absorbs a single client's repeated fetches of the same preview.
+ * The revocation window, in seconds, that a shared cache may keep serving this image for.
+ *
+ * This number is the entire trade this header makes. Read `OG_CACHE_CONTROL` before changing it.
  */
-const OG_CACHE_CONTROL = "private, max-age=300";
+const OG_SHARED_CACHE_SECONDS = 60;
+
+/**
+ * A bounded shared cache — deliberately neither of the two headers this route has worn before.
+ *
+ * This is the one share surface that is fetched with no cookie and no viewer: unfurl bots. It is
+ * therefore both the surface where revocation is easiest to lose *and* the surface with the worst
+ * fan-out, and the two previous headers each fixed one of those by giving up the other.
+ *
+ *  - `public, s-maxage=3600, stale-while-revalidate=86400` lost revocation. A shared cache is keyed
+ *    on the URL alone and never re-asks, so once any bot had warmed an edge entry the document's
+ *    title and a picture of its first page kept being served for up to 25 hours after the owner
+ *    disabled, expired, archived or password-protected the link. `stale-while-revalidate` was the
+ *    worse half: it exists precisely to keep serving an entry the cache already knows is expired.
+ *  - `private, max-age=300` fixed that by banning shared storage outright, and paid for it at the
+ *    origin. `private` means no edge or proxy may store the bytes, so *every* unfurl becomes a cold
+ *    render here: `resolveShareLink`, a server-side blob fetch, and a satori `ImageResponse`. Bots
+ *    re-fetch per channel, per recipient, per re-share, so one link pasted into a large Slack
+ *    workspace turns what used to be free CDN reads into a burst of serverless invocations.
+ *
+ * `public` is correct on the *content*: this image is scoped to the link, not to the viewer. There
+ * is no cookie, no `Vary`, and no per-recipient variation — everyone who may see this link sees the
+ * identical bytes, which is exactly the case a URL-keyed shared cache is built for. The only thing
+ * `private` was ever buying was freshness after a revoke, and `s-maxage` buys that directly, in
+ * seconds, instead of by forbidding caching.
+ *
+ * Why 60s, and why nothing longer: the load this header exists to absorb is a *burst*. A link
+ * posted once fans out to many unfurl bots within seconds of the post, and a minute of shared
+ * caching collapses that burst into a single origin render. A re-share hours later is a cold render
+ * under any window we would be willing to accept, so raising 60s to an hour buys almost no extra
+ * hit rate while multiplying the revocation window sixtyfold. One minute of stale exposure after an
+ * owner revokes a link is under the time it takes them to check that the revoke worked; an hour is
+ * not, and a day certainly is not.
+ *
+ * `stale-while-revalidate` is absent on purpose and must stay absent — it re-opens the exact hole
+ * above by licensing a cache to serve an expired entry. `stale-if-error` is the same hazard wearing
+ * a different name; do not add it either. `max-age=0` keeps a client that already has the image
+ * from holding it privately past the revoke: its re-ask lands on the edge, not on us.
+ *
+ * The gates themselves are untouched and still run per request: `resolveShareLink`'s refusal and
+ * the password check below both `notFound()` on every request that actually reaches this function,
+ * and those 404s do not carry this header, so nothing caches a refusal either.
+ */
+const OG_CACHE_CONTROL = `public, max-age=0, s-maxage=${OG_SHARED_CACHE_SECONDS}`;
 
 /**
  * Dynamic OG image route for a share page.

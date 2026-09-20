@@ -12,6 +12,10 @@
  * counter moves (an owner downloading their own deck must not bump the link's `downloadCount` or
  * write "Someone downloaded this" into their own feed), a duplicate-key race still increments, and
  * Range requests pass through untouched because pdf.js depends on them.
+ *
+ * The order of the checks in `GET` is load-bearing and matches the page's: link, then password, then
+ * membership. A locked room must answer every candidate document id the same way, here as much as
+ * there — see the note in the handler.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -23,7 +27,8 @@ import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { touchShareLink } from "@/lib/share/links";
 import { isOwnerSideViewer } from "@/lib/share/ownerSide";
-import { projectLinkPasswordEnabled, projectViewerKey, resolveProjectDocument } from "@/lib/share/projectPublic";
+import { resolveProjectLink } from "@/lib/share/projectLinks";
+import { findProjectDocument, projectLinkPasswordEnabled, projectViewerKey } from "@/lib/share/projectPublic";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { clientIpFromRequest, rateLimit } from "@/lib/http/rateLimit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
@@ -169,26 +174,45 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   const botId = url.searchParams.get("botId");
   const viewerIp = clientIpFromRequest(request) || null;
 
-  // Membership is re-proved here, not trusted from the URL: this route hands out bytes.
-  const resolved = await resolveProjectDocument(shareId, docId, {
-    select: { blobUrl: 1, title: 1, fileName: 1, orgId: 1, userId: 1 },
-    projectSelect: { isRequest: 1 },
-  });
-  if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  /**
+   * The link first, the password next, the document only after that — the same order the page above
+   * now uses (`/p/[shareId]/[docId]/page.tsx`), and here for the same reason.
+   *
+   * This route resolved link *and* document in one `resolveProjectDocument` call and answered a
+   * non-member id with 404 `Not found`, a member id with no bytes 404 `PDF not available`, and only
+   * *then* asked for the password. So the page's fix closed the oracle on the page and left it wide
+   * open one path deeper: `GET /p/<locked slug>/<candidate docId>/pdf` with no cookie still sorted
+   * candidate ids into "in this room" (401) and "not in this room" (404), which is the document
+   * inventory the password gate exists to withhold.
+   *
+   * The ordering below is the whole fix. Link-level refusals stay ahead of the gate because they are
+   * properties of the link the recipient already holds, not of its contents. Everything after the
+   * gate — the membership check, the missing-bytes 404, the download gate, the analytics — is
+   * untouched: behind the password the answers are allowed to differ again, because by then the
+   * caller has the password.
+   */
+  const resolvedLink = await resolveProjectLink(shareId, { select: { isRequest: 1 } });
+  if (!resolvedLink) return NextResponse.json({ error: "Not found" }, { status: 404 });
   // A request repo has no public room — the rule, and why, is at `/p/[shareId]/page.tsx`. This
   // route is the one that actually hands the file over, so it asks for itself rather than trusting
   // the page above it to have asked.
-  if (resolved.project.isRequest) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  const { link, project, doc } = resolved;
-
-  const blobUrl = typeof doc.blobUrl === "string" ? doc.blobUrl : "";
-  if (!blobUrl) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
+  if (resolvedLink.project.isRequest) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (resolvedLink.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { link, project } = resolvedLink;
 
   if (projectLinkPasswordEnabled(link)) {
     const cookie = getCookie(request, shareAuthCookieName(shareId)) ?? "";
     const expected = shareAuthCookieValue({ shareId, sharePasswordHash: link.passwordHash as string });
     if (!cookie || cookie !== expected) return new Response("Unauthorized", { status: 401 });
   }
+
+  // Membership is re-proved here, not trusted from the URL: this route hands out bytes. The only
+  // change is that it now happens after the gate, exactly as on the page.
+  const doc = await findProjectDocument(project, docId, { select: { blobUrl: 1, title: 1, fileName: 1, orgId: 1, userId: 1 } });
+  if (!doc) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  const blobUrl = typeof doc.blobUrl === "string" ? doc.blobUrl : "";
+  if (!blobUrl) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
   // PRD decision 3: the project link's flag governs every document opened through it. A document
   // whose own link allows downloads is still not downloadable to *this* audience unless the sender

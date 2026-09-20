@@ -243,7 +243,14 @@ describe("/s/:shareId/og.png only dereferences the blob store", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     // It degrades rather than refusing: the document still unfurls, with its title.
     expect(imageResponseFromBytes).not.toHaveBeenCalled();
-    expect(res.headers.get("Cache-Control")).toContain("private");
+    // This used to assert `private`. That header was an over-correction: the image is keyed on the
+    // link and identical for everyone who may see it, so refusing every shared cache made each
+    // unfurl a cold origin render — and a link pasted once into a large channel is fetched by many
+    // bots at once. It is a short `s-maxage` now, which keeps the revocation window to a minute
+    // while letting the edge absorb the burst. See the route for the full trade.
+    const cacheControl = res.headers.get("Cache-Control") ?? "";
+    expect(cacheControl).toContain("s-maxage");
+    expect(cacheControl).not.toContain("stale-while-revalidate");
   });
 
   test("an arbitrary external host is not requested either", async () => {

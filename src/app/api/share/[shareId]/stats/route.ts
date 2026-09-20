@@ -16,6 +16,7 @@ import { Types } from "mongoose";
 import { DocModel } from "@/lib/models/Doc";
 import { resolveShareLink, shareLinkUnlocked, touchShareLink, type PasswordProtectedLink } from "@/lib/share/links";
 import { projectViewerKey, resolveProjectStatsTarget } from "@/lib/share/projectPublic";
+import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerIdentity";
 import { sendViewerIntroductionEmails, viewerIntroductionAppUrl } from "@/lib/share/viewerIntroductionEmails";
 import { isViewerEmailVerified } from "@/lib/share/viewerEmailVerification";
@@ -67,6 +68,39 @@ const STATS_POST_LIMIT = 120;
  * real traffic.
  */
 const NEW_VIEWER_FANOUT_PER_LINK_PER_DAY = 200;
+
+/**
+ * Confirmation mails one share link may cause in a day, counted across every address.
+ * See the note at the send site — the sender's own bounds are per address, which an attacker
+ * rotates freely, so this is the bound that actually holds.
+ */
+const VERIFY_MAIL_PER_LINK_PER_DAY = 50;
+
+/**
+ * A locked data room must answer the same thing about every document id, member or not.
+ *
+ * `resolveProjectStatsTarget` resolves the link *and* the document together, so a slug the caller
+ * has no password for still answered 404 for an id that is not in the room and fell through to a
+ * 200 for one that is. That sorts guessed ids into "inside" and "outside" — an inventory of the
+ * room, handed out to someone who has not given the password, which is the one thing the password
+ * is there to withhold. The page and the PDF proxy were reordered to close exactly this; the
+ * ingest was the third door.
+ *
+ * Reordering here would mean resolving the link twice on the hot path for every ordinary view, so
+ * instead this runs only on the branch that was about to 404: if the slug is a real project link
+ * and it is locked, answer whatever the locked case answers, so both outcomes look identical.
+ */
+async function lockedProjectLink(request: Request, shareId: string): Promise<boolean> {
+  try {
+    const linkOnly = await resolveProjectLink(shareId);
+    if (!linkOnly || linkOnly.refusal) return false;
+    return !shareLinkUnlocked(request, shareId, linkOnly.link as PasswordProtectedLink);
+  } catch {
+    // A lookup that fails must not turn into a different answer either.
+    return false;
+  }
+}
+
 const STATS_POST_WINDOW_MS = 60 * 1000;
 export const dynamic = "force-dynamic";
 /**
@@ -228,6 +262,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
         ? null
         : await resolveProjectStatsTarget({ shareId, request, select: { userId: 1, orgId: 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
+        // Same answer as the locked case below, so a guessed id learns nothing. See `lockedProjectLink`.
+        if (!resolved && (await lockedProjectLink(request, shareId))) {
+          return NextResponse.json({ isOwner: false }, { headers: { "cache-control": "no-store" } });
+        }
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       const link = resolved ? resolved.link : projectTarget!.link;
@@ -365,6 +403,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
         ? null
         : await resolveProjectStatsTarget({ shareId, request, bodyDocId: (body as { docId?: unknown })?.docId, select: { title: 1, userId: 1, orgId: 1, "slideNodes.pageNumber": 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
+        // Same quiet 200 the locked case answers below, so a guessed id learns nothing about what
+        // the room holds. See `lockedProjectLink`.
+        if (!resolved && (await lockedProjectLink(request, shareId))) {
+          return NextResponse.json({ ok: true }, { headers: { "cache-control": "no-store" } });
+        }
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
       const link = resolved ? resolved.link : projectTarget!.link;
@@ -403,8 +446,13 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
        * slide nodes have not been written yet (still processing) has no count to check against and
        * keeps the 5000 ceiling as its only bound.
        */
-      const pageCount = docPageCount(doc.slideNodes);
-      const pageNumber = pageNumberRaw && (!pageCount || pageNumberRaw <= pageCount) ? pageNumberRaw : null;
+      // Narrowing to the document's own page count was tried here and removed. `Doc.slideNodes` is
+      // a render artifact, and when a replacement's slide pass fails the *previous* version's nodes
+      // are deliberately kept while `blobUrl` moves on — so a 9-page v1 can sit on a 30-page v2, and
+      // every genuine reading past page 9 was being thrown away. Silently dropping real reads is a
+      // worse failure than the one the bound was added for: the 1..5000 parse above already stops a
+      // caller growing the per-page maps without limit, which was the finding.
+      const pageNumber = pageNumberRaw;
       const shareLinkId = link._id;
       // Denormalized tenancy on the analytics rows (see `ShareView.orgId`).
       const shareOrgId = doc.orgId ? new Types.ObjectId(String(doc.orgId)) : null;
@@ -512,9 +560,27 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             if (!/E11000|duplicate key/i.test(msg)) throw e;
           }
 
-          // Charged once per brand-new reader, never on a repeat visit by someone already known,
-          // so an ordinary audience never touches it however often they come back.
-          const fanOutAllowed = created
+          /**
+           * Charged once per brand-new reader, never on a repeat visit by someone already known,
+           * so an ordinary audience never touches it however often they come back.
+           *
+           * The charge cannot hang off `created` alone. On a document link a row is one viewer, but
+           * on a project link a row is one (viewer, document) — so a ten-file data room sent to
+           * forty investors charged the budget four hundred times, spent it after the twentieth
+           * investor, and then stopped telling the owner about the twenty real people who came
+           * after. The extra `limit: 1` bucket is a per-day dedupe on the *person*: it answers
+           * "have we already charged for this reader today", so ten files cost one.
+           */
+          const firstSightingToday =
+            created &&
+            (
+              await rateLimit({
+                key: `viewfanseen:${shareId}:${viewerBotIdHash}`,
+                limit: 1,
+                windowMs: 24 * 60 * 60 * 1000,
+              })
+            ).ok;
+          const fanOutAllowed = firstSightingToday
             ? (
                 await rateLimit({
                   key: `viewfanout:${shareId}`,
@@ -614,9 +680,32 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
              */
             if (viewerEmail && !ownerPreview && shareOrgId && fanOutAllowed) {
               const appUrl = viewerIntroductionAppUrl();
+              /**
+               * A ceiling on confirmation mail per link, whatever address it is addressed to.
+               *
+               * The sender's own bounds are keyed on the address — three per address per workspace,
+               * one an hour — which is the right shape for someone who mistypes their own address
+               * and the wrong shape entirely for an attacker, who simply supplies a new one each
+               * time and is never the same key twice. `fanOutAllowed` does not cover it either: it
+               * is charged only when a `ShareView` row is *created*, so holding `botId` steady and
+               * rotating only the address makes every request after the first free.
+               *
+               * Wiring this previously-dead sender into a public, unauthenticated route without
+               * that second bound would have made the product an arbitrary-recipient mail relay —
+               * anyone with a live share link could have it email anyone they liked, from our own
+               * sending domain. That is a deliverability incident as much as an abuse one.
+               *
+               * So it is bounded by the thing the caller cannot rotate: the link. Degrades rather
+               * than refuses — the introduction is still accepted, recorded and shown in the feed.
+               */
+              const mailBudget = await rateLimit({
+                key: `viewerverify:${shareId}`,
+                limit: VERIFY_MAIL_PER_LINK_PER_DAY,
+                windowMs: 24 * 60 * 60 * 1000,
+              });
               // No absolute base configured in production means a relative link, and a relative
               // link in a mail client does nothing — so there is no confirmation to offer.
-              if (appUrl) {
+              if (appUrl && mailBudget.ok) {
                 await sendViewerIntroductionEmails({
                   orgId: shareOrgId,
                   shareId,

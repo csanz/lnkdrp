@@ -14,6 +14,13 @@
  *
  * Both are pinned on the value actually emitted (the `og:image` URL, the `Cache-Control` header),
  * because that string is the whole protection — the resolver underneath was never the bug.
+ *
+ * The cache header is pinned from *both* sides, because it has now been wrong in both directions.
+ * The first fix, `private, max-age=300`, closed the revocation hole by banning shared storage
+ * outright and so made every unfurl a cold origin render (`resolveShareLink` + blob fetch + satori)
+ * — one link in a busy Slack workspace, one serverless invocation per bot. So these tests assert a
+ * bounded shared cache: `s-maxage` present but small, and no directive that licenses a cache to
+ * serve an entry it knows is expired.
  */
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -115,10 +122,42 @@ describe("share card never names the blob", () => {
   });
 });
 
-describe("/s/:shareId/og.png is not cacheable by a shared cache", () => {
+/**
+ * The revocation window the route commits to. Both directions matter:
+ * absent/zero means every unfurl is an origin render, long means a revoked link keeps unfurling.
+ */
+const MAX_SHARED_CACHE_SECONDS = 120;
+
+/**
+ * Assert the one header both failure modes live in.
+ *
+ * A shared cache must be allowed to store this (otherwise every bot is an origin render), for a
+ * window short enough that a revoke lands quickly, and with nothing that lets a cache keep serving
+ * an entry past that window — `stale-while-revalidate` (the original 24-hour hole) or its twin
+ * `stale-if-error`.
+ */
+function expectBoundedSharedCache(headerValue: string) {
+  expect(headerValue).toContain("public");
+  expect(headerValue).not.toContain("private");
+  expect(headerValue).not.toContain("stale-while-revalidate");
+  expect(headerValue).not.toContain("stale-if-error");
+  expect(headerValue).not.toContain("immutable");
+
+  const sMaxAge = /s-maxage=(\d+)/.exec(headerValue);
+  expect(sMaxAge, `no s-maxage in ${headerValue}`).not.toBeNull();
+  const seconds = Number(sMaxAge![1]);
+  expect(seconds).toBeGreaterThan(0);
+  // The number nobody may quietly "optimise" back up to an hour or a day.
+  expect(seconds).toBeLessThanOrEqual(MAX_SHARED_CACHE_SECONDS);
+
+  // A client that already holds the image must re-ask rather than outlive the revoke privately.
+  expect(headerValue).toContain("max-age=0");
+}
+
+describe("/s/:shareId/og.png is shared-cacheable only inside a short revocation window", () => {
   const params = Promise.resolve({ shareId: SHARE_ID });
 
-  test("the rendered preview refuses `public`/`s-maxage`", async () => {
+  test("the rendered preview ships a small `s-maxage` and no stale-serving directive", async () => {
     resolveShareLink.mockResolvedValue({
       refusal: null,
       link: {},
@@ -135,26 +174,22 @@ describe("/s/:shareId/og.png is not cacheable by a shared cache", () => {
 
     expect(imageResponseFromBytes).toHaveBeenCalledTimes(1);
     const cacheControl = String(imageResponseFromBytes.mock.calls[0]![0].cacheControl);
-    expect(cacheControl).toContain("private");
-    expect(cacheControl).not.toContain("public");
-    expect(cacheControl).not.toContain("s-maxage");
-    expect(cacheControl).not.toContain("stale-while-revalidate");
+    expectBoundedSharedCache(cacheControl);
 
     vi.unstubAllGlobals();
   });
 
-  test("the text-card fallback refuses them as well", async () => {
+  test("the text-card fallback carries the same window", async () => {
     resolveShareLink.mockResolvedValue({ refusal: null, link: {}, doc: { title: "Series B deck" } });
 
     const res = (await ogRoute({} as never, { params })) as unknown as { headers: Headers };
 
-    const cacheControl = String(res.headers.get("Cache-Control"));
-    expect(cacheControl).toContain("private");
-    expect(cacheControl).not.toContain("public");
-    expect(cacheControl).not.toContain("s-maxage");
-    expect(cacheControl).not.toContain("stale-while-revalidate");
+    // The card is the document's real title, so it is just as revocable as the rendered preview.
+    expectBoundedSharedCache(String(res.headers.get("Cache-Control")));
   });
 
+  // The header bounds how long a *cached* 200 survives a revoke; the gates are what stop a fresh
+  // request. Letting shared caches back in must not have softened either of them.
   test("a revoked or locked link still gets nothing at all", async () => {
     resolveShareLink.mockResolvedValueOnce({ refusal: "disabled", link: {}, doc: {} });
     await expect(ogRoute({} as never, { params })).rejects.toBeInstanceOf(NotFoundError);

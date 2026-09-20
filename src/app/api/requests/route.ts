@@ -12,6 +12,7 @@ import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonal
 import { newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
 import { recordActivity } from "@/lib/activity/log";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 
@@ -279,6 +280,14 @@ export async function POST(request: Request) {
     // Viewers can read a workspace but must not create requests in it.
     const forbidden = await forbidUnlessOrgRole(actor);
     if (forbidden) return forbidden;
+    // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+    // queued account to /waitlist, which is a decoration: the browser could still call this route
+    // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+    // This one mints two public capability links — `requestUploadToken` lets anyone with the URL
+    // drop files into the operator's storage, `requestViewToken` lets anyone read what landed — so
+    // the account the queue exists to hold at the door was handing out the door key.
+    const queued = await forbidWaitlisted(actor, "create a request folder");
+    if (queued) return queued;
 
     const body = (await request.json().catch(() => ({}))) as Partial<{
       name: string;

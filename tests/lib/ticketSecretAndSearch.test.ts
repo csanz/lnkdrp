@@ -10,6 +10,13 @@
  *   key instead. The fix derives a purpose-bound key with HKDF rather than refusing to start, so a
  *   single-secret deploy keeps working and the value those processes can leak is only a ticket key.
  *
+ *   The first shape of that fix derived only when it could *see* that the configured secret was the
+ *   master (`dedicated !== master`), which made the key depend on whether `NEXTAUTH_SECRET` happened
+ *   to be in that process — and it is deliberately absent from the realtime and MCP hosts. The key
+ *   is now derived unconditionally, so it is a function of the configured secret and nothing else;
+ *   the tests below pin both halves: same input → same key on any host, and the raw secret (either
+ *   one) is never the key.
+ *
  * - **L9, already fixed.** `GET /api/uploads?q=` once ran the caller's regex as
  *   `DocModel.find({ title: rx })` with no workspace bound — an unindexed cross-tenant collection
  *   scan any signed-in caller could fire, whose 100-row cap could also be filled by foreign titles
@@ -42,10 +49,34 @@ describe("realtimeSecret()", () => {
     else process.env.NEXTAUTH_SECRET = saved.nextauth;
   });
 
-  test("a secret set for this purpose is used exactly as configured", () => {
+  test("the key is a function of the configured secret alone, not of the rest of the environment", () => {
+    // The Vercel app holds both variables; the realtime and MCP hosts are told to hold only
+    // REALTIME_SECRET. Same configured value, so the same key — otherwise every ticket the app
+    // mints is rejected by the server that verifies it (close 4401) and realtime falls back to
+    // polling with no configuration having changed.
     process.env.REALTIME_SECRET = DEDICATED;
     process.env.NEXTAUTH_SECRET = MASTER;
-    expect(realtimeSecret()).toBe(DEDICATED);
+    const onTheApp = realtimeSecret();
+    delete process.env.NEXTAUTH_SECRET;
+    expect(realtimeSecret()).toBe(onTheApp);
+
+    // And the case the old equality check broke: one string reused under both names.
+    process.env.REALTIME_SECRET = MASTER;
+    process.env.NEXTAUTH_SECRET = MASTER;
+    const appWithACopy = realtimeSecret();
+    delete process.env.NEXTAUTH_SECRET;
+    expect(realtimeSecret()).toBe(appWithACopy);
+  });
+
+  test("a secret set for this purpose is still bound to this purpose, never used raw", () => {
+    process.env.REALTIME_SECRET = DEDICATED;
+    process.env.NEXTAUTH_SECRET = MASTER;
+    const key = realtimeSecret();
+    expect(key).not.toBe(DEDICATED);
+    expect(key).not.toContain(DEDICATED);
+    // It is still the configured secret that decides the key: change it and the key changes.
+    process.env.REALTIME_SECRET = `${DEDICATED}-rotated`;
+    expect(realtimeSecret()).not.toBe(key);
   });
 
   test("the NEXTAUTH_SECRET fallback never becomes the ticket key itself", () => {
@@ -74,7 +105,7 @@ describe("realtimeSecret()", () => {
     expect(second).toBe(first);
   });
 
-  test("REALTIME_SECRET set to a copy of NEXTAUTH_SECRET is treated as the fallback, not as a secret", () => {
+  test("one string reused under both variable names lands on one key, and never on the string", () => {
     process.env.NEXTAUTH_SECRET = MASTER;
     delete process.env.REALTIME_SECRET;
     const derived = realtimeSecret();

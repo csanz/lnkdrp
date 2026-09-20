@@ -35,6 +35,14 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { clientIpFromRequest, rateLimit, rateLimitedResponse } from "@/lib/http/rateLimit";
 import { errorJson } from "@/lib/http/errorResponse";
 
+/**
+ * Confirmation mails one share link may cause in a day, counted across every address.
+ * See the note at the send site — the sender's own bounds are per address, which an attacker
+ * rotates freely, so this is the bound that actually holds.
+ */
+const VERIFY_MAIL_PER_LINK_PER_DAY = 50;
+
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -272,6 +280,32 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
               // A relative link does nothing in a mail client, so an unconfigured base means no
               // confirmation to offer rather than a broken one.
               if (appUrl) {
+              /**
+               * A ceiling on confirmation mail per link, whatever address it is addressed to.
+               *
+               * The sender has its own bounds — three confirmations per address per workspace, one
+               * an hour — and those are the right shape for a person who mistypes their address
+               * twice. They are the wrong shape for an attacker, because the key is the address:
+               * a caller who supplies a different address on every request is never the same key
+               * twice and is therefore never bounded. Wiring this previously-dead sender into two
+               * public, unauthenticated routes without a second bound turned them into an
+               * arbitrary-recipient mail relay — a stranger with any live share link could have
+               * this product email anyone it liked, from the product's own sending domain, at the
+               * per-IP ingest limit. That is a deliverability incident, not just an abuse one.
+               *
+               * So the mail is bounded by the thing the attacker cannot rotate: the link it is
+               * being sent on behalf of. A genuine send is nowhere near this — it is one
+               * confirmation per person who volunteers an address, and most never do.
+               *
+               * Degrades, never refuses: past the ceiling the introduction is still accepted,
+               * still recorded on the row, still in the feed. Only the outbound mail holds.
+               */
+              const mailBudget = await rateLimit({
+                key: `viewerverify:${shareId}`,
+                limit: VERIFY_MAIL_PER_LINK_PER_DAY,
+                windowMs: 24 * 60 * 60 * 1000,
+              });
+              if (mailBudget.ok) {
                 await sendViewerIntroductionEmails({
                   orgId: String(project.orgId),
                   shareId,
@@ -289,6 +323,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                       : null,
                   appUrl,
                 });
+                }
               }
             }
           }

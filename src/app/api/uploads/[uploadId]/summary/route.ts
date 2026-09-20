@@ -10,6 +10,7 @@ import { Types } from "mongoose";
 
 import { applyTempUserHeaders, resolveActor } from "@/lib/gating/actor";
 import { forbidUnlessOrgRole } from "@/lib/orgs/requireOrgEditor";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 import { getCreditsSnapshot } from "@/lib/credits/snapshot";
 import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
 import { creditsForRun } from "@/lib/credits/schedule";
@@ -22,6 +23,14 @@ export async function POST(request: Request, ctx: { params: Promise<{ uploadId: 
   const actor = await resolveActor(request);
   const forbidden = await forbidUnlessOrgRole(actor);
   if (forbidden) return forbidden;
+  // The queue is a gate on the API, not a redirect on one page layout. `(app)/layout.tsx` sent a
+  // queued account to /waitlist, which is a decoration: the browser could still call this route
+  // directly, and so could an `lnk_` key. See src/lib/gating/waitlist.ts.
+  // Sibling of `/api/uploads/:id/process`, and it has to refuse for the same reason: this reserves
+  // and burns a credit on the operator's bill. It goes before the credits preflight, because "out
+  // of credits" is the wrong answer to give someone who was never let in.
+  const queued = await forbidWaitlisted(actor, "write a summary");
+  if (queued) return queued;
   if (!Types.ObjectId.isValid(uploadId)) {
     return applyTempUserHeaders(NextResponse.json({ error: "Invalid uploadId" }, { status: 400 }), actor);
   }

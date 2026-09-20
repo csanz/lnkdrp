@@ -1682,7 +1682,22 @@ export async function POST(
       // Extract text (retryable)
       try {
         await progress.report("extracting");
-        const existingText = upload.rawExtractedText ?? upload.pdfText ?? null;
+        /**
+         * Stored text is a cache of what the PDF says — and only an owner may fill that cache.
+         *
+         * This branch trusted whatever sat on the upload row. A link recipient holds an upload
+         * secret, and the PATCH on that secret used to accept `rawExtractedText`/`pdfText`, so a
+         * recipient could hand the processor a body of text and the PDF would never be read: the
+         * summary, the version compare, the doc body and every AI pass downstream would describe
+         * a document nobody uploaded. The write path is closed now (`buildPatchUpdate` in
+         * src/app/api/uploads/[uploadId]/route.ts takes those two fields from an owner only); this
+         * is the second lock, so however a value got onto the row, it cannot decide the parse of a
+         * recipient upload.
+         *
+         * It degrades rather than refuses: the upload still completes, it just always reads the
+         * bytes it was actually given. The only cost is re-parsing on a retried recipient run.
+         */
+        const existingText = viaUploadSecret ? null : (upload.rawExtractedText ?? upload.pdfText ?? null);
         if (existingText) {
           extractedText = existingText;
           debugLog(2, "[process] extracted text already exists", { uploadId });
