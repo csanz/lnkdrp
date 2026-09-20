@@ -736,7 +736,15 @@ export async function createShareLink(input: {
   return { link: created as ShareLink, limit };
 }
 
-export type UpdateShareLinkResult = { link: ShareLink; limit: LimitCheck | null };
+export type UpdateShareLinkResult = {
+  link: ShareLink;
+  limit: LimitCheck | null;
+  /**
+   * Links this call brought back: siblings the document switch had disabled, restored because
+   * enabling one link re-shares the document. Present only when there were any.
+   */
+  restored?: ShareLink[];
+};
 
 /** Patch a link's settings. Enabling a disabled link re-checks the Free cap. */
 export async function updateShareLink(input: {
@@ -798,9 +806,44 @@ export async function updateShareLink(input: {
   }
   if (Object.keys(set).length === 0) return { link, limit };
   const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true }).lean<ShareLink>();
+
+  /**
+   * Enabling one link re-shares the document, so it has to restore what the document switch took
+   * down. The mirror of the same rule in `updateProjectLink`, and it was missing here.
+   *
+   * `Doc.shareEnabled` is derived from "at least one active link" (`syncDocShareState`), so turning
+   * any single link on makes the document shared again. There were then two routes to a shared
+   * document and only one put the other links back: the explicit switch calls
+   * `setAllLinksEnabled`, which restores every link marked `disabledByDocSwitch`, while enabling
+   * one link restored nothing. The document came back with most of its recipients still locked out,
+   * silently, and nothing would ever clear their marker.
+   *
+   * Only marked links are restored. A link the sender revoked on its own is not marked and stays
+   * revoked — the distinction the marker exists for.
+   */
+  const restored: ShareLink[] = [];
+  if (set.enabled === true && !input.viaDocSwitch) {
+    const siblings = await ShareLinkModel.find({
+      docId: link.docId,
+      ...DOC_LINK_FILTER,
+      archivedAt: null,
+      _id: { $ne: link._id },
+      enabled: false,
+      disabledByDocSwitch: true,
+    }).lean<ShareLink[]>();
+    for (const sib of siblings) {
+      const back = await ShareLinkModel.findOneAndUpdate(
+        { _id: sib._id },
+        { $set: { enabled: true, disabledByDocSwitch: false } },
+        { new: true },
+      ).lean<ShareLink>();
+      if (back) restored.push(back);
+    }
+  }
+
   // `DOC_LINK_FILTER` on the lookup above guarantees a document link, so `docId` is set.
   await syncDocShareState(link.docId as Types.ObjectId);
-  return { link: updated ?? link, limit };
+  return { link: updated ?? link, limit, ...(restored.length ? { restored } : {}) };
 }
 
 /**

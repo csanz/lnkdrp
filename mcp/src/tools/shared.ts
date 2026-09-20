@@ -174,3 +174,28 @@ export function shareView(api: ApiClient, doc: ApiDoc): ShareView {
     isArchived: doc.isArchived,
   };
 }
+
+/**
+ * "Is this still there?", answered only by a genuine not-found.
+ *
+ * For `IdempotencyStore.run`'s `stillExists`, where getting this wrong is harmful in both
+ * directions and the first two attempts managed one each:
+ *
+ * - `Boolean(await api.getDoc(id))` never returns false, because a missing document *throws*
+ *   rather than resolving null — so the replay-of-a-deleted-object bug it was written to fix
+ *   carried on happening.
+ * - `await api.getX(id).catch(() => null)` returns false for *any* failure, so one bad minute on
+ *   the network is read as a deletion and the retry creates a duplicate.
+ *
+ * Only `not_found` means gone. Anything else is re-thrown for the caller to treat as "still
+ * there", which is the safe reading: a stale replay is recoverable, a duplicate document is not.
+ */
+export async function existsUnlessNotFound(lookup: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await lookup();
+    return true;
+  } catch (err) {
+    if (err instanceof ToolError && err.code === "not_found") return false;
+    throw err;
+  }
+}

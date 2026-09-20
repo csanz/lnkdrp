@@ -16,7 +16,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { ToolContext } from "../context";
-import { handleTool } from "../errors";
+import { handleTool, ToolError } from "../errors";
 import { UNTRUSTED_LIMITS, untrustedOrNull } from "../untrusted";
 import { docIdSchema, SAFETY_TAIL } from "./shared";
 import type { ActivityType } from "../../../src/lib/activity/log";
@@ -138,15 +138,74 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
        * appears only sometimes is a field nobody can rely on.
        */
       let tagMatched: boolean | null = null;
+      /** Set when a tag filter ran, so the paging below is done here rather than by the route. */
+      let tagged: { total: number; pageIds: string[] } | null = null;
+
       if (!ids && args.tag) {
-        const carried = await ctx.api.itemsForTag(args.tag).catch(() => null);
-        tagMatched = Boolean(carried);
-        if (!carried || !carried.docIds.length) {
-          return { total: 0, page: 1, limit: args.limit, hasMore: false, docs: [], tag: args.tag, tagMatched };
+        /**
+         * A failed lookup is not an empty tag.
+         *
+         * Swallowing the error reported "nothing is filed under that" for an upstream blip, which
+         * is a confident wrong answer to a question the agent will act on. Only a genuine
+         * not-found means the tag does not exist; anything else is the caller's to see.
+         */
+        let carried: Awaited<ReturnType<typeof ctx.api.itemsForTag>> | null = null;
+        try {
+          carried = await ctx.api.itemsForTag(args.tag);
+        } catch (err) {
+          if (!(err instanceof ToolError && err.code === "not_found")) throw err;
         }
-        ids = carried.docIds.slice(0, 50);
+        tagMatched = Boolean(carried);
+
+        /**
+         * Paged here, not by the route.
+         *
+         * `GET /api/docs` treats `ids` as an override: it ignores `q`, `page` and `limit` and
+         * reports the id count as the total. Handing it the tag's whole document set therefore
+         * dropped a narrowing `query` on the floor, made `page` inert, and — with a `slice(0, 50)`
+         * on top — silently truncated any tag carrying more than fifty documents while reporting
+         * the truncated figure as the total and `hasMore: false`. An agent could neither see the
+         * missing documents nor page to them.
+         *
+         * So the intersection is computed here: the tag's ids, narrowed by `query` when there is
+         * one, then sliced for the requested page. The route is asked only for the page's rows.
+         */
+        let docIds = carried?.docIds ?? [];
+        if (docIds.length && args.query) {
+          // The route's own search, over the same workspace, then kept only where the two agree.
+          const matching = await ctx.api.listDocsPage({
+            q: args.query,
+            limit: 50,
+            archived: args.archived,
+          });
+          const byQuery = new Set(matching.docs.map((d) => d.id));
+          docIds = docIds.filter((id) => byQuery.has(id));
+        }
+        const start = (args.page - 1) * args.limit;
+        tagged = { total: docIds.length, pageIds: docIds.slice(start, start + args.limit) };
+        if (!tagged.pageIds.length) {
+          return {
+            tag: args.tag,
+            tagMatched,
+            total: tagged.total,
+            page: args.page,
+            limit: args.limit,
+            hasMore: false,
+            docs: [],
+          };
+        }
+        ids = tagged.pageIds;
       }
-      const page = await ctx.api.listDocsPage({ q: args.query, ids, page: args.page, limit: args.limit, archived: args.archived });
+
+      const page = await ctx.api.listDocsPage({
+        // `query` has already been applied above when a tag was given; passing it again would hit
+        // the route's ids branch, which ignores it anyway, and reads as though it were doing work.
+        q: tagged ? undefined : args.query,
+        ids,
+        page: args.page,
+        limit: args.limit,
+        archived: args.archived,
+      });
 
       // One read for every row's tags rather than one per row; an empty map is fine, tags are
       // optional and a workspace that files nothing gets empty arrays.
@@ -163,10 +222,15 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
       const notFound = args.ids ? [...new Set(args.ids)].filter((id) => !found.has(id.toLowerCase())) : [];
       return {
         ...(tagMatched === null ? {} : { tag: args.tag, tagMatched }),
-        total: page.total,
-        page: page.page,
-        limit: page.limit,
-        hasMore: page.docs.length > 0 && page.page * page.limit < page.total,
+        // Under a tag filter the route is answering about one page of ids, so its own total, page
+        // and limit describe that slice rather than the query. The real figures are the ones
+        // computed above.
+        total: tagged ? tagged.total : page.total,
+        page: tagged ? args.page : page.page,
+        limit: tagged ? args.limit : page.limit,
+        hasMore: tagged
+          ? args.page * args.limit < tagged.total
+          : page.docs.length > 0 && page.page * page.limit < page.total,
         // Always present when ids were asked for, empty or not: a key that disappears when there is
         // nothing to report makes "everything resolved" indistinguishable from an older server.
         ...(args.ids ? { notFound } : {}),

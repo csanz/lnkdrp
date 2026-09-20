@@ -33,7 +33,7 @@ import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { looksLikePdf, optimizePdf, type OptimizeReport } from "../optimize";
 import { waitForDocStatus } from "../realtime";
 import { readAiOutcome } from "./aiWarnings";
-import { SAFETY_TAIL } from "./shared";
+import { existsUnlessNotFound, SAFETY_TAIL } from "./shared";
 
 const PROCESS_NOT_READY_RETRIES = 5;
 const PROCESS_NOT_READY_DELAY_MS = 1000;
@@ -536,7 +536,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
       const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "share_pdf", args.idempotencyKey), run, {
         fingerprint: fingerprintArgs(args),
         // A document the human deleted between the two calls is not a document to hand back.
-        stillExists: async (cached) => Boolean(await api.getDoc(cached.docId)),
+        stillExists: (cached) => existsUnlessNotFound(() => api.getDoc(cached.docId)),
       });
       if (!replayed) return value;
       // A replay returns the same document; refresh the status so a retry after a timeout is useful.
