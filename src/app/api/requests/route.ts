@@ -307,6 +307,13 @@ export async function POST(request: Request) {
           orgId,
           userId,
           shareId: newProjectShareId(),
+          // Off, explicitly. The slug stays because the row needs a unique one, but a request repo
+          // is an inbox and `/p/:shareId` must never list what outsiders dropped into it. This raw
+          // insert bypasses the schema default, so an absent field is what shipped — and every
+          // reader treats absent as *on* (`shareEnabled !== false`), which published the repo. The
+          // `/p` tree refuses request repos outright now (`src/app/p/[shareId]/page.tsx`); this is
+          // the same answer written into the data, for anything that reads the row and not the rule.
+          shareEnabled: false,
           name,
           slug,
           description,

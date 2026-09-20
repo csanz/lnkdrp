@@ -6,6 +6,8 @@
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
+import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import Stripe from "stripe";
 
 import { connectMongo } from "@/lib/mongodb";
@@ -101,6 +103,23 @@ export async function GET(request: Request) {
     try {
       if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+
+      /**
+       * Owner or admin, the same bar `/api/billing/spend` and the portal use.
+       *
+       * Membership alone was the gate, and every row this returns carries `hostedInvoiceUrl` —
+       * Stripe's hosted invoice page, which shows the payer's billing name, address and card
+       * last4. A `viewer` invited to read one deck could read the owner's billing identity.
+       */
+      const role = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "admin" });
+      if (!role.ok) {
+        return NextResponse.json(
+          { error: "Only an owner or admin can see this workspace's invoices." },
+          { status: 403 },
+        );
+      }
+      const keyForbidden = forbidApiKey(actor, "read billing invoices");
+      if (keyForbidden) return keyForbidden;
 
       const url = new URL(request.url);
       const monthParam = normalizeMonth(url.searchParams.get("month"));

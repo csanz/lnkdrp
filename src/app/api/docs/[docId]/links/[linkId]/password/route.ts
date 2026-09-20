@@ -22,6 +22,7 @@ import { rateLimit } from "@/lib/http/rateLimit";
 import { decryptSharePassword } from "@/lib/sharePassword";
 import { listShareLinks } from "@/lib/share/links";
 import { accessDocForLinks, linkErrorResponse } from "../../shared";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,6 +40,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
   const gate = await accessDocForLinks(request, docId, "admin");
   if (!gate.ok) return gate.response;
   const { actor, docId: docObjectId, orgId, title } = gate.access;
+  // A key must never hold a secret that outlives its own revocation: revoking the key would
+  // not take back a password an agent had already read. See forbidApiKey.
+  const keyRefusal = forbidApiKey(actor, "reveal a share password");
+  if (keyRefusal) return keyRefusal;
   try {
     if (!Types.ObjectId.isValid(linkId)) {
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid linkId" }, { status: 400 }), actor);

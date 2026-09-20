@@ -41,9 +41,12 @@ export default function AdminProjectEditorPage() {
   const [okMessage, setOkMessage] = useState<string | null>(null);
   const [raw, setRaw] = useState<ProjectRaw | null>(null);
 
-  const token = useMemo(() => {
-    const t = raw?.requestUploadToken;
-    return typeof t === "string" ? t : null;
+  // Whether the repo has an upload token, never the token itself: `/request/:token` accepts
+  // documents into this customer's workspace with no session behind it, so the only thing this
+  // page needs — and gets — is the fact that one exists (see src/lib/admin/docPrivacy.ts).
+  const hasToken = useMemo(() => {
+    const s = raw?.secrets as { hasRequestUploadToken?: boolean | null } | undefined;
+    return s?.hasRequestUploadToken === true;
   }, [raw]);
   const currentIsRequest = useMemo(() => Boolean(raw?.isRequest), [raw]);
 
@@ -159,7 +162,7 @@ export default function AdminProjectEditorPage() {
                 <IdCell value={projectId} label="project id" />
               </DetailRow>
               <DetailRow label="Request token">
-                <IdCell value={token} label="request upload token" head={10} tail={4} />
+                <StatusPill tone={hasToken ? "info" : "quiet"}>{hasToken ? "Set" : "None"}</StatusPill>
               </DetailRow>
             </DetailGrid>
           </DetailPanel>
@@ -171,7 +174,7 @@ export default function AdminProjectEditorPage() {
               <Button
                 variant="solid"
                 size="sm"
-                disabled={saving || loading || (draftIsRequest && !token)}
+                disabled={saving || loading || (draftIsRequest && !hasToken)}
                 onClick={() => void onSave()}
               >
                 {saving ? "Saving…" : "Save"}
@@ -198,7 +201,7 @@ export default function AdminProjectEditorPage() {
               </span>
             </label>
 
-            {!token ? (
+            {!hasToken ? (
               <div className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
                 <p className="min-w-0 text-[12px] leading-5 text-[var(--muted-2)]">
                   No request token yet. Converting generates one and sets isRequest=true.
@@ -223,7 +226,7 @@ export default function AdminProjectEditorPage() {
         <DetailPanel
           className="mt-3"
           title="Raw project document"
-          description="Everything stored on this project, straight from Mongo."
+          description="Everything stored on this project bar its capability tokens and public slug."
           bodyClassName="p-2"
         >
           <JsonBlock

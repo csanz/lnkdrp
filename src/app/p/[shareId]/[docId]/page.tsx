@@ -98,9 +98,11 @@ export async function generateMetadata(props: { params: Promise<{ shareId: strin
 
   const resolved = await resolveProjectDocument(shareId, docId, {
     select: { title: 1, previewImageUrl: 1, firstPagePngUrl: 1 } as Record<string, 1>,
+    projectSelect: { isRequest: 1 },
   });
   const locked = Boolean(resolved && !resolved.refusal && projectLinkPasswordEnabled(resolved.link));
-  const doc = resolved && !resolved.refusal && !locked ? (resolved.doc as Record<string, unknown>) : null;
+  const hidden = Boolean(resolved?.project.isRequest);
+  const doc = resolved && !resolved.refusal && !locked && !hidden ? (resolved.doc as Record<string, unknown>) : null;
   if (!doc) return buildShareMetadata({ title: "Shared document", description: "" });
 
   const preview =
@@ -118,8 +120,11 @@ export default async function ProjectLinkDocumentPage(props: { params: Promise<{
   const { shareId, docId } = await props.params;
   if (!shareId || !docId) notFound();
 
-  const resolved = await resolveProjectDocument(shareId, docId, { select: VIEWER_DOC_FIELDS });
+  const resolved = await resolveProjectDocument(shareId, docId, { select: VIEWER_DOC_FIELDS, projectSelect: { isRequest: 1 } });
   if (!resolved) notFound();
+  // A request repo has no public room — the rule, and why, is at `/p/[shareId]/page.tsx`. Repeated
+  // here because a deep link to one document must not be the way around the room's own 404.
+  if (resolved.project.isRequest) notFound();
   const { link, doc } = resolved;
   if (resolved.refusal === "project_gone") notFound();
   if (resolved.refusal) return <RefusalNotice kind={resolved.refusal === "expired" ? "expired" : "disabled"} />;

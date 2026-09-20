@@ -70,6 +70,9 @@ function matchLinks(filter: Record<string, any>): Record<string, unknown>[] {
 }
 
 vi.mock("@/lib/models/ShareLink", () => ({
+  // The real fragment, not a stand-in: every write path in the service carries it, and a mock that
+  // dropped it would let a test pass against a query the database would have scoped differently.
+  DOC_LINK_FILTER: { kind: { $ne: "project" } },
   ShareLinkModel: {
     findOne: vi.fn((filter: Record<string, unknown>) => ({ lean: async () => matchLink(filter) })),
     // Supports both call shapes the service actually uses: `.find(filter).lean()` (everything,
@@ -119,7 +122,18 @@ vi.mock("@/lib/models/ShareLink", () => ({
 vi.mock("@/lib/crypto/randomBase62", () => ({ newShareId: () => "generatedSlug1" }));
 vi.mock("@/lib/billing/planLimits", () => ({ checkLimit: vi.fn(async () => ({ ok: true, warning: null })) }));
 
-const { DEFAULT_LINK_LABEL, isLinkActive, listShareLinksPage, resolveShareLink, toShareLinkDTO } = await import("@/lib/share/links");
+const {
+  DEFAULT_LINK_LABEL,
+  createShareLink,
+  isLinkActive,
+  listShareLinksPage,
+  resolveShareLink,
+  setAllLinksEnabled,
+  toShareLinkDTO,
+  updateShareLink,
+} = await import("@/lib/share/links");
+const { checkLimit } = await import("@/lib/billing/planLimits");
+const { ShareLinkModel } = await import("@/lib/models/ShareLink");
 
 const DOC_ID = new Types.ObjectId();
 const ORG_ID = new Types.ObjectId();
@@ -442,5 +456,212 @@ describe("listShareLinksPage", () => {
       expect(page.total).toBe(2);
       expect(page.links[0]?.isDefault).toBe(true);
     });
+  });
+});
+
+/**
+ * The document-level share switch, and the one thing it must never do: hand a revoked recipient
+ * their URL back.
+ *
+ * A default link cannot be deleted — `archiveShareLink` says so — so disabling it *is* how an owner
+ * revokes that audience. The switch then had to tell its own disables from the owner's, and the
+ * rule it used ("nothing is marked and nothing is enabled → this is a legacy document, restore
+ * everything") could not: a document whose every link the owner had revoked by hand looks exactly
+ * like that. Turning sharing back on re-enabled the revoked link, at its original slug, silently.
+ */
+describe("setAllLinksEnabled", () => {
+  type Write = { id: string; set: Record<string, unknown> };
+
+  /** The link writes the switch actually issued, in order. */
+  function writes(): Write[] {
+    const calls = (ShareLinkModel.findOneAndUpdate as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    return calls.map((c) => ({
+      id: String((c[0] as { _id: unknown })._id),
+      set: (c[1] as { $set: Record<string, unknown> }).$set,
+    }));
+  }
+
+  const OTHER_LINK = new Types.ObjectId();
+
+  beforeEach(() => {
+    (ShareLinkModel.findOneAndUpdate as unknown as { mockClear: () => void }).mockClear();
+  });
+
+  test("a link the owner revoked by hand stays revoked when sharing is turned back on", async () => {
+    // Exactly the reported sequence: one default link, revoked with `PATCH .../links/:id
+    // {enabled:false}` (so `disabledByDocSwitch` is false), then `PATCH /api/docs/:id
+    // {shareEnabled:true}`.
+    docs = [docRow({ shareEnabled: false })];
+    links = [linkRow({ isDefault: true, enabled: false, disabledByDocSwitch: false })];
+
+    const res = await setAllLinksEnabled({ orgId: ORG_ID, docId: DOC_ID, enabled: true });
+
+    expect(res.changed).toBe(0);
+    expect(writes()).toEqual([]);
+  });
+
+  test("a link the switch itself turned off is restored", async () => {
+    docs = [docRow({ shareEnabled: false })];
+    links = [linkRow({ isDefault: true, enabled: false, disabledByDocSwitch: true })];
+
+    const res = await setAllLinksEnabled({ orgId: ORG_ID, docId: DOC_ID, enabled: true });
+
+    expect(res.changed).toBe(1);
+    expect(writes()).toEqual([{ id: String(LINK_ID), set: { enabled: true, disabledByDocSwitch: false } }]);
+  });
+
+  test("with both kinds off, only the switch's own link comes back", async () => {
+    docs = [docRow({ shareEnabled: false })];
+    links = [
+      linkRow({ isDefault: true, enabled: false, disabledByDocSwitch: true }),
+      linkRow({ _id: OTHER_LINK, shareId: "revoked0001", label: "Benchmark", enabled: false, disabledByDocSwitch: false }),
+    ];
+
+    const res = await setAllLinksEnabled({ orgId: ORG_ID, docId: DOC_ID, enabled: true });
+
+    expect(res.changed).toBe(1);
+    expect(writes().map((w) => w.id)).toEqual([String(LINK_ID)]);
+  });
+
+  test("a row written before the marker existed has no marker, and is still restored", async () => {
+    // The legacy case the old fallback was for: `disabledByDocSwitch` absent, not false.
+    docs = [docRow({ shareEnabled: false })];
+    const legacy = linkRow({ isDefault: true, enabled: false }) as Record<string, unknown>;
+    delete legacy.disabledByDocSwitch;
+    links = [legacy];
+
+    const res = await setAllLinksEnabled({ orgId: ORG_ID, docId: DOC_ID, enabled: true });
+
+    expect(res.changed).toBe(1);
+    expect(writes().map((w) => w.id)).toEqual([String(LINK_ID)]);
+  });
+
+  test("turning the switch off marks every link it disables, so it can undo exactly that", async () => {
+    docs = [docRow()];
+    links = [linkRow({ isDefault: true }), linkRow({ _id: OTHER_LINK, shareId: "benchmark01", label: "Benchmark" })];
+
+    const res = await setAllLinksEnabled({ orgId: ORG_ID, docId: DOC_ID, enabled: false });
+
+    expect(res.changed).toBe(2);
+    expect(writes().every((w) => w.set.enabled === false && w.set.disabledByDocSwitch === true)).toBe(true);
+  });
+
+  test("a document shared for the first time still turns on: its link is born marked", async () => {
+    // No link row yet and `shareEnabled: false`, so `ensureDefaultLink` materialises one disabled.
+    // It is off because the *document* is off, which is the switch's own doing — the alternative
+    // reading (an owner revoke) would leave the Share toggle unable to do anything at all.
+    docs = [docRow({ shareEnabled: false })];
+    links = [];
+
+    const res = await setAllLinksEnabled({ orgId: ORG_ID, docId: DOC_ID, enabled: true });
+
+    expect(shareLinkCreate).toHaveBeenCalledTimes(1);
+    expect(shareLinkCreate.mock.calls[0][0]).toMatchObject({ enabled: false, disabledByDocSwitch: true });
+    expect(res.changed).toBe(1);
+  });
+});
+
+
+/**
+ * The Free cap counts shared **documents**, and `syncDocShareState` decides "shared" from whether
+ * any link is active. That made the cap walkable: turn a document's only link off (the workspace
+ * drops below the cap), upload another document (allowed), turn the first link back on — nothing
+ * re-checked, and the cycle repeats without bound. The document-level switch had the check; the
+ * per-link routes, which the app and the MCP both use, did not.
+ *
+ * What must NOT regress in fixing it: links themselves are deliberately uncapped. A second link on
+ * a document that is already shared adds no document, so it must never consult the cap — one link
+ * per investor is the feature.
+ */
+describe("the Free documents cap and the link routes", () => {
+  const blocked = {
+    ok: false as const,
+    code: "plan_limit" as const,
+    limit: "documents" as const,
+    used: 3,
+    max: 3,
+    grace: null,
+    upgradeUrl: "/pricing",
+    message: "Free workspaces can share 3 documents.",
+  };
+
+  beforeEach(() => {
+    (checkLimit as unknown as { mockClear: () => void }).mockClear();
+    (checkLimit as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({ ok: true, warning: null });
+    (ShareLinkModel.findOneAndUpdate as unknown as { mockClear: () => void }).mockClear();
+  });
+
+  test("a new enabled link on an UNSHARED document asks the documents cap, and is born off when refused", async () => {
+    docs = [docRow({ shareEnabled: false })];
+    links = [linkRow({ isDefault: true, enabled: false })];
+    (checkLimit as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(blocked);
+
+    const res = await createShareLink({
+      orgId: ORG_ID,
+      docId: DOC_ID,
+      userId: null,
+      createdVia: "web",
+      settings: { label: "Sequoia" },
+    });
+
+    expect(checkLimit).toHaveBeenCalledWith(ORG_ID, "documents");
+    expect(res.limit.ok).toBe(false);
+    expect(shareLinkCreate.mock.calls[0][0]).toMatchObject({ enabled: false });
+  });
+
+  test("a new link on an ALREADY SHARED document never consults the cap", async () => {
+    docs = [docRow({ shareEnabled: true })];
+    links = [linkRow({ isDefault: true, enabled: true })];
+
+    const res = await createShareLink({
+      orgId: ORG_ID,
+      docId: DOC_ID,
+      userId: null,
+      createdVia: "web",
+      settings: { label: "Accel" },
+    });
+
+    expect(checkLimit).not.toHaveBeenCalledWith(ORG_ID, "documents");
+    expect(res.limit.ok).toBe(true);
+    expect(shareLinkCreate.mock.calls[0][0]).toMatchObject({ enabled: true });
+  });
+
+  test("re-enabling the last link of an unshared document is refused at the cap, and writes nothing", async () => {
+    docs = [docRow({ shareEnabled: false })];
+    links = [linkRow({ isDefault: true, enabled: false })];
+    (checkLimit as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(blocked);
+
+    const res = await updateShareLink({ orgId: ORG_ID, linkId: LINK_ID, settings: { enabled: true } });
+
+    expect(checkLimit).toHaveBeenCalledWith(ORG_ID, "documents");
+    expect(res.limit?.ok).toBe(false);
+    expect(ShareLinkModel.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  test("turning a link OFF is never a plan decision", async () => {
+    docs = [docRow({ shareEnabled: true })];
+    links = [linkRow({ isDefault: true, enabled: true })];
+    (checkLimit as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(blocked);
+
+    await updateShareLink({ orgId: ORG_ID, linkId: LINK_ID, settings: { enabled: false } });
+
+    expect(checkLimit).not.toHaveBeenCalledWith(ORG_ID, "documents");
+    expect(ShareLinkModel.findOneAndUpdate).toHaveBeenCalled();
+  });
+
+  test("the document switch keeps its own upstream check: it is not re-gated here", async () => {
+    docs = [docRow({ shareEnabled: false })];
+    links = [linkRow({ isDefault: true, enabled: false, disabledByDocSwitch: true })];
+    (checkLimit as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue(blocked);
+
+    const res = await updateShareLink({
+      orgId: ORG_ID,
+      linkId: LINK_ID,
+      settings: { enabled: true },
+      viaDocSwitch: true,
+    });
+
+    expect(checkLimit).not.toHaveBeenCalledWith(ORG_ID, "documents");
+    expect(res.limit).toBeNull();
   });
 });

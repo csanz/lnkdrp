@@ -328,6 +328,8 @@ export default function BillingInvoicesTab() {
   const [resumeBusy, setResumeBusy] = useState(false);
   const [billingNotice, setBillingNotice] = useState<string | null>(null);
   const { plan: planSnapshot } = usePlan();
+  /** Same rule the server now enforces on /api/billing/invoices, and the same one SubscriptionCard uses. */
+  const canManageBilling = planSnapshot?.role === "owner" || planSnapshot?.role === "admin";
   const [manageError, setManageError] = useState<string | null>(null);
   const [creditsInfoOpen, setCreditsInfoOpen] = useState(false);
   const [debugEnabled, setDebugEnabled] = useState(false);
@@ -551,6 +553,20 @@ export default function BillingInvoicesTab() {
 
   useEffect(() => {
     let cancelled = false;
+    /**
+     * Invoices are owner/admin only on the server, so a member must not ask for them.
+     *
+     * The role gate was added to `/api/billing/invoices` to stop a viewer reading the workspace's
+     * billing history — correct — but the tab is in the nav for everyone, and this effect fired
+     * regardless of role. A member opening Billing got a raw 403 rendered as a failure, which reads
+     * as the product being broken rather than as a permission they do not have. The page says so
+     * below instead.
+     */
+    if (!canManageBilling) {
+      setInvoicesBusy(false);
+      setInvoicesError(null);
+      return;
+    }
     // Prevent a redundant second request on initial load:
     // first request returns `selectedMonth`, we set it, which re-triggers the effect.
     if (invoices && selectedMonth && invoices.selectedMonth === selectedMonth) return;
@@ -990,7 +1006,11 @@ export default function BillingInvoicesTab() {
           </div>
         </div>
 
-        {invoicesError ? (
+        {!canManageBilling ? (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-3 text-sm text-[var(--muted)]">
+            Invoices are visible to workspace owners and admins. Ask an owner if you need a copy.
+          </div>
+        ) : invoicesError ? (
           <Alert variant="error" className="mt-4 text-[12px]">
             {invoicesError}
           </Alert>

@@ -4,6 +4,7 @@
  * Revoke (invalidate) an org invite link (owner/admin only).
  */
 import { NextResponse } from "next/server";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgInviteModel } from "@/lib/models/OrgInvite";
@@ -15,6 +16,10 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   const actor = await resolveActor(request);
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  // Membership management is not key work, and this route takes its workspace from the body — so a
+  // key minted for one workspace could otherwise revoke another's invites.
+  const keyRefusal = forbidApiKey(actor, "revoke workspace invites");
+  if (keyRefusal) return keyRefusal;
 
   const body = (await request.json().catch(() => ({}))) as Partial<{ inviteId: string; orgId: string }>;
   const inviteId = typeof body.inviteId === "string" ? body.inviteId.trim() : "";

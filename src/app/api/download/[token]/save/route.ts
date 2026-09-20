@@ -11,7 +11,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
-import { resolveShareLink } from "@/lib/share/links";
+import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
 import { newShareId } from "@/lib/crypto/randomBase62";
 
 export const runtime = "nodejs";
@@ -59,6 +59,19 @@ export async function POST(request: Request, ctx: { params: Promise<{ token: str
     const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
     const resolvedLink = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
     if (!resolvedLink || resolvedLink.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // ...and to the same password gate as the download, for the stronger reason: this one leaves a
+    // permanent Doc in the claimer's own workspace pointing at the same blob, so a copy taken
+    // without the password outlives every control the owner still has over the link.
+    // The cookie is named for the slug the recipient visited — the one stored on the request row.
+    if (!shareLinkUnlocked(request, shareIdOfRequest, resolvedLink.link)) {
+      return NextResponse.json(
+        // The sentence goes in `error`: that is the field `fetchJson` shows the person, and the
+        // claim page renders it verbatim. It has to say what to do, because the fix is theirs.
+        { error: `This link is password protected. Open /s/${resolvedLink.link.shareId}, enter the password, then try again.` },
+        { status: 401 },
+      );
+    }
 
     const src = await DocModel.findOne({ _id: sourceDocId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
       .select({ title: 1, fileName: 1, blobUrl: 1, previewImageUrl: 1, firstPagePngUrl: 1 })

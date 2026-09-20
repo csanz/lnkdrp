@@ -160,6 +160,19 @@ export default function TeamsManager() {
   const isPersonalOrg = currentOrg?.type === "personal";
   // Personal workspaces are single-user; teams + invites are not allowed.
   const canAdminTeams = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
+
+  /**
+   * Whether this viewer may remove that member — the client-side mirror of what
+   * `/api/orgs/:orgId/members/:userId/revoke` allows. The server stays the authority; this only
+   * keeps the UI from offering a button that cannot work.
+   */
+  function canRemoveMember(viewerRole: string | null, targetRole: string | null): boolean {
+    const target = (targetRole ?? "member").toLowerCase();
+    if (target === "owner") return false;
+    if (viewerRole === "owner") return true;
+    if (viewerRole === "admin") return target === "member" || target === "viewer";
+    return false;
+  }
   const canInvite = canAdminTeams;
   // Plan gate: Free workspaces are single-user (the invite form renders disabled with a one-line
   // note whose Upgrade button opens the upgrade modal, instead of a 402); Pro includes one
@@ -618,7 +631,13 @@ export default function TeamsManager() {
                         </div>
 
                         <div className="shrink-0">
-                          {m.userId && !isSelf ? (
+                          {/*
+                            The same matrix the revoke route enforces: an owner may remove anyone
+                            below them, an admin may remove members and viewers only. Offering the
+                            button on the owner's row — or, for an admin, on another admin's — put a
+                            control in front of people that answers "Not found" when clicked.
+                          */}
+                          {m.userId && !isSelf && canRemoveMember(activeOrgRole, m.memberRole) ? (
                             <button
                               type="button"
                               className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[13px] font-semibold text-[var(--muted-2)] hover:bg-[var(--panel-hover)]"

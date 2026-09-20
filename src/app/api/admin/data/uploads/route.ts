@@ -74,7 +74,9 @@ export async function GET(request: Request) {
       originalFileName: 1,
       createdDate: 1,
     })
-    .populate({ path: "docId", select: { title: 1, shareId: 1 } })
+    // Title only. The document's slug came along for the ride here and `/s/:shareId` renders the
+    // document, so the upload board was a list of links into customers' files.
+    .populate({ path: "docId", select: { title: 1 } })
     .lean();
 
   return NextResponse.json({
@@ -83,14 +85,13 @@ export async function GET(request: Request) {
     page,
     limit,
     uploads: items.map((u) => {
-      const doc = (u.docId ?? null) as { _id?: unknown; title?: unknown; shareId?: unknown } | null;
+      const doc = (u.docId ?? null) as { _id?: unknown; title?: unknown } | null;
       const docId = doc && doc._id ? String(doc._id) : u.docId ? String(u.docId) : null;
       return {
         id: String(u._id),
         userId: u.userId ? String(u.userId) : null,
         docId,
         docTitle: doc && typeof doc.title === "string" ? doc.title : null,
-        shareId: doc && typeof doc.shareId === "string" ? doc.shareId : null,
         originalFileName: typeof u.originalFileName === "string" ? u.originalFileName : null,
         version: Number.isFinite(u.version) ? u.version : null,
         status: typeof u.status === "string" ? u.status : null,

@@ -36,7 +36,6 @@ import {
   TimeCell,
   useAdminAccess,
   AdminSection,
-  IdCell,
   RowActions,
 } from "@/components/admin";
 import { fmtDuration } from "@/lib/admin/format";
@@ -107,7 +106,6 @@ type UnavailablePreview = { catalogId: string; what: string; builtBy: string };
 
 type DownloadRequestRow = {
   requestId: string;
-  shareId: string | null;
   docId: string | null;
   requesterEmail: string | null;
   status: string | null;
@@ -121,7 +119,7 @@ type DownloadRequestRow = {
 
 const CATALOG_COLUMNS = 7;
 const BUCKET_COLUMNS = 8;
-const REQUEST_COLUMNS = 7;
+const REQUEST_COLUMNS = 6;
 const DEAD_COLUMNS = 6;
 
 /** A cron job's state. `ok` is the boring case; only a failure gets a hue. */
@@ -948,7 +946,6 @@ export default function AdminEmailsPage() {
               <AdminTh>Receipt</AdminTh>
               <AdminTh>Owner mail</AdminTh>
               <AdminTh>Claim mail</AdminTh>
-              <AdminTh>Link</AdminTh>
             </>
           }
         >
@@ -988,9 +985,6 @@ export default function AdminEmailsPage() {
                 </AdminTd>
                 <AdminTd truncate="max-w-[200px]">
                   <OutcomeCell outcome={row.claimEmailOutcome} />
-                </AdminTd>
-                <AdminTd>
-                  <IdCell value={row.shareId} label="share id" head={8} tail={4} />
                 </AdminTd>
               </AdminTr>
             ))

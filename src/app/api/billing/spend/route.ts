@@ -15,6 +15,7 @@
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor, resolveActorForStats, tryResolveUserActorFast } from "@/lib/gating/actor";
@@ -233,6 +234,10 @@ export async function POST(request: Request) {
       if (actor.kind !== "user") return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
       if (!Types.ObjectId.isValid(actor.userId)) return NextResponse.json({ error: "Invalid user" }, { status: 400 });
       if (!Types.ObjectId.isValid(actor.orgId)) return NextResponse.json({ error: "Invalid org" }, { status: 400 });
+      // The on-demand spend limit is the ceiling on what this workspace can be charged. A document
+      // key must not be able to raise it.
+      const keyForbidden = forbidApiKey(actor, "change the on-demand spend limit");
+      if (keyForbidden) return keyForbidden;
 
       const body = (await request.json().catch(() => null)) as { spendLimitCents?: unknown } | null;
       const limitCents = normalizeLimitCents(body?.spendLimitCents);

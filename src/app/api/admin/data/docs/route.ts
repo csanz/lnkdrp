@@ -89,7 +89,9 @@ export async function GET(request: Request) {
       userId: 1,
       title: 1,
       status: 1,
-      shareId: 1,
+      // `shareId` is searched above but never selected: `/s/:shareId` renders the document, so a
+      // slug in a listing is the whole document redaction was built to withhold. Matching a slug
+      // the customer supplied is a lookup; handing 200 of them back is a key ring.
       shareEnabled: 1,
       isArchived: 1,
       createdDate: 1,
@@ -111,7 +113,6 @@ export async function GET(request: Request) {
       userId: d.userId ? String(d.userId) : null,
       title: typeof d.title === "string" ? d.title : null,
       status: typeof d.status === "string" ? d.status : null,
-      shareId: typeof d.shareId === "string" ? d.shareId : null,
       shareEnabled: (d as { shareEnabled?: unknown }).shareEnabled !== false,
       isArchived: Boolean((d as { isArchived?: unknown }).isArchived),
       updatedDate: d.updatedDate ? new Date(d.updatedDate).toISOString() : null,

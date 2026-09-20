@@ -127,8 +127,15 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
   const viewerIp = clientIpFromRequest(request) || null;
 
   // Membership is re-proved here, not trusted from the URL: this route hands out bytes.
-  const resolved = await resolveProjectDocument(shareId, docId, { select: { blobUrl: 1, title: 1, fileName: 1, orgId: 1, userId: 1 } });
+  const resolved = await resolveProjectDocument(shareId, docId, {
+    select: { blobUrl: 1, title: 1, fileName: 1, orgId: 1, userId: 1 },
+    projectSelect: { isRequest: 1 },
+  });
   if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  // A request repo has no public room — the rule, and why, is at `/p/[shareId]/page.tsx`. This
+  // route is the one that actually hands the file over, so it asks for itself rather than trusting
+  // the page above it to have asked.
+  if (resolved.project.isRequest) return NextResponse.json({ error: "Not found" }, { status: 404 });
   const { link, project, doc } = resolved;
 
   const blobUrl = typeof doc.blobUrl === "string" ? doc.blobUrl : "";

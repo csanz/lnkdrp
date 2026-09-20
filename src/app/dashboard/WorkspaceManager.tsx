@@ -778,7 +778,12 @@ export default function WorkspaceManager() {
                 <button
                   type="button"
                   className="rounded-lg bg-red-600 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-60"
-                  disabled={orgActionBusy || !manageOrgId}
+                  disabled={orgActionBusy || !manageOrgId || manageOrgRow?.role !== "owner"}
+                  title={
+                    manageOrgRow && manageOrgRow.role !== "owner"
+                      ? "Only the workspace owner can delete it."
+                      : "Delete workspace"
+                  }
                   onClick={() => {
                     setShowDeleteConfirm(true);
                     void loadManageCounts();
@@ -790,13 +795,16 @@ export default function WorkspaceManager() {
                 <div className="space-y-2">
                   <div className="text-[12px] font-semibold text-[var(--fg)]">Confirm deletion</div>
                   <div className="text-[12px] text-[var(--muted-2)]">
-                    Type <span className="font-semibold">delete {manageOrgName}</span> to permanently delete this workspace and its content.
+                    {/* `baselineOrgName`, not the live input: the server compares the typed phrase
+                        against the name it has stored, so an unsaved edit in the Name field above
+                        would ask for a phrase that can never match. */}
+                    Type <span className="font-semibold">delete {baselineOrgName}</span> to permanently delete this workspace and its content.
                   </div>
                   <input
                     className="w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-[14px] text-[var(--fg)] outline-none focus:border-[var(--muted-2)]"
                     value={deleteConfirmText}
                     onChange={(e) => setDeleteConfirmText(e.target.value)}
-                    placeholder={`delete ${manageOrgName}`}
+                    placeholder={`delete ${baselineOrgName}`}
                     disabled={orgActionBusy}
                   />
                   {deleteError ? <div className="text-[12px] text-red-600 dark:text-red-500">{deleteError}</div> : null}

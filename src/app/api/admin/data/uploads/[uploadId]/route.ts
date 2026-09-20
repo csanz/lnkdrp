@@ -1,8 +1,13 @@
 /**
  * Admin API route: `GET|DELETE /api/admin/data/uploads/:uploadId`
  *
- * - GET: returns full upload details (lean) for inspection (including `error.details`)
+ * - GET: returns the upload row for inspection (including `error.details`), minus content and tokens
  * - DELETE: soft-deletes an upload (sets isDeleted + deletedDate)
+ *
+ * `redactDocRow` is load-bearing here for a second reason beyond content: an upload row carries
+ * `uploadSecret`, which `PATCH /api/uploads/:id` accepts as `x-upload-secret` with no session at
+ * all. Handing it to staff was handing out a permanent write capability over a customer's live
+ * document — and the activity row it writes is attributed to the owner's own workspace.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -36,7 +41,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ uploadId: s
 
   return NextResponse.json({
     ok: true,
-    // The whole upload row minus its content (file URL, preview, extracted text, AI output).
+    // The whole upload row minus its content (file URL, preview, extracted text, AI output) and
+    // minus its capability tokens (`uploadSecret`).
     upload: redactDocRow({
       ...(upload as Record<string, unknown>),
       id: String((upload as any)._id),

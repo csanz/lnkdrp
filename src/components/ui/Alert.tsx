@@ -33,7 +33,9 @@ export default function Alert({ variant = "info", className, children, role }: P
   const base = "rounded-xl border px-4 py-3";
   const v =
     variant === "error"
-      ? "border-red-500/20 bg-red-500/10 text-red-700"
+      ? // `text-red-700` alone sits at roughly 2.7:1 on the dark panel. Every hand-rolled error
+        // line in the dashboard already pairs a dark variant; this is the shared one.
+        "border-red-500/20 bg-red-500/10 text-red-700 dark:text-red-400"
       : "border-[var(--border)] bg-[var(--panel-2)] text-[var(--muted-2)]";
 
   const computedRole = role ?? (variant === "error" ? "alert" : "status");

@@ -78,7 +78,7 @@ export default function ShareViewsAdminPage() {
 
     let views24h = 0;
     let views7d = 0;
-    const docCounts = new Map<string, { docId: string; title: string; shareId: string | null; count: number }>();
+    const docCounts = new Map<string, { docId: string; title: string; count: number }>();
     const pagesSeenCounts: Record<string, number> = {};
     let totalPagesSeen = 0;
     let totalDownloads = 0;
@@ -91,11 +91,11 @@ export default function ShareViewsAdminPage() {
         if (t >= last7d) views7d++;
       }
 
-      const { docId, title, shareId } = docInfo(item);
+      const { docId, title } = docInfo(item);
       if (docId) {
         const prev = docCounts.get(docId);
         if (prev) prev.count += 1;
-        else docCounts.set(docId, { docId, title, shareId, count: 1 });
+        else docCounts.set(docId, { docId, title, count: 1 });
       }
 
       const pages = Array.isArray(item.pagesSeen) ? item.pagesSeen.length : 0;
@@ -131,16 +131,15 @@ export default function ShareViewsAdminPage() {
     };
   }, [normalized, rangeDays]);
 
-  /** The table narrows on document title, viewer and share id; the overview above does not. */
+  /** The table narrows on document title, viewer and IP; the overview above does not. */
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return normalized;
     return normalized.filter((item) => {
-      const { title, shareId } = docInfo(item);
+      const { title } = docInfo(item);
       return (
         title.toLowerCase().includes(needle) ||
         viewerLabel(item).toLowerCase().includes(needle) ||
-        (shareId ?? "").toLowerCase().includes(needle) ||
         (item.viewerIp ?? "").toLowerCase().includes(needle)
       );
     });
@@ -285,7 +284,6 @@ export default function ShareViewsAdminPage() {
                       <AdminTh align="right" width="w-[150px]">
                         Viewers
                       </AdminTh>
-                      <AdminTh width="w-[150px]">Share</AdminTh>
                       <AdminTh width="w-[140px]">Doc ID</AdminTh>
                     </>
                   }
@@ -314,9 +312,6 @@ export default function ShareViewsAdminPage() {
                           />
                           <span className="relative px-1.5">{d.count.toLocaleString()}</span>
                         </span>
-                      </AdminTd>
-                      <AdminTd>
-                        <IdCell value={d.shareId} label="share id" head={8} tail={4} />
                       </AdminTd>
                       <AdminTd>
                         <IdCell value={d.docId} label="doc id" href={`/a/shareviews/${encodeURIComponent(d.docId)}`} />
@@ -359,7 +354,7 @@ export default function ShareViewsAdminPage() {
               />
             ) : (
               pageItems.map((v) => {
-                const { docId, title, shareId } = docInfo(v);
+                const { docId, title } = docInfo(v);
                 const pages = Array.isArray(v.pagesSeen) ? v.pagesSeen.length : 0;
                 const downloads = typeof v.downloads === "number" ? v.downloads : Number(v.downloads ?? 0) || 0;
                 const viewer = viewerLabel(v);
@@ -397,11 +392,7 @@ export default function ShareViewsAdminPage() {
                         already carries, and a pair per row was 400 buttons down the page. */}
                     <AdminTd align="right" sticky actions>
                       <RowActions>
-                        {shareId ? (
-                          <span className="text-[12px] text-[var(--muted-2)]">—</span>
-                        ) : (
-                          <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_DASH}</span>
-                        )}
+                        <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_DASH}</span>
                       </RowActions>
                     </AdminTd>
                   </AdminTr>

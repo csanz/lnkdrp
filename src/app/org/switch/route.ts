@@ -30,9 +30,22 @@ function safeReturnTo(raw: string | null): string {
   const s = (raw ?? "").trim();
   if (!s) return "/";
   if (!s.startsWith("/")) return "/";
-  // Prevent protocol-relative redirects.
-  if (s.startsWith("//")) return "/";
-  return s;
+  /**
+   * Same-origin only, decided by the URL parser rather than by prefix tests.
+   *
+   * The prefix tests missed `/\evil.example`: a backslash in that position is normalised to a
+   * slash by browsers, so the value reads as protocol-relative and the workspace switcher would
+   * bounce the signed-in user straight off the origin — a credible phishing hop, since it happens
+   * right after an auth action they initiated.
+   */
+  try {
+    const parsed = new URL(s, "https://lnkdrp.invalid");
+    if (parsed.origin !== "https://lnkdrp.invalid") return "/";
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return path.startsWith("/") ? path : "/";
+  } catch {
+    return "/";
+  }
 }
 
 /**

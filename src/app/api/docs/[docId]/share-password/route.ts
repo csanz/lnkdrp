@@ -3,7 +3,7 @@ import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
-import { decryptSharePassword, encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
+import { encryptSharePassword, hashSharePassword } from "@/lib/sharePassword";
 import { ensureDefaultLink, updateShareLink } from "@/lib/share/links";
 import { SHARE_PASSWORD_MAX, SHARE_PASSWORD_MIN } from "@/lib/share/passwordPolicy";
 import { ERROR_CODE_UNHANDLED_EXCEPTION, logErrorEvent } from "@/lib/errors/logger";
@@ -224,14 +224,26 @@ export async function POST(request: Request, ctx: { params: Promise<{ docId: str
   }
 }
 /**
- * Reveal the DOCUMENT-level share password — the default link's, mirrored onto the Doc by
- * `syncDocShareState`. No UI calls this; `scripts/tests-benchmark.ts` does, which is why it is
- * still here. For any other link, and for the owner-facing Show control in the edit modal, use
- * `GET /api/docs/:docId/links/:linkId/password`, which covers every link and is admin-gated.
+ * Say WHETHER the document's default link has a password. Never what it is.
+ *
+ * This used to decrypt `sharePasswordEnc` and hand back the plaintext to anyone with a membership
+ * row, which is every role including `viewer` — the read-only seat handed to outside reviewers.
+ * A viewer could walk the ids from `GET /api/docs` and collect the password for every protected
+ * link in the workspace, and because nothing here wrote an activity row the collection left no
+ * trace. Reading a secret back out is a higher permission than setting one, and this route had no
+ * permission at all.
+ *
+ * The reveal is not gated here, it is gone: there is exactly one way to read a share password back
+ * out, `GET /api/docs/:docId/links/:linkId/password`, which is admin-or-owner only, rate-limited,
+ * refuses deleted links, and records `share_link.password_revealed`. Two reveal paths means one of
+ * them is the unaudited one; a second implementation of a rule is how the rule drifts.
+ *
+ * Nothing asked for the plaintext: no UI code, no MCP tool (`mcp/src/api.ts` only POSTs here), and
+ * `scripts/tests-benchmark.ts` calls this with `?lite=1`, which never returned it. `password` is
+ * kept in the body as a permanent `null` so an old caller reads "no password available" rather
+ * than crashing on a missing field.
  */
 export async function GET(request: Request, ctx: { params: Promise<{ docId: string }> }) {
-  const url = new URL(request.url);
-  const lite = url.searchParams.get("lite") === "1";
   let actor: Awaited<ReturnType<typeof resolveActor>> | null = null;
   let docIdForLog: string | null = null;
   try {
@@ -261,11 +273,8 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
           }
         : { _id: new Types.ObjectId(docId), orgId, isDeleted: { $ne: true } }),
     })
-      .select(
-        lite
-          ? { sharePasswordHash: 1 }
-          : { sharePasswordHash: 1, sharePasswordEnc: 1, sharePasswordEncIv: 1, sharePasswordEncTag: 1 },
-      )
+      // The encrypted material is not selected, so this handler cannot leak it however it changes.
+      .select({ sharePasswordHash: 1 })
       .lean();
 
     if (!doc) {
@@ -273,24 +282,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
     }
 
     const enabled = Boolean((doc as { sharePasswordHash?: unknown }).sharePasswordHash);
-    if (lite) {
-      return applyTempUserHeaders(
-        NextResponse.json(
-          { sharePasswordEnabled: enabled, password: null },
-          { headers: { "cache-control": "no-store" } },
-        ),
-        actor,
-      );
-    }
-    const password = decryptSharePassword({
-      enc: (doc as { sharePasswordEnc?: unknown }).sharePasswordEnc as string | null | undefined,
-      iv: (doc as { sharePasswordEncIv?: unknown }).sharePasswordEncIv as string | null | undefined,
-      tag: (doc as { sharePasswordEncTag?: unknown }).sharePasswordEncTag as string | null | undefined,
-    });
-
     return applyTempUserHeaders(
       NextResponse.json(
-        { sharePasswordEnabled: enabled, password: enabled ? password : null },
+        { sharePasswordEnabled: enabled, password: null },
         { headers: { "cache-control": "no-store" } },
       ),
       actor,

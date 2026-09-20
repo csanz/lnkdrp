@@ -4,6 +4,7 @@
  * Updates the org avatar URL (owner/admin only).
  */
 import { NextResponse } from "next/server";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { OrgModel } from "@/lib/models/Org";
@@ -31,6 +32,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ orgId: str
     debugLog(1, "[api/orgs/:orgId/avatar] POST", { orgId: id });
     const actor = await resolveActor(request);
     if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+    // The workspace comes from the path, not from the key's own workspace: without this a key for
+    // one workspace could rebrand another.
+    const keyRefusal = forbidApiKey(actor, "change a workspace avatar");
+    if (keyRefusal) return keyRefusal;
 
     const body = (await request.json().catch(() => ({}))) as Partial<{ avatarUrl: string | null }>;
     const avatarUrlRaw = body.avatarUrl;

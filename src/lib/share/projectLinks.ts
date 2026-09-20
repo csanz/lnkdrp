@@ -44,6 +44,7 @@ import {
   type ShareLinkSettingsInput,
   type ShareLinkStats,
 } from "./links";
+import { switchMayRestore } from "@/lib/share/links";
 
 /**
  * Runaway guard, not a plan limit — the same role `SHARE_LINKS_PER_DOC_MAX` plays for documents.
@@ -657,12 +658,20 @@ export async function setAllProjectLinksEnabled(input: {
   const project = await findProject({ orgId: input.orgId, projectId: input.projectId });
   if (project) await ensureDefaultProjectLink(project);
   const links = await listProjectLinks({ orgId: input.orgId, projectId: input.projectId });
-  const marked = links.filter((l) => !l.enabled && l.disabledByDocSwitch);
-  const legacyAllOff = marked.length === 0 && links.every((l) => !l.enabled);
+  /**
+   * The same rule as the document switch, imported rather than re-derived.
+   *
+   * This carried its own copy — "no marked links and none enabled" decided per *project* — which is
+   * the shape the document side was fixed for and this one was not: it cannot tell a pre-marker
+   * project from one whose every link the owner deliberately revoked, so turning sharing back on
+   * handed revoked recipients their original URL again. Two implementations of one rule, and only
+   * one of them got the fix; now there is one.
+   */
+  const everyLinkDisabled = links.every((l) => !l.enabled);
   let changed = 0;
   for (const l of links) {
     if (Boolean(l.enabled) === input.enabled) continue;
-    if (input.enabled && !l.disabledByDocSwitch && !legacyAllOff) continue;
+    if (input.enabled && !switchMayRestore(l as unknown as Parameters<typeof switchMayRestore>[0], { everyLinkDisabled })) continue;
     await updateProjectLink({ orgId: input.orgId, linkId: l._id, settings: { enabled: input.enabled }, viaProjectSwitch: true });
     changed += 1;
   }

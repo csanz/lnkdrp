@@ -2,11 +2,18 @@
  * Admin API route: `GET /api/admin/data/requests`
  *
  * Lists request link repos (stored as Projects with request fields) across all users (paged).
+ *
+ * The two tokens that make a repo work — `requestUploadToken` (submit documents into it) and its
+ * public slug — are selected to answer "is this repo live?" and then dropped. They used to come
+ * back in every row, and the page turned the upload token into a clickable `/request/:token`, so
+ * the listing was a set of working write capabilities into other people's workspaces. Either token
+ * still works as a search term: matching one an admin was handed is a lookup, not a handout.
  */
 import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
+import { stripSecrets } from "@/lib/admin/docPrivacy";
 
 export const runtime = "nodejs";
 
@@ -95,13 +102,10 @@ export async function GET(request: Request) {
       name: typeof p.name === "string" ? p.name : null,
       slug: typeof p.slug === "string" ? p.slug : null,
       description: typeof p.description === "string" ? p.description : null,
-      shareId: typeof p.shareId === "string" ? p.shareId : null,
       docCount: Number.isFinite(p.docCount) ? p.docCount : null,
       isRequest: Boolean((p as { isRequest?: unknown }).isRequest),
-      requestUploadToken:
-        typeof (p as { requestUploadToken?: unknown }).requestUploadToken === "string"
-          ? (p as unknown as { requestUploadToken: string }).requestUploadToken
-          : null,
+      // Whether the repo has a public slug and an upload token, not what they are.
+      secrets: stripSecrets(p as unknown as Record<string, unknown>).secrets,
       requestReviewEnabled: Boolean((p as { requestReviewEnabled?: unknown }).requestReviewEnabled),
       updatedDate: (p as unknown as { updatedDate?: Date | string | null }).updatedDate
         ? new Date((p as unknown as { updatedDate: Date | string }).updatedDate).toISOString()

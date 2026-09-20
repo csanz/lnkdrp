@@ -40,10 +40,10 @@ type ProjectRow = {
   name: string | null;
   slug: string | null;
   description: string | null;
-  shareId: string | null;
   docCount: number | null;
   isRequest: boolean;
-  requestUploadToken: string | null;
+  /** Which capability tokens exist on the row — never their values. See src/lib/admin/docPrivacy.ts. */
+  secrets?: { hasShareLink?: boolean | null; hasRequestUploadToken?: boolean | null } | null;
   updatedDate: string | null;
   createdDate: string | null;
 };
@@ -181,7 +181,9 @@ export default function AdminDataProjectsPage() {
             />
           ) : (
             items.map((p) => {
-              const isRequest = Boolean(p.isRequest || p.requestUploadToken);
+              // A repo whose `isRequest` was never backfilled still has an upload token, and the
+              // flag says so without the page ever holding the token.
+              const isRequest = Boolean(p.isRequest || p.secrets?.hasRequestUploadToken);
               return (
                 <AdminTr key={p.id}>
                   {/* The description is the row's tooltip rather than a second line: one project

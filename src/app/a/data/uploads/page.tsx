@@ -31,7 +31,7 @@ import {
   TimeCell,
   useAdminAccess,
 } from "@/components/admin";
-import { ADMIN_NO_CONTENT_NOTE } from "@/lib/admin/docPrivacy";
+import { ADMIN_NO_CONTENT_NOTE, ADMIN_NO_SECRETS_NOTE } from "@/lib/admin/docPrivacy";
 import { ADMIN_DASH, ADMIN_FOCUS_RING, statusLabel } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { pipelineStatusTone } from "@/lib/admin/statusTones";
@@ -42,7 +42,6 @@ type UploadRow = {
   userId: string | null;
   docId: string | null;
   docTitle: string | null;
-  shareId: string | null;
   originalFileName: string | null;
   version: number | null;
   status: string | null;
@@ -56,7 +55,7 @@ type AdminUploadDetailsResponse = {
 };
 
 /** Column count of the table below; every full-width row's colSpan has to match it. */
-const COLUMN_COUNT = 8;
+const COLUMN_COUNT = 7;
 
 /** Route entry: the uploads list reads `?uploadId=`, so it renders inside a Suspense boundary. */
 export default function AdminDataUploadsPage() {
@@ -233,7 +232,6 @@ function AdminDataUploadsPageInner() {
                   <AdminTh width="w-[110px]">Status</AdminTh>
                   <AdminTh align="right" width="w-[70px]">Version</AdminTh>
                   <AdminTh align="right" width="w-[130px]">Created</AdminTh>
-                  <AdminTh width="w-[150px]">Share</AdminTh>
                   <AdminTh width="w-[130px]">Upload ID</AdminTh>
                   <AdminTh align="right" sticky>
                     Actions
@@ -298,14 +296,6 @@ function AdminDataUploadsPageInner() {
                       <TimeCell value={u.createdDate} />
                     </AdminTd>
                     <AdminTd>
-                      <IdCell
-                        value={u.shareId}
-                        label="share id"
-                        head={8}
-                        tail={4}
-                                              />
-                    </AdminTd>
-                    <AdminTd>
                       <IdCell value={u.id} label="upload id" />
                     </AdminTd>
                     <AdminTd align="right" sticky actions>
@@ -362,6 +352,7 @@ function AdminDataUploadsPageInner() {
               {uploadDetails?.upload?.docId ? (
                 <div className="mt-3">
                   <span className="text-[12px] text-[var(--muted-2)]">{ADMIN_NO_CONTENT_NOTE}</span>
+                  <span className="mt-1 block text-[12px] text-[var(--muted-2)]">{ADMIN_NO_SECRETS_NOTE}</span>
                 </div>
               ) : null}
 

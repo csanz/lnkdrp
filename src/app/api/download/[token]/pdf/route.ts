@@ -13,7 +13,7 @@ import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareViewModel } from "@/lib/models/ShareView";
-import { resolveShareLink, touchShareLink } from "@/lib/share/links";
+import { resolveShareLink, shareLinkUnlocked, touchShareLink } from "@/lib/share/links";
 import { recordActivity } from "@/lib/activity/log";
 
 export const runtime = "nodejs";
@@ -79,6 +79,20 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
     const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
     const resolved = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
     if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // ...and to the link's password, which the approval does not stand in for. The owner approved a
+    // person; the password admits a browser, and one added or rotated after the request was filed
+    // is the owner revoking exactly this audience. Recoverable on purpose: unlocking the share page
+    // sets the cookie (14 days, path "/") and this link then works, so a claim opened on a device
+    // that never held the password is a detour rather than a dead end. Asked under the slug the
+    // recipient actually visited (the one on the request row), because that is the name the unlock
+    // cookie was set under.
+    if (!shareLinkUnlocked(request, shareIdOfRequest, resolved.link)) {
+      return new Response(
+        `This link is password protected. Open /s/${resolved.link.shareId}, enter the password, then use this download link again.`,
+        { status: 401, headers: { "content-type": "text/plain; charset=utf-8" } },
+      );
+    }
 
     const doc = await DocModel.findOne({ _id: docId, isDeleted: { $ne: true }, isArchived: { $ne: true } })
       .select({ blobUrl: 1, title: 1, fileName: 1, userId: 1, orgId: 1 })

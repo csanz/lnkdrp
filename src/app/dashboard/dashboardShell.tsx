@@ -308,7 +308,7 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           <div className="flex items-center gap-3">
             <Link
               href={ctaHref}
-              className="rounded-lg border border-amber-900/[0.06] bg-amber-50/60 px-[8px] py-[3px] text-[11px] font-semibold text-stone-900/90 hover:bg-amber-50/68 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-900/15 dark:border-amber-100/[0.06] dark:bg-[#f3e7d3]/32 dark:hover:bg-[#f3e7d3]/38 dark:focus-visible:outline-amber-100/15"
+              className="rounded-lg border border-amber-900/[0.06] bg-amber-50/60 px-[8px] py-[3px] text-[11px] font-semibold text-stone-900/90 dark:text-amber-950 hover:bg-amber-50/68 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-900/15 dark:border-amber-100/[0.06] dark:bg-[#f3e7d3]/32 dark:hover:bg-[#f3e7d3]/38 dark:focus-visible:outline-amber-100/15"
             >
               {ctaLabel}
             </Link>

@@ -11,7 +11,7 @@ import { ProjectModel } from "@/lib/models/Project";
 import { UploadModel } from "@/lib/models/Upload";
 import { UserModel } from "@/lib/models/User";
 import { debugEnabled, debugError, debugLog } from "@/lib/debug";
-import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg } from "@/lib/gating/actor";
+import { applyTempUserHeaders, resolveActor, tryResolveUserActorFastWithPersonalOrg, type Actor } from "@/lib/gating/actor";
 import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBase62";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
@@ -111,6 +111,51 @@ function isObjectId(id: string) {
  */
 function newReplaceUploadToken() {
   return newSecretToken(24);
+}
+
+/**
+ * Fields on a Doc whose value *is* access, for the `?debug=1` snapshot below.
+ *
+ * Same rule as `src/lib/admin/docPrivacy.ts` keeps for the admin routes, kept by name here so the
+ * raw-row escape hatch cannot serve what the shaped response withholds.
+ */
+const DOC_SECRET_FIELDS = [
+  "replaceUploadToken",
+  "sharePasswordSalt",
+  "sharePasswordHash",
+  "sharePasswordEnc",
+  "sharePasswordEncIv",
+  "sharePasswordEncTag",
+] as const;
+
+/** A copy of `row` with every capability field removed. The input is untouched. */
+function withoutDocSecrets(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row };
+  for (const f of DOC_SECRET_FIELDS) delete out[f];
+  return out;
+}
+
+/**
+ * Whether this caller may be handed `Doc.replaceUploadToken`.
+ *
+ * The token is a bearer capability, not a piece of metadata: `POST /api/replace/:token/uploads`
+ * authorises on the token alone, with no session, and the `uploadSecret` it returns installs a new
+ * PDF as the current version of a document recipients are already reading. Nothing in the codebase
+ * rotates or revokes the token, so whoever reads it once can overwrite that document for ever.
+ * Reading it is therefore the document-edit right, permanently, and has to be gated as such:
+ *
+ * - `viewer` never sees it. PATCH on this same document refuses a viewer (`minRole: "member"`),
+ *   and a viewer who could read the token would simply replace the file through the public route
+ *   instead, which is the member gate bypassed rather than enforced.
+ * - An API key never sees it, whatever scopes it holds. A key is revocable and this token is not,
+ *   so a `read`-scope key that fetched one document would leave behind a write capability that
+ *   outlives revoking the key — the self-perpetuating compromise `src/lib/gating/forbidApiKey.ts`
+ *   exists to prevent. An agent that should replace a PDF does it through the scoped upload API.
+ */
+async function mayHoldReplaceCapability(actor: Actor): Promise<boolean> {
+  if (actor.kind === "user" && actor.viaApiKey) return false;
+  const check = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "member" });
+  return check.ok;
 }
 
 /**
@@ -260,7 +305,12 @@ export async function GET(
     const isReceivedViaRequest = Boolean(receivedViaRequestProjectIdRaw);
     const replaceUploadTokenRaw = (docLean as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
     const hasReplaceUploadToken = typeof replaceUploadTokenRaw === "string" && replaceUploadTokenRaw.trim().length > 0;
-    if (isReceivedViaRequest && !hasReplaceUploadToken) {
+    // Only asked for documents that carry the capability at all, so the ordinary read stays one
+    // query. A caller who may not hold the token does not mint one either: a viewer's read must
+    // not create a permanent write capability over a document they cannot edit.
+    const mayReplace =
+      isReceivedViaRequest || hasReplaceUploadToken ? await mayHoldReplaceCapability(actor) : false;
+    if (isReceivedViaRequest && mayReplace && !hasReplaceUploadToken) {
       // Very low collision probability, but handle duplicate-key errors defensively.
       for (let i = 0; i < 2; i++) {
         const candidate = newReplaceUploadToken();
@@ -645,7 +695,9 @@ export async function GET(
           const raw = (docLean as unknown as { receivedViaRequestProjectId?: unknown }).receivedViaRequestProjectId;
           return raw ? String(raw) : null;
         })(),
+        // Null for a viewer and for any API key: see `mayHoldReplaceCapability`.
         replaceUploadToken: (function () {
+          if (!mayReplace) return null;
           const raw = (docLean as unknown as { replaceUploadToken?: unknown }).replaceUploadToken;
           return typeof raw === "string" && raw.trim() ? raw.trim() : null;
         })(),
@@ -731,7 +783,11 @@ export async function GET(
 
       response.debug = {
         enabled: true,
-        doc: docLean,
+        // The debug snapshot is the raw row, so it is a second way out of this handler and it
+        // would hand back the capability token and the share-password material that the fields
+        // above withhold — to a viewer, on any deployment where `?debug=1` is honoured. Diagnosing
+        // a stuck document needs the status and the pointers, never the secrets.
+        doc: withoutDocSecrets(docLean as Record<string, unknown>),
         currentUpload: upload,
         ...(wantsDebugUploads
           ? {

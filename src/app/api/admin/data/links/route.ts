@@ -10,6 +10,12 @@
  *
  * Password material is never returned: `passwordHash` is selected only to answer "is one set?" and
  * the encrypted reveal copy (`passwordEnc*`) is not selected at all.
+ *
+ * Neither is the slug. That care over the password was undone by the column beside it: `shareId` is
+ * the address of the customer's document, so `state=active&kind=doc&limit=200`, filtered to the
+ * rows reporting no password, was a page of documents anyone on the staff could open — with the
+ * reads landing in the owner's analytics as anonymous recipient views. A slug an admin was actually
+ * given still works as a search term above; it just does not come back in the rows.
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
@@ -150,7 +156,6 @@ export async function GET(request: Request) {
       docId: 1,
       projectId: 1,
       kind: 1,
-      shareId: 1,
       label: 1,
       audience: 1,
       isDefault: 1,
@@ -209,7 +214,6 @@ export async function GET(request: Request) {
       return {
         id: String(r._id),
         kind: asString(r.kind) ?? "doc",
-        shareId: asString(r.shareId),
         label: asString(r.label),
         audience: asString(r.audience),
         isDefault: Boolean(r.isDefault),

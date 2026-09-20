@@ -12,6 +12,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { UserModel } from "@/lib/models/User";
 import { DocModel } from "@/lib/models/Doc";
+import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
 import { debugError } from "@/lib/debug";
 
 export const runtime = "nodejs";
@@ -50,6 +51,21 @@ export async function GET(request: Request, ctx: { params: Promise<{ token: stri
         : "";
     if (!email || !requesterEmail || email.trim().toLowerCase() !== requesterEmail) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // The same two gates the bytes are behind (`./pdf`, `./save`), asked here so the claim page can
+    // say so before the person clicks: an approval is permission through *that link*, and a
+    // password-protected link still wants the password. Answering "ready to download" and then
+    // refusing at the click is how a recipient learns to distrust the product instead of the link.
+    const shareIdOfRequest = typeof (reqDoc as { shareId?: unknown }).shareId === "string" ? String((reqDoc as { shareId: string }).shareId) : "";
+    const resolved = shareIdOfRequest ? await resolveShareLink(shareIdOfRequest) : null;
+    if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // The cookie is named for the slug the recipient visited — the one stored on the request row.
+    if (!shareLinkUnlocked(request, shareIdOfRequest, resolved.link)) {
+      return NextResponse.json(
+        { error: `This link is password protected. Open /s/${resolved.link.shareId}, enter the password, then open this link again.` },
+        { status: 401 },
+      );
     }
 
     const docId = (reqDoc as { docId?: unknown }).docId;

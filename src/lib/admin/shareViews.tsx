@@ -14,8 +14,10 @@ import { ADMIN_FIELD_LABEL, ADMIN_STAT_TILE, ADMIN_STAT_VALUE } from "./ui";
 
 export type ShareViewItem = {
   _id: string;
-  shareId?: string | null;
-  docId?: { _id?: string; title?: string | null; shareId?: string | null } | string | null;
+  // No `shareId`: the slug the view was made through is `/s/:shareId`, the document itself, and
+  // the admin routes stopped sending it (src/lib/admin/docPrivacy.ts). The doc id identifies the
+  // row, and `/a/shareviews/:docId` is where an admin goes from here.
+  docId?: { _id?: string; title?: string | null } | string | null;
   pagesSeen?: number[] | null;
   downloads?: number | null;
   downloadsByDay?: Record<string, number> | null;
@@ -97,14 +99,13 @@ export function viewerLabel(item: ShareViewItem) {
 }
 
 /** The document a row points at, whether the route populated it or left an id. */
-export function docInfo(item: ShareViewItem): { docId: string | null; title: string; shareId: string | null } {
+export function docInfo(item: ShareViewItem): { docId: string | null; title: string } {
   if (item.docId && typeof item.docId === "object") {
     const id = typeof item.docId._id === "string" ? item.docId._id : null;
     const title = typeof item.docId.title === "string" && item.docId.title.trim() ? item.docId.title : "(untitled)";
-    const shareId = typeof item.docId.shareId === "string" ? item.docId.shareId : null;
-    return { docId: id, title, shareId };
+    return { docId: id, title };
   }
-  return { docId: null, title: "(unknown doc)", shareId: typeof item.shareId === "string" ? item.shareId : null };
+  return { docId: null, title: "(unknown doc)" };
 }
 
 /** How many pages this viewer reached — the bucket the distribution counts it in. */

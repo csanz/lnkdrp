@@ -87,10 +87,25 @@ export async function GET(
     }
 
     const actor = await resolveActor(request);
+    /**
+     * The same workspace bound the listing beside this one carries.
+     *
+     * It was owner-scoped alone (`userId`), which is the gap that was closed on `GET /api/uploads`
+     * and left standing here — the detail endpoint one directory over, reachable by anyone holding
+     * an upload id. An `lnk_` key is attributed to the member who minted it but scoped to its own
+     * workspace, and a removed member's session falls back to their personal one; both still read
+     * rows from workspaces whose access had been taken away. `allowLegacyByUserId` is the same
+     * concession `docMatch` makes for rows that predate workspaces.
+     */
+    const uploadOrgId = new Types.ObjectId(actor.orgId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
     const upload = await UploadModel.findOne({
       _id: new Types.ObjectId(uploadId),
       userId: new Types.ObjectId(actor.userId),
       isDeleted: { $ne: true },
+      ...(allowLegacyByUserId
+        ? { $or: [{ orgId: uploadOrgId }, { orgId: { $exists: false } }, { orgId: null }] }
+        : { orgId: uploadOrgId }),
     }).lean();
     if (!upload) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

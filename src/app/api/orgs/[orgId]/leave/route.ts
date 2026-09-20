@@ -12,12 +12,20 @@ import { UserModel } from "@/lib/models/User";
 import { membershipChanged, resolveActor } from "@/lib/gating/actor";
 import { recordActivity } from "@/lib/activity/log";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request, ctx: { params: Promise<{ orgId: string }> }) {
   const actor = await resolveActor(request);
   if (actor.kind !== "user") return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
+  /**
+   * Not key work, and not only because leaving is destructive: this route takes the workspace from
+   * the path, while a key belongs to one workspace. A key minted in workspace A could otherwise
+   * drop its creator's membership in workspace B, which then needs a fresh invite to undo.
+   */
+  const keyForbidden = forbidApiKey(actor, "leave a workspace");
+  if (keyForbidden) return keyForbidden;
 
   const { orgId: orgIdRaw } = await ctx.params;
   const orgId = (orgIdRaw ?? "").trim();

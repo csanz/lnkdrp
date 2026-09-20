@@ -30,7 +30,7 @@ import {
   TimeCell,
   useAdminAccess,
 } from "@/components/admin";
-import { ADMIN_NO_CONTENT_NOTE } from "@/lib/admin/docPrivacy";
+import { ADMIN_NO_CONTENT_NOTE, ADMIN_NO_SECRETS_NOTE } from "@/lib/admin/docPrivacy";
 import { ADMIN_DASH, ADMIN_FOCUS_RING, statusLabel, type AdminTone } from "@/lib/admin/ui";
 import { ADMIN_PAGE_CONTAINER } from "@/lib/admin/layout";
 import { pipelineStatusTone } from "@/lib/admin/statusTones";
@@ -41,7 +41,6 @@ type DocRow = {
   userId: string | null;
   title: string | null;
   status: string | null;
-  shareId: string | null;
   isArchived: boolean;
   updatedDate: string | null;
   createdDate: string | null;
@@ -81,7 +80,7 @@ type SortField = "updatedDate" | "createdDate";
 type SortOrder = "desc" | "asc";
 
 /** Column count of the table below; every full-width row's colSpan has to match it. */
-const COLUMN_COUNT = 6;
+const COLUMN_COUNT = 5;
 
 /**
  * One state per row, not two columns of chrome.
@@ -270,8 +269,8 @@ export default function AdminDataDocsPage() {
               setPage(1);
               setQ(v);
             }}
-            placeholder="Search title or shareId…"
-            ariaLabel="Search documents by title or shareId"
+            placeholder="Search title or share slug…"
+            ariaLabel="Search documents by title or share slug"
           />
           <AdminSelect
             ariaLabel="Filter by status"
@@ -335,7 +334,6 @@ export default function AdminDataDocsPage() {
                   <AdminTh>Title</AdminTh>
                   <AdminTh width="w-[120px]">State</AdminTh>
                   <AdminTh align="right" width="w-[130px]">Updated</AdminTh>
-                  <AdminTh width="w-[150px]">Share</AdminTh>
                   <AdminTh width="w-[130px]">Doc ID</AdminTh>
                   <AdminTh align="right" sticky>
                     Actions
@@ -382,14 +380,6 @@ export default function AdminDataDocsPage() {
                     </AdminTd>
                     <AdminTd align="right" numeric>
                       <TimeCell value={d.updatedDate} />
-                    </AdminTd>
-                    <AdminTd>
-                      <IdCell
-                        value={d.shareId}
-                        label="share id"
-                        head={8}
-                        tail={4}
-                      />
                     </AdminTd>
                     <AdminTd>
                       <IdCell value={d.id} label="doc id" href={`/a/shareviews/${encodeURIComponent(d.id)}`} />
@@ -448,8 +438,10 @@ export default function AdminDataDocsPage() {
                 </RowActions>
               </div>
 
-              {/* No link into the document: admin sees metadata, never someone's file. */}
+              {/* No link into the document, and no slug to build one from: admin sees metadata,
+                  never someone's file, and never a key to it. */}
               <p className="mt-3 text-[12px] leading-5 text-[var(--muted-2)]">{ADMIN_NO_CONTENT_NOTE}</p>
+              <p className="mt-1 text-[12px] leading-5 text-[var(--muted-2)]">{ADMIN_NO_SECRETS_NOTE}</p>
 
               {detailsError ? (
                 <AdminAlert className="mt-3">

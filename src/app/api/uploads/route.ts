@@ -51,26 +51,69 @@ export async function GET(request: Request) {
     const actor = await resolveActor(request);
     await connectMongo();
 
+    const orgId = new Types.ObjectId(actor.orgId);
+    const actorUserId = new Types.ObjectId(actor.userId);
+    const allowLegacyByUserId = actor.orgId === actor.personalOrgId;
+
+    /**
+     * The **workspace** bound — the rule `src/lib/docs/docMatch.ts` states for documents, applied
+     * to the uploads that carry them.
+     *
+     * This listing was scoped by `userId` alone and never read `actor.orgId`, which made "who
+     * uploaded it" the whole of the access decision and left the workspace out of it. Two callers
+     * whose access had already been taken away walked straight through:
+     *
+     * - an `lnk_` key is attributed to the member who minted it but scoped to *its own* workspace
+     *   (`apiKeyActor.ts`), so a key issued in workspace B returned that person's rows from every
+     *   workspace they had ever uploaded into — each row joined to its document's present-day
+     *   title and its public `/s/:shareId` slug;
+     * - a removed member's session falls back to their personal workspace, and every upload they
+     *   had made in the workspace they were removed from still came back.
+     *
+     * `orgId` is stamped on the row at creation from the document, so the bound is on the upload
+     * itself and no join can reintroduce the gap. `allowLegacyByUserId` is the same concession
+     * `docMatch` makes: rows that predate workspaces carry no `orgId` and belong to a person, so
+     * they resolve only while that person is sitting in their own personal workspace.
+     *
+     * It goes in `$and` rather than a top-level `$or`, because the search below wants an `$or` of
+     * its own and assigning `filter.$or` would replace this one outright — the exact shape that
+     * un-scoped document search in `/api/docs` once (see the note there).
+     */
+    const tenancy = allowLegacyByUserId
+      ? { $or: [{ orgId }, { orgId: { $exists: false } }, { orgId: null }] }
+      : { orgId };
+    const and: Array<Record<string, unknown>> = [tenancy];
     const filter: Record<string, unknown> = {
       isDeleted: { $ne: true },
-      userId: new Types.ObjectId(actor.userId),
+      userId: actorUserId,
+      $and: and,
     };
 
     if (q) {
       const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
       // Scoped to this actor's documents. Unscoped, the 100-row cap was filled from every
       // workspace in the database, so a common word could push the caller's own matching documents
-      // out of the list entirely and their uploads would simply not be found. The upload filter
-      // below is already owner-scoped, so this never leaked another tenant's rows — it lost yours.
+      // out of the list entirely and their uploads would simply not be found. Same tenancy rule as
+      // the upload filter above: a title match in a workspace the caller is not in must not even
+      // reach the join, or a removed member learns titles by probing for them.
       const matchingDocs = await DocModel.find({
         title: rx,
-        $or: [{ orgId: new Types.ObjectId(actor.orgId) }, { userId: new Types.ObjectId(actor.userId) }],
+        ...(allowLegacyByUserId
+          ? {
+              $or: [
+                { orgId },
+                { userId: actorUserId, $or: [{ orgId: { $exists: false } }, { orgId: null }] },
+              ],
+            }
+          : { orgId }),
       })
         .select({ _id: 1 })
         .limit(100)
         .lean();
       const docIds = matchingDocs.map((d) => d._id);
-      filter.$or = [{ originalFileName: rx }, ...(docIds.length ? [{ docId: { $in: docIds } }] : [])];
+      and.push({
+        $or: [{ originalFileName: rx }, ...(docIds.length ? [{ docId: { $in: docIds } }] : [])],
+      });
     }
 
     const total = await UploadModel.countDocuments(filter);

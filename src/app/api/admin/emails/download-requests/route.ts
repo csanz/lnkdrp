@@ -38,7 +38,6 @@ function asIso(v: unknown): string | null {
 
 type DownloadRequestRow = {
   requestId: string;
-  shareId: string | null;
   docId: string | null;
   requesterEmail: string | null;
   status: string | null;
@@ -71,7 +70,8 @@ export async function GET(request: Request) {
     .skip((page - 1) * limit)
     .limit(limit)
     .select({
-      shareId: 1,
+      // No `shareId`: the slug is the document, and this board is about whether three emails
+      // went out, which the doc id already anchors. See src/lib/admin/docPrivacy.ts.
       docId: 1,
       requesterEmail: 1,
       status: 1,
@@ -91,7 +91,6 @@ export async function GET(request: Request) {
     const d = raw as Record<string, unknown>;
     return {
       requestId: String(d._id),
-      shareId: asString(d.shareId),
       docId: d.docId ? String(d.docId) : null,
       requesterEmail: asString(d.requesterEmail),
       status: asString(d.status),

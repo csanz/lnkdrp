@@ -23,6 +23,7 @@ import { rateLimit } from "@/lib/http/rateLimit";
 import { decryptSharePassword } from "@/lib/sharePassword";
 import { listProjectLinks } from "@/lib/share/projectLinks";
 import { accessProjectForLinks, linkErrorResponse } from "../../shared";
+import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +41,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
   const gate = await accessProjectForLinks(request, projectSlug, "admin");
   if (!gate.ok) return gate.response;
   const { actor, projectId, orgId, name } = gate.access;
+  // A key must never hold a secret that outlives its own revocation: revoking the key would
+  // not take back a password an agent had already read. See forbidApiKey.
+  const keyRefusal = forbidApiKey(actor, "reveal a share password");
+  if (keyRefusal) return keyRefusal;
   try {
     if (!Types.ObjectId.isValid(linkId)) {
       return applyTempUserHeaders(NextResponse.json({ error: "Invalid linkId" }, { status: 400 }), actor);
@@ -56,6 +61,21 @@ export async function GET(request: Request, ctx: { params: Promise<{ projectSlug
     const link = (await listProjectLinks({ orgId, projectId, includeArchived: true })).find((l) => String(l._id) === linkId);
     if (!link) {
       return applyTempUserHeaders(NextResponse.json({ error: "Link not found." }, { status: 404 }), actor);
+    }
+
+    /**
+     * An archived link's password is not retrievable, the same rule the document twin states.
+     *
+     * The row is kept so its analytics keep their name, and `includeArchived: true` above is what
+     * lets this route find it at all — but "deleted" has to mean the same thing on every endpoint,
+     * and this is the one that hands back a secret. Without it, revoking a project link left its
+     * plaintext password readable by anyone who kept the id.
+     */
+    if (link.archivedAt) {
+      return applyTempUserHeaders(
+        NextResponse.json({ error: "That link was deleted, so its password is no longer available." }, { status: 404 }),
+        actor,
+      );
     }
 
     const enabled = Boolean(link.passwordHash);

@@ -89,8 +89,8 @@ export async function generateMetadata(props: { params: Promise<{ shareId: strin
   const { shareId } = await props.params;
   if (!shareId) return buildShareMetadata({ title: "Shared documents", description: "" });
 
-  const resolved = await resolveProjectLink(shareId, { select: { description: 1 } });
-  if (!resolved || resolved.refusal || projectLinkPasswordEnabled(resolved.link)) {
+  const resolved = await resolveProjectLink(shareId, { select: { description: 1, isRequest: 1 } });
+  if (!resolved || resolved.refusal || Boolean(resolved.project.isRequest) || projectLinkPasswordEnabled(resolved.link)) {
     return buildShareMetadata({ title: "Shared documents", description: "" });
   }
   const { project } = resolved;
@@ -103,9 +103,33 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
   const { shareId } = await props.params;
   if (!shareId) notFound();
 
-  const resolved = await resolveProjectLink(shareId, { select: { description: 1 } });
+  // `isRequest` is selected for the rule below; `PROJECT_SHARE_FIELDS` does not carry it, and an
+  // unselected field reads as `undefined`, which would pass the check while meaning nothing.
+  const resolved = await resolveProjectLink(shareId, { select: { description: 1, isRequest: 1 } });
   // An unknown slug, a document link's slug, or a deleted project: indistinguishable, on purpose.
   if (!resolved || resolved.refusal === "project_gone") notFound();
+  /**
+   * A request repo has no public room, and this is where that is decided.
+   *
+   * A data room and a request repo are the same `Project` row pointing opposite ways. A room is
+   * documents the owner chose to hand out; a repo is an inbox — `isRequest`, with an upload token
+   * the owner sends to outsiders so they can drop files *in*. Those submissions are somebody else's
+   * confidential documents (pitch decks, applications, RFP responses) and nobody ever asked for
+   * them to be published.
+   *
+   * They were. A repo is created with a `shareId`, nothing in the resolver filtered on `isRequest`,
+   * and a missing `shareEnabled` reads as on everywhere (`shareEnabled !== false`), so the slug
+   * rendered as a room listing every submission — no password, no expiry, no sign-in. `GET
+   * /api/projects` hands that slug to every member including viewer-role, it never rotates, and the
+   * owner could not even switch it off: the project page swaps the share panel out for the
+   * request-repo panel when `isRequest`, so the one control that would set `shareEnabled: false` is
+   * not rendered for exactly these projects. Hence a rule and not a setting.
+   *
+   * A 404, indistinguishable from an unknown slug, because who submitted what to whom is not public
+   * either. The upload side is untouched: recipients still use `/request/:token`, which is the
+   * capability the owner actually sent them.
+   */
+  if (resolved.project.isRequest) notFound();
   const { link, project } = resolved;
   // Expiry is the one refusal a recipient can act on, so it gets its own words (see RefusalNotice);
   // a disabled or archived link reads exactly as it did before this feature existed.

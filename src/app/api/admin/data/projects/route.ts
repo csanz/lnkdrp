@@ -2,11 +2,16 @@
  * Admin API route: `GET /api/admin/data/projects`
  *
  * Lists projects across all users (paged).
+ *
+ * The public slug and `requestUploadToken` are selected to say whether they exist and then dropped:
+ * one opens `/p/:shareId`, the other submits documents into the customer's repo, and neither needs
+ * to be readable to answer an operational question. Both still work as search terms above.
  */
 import { NextResponse } from "next/server";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { requireAdmin } from "@/lib/gating/requireAdmin";
+import { stripSecrets } from "@/lib/admin/docPrivacy";
 
 export const runtime = "nodejs";
 
@@ -74,13 +79,12 @@ export async function GET(request: Request) {
       name: typeof p.name === "string" ? p.name : null,
       slug: typeof p.slug === "string" ? p.slug : null,
       description: typeof p.description === "string" ? p.description : null,
-      shareId: typeof p.shareId === "string" ? p.shareId : null,
       docCount: Number.isFinite(p.docCount) ? p.docCount : null,
       isRequest: Boolean((p as { isRequest?: unknown }).isRequest),
-      requestUploadToken:
-        typeof (p as { requestUploadToken?: unknown }).requestUploadToken === "string"
-          ? (p as unknown as { requestUploadToken: string }).requestUploadToken
-          : null,
+      // Whether the project has a public slug and an upload token, not what they are. The page
+      // reads `hasRequestUploadToken` where it used to read the token, to spot a repo whose
+      // `isRequest` was never backfilled.
+      secrets: stripSecrets(p as unknown as Record<string, unknown>).secrets,
       requestReviewEnabled: Boolean((p as { requestReviewEnabled?: unknown }).requestReviewEnabled),
       updatedDate: (p as unknown as { updatedDate?: Date | string | null }).updatedDate
         ? new Date((p as unknown as { updatedDate: Date | string }).updatedDate).toISOString()

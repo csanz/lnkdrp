@@ -7,7 +7,7 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { Types } from "mongoose";
-import { resolveShareLink } from "@/lib/share/links";
+import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
 import { UserModel } from "@/lib/models/User";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
@@ -87,6 +87,15 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     // decides whether a request is needed is the link's (docs/prds/lnkdrp-multi-links.md).
     const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
     if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    // A protected link says nothing to a browser that never typed the password — and "I would like
+    // this PDF" is a way to be handed the PDF. Without this the holder of a forwarded slug could
+    // start the chain, and the owner's approval mail gave them no way to tell: it names a document
+    // they did share and an address the requester chose. The check sits above the
+    // `download_already_enabled` answer below because that answer is itself a fact about the link.
+    if (!shareLinkUnlocked(request, shareId, resolved.link)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
     const doc = resolved.doc;
     const docTitle = typeof doc.title === "string" ? doc.title : null;
 
