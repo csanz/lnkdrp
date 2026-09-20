@@ -252,23 +252,24 @@ export default function RecentVisitors({
                     ),
                   )}
                 </span>
-                {v.detail ? (
-                  <span className="block truncate text-[12px] text-[var(--muted-2)]">
-                    {v.detail}
-                  </span>
-                ) : null}
               </span>
 
-              <span
-                className={[
-                  "shrink-0 whitespace-nowrap text-[12px] tabular-nums",
-                  isFresh
-                    ? "font-medium text-[var(--fg)]"
-                    : "text-[var(--muted-2)]",
-                ].join(" ")}
-                title={v.lastSeen ?? undefined}
-              >
-                {v.ago?.label}
+              {/* The reading and the time sit together on the right, on the same line as the name.
+                  They used to be a second line under it, which doubled the height of every row and
+                  made five visitors as tall as the tile row beneath them. A row is one line now,
+                  and the figures still read left-to-right in the order you ask for them: what they
+                  did, then when. */}
+              <span className="flex shrink-0 items-baseline gap-2 whitespace-nowrap text-[12px] tabular-nums">
+                {v.detail ? <span className="text-[var(--muted-2)]">{v.detail}</span> : null}
+                <span
+                  className={[
+                    "min-w-[4.5rem] text-right",
+                    isFresh ? "font-medium text-[var(--fg)]" : "text-[var(--muted-2)]",
+                  ].join(" ")}
+                  title={v.lastSeen ?? undefined}
+                >
+                  {v.ago?.label}
+                </span>
               </span>
             </li>
           );
