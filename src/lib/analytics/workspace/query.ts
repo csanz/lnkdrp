@@ -152,6 +152,8 @@ type PersonRow = {
   lastSeen?: Date | null;
   name?: string | null;
   email?: string | null;
+  /** Pages reached in each document they opened — the grain the reading badge has to be judged at. */
+  perDoc?: Array<{ docId?: unknown; pages?: unknown }>;
 };
 /** The same person, from the window's visits: the only source of a range-scoped reading time. */
 type VisitPersonRow = {
@@ -161,6 +163,8 @@ type VisitPersonRow = {
   lastSeen?: Date | null;
   name?: string | null;
   email?: string | null;
+  /** Time spent in each document they opened, paired with `PersonRow.perDoc` by `docId`. */
+  perDoc?: Array<{ docId?: unknown; readingTimeMs?: unknown }>;
 };
 type CountRow = { n?: number };
 type TotalsRow = { views?: number; viewers?: number };
@@ -221,12 +225,45 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   // parallel with the documents, because the facet below has to be built with them in hand.
   const [docs, projectShareIds] = (await Promise.all([
     DocModel.find({ orgId, isDeleted: { $ne: true } })
-      .select({ _id: 1, title: 1, isArchived: 1, shareEnabled: 1, createdDate: 1 })
+      .select({ _id: 1, title: 1, isArchived: 1, shareEnabled: 1, createdDate: 1, currentUploadId: 1 })
       .lean(),
     projectLinkSlugsForOrg(orgId),
   ])) as unknown as [DocRow[], string[]];
 
   if (!docs.length) return emptyResponse(resolved, input.plan, isPro);
+
+  /**
+   * How many pages each document has, from the upload its current version points at.
+   *
+   * Only the reading badge needs this, and only as a denominator: without it a reader who spent
+   * six minutes on one page of a nine-page deck reads as "Read" here and "Started" on the
+   * document's own page, which is the contradiction that kept the badge off this card. One lean
+   * read over the workspace's uploads, projected to a single number.
+   */
+  const pagesByDocId = new Map<string, number>();
+  {
+    const uploadIdByDoc = new Map<string, string>();
+    for (const d of docs as Array<DocRow & { currentUploadId?: unknown }>) {
+      if (d.currentUploadId) uploadIdByDoc.set(String(d._id), String(d.currentUploadId));
+    }
+    const uploadIds = [...new Set(uploadIdByDoc.values())]
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    if (uploadIds.length) {
+      const uploads = (await UploadModel.find({ _id: { $in: uploadIds } })
+        .select({ _id: 1, "metadata.pages": 1 })
+        .lean()) as Array<{ _id: Types.ObjectId; metadata?: { pages?: unknown } }>;
+      const pagesByUpload = new Map<string, number>();
+      for (const u of uploads) {
+        const n = u?.metadata?.pages;
+        if (typeof n === "number" && Number.isFinite(n) && n > 0) pagesByUpload.set(String(u._id), Math.floor(n));
+      }
+      for (const [docId, uploadId] of uploadIdByDoc) {
+        const pages = pagesByUpload.get(uploadId);
+        if (pages) pagesByDocId.set(docId, pages);
+      }
+    }
+  }
 
   const docById = new Map<string, DocRow>();
   const liveDocIds: Types.ObjectId[] = [];
@@ -374,9 +411,22 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           // maximum is deterministic without paying for a blocking `$sort` inside the facet.
           name: { $max: "$viewerName" },
           email: { $max: { $ifNull: ["$viewerEmailSnapshot", "$viewerEmail"] } },
+          // Which pages of THIS document they reached. Kept per document because that is the only
+          // scope where a page number means anything: page 3 of the deck is not page 3 of the term
+          // sheet, so a union across documents would be a number about nothing.
+          pagesSeenArrays: { $push: { $ifNull: ["$pagesSeen", []] } },
         },
       },
       { $match: { "_id.key": { $ne: null } } },
+      {
+        $addFields: {
+          pages: {
+            $size: {
+              $reduce: { input: "$pagesSeenArrays", initialValue: [], in: { $setUnion: ["$$value", "$$this"] } },
+            },
+          },
+        },
+      },
       {
         $group: {
           _id: "$_id.key",
@@ -385,6 +435,9 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           lastSeen: { $max: "$lastSeen" },
           name: { $max: "$name" },
           email: { $max: "$email" },
+          // One entry per document this person opened, so the reading badge can be judged the way
+          // the document's own page judges it rather than by a workspace-wide average.
+          perDoc: { $push: { docId: "$_id.docId", pages: "$pages" } },
         },
       },
       { $sort: { views: -1, lastSeen: -1 } },
@@ -523,6 +576,8 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
           lastSeen: { $max: "$lastSeen" },
           name: { $max: "$name" },
           email: { $max: "$email" },
+          // Time per document, to pair with the pages per document from the view facet.
+          perDoc: { $push: { docId: "$_id.docId", readingTimeMs: "$readingTimeMs" } },
         },
       },
       // Ranked on the figure the card prints, so the candidates Mongo keeps are the top readers of
@@ -789,6 +844,39 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
   const trimmed = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
   /**
+   * The single reading a person's badge should be about: the document they spent longest in.
+   *
+   * Pages come from the view rows, time from the visit rows, length from the upload — three
+   * sources that only line up per (person, document), which is why both facets keep that grain.
+   * A document with no recorded length is still usable: `readingDepth` simply skips the coverage
+   * rule, exactly as it does on a document page whose page count is unknown.
+   */
+  const depthSampleFor = (
+    viewRow: PersonRow | undefined,
+    visitRow: VisitPersonRow | undefined,
+  ): WorkspacePerson["depthSample"] => {
+    const pagesByDoc = new Map<string, number>();
+    for (const entry of (viewRow?.perDoc ?? []) as Array<{ docId?: unknown; pages?: unknown }>) {
+      const docId = entry?.docId ? String(entry.docId) : "";
+      const pages = safeCount(entry?.pages);
+      if (docId) pagesByDoc.set(docId, pages);
+    }
+    let best: { docId: string; timeMs: number } | null = null;
+    for (const entry of (visitRow?.perDoc ?? []) as Array<{ docId?: unknown; readingTimeMs?: unknown }>) {
+      const docId = entry?.docId ? String(entry.docId) : "";
+      if (!docId) continue;
+      const timeMs = safeCount(entry?.readingTimeMs);
+      if (!best || timeMs > best.timeMs) best = { docId, timeMs };
+    }
+    if (!best || best.timeMs <= 0) return null;
+    return {
+      timeMs: best.timeMs,
+      pages: pagesByDoc.get(best.docId) ?? 0,
+      totalPages: pagesByDocId.get(best.docId) ?? null,
+    };
+  };
+
+  /**
    * Every named person in the window, before either card trims them.
    *
    * Two lists come off this: the engagement ranking ("Most engaged people") and the recency slice
@@ -814,6 +902,7 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
               // described by their visits instead.
               docs: view ? safeCount(view.docs) : safeCount(row.docs),
               lastSeenAt: toIsoOrNull(view?.lastSeen ?? row.lastSeen),
+              depthSample: depthSampleFor(view, row),
             });
           }
           for (const row of peopleRows) {
@@ -826,6 +915,9 @@ export async function loadWorkspaceMetrics(input: WorkspaceMetricsInput): Promis
               readingTimeMs: 0,
               docs: safeCount(row.docs),
               lastSeenAt: toIsoOrNull(row.lastSeen),
+              // No visit rows: their traffic predates the reading clock, so there is no reading to
+              // judge and the row carries figures without a word.
+              depthSample: null,
             });
           }
           return rows;

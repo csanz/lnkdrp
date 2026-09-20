@@ -31,6 +31,8 @@ import {
   TopLinksSection,
 } from "@/components/workspaceMetrics/Sections";
 import { outputSentence, type MetricKey } from "@/components/workspaceMetrics/format";
+// The same duration wording the document and project cards print, so "58s" means 58s everywhere.
+import { formatDurationShort } from "@/components/metrics/MetricsView";
 // `./types` and not the barrel: the barrel re-exports `./range`, which reaches the plan limits
 // and through them Mongoose. `types.ts` imports nothing, so nothing server-only follows it here.
 import {
@@ -274,13 +276,26 @@ export default function MetricsPageClient() {
                 key: p.key,
                 name: (p.name ?? "").trim() || (p.email ?? "").trim() || null,
                 lastSeen: p.lastSeenAt,
-                detail: p.docs > 0 ? `${p.docs} ${p.docs === 1 ? "document" : "documents"}` : null,
-                // No reading badge here, deliberately. The badge needs a denominator to judge
-                // coverage, and a workspace has none: its unit is documents opened, with no page
-                // count behind them. Fed `pages = docs`, every row came out READ — including a
-                // reader the document's own page calls SKIMMED, because there it knows they saw
-                // nine pages in eighty seconds. A word that contradicts the page you reach by
-                // clicking it is worse than no word, so the figures speak for themselves here.
+                // The same shape the other two cards print — "1 document · 58s" beside their
+                // "9 pages · 58s" — instead of a bare noun with the figures left out.
+                detail: [
+                  p.docs > 0 ? `${p.docs} ${p.docs === 1 ? "document" : "documents"}` : null,
+                  p.readingTimeMs > 0 ? formatDurationShort(p.readingTimeMs) : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || null,
+                /**
+                 * The badge is judged on one real reading, not on a workspace-wide average.
+                 *
+                 * Fed the workspace's own unit — documents — every row came out READ, including a
+                 * reader the document's own page calls SKIMMED. So the payload carries the inputs
+                 * of the single document this person spent longest in (`depthSample`), and the
+                 * same `readingDepth` runs here as everywhere else. The word on this card is now
+                 * the word you find when you click through to that reading.
+                 */
+                timeMs: p.depthSample?.timeMs ?? null,
+                pages: p.depthSample?.pages ?? null,
+                totalPages: p.depthSample?.totalPages ?? null,
               }))}
               seeAllLabel="See all readers"
               onSeeAll={() => {

@@ -181,6 +181,20 @@ export type WorkspacePerson = {
   /** Distinct documents this person opened in the range. */
   docs: number;
   lastSeenAt: string | null;
+  /**
+   * The one reading this person's badge is about, so the word here can never contradict the word
+   * on the document's own page.
+   *
+   * A workspace has no page count of its own — its unit is documents — so a badge judged at this
+   * scope would be judging a different thing from every other badge in the product. This carries
+   * the inputs of a single real reading instead (their time, the pages they reached, and that
+   * document's length), and the client runs the same `readingDepth` every other surface runs.
+   *
+   * The document chosen is the one they spent longest in, which for the overwhelmingly common case
+   * — a reader who opened one document — is simply that one. `null` when nothing can be judged:
+   * no visit rows, or a document whose page count was never recorded.
+   */
+  depthSample: { timeMs: number; pages: number; totalPages: number | null } | null;
 };
 
 export type WorkspacePeople = {
