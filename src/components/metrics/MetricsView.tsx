@@ -2640,7 +2640,7 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
             {filterDroppedNotice ? (
               <div className="flex items-start justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-2)] px-4 py-2.5 text-[13px] text-[var(--fg)]">
                 <span>
-                  That link was deleted — showing all links, so every number
+                  That link was deleted. Showing all links, so every number
                   below is the whole {scope.nounLower} now.
                 </span>
                 <button

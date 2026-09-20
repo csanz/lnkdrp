@@ -121,7 +121,7 @@ function scopeConfig(scope: LinksScope): ScopeConfig {
       showRevisionHistory: false,
       makeDefaultHint: "Shown in the side panel as the project's primary link",
       nudgeBody:
-        "The same documents, a separate link for each person or firm — see which one opened them, revoke one without touching the rest, give one a password or an expiry.",
+        "The same documents, a separate link for each person or firm: see which one opened them, revoke one without touching the rest, give one a password or an expiry.",
     };
   }
   return {
@@ -137,7 +137,7 @@ function scopeConfig(scope: LinksScope): ScopeConfig {
     showRevisionHistory: true,
     makeDefaultHint: "Shown in the side panel as the document's primary link",
     nudgeBody:
-      "The same document, a separate link for each person or firm — see which one opened it, revoke one without touching the rest, give one a password or an expiry.",
+      "The same document, a separate link for each person or firm: see which one opened it, revoke one without touching the rest, give one a password or an expiry.",
   };
 }
 
@@ -972,7 +972,7 @@ const LinksManager = forwardRef<LinksManagerHandle, Props>(function LinksManager
                 <td colSpan={8} className="px-4 py-10 text-center">
                   <div className="text-sm font-semibold text-[var(--fg)]">No links yet</div>
                   <div className="mx-auto mt-1 max-w-sm text-[13px] text-[var(--muted)]">
-                    Create one link per audience — each keeps its own settings and its own stats.
+                    Create one link per audience. Each keeps its own settings and its own stats.
                   </div>
                   {canManage ? (
                     <button type="button" onClick={openCreate} className={`${NEW_LINK_CLASS} mt-4`}>

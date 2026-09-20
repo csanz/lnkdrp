@@ -69,8 +69,8 @@ export function MetricsEmptyWorkspace() {
     <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] px-6 py-12 text-center">
       <h2 className="text-[15px] font-semibold text-[var(--fg)]">No shared documents yet</h2>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-5 text-[var(--muted)]">
-        Once you share a document, this page shows how many people opened it, how long they read, which
-        links are working and which have gone quiet — across the whole workspace.
+        This page covers the whole workspace. Once you share a document, it shows how many people opened
+        it, how long they read, and which links are working or have gone quiet.
       </p>
       <Link
         href="/upload"

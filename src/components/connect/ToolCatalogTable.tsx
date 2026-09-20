@@ -91,15 +91,19 @@ function ToolDetail({ entry }: { entry: ToolCatalogEntry }) {
       </Block>
       <Block label="Errors">
         <ul className="grid gap-1">
-          {d.errors.map((line) => (
-            <li key={line} className="flex gap-2">
-              <span aria-hidden="true" className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[var(--muted-2)]" />
-              <span>
-                <code className="font-mono text-[11px] text-[var(--fg)]">{line.split(" — ")[0]}</code>
-                {line.includes(" — ") ? <span> — {line.split(" — ").slice(1).join(" — ")}</span> : null}
-              </span>
-            </li>
-          ))}
+          {d.errors.map((line) => {
+            // Each entry is `code: when`; the code becomes the chip, the rest stays prose.
+            const [code, ...rest] = line.split(": ");
+            return (
+              <li key={line} className="flex gap-2">
+                <span aria-hidden="true" className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-[var(--muted-2)]" />
+                <span>
+                  <code className="font-mono text-[11px] text-[var(--fg)]">{code}</code>
+                  {rest.length > 0 ? <span>: {rest.join(": ")}</span> : null}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       </Block>
       {d.note ? (

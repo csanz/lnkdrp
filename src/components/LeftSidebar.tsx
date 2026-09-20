@@ -1650,7 +1650,7 @@ export default function LeftSidebar({
           // Best-effort: keep the request link usable even if guide upload fails,
           // but disable review since the guide is required for automatic review.
           setRequestError(
-            "Repository created, but evaluation guide upload failed. Automatic review was disabled—attach a guide from the repo settings to enable it.",
+            "Repository created, but evaluation guide upload failed. Automatic review was disabled. Attach a guide from the repo settings to enable it.",
           );
           try {
             await fetchWithTempUser(`/api/projects/${encodeURIComponent(projectId)}`, {

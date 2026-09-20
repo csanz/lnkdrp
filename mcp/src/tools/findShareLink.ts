@@ -28,7 +28,7 @@ export const findShareLinkInputShape = {
     .trim()
     .min(1)
     .max(120)
-    .describe("Name to search for, e.g. \"a16z\" or \"Sequoia\" — matches a link's label or audience. Whole words, not substrings."),
+    .describe("Name to search for, e.g. \"a16z\" or \"Sequoia\". Matches a link's label or audience. Whole words, not substrings."),
   limit: z.number().int().min(1).max(50).default(20).describe("Max results, 1-50, default 20."),
 };
 
@@ -80,7 +80,7 @@ export function registerFindShareLinkTool(server: McpServer, ctx: ToolContext): 
         ...(terms.length > 1 && !narrowed && hits.length
           ? {
               warnings: [
-                `No link matches every word of "${args.query}". These match at least one, ranked by relevance — check ` +
+                `No link matches every word of "${args.query}". These match at least one, ranked by relevance. Check ` +
                   "the label and audience before using one.",
               ],
             }

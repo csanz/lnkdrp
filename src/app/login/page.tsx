@@ -88,7 +88,7 @@ function LoginPageInner() {
 
   const headline = signedOut ? "You’ve been signed out." : "Log in or sign up.";
   const intro = useMemo(() => {
-    if (!authEnabled) return "Login isn’t available right now — authentication is disabled on this build.";
+    if (!authEnabled) return "Login isn’t available right now: authentication is disabled on this build.";
     if (signedOut) {
       return next && next !== "/"
         ? "Your session ended, so we stopped here rather than showing you a half-loaded page. Sign back in and we’ll take you straight back to where you were."

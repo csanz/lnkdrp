@@ -21,7 +21,7 @@ export default function ProPill({ className, onClick }: { className?: string; on
           "hover:bg-[var(--panel-hover)] hover:text-[var(--fg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
           className,
         )}
-        title="Pro feature — see what's included"
+        title="Pro feature. See what's included"
         aria-label="Pro feature. See what's included in Pro"
         onClick={onClick}
       >

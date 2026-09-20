@@ -22,7 +22,7 @@ export function waitlistApprovedEmail(params: {
   const base = (params.appUrl ?? getPublicSiteBase() ?? "").trim().replace(/\/+$/, "");
 
   return {
-    subject: "You're in — your LinkDrop account is open",
+    subject: "You're in: your LinkDrop account is open",
     text: emailBody([
       first ? `You're in, ${first}.` : "You're in.",
       "",

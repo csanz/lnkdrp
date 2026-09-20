@@ -713,7 +713,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                     <button
                                       type="button"
                                       className="font-mono text-[10px] tracking-tight text-[var(--muted-2)] underline decoration-dotted underline-offset-2 hover:text-[var(--fg)]"
-                                      title={`Revision ${it.id} — click to copy`}
+                                      title={`Revision ${it.id}. Click to copy`}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         void navigator.clipboard?.writeText(it.id);
@@ -753,7 +753,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
                                     <li key={idx}>
                                       <span className="font-medium text-[var(--fg)]">{(c?.title ?? "").toString()}</span>
                                       {c?.detail ? (
-                                        <span className="text-[var(--muted)]"> — {String(c.detail)}</span>
+                                        <span className="text-[var(--muted)]"> · {String(c.detail)}</span>
                                       ) : null}
                                     </li>
                                   ))}
@@ -1102,7 +1102,7 @@ export default function HistoryPageClient({ docId }: { docId: string }) {
           <div className="space-y-3">
             <div className="text-base font-semibold text-[var(--fg)]">Viewer stats</div>
             <div className="text-sm font-semibold text-[var(--fg)]">
-              {viewerStatsOpen.name ?? viewerStatsOpen.email ?? "Viewer"} — v{viewerStatsOpen.version}
+              {viewerStatsOpen.name ?? viewerStatsOpen.email ?? "Viewer"} · v{viewerStatsOpen.version}
             </div>
 
             {viewerStatsLoading ? (

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FolderIcon } from "@heroicons/react/24/outline";
+import AgentHintNotice from "@/components/AgentHintNotice";
 import Modal from "@/components/modals/Modal";
 
 export type DocProjectListItem = { id: string; name: string; slug?: string };
@@ -58,6 +59,8 @@ export default function DocProjectsModal({
           })}
         </ul>
       )}
+
+      <AgentHintNotice hintKey="doc_projects" className="mt-4" />
     </Modal>
   );
 }

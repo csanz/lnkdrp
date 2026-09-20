@@ -343,7 +343,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "Can I create more than one link for a document?",
-                  a: "Yes. Give a document a link per audience — one per investor, one per counterparty — each with its own label, password, download switch, expiry and stats, without uploading the file again. Links are not capped on any plan — Free counts shared documents (3), not the links on them, so three investor links on one deck use one slot.",
+                  a: "Yes. Give a document a link per audience: one per investor, one per counterparty. Each link carries its own label, password, download switch, expiry and stats, and you never upload the file again. Links are not capped on any plan. Free counts shared documents (3), not the links on them, so three investor links on one deck use one slot.",
                 },
                 {
                   q: "Is Pro per person or per workspace?",
@@ -351,7 +351,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "I already have more than 3 shared documents. What happens?",
-                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new documents and projects wait until you archive some or upgrade. Existing links never stop working, and you can keep adding links to the documents you already have — links are not capped on any plan.",
+                  a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new documents and projects wait until you archive some or upgrade. Existing links never stop working, and you can keep adding links to the documents you already have. Links are not capped on any plan.",
                 },
                 {
                   q: "What do credits pay for?",
@@ -359,7 +359,7 @@ export default async function PricingPage() {
                 },
                 {
                   q: "What happens when I run out of credits?",
-                  a: `Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until you add credits — on Free, ${whatHappensAfterFreeCredits()}; on Pro, turn on on-demand usage or wait for the next billing cycle.`,
+                  a: `Uploads still complete and links keep working. The AI summary is skipped, and you can write it later from the document page for 1 credit. AI compare and other AI actions stop until you add credits. On Free, ${whatHappensAfterFreeCredits()}. On Pro, turn on on-demand usage or wait for the next billing cycle.`,
                 },
                 {
                   q: "Can I replace a file on Free?",

@@ -226,7 +226,7 @@ export default function RecentVisitors({
                       <Link
                         key={via.name}
                         href={via.href}
-                        title={via.kind === "doc" ? `Read ${via.name}` : `Opened through ${via.name} — see that project's metrics`}
+                        title={via.kind === "doc" ? `Read ${via.name}` : `Opened through ${via.name}. See that project's metrics`}
                         className="relative z-10 inline-flex max-w-[180px] shrink-0 items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--muted-2)] hover:text-[var(--fg)]"
                       >
                         {via.kind === "doc" ? (

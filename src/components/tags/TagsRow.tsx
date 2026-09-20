@@ -113,7 +113,7 @@ export default function TagsRow({
             key={tag.id}
             type="button"
             onClick={() => canManage && setPicking(true)}
-            title={canManage ? `${all} — click to change` : all}
+            title={canManage ? `${all}. Click to change` : all}
             className={[
               "inline-flex h-6 max-w-[160px] shrink-0 items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel)] px-2 text-[11px] font-medium text-[var(--muted)] transition-colors",
               canManage ? "hover:text-[var(--fg)]" : "cursor-default",

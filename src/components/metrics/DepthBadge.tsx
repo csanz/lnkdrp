@@ -38,7 +38,7 @@ const LEGEND: Array<{
     depth: "started",
     rule: "the same attention, but on less than a third of the pages",
     means:
-      "They were reading and stopped early — usually the row worth a follow-up.",
+      "They were reading and stopped early. Usually the row worth a follow-up.",
   },
   {
     depth: "skimmed",
@@ -92,7 +92,7 @@ function ReadingLegendModal({
       </div>
       <div className="mt-1 text-[13px] leading-6 text-[var(--muted)]">
         From two facts: how long they spent per page, and how much of the
-        document they reached. Deliberately coarse — a clock cannot tell a
+        document they reached. It is deliberately coarse. A clock cannot tell a
         careful reader from a tab left open, so the words stop where the data
         does.
       </div>

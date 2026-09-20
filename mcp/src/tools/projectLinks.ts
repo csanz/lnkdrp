@@ -220,8 +220,8 @@ export function registerListProjectLinksTool(server: McpServer, ctx: ToolContext
       description:
         "Every share link of a project, the default link first: label, audience, shareUrl (/p/<shareId>), status " +
         "(active|disabled|expired), whether a password is set, expiry, whether downloads are allowed, and that link's own " +
-        "view and download counts. viewCount is the number of recipients who opened something through the link — the same " +
-        "quantity it carries on a document link — not landings on the project page and not documents opened. publicPageEnabled says whether the project's page resolves at all: while it is false every link " +
+        "view and download counts. viewCount is the number of recipients who opened something through the link, the same " +
+        "quantity it carries on a document link. It is not landings on the project page and not documents opened. publicPageEnabled says whether the project's page resolves at all: while it is false every link " +
         "reads disabled, and lnkdrp_update_project { publicPageEnabled: true } turns them back on. Pass query to search this " +
         "project's links by label/audience instead of listing all of them. Use a link's id with " +
         "lnkdrp_update_project_link / lnkdrp_delete_project_link. Archived (deleted) links are not listed. An empty links list does NOT mean the project is private: a new project's default link has no row until the first write, so check publicPageEnabled, and read note when it is present. " +

@@ -50,7 +50,7 @@ function buildCapabilities(
       feature: "requestRepos",
       reason: featureRequestsEnabled
         ? "exists on this deployment (upload requests, review) but no MCP tool covers it yet"
-        : "disabled on this deployment (NEXT_PUBLIC_FEATURE_REQUESTS) — the web app hides it too",
+        : "disabled on this deployment by NEXT_PUBLIC_FEATURE_REQUESTS, so the web app hides it too",
     },
     { feature: "downloadAccessRequests", reason: "no MCP tool, and the app itself has no read endpoint for these yet" },
   ];

@@ -7,6 +7,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import AgentHintNotice from "@/components/AgentHintNotice";
 import UploadButton, { UploadIcon } from "@/components/UploadButton";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
 import { refreshPlan, usePlan } from "@/lib/client/usePlan";
@@ -428,6 +429,9 @@ export default function UploadPageClient() {
                 <li className="flex gap-2"><span aria-hidden="true" className="text-[var(--muted-2)]">·</span>The AI summary and key points are generated after upload.</li>
               </ul>
             ) : null}
+
+            <AgentHintNotice hintKey="upload" className="mt-4" />
+
             <div className="mt-4 hidden text-[11px] leading-5 text-[var(--muted)] md:block">
               Tip: drag & drop a PDF anywhere onto this page to replace the selection.
             </div>

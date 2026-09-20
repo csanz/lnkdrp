@@ -13,7 +13,7 @@ const PREVIEWS: Array<{ href: string; title: string; blurb: string; status: stri
     href: "/style-guide/tags",
     title: "Tags in the left menu",
     blurb: "Tag pill versus tag dot on project rows, at the sidebar's real width, with short and long project names, plus the Tags section that makes a dot legible.",
-    status: "Open — awaiting a decision (docs/prds/lnkdrp-tags.md)",
+    status: "Open, awaiting a decision (docs/prds/lnkdrp-tags.md)",
   },
 ];
 

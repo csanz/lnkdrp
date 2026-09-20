@@ -158,7 +158,7 @@ export async function requireHumanConfirmation(
           properties: {
             confirmed: {
               type: "boolean",
-              title: preview.reversible ? "Yes, do it" : "Yes, delete it — I understand this cannot be undone",
+              title: preview.reversible ? "Yes, do it" : "Yes, delete it. I understand this cannot be undone",
               description: "Untick or cancel to keep everything as it is.",
             },
           },
@@ -219,7 +219,7 @@ export async function requireHumanConfirmation(
       // a recipient". A confirmation prompt that contradicts its own evidence teaches the reader to
       // skip the prose.
       (preview.severity === "high"
-        ? "Several people may lose access at once — recipients have opened this, or more than one live link stops " +
+        ? "Several people may lose access at once: recipients have opened this, or more than one live link stops " +
           "resolving. Do not confirm on your own judgement."
         : "Nothing has opened this yet, so the stakes are low, but the ask is still required."),
     { status: 400, details: previewDetails },

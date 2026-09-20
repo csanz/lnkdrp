@@ -189,7 +189,7 @@ export function TopLinksSection({ links, now }: { links: WorkspaceTopLink[]; now
                 <Link
                   href={l.href}
                   className={ROW_LINK_CLASS}
-                  title={`${name} — ${isProject ? `${l.parentName} (project)` : l.parentName}`}
+                  title={`${name} · ${isProject ? `${l.parentName} (project)` : l.parentName}`}
                 >
                   <div className="min-w-0 flex-1">
                     <div className={TITLE_CLASS}>{name}</div>

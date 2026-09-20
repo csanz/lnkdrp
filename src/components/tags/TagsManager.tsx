@@ -369,7 +369,7 @@ export default function TagsManager() {
       >
         <div className="text-base font-semibold text-[var(--fg)]">New tag</div>
         <p className="mt-1.5 text-[13px] leading-5 text-[var(--muted)]">
-          Tags are private to this workspace — recipients never see them. A colour is picked for you
+          Tags are private to this workspace. Recipients never see them. A colour is picked for you
           and you can change it afterwards.
         </p>
         <input

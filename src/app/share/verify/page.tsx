@@ -115,16 +115,16 @@ function copyFor(outcome: Outcome): { heading: string; body: string } {
       return outcome.again
         ? {
             heading: "Already confirmed",
-            body: `${outcome.email} was confirmed earlier. Nothing more to do — the sender already sees your name on what you read.`,
+            body: `${outcome.email} was confirmed earlier. Nothing more to do. The sender already sees your name on what you read.`,
           }
         : {
             heading: "Email confirmed",
-            body: `Thanks — ${outcome.email} is confirmed. The person who shared the document now sees your name on what you read, rather than an anonymous reader.`,
+            body: `Thanks. ${outcome.email} is confirmed. The person who shared the document now sees your name on what you read, rather than an anonymous reader.`,
           };
     case "expired":
       return {
         heading: "That link has expired",
-        body: "Confirmation links last a day. Nothing was lost: your introduction was recorded when you gave it, and the sender can already see it — it is simply marked as unconfirmed.",
+        body: "Confirmation links last a day. Nothing was lost: your introduction was recorded when you gave it, and the sender can already see it. It is simply marked as unconfirmed.",
       };
     case "unavailable":
       return {

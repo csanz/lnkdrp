@@ -357,7 +357,7 @@ export async function updateTag(params: {
     const clash = await TagModel.findOne({ orgId, slug, _id: { $ne: tagId } }).select({ _id: 1 }).lean();
     // Renaming onto an existing tag is a merge, and merging silently would destroy the distinction
     // between them without asking. The caller is told to merge instead.
-    if (clash) throw new Error("A tag with that name already exists — merge them instead");
+    if (clash) throw new Error("A tag with that name already exists. Merge them instead.");
     update.name = name;
     update.slug = slug;
   }

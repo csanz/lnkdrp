@@ -992,7 +992,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
               ? `Updated to v${actualVersion}.`
               : "Update complete.";
           const summary = unchanged
-            ? `${vLabel} This file reads the same as the previous version — if you meant to upload a different one, replace it again.`
+            ? `${vLabel} This file reads the same as the previous version. If you meant to upload a different one, replace it again.`
             : vLabel;
           setReplaceNotice({
             kind: "success",
@@ -2633,10 +2633,10 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                             We’re preparing this received document.
                           </div>
                           <div className="mt-1 text-sm text-[var(--muted)]">
-                            Please wait —{" "}
+                            Please wait.{" "}
                             {showRequestIntel
                               ? "Intel will appear once processing is complete."
-                              : "a summary will appear once processing is complete."}
+                              : "A summary will appear once processing is complete."}
                           </div>
                           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--border)]">
                             <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--primary-bg)]" />
@@ -3091,7 +3091,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {intel.strengths.slice(0, 10).map((s, idx) => (
                                 <li key={`s:${idx}`}>
                                   <span className="font-medium">{s.title}</span>
-                                  {s.detail ? <span className="text-[var(--muted)]"> — {s.detail}</span> : null}
+                                  {s.detail ? <span className="text-[var(--muted)]"> · {s.detail}</span> : null}
                                 </li>
                               ))}
                             </ul>
@@ -3105,7 +3105,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {intel.weaknessesAndRisks.slice(0, 10).map((w, idx) => (
                                 <li key={`w:${idx}`}>
                                   <span className="font-medium">{w.title}</span>
-                                  {w.detail ? <span className="text-[var(--muted)]"> — {w.detail}</span> : null}
+                                  {w.detail ? <span className="text-[var(--muted)]"> · {w.detail}</span> : null}
                                 </li>
                               ))}
                             </ul>
@@ -3119,7 +3119,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {intel.recommendations.slice(0, 10).map((r, idx) => (
                                 <li key={`r:${idx}`}>
                                   <span className="font-medium">{r.title}</span>
-                                  {r.detail ? <span className="text-[var(--muted)]"> — {r.detail}</span> : null}
+                                  {r.detail ? <span className="text-[var(--muted)]"> · {r.detail}</span> : null}
                                 </li>
                               ))}
                             </ul>
@@ -3136,7 +3136,7 @@ export default function DocPageClient({ initialDoc }: { initialDoc: DocDTO }) {
                               {intel.actionItems.slice(0, 10).map((a, idx) => (
                                 <li key={`a:${idx}`}>
                                   <span className="font-medium">{a.title}</span>
-                                  {a.detail ? <span className="text-[var(--muted)]"> — {a.detail}</span> : null}
+                                  {a.detail ? <span className="text-[var(--muted)]"> · {a.detail}</span> : null}
                                 </li>
                               ))}
                             </ul>

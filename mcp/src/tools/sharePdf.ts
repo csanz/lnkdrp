@@ -212,7 +212,7 @@ export async function prepareInlineUpload(source: InlinePdfSource, opts: { optim
     if (!/^[A-Za-z0-9+/\r\n=_-]*$/.test(withoutDataUri)) {
       throw new ToolError(
         "validation",
-        "fileBase64 is not base64 — it contains characters outside the base64 alphabet. Re-encode the file, or pass " +
+        "fileBase64 is not base64: it contains characters outside the base64 alphabet. Re-encode the file, or pass " +
           "sourceUrl (an https link to the PDF) instead.",
       );
     }
@@ -223,8 +223,8 @@ export async function prepareInlineUpload(source: InlinePdfSource, opts: { optim
     if (!looksLikePdf(bytes)) {
       throw new ToolError(
         "unsupported_content_type",
-        'fileBase64 decoded, but the bytes are not a PDF (they do not start with "%PDF-"). lnkdrp shares PDFs only — ' +
-          "convert the file first.",
+        'fileBase64 decoded, but the bytes are not a PDF (they do not start with "%PDF-"). lnkdrp shares PDFs only. ' +
+          "Convert the file first.",
       );
     }
   }
@@ -455,7 +455,7 @@ export function registerSharePdfTool(server: McpServer, ctx: ToolContext): void 
         "usable file, and the fix is lnkdrp_replace_pdf with a working PDF (or deleting the document). " +
         "A skipped AI step (for example out of credits) does not fail the call: the link is still valid and warnings says what was skipped. " +
         "Free workspaces have a cap on shared documents. At the cap this call fails with code plan_limit and creates " +
-        "nothing — the error names what you can still do without upgrading, such as adding another link to a document " +
+        "nothing. The error names what you can still do without upgrading, such as adding another link to a document " +
         "that already exists. Below the cap, planWarning appears when the workspace is close to it. " +
         SAFETY_TAIL,
       inputSchema: sharePdfInputShape,

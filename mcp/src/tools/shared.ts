@@ -36,7 +36,7 @@ export function requireExactlyOneRef(ref: DocRef): DocRef {
   if (has > 1) {
     throw new ToolError(
       "validation",
-      "Pass docId or shareId, not both — this tool takes exactly one. Use the shareId alone to ask about a link, or the " +
+      "Pass docId or shareId, not both: this tool takes exactly one. Use the shareId alone to ask about a link, or the " +
         "docId alone to ask about the document. (lnkdrp_get_share_stats is the tool that accepts the pair.)",
     );
   }

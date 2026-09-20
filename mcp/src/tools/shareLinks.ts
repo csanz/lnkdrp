@@ -67,7 +67,7 @@ function withUrl(api: ApiClient, link: ApiShareLink): ShareLinkResult {
  */
 function planNote(warning: PlanWarning | undefined, siteUrl: string): string | undefined {
   if (!warning) return undefined;
-  return `This link is active. Note the workspace is using ${warning.used} of ${warning.max} shared documents on Free — links are unlimited, documents are not. The owner can upgrade at ${siteUrl}/pricing.`;
+  return `This link is active. Note the workspace is using ${warning.used} of ${warning.max} shared documents on Free. Links are unlimited; documents are not. The owner can upgrade at ${siteUrl}/pricing.`;
 }
 
 export const createShareLinkInputShape = {

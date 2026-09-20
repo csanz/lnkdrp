@@ -98,7 +98,7 @@ export default function TagPageClient({ slug }: { slug: string }) {
               ? "Everything carrying this tag."
               : total === 0
                 ? "Nothing carries this tag yet. Add it from any document or project."
-                : `${total} ${total === 1 ? "item" : "items"} — ${projects.length} ${projects.length === 1 ? "project" : "projects"}, ${docs.length} ${docs.length === 1 ? "document" : "documents"}.`
+                : `${total} ${total === 1 ? "item" : "items"}: ${projects.length} ${projects.length === 1 ? "project" : "projects"}, ${docs.length} ${docs.length === 1 ? "document" : "documents"}.`
         }
       />
 

@@ -60,9 +60,9 @@ function planLimitAlternatives(limit: string): string[] {
   switch (limit) {
     case "documents":
       return [
-        "add another share link to a document this workspace already has (lnkdrp_create_share_link — links are unlimited on every plan, one per investor or counterparty)",
-        "replace the file on an existing document with lnkdrp_replace_pdf - recipients see the new version on the links they already have, and this is never blocked by plan_limit",
-        "find one to archive with lnkdrp_list_docs, then archive it with lnkdrp_archive_doc — it frees a slot and keeps its analytics",
+        "add another share link to a document this workspace already has (lnkdrp_create_share_link: links are unlimited on every plan, one per investor or counterparty)",
+        "replace the file on an existing document with lnkdrp_replace_pdf: recipients see the new version on the links they already have, and this is never blocked by plan_limit",
+        "find one to archive with lnkdrp_list_docs, then archive it with lnkdrp_archive_doc (it frees a slot and keeps its analytics)",
       ];
     case "projects":
       return [
@@ -72,12 +72,12 @@ function planLimitAlternatives(limit: string): string[] {
       ];
     case "project_links":
       return [
-        "send the project's existing default link instead (lnkdrp_list_project_links shows it) — it works on every plan, it just cannot be labelled per audience",
-        "send each document on its own labelled link with lnkdrp_create_share_link — document links are never capped, so one recipient can still get their own set",
-        "give the second audience its own project (lnkdrp_create_project, then lnkdrp_add_docs_to_project — a document can be in several): each project's default link is a separate URL with separate analytics, within the Free project cap",
+        "send the project's existing default link instead (lnkdrp_list_project_links shows it), which works on every plan but cannot be labelled per audience",
+        "send each document on its own labelled link with lnkdrp_create_share_link, since document links are never capped and one recipient can still get their own set",
+        "give the second audience its own project (lnkdrp_create_project, then lnkdrp_add_docs_to_project, since a document can be in several): each project's default link is a separate URL with separate analytics, within the Free project cap",
       ];
     case "collaborators":
-      return ["share a link with them instead of adding them to the workspace — recipients never need an account"];
+      return ["share a link with them instead of adding them to the workspace. Recipients never need an account"];
     case "version_history":
       return [
         "replace the file anyway: the new version is recorded and every existing link serves it",
@@ -86,7 +86,7 @@ function planLimitAlternatives(limit: string): string[] {
     case "analytics_history":
       return [
         "read the basic figures, which every plan gets: views, downloads, pages viewed, total time and a unique viewer count",
-        "narrow to one link with lnkdrp_get_share_stats and a shareId — per-link totals are not Pro-gated",
+        "narrow to one link with lnkdrp_get_share_stats and a shareId. Per-link totals are not Pro-gated",
       ];
     default:
       return [];
@@ -240,7 +240,7 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
         return new ToolError(
           "fetch_blocked",
           `lnkdrp could not fetch the source URL: ${errorText}. The URL must be a direct https link that returns the ` +
-            "PDF bytes with no sign-in — a Google Docs/Slides/Sheets or OneDrive page is a viewer, not a file. Use that " +
+            "PDF bytes with no sign-in. A Google Docs/Slides/Sheets or OneDrive page is a viewer, not a file. Use that " +
             "service's export or download link, or send the bytes yourself with fileBase64.",
           { status, details: { error: errorText } },
         );
@@ -293,7 +293,7 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
       return new ToolError(
         "too_large",
         `${message || "The file is too large."} That ceiling is on the document, so sending the same file a different ` +
-          "way will not get past it — shrink the PDF instead (fewer pages, or downsampled images) and try again.",
+          "way will not get past it. Shrink the PDF instead (fewer pages, or downsampled images) and try again.",
         { status },
       );
     case 415:

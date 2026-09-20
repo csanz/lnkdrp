@@ -35,7 +35,7 @@ export const metadata: Metadata = {
 const FEATURES: { title: string; body: string }[] = [
   {
     title: "Send a PDF as a link",
-    body: "Upload it, get a link, send it. Whoever you send it to opens it in the browser — no account, no download, no attachment bouncing off a mailbox limit.",
+    body: "Upload it, get a link, send it. Whoever you send it to opens it in the browser. No account, no download, no attachment bouncing off a mailbox limit.",
   },
   {
     title: "See who read it",
@@ -43,7 +43,7 @@ const FEATURES: { title: string; body: string }[] = [
   },
   {
     title: "A link per audience",
-    body: "One document, many links — one for each investor, client or firm — each with its own password, expiry, download rule and its own numbers.",
+    body: "One document, many links: one for each investor, client or firm. Every link has its own password, expiry, download rule and its own numbers.",
   },
   {
     title: "Data rooms",
@@ -55,7 +55,7 @@ const FEATURES: { title: string; body: string }[] = [
   },
   {
     title: "Built for agents",
-    body: "Claude Code, Cursor, Codex, or any MCP client can upload, share, set a password and read the numbers back — no seat, no separate API to learn.",
+    body: "Claude Code, Cursor, Codex, or any MCP client can upload, share, set a password and read the numbers back. No seat, no separate API to learn.",
   },
 ];
 
@@ -112,13 +112,13 @@ export default async function WaitlistPage() {
                 opening it up in small groups rather than all at once.
               </p>
               <p className="mt-4 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-                We are early, and the documents people put in here matter — a deck going to an investor, a data room
+                We are early, and the documents people put in here matter: a deck going to an investor, a data room
                 going to a buyer. We would rather be sure it all works than be fast about letting you in. It
                 won&rsquo;t be long.
               </p>
               <p className="mt-6 max-w-lg text-[13px] leading-6 text-white/45">
                 We&rsquo;ll email {email ? <span className="text-white/70">{email}</span> : "you"} the moment your
-                account opens. Nothing else — no drip, no newsletter.
+                account opens. Nothing else: no drip, no newsletter.
               </p>
             </div>
 

@@ -19,6 +19,7 @@ import { CheckIcon, PlusIcon } from "@heroicons/react/24/outline";
 
 import Link from "next/link";
 
+import AgentHintNotice from "@/components/AgentHintNotice";
 import Modal from "@/components/modals/Modal";
 import TagDot from "@/components/tags/TagDot";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
@@ -162,7 +163,7 @@ export default function TagPickerModal({
         Tags for this {targetKind === "doc" ? "document" : "project"}
       </div>
       <div className="mt-1 text-[13px] text-[var(--muted)]">
-        Tick the ones that apply, or type a new one. Tags are private to this workspace — recipients never see them.
+        Tick the ones that apply, or type a new one. Tags are private to this workspace. Recipients never see them.
       </div>
 
       <input
@@ -242,6 +243,9 @@ export default function TagPickerModal({
           </div>
         ) : null}
       </div>
+
+      {/* Below the list: the fast path through this modal is typing, and a note must not push the field down. */}
+      <AgentHintNotice hintKey="tags" className="mt-3" />
 
       <div className="mt-4 flex items-center justify-between gap-3">
         <span className="text-[12px] text-[var(--muted-2)]">

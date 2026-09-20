@@ -60,7 +60,7 @@ export default function LinksPageClient({ docId }: { docId: string }) {
               </div>
               <div className="mt-1 text-sm text-[var(--muted)]">
                 One link per audience, each with its own settings and its own stats. Labels are private
-                to you — recipients never see them.
+                to you. Recipients never see them.
               </div>
             </div>
             {/* Above the table, not in the header row: a button only this page has would push the

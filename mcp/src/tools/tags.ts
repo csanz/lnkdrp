@@ -60,7 +60,7 @@ function resolveTarget(
   // agent the server had a problem and invites a retry of a call that can only fail again. The
   // caller's mistake is a `validation` fault everywhere else on this surface.
   if (doc && project) {
-    throw new ToolError("validation", `Give either docId or projectId, not both — ${verb} acts on one thing at a time.`);
+    throw new ToolError("validation", `Give either docId or projectId, not both: ${verb} acts on one thing at a time.`);
   }
   if (!doc && !project) {
     throw new ToolError("validation", `Give a docId or a projectId to ${verb}.`);
@@ -98,7 +98,7 @@ export function registerTagTool(server: McpServer, ctx: ToolContext): void {
       title: "Tag a document or project",
       description:
         "Put one or more tags on a document (docId) or a project (projectId). Tags are given by name and created if the " +
-        "workspace has none by that name, so filing something takes one call. Names are matched loosely — case, accents " +
+        "workspace has none by that name, so filing something takes one call. Names are matched loosely: case, accents " +
         "and punctuation are folded, so 'Fundraising', 'fundraising' and ' FUNDRAISING ' are the same tag and you will " +
         "not make a duplicate by typing it differently. Safe to repeat: a tag already on the item stays as it is. " +
         "Returns every tag on the item afterwards, and which names were newly created. " +

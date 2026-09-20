@@ -216,7 +216,7 @@ function LinkMiniList({
                 <Link
                   href={href(r.shareId)}
                   className="min-w-0 truncate font-medium text-[var(--fg)] underline-offset-2 hover:underline"
-                  title={`${r.label} — see who opened it`}
+                  title={`${r.label}. See who opened it`}
                 >
                   {r.label}
                 </Link>

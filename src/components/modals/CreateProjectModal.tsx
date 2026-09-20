@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import AgentHintNotice from "@/components/AgentHintNotice";
 import Modal from "@/components/modals/Modal";
 import PlanLimitNotice from "@/components/PlanLimitNotice";
 import { useUpgradeModal } from "@/components/UpgradeModalProvider";
@@ -74,6 +75,9 @@ export default function CreateProjectModal({
         <div className="text-sm text-[var(--muted)]">
           Create a project to group docs. You can add docs to it later.
         </div>
+
+        {/* One notice at a time: at the cap, the plan limit is the thing that needs saying. */}
+        {showLimitNotice ? null : <AgentHintNotice hintKey="create_project" />}
 
         <div>
           <div className="text-xs font-semibold uppercase tracking-wide text-[var(--muted-2)]">Name</div>

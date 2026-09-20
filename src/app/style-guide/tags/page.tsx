@@ -142,23 +142,23 @@ function Column({
 export default function TagsPreviewPage() {
   return (
     <div className="px-6 py-8">
-      <h1 className="text-lg font-semibold tracking-tight text-[var(--fg)]">Tags in the left menu — preview</h1>
+      <h1 className="text-lg font-semibold tracking-tight text-[var(--fg)]">Tags in the left menu: preview</h1>
       <p className="mt-1 max-w-2xl text-[13px] leading-5 text-[var(--muted)]">
-        Fake names, fake tags, no data model — a design preview only, at the sidebar&apos;s real width (312px). Compare how each
+        Fake names, fake tags, no data model: a design preview only, at the sidebar&apos;s real width (312px). Compare how each
         variant holds up against short project names and long ones, then the dots together with a Tags section, which is what
         makes a coloured dot legible.
       </p>
 
       <div className="mt-8 flex flex-wrap gap-10">
         <Column title="Today" note="No tags" rows={SHORT} variant="none" />
-        <Column title="Variant A — pill" note="Reads instantly, costs name width" rows={SHORT} variant="pill" />
-        <Column title="Variant B — dots" note="Never truncates, needs the section below" rows={SHORT} variant="dots" withTagsSection />
+        <Column title="Variant A: pill" note="Reads instantly, costs name width" rows={SHORT} variant="pill" />
+        <Column title="Variant B: dots" note="Never truncates, needs the section below" rows={SHORT} variant="dots" withTagsSection />
       </div>
 
       <h2 className="mt-12 text-[13px] font-semibold text-[var(--fg)]">The same two, with long project names</h2>
       <div className="mt-4 flex flex-wrap gap-10">
-        <Column title="Variant A — pill" note="Name truncates earlier with every tag" rows={LONG} variant="pill" />
-        <Column title="Variant B — dots" note="Name keeps the space it has today" rows={LONG} variant="dots" />
+        <Column title="Variant A: pill" note="Name truncates earlier with every tag" rows={LONG} variant="pill" />
+        <Column title="Variant B: dots" note="Name keeps the space it has today" rows={LONG} variant="dots" />
       </div>
     </div>
   );
