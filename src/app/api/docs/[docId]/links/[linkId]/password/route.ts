@@ -52,9 +52,27 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       );
     }
 
+    // `includeArchived: true` so a deleted link can be told apart from an id that never existed —
+    // the two deserve different answers — and then refused below.
     const link = (await listShareLinks({ orgId, docId: docObjectId, includeArchived: true })).find((l) => String(l._id) === linkId);
     if (!link) {
       return applyTempUserHeaders(NextResponse.json({ error: "Link not found." }, { status: 404 }), actor);
+    }
+
+    /**
+     * A deleted link keeps no readable secret.
+     *
+     * Deleting soft-archives the row, and this route used to read straight through that: the link
+     * was gone from the links table, gone from search, and refused by PATCH, while its plaintext
+     * password was still retrievable by id. "Deleted" has to mean the same thing everywhere,
+     * especially for the one endpoint that hands back a secret — otherwise revoking a link leaves
+     * its password quietly readable by anyone who kept the id.
+     */
+    if (link.archivedAt) {
+      return applyTempUserHeaders(
+        NextResponse.json({ error: "That link was deleted, so its password is no longer available." }, { status: 404 }),
+        actor,
+      );
     }
 
     const enabled = Boolean(link.passwordHash);

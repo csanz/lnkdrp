@@ -150,7 +150,14 @@ export async function GET(request: Request) {
       // `DOC_LINK_FILTER`: `sharelinks` also holds project links, whose `docId` is null. A project
       // slug matching the regex would burn one of the 50 slots on a row that can never join to a
       // document — document search must only ever see document links.
-      const linkHits = await ShareLinkModel.find({ shareId: rx, orgId, ...DOC_LINK_FILTER })
+      //
+      // `archivedAt: null` because DELETE on a link soft-archives it rather than removing the row.
+      // Without this a deleted slug still resolved its document, and every caller that starts from
+      // a slug then reported a *different*, live link's state under the dead one: `get_share`
+      // answered with the default link marked active, and `get_share_stats` returned a perLink
+      // success full of zeroes — indistinguishable from a link nobody has opened yet. An agent
+      // asked "how is the link I revoked doing?" was told "no traffic", confidently and wrongly.
+      const linkHits = await ShareLinkModel.find({ shareId: rx, orgId, archivedAt: null, ...DOC_LINK_FILTER })
         .select({ docId: 1 })
         .limit(50)
         .lean<Array<{ docId: Types.ObjectId }>>();
