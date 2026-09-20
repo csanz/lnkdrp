@@ -72,12 +72,32 @@ Each `ShareVisit` contains:
 - Route: `POST /api/share/:shareId/stats`
 - File: `src/app/api/share/[shareId]/stats/route.ts`
 
-The share viewer (`src/components/PdfJsViewer.tsx`) posts best-effort events:
+The share viewer (`src/components/PdfJsViewer.tsx`) posts best-effort events. What it sends is
+decided by `src/lib/share/readingClock.ts`, a pure state machine with its own tests; the viewer
+only feeds it browser events and posts what it flushes.
 
 - `pageNumber` only (records “page seen”)
-- `durationMs` (+ optionally `pageNumber`) (increments time totals)
+- `durationMs` — the **visit clock**, how long the tab was open on this document. Feeds
+  `timeSpentMs`.
+- `pageDurationMs` (+ `pageNumber`) — the **page clock**, time on that one page. Feeds
+  `pageTimeMsByPage`.
 - `visitId` (per-tab visit id, sessionStorage) attaches the event to a `ShareVisit`
-- `enteredAtMs` + `leftAtMs` (best-effort timing bounds) enables recording page sequence events for a visit
+- `enteredAtMs` + `leftAtMs` — timing bounds, and **the exit signal**: their presence is what says
+  the reader has *left* that page, which is what promotes the post to a `pageEvents` segment, a
+  `pageVisitCountByPage` revisit tick, and a `toPage` the live metrics pages read.
+
+Two rules that are easy to break and were each broken once:
+
+- **The two clocks are separate counters over the same seconds.** Time on page 4 is also time in
+  the visit, so one number can never feed both — `visitTimeIncrement` reads only `durationMs` and
+  `pageTimeIncrement` only `pageDurationMs` (`src/lib/analytics/shareTiming.ts`). Their sum is a
+  ceiling, not a total: reported page time must never exceed reported visit time, which is the
+  property `scripts/verify-share-analytics.ts` and the clock's fuzz test both assert.
+- **A heartbeat sends page time with no bounds.** The 30-second heartbeat reports the page the
+  reader is *still on*, because a document with one page never turns a page and so recorded
+  nothing until the tab closed. It carries `pageDurationMs` and omits `enteredAtMs`/`leftAtMs`, so
+  the server moves the clock and writes no phantom exit. The clock keeps a `pageReportedMs` ledger
+  so the eventual exit flush sends only what is left.
 
 Server behavior:
 

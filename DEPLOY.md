@@ -770,7 +770,7 @@ production env file:
 | 6 | `npx tsx --env-file=prod.env scripts/docchange-from-upload-repair.ts`, then `--apply` | Old version-change rows pointed "from" at the new upload |
 | 7 | `npx tsx --env-file=prod.env scripts/credit-balances-reconcile.ts`, then `--apply` | Team workspaces seeded with Free starter credits; Free workspaces missing the 15-a-day cap. Add `--reset-compare-tier` only if no Free user has chosen a compare tier on purpose: it moves every Free row stored as "standard" back to the plan default (a replacement cost 6 instead of 3) |
 | 8 | `npx tsx --env-file=prod.env scripts/ai-ask-repair.ts`, then `--apply` | Stored summaries with an operating cost taken as the funding ask, and invented "Funding ask"/milestone metrics |
-| 9 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Must print "All share-analytics invariants hold" (see 9.1) |
+| 9 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Read-only. It prints "All share-analytics invariants hold" only on a database with no data rooms; otherwise expect one `0 recipient rows exist` line per project link, which is the script's blind spot and not drift. What must be zero is `pageTimeOverruns` (9.1) |
 
 `scripts/request-docs-projectids-backfill.mjs` and `scripts/doc-received-via-request-backfill.mjs`
 repair Requests data. Requests are hidden at launch; run them (same form, dry run then `--apply`)
@@ -1249,7 +1249,9 @@ Run in this order; each step depends on the previous.
     **Turn off these emails** in it on a phone or a signed-out browser: the page says view emails
     are off, and Preferences now reads Off.
 12. Recreate `prod.env`, run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts`
-    against production (read-only), and delete the file again.
+    against production (read-only), and delete the file again. Read the output against 9.1: the
+    per-link and per-document lines are noise on any workspace with a data room, and the line that
+    must be clean is the page-time one.
 13. Revoke the test key from `/connect`; the sidebar returns to Not connected.
 14. Vercel → Settings → Cron Jobs lists 10 jobs. Prove the scheduler, not your step 9 hand runs.
     An hour after the deploy, in Vercel → Settings → Cron Jobs → View Logs, each of the five jobs
@@ -1349,8 +1351,25 @@ Run in this order; each step depends on the previous.
 
 Run `npx tsx --env-file=.env.<target> scripts/verify-share-analytics.ts` against the target
 database before and after any release that touches the share analytics. `npm run verify:analytics`
-always reads `.env.local`, so use it only for the local database. The check is read-only, safe
-against production, and exits non-zero, so it also works as a CI step.
+always reads `.env.local`, so use it only for the local database. The check is read-only and safe
+against production.
+
+> **It does not know about project links, so it cannot be a CI gate yet (2026-09-20).**
+> A project link has `docId: null` — its rows belong to the room, one per (viewer, document), and
+> carry the *document's* `docId`. The per-link check recomputes from document-scoped rows, so for
+> every data-room link it finds nothing and reports the link as completely drifted:
+> `ShareLink.viewCount is 10 but 0 recipient rows exist`, plus the `lastViewedAt` and
+> `downloadCount` variants. The document rollups fail the same way and for the same reason
+> (`people 0 but a fresh viewer-count aggregate says 5`): a read through a project link belongs to
+> the project, so the document's stored figures exclude it while the script's recomputation does
+> not. Confirmed on the local database: three project links reported `0 recipient rows` while 14,
+> 5 and 2 rows respectively existed, all with `isOwnerPreview: false`.
+>
+> `analytics-reconcile` is the one telling the truth here — it knows the difference and reports
+> `drift: []` on exactly these links. **Do not "repair" toward the script.** Until it learns the
+> project scope (`src/lib/analytics/docScope.ts`), read its output by hand and ignore the
+> project-link rows; the property worth the trip is the first one in the table below, which is
+> scope-independent and was clean (`pageTimeOverruns: 0`) through the reading-clock change.
 
 It asserts four properties, each of which failed silently in production shape at least once:
 
@@ -1363,11 +1382,27 @@ It asserts four properties, each of which failed silently in production shape at
 
 Counter drift is repairable and the nightly `analytics-reconcile` job fixes it on its own; you can
 force it with `npx tsx scripts/cron/cron.analytics-reconcile.ts --target=https://lnkdrp.com` (with
-`CRON_SECRET` exported, 3).
+`CRON_SECRET` exported, 3). If the script still reports link drift after a forced run that returned
+`linksReconciled: 0` and `drift: []`, it is the scope mismatch above and not drift at all.
 A **page-time overrun is not repairable and is never repaired automatically**: it means the ingest
 double counted, and overwriting the rows would hide the bug instead of fixing it. The job reports
-those in `CronHealth.lastResult` and marks itself `error` so the run is visible, which is the
-signal to look at `src/lib/analytics/shareTiming.ts` and the flush logic in `PdfJsViewer`.
+those in `CronHealth.lastResult` and marks itself `error` so the run is visible.
+
+Three files, in the order to read them. `src/lib/share/readingClock.ts` is the flush logic — a
+pure state machine with its own unit tests, including a fuzz test whose invariant is exactly the
+property above: reported page time never exceeds reported visit time.
+`src/lib/analytics/shareTiming.ts` turns one post into the two increments and holds the rule that
+timing *bounds* (`enteredAtMs` / `leftAtMs`) mean the reader **left** the page, which is what
+promotes a post to a `pageEvents` segment and a revisit tick. `PdfJsViewer` only feeds the clock
+browser events and posts what it flushes; there are no timing rules left in it.
+
+The clock reports the page it is **still on** every 30-second heartbeat, not only on a page turn —
+a document with one page has nowhere to turn to and recorded nothing at all until the tab closed.
+A heartbeat's post therefore carries `pageDurationMs` with **no** bounds, and the clock keeps a
+`pageReportedMs` ledger so the exit flush sends only what has not been sent yet. That ledger is
+the thing to suspect first if this property ever fails again: reset it in one place and not
+another and the page's whole dwell is sent twice. A heartbeat that starts arriving *with* bounds
+is the other tell — every one of those writes a page exit that never happened.
 
 The job rescans every settled row every night, so one overrun keeps `analytics-reconcile` at
 `error`, and `/api/monitor/crons` at 503, every night until the rows are handled. Until then the
@@ -1538,7 +1573,8 @@ monitor is in 12.
   the recipient's address, so treat invite failures in the logs as containing personal data.
 - **Backups:** set up in 4.1 step 4. Restore: follow 10 (Database) — crons off first, point-in-time
   restore to a new cluster, allowlist it as in 4.1, check it with
-  `npx tsx --env-file=.env.restored scripts/verify-share-analytics.ts`, point `MONGODB_URI` at it
+  `npx tsx --env-file=.env.restored scripts/verify-share-analytics.ts` (reading it as 9.1 says —
+  project links report false drift), point `MONGODB_URI` at it
   on the web app and the realtime server and redeploy both, replay Stripe events and reconcile the
   meter before crons go back on. Do one
   test restore before launch. Vercel Blob has no backup and is not in the Atlas restore. Ordinary
@@ -1655,12 +1691,28 @@ monitor is in 12.
   address counts as a separate IP). Decide on an abuse budget or tighter rate limits before relying
   on view counts for billing or reports. The same endpoint accepts any `viewerEmail`/`viewerName`
   without verification, so a view can be attributed to someone who never opened the link (it shows
-  in the activity feed and viewer analytics). Treat volunteered identities as unverified, in the UI
-  copy and before building anything (alerts, CRM sync, billing) on them.
-- **Link passwords can be guessed:** 10 tries per 5 minutes per IP per link, no per-link cap, no
-  minimum length (by decision), and every IPv6 address counts as a separate IP. Until the code caps
-  attempts per link and buckets IPv6 by /64 (`src/app/api/share/[shareId]/unlock/route.ts`,
-  `src/lib/http/rateLimit.ts`), add a tight Firewall rule on `POST /api/share/*/unlock`.
+  in the activity feed and viewer analytics). Nothing about that has changed; treat volunteered
+  identities as unverified before building anything (alerts, CRM sync, billing) on them.
+  **Partly answered in the UI, and only partly.** A device-keyed row that carries a name can only
+  have got it by someone typing it in, so the reader page marks it: `IntroducedBadge`
+  ("Introduced themselves", tooltip "Typed in by them, not verified") renders in
+  `src/components/metrics/ViewerProfile.tsx` and nowhere else. Recent-visitor lists, the workspace
+  card and the activity feed still print such a name exactly as they print a signed-in reader's,
+  with no way to tell the claim from the fact. Either mark it in those three places too, or decide
+  the reader page is the only surface where the distinction has to be visible — but decide, rather
+  than leaving one marked surface to imply the others were checked.
+- **Link passwords: the per-link cap landed; IPv6 is still the hole.** Three buckets now apply in
+  `src/app/api/share/[shareId]/unlock/route.ts`: 10 tries per IP per link / 5 min, **100 tries per
+  link across every source address / 15 min**, and 60 tries per IP across all links / 5 min. The
+  middle one is the bound an attacker cannot buy their way out of with more proxies, and it is
+  what stands in for a password length rule (`SHARE_PASSWORD_MIN = 1`, a settled product
+  decision). Note the trade it makes: exhausting it locks that link for everyone until the window
+  ends, so a sustained attack on one link is a denial of service against its real audience — the
+  ceiling is set an order of magnitude above the busiest real send for that reason.
+  Still open: `normalizeIp` in `src/lib/http/rateLimit.ts` keys on the whole address, so every
+  IPv6 address in a /64 — one customer allocation — is a separate bucket and gets its own 10
+  tries. Until it buckets IPv6 by /64, a Firewall rule on `POST /api/share/*/unlock` is what
+  covers that.
 - **Still to do in infrastructure:** the app now caps temp-workspace creation and API-key traffic
   itself (11, Rate limits), but every refused request has still woken a function and read Mongo.
   Add a Vercel Firewall rate-limit rule on `/api/*` per IP so abuse is refused before it costs
@@ -1726,6 +1778,10 @@ monitor is in 12.
   - `db/migration/`: fix the comment in `20260913_0001_sharelinks_indexes.mjs` that says production
     runs with `autoIndex` off (it is on). Optionally make `db/migration/run.mjs` log the redacted
     host and database it connected to.
+  - `scripts/verify-share-analytics.ts`: teach the per-link and per-document checks the project
+    scope, so a workspace with a data room does not fail every run (9.1). Until then it cannot be
+    the required status check the gate workflow below wants, because it is permanently red and a
+    real regression would be one line among the noise.
   - Cron monitoring: `src/app/api/cron/notification-emails/route.ts` still records `ok` when
     `sendFailures` > 0; record `error` as the other jobs now do. In `analytics-reconcile`, report
     overruns only on rows newer than the last run (or exclude acknowledged rows) and stream with a
