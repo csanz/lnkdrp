@@ -7,38 +7,14 @@
  */
 import { NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { isBlobStoreHost } from "@/lib/blob/serverClientUploadRoute";
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/lib/models/Project";
 import { DocModel } from "@/lib/models/Doc";
+import { fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 
 export const runtime = "nodejs";
 
-/** Vercel Blob's public CDN, and the bare host on rows written before the store id was pinned. */
-const VERCEL_BLOB_HOST = "blob.vercel-storage.com";
 
-/**
- * Which stored `Doc.blobUrl` this route is willing to go and *dereference*. The twin of the same
- * function on `/s/:shareId/pdf`, which carries the full rationale; the short version is that this
- * route streams `upstream.body` back to whoever holds the capability token, `blobUrl` was
- * owner-supplied text until recently, and rows poisoned while it was still patchable are a live
- * arbitrary-outbound-GET-with-body-return until the *read* side refuses them. It matters more here
- * than anywhere: the documents behind this token were uploaded by third parties, so the person who
- * chose the bytes and the person reading them are never the same. `isBlobStoreHost` is the write
- * path's own authority, reused rather than restated so the two cannot drift.
- */
-function blobFetchUrl(candidate: string): URL | null {
-  let url: URL;
-  try {
-    url = new URL(candidate);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:") return null;
-  const host = url.hostname.toLowerCase();
-  if (isBlobStoreHost(host)) return url;
-  return host === VERCEL_BLOB_HOST || host.endsWith(`.${VERCEL_BLOB_HOST}`) ? url : null;
-}
 
 function isObjectId(id: string) {
   return Types.ObjectId.isValid(id);
@@ -111,14 +87,12 @@ export async function GET(
   // Beside the empty check so the refusal is the document's own 404, not a 500 thrown out of this
   // handler by a `fetch` of a host that does not resolve. The owner sees "PDF not available" on
   // that submission until it is re-uploaded through the validated path.
-  const pdfUrl = blobFetchUrl(blobUrl);
-  if (!pdfUrl) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
-
   const range = request.headers.get("range");
-  const upstream = await fetch(pdfUrl, {
-    headers: range ? { range } : undefined,
-    cache: "no-store",
-  });
+  // `fetchStoredBlob` applies the allowlist to every hop, so a stored URL that redirects off the
+  // store is refused rather than followed. It returns null for both "not ours" and "led somewhere
+  // that is not ours", which are the same answer from here.
+  const upstream = await fetchStoredBlob(blobUrl, { headers: range ? { range } : undefined });
+  if (!upstream) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
   const headers = new Headers();
   // Pinned, not copied. These routes serve one thing — the stored PDF — so echoing the upstream

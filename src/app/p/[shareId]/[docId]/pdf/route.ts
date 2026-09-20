@@ -21,7 +21,6 @@ import { NextResponse } from "next/server";
 import { Types } from "mongoose";
 import crypto from "node:crypto";
 
-import { isBlobStoreHost } from "@/lib/blob/serverClientUploadRoute";
 import { recordActivity } from "@/lib/activity/log";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
@@ -33,6 +32,7 @@ import { findProjectDocument, projectLinkPasswordEnabled, projectViewerKey } fro
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { clientIpFromRequest, rateLimit } from "@/lib/http/rateLimit";
 import { tryResolveAuthUserId } from "@/lib/gating/actor";
+import { blobFetchUrl, fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 
 export const runtime = "nodejs";
 
@@ -41,29 +41,7 @@ const DOWNLOAD_TRACK_PER_LINK_LIMIT = 30;
 const DOWNLOAD_TRACK_PER_IP_LIMIT = 120;
 const DOWNLOAD_TRACK_WINDOW_MS = 60_000;
 
-/** Vercel Blob's public CDN, and the bare host on rows written before the store id was pinned. */
-const VERCEL_BLOB_HOST = "blob.vercel-storage.com";
 
-/**
- * Which stored `Doc.blobUrl` this route is willing to go and *dereference*. The twin of the same
- * function on `/s/:shareId/pdf`, which carries the full rationale; the short version is that this
- * route streams `upstream.body` back to an unauthenticated caller, `blobUrl` was owner-supplied
- * text until recently, and rows poisoned while it was still patchable are a live
- * arbitrary-outbound-GET-with-body-return until the *read* side refuses them. `isBlobStoreHost` is
- * the write path's own authority, reused rather than restated so the two cannot drift.
- */
-function blobFetchUrl(candidate: string): URL | null {
-  let url: URL;
-  try {
-    url = new URL(candidate);
-  } catch {
-    return null;
-  }
-  if (url.protocol !== "https:") return null;
-  const host = url.hostname.toLowerCase();
-  if (isBlobStoreHost(host)) return url;
-  return host === VERCEL_BLOB_HOST || host.endsWith(`.${VERCEL_BLOB_HOST}`) ? url : null;
-}
 
 function utcDayKey(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -376,7 +354,11 @@ export async function GET(request: Request, ctx: { params: Promise<{ shareId: st
 
   // Range passes through untouched: pdf.js depends on it, and the limiter above only decided whether
   // this chunk counted, never whether it is served.
-  const upstream = await fetch(pdfUrl, { headers: rangeHeader ? { range: rangeHeader } : undefined, cache: "no-store" });
+  // Not a plain `fetch`: `fetchStoredBlob` re-applies the allowlist to every redirect, so a stored
+  // URL that answers 302 to somewhere off the store is refused rather than followed. The early
+  // `blobFetchUrl` check above only ever saw the first hop.
+  const upstream = await fetchStoredBlob(pdfUrl.toString(), { headers: rangeHeader ? { range: rangeHeader } : undefined });
+  if (!upstream) return NextResponse.json({ error: "PDF not available" }, { status: 404 });
 
   const headers = new Headers();
   // Pinned, not copied. These routes serve one thing — the stored PDF — so echoing the upstream
