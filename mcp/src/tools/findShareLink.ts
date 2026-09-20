@@ -20,6 +20,7 @@ import { z } from "zod";
 import type { ToolContext } from "../context";
 import { handleTool } from "../errors";
 import { SAFETY_TAIL } from "./shared";
+import { untrustedOrNull, UNTRUSTED_LIMITS } from "../untrusted";
 
 export const findShareLinkInputShape = {
   query: z
@@ -62,9 +63,14 @@ export function registerFindShareLinkTool(server: McpServer, ctx: ToolContext): 
           // has no docId: handing back the /s/ form gave the human a URL that resolves to nothing.
           kind: h.kind,
           docId: h.docId,
-          docTitle: h.docTitle,
+          // Wrapped like every other document-derived string in the tool surface. This was the one
+          // place a PDF's own title reached an agent bare: a title is attacker-supplied content,
+          // since anyone who can get a file shared into a workspace chooses it.
+          docTitle: untrustedOrNull(h.docTitle, "document", UNTRUSTED_LIMITS.title),
           docShareId: h.docShareId,
-          ...(h.kind === "project" ? { projectId: h.projectId, projectName: h.projectName } : {}),
+          ...(h.kind === "project"
+            ? { projectId: h.projectId, projectName: untrustedOrNull(h.projectName, "document", UNTRUSTED_LIMITS.short) }
+            : {}),
           linkId: h.linkId,
           shareId: h.shareId,
           shareUrl: h.kind === "project" ? ctx.api.projectPublicUrl(h.shareId) : ctx.api.shareUrl(h.shareId),
