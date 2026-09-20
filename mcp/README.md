@@ -43,6 +43,53 @@ claude mcp add --transport http lnkdrp http://localhost:8787/mcp --header "Autho
 { "mcpServers": { "lnkdrp": { "url": "http://localhost:8787/mcp", "headers": { "Authorization": "Bearer lnk_…" } } } }
 ```
 
+## Which clients can reach the hosted server
+
+Authentication here is a raw API key in an `Authorization: Bearer` header. The server answers 401
+with a `WWW-Authenticate` pointing at `/.well-known/oauth-protected-resource`, and that document
+advertises `authorization_servers: []` — there is no OAuth authorization server, because OAuth is
+not implemented yet. That one fact decides which clients can connect:
+
+- **Clients where a human pastes the key into config work** — Claude Code, Cursor, Codex, Gemini
+  CLI, Grok, Cowork, and anything else that lets you set a request header. These are what `/connect`
+  generates snippets for.
+- **Clients that expect to authenticate by OAuth do not.** A client that follows the MCP
+  authorization spec discovers the resource metadata, finds no authorization server in it, and has
+  nothing to send the user to. This is the constraint to check first when a hosted client "cannot
+  connect" — it is not a networking problem, and no amount of retrying fixes it.
+
+Supporting those clients means implementing OAuth 2.1 on this server (authorization server
+metadata, dynamic client registration, the code flow), issuing tokens that map to the same
+workspace an `lnk_…` key maps to today. That is a feature, not a configuration change.
+
+## Running locally against production
+
+The hosted server at `mcp.lnkdrp.com` cannot accept `filePath`, and that is deliberate rather than a
+gap: it reads the path from *its own* disk, so a path from your laptop either names nothing there or
+names a file belonging to that host (see `sharePdf.ts`). Uploading a local PDF through the hosted
+server means `sourceUrl` or `fileBase64`.
+
+When you want `filePath` — the practical way to share a 20MB deck sitting on your machine — run the
+server yourself against the production API. It is the same binary, the same key and the same
+workspace; only the process location changes.
+
+```sh
+# HTTP, alongside the hosted one
+LNKDRP_API_URL=https://lnkdrp.com LNKDRP_ALLOW_LOCAL_FILES=1 npm run mcp
+
+# or stdio, for a client that launches the server itself
+LNKDRP_API_URL=https://lnkdrp.com LNKDRP_ALLOW_LOCAL_FILES=1 LNKDRP_API_KEY=lnk_… npm run mcp -- --stdio
+```
+
+`LNKDRP_ALLOW_LOCAL_FILES=1` is required and is the whole point: without it the server refuses
+`filePath` whenever its API URL is not localhost, which is exactly the case here. Set it only on a
+server running on the caller's own machine — on a shared host it lets any connected agent read that
+host's filesystem.
+
+Two things follow from running a second server: it has its own in-memory session list and its own
+24h idempotency cache, so an `idempotencyKey` used against the hosted server is unknown to this one,
+and a retry that crosses between them creates a second document rather than replaying the first.
+
 ## Environment
 
 | Variable | Default | Purpose |
