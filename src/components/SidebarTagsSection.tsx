@@ -24,6 +24,15 @@ import type { TagColorKey } from "@/lib/tags/palette";
 type Tag = { id: string; name: string; slug: string; color: TagColorKey; count?: number };
 
 /**
+ * How many tags the sidebar lists before handing over to the manage screen.
+ *
+ * Enough that a workspace with a normal number of tags sees all of them and never meets the
+ * overflow link; small enough that one with thousands does not get thousands of links in a column
+ * 240 pixels wide.
+ */
+const SIDEBAR_TAG_LIMIT = 20;
+
+/**
  * Closed by default, and nothing is remembered between loads.
  *
  * It opened itself for a while, because a header with a count and nothing under it read as a
@@ -50,6 +59,7 @@ export default function SidebarTagsSection() {
   const pathname = usePathname() ?? "";
   const onTagPage = pathname.startsWith("/tag/");
   const [tags, setTags] = useState<Tag[] | null>(null);
+  const [total, setTotal] = useState(0);
   /** `null` until you say otherwise in this visit; the default depends on how many tags there are. */
   const [collapsedPref, setCollapsedPref] = useState<boolean | null>(null);
 
@@ -63,17 +73,30 @@ export default function SidebarTagsSection() {
     }
   }, []);
 
+  /**
+   * The first page, not the workspace.
+   *
+   * This asked for every tag and rendered every tag, which is fine at a dozen and absurd at three
+   * thousand: a 240px column holding three thousand links, and the whole list down the wire on
+   * every load to build it. The header already carries the real total, and the section's own job
+   * is to be somewhere to go rather than something to read — so it shows a page and points at the
+   * manage screen for the rest.
+   */
   const load = useCallback(async () => {
     try {
-      const res = await fetchWithTempUser("/api/tags", { cache: "no-store" });
+      const res = await fetchWithTempUser(`/api/tags?page=1&limit=${SIDEBAR_TAG_LIMIT}`, { cache: "no-store" });
       if (!res.ok) {
         setTags([]);
+        setTotal(0);
         return;
       }
-      const json = (await res.json()) as { tags?: Tag[] };
-      setTags(Array.isArray(json.tags) ? json.tags : []);
+      const json = (await res.json()) as { tags?: Tag[]; total?: number };
+      const rows = Array.isArray(json.tags) ? json.tags : [];
+      setTags(rows);
+      setTotal(typeof json.total === "number" ? json.total : rows.length);
     } catch {
       setTags([]);
+      setTotal(0);
     }
   }, []);
 
@@ -126,6 +149,7 @@ export default function SidebarTagsSection() {
 
   // Nothing at all until there is a tag: an empty section is a permanent question nobody asked.
   if (!tags || !tags.length) return null;
+  const hidden = Math.max(0, total - tags.length);
 
   // Open only when you opened it, or when you are on a tag page — where the list is the context.
   const open = onTagPage || collapsedPref === false;
@@ -145,7 +169,7 @@ export default function SidebarTagsSection() {
         >
           <span>Tags</span>
           {/* The count stays in the header for when the list is closed. */}
-          <span className="font-semibold text-[var(--muted-2)]/70">{tags.length}</span>
+          <span className="font-semibold text-[var(--muted-2)]/70">{total || tags.length}</span>
         </button>
         {/* The way to /tags: rename, recolour, merge, delete. Always visible, not revealed on
             hover — this section is collapsed by default, so a hidden control meant the answer to
@@ -194,6 +218,18 @@ export default function SidebarTagsSection() {
               </li>
             );
           })}
+
+          {hidden > 0 ? (
+            <li className="min-w-0">
+              <Link
+                href="/tags"
+                className="flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] text-[var(--muted-2)] transition-colors hover:bg-[var(--sidebar-hover)] hover:text-[var(--fg)]"
+                title="Manage every tag in this workspace"
+              >
+                <span className="min-w-0 flex-1 truncate">{hidden} more…</span>
+              </Link>
+            </li>
+          ) : null}
         </ul>
       ) : null}
 
