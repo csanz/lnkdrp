@@ -19,6 +19,7 @@ import { PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 import TagDot from "@/components/tags/TagDot";
 import Modal from "@/components/modals/Modal";
 import DataTable from "@/components/ui/DataTable";
+import OverflowMenu from "@/components/ui/OverflowMenu";
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 import { TAG_COLOR_KEYS, TAG_COLORS, type TagColorKey } from "@/lib/tags/palette";
 
@@ -45,8 +46,6 @@ export default function TagsManager() {
   const [creating, setCreating] = useState(false);
   const [filter, setFilter] = useState("");
   const [page, setPage] = useState(1);
-  /** Which row has its palette open; only one at a time, so the table does not grow six rows at once. */
-  const [colorFor, setColorFor] = useState("");
   const [adding, setAdding] = useState(false);
   const [mergeQuery, setMergeQuery] = useState("");
 
@@ -396,22 +395,48 @@ export default function TagsManager() {
             const busy = busyId === tag.id;
             const editing = editingId === tag.id;
             const merging = mergeFrom?.id === tag.id;
-            const picking = colorFor === tag.id;
             const open = merging || confirmDelete?.id === tag.id;
             return (
               <Fragment key={tag.id}>
                 <tr className={`group border-t border-[var(--divider)] ${open ? "" : "hover:bg-[var(--panel-hover)]"}`}>
                   <td className="px-3 py-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      aria-label={`Change colour of ${tag.name}`}
-                      title="Change colour"
-                      onClick={() => setColorFor(picking ? "" : tag.id)}
-                      className="grid h-7 w-7 place-items-center rounded-full ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--panel-hover)] hover:ring-[var(--fg)] disabled:opacity-40"
+                    {/* A picker anchored to its own swatch. It used to open as an extra table row,
+                        which read as belonging to the tag underneath it and shoved every row below
+                        down the page. Portalled, because the table clips its own overflow. */}
+                    <OverflowMenu
+                      label={`Change colour of ${tag.name}`}
+                      align="start"
+                      panelWidth={212}
+                      triggerClassName="grid h-7 w-7 place-items-center rounded-full ring-1 ring-[var(--border)] transition-colors hover:bg-[var(--panel-hover)] hover:ring-[var(--fg)]"
+                      trigger={<TagDot color={tag.color} size={11} />}
                     >
-                      <TagDot color={tag.color} size={11} />
-                    </button>
+                      {(close) => (
+                        <div className="flex items-center gap-1">
+                          {TAG_COLOR_KEYS.map((key) => (
+                            <button
+                              key={key}
+                              type="button"
+                              disabled={busy}
+                              aria-label={TAG_COLORS[key].label}
+                              title={TAG_COLORS[key].label}
+                              onClick={() => {
+                                close();
+                                if (key === tag.color) return;
+                                void patch(tag, { color: key });
+                              }}
+                              className={[
+                                "grid h-8 w-8 place-items-center rounded-full transition-colors",
+                                key === tag.color
+                                  ? "ring-1 ring-[var(--fg)]"
+                                  : "hover:bg-[var(--panel-hover)]",
+                              ].join(" ")}
+                            >
+                              <TagDot color={key} size={12} />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </OverflowMenu>
                   </td>
 
                   <td className="px-3 py-2">
@@ -496,36 +521,6 @@ export default function TagsManager() {
                     </div>
                   </td>
                 </tr>
-
-                {/* The palette, opened from the dot rather than shown on every row at all times. */}
-                {picking ? (
-                  <tr className="bg-[var(--panel)]">
-                    <td colSpan={4} className="px-3 pb-2.5 pt-0">
-                      <div className="flex items-center gap-1.5">
-                        {TAG_COLOR_KEYS.map((key) => (
-                          <button
-                            key={key}
-                            type="button"
-                            disabled={busy}
-                            aria-label={`${TAG_COLORS[key].label} for ${tag.name}`}
-                            title={TAG_COLORS[key].label}
-                            onClick={() => {
-                              setColorFor("");
-                              if (key === tag.color) return;
-                              void patch(tag, { color: key });
-                            }}
-                            className={[
-                              "grid h-6 w-6 place-items-center rounded-full transition-colors",
-                              key === tag.color ? "ring-1 ring-[var(--fg)]" : "hover:bg-[var(--panel-hover)]",
-                            ].join(" ")}
-                          >
-                            <TagDot color={key} size={10} />
-                          </button>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
 
                 {confirmDelete?.id === tag.id ? (
                   <tr className="bg-[var(--panel)]">
