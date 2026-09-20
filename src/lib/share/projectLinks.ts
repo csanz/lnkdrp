@@ -494,7 +494,7 @@ export async function updateProjectLink(input: {
   settings: ShareLinkSettingsInput;
   /** Internal: set by the project-level share switch so it can tell its own disables from the sender's. */
   viaProjectSwitch?: boolean;
-}): Promise<{ link: ShareLink }> {
+}): Promise<{ link: ShareLink; restored?: ShareLink[] }> {
   await connectMongo();
   const link = await ShareLinkModel.findOne({
     _id: oid(input.linkId),
@@ -519,8 +519,46 @@ export async function updateProjectLink(input: {
   }
   if (Object.keys(set).length === 0) return { link };
   const updated = await ShareLinkModel.findOneAndUpdate({ _id: link._id }, { $set: set }, { new: true }).lean<ShareLink>();
+
+  /**
+   * Enabling one link republishes the page, so it has to restore what the page switch took down.
+   *
+   * `Project.shareEnabled` is derived — "this project has at least one active link"
+   * (`syncProjectShareState`) — so enabling any single link turns the public page back on. There
+   * were then two routes to a live page and only one of them put the other links back: the explicit
+   * `PATCH /api/projects/:id { shareEnabled: true }` calls `setAllProjectLinksEnabled`, which
+   * restores every link marked `disabledByDocSwitch`, while this path restored nothing.
+   *
+   * The result was a data room that came back up with most of its recipients still locked out,
+   * silently and permanently: the links were disabled only because the page had been switched off,
+   * the page was on again, and nothing would ever clear the marker. The owner saw a working room;
+   * two of three recipients saw a dead link.
+   *
+   * Restoring only marked links is what keeps this safe. A link the sender revoked on its own is
+   * not marked, so it stays revoked — the distinction the marker exists for.
+   */
+  const restored: ShareLink[] = [];
+  if (set.enabled === true && !input.viaProjectSwitch) {
+    const siblings = await ShareLinkModel.find({
+      projectId: link.projectId,
+      ...PROJECT_LINK_FILTER,
+      archivedAt: null,
+      _id: { $ne: link._id },
+      enabled: false,
+      disabledByDocSwitch: true,
+    }).lean<ShareLink[]>();
+    for (const sib of siblings) {
+      const back = await ShareLinkModel.findOneAndUpdate(
+        { _id: sib._id },
+        { $set: { enabled: true, disabledByDocSwitch: false } },
+        { new: true },
+      ).lean<ShareLink>();
+      if (back) restored.push(back);
+    }
+  }
+
   await syncProjectShareState(link.projectId as Types.ObjectId);
-  return { link: updated ?? link };
+  return { link: updated ?? link, ...(restored.length ? { restored } : {}) };
 }
 
 /**

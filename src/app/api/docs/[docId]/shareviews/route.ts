@@ -244,11 +244,29 @@ export async function GET(request: Request, ctx: { params: Promise<{ docId: stri
       // used to go through `listShareLinks`, which lists every link of the document *and* runs
       // `ensureDefaultLink` — i.e. a read-only analytics GET could create a share link and update
       // the document as a side effect, twelve times over on a twelve-link metrics page.
+      //
+      // `archivedAt: null` because deleting a link soft-archives the row. Without it a deleted link
+      // was still found and served, and the answer was a success: `perLink: true` with a window of
+      // zeroes, which reads as "this link exists and nobody opened it" rather than "this link is
+      // gone". An agent asked how a revoked link performed reported no traffic, confidently. The
+      // shareId-only form already refused it; this is the form the tool description recommends for
+      // a non-default link, so it was the one most likely to be asked.
       const link = shareIdFilter
-        ? await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId }).lean<ShareLink>()
+        ? await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId, archivedAt: null }).lean<ShareLink>()
         : null;
       if (shareIdFilter && !link) {
-        return applyTempUserHeaders(NextResponse.json({ error: "Not found" }, { status: 404 }), actor);
+        // Separate the two 404s: a slug that was never on this document, and one that was deleted.
+        // Only the second is something the caller can act on ("it existed; it is gone").
+        const deleted = await ShareLinkModel.findOne({ shareId: shareIdFilter, docId: docObjectId })
+          .select({ _id: 1 })
+          .lean();
+        return applyTempUserHeaders(
+          NextResponse.json(
+            { error: deleted ? "Link deleted" : "Not found", ...(deleted ? { deleted: true } : {}) },
+            { status: 404 },
+          ),
+          actor,
+        );
       }
       /**
        * The slugs `{ docId }` matches that are **not** this document's links.
