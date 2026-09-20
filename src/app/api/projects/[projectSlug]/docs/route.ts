@@ -99,6 +99,12 @@ export async function GET(
     )
       .select({
         _id: 1,
+        // `orgId` and `userId` are not rendered by this route — they are here for
+        // `ensureDefaultProjectLink` below, which needs a workspace to attach the link to and
+        // silently returns null without one. Leaving them out of the projection is what made the
+        // one place that materialises a default project link never materialise anything.
+        orgId: 1,
+        userId: 1,
         shareId: 1,
         name: 1,
         slug: 1,
