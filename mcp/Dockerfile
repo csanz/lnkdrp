@@ -55,6 +55,9 @@ COPY src/lib/credits/types.ts ./src/lib/credits/types.ts
 # share_pdf/replace_pdf and the Express body limit read the upload ceilings from the app's single
 # definition; without this the image builds and then dies at boot on a missing module.
 COPY src/lib/limits/uploads.ts ./src/lib/limits/uploads.ts
+# lnkdrp_untag folds tag names with the same function the server files them under, so removing a tag
+# by a differently-accented or punctuated spelling works. Pure string handling, no server deps.
+COPY src/lib/tags/slug.ts ./src/lib/tags/slug.ts
 COPY mcp ./mcp
 
 USER node

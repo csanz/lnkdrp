@@ -22,6 +22,7 @@ import type { ApiTag } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool } from "../errors";
 import { docIdSchema, SAFETY_TAIL } from "./shared";
+import { tagSlug } from "../../../src/lib/tags/slug";
 
 /**
  * What a tag looks like coming back out.
@@ -141,15 +142,22 @@ export function registerUntagTool(server: McpServer, ctx: ToolContext): void {
     },
     handleTool(async (args) => {
       const target = resolveTarget(args);
-      const wanted = [...new Set(args.tags.map((t) => t.trim().toLowerCase()).filter(Boolean))];
+      // Folded with the same function the server files tags under, because `lnkdrp_tag` promises
+      // exactly that: "case, accents and punctuation are folded". Removing was only lowercasing, so
+      // untagging "Serie A" from an item carrying "Série A" — or "fund raising" where the tag is
+      // "fund-raising" — reported it in notTagged, which tells the agent the tag was not there when
+      // it is. A tool that silently declines to do the one thing it was asked is worse than one
+      // that refuses.
+      const wanted = [...new Set(args.tags.map((t) => tagSlug(t)).filter(Boolean))];
 
       let tags = await ctx.api.tagsForTarget(target);
       const removed: string[] = [];
       const notTagged: string[] = [];
       for (const name of wanted) {
-        // Matched on the *name as displayed*, folded the same way a person reading the list would:
-        // an agent asked to remove "fundraising" should not have to know the stored casing.
-        const match = tags.find((t) => t.name.trim().toLowerCase() === name || t.slug === name);
+        // Both sides through the same fold: the stored slug IS the folded name, so comparing
+        // against it is the whole match. The display name is folded too rather than compared raw,
+        // for tags written before a slug existed.
+        const match = tags.find((t) => t.slug === name || tagSlug(t.name) === name);
         if (!match) {
           notTagged.push(name);
           continue;
