@@ -76,12 +76,26 @@ function sameKey(session: Session, key: string): boolean {
   return h.length === session.keyHash.length && timingSafeEqual(h, session.keyHash);
 }
 
-/** 401 JSON with a `WWW-Authenticate` hint at the resource metadata. */
+/**
+ * 401 JSON with a `WWW-Authenticate` hint at the resource metadata, and a sentence a human can act
+ * on.
+ *
+ * The bare `{"error":"unauthorized"}` was correct and useless. This server authenticates with an
+ * API key and advertises no OAuth authorization server, so a client that expects to authenticate by
+ * OAuth gets a 401 it cannot resolve by retrying, by re-authorising, or by anything else it knows
+ * how to do — and the person watching sees "cannot connect", which reads as a network fault. Say
+ * which of the two it is and where the key comes from; the error `code` stays machine-readable and
+ * unchanged for anything parsing it.
+ */
 function unauthorized(res: Response, code: "unauthorized" | "key_revoked" = "unauthorized"): void {
+  const message =
+    code === "key_revoked"
+      ? `That API key has been revoked. Create a new one at ${config.apiUrl}/connect and update this client's Authorization header.`
+      : `This server authenticates with a lnkdrp API key, not OAuth. Send "Authorization: Bearer lnk_…" with a key from ${config.apiUrl}/connect. If your client can only authenticate by OAuth, it cannot connect to this server yet.`;
   res
     .status(401)
     .set("www-authenticate", `Bearer resource_metadata="${config.publicUrl}/.well-known/oauth-protected-resource"`)
-    .json({ error: code });
+    .json({ error: code, message });
 }
 
 /** A JSON-RPC error body with the given HTTP status. */
@@ -233,8 +247,21 @@ function createApp() {
     res.json({ ok: true, sessions: sessions.size, version: MCP_SERVER_VERSION, apiUrl: config.apiUrl });
   });
 
+  /**
+   * RFC 9728 protected-resource metadata.
+   *
+   * `authorization_servers` is empty and that is the honest answer: there is no OAuth authorization
+   * server, keys are issued by the app. A client that discovers this document and finds the list
+   * empty has nowhere to send its user, so `resource_documentation` points at the page that does
+   * issue keys — the one thing that turns a dead end into an instruction.
+   */
   app.get("/.well-known/oauth-protected-resource", (_req, res) => {
-    res.json({ resource: config.publicUrl, authorization_servers: [], bearer_methods_supported: ["header"] });
+    res.json({
+      resource: config.publicUrl,
+      authorization_servers: [],
+      bearer_methods_supported: ["header"],
+      resource_documentation: `${config.apiUrl}/connect`,
+    });
   });
 
   const mcp = (req: Request, res: Response) => {
