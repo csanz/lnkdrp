@@ -1953,7 +1953,7 @@ export default function LeftSidebar({
   }, [deleteDocOpen, deleteDocTarget?.id]);
 
   return (
-    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[color-mix(in_srgb,var(--border)_35%,transparent)] bg-[var(--sidebar-bg)]">
+    <aside className="lnkdrp-sidebar relative z-50 h-screen w-[312px] shrink-0 overflow-hidden border-r border-[var(--sidebar-edge)] bg-[var(--sidebar-bg)]">
       {/* Two parts, and the split is deliberate: everything you *browse* scrolls — the logo, the
           workspace pill, the nav items and the lists — and the foot that says who you are and what
           you have left stays put at the bottom. Pinning the header was wrong (it ate half a laptop

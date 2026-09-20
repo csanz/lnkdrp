@@ -70,9 +70,13 @@ export default function HeadlineStrip({
               title={chip?.title ?? `Show ${meta.label.toLowerCase()} per day`}
               className={cn(
                 "min-w-0 rounded-2xl border p-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+                // A card, not an inset: white like every other top-level card on the page, and
+                // selected by its edge rather than by a fill. Light has no room above white to
+                // raise a chosen tile, so filling it darker was the only move a fill could make —
+                // and a darker tile reads as pressed or disabled, which is the opposite of chosen.
                 active
-                  ? "border-[var(--fg)] bg-[var(--panel-hover)]"
-                  : "border-[var(--border)] bg-[var(--panel-2)] hover:bg-[var(--panel-hover)]",
+                  ? "border-[var(--fg)] bg-[var(--panel)] ring-1 ring-[var(--fg)]"
+                  : "border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-2)]",
               )}
             >
               <div className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">{meta.label}</div>

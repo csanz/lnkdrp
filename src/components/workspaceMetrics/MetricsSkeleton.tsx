@@ -18,7 +18,7 @@ export default function MetricsSkeleton() {
         {Array.from({ length: 4 }).map((_, i) => (
           <div
             key={i}
-            className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-4 motion-safe:animate-pulse"
+            className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 motion-safe:animate-pulse"
             style={{ animationDelay: `${i * 80}ms` }}
           >
             <div className="h-3 w-20 rounded bg-[var(--panel-hover)]" />
@@ -28,7 +28,7 @@ export default function MetricsSkeleton() {
         ))}
       </div>
 
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-2)] p-5">
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
         <div className="h-3.5 w-28 rounded bg-[var(--panel-hover)]" />
         <div className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
           <div className="h-56 w-full rounded-lg bg-[var(--panel-hover)] motion-safe:animate-pulse" />

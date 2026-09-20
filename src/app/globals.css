@@ -21,7 +21,7 @@
     deliberately softened both ends (see the comment on the dark block); 16.1:1 here matches dark's
     15.94:1 and is still far above AA.
   */
-  --bg: #f9f9f9;
+  --bg: #ffffff;
   --fg: #1c1c1c;
 
   --panel: #ffffff;
@@ -56,7 +56,7 @@
   /* Sized against `--panel-2`, the surface the plots are drawn on: when that dropped to #efefef
      and this held still, the gridlines lost 28% of their contrast and started fading out of the
      chart — the exact failure this token exists to cure. */
-  --chart-grid: #e1e1e1;
+  --chart-grid: #f0f0f0;
   --chart-cursor: #b9b9b9;
   /* A failure that has to be readable, not decorative: red-400/red-500 were picked on the dark
      panel and land at 2.5-3.8:1 on a light one. */
@@ -89,15 +89,15 @@
    * grays feel off" being true of one hue in two contexts. Lightness is unchanged wherever the
    * comments below argue from it; only the cast is gone.
    */
-  --panel-2: #efefef;
+  --panel-2: #f7f7f7;
   /* Steps with `--panel-2`, not with the page. When that surface dropped and this did not, the
      selected stat tile on the metrics pages fell to ΔL* 2.10 from its unselected siblings and
      stopped reading as the chosen one; 3.15 is the step dark gets. */
-  --panel-hover: #e6e6e6;
+  --panel-hover: #efefef;
 
   /* ChatGPT-like surfaces */
-  --sidebar-bg: #f1f1f1;
-  --sidebar-hover: #e4e4e4;
+  --sidebar-bg: #ffffff;
+  --sidebar-hover: #f2f2f2;
   /* The current row. It used to paint `--sidebar-hover`, the same token `hover:` uses, so selected
      and hovered were indistinguishable and whichever row the pointer was over read as the page you
      were on. */
@@ -106,7 +106,7 @@
      `--sidebar-hover` (see the note in that block), so "dark's ratio" is no ratio at all. Lighter
      here collapsed selected-against-hovered from ΔL* 4.61 to 2.83 — most of the way back to the
      bug this token exists to fix. */
-  --sidebar-active: #d7d7d7;
+  --sidebar-active: #e8e8e8;
   --code-bg: #f6f6f6;
   --code-border: #e7e7e7;
   --diff-add-bg: #e8f7ef;
@@ -117,6 +117,10 @@
      a card, where dark has it as the second cue on top of a panel step. ~1.45:1 gives it the same
      perceptual weight (ΔL* ~14) its dark counterpart has. */
   --border: #d6d6d6;
+  /* The line between the sidebar and the page. It is the whole boundary now that both sides are
+     white, so it is the full border here; dark keeps the faint mix it always had, where the two
+     planes differ by their own lightness. */
+  --sidebar-edge: var(--border);
 
   /* Tag palette (src/lib/tags/palette.ts owns the keys; these are the light-theme shades). */
   /* jade was #0f9b6c — 3.31:1 on the sidebar, where the 6px dot lives, while every sibling had
@@ -131,7 +135,7 @@
      against the page; on a --panel-2 card in dark mode it was nearly invisible as an inner rule.
      This was byte-identical to `--border`, so the distinction the token was created for existed
      only in dark: an inner rule looked exactly like a card outline. */
-  --divider: #cacaca;
+  --divider: #e6e6e6;
   /* Was `#000 16%`, which resolves to ~#d6d6d6 over white — a 1.45:1 focus indicator, and every
      consumer pairs it with `outline-none` so there is no UA fallback. WCAG 2.4.11 wants 3:1.
      A real colour rather than an alpha wash; this is the fix src/lib/admin/ui.ts had to route
@@ -212,6 +216,7 @@
 
   /* ChatGPT-like surfaces (dark) */
   --sidebar-bg: #0e0e10;
+  --sidebar-edge: color-mix(in srgb, var(--border) 35%, transparent);
   --sidebar-hover: #1a1a1e;
   /* Dark held its own step badly too, but the brief for this pass was light-only and a token's dark
      value stays exactly what it rendered before: here, `--sidebar-hover`. Worth its own step later. */
