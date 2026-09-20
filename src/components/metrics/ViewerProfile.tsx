@@ -337,10 +337,18 @@ export default function ViewerProfile({
    */
   const readingNow = readingAt !== null && Date.now() - readingAt < 60_000;
 
-  const stat = (label: string, value: string) => (
+  const stat = (label: string, value: string, sub?: string | null) => (
     <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-4">
       <div className="truncate text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--muted-2)]">{label}</div>
       <div className="mt-1 truncate text-2xl font-semibold tabular-nums text-[var(--fg)]">{value}</div>
+      {/* Only the tile whose number is about something nameable uses this: "4m 12s" is the answer,
+          but "4m 12s on the term sheet" is the useful one, and a document title does not fit in a
+          2xl value slot beside five other tiles. */}
+      {sub ? (
+        <div className="mt-0.5 truncate text-[12px] text-[var(--muted-2)]" title={sub}>
+          {sub}
+        </div>
+      ) : null}
     </div>
   );
 
@@ -428,7 +436,22 @@ export default function ViewerProfile({
             return timeMs > 0 && n > 0 ? formatDurationShort(Math.round(timeMs / n)) : "—";
           })(),
         )}
-        {stat("Longest page", longest ? `p${longest.page} · ${formatDurationShort(longest.ms)}` : "—")}
+        {/* A project's unit is documents, not pages.
+            "Longest page" was a dead tile on this scope — a project reader's payload carries no
+            `pagesSeen` and no `pageTimeMsByPage` at all (their pages belong to whichever document
+            they were in, and page 3 of the deck is not page 3 of the term sheet), so it rendered a
+            permanent "—". The honest analogue is the document that held them longest, which the
+            payload already sorts to the front for us. */}
+        {scopeKind === "doc"
+          ? stat("Longest page", longest ? `p${longest.page} · ${formatDurationShort(longest.ms)}` : "—")
+          : (() => {
+              const top = (viewer.docs ?? []).find((d) => (d.timeSpentMs ?? 0) > 0) ?? null;
+              return stat(
+                "Longest document",
+                top ? formatDurationShort(top.timeSpentMs) : "—",
+                top ? top.title?.trim() || "Untitled document" : null,
+              );
+            })()}
         {stat("Avg per session", sessions > 0 && timeMs > 0 ? formatDurationShort(Math.round(timeMs / sessions)) : "—")}
       </div>
 
