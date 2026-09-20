@@ -13,7 +13,7 @@
  */
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon, PlusIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 import TagDot from "@/components/tags/TagDot";
@@ -51,6 +51,8 @@ export default function TagsManager() {
   /** Debounced `filter`; what the server is actually asked. */
   const [query, setQuery] = useState("");
   const [total, setTotal] = useState(0);
+  /** Tags in the workspace, unfiltered — what "is there anything to merge into" actually asks. */
+  const [workspaceTotal, setWorkspaceTotal] = useState(0);
 
   /**
    * One page from the server, searched there too.
@@ -60,7 +62,15 @@ export default function TagsManager() {
    * `?q=&page=&limit=` is the real thing — the query goes to Mongo, the counts are computed for the
    * page only, and a workspace with three thousand tags sends twenty-four.
    */
+  /**
+   * Which request is current. Two are routinely in flight — typing sets `page` at once and `query`
+   * 250ms later — and without this the one that *lands* last wins rather than the one *asked* last,
+   * so a slow unfiltered fetch can overwrite the search results the user is reading.
+   */
+  const seq = useRef(0);
+
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
       if (query.trim()) params.set("q", query.trim());
@@ -103,6 +113,16 @@ export default function TagsManager() {
 
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const current = Math.min(page, pageCount);
+
+  /**
+   * Clamp for real, not only at render. `load` asks for `page`; the footer printed `current`. Delete
+   * the last row of the last page and the request kept asking for a page that no longer exists —
+   * coming back empty — while the footer described a range from the clamped value. Two views of one
+   * number is how a list ends up blank with a footer insisting it is not.
+   */
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
 
   /**
    * Merge targets come from their own search, for the same reason the table does: the dialog
@@ -439,6 +459,8 @@ export default function TagsManager() {
                     <OverflowMenu
                       label={`Change colour of ${tag.name}`}
                       align="start"
+                      autoFocus
+                      panelRole="group"
                       panelClassName="fixed z-[1000] rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 shadow-lg"
                       panelWidth={212}
                       triggerClassName="grid h-7 w-7 place-items-center rounded-full ring-1 ring-[var(--border)] transition hover:ring-2 hover:ring-[var(--fg)]"
@@ -546,13 +568,13 @@ export default function TagsManager() {
                     >
                       <button
                         type="button"
-                        disabled={busy || (tags?.length ?? 0) < 2}
+                        disabled={busy || workspaceTotal < 2}
                         onClick={() => {
                           setMergeQuery("");
                           setMergeFrom(merging ? null : tag);
                         }}
                         className="rounded-lg border border-[var(--border)] px-2 py-1 text-[12px] font-medium text-[var(--muted)] transition-colors hover:text-[var(--fg)] disabled:opacity-40"
-                        title={(tags?.length ?? 0) < 2 ? "Nothing to merge into yet" : "Merge into another tag"}
+                        title={workspaceTotal < 2 ? "Nothing to merge into yet" : "Merge into another tag"}
                       >
                         Merge
                       </button>

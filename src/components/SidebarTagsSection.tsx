@@ -152,7 +152,15 @@ export default function SidebarTagsSection() {
   const hidden = Math.max(0, total - tags.length);
 
   // Open only when you opened it, or when you are on a tag page — where the list is the context.
-  const open = onTagPage || collapsedPref === false;
+    /**
+   * An explicit choice beats the route's default.
+   *
+   * `onTagPage || …` meant the section opened itself on a tag page and then could not be closed:
+   * the collapse control wrote a preference that the route immediately overrode, so the button did
+   * nothing on precisely the page where the list is longest. Being on a tag page is now only the
+   * *default* — it decides what open means until someone says otherwise.
+   */
+  const open = collapsedPref === null ? onTagPage : !collapsedPref;
   const activeSlug = onTagPage ? decodeURIComponent(pathname.slice("/tag/".length)).toLowerCase() : "";
 
   function toggle() {
