@@ -15,6 +15,7 @@ import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
+import DocReplaceFileButton from "@/components/doc/DocReplaceFileButton";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import SubPageHeader from "@/components/SubPageHeader";
 import EntityCrumbLabel, { CrumbSkeleton, EntityHeaderName } from "@/components/HeaderIdentity";
@@ -78,7 +79,12 @@ export function MetricsHeaderPlaceholder({ docId }: { docId: string }) {
             // that fetches it has not even been downloaded at this point.
             { label: <CrumbSkeleton /> },
           ]}
-          actions={<DocHeaderActions docId={docId} current="links" />}
+          actions={
+            <div className="flex items-center gap-2 md:gap-3">
+              <DocReplaceFileButton docId={docId} />
+              <DocHeaderActions docId={docId} current="links" />
+            </div>
+          }
         />
       ) : (
         <SubPageHeader
@@ -89,7 +95,12 @@ export function MetricsHeaderPlaceholder({ docId }: { docId: string }) {
             { label: <EntityCrumbLabel kind="doc" id={docId} noun="Document" />, href: base },
             { label: "Metrics" },
           ]}
-          actions={<DocHeaderActions docId={docId} current="metrics" />}
+          actions={
+            <div className="flex items-center gap-2 md:gap-3">
+              <DocReplaceFileButton docId={docId} />
+              <DocHeaderActions docId={docId} current="metrics" />
+            </div>
+          }
         />
       )}
       <div className="min-h-0 flex-1 bg-[var(--bg)]" aria-busy="true" />

@@ -59,7 +59,19 @@ export default function SubPageHeader({
   hideTile?: boolean;
 }) {
   return (
-    <header className={`shrink-0 border-b border-[var(--border)] bg-[var(--panel)] ${APP_PAGE_GUTTER} pb-5 pt-6`}>
+    /**
+     * The actions sit beside the whole identity block, not inside its first line.
+     *
+     * They used to live in the title row, which centred them on that one line — 13px higher than
+     * the document page puts them, where they are centred against the title *and* the line under
+     * it. So walking from a document into its Metrics or Links page slid the same three controls
+     * upwards. The band was already the same height on both; this is the last thing in it that
+     * moved.
+     */
+    <header
+      className={`shrink-0 border-b border-[var(--border)] bg-[var(--panel)] ${APP_PAGE_GUTTER} pb-5 pt-6 md:flex md:items-center md:justify-between md:gap-x-4`}
+    >
+      <div className="min-w-0 md:flex-1">
       <div className="flex h-8 items-center justify-between gap-x-4">
         <div className="flex min-w-0 items-center gap-2.5">
           {hideTile ? null : <ScopeTile kind={kind} parent={parent} size="sm" />}
@@ -75,7 +87,9 @@ export default function SubPageHeader({
           )}
           {badge}
         </div>
-        {actions ? <div className="shrink-0">{actions}</div> : null}
+        {/* Narrow screens keep them on the title line, where there is no second column to sit
+            beside; from `md` up the block below takes over. */}
+        {actions ? <div className="shrink-0 md:hidden">{actions}</div> : null}
       </div>
 
       {/* Exactly where `AppPageHeader` puts its description, so the band is the same height. */}
@@ -97,6 +111,8 @@ export default function SubPageHeader({
           </span>
         ))}
       </div>
+      </div>
+      {actions ? <div className="hidden shrink-0 md:block">{actions}</div> : null}
     </header>
   );
 }

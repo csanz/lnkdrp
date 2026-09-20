@@ -18,6 +18,7 @@ import SubPageHeader from "@/components/SubPageHeader";
 import EntityCrumbLabel from "@/components/HeaderIdentity";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
+import DocReplaceFileButton from "@/components/doc/DocReplaceFileButton";
 
 /** Render the document's Links page: the document's own header band over the links table. */
 export default function LinksPageClient({ docId }: { docId: string }) {
@@ -41,7 +42,12 @@ export default function LinksPageClient({ docId }: { docId: string }) {
           },
           { label: "Links" },
         ]}
-        actions={<DocHeaderActions docId={docId} current="links" />}
+        actions={
+            <div className="flex items-center gap-2 md:gap-3">
+              <DocReplaceFileButton docId={docId} />
+              <DocHeaderActions docId={docId} current="links" />
+            </div>
+          }
       />
 
       <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg)]">

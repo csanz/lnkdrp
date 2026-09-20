@@ -45,6 +45,7 @@ import DepthBadge, {
 } from "@/components/metrics/DepthBadge";
 import ProjectHeaderActions from "@/components/project/ProjectHeaderActions";
 import DocHeaderActions from "@/components/doc/DocHeaderActions";
+import DocReplaceFileButton from "@/components/doc/DocReplaceFileButton";
 import DocIdentityRow from "@/components/doc/DocIdentityRow";
 import ProjectIdentityRow from "@/components/project/ProjectIdentityRow";
 import Modal from "@/components/modals/Modal";
@@ -2421,10 +2422,12 @@ export default function MetricsView({ scope }: { scope: MetricsScope }) {
               current={shareId ? "links" : "metrics"}
             />
           ) : (
-            <DocHeaderActions
-              docId={scope.id}
-              current={shareId ? "links" : "metrics"}
-            />
+            // "Replace file" first, then the cluster — the order the document page uses, so the
+            // whole right-hand group is the same shape wherever you are inside the document.
+            <div className="flex items-center gap-2 md:gap-3">
+              <DocReplaceFileButton docId={scope.id} />
+              <DocHeaderActions docId={scope.id} current={shareId ? "links" : "metrics"} />
+            </div>
           )
         }
       />
