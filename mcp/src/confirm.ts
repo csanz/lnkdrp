@@ -213,8 +213,14 @@ export async function requireHumanConfirmation(
     "validation",
     `${preview.headline}${workspace ? ` in the workspace ${workspace}` : ""}. This needs the user's explicit go-ahead. Show them the facts in details.preview, ` +
       `ask, and only if they say yes call this tool again with confirm: true. ` +
+      // Keyed on what the preview actually says, not on severity alone: `severityFromTraffic`
+      // also returns "high" for more than one live link, so a document nobody has opened was being
+      // described as having "real recipient traffic" directly above facts reading "Never opened by
+      // a recipient". A confirmation prompt that contradicts its own evidence teaches the reader to
+      // skip the prose.
       (preview.severity === "high"
-        ? "This target has real recipient traffic — do not confirm on your own judgement."
+        ? "Several people may lose access at once — recipients have opened this, or more than one live link stops " +
+          "resolving. Do not confirm on your own judgement."
         : "Nothing has opened this yet, so the stakes are low, but the ask is still required."),
     { status: 400, details: previewDetails },
   );

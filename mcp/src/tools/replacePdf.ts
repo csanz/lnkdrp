@@ -23,7 +23,7 @@ import { z } from "zod";
 
 import type { PlanWarning } from "../api";
 import type { ToolContext } from "../context";
-import { handleTool, isToolError } from "../errors";
+import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
 import { waitForDocStatus } from "../realtime";
 import { UPLOAD_BASE64_SCHEMA_MAX_CHARS, UPLOAD_MAX_LABEL } from "../../../src/lib/limits/uploads";
@@ -166,6 +166,12 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
     handleTool(async (args, extra) => {
       const { api } = ctx;
       const source = resolvePdfSource(args, ctx.config.apiUrl);
+      // The same pairing lnkdrp_share_pdf enforces, and it was missing here: half the pair is not a
+      // cheaper summary, it is a summary the pipeline cannot use. Checked before the fetch, so a
+      // caller that got it wrong finds out from the argument rather than from a file error later.
+      if ((args.summary === undefined) !== (args.keyPoints === undefined)) {
+        throw new ToolError("validation", "Pass summary and keyPoints together (both or neither).");
+      }
       const orgId = ctx.whoami().orgId;
       const progressToken = extra._meta?.progressToken;
 

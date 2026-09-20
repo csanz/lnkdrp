@@ -45,6 +45,22 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
       const summaryStale = ai !== null && (ai.summary === "failed" || ai.summary === "skipped");
       const view = shareView(ctx.api, doc);
 
+      /**
+       * Read before the branch, not after it.
+       *
+       * The non-default-link answer returned early and never reached this, so the same document
+       * described by its own slug carried `tags` and `summaryStale` and described by one of its
+       * other links carried neither. One document should give one shape whichever slug you name it
+       * by; an agent that has to know which id it used to know which fields exist has been handed
+       * two contracts.
+       *
+       * Best-effort, because a document is perfectly describable without them.
+       */
+      const tags = await ctx.api
+        .tagsForTarget({ targetKind: "doc", targetId: doc.id })
+        .then((list) => list.map((t) => ({ name: t.name, slug: t.slug, color: t.color })))
+        .catch(() => []);
+
       // Asked about one link by its slug: answer about *that* link. The document-level fields
       // (`shareUrl`, download, password, revision history) are the default link's, so an agent
       // handed the Sequoia link and asking "is this password-protected?" was being told about a
@@ -71,16 +87,12 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
               status: link.status,
               expiresAt: link.expiresAt,
             },
+            ...(summaryStale ? { summaryStale } : {}),
+            tags,
             warnings,
           };
         }
       }
-      // How the workspace has filed this document. Private to the workspace; recipients never see
-      // tags. Best-effort, because a document is perfectly describable without them.
-      const tags = await ctx.api
-        .tagsForTarget({ targetKind: "doc", targetId: doc.id })
-        .then((list) => list.map((t) => ({ name: t.name, slug: t.slug, color: t.color })))
-        .catch(() => []);
       return {
         ...(await withDefaultLinkState(ctx.api, doc, view)),
         ...(summaryStale ? { summaryStale } : {}),
