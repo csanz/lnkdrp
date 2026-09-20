@@ -16,6 +16,16 @@ vi.mock("@/lib/mongodb", () => ({
   connectMongo: vi.fn(async () => {}),
 }));
 
+/**
+ * Invoices are owner/admin only — a viewer must not read the workspace's billing history.
+ *
+ * Mocked here because the route now asks, and an unmocked `requireOrgRole` reaches for a real Mongo
+ * connection and hangs the test rather than failing it.
+ */
+vi.mock("@/lib/orgs/requireOrgRole", () => ({
+  requireOrgRole: vi.fn(async () => ({ ok: true, role: "owner" })),
+}));
+
 vi.mock("@/lib/models/Subscription", () => ({
   SubscriptionModel: {
     findOne: vi.fn(() => ({
