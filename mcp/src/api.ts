@@ -370,6 +370,23 @@ export type ProjectLinkTraffic = {
 
 export type ShareViews = {
   days: number;
+  /**
+   * Lifetime figures for the same scope, beside the windowed ones.
+   *
+   * Without these the default 15-day window is the whole answer, so a deck shared three months ago
+   * and read then reports `views: 0` — and "has anyone read this?" answers "nobody" about a
+   * document with a hundred readings. The window is a lens, not the truth.
+   */
+  totalsAllTime: {
+    views: number;
+    ownerPreviews: number;
+    opens: number;
+    opensPartial: boolean;
+    downloads: number;
+    pagesViewed: number;
+  } | null;
+  /** Most recent recorded activity in this scope, ever. Null when nothing has been recorded. */
+  lastViewedAt: string | null;
   analyticsDaysLimit: number | null;
   analyticsTier: "basic" | "deep" | string;
   viewerCount: number;
@@ -988,8 +1005,31 @@ export class ApiClient {
    * the ones matching it by label/audience, ranked by relevance (mt_9ceLy7DqEr).
    */
   async listShareLinks(docId: string, query?: string | undefined): Promise<ApiShareLink[]> {
-    const body = rec(await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/links`, { query: { q: query || undefined } }));
-    return Array.isArray(body.links) ? body.links.map(asShareLink) : [];
+    return (await this.listShareLinksPage(docId, query)).links;
+  }
+
+  /**
+   * The same route, with the figure that says whether you got all of it.
+   *
+   * `GET /api/docs/:id/links` is page-based — default 25, max 100 — and this client was sending
+   * neither `page` nor `limit` and discarding `total`. A document with more than 25 links quietly
+   * lost the tail, and every caller above treated the answer as "every link on this document":
+   * `get_share` looked for the default link in it, `delete_doc` counted live links from it to
+   * decide how loudly to confirm. Asking for the maximum does not make the truncation impossible,
+   * so the count comes back too and the callers say "25 of 40" rather than implying completeness.
+   */
+  async listShareLinksPage(
+    docId: string,
+    query?: string | undefined,
+  ): Promise<{ links: ApiShareLink[]; total: number; truncated: boolean }> {
+    const body = rec(
+      await this.request("GET", `/api/docs/${encodeURIComponent(docId)}/links`, {
+        query: { q: query || undefined, limit: 100 },
+      }),
+    );
+    const links = Array.isArray(body.links) ? body.links.map(asShareLink) : [];
+    const total = typeof body.total === "number" ? body.total : links.length;
+    return { links, total, truncated: total > links.length };
   }
 
   /**
@@ -1114,11 +1154,21 @@ export class ApiClient {
   }
 
   /** `PATCH /api/projects/:id/links/:linkId` — change one project link's settings. */
-  async updateProjectLink(projectId: string, linkId: string, patch: ProjectLinkPatch): Promise<ApiProjectLink> {
+  async updateProjectLink(
+    projectId: string,
+    linkId: string,
+    patch: ProjectLinkPatch,
+  ): Promise<{ link: ApiProjectLink; warnings: string[] }> {
     const body = rec(
       await this.request("PATCH", `/api/projects/${encodeURIComponent(projectId)}/links/${encodeURIComponent(linkId)}`, { body: patch }),
     );
-    return asProjectLink(body.link);
+    return {
+      link: asProjectLink(body.link),
+      // Enabling a project link can republish the room's public page and restore every link that
+      // page switch had taken down. The route says so; dropping it here left the same silence the
+      // document version was fixed for, on the surface where one link is the whole data room.
+      warnings: Array.isArray(body.warnings) ? body.warnings.filter((w): w is string => typeof w === "string") : [],
+    };
   }
 
   /** `DELETE /api/projects/:id/links/:linkId` — soft-archive a project link (204; analytics kept). */
@@ -1238,6 +1288,19 @@ export class ApiClient {
       // added this section so that "who read this document" stops answering "nobody" while the
       // activity feed names someone, and the mapper below silently dropped it.
       projectLinkTraffic: asProjectLinkTraffic(body.projectLinkTraffic),
+      totalsAllTime: (() => {
+        if (!body.totalsAllTime || typeof body.totalsAllTime !== "object") return null;
+        const t = rec(body.totalsAllTime);
+        return {
+          views: num(t.views),
+          ownerPreviews: num(t.ownerPreviews),
+          opens: num(t.opens),
+          opensPartial: t.opensPartial === true,
+          downloads: num(t.downloads),
+          pagesViewed: num(t.pagesViewed),
+        };
+      })(),
+      lastViewedAt: strOrNull(body.lastViewedAt),
     };
   }
 }

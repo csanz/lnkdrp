@@ -28,7 +28,7 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
     {
       title: "Get share stats",
       description:
-        "Analytics for a share link by docId, shareId, or both (at least one): totals (views, ownerPreviews, opens, " +
+        "Analytics for a share link by docId, shareId, or both (at least one). Every figure in totals and series covers the window set by days (15 by default), so check totalsAllTime and lastViewedAt before concluding nobody has read something - a document shared last quarter has views 0 for this fortnight and a lifetime count that says otherwise. totals (views, ownerPreviews, opens, " +
         "downloads, pagesViewed, timeSpentMs, authenticated/anonymous viewers), a per-day series (date, views, opens, " +
         "downloads - the same split as totals, so a quiet week and a returning reader are distinguishable day by day) " +
         "and the unique viewerCount " +
@@ -43,7 +43,7 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         "A shareId scopes every number to that one link (perLink: true); a docId covers the document and all of its links. " +
         "To read one non-default link, pass its docId and shareId together (both come from lnkdrp_list_share_links). " +
         "analyticsTier is basic on Free (window clamped, no viewer identities) or deep on Pro; with includeViewers on Pro, " +
-        "totals and the series cover the document's OWN links only: reads that arrived through a project's link are " +
+        "On EVERY call - not only with includeViewers - totals and the series cover the document's OWN links only: reads that arrived through a project's link are " +
         "reported separately in projectLinkTraffic (views, viewers, per-link rows, and named readers on the deep tier), " +
         "because a project link belongs to the room rather than to this document. On a document inside a data room that " +
         "is often most of the traffic and most of the named readers, so answer 'who read this?' from both. " +
@@ -148,6 +148,13 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         analyticsTier: stats.analyticsTier,
         viewerCount: stats.viewerCount,
         totals: stats.totals,
+        /**
+         * The same scope, ever. `days` defaults to 15, so without this the tool's answer to "has
+         * anyone read this?" is really "in the last fortnight" — and a document shared last quarter
+         * reports zero views beside a `lastViewedAt` that proves otherwise.
+         */
+        ...(stats.totalsAllTime ? { totalsAllTime: stats.totalsAllTime } : {}),
+        ...(stats.lastViewedAt ? { lastViewedAt: stats.lastViewedAt } : {}),
         series: stats.series,
         ...(viewers ? { viewers } : {}),
         ...(anonymousViewers ? { anonymousViewers } : {}),
