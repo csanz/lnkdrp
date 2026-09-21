@@ -109,6 +109,13 @@ function str(value: unknown): string {
 
 const FETCH_BLOCKED_RE = /failed to fetch url|url is not allowed|timed out fetching|only http\(s\) urls|empty pdf|missing url/i;
 const TOO_LARGE_RE = /too large/i;
+/**
+ * Text that means "our side broke", not "your arguments were wrong": Mongoose schema and cast
+ * failures, and the driver's own duplicate-key and connection errors. These reach the 400 branch
+ * from routes that catch everything and answer 400.
+ */
+const INTERNAL_FAULT_RE =
+  /validation failed:|Cast to \w+ failed|is not a valid enum value|MongoServerError|MongooseError|E11000|ECONNREFUSED|Topology is closed/i;
 const RATE_LIMITED_RE = /over its limit of \d+ requests/i;
 
 /** A finite number or null. */
@@ -255,6 +262,27 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
             "plain text and keyPoints 2-7 items of at most 160 characters each, written from the document, with no URLs or " +
             "markup (they are stripped before the length check). Pass both or neither; omit both to let lnkdrp summarize (costs credits).",
           { status, details: { code: bodyCode } },
+        );
+      }
+      /**
+       * Not everything answered 400 is the caller's fault.
+       *
+       * A schema or driver failure surfaces here as the database's own sentence — "ShareLink
+       * validation failed: createdVia: `default` is not a valid enum value for path `createdVia`"
+       * — and calling that `validation` tells an agent its *arguments* were wrong. There are no
+       * arguments it could send to fix a server-side enum, so it rewrites the call and tries again,
+       * and again. `upstream` is the honest code: something on our side broke, retrying the same
+       * thing is reasonable, changing the arguments is not.
+       *
+       * The raw text stays in `details` for whoever debugs it, and out of the message, which an
+       * agent may repeat to a human.
+       */
+      if (INTERNAL_FAULT_RE.test(errorText)) {
+        return new ToolError(
+          "upstream",
+          "lnkdrp could not complete that request because of a problem on its side, not with your arguments. " +
+            "Retrying the same call shortly is reasonable; changing the arguments will not help.",
+          { status: 500, details: { error: errorText, ...(bodyCode ? { code: bodyCode } : {}) } },
         );
       }
       return new ToolError("validation", message || `lnkdrp rejected the request (${where}).`, {
