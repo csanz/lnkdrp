@@ -3,7 +3,9 @@
  *
  * Every workspace has credits (Free starts with a one-time starter grant, Pro gets a monthly
  * allowance), so the header credits pill and the snapshot fetch behind it run for both plans. The
- * plan from `/api/billing/status` only picks the copy of the out-of-credits banner.
+ * plan from `/api/billing/status` only picks the copy of the out-of-credits banner, and stays
+ * unknown (null) unless that call succeeds with a plan we recognise — a plan we guessed wrong is
+ * worse than a banner that waits, because the Free copy is an upsell.
  */
 "use client";
 
@@ -232,7 +234,15 @@ export default function DashboardShell({ children }: { children: React.ReactNode
           const json = (await res.json().catch(() => null)) as { plan?: unknown } | null;
           const p = res.ok && json && typeof json.plan === "string" ? json.plan.trim().toLowerCase() : "";
           if (cancelled) return;
-          setPlan(p === "pro" ? "pro" : "free");
+          // A failed read is not a Free workspace. This used to be `p === "pro" ? "pro" : "free"`,
+          // which folded every non-ok response into "free" — and /api/billing/status answers any
+          // Mongo hiccup with a 400 — so one bad read told a paying Pro workspace that it had used
+          // its *starter* credits and offered it "Upgrade to Pro" → /pricing. Only a recognised
+          // plan string sets the plan now; anything else leaves it null and the banner keeps
+          // waiting, exactly as the `catch` below already did.
+          const next: "free" | "pro" | null = p === "pro" ? "pro" : p === "free" ? "free" : null;
+          if (next === null) return;
+          setPlan(next);
         } catch {
           // Unknown plan: the pill still shows; only the banner (whose copy is plan-specific) waits.
         }

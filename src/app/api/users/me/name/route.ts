@@ -2,6 +2,7 @@
  * API route for `/api/users/me/name` — update the signed-in user's display name.
  */
 import { NextResponse } from "next/server";
+import { errorJson } from "@/lib/http/errorResponse";
 import { Types } from "mongoose";
 import { connectMongo } from "@/lib/mongodb";
 import { resolveActor } from "@/lib/gating/actor";
@@ -59,8 +60,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ ok: true, name });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 400 });
+    // A caught failure here is ours, not the caller's: the raw message went straight to the
+    // browser (Mongo and Stripe internals included) and nothing reached the logs. `errorJson`
+    // redacts, logs one line always, and keeps `detail` for non-production.
+    return errorJson(err, { status: 500, publicMessage: "Could not save your name.", context: "[api/users/me/name] request failed" });
   }
 }
 

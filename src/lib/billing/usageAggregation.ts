@@ -4,6 +4,7 @@
  * These helpers intentionally operate on a minimal, billing-safe subset of ledger fields.
  * They must not require or expose provider/model token telemetry.
  */
+import { USD_CENTS_PER_CREDIT } from "./pricing";
 
 export type BillingLedgerRow = {
   actionType: "summary" | "review" | "history" | "unknown";
@@ -73,13 +74,23 @@ function inferOnDemandCredits(l: BillingLedgerRow): number {
 /**
  * Returns the on-demand cost (in cents) for a billing ledger row, or null when unknown.
  *
- * Exists to keep UI aggregation logic billing-safe: we only expose cost when it is explicitly
- * present as USD on the ledger row.
+ * This used to expose a cost only when the row carried USD in `costUsdActual`, to avoid inventing
+ * invoice dollars. Nothing ever writes that field - the ledger is created with `costUsdActual:
+ * null` and the charge path only fills provider/token telemetry - so it returned null for every
+ * row, and the billing table printed "Not available" in the Cost and Total column of on-demand
+ * usage the customer was really invoiced for.
+ *
+ * On-demand is not priced per token: it is billed at a flat USD_CENTS_PER_CREDIT per credit, the
+ * same arithmetic `/api/billing/spend` uses for the Limits tab. Credits are therefore an exact
+ * answer here, not a fabricated one. Null now means only what it says: a row with neither a stored
+ * cost nor any on-demand credits.
  */
 export function onDemandCostCentsOrNull(l: BillingLedgerRow): number | null {
   if (typeof l.costUsdActual === "number" && Number.isFinite(l.costUsdActual) && l.costUsdActual !== null) {
     return centsFromUsd(l.costUsdActual);
   }
+  const credits = inferOnDemandCredits(l);
+  if (credits > 0) return credits * USD_CENTS_PER_CREDIT;
   return null;
 }
 

@@ -1,7 +1,13 @@
 /**
  * API route for `/api/org-invites`.
  *
+ * - GET: list this org's live (non-revoked) invites, newest first (owner/admin only).
  * - POST: create a new org invite link (owner/admin only).
+ *
+ * GET response shape:
+ *   { ok, invites: [...], counts: { all, notUsed, used, expired }, page: { limit, offset, hasMore } }
+ * `invites` is unchanged from before pagination existed; `counts` and `page` are additive. The
+ * counts are computed over the whole workspace, not over the page — see the comment on the handler.
  *
  * Notes:
  * - Invite tokens are returned only once (plaintext is never stored).
@@ -23,6 +29,11 @@ import { checkLimit, planLimitResponse } from "@/lib/billing/planLimits";
 export const runtime = "nodejs";
 
 const ENC_IV_BYTES = 12;
+
+/** Rows per page of GET /api/org-invites when the caller names no `limit`. */
+const INVITE_PAGE_DEFAULT = 25;
+/** Ceiling on `limit`, so one request cannot ask us to decrypt an unbounded number of tokens. */
+const INVITE_PAGE_MAX = 100;
 
 function sha256Hex(s: string): string {
   return crypto.createHash("sha256").update(s).digest("hex");
@@ -109,10 +120,23 @@ export async function GET(request: Request) {
     const canInvite = userRole === "owner" || userRole === "admin";
     if (!canInvite) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-    const invites = await OrgInviteModel.find({
-      orgId: new Types.ObjectId(orgIdRaw),
-      isRevoked: { $ne: true },
-    })
+    // Paging. This list used to be a hard `.limit(25)` with no way to ask for more and no total,
+    // and the Teams tab counted its filter tabs ("Not used (3)") off exactly that truncated array —
+    // so a workspace past 25 invites was shown confident numbers that were wrong, and its oldest
+    // still-claimable links appeared under no filter at all, not even "All".
+    const limitRaw = Number(url.searchParams.get("limit"));
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(INVITE_PAGE_MAX, Math.floor(limitRaw))
+      : INVITE_PAGE_DEFAULT;
+    const offsetRaw = Number(url.searchParams.get("offset"));
+    const offset = Number.isFinite(offsetRaw) && offsetRaw > 0 ? Math.floor(offsetRaw) : 0;
+
+    // `isRevoked: false`, not `{ $ne: true }`: every document has the field (the schema has
+    // defaulted it to false since it was written), and only the equality form lets the planner use
+    // the { orgId, createdDate } partial index — see the comment on it in models/OrgInvite.ts.
+    const scope = { orgId: new Types.ObjectId(orgIdRaw), isRevoked: false } as const;
+
+    const invites = await OrgInviteModel.find(scope)
       .select({
         _id: 1,
         role: 1,
@@ -126,8 +150,26 @@ export async function GET(request: Request) {
         tokenEncTag: 1,
       })
       .sort({ createdDate: -1 })
-      .limit(25)
+      .skip(offset)
+      .limit(limit)
       .lean();
+
+    // Counts over the whole workspace, so the tab labels stop being a description of the page.
+    // The buckets mirror what the client derived row by row: an invite is "used" once it has a
+    // `redeemedAt`, "expired" when it has none and its `expiresAt` has passed, "not used" otherwise.
+    // `expiresAt` is required by the schema, so there is no third state to account for here.
+    const countedAt = new Date();
+    const [countAll, countUsed, countExpired] = await Promise.all([
+      OrgInviteModel.countDocuments(scope),
+      OrgInviteModel.countDocuments({ ...scope, redeemedAt: { $ne: null } }),
+      OrgInviteModel.countDocuments({ ...scope, redeemedAt: null, expiresAt: { $lte: countedAt } }),
+    ]);
+    const counts = {
+      all: countAll,
+      used: countUsed,
+      expired: countExpired,
+      notUsed: Math.max(0, countAll - countUsed - countExpired),
+    };
 
   const redeemedUserIds = Array.from(
     new Set(
@@ -188,7 +230,13 @@ export async function GET(request: Request) {
     };
   });
 
-    return NextResponse.json({ ok: true, invites: out });
+    return NextResponse.json({
+      ok: true,
+      invites: out,
+      counts,
+      // `hasMore` is derived from the total rather than an extra row, since we have the total anyway.
+      page: { limit, offset, hasMore: offset + out.length < countAll },
+    });
   });
 }
 

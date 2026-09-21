@@ -2,8 +2,8 @@
  * Billing & Invoices tab content for `/dashboard?tab=billing` (and `/dashboard/billing` via redirect).
  *
  * Cursor-style layout:
- * - Included Usage (current cycle)
- * - On-Demand Usage (current cycle, with cycle selector)
+ * - Included Usage (the selected cycle)
+ * - On-Demand Usage (the selected cycle; its Period selector drives both tables)
  * - Invoices (month selector + View links)
  */
 "use client";
@@ -290,6 +290,51 @@ function CreditsInfo({ className }: { className?: string }) {
   );
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Do two ISO strings name the same instant?
+ *
+ * Compared as timestamps, not as text: the cycle start the selector holds comes from
+ * `/api/billing/summary` (or from `cycleOptions` below) while the one we check it against comes
+ * back from `/api/billing/usage`, and two servers round-tripping the same instant can still spell
+ * it differently.
+ */
+function sameInstant(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  return Number.isFinite(ta) && Number.isFinite(tb) && ta === tb;
+}
+
+/**
+ * `base` moved by whole calendar months in UTC, clamping the day to the target month's length the
+ * way Stripe clamps a billing anchor: a subscription anchored on the 31st bills Feb 28.
+ */
+function shiftMonthsUtc(base: Date, anchorDay: number, months: number): Date {
+  const firstOfTarget = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + months, 1));
+  const y = firstOfTarget.getUTCFullYear();
+  const m = firstOfTarget.getUTCMonth();
+  // Day 0 of the next month is the last day of this one.
+  const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return new Date(
+    Date.UTC(
+      y,
+      m,
+      Math.min(anchorDay, daysInMonth),
+      base.getUTCHours(),
+      base.getUTCMinutes(),
+      base.getUTCSeconds(),
+      base.getUTCMilliseconds(),
+    ),
+  );
+}
+
+/** "2026-08" for an instant, in the same UTC month key `/api/billing/invoices` reports. */
+function monthKeyUtc(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function formatJson(v: unknown) {
   try {
     return JSON.stringify(v, null, 2);
@@ -320,6 +365,16 @@ export default function BillingInvoicesTab() {
     return key ? cached!.invoicesByMonth[key] : null;
   });
 
+  /**
+   * Oldest month `/api/billing/invoices` has reported in this session, as a `YYYY-MM` key.
+   *
+   * Only ever moves backwards. The route recomputes `months` from the invoices it just listed, so
+   * asking it for one month narrows the list it answers with; if the period selector read that
+   * narrowed list directly it would drop options — possibly the one the user is looking at — the
+   * moment they picked an invoice month. Keeping the widest boundary we have seen makes the
+   * selector's length stable for the life of the tab.
+   */
+  const [oldestInvoiceMonth, setOldestInvoiceMonth] = useState("");
   const [cycleStartIso, setCycleStartIso] = useState<string | null>(() => cached?.summary?.cycle?.start ?? null);
   const [selectedMonth, setSelectedMonth] = useState<string | null>(() => cached?.invoicesByMonth?.["__default__"]?.selectedMonth ?? null);
   const [manageBusy, setManageBusy] = useState(false);
@@ -340,6 +395,34 @@ export default function BillingInvoicesTab() {
   const [debugCopyDone, setDebugCopyDone] = useState(false);
   const [debugCopying, setDebugCopying] = useState(false);
 
+  /**
+   * The periods the selector offers, on real month boundaries.
+   *
+   * This used to walk backwards by a fixed `start - i * periodMs` using the current cycle's length.
+   * Stripe's monthly cycles are 28–31 days, so every earlier option drifted further from the
+   * invoice it claimed to be: a workspace billed Mar 1 → Apr 1 was offered "Period starting Jan 29"
+   * for what Stripe billed as Feb 1 → Mar 1, the label named a date that matched no invoice, and
+   * the usage fetch pulled three days of January into a period the reader believed was February.
+   * Six options back the drift compounded to about a week.
+   *
+   * Stripe anchors a monthly subscription on a day of the month and clamps it to the last day of
+   * shorter months, so stepping whole calendar months back from the current start — with the same
+   * clamping — reproduces the real boundaries. The anchor is the larger of the current start and
+   * end day, because a start that landed in a short month is itself already clamped: Jan 31 →
+   * Feb 28 → Mar 31 is anchor 31, and reading 28 off the February start would misdate January.
+   *
+   * How far back: the invoice months this tab already fetched, when we have them, since they are
+   * the only real evidence of how long this workspace has been billed. The cut-off compares the
+   * period's END month so that it holds whether Stripe invoiced the period in advance or in
+   * arrears. With no invoice history (a Free workspace, or a member who may not read invoices) we
+   * keep the previous six, which are at least correctly dated now.
+   *
+   * A window that is not roughly a month long — an annual plan — gets the current period alone,
+   * because it has no month boundaries to walk and inventing five is what this code was doing
+   * wrong in the first place. The rolling 30-day window `/api/billing/usage` falls back to when no
+   * subscription period is stored does count as monthly here: it has no real boundaries either
+   * way, and each option still fetches exactly the range its label names.
+   */
   const cycleOptions = useMemo(() => {
     const start = summary?.cycle?.start;
     const end = summary?.cycle?.end;
@@ -347,17 +430,34 @@ export default function BillingInvoicesTab() {
     const s = new Date(start);
     const e = new Date(end);
     if (!Number.isFinite(s.getTime()) || !Number.isFinite(e.getTime())) return [{ start, end, label: "Current period" }];
-    const periodMs = Math.max(1, e.getTime() - s.getTime());
 
-    const out: Array<{ start: string; end: string; label: string }> = [];
-    for (let i = 0; i < 6; i++) {
-      const cs = new Date(s.getTime() - i * periodMs);
-      const ce = new Date(cs.getTime() + periodMs);
-      const label = `Period starting ${formatShortDate(cs.toISOString())}`;
-      out.push({ start: cs.toISOString(), end: ce.toISOString(), label });
+    // The current period keeps the summary's own strings, so the <Select>'s value always matches an
+    // option and the usage effect can find this entry to read its `end` from.
+    const out: Array<{ start: string; end: string; label: string }> = [{ start, end, label: "Current period" }];
+
+    const periodMs = e.getTime() - s.getTime();
+    const monthly = periodMs >= 27 * DAY_MS && periodMs <= 32 * DAY_MS;
+    if (!monthly) return out;
+
+    const anchorDay = Math.max(s.getUTCDate(), e.getUTCDate());
+    for (let i = 1; i < 6; i++) {
+      const cs = shiftMonthsUtc(s, anchorDay, -i);
+      const ce = shiftMonthsUtc(s, anchorDay, -i + 1);
+      if (ce.getTime() <= cs.getTime()) break;
+      out.push({ start: cs.toISOString(), end: ce.toISOString(), label: formatDateRange(cs.toISOString(), ce.toISOString()) });
     }
-    return out;
-  }, [summary?.cycle?.start, summary?.cycle?.end]);
+
+    // Trim after building rather than stopping the loop, so the period the user is currently
+    // reading survives invoices arriving late and moving the cut-off up past it.
+    let keep = out.length;
+    if (oldestInvoiceMonth) {
+      const firstUnbilled = out.findIndex((o, idx) => idx > 0 && monthKeyUtc(new Date(o.end)) < oldestInvoiceMonth);
+      if (firstUnbilled > 0) keep = firstUnbilled;
+    }
+    const selectedIdx = out.findIndex((o) => sameInstant(o.start, cycleStartIso));
+    if (selectedIdx >= keep) keep = selectedIdx + 1;
+    return keep >= out.length ? out : out.slice(0, keep);
+  }, [summary?.cycle?.start, summary?.cycle?.end, oldestInvoiceMonth, cycleStartIso]);
 
   const loadWorkspace = useCallback(async (fresh = false): Promise<BilledWorkspace | null> => {
     try {
@@ -617,6 +717,15 @@ export default function BillingInvoicesTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMonth, invoices]);
 
+  useEffect(() => {
+    // Widen (never narrow) the invoice-month floor the period selector is sized from. See
+    // `oldestInvoiceMonth` above for why a narrowed `months` list must not shrink the selector.
+    const months = (invoices?.months ?? []).filter((m) => typeof m === "string" && /^\d{4}-\d{2}$/.test(m));
+    if (!months.length) return;
+    const oldest = months.reduce((min, m) => (m < min ? m : min));
+    setOldestInvoiceMonth((prev) => (!prev || oldest < prev ? oldest : prev));
+  }, [invoices]);
+
   async function openCancelFlow() {
     setCancelBusy(true);
     setManageError(null);
@@ -659,19 +768,42 @@ export default function BillingInvoicesTab() {
     }
   }
 
-  const cycleRange = summary?.cycle ? formatDateRange(summary.cycle.start, summary.cycle.end) : "";
-  const includedRows = usage?.included?.rows ?? [];
-  const includedTotal = usage?.included?.total ?? null;
-  const onDemandRows = usage?.onDemand?.rows ?? [];
-  const onDemandAdjustments = usage?.onDemand?.adjustments ?? [];
-  const onDemandSubtotalCents = clampNonNegInt(usage?.onDemand?.subtotalCents ?? 0);
+  /**
+   * The usage payload only counts once it is the SELECTED period's.
+   *
+   * `usage` keeps the previous period's payload on screen while the next one is fetched, so
+   * everything below reads through this guard and renders its loading state instead of dressing
+   * one period's numbers in another period's dates.
+   */
+  const usageForCycle = usage && (!cycleStartIso || sameInstant(usage.cycle?.start, cycleStartIso)) ? usage : null;
+
+  /**
+   * The period every figure on this page describes.
+   *
+   * The dates and the on-demand total used to come from `summary`, which is fetched once with no
+   * cycle parameter and is always the CURRENT cycle, while the Period selector re-fetched the
+   * tables for the selected one. Picking a past period repainted the rows and the subtotal but
+   * left today's dates above them and today's dollar figure on top, with nothing saying so — the
+   * headline could read "$47.20" over a table that added up to $6.10. `summary` is now only the
+   * fallback for the moment before the selected period's payload lands.
+   */
+  const displayedCycle = usageForCycle?.cycle ?? cycleOptions.find((c) => sameInstant(c.start, cycleStartIso)) ?? summary?.cycle ?? null;
+  const cycleRange = displayedCycle ? formatDateRange(displayedCycle.start, displayedCycle.end) : "";
+  const includedRows = usageForCycle?.included?.rows ?? [];
+  const includedTotal = usageForCycle?.included?.total ?? null;
+  const onDemandRows = usageForCycle?.onDemand?.rows ?? [];
+  const onDemandAdjustments = usageForCycle?.onDemand?.adjustments ?? [];
+  const onDemandSubtotalCents = clampNonNegInt(usageForCycle?.onDemand?.subtotalCents ?? 0);
   const onDemandHasUnknownCost = onDemandRows.some((r) => r.totalCents === null || r.costCents === null);
-  const onDemandLimitCents = clampNonNegInt(summary?.onDemand?.monthlyLimitCents ?? 0);
+  // Per-cycle figures from the per-cycle payload; `summary` is the current cycle's and is only the
+  // stand-in while that payload loads.
+  const onDemandUsedCents = clampNonNegInt(usageForCycle?.onDemand?.usedCents ?? summary?.onDemand?.usedCentsThisCycle ?? 0);
+  const onDemandLimitCents = clampNonNegInt(usageForCycle?.onDemand?.limitCents ?? summary?.onDemand?.monthlyLimitCents ?? 0);
   const onDemandUnlimited = Boolean(summary?.onDemand?.enabled) && onDemandLimitCents >= UNLIMITED_LIMIT_CENTS;
   const onDemandLimitLabel = onDemandUnlimited ? "Unlimited" : formatUsdFromCents(onDemandLimitCents);
 
   const summaryLoaded = Boolean(summary) && !summaryBusy && !summaryError;
-  const usageLoaded = Boolean(usage) && !usageBusy && !usageError;
+  const usageLoaded = Boolean(usageForCycle) && !usageBusy && !usageError;
   const invoicesLoaded = Boolean(invoices) && !invoicesBusy && !invoicesError;
 
   return (
@@ -800,7 +932,7 @@ export default function BillingInvoicesTab() {
         ) : null}
 
         <div className="mt-4">
-          {!summaryLoaded || usageBusy || !usage ? (
+          {!summaryLoaded || usageBusy || !usageForCycle ? (
             <SkeletonLines lines={4} />
           ) : usageError ? (
             <Alert variant="error" className="text-[12px]">
@@ -868,7 +1000,7 @@ export default function BillingInvoicesTab() {
                 </>
               ) : summary?.onDemand?.enabled ? (
                 <>
-                  {formatUsdFromCents(clampNonNegInt(summary.onDemand.usedCentsThisCycle))}{" "}
+                  {formatUsdFromCents(onDemandUsedCents)}{" "}
                   <span className="text-[14px] font-semibold text-[var(--muted-2)]">
                     / {onDemandLimitLabel}
                   </span>
@@ -914,7 +1046,7 @@ export default function BillingInvoicesTab() {
         ) : null}
 
         <div className="mt-4">
-          {!summaryLoaded || usageBusy || !usage ? (
+          {!summaryLoaded || usageBusy || !usageForCycle ? (
             <SkeletonLines lines={4} />
           ) : usageError ? (
             <Alert variant="error" className="text-[12px]">

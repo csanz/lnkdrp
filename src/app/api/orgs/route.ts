@@ -13,6 +13,13 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { debugError, debugLog } from "@/lib/debug";
 import { activeOrgCandidateOrder, resolveActor, tryResolveAuthUserId } from "@/lib/gating/actor";
 import { ACTIVE_ORG_COOKIE } from "@/lib/orgs/activeOrgCookie";
+import { errorJson } from "@/lib/http/errorResponse";
+import {
+  FREE_TEAM_WORKSPACES,
+  UPGRADE_URL,
+  getWorkspacePlan,
+  planLimitResponse,
+} from "@/lib/billing/planLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -182,6 +189,27 @@ export async function GET(request: Request) {
   }
 }
 
+/**
+ * The team workspaces this user owns — memberships with `role: "owner"` whose org is a live team.
+ *
+ * Personal workspaces are excluded by the `type` filter: everyone has exactly one, nobody chose it,
+ * and counting it would refuse the very first team workspace a Free user creates.
+ */
+async function ownedTeamWorkspaceIds(userId: Types.ObjectId): Promise<Types.ObjectId[]> {
+  const memberships = await OrgMembershipModel.find({ userId, role: "owner", isDeleted: { $ne: true } })
+    .select({ orgId: 1 })
+    .lean();
+  const orgIds = memberships
+    .map((m) => (m as { orgId?: unknown }).orgId)
+    .filter((id): id is Types.ObjectId => id instanceof Types.ObjectId || Types.ObjectId.isValid(String(id)))
+    .map((id) => new Types.ObjectId(String(id)));
+  if (!orgIds.length) return [];
+  const orgs = await OrgModel.find({ _id: { $in: orgIds }, type: "team", isDeleted: { $ne: true } })
+    .select({ _id: 1 })
+    .lean();
+  return orgs.map((o) => new Types.ObjectId(String((o as { _id: unknown })._id)));
+}
+
 export async function POST(request: Request) {
   try {
     debugLog(1, "[api/orgs] POST");
@@ -197,6 +225,44 @@ export async function POST(request: Request) {
 
     await connectMongo();
     const userId = new Types.ObjectId(String(actor.userId));
+
+    /**
+     * How many team workspaces this person may own.
+     *
+     * Every other plan limit in the product is counted per workspace — three shared documents, one
+     * project, no collaborators — and creating a workspace was free, instant and unlimited. So the
+     * Free caps were only ever "per workspace you happen to have", and the way around all of them
+     * was the New workspace button. This is the limit that makes the rest mean what they say.
+     *
+     * Pro is unlimited, and "Pro" here means the person, not the workspace they are creating (which
+     * does not exist yet): if any workspace they already own is on Pro, they are a paying customer
+     * and this is not the place to stop them. Owned workspaces are few — the Free ceiling is one —
+     * so the plan reads are bounded.
+     *
+     * Grandfathering is deliberate: someone already over the line keeps every workspace they have
+     * and is only refused the next one. Taking a workspace away from an existing user to enforce a
+     * cap introduced after they made it would be the wrong trade.
+     */
+    const ownedTeamOrgIds = await ownedTeamWorkspaceIds(userId);
+    if (ownedTeamOrgIds.length >= FREE_TEAM_WORKSPACES) {
+      const plans = await Promise.all(ownedTeamOrgIds.map((id) => getWorkspacePlan(id)));
+      if (!plans.some((plan) => plan === "pro")) {
+        return planLimitResponse({
+          ok: false,
+          code: "plan_limit",
+          limit: "team_workspaces",
+          used: ownedTeamOrgIds.length,
+          max: FREE_TEAM_WORKSPACES,
+          grace: null,
+          upgradeUrl: UPGRADE_URL,
+          message:
+            FREE_TEAM_WORKSPACES === 1
+              ? "Free accounts can have one team workspace. Upgrade to Pro to create another."
+              : `Free accounts can have ${FREE_TEAM_WORKSPACES} team workspaces. Upgrade to Pro to create another.`,
+        });
+      }
+    }
+
     const base = slugify(slugRaw || name);
     const slug = await ensureUniqueOrgSlug(base);
 
@@ -248,8 +314,14 @@ export async function POST(request: Request) {
     ) {
       return NextResponse.json({ error: "An org with that slug already exists" }, { status: 409 });
     }
-    debugError(1, "[api/orgs] POST failed", { message });
-    return NextResponse.json({ error: message }, { status: 400 });
+    // Anything that reaches here is ours, not the caller's — the one client error this route
+    // produces (a slug collision) is answered above. The raw message used to go to the browser and
+    // `debugError` only logged it when DEBUG_LEVEL was set, which it is not in production.
+    return errorJson(err, {
+      status: 500,
+      publicMessage: "Could not create the workspace.",
+      context: "[api/orgs] POST failed",
+    });
   }
 }
 

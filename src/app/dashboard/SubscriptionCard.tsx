@@ -253,7 +253,7 @@ export default function SubscriptionCard() {
   );
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 sm:p-6">
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)] p-4 sm:p-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="text-[13px] font-semibold text-[var(--fg)]">Plan</div>
