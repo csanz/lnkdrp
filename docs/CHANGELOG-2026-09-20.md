@@ -41,6 +41,66 @@ API echoes ids lowercased. An uppercase id came back in `docs` with the same id 
 `notFound`. `notFound` is also always present now when `ids` was passed, rather than vanishing when
 empty.
 
+**Two tools contradicted each other about the same link, one second apart.**
+`lnkdrp_verify_share_password` read the link row raw, so on an archived document it answered
+`linkStatus: "active"`, `opensLink: true` — while `lnkdrp_get_share`, one call later, answered
+`isArchived: true`, `anyLinkActive: false` about the same link. An archived document's links open
+for nobody whatever their own rows say; the rows keep the state that unarchiving restores, which is
+why the raw read looks live. `get_share` already had the override, and this tool — whose own
+description says to check `opensLink` before telling a human the link works — did not. It does now,
+and says `isArchived` out loud.
+
+**"Downloads: 0" meant two different things and reported one.** `lnkdrp_get_share_stats` returned
+`downloads: 0` on a document whose only link had downloads switched off, so nobody *could* have
+downloaded it — and nothing in the response said so. The route computes `downloadsEnabled` as an
+explicit label for exactly this, and the mapper dropped it. The obvious substitute is wrong on a
+multi-link document: `get_share`'s `shareAllowPdfDownload` is the *default* link's setting, while
+this is "any live link allows it". Now returned, with a description clause mirroring the one that
+already warned about the same trap on views.
+
+**A byte-identical replacement was reported as an update.** `lnkdrp_replace_pdf` on a file matching
+the version it replaced returned `{status: "ready", version: N+1, warnings: []}` — identical in
+shape to a real update — and the agent told its human the document had been updated. The processing
+route already knew (it detects the match, keeps the existing summary and skips the charge); the tool
+discarded the signal. Now `unchangedFromPrevious: true`. Its idempotency replay also gained the
+`stillExists` check and the `replayed: true` flag that `share_pdf` and `create_project` got in the
+same sweep and it missed.
+
+**`star_docs` said "unchanged" about a star it had just switched on.** The id regex accepts either
+case and the API normalises, but the changed/unchanged compare is a string equality against the
+API's lower-case ids — so an upper-case id read as unstarred before *and* after its own successful
+write, in both directions. The same class of bug as the `list_docs` one above, in the tool where the
+answer is the whole result. Ids are lower-cased at the door now.
+
+**A confirmation prompt contradicted its own evidence.** `lnkdrp_delete_project` graded severity as
+"the public page is on and it is not empty", which is not a fact about anyone losing anything. On a
+project made four minutes earlier with one document and zero views, the human was shown "Several
+people may lose access at once: recipients have opened this, or more than one live link stops
+resolving" directly above facts saying neither. The comment in `confirm.ts` explaining why that must
+not happen was written when the same thing was fixed for documents; projects never got it. Severity
+now comes from the project's link traffic, and an unreadable listing stays `high` — the safe default
+for a prompt is the louder one.
+
+**Free text walked past the untrusted wrapper.** `lnkdrp_get_activity` wrapped seven `meta` keys and
+let the rest through raw: across ~700 live rows that was `projectName` on 223, `tagName` on 85 and
+`fileName` on 42 — an uploader's own file name is a string a stranger chose. It was also shallow, so
+`share_link.updated` carried the edited link label under `meta.values.label` unwrapped while the
+identical text arrived wrapped as `linkLabel` on every other row. Both fixed: a wider key list, and
+one level of recursion. Ids, slugs and enums stay raw.
+
+**A Free workspace inside its grace window was told to upgrade.** `checkLimit` lets the write
+through when a Free workspace is over its cap but inside the unblocked launch window, and
+`GET /api/plan` forces every `atLimit` flag false to match — and the MCP's plan mapper dropped both
+`graceActive` and `atLimit`, leaving `whoami` to compute `remaining: limit - used` = 0. The one
+preflight the tool's own description tells an agent to run concluded "capped, recommend an upgrade"
+during the single window where no upgrade is needed. `capabilities` now carries `atLimit` per cap
+and `graceActive` when it holds, and says to read the flag rather than the arithmetic.
+
+**`untag` reported a tag in a spelling nobody typed.** Matching folds case, accents and punctuation —
+correctly — but `notTagged` was built from the fold, so asking to remove "Série A" from an item that
+did not carry it reported `serie-a`, a string the human never wrote and cannot find in the UI. It
+now answers in the caller's own spelling, while `removed` carries the tag's stored name.
+
 **An idempotent replay outlived its subject.** Create a document with a key, delete it, retry the
 key, and `lnkdrp_share_pdf` returned the original success — same `docId`, `status: "ready"`, empty
 warnings — describing something that no longer existed, so an agent handed a dead share link to a

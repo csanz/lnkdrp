@@ -21,7 +21,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import type { PlanWarning } from "../api";
+import type { PlanWarning, UploadAi } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool, isToolError, ToolError } from "../errors";
 import { fingerprintArgs, IdempotencyStore } from "../idempotency";
@@ -30,7 +30,7 @@ import { UPLOAD_BASE64_SCHEMA_MAX_CHARS, UPLOAD_MAX_LABEL } from "../../../src/l
 import type { OptimizeReport } from "../optimize";
 import { fileNameFromUrl, type InlineUpload, prepareInlineUpload, resolvePdfSource } from "./sharePdf";
 import { readAiOutcome } from "./aiWarnings";
-import { docIdSchema, SAFETY_TAIL } from "./shared";
+import { docIdSchema, SAFETY_TAIL, existsUnlessNotFound } from "./shared";
 
 const PROCESS_NOT_READY_RETRIES = 5;
 const PROCESS_NOT_READY_DELAY_MS = 1000;
@@ -90,7 +90,7 @@ export const replacePdfInputShape = {
   summary: z
     .string()
     .min(40, "summary must be 40-600 characters, and goes together with keyPoints (2-7 items). Omit both to let lnkdrp write the summary instead, which costs credits.")
-    .max(600)
+    .max(600, "summary must be 40-600 characters. Trim it, or omit summary and keyPoints to let lnkdrp write one (costs credits).")
     .optional()
     .describe(
       "Your own summary of the new content, written from it (40-600 characters, plain text; URLs and markup are stripped). " +
@@ -123,6 +123,10 @@ export type ReplacePdfResult = {
   warnings: string[];
   /** Workspace credits left after processing, when the snapshot was readable. */
   creditsRemaining?: number;
+  /** The new file's text matched the previous version: a new version number, the same document. */
+  unchangedFromPrevious?: true;
+  /** This `idempotencyKey` had already run: the same result, not a second upload. */
+  replayed?: true;
 };
 
 /** Resolve after `ms`. */
@@ -147,7 +151,9 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
         "large inline upload can still be refused by the platform - sourceUrl never has that problem. On the filePath " +
         "and fileBase64 paths the PDF is shrunk first when that helps and is safe (optimize: false turns it off); the " +
         "result's optimized field reports what happened. Returns { docId, shareId, shareUrl, status, " +
-        "version, uploadId, optimized, warnings, creditsRemaining }. " +
+        "version, uploadId, optimized, warnings, creditsRemaining }. "
+        + "unchangedFromPrevious: true means the new file reads the same as the one it replaced - a new version number "
+        + "over identical content. Say so rather than reporting the document as updated; it is usually a re-sent file. " +
         "The document's status flips to preparing the moment this call starts, before the new file is even fetched - " +
         "recipients opening a link in that window see 'preparing', same as during the first upload. If import or " +
         "processing then fails, the document goes back to its previous version and to ready - it is not left stuck in " +
@@ -261,7 +267,7 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
           const outcome =
             args.waitForReady && !timedOut
               ? await readAiOutcome(api, uploadId, { credits: true })
-              : { warnings: [] as string[], creditsRemaining: null, failureReason: null as string | null };
+              : { warnings: [] as string[], creditsRemaining: null, ai: null as UploadAi | null, failureReason: null as string | null };
 
           return {
             ...ids,
@@ -274,6 +280,13 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
             // A failed version says why here, not only inside warnings: an agent that reads status
             // "failed" needs the reason in the same breath to tell the human what to do next.
             ...(outcome.failureReason ? { failureReason: outcome.failureReason } : {}),
+            // The one fact that separates a real update from a no-op. The process route sets
+            // ai.summary = "unchanged" when the replacement's extracted text matches the previous
+            // version, and warningsFromAi rightly says nothing about it — it is not a warning. But
+            // nothing else said it either, so a byte-identical replace returned {status: "ready",
+            // version: N+1, warnings: []}, indistinguishable from a new file, and the agent told
+            // its human the document had been updated.
+            ...(outcome.ai?.summary === "unchanged" ? { unchangedFromPrevious: true as const } : {}),
             warnings: outcome.warnings,
             ...(outcome.creditsRemaining !== null ? { creditsRemaining: outcome.creditsRemaining } : {}),
           };
@@ -284,11 +297,23 @@ export function registerReplacePdfTool(server: McpServer, ctx: ToolContext): voi
 
       const { value, replayed } = await ctx.idempotency.run(IdempotencyStore.key(orgId, "replace_pdf", args.idempotencyKey), run, {
         fingerprint: fingerprintArgs(args),
+        // The sibling 0fd858a wired into share_pdf and create_project and missed here: a document
+        // deleted between the two calls is not one to hand back as a fresh success.
+        stillExists: (cached) => existsUnlessNotFound(() => api.getDoc(cached.docId)),
       });
       if (!replayed) return value;
       // A replay returns the same result; refresh the status so a retry after a timeout is useful.
+      // `replayed` is said out loud: without it an agent that retried after a network error reads a
+      // second identical success and reports two versions uploaded when only one was.
       const fresh = await api.getDoc(value.docId).catch(() => null);
-      return fresh ? { ...value, status: fresh.status, ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}) } : value;
+      return fresh
+        ? {
+            ...value,
+            replayed: true as const,
+            status: fresh.status,
+            ...(fresh.status === "ready" || fresh.status === "failed" ? { timedOut: undefined } : {}),
+          }
+        : { ...value, replayed: true as const };
     }),
   );
 }

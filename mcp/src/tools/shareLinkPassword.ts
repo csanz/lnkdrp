@@ -91,7 +91,7 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
         "password a human gave you actually works, after setting it or before passing it on. Returns { passwordEnabled, " +
         "matches, linkStatus, opensLink }; matches is false whenever the link has no password at all. matches only compares " +
         "the password, so check opensLink before telling the human the link works: it is true when the link is active and " +
-        "either the password matches or the link needs none (an open link opens for anyone). This is safe to call: it does not open the " +
+        "either the password matches or the link needs none (an open link opens for anyone). An archived document's links open for nobody whatever their own settings say, so linkStatus comes back 'archived' and opensLink false; unarchive with lnkdrp_archive_doc archived: false to restore exactly what was live. This is safe to call: it does not open the " +
         "link, does not record a view, and does not spend the recipient's unlock attempts - a recipient gets only 10 " +
         "tries per 5 minutes, so checking through the public link could lock out the person it was made for. This tool " +
         "has its own separate limit of 20 checks per link per 5 minutes. Owner or admin of the key's own workspace. " +
@@ -104,7 +104,14 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
       // A matching password on a disabled or expired link still opens nothing. Without the link's
       // status an agent told the human "the password works" about a link nobody can open.
       const link = (await ctx.api.listShareLinks(args.docId)).find((l) => l.id === args.linkId) ?? null;
-      const linkStatus = link?.status ?? null;
+      // An archived document's links stop resolving while their rows keep the enabled/expiry state
+      // that unarchiving restores — so the raw row still says "active". get_share overrides exactly
+      // this (shared.ts withDefaultLinkState) and this tool did not, so the two contradicted each
+      // other about the same link, one second apart: linkStatus "active", opensLink true, against
+      // isArchived true. This tool's own description says to act on opensLink.
+      const doc = await ctx.api.getDoc(args.docId).catch(() => null);
+      const archived = doc?.isArchived === true;
+      const linkStatus = link ? (archived ? "archived" : link.status) : null;
       return {
         docId: args.docId,
         linkId: args.linkId,
@@ -115,6 +122,7 @@ export function registerVerifySharePasswordTool(server: McpServer, ctx: ToolCont
         // password at all is yes: it opens for anyone. Tied to matches alone, this read false for a
         // perfectly live open link, and the description tells agents to act on it.
         opensLink: linkStatus === "active" && (res.passwordEnabled ? res.matches : true),
+        ...(archived ? { isArchived: true as const } : {}),
       };
     }),
   );

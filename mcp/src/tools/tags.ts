@@ -165,7 +165,7 @@ export function registerUntagTool(server: McpServer, ctx: ToolContext): void {
       description:
         "Take tags off a document (docId) or a project (projectId), by name. The tag itself stays in the workspace and " +
         "on everything else that carries it; only this item loses it. Safe to repeat: a tag that was not on the item is " +
-        "reported in notTagged, not an error. Returns the tags left on the item. " +
+        "reported in notTagged as you spelled it, not an error. Matching folds case, accents and punctuation, so 'Série A' takes off a tag stored as 'serie a'; removed reports the tag's stored name. Returns the tags left on the item. " +
         SAFETY_TAIL,
       inputSchema: {
         ...targetShape,
@@ -181,18 +181,25 @@ export function registerUntagTool(server: McpServer, ctx: ToolContext): void {
       // "fund-raising" — reported it in notTagged, which tells the agent the tag was not there when
       // it is. A tool that silently declines to do the one thing it was asked is worse than one
       // that refuses.
-      const wanted = [...new Set(args.tags.map((t) => tagSlug(t)).filter(Boolean))];
+      // Folded for matching, but the caller's own spelling is kept beside it. `notTagged` is read
+      // back to a human ("Série A was not on this document"), and reporting the fold instead —
+      // "serie-a" — hands them a string they never typed and cannot find in the UI.
+      const wanted = new Map<string, string>();
+      for (const raw of args.tags) {
+        const slug = tagSlug(raw);
+        if (slug && !wanted.has(slug)) wanted.set(slug, raw.trim());
+      }
 
       let tags = await withTargetNoun(target, () => ctx.api.tagsForTarget(target));
       const removed: string[] = [];
       const notTagged: string[] = [];
-      for (const name of wanted) {
+      for (const [name, asTyped] of wanted) {
         // Both sides through the same fold: the stored slug IS the folded name, so comparing
         // against it is the whole match. The display name is folded too rather than compared raw,
         // for tags written before a slug existed.
         const match = tags.find((t) => t.slug === name || tagSlug(t.name) === name);
         if (!match) {
-          notTagged.push(name);
+          notTagged.push(asTyped);
           continue;
         }
         tags = await withTargetNoun(target, () => ctx.api.detachTag({ ...target, tagId: match.id }));

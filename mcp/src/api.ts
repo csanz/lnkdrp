@@ -249,6 +249,14 @@ export type PlanSnapshotLite = {
   plan: string | null;
   limits: { documents: number | null; projects: number | null; analyticsDays: number | null; collaborators: number | null };
   usage: { documents: number; projects: number; members: number };
+  /**
+   * A Free workspace over its cap but inside the unblocked launch grace window. `checkLimit` lets
+   * the write through in that state, so a preflight that reads `limit - used` alone answers "you
+   * are capped" about a document the server would accept.
+   */
+  graceActive: boolean;
+  /** The route's own verdict, already accounting for grace. Not derivable from limits and usage. */
+  atLimit: { documents: boolean; projects: boolean; collaborators: boolean };
 };
 
 export type DocPatch = Partial<{
@@ -396,6 +404,12 @@ export type ShareViews = {
   anonymousViewers: ShareViewsViewer[];
   /** Present only when project links carried traffic to this document in the window. */
   projectLinkTraffic: ProjectLinkTraffic | null;
+  /**
+   * Whether any live link of this document (or the one named by `shareId`) allows the PDF to be
+   * downloaded. A label, not a filter: without it `downloads: 0` reads as "nobody downloaded it"
+   * when the truth is that nobody could.
+   */
+  downloadsEnabled: boolean;
 };
 
 type Query = Record<string, string | number | boolean | undefined>;
@@ -1243,11 +1257,18 @@ export class ApiClient {
     const p = rec(await this.request("GET", "/api/plan"));
     const limits = rec(p.limits);
     const usage = rec(p.usage);
+    const atLimit = rec(p.atLimit);
     const n = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
     return {
       plan: strOrNull(p.plan),
       limits: { documents: n(limits.documents), projects: n(limits.projects), analyticsDays: n(limits.analyticsDays), collaborators: n(limits.collaborators) },
       usage: { documents: n(usage.documents) ?? 0, projects: n(usage.projects) ?? 0, members: n(usage.members) ?? 0 },
+      graceActive: p.graceActive === true,
+      atLimit: {
+        documents: atLimit.documents === true,
+        projects: atLimit.projects === true,
+        collaborators: atLimit.collaborators === true,
+      },
     };
   }
 
@@ -1301,6 +1322,9 @@ export class ApiClient {
         };
       })(),
       lastViewedAt: strOrNull(body.lastViewedAt),
+      // "Any live link allows it", which is not the same question as the default link's
+      // shareAllowPdfDownload — the divergence the route's own comment says it was written for.
+      downloadsEnabled: body.downloadsEnabled === true,
     };
   }
 }

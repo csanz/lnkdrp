@@ -344,11 +344,51 @@ export function registerGetActivityTool(server: McpServer, ctx: ToolContext): vo
  * recipient's typed name for an instruction.
  */
 function sanitizeMeta(meta: Record<string, unknown>): Record<string, unknown> {
-  const TEXT_KEYS = new Set(["viewerName", "viewerEmail", "linkLabel", "audience", "label", "title", "name"]);
+  return wrapMetaLevel(meta, 0);
+}
+
+/**
+ * Every free-text key the feed actually carries, not the ones we first thought of.
+ *
+ * The original list was written from the viewer-identity events alone and held for those; a scan
+ * of ~700 live rows found `projectName` on 223 of them, `tagName` on 85 and `fileName` on 42 —
+ * the uploader's own file name, a tag someone typed, a project someone named — all arriving as
+ * bare strings while the identical text under `linkLabel` arrived wrapped. Ids, slugs and enums
+ * stay raw: they are ours, and wrapping them only makes them harder to use.
+ */
+const TEXT_KEYS = new Set([
+  "viewerName",
+  "viewerEmail",
+  "linkLabel",
+  "audience",
+  "label",
+  "title",
+  "name",
+  "fileName",
+  "projectName",
+  "tagName",
+  "sourceHost",
+  "note",
+  "message",
+]);
+
+const VIEWER_KEYS = new Set(["viewerName", "viewerEmail"]);
+
+/**
+ * One level down as well as across.
+ *
+ * `share_link.updated` records what changed under `meta.values`, so the link label an agent is
+ * warned about at the top level came back raw one key deeper on exactly the events that carry an
+ * edit. One level is enough for every shape the feed writes, and it stops a hostile payload from
+ * costing unbounded work.
+ */
+function wrapMetaLevel(meta: Record<string, unknown>, depth: number): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(meta)) {
     if (typeof v === "string" && TEXT_KEYS.has(k)) {
-      out[k] = untrustedOrNull(v, k === "viewerName" || k === "viewerEmail" ? "viewer" : "document", UNTRUSTED_LIMITS.short);
+      out[k] = untrustedOrNull(v, VIEWER_KEYS.has(k) ? "viewer" : "document", UNTRUSTED_LIMITS.short);
+    } else if (depth === 0 && v !== null && typeof v === "object" && !Array.isArray(v)) {
+      out[k] = wrapMetaLevel(v as Record<string, unknown>, depth + 1);
     } else {
       out[k] = v;
     }

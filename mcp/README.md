@@ -172,9 +172,14 @@ workspace's spend limit. On Free it is always `false` — the snapshot cannot re
 workspace that reaches zero credits stops running AI until its cycle resets. It is also `false` when the snapshot
 could not be read at all, which is indistinguishable here; treat `false` as "not known to be on".
 Also carries `capabilities` (mt_1mVhlEPXGT), built from `GET /api/plan`: `{ links: {limited:false},
-projectLinks: {proOnly:true, available}, documents/projects: {limit,used,remaining}|null,
-collaborators: {limit,used}|null, analyticsDaysLimit, deepAnalytics, recipientsCanBrowseVersions, notMcpAccessible:
-[{feature,reason}] }` — one call to answer "what can I do here" instead of learning a gate by hitting it.
+projectLinks: {proOnly:true, available}, documents/projects: {limit,used,remaining,atLimit}|null,
+collaborators: {limit,used,atLimit}|null, graceActive?, analyticsDaysLimit, deepAnalytics,
+recipientsCanBrowseVersions, notMcpAccessible: [{feature,reason}] }` — one call to answer "what can I do here"
+instead of learning a gate by hitting it. Read `atLimit`, not `remaining`, to decide whether the next write is
+refused: a Free workspace over its cap but inside the unblocked launch grace window reports `graceActive: true`,
+`remaining: 0` and `atLimit: false`, and the write goes through — `checkLimit` allows it with a warning and
+`GET /api/plan` forces the flags false to match. The arithmetic answer alone told the agent to recommend an
+upgrade during the one window where none was needed.
 The plan snapshot is best-effort like the credits one: when it cannot be read the per-plan entries are
 `null` rather than zero, because "no limit known" and "no allowance left" are different answers.
 `projectLinks.available: false` is the one link-create a plan refuses — a Free workspace keeps the
@@ -204,7 +209,10 @@ How an agent finds documents it was not handed, and reads what happened in the w
 - get_activity — In `{ limit? = 40 (≤100), cursor?, types? (enum of every event), docId?, who?: "me"|"team"|"agents" }` →
   `GET /api/activity` → `{ nextCursor, items: [{ id, type, at, actor, agent|null, doc|null, project|null, meta }] }`.
   `who: "agents"` = rows with agent attribution, whoever owns the key. Names, titles and `meta`'s free-text keys are
-  wrapped as untrusted. Free strips viewer identity from `share.viewed`/`share.downloaded` rows, as the app does.
+  wrapped as untrusted — `viewerName`, `viewerEmail`, `linkLabel`, `audience`, `label`, `title`, `name`, `fileName`,
+  `projectName`, `tagName`, `sourceHost`, `note`, `message`, and the same keys one level down inside a plain object
+  (`share_link.updated` records an edited label under `meta.values.label`). Ids, slugs and enums stay raw.
+  Free strips viewer identity from `share.viewed`/`share.downloaded` rows, as the app does.
 
 ### `lnkdrp_share_pdf`
 In `{ idempotencyKey (1–128), title? (≤200), allowDownload? = false, password? (1–128), waitForReady? = true,
@@ -268,7 +276,7 @@ summary? (40–600 chars), keyPoints? (2–7 items, ≤160 chars each) }` plus *
 `currentUploadId` at it and flips `status` to `preparing`, same as the web app's own replace button)
 → `import-url` or `import-bytes` → `process` → optional `PATCH { title }` → wait for `ready|failed`. Out `{ docId,
 shareId, shareUrl, status, version, uploadId, title, timedOut?, optimized?, optimizeNote?, failureReason?,
-warnings, creditsRemaining? }` — no
+warnings, creditsRemaining?, unchangedFromPrevious?, replayed? }` — no
 `replaceUrl`, this tool is the replacement path. Never `plan_limit` (replacing creates no document),
 so it works on a Free workspace at its shared-document cap — the gap `share_pdf`'s own `plan_limit`
 error points at. A failed import no longer strands the document: the import routes abandon the
@@ -280,8 +288,13 @@ deleted, and calling it again with a working source finishes the update.
 The AI compare against the previous version costs credits on every replacement, at the workspace's
 default tier, whether or not `summary` and `keyPoints` are passed — `whoami`'s `costs.compare` is the
 figure. Short of credits it is skipped and reported in `warnings`, never blocking the replace.
-Idempotent by key, same 24h in-memory store as `share_pdf`, its own namespace; a replay refreshes the
-status but, unlike `share_pdf`, does not check the document still exists or flag itself. Errors
+`unchangedFromPrevious: true` means the new file's extracted text matches the version it replaced: a new version
+number over identical content. The process route already knew (it sets `ai.summary: "unchanged"` and skips the
+summary charge); the tool discarded it, so a re-sent file returned `{status:"ready", version:N+1, warnings:[]}` —
+byte-identical in shape to a real update — and the agent reported the document as updated.
+Idempotent by key, same 24h in-memory store as `share_pdf`, its own namespace; a replay refreshes the status,
+flags itself with `replayed: true`, and checks the document still exists first, so a retry after a network error
+cannot hand back a success about a document deleted in between. Errors
 `not_found` (checked before anything is created) plus `share_pdf`'s upload-side errors.
 
 ### `lnkdrp_get_share`
@@ -329,8 +342,11 @@ one link (`perLink: true`, `GET /api/docs/:id/shareviews?shareId=`); a `docId` c
 both for a non-default link: a bare `shareId` goes through `GET /api/docs?q=`, which only matches a document's default link.
 Out `{ docId, shareId, perLink, days, analyticsDaysLimit, analyticsTier, viewerCount, totals: { views, ownerPreviews,
 opens, opensPartial, downloads, pagesViewed, timeSpentMs, authenticatedViewers, anonymousViewers },
-totalsAllTime?, lastViewedAt?, series: [{ date, views, opens, downloads }], viewers?, anonymousViewers?,
-projectLinkTraffic? }`.
+totalsAllTime?, lastViewedAt?, downloadsEnabled, series: [{ date, views, opens, downloads }], viewers?,
+anonymousViewers?, projectLinkTraffic? }`.
+`downloadsEnabled` answers the question `downloads: 0` cannot: nobody downloaded it, or nobody could. It means
+"any live link allows it", deliberately not `get_share`'s `shareAllowPdfDownload`, which is the *default* link's
+setting and says nothing about the other nine — the same divergence the route computes it for.
 `totals` and `series` cover the window `days` sets, which defaults to a fortnight, so on their own they answer
 "has anyone read this lately" while reading as "has anyone read this": a deck shared last quarter reports
 `views: 0`. `totalsAllTime` (`views, ownerPreviews, opens, opensPartial, downloads, pagesViewed`) and
@@ -391,12 +407,15 @@ link nobody can open.
   term; when nothing carries all of them the OR results come back anyway with a `warnings` line saying so, because a
   labelled near miss beats an empty answer to "find the Sequoia diligence link".
 - confirm a password — `lnkdrp_verify_share_password` `{docId, linkId, password}` -> `{docId, linkId, passwordEnabled,
-  matches, linkStatus, opensLink}`. Never uses the
+  matches, linkStatus, opensLink, isArchived?}`. Never uses the
   recipient's unlock route, so it sets no cookie, records no view, and cannot spend the recipient's 10-per-5-min budget;
   it has its own limit of 20 checks per link per 5 minutes. `matches` compares the password alone, which is not the
   question a human is asking: a correct password on a disabled or expired link opens nothing, and a link with no
   password opens for everyone. `opensLink` is the answer to "does this link work for the person holding this" —
-  active, and either the password matches or none is set.
+  active, and either the password matches or none is set. An archived document's links open for nobody whatever
+  their own rows say (the rows keep the state unarchiving restores), so `linkStatus` comes back `"archived"`,
+  `opensLink` false and `isArchived: true` — the same override `lnkdrp_get_share` applies, which this tool used to
+  contradict one call later.
 - read a password back — `lnkdrp_get_share_link_password` `{docId, linkId}` -> `{docId, linkId, passwordEnabled, password}`, plain text,
   owner/admin, and every read lands in the activity feed. **Refused for API-key callers** since the security pass
   (`forbidApiKey`, "reveal a share password"), and every MCP connection is an API key — so over MCP this answers
@@ -462,7 +481,11 @@ belongs to the workspace, so membership changes always read the project first.
   overwrites name, description and autoAddFiles together, so the tool fills in current values for what was not passed.
   A name another project holds comes back as `validation`, not the route's 409.
 - delete_project — In `{ projectId | projectSlug, confirm? }` → confirms with the human first → `DELETE /api/projects/:id` →
-  `{ ok, deleted: { projectId, slug, documentsDetached } }`. Documents stay.
+  `{ ok, deleted: { projectId, slug, documentsDetached } }`. Documents stay. The preview's `severity` comes from the
+  project's link traffic (`severityFromTraffic`: any recipient view, or more than one live link), not from "the
+  public page is on and it is not empty" — which is not a fact about anyone losing anything, and printed the
+  high-severity sentence ("recipients have opened this…") above facts showing zero views. An unreadable link
+  listing stays `high`: the safe default for a confirmation prompt is the louder one.
 
 ### Project links (`src/tools/projectLinks.ts`)
 A document link sends one PDF to one recipient; a project link sends the whole room. Each one is a `/p/<shareId>`
@@ -529,6 +552,8 @@ undoes it). Tag DTO: `{ tagId, name, slug, color, taggedItems? }`.
   make a duplicate. Safe to repeat. Attached one name at a time on purpose: a partial failure leaves the tags that
   did land rather than losing all of them.
 - untag — In `{ docId | projectId, tags (1–10 names) }` → `GET /api/tags/assignments`, then `DELETE` per match →
+  `notTagged` reports a name in the spelling the caller used, not the fold it matched on; `removed` carries the
+  tag's stored name. Reporting "serie-a" back handed a human a string they never typed and cannot find in the UI. 
   `{ docId|projectId, removed, notTagged, tags }`. Both sides go through the same fold `lnkdrp_tag` promises — the
   stored slug *is* the folded name — so a name matches whichever way it was typed. Removing used only to lowercase,
   which meant untagging "Serie A" from an item carrying "Série A" reported it as not there: a tool that silently
@@ -544,7 +569,10 @@ Starring is not sharing and changes nothing a recipient sees, so neither tool co
 - star_docs — In `{ docIds (1–50), starred? = true }` → `POST /api/starred` per document →
   `{ starred, changed, unchanged, notFound, starredDocs }`. The web button toggles; these tools always send the
   wanted state, so a repeat is a no-op rather than an unstar. A document already in that state comes back in
-  `unchanged`; `notFound` collects ids that are unknown, deleted or archived, and never fails the call.
+  `unchanged`; `notFound` collects ids that are unknown, deleted or archived, and never fails the call. Ids are
+  lower-cased at the door: `docIdSchema` accepts either case and the API normalises, but the changed/unchanged
+  compare is a string equality against the API's lower-case ids, so an upper-case id was reported as `unchanged`
+  in both directions while the star actually went on and off.
 - list_starred — In `{}` → `GET /api/starred` → `{ total, starredDocs }`, in sidebar order. Deleted and archived
   documents are left out, and their stars come back if the document does.
 

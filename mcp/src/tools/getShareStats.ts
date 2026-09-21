@@ -36,6 +36,9 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         "one view and three opens - the gap between them is what a returning reader looks like. " +
         "Every figure excludes the workspace owner's and teammates' own opens; those are counted separately as " +
         "totals.ownerPreviews, so views 0 with ownerPreviews 3 means only the owner has opened it, not that nobody has. " +
+        "downloads has the same trap in a sharper form: read downloadsEnabled first, because false means nobody was ever "
+        + "able to download it, not that nobody wanted to. It answers 'any live link allows it', so it can be true while "
+        + "the default link's own shareAllowPdfDownload is false. "  +
         "That split is best-effort: it relies on the opener being signed in to lnkdrp when they opened the link, so an owner " +
         "who opens their own link in a private window, a logged-out browser or a script is recorded as an anonymous " +
         "recipient and counts in views. Two anonymous views seconds after a link was created are therefore most likely the " +
@@ -148,6 +151,13 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         analyticsTier: stats.analyticsTier,
         viewerCount: stats.viewerCount,
         totals: stats.totals,
+        /**
+         * Could anyone have downloaded it? `downloads: 0` has two readings and only one of them is
+         * about recipients. This is the same "any live link allows it" answer the owner's own
+         * metrics page uses — deliberately not get_share's shareAllowPdfDownload, which is the
+         * default link's setting and says nothing about the other nine.
+         */
+        downloadsEnabled: stats.downloadsEnabled,
         /**
          * The same scope, ever. `days` defaults to 15, so without this the tool's answer to "has
          * anyone read this?" is really "in the last fortnight" — and a document shared last quarter

@@ -319,7 +319,7 @@ export const sharePdfInputShape = {
   summary: z
     .string()
     .min(40, "summary must be 40-600 characters, and goes together with keyPoints (2-7 items). Omit both to let lnkdrp write the summary instead, which costs credits.")
-    .max(600)
+    .max(600, "summary must be 40-600 characters. Trim it, or omit summary and keyPoints to let lnkdrp write one (costs credits).")
     .optional()
     .describe(
       "Your own summary of the document, written from its content (40-600 characters, plain text; URLs and markup are stripped). " +

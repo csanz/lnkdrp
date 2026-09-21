@@ -8,6 +8,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { creditsForRun } from "../../../src/lib/credits/schedule";
 import type { ActionType, QualityTier } from "../../../src/lib/credits/types";
 import { MCP_SERVER_VERSION } from "../config";
+import type { PlanSnapshotLite } from "../api";
 import type { ToolContext } from "../context";
 import { handleTool } from "../errors";
 import { SAFETY_TAIL } from "./shared";
@@ -38,13 +39,24 @@ type UncoveredFeature = { feature: string; reason: string };
  * silently-failed attempt. Project management left this list when `tools/projects.ts` shipped.
  */
 function buildCapabilities(
-  plan: { plan: string | null; limits: { documents: number | null; projects: number | null; analyticsDays: number | null; collaborators: number | null }; usage: { documents: number; projects: number; members: number } } | null,
+  plan: PlanSnapshotLite | null,
   featureRequestsEnabled: boolean,
 ): Record<string, unknown> {
   const isPro = plan?.plan === "pro";
   const limits = plan?.limits ?? { documents: null, projects: null, analyticsDays: null, collaborators: null };
   const usage = plan?.usage ?? { documents: 0, projects: 0, members: 0 };
   const remaining = (limit: number | null, used: number) => (limit === null ? null : Math.max(0, limit - used));
+  /**
+   * Grace beats arithmetic.
+   *
+   * A Free workspace over its cap but inside the unblocked launch window is not capped — `checkLimit`
+   * returns ok with a warning, and `/api/plan` forces every `atLimit` flag false to match. This
+   * builder computed `max(0, limit - used)` = 0 and the description tells the agent to read that as
+   * "what I can do before attempting anything", so the one preflight it is told to run concluded
+   * "upgrade first" during the single window where no upgrade is needed.
+   */
+  const graceActive = plan?.graceActive === true;
+  const atLimit = plan?.atLimit ?? { documents: false, projects: false, collaborators: false };
   const notMcpAccessible: UncoveredFeature[] = [
     {
       feature: "requestRepos",
@@ -63,9 +75,16 @@ function buildCapabilities(
     // plan_limit a create happens to throw: `available: false` means the project's single default
     // link is all this workspace gets.
     projectLinks: { proOnly: true, available: isPro },
-    documents: plan ? { limit: limits.documents, used: usage.documents, remaining: remaining(limits.documents, usage.documents) } : null,
-    projects: plan ? { limit: limits.projects, used: usage.projects, remaining: remaining(limits.projects, usage.projects) } : null,
-    collaborators: plan ? { limit: limits.collaborators, used: usage.members } : null,
+    documents: plan
+      ? { limit: limits.documents, used: usage.documents, remaining: remaining(limits.documents, usage.documents), atLimit: atLimit.documents }
+      : null,
+    projects: plan
+      ? { limit: limits.projects, used: usage.projects, remaining: remaining(limits.projects, usage.projects), atLimit: atLimit.projects }
+      : null,
+    collaborators: plan ? { limit: limits.collaborators, used: usage.members, atLimit: atLimit.collaborators } : null,
+    // Present only while it is true, and worth saying out loud: it is the one state where
+    // `remaining: 0` does not mean the next write is refused.
+    ...(graceActive ? { graceActive: true as const } : {}),
     // `null` = no cap (Pro); a number is how many days of history `lnkdrp_get_share_stats` serves.
     analyticsDaysLimit: plan ? limits.analyticsDays : null,
     // Viewer identities, per-page time and visit history in lnkdrp_get_share_stats — Pro only, and
@@ -127,7 +146,9 @@ export function registerWhoamiTool(server: McpServer, ctx: ToolContext): void {
         "the workspace's spend limit, so 0 credits on Pro with onDemand is not a wall. Free workspaces add credits by " +
         "buying packs, which only a person can do. capabilities answers 'what can I do here' in one call, " +
         "before attempting anything: documents/projects (limit, used, remaining; limit null = unlimited - documents.used " +
-        "counts shared documents, those with a link on, so it can be lower than lnkdrp_list_docs's total), links " +
+        "counts shared documents, those with a link on, so it can be lower than lnkdrp_list_docs's total; read atLimit " +
+        "rather than remaining to decide whether the next write is refused - a Free workspace inside its launch grace " +
+        "window reports capabilities.graceActive: true, remaining 0 and atLimit false, and the write goes through), links " +
         "(never limited on any plan), projectLinks (Pro only - on Free a project keeps its one default link and " +
         "lnkdrp_create_project_link fails with plan_limit), collaborators, analyticsDaysLimit (the window lnkdrp_get_share_stats serves), " +
         "deepAnalytics and recipientsCanBrowseVersions (both Pro-only), and notMcpAccessible - real product features " +
