@@ -56,9 +56,10 @@ export default function WorkspaceManager() {
     const found = stableOrgs.find((o) => o.id === activeOrgId);
     return found?.role ?? null;
   }, [activeOrgId, stableOrgs]);
-  const isPersonalOrg = currentOrg?.type === "personal";
-  // Personal workspaces are single-user; invites are not allowed.
-  const canInvite = !isPersonalOrg && (activeOrgRole === "owner" || activeOrgRole === "admin");
+  // Role only. Whether this workspace may have a second member is a plan question, not a workspace
+  // *type* question, and the four join routes already decide it with `checkLimit(orgId,
+  // "collaborators")`. See the note on `canAdminTeams` in `src/app/dashboard/TeamsManager.tsx`.
+  const canInvite = activeOrgRole === "owner" || activeOrgRole === "admin";
 
   const switchOrg = useCallback(
     async (nextOrgId: string) => {

@@ -278,6 +278,16 @@ export default function KeysPanel({
   // by history. The modal keeps the full audit trail one click away.
   const activeKeys = keys.filter((k) => !k.revoked);
   const revokedKeys = keys.filter((k) => k.revoked);
+  /**
+   * Show who created a key only when that distinguishes anything.
+   *
+   * This used to be `!status?.isPersonalOrg` — the owner column was hidden in a personal workspace
+   * because a personal workspace could only ever hold one person. It can hold collaborators now
+   * (the gate is the plan, not the workspace type), so that test would hide exactly the column a
+   * shared personal workspace needs. Counting the distinct creators answers the real question and
+   * is right for every workspace type: one creator, no column.
+   */
+  const showKeyOwner = new Set(keys.map((k) => ownerName(k.createdBy) ?? "")).size > 1;
   const [revokedOpen, setRevokedOpen] = useState(false);
   const activeCount = keys.filter((k) => !k.revoked).length;
 
@@ -444,7 +454,7 @@ export default function KeysPanel({
               key={row.id}
               row={row}
               canManage={canManage}
-              showOwner={!status?.isPersonalOrg}
+              showOwner={showKeyOwner}
               inUse={Boolean(plaintextKey && plaintextKey.startsWith(row.prefix))}
               onUse={onUse}
               onRevoked={onRevoked}
@@ -474,7 +484,7 @@ export default function KeysPanel({
         </div>
         <ul className="mt-4 divide-y divide-[var(--border)] rounded-xl border border-[var(--border)]">
           {revokedKeys.map((row) => (
-            <KeyRow key={row.id} row={row} canManage={false} showOwner={!status?.isPersonalOrg} onRevoked={onRevoked} />
+            <KeyRow key={row.id} row={row} canManage={false} showOwner={showKeyOwner} onRevoked={onRevoked} />
           ))}
         </ul>
       </Modal>
