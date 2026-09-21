@@ -544,8 +544,8 @@ it before deploying, not after:
   on the remaining 23:00–23:59 UTC ticks, then on the next day's 23:00 run. Once a stuck cursor is
   more than 7 days old (`defaultLookbackDays`), the events older than that fall out of the window
   and are never sent.
-- The cron reads every live membership, unsorted, capped at `limitMembers` (default 500). Above
-  500 memberships across all workspaces, some members get no view, doc-update or request emails
+- The cron reads every live membership, unsorted, capped at `limitMembers` (default 600). Above
+  600 memberships across all workspaces, some members get no view, doc-update or request emails
   on a tick, and nothing reports it; raise the limit or fix the query before that point.
 - Every view email carries a signed one-click **Turn off these emails** link
   (`/api/notifications/views/off`, no sign-in, 30 days; `LNKDRP_NOTIFICATION_TOKEN_SECRET` or
