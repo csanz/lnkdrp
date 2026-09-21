@@ -176,12 +176,22 @@ export default async function SharePage(props: {
   const docOrgId = (doc as { orgId?: unknown }).orgId;
   const workspace = await workspaceBrandForOrg(typeof docOrgId === "undefined" || docOrgId === null ? null : String(docOrgId));
 
-  const previewUrl =
-    typeof doc.previewImageUrl === "string"
-      ? doc.previewImageUrl
-      : typeof doc.firstPagePngUrl === "string"
-        ? doc.firstPagePngUrl
-        : null;
+  /**
+   * Whether there is a preview, not where it lives.
+   *
+   * This used to be the stored value, rendered as `<img src>` — a Vercel Blob URL on a public,
+   * unauthenticated CDN. The recipient walked away with a permanent copy of the first page, and
+   * with the document and upload ids, which are in the path; every other artifact the pipeline
+   * writes hangs off that same prefix, `extracted.txt` included. Nothing the owner did to the link
+   * afterwards could take any of it back.
+   *
+   * The bytes come through `/s/:shareId/preview` now, which re-proves this link's refusals and its
+   * password before serving anything. The same change was made on the data-room side first.
+   */
+  const hasPreview =
+    Boolean(typeof doc.previewImageUrl === "string" ? doc.previewImageUrl.trim() : "") ||
+    Boolean(typeof doc.firstPagePngUrl === "string" ? doc.firstPagePngUrl.trim() : "");
+  const previewUrl = hasPreview ? `/s/${encodeURIComponent(shareId)}/preview` : null;
 
   const sharePasswordHash = link.passwordHash;
   const sharePasswordSalt = link.passwordSalt;
