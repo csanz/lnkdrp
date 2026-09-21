@@ -8,8 +8,7 @@
  * explained again — they need the door. What follows the link is only what they cannot guess: what
  * the free plan gives them, so nobody goes looking for a credit card first.
  */
-import type { EmailContent } from "./downloadRequest";
-import { emailBody } from "./signature";
+import { blocks, transactional, type EmailContent } from "./compose";
 import { getPublicSiteBase } from "@/lib/urls";
 import { FREE_DOCUMENTS } from "@/lib/billing/planLimits";
 import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
@@ -23,18 +22,21 @@ export function waitlistApprovedEmail(params: {
   const first = (params.name ?? "").trim().split(/\s+/)[0] ?? "";
   const base = (params.appUrl ?? getPublicSiteBase() ?? "").trim().replace(/\/+$/, "");
 
-  return {
+  return transactional({
     subject: "You're in: your LinkDrop account is open",
-    text: emailBody([
-      first ? `You're in, ${first}.` : "You're in.",
-      "",
-      "Your LinkDrop account is open. Sign in with the same Google account you signed up with and upload something.",
-      base ? "" : null,
-      base ? `Start here: ${base}` : null,
-      "",
-      `You're on the free plan: ${FREE_DOCUMENTS} shared documents with view and download tracking, as many links as you like on each, and ${FREE_STARTER_CREDITS} credits for the AI summaries and compares. No card needed.`,
-      "",
-      "Thanks for waiting.",
-    ]),
-  };
+    preheader: "Sign in with the same Google account you signed up with.",
+    blocks: blocks(
+      { kind: "heading", text: first ? `You're in, ${first}.` : "You're in." },
+      {
+        kind: "p",
+        text: "Your LinkDrop account is open. Sign in with the same Google account you signed up with and upload something.",
+      },
+      base ? { kind: "action", label: "Start here", url: base } : null,
+      {
+        kind: "p",
+        text: `You're on the free plan: ${FREE_DOCUMENTS} shared documents with view and download tracking, as many links as you like on each, and ${FREE_STARTER_CREDITS} credits for the AI summaries and compares. No card needed.`,
+      },
+      { kind: "muted", text: "Thanks for waiting." },
+    ),
+  });
 }

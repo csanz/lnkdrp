@@ -9,8 +9,7 @@
  * is answered in a sentence, and the rest (their account, their own workspace) in another. A
  * removal notice that reads like a policy page is worse, not kinder.
  */
-import type { EmailContent } from "./downloadRequest";
-import { emailBody } from "./signature";
+import { blocks, transactional, type EmailContent } from "./compose";
 import { getPublicSiteBase } from "@/lib/urls";
 
 export function memberRemovedEmail(params: {
@@ -26,15 +25,17 @@ export function memberRemovedEmail(params: {
   // an env var nothing sets, so its one link silently never appeared.
   const base = (params.appUrl ?? getPublicSiteBase() ?? "").trim().replace(/\/+$/, "");
 
-  return {
+  return transactional({
     subject: `You were removed from ${workspace}`,
-    text: emailBody([
-      `You no longer have access to the workspace “${workspace}”.`,
-      removedBy ? `Removed by: ${removedBy}` : null,
-      "",
-      "Anything you uploaded stays with the workspace and its links keep working. Your own account and personal workspace are unchanged.",
-      base ? "" : null,
-      base ? `Your workspace: ${base}` : null,
-    ]),
-  };
+    preheader: "Your own account and personal workspace are unchanged.",
+    blocks: blocks(
+      { kind: "p", text: `You no longer have access to the workspace \u201C${workspace}\u201D.` },
+      removedBy ? { kind: "rows", rows: [["Removed by", removedBy]] } : null,
+      {
+        kind: "p",
+        text: "Anything you uploaded stays with the workspace and its links keep working. Your own account and personal workspace are unchanged.",
+      },
+      base ? { kind: "action", label: "Your workspace", url: base } : null,
+    ),
+  });
 }

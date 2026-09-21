@@ -10,6 +10,7 @@
  *   npx tsx --env-file=.env.local scripts/send-test-emails.ts --list
  *   npx tsx --env-file=.env.local scripts/send-test-emails.ts --to=you@example.com
  *   ... --to=you@example.com --only=share_views.immediate,plan_limit
+ *   ... --to=you@example.com --raw        # exact subjects, no [TEST] prefix
  *   ... --to=you@example.com --dry-run
  *
  * Safety, in the order it matters:
@@ -17,7 +18,8 @@
  *   - **`--to` is required and is the only recipient.** Nothing is read from the database, so there
  *     is no path by which a real customer receives one of these.
  *   - **Every subject is prefixed `[TEST]`**, so a message that escapes into a shared inbox is
- *     obviously not a live notification.
+ *     obviously not a live notification. `--raw` drops the prefix, for when the question is what a
+ *     recipient actually sees — a subject you cannot read as sent is a subject you cannot judge.
  *   - **`EMAIL_TRANSPORT=console` short-circuits the whole thing** — that is the setting this repo
  *     runs with by default precisely so scripts do not send, and a script whose job is to send has
  *     to say plainly that it did nothing rather than appear to succeed.
@@ -72,6 +74,9 @@ async function main() {
   }
 
   const dryRun = flag("dry-run") !== null;
+  // Off by default: the prefix is what stops a stray test looking like a live notification, so
+  // dropping it has to be something you asked for.
+  const raw = flag("raw") !== null;
   // Printing is a legitimate way to read the copy, so this does not refuse — but it says so in a
   // way that cannot be mistaken for a send, and the summary at the end repeats it. A script whose
   // whole job is sending must never let "printed 17 emails" read as "delivered 17 emails".
@@ -90,7 +95,7 @@ async function main() {
   let sent = 0;
   const failures: Array<{ id: string; error: string }> = [];
   for (const row of chosen) {
-    const subject = `[TEST] ${row.subject}`;
+    const subject = raw ? row.subject : `[TEST] ${row.subject}`;
     if (dryRun) {
       console.log(`  would send  ${row.catalogId.padEnd(28)} ${subject}`);
       sent += 1;

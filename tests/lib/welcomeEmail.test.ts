@@ -50,13 +50,18 @@ describe("welcome email body", () => {
     expect(mail.text).toContain("No card needed.");
   });
 
-  test("points at the dashboard, and omits the line rather than printing a bare slash", () => {
-    expect(welcomeEmail({ name: "Dana", appUrl: "https://lnkdrp.com" }).text).toContain(
-      "https://lnkdrp.com/dashboard",
-    );
-    const noUrl = welcomeEmail({ name: "Dana", appUrl: "" }).text;
-    expect(noUrl).not.toContain("Your dashboard:");
-    expect(noUrl).not.toContain("/dashboard");
+  test("the dashboard button reaches both bodies", () => {
+    const mail = welcomeEmail({ name: "Dana", appUrl: "https://lnkdrp.com" });
+    expect(mail.text).toContain("Open your dashboard: https://lnkdrp.com/dashboard");
+    expect(mail.html).toContain('href="https://lnkdrp.com/dashboard"');
+  });
+
+  test("with no site URL the button is dropped, not pointed at a bare slash", () => {
+    const mail = welcomeEmail({ name: "Dana", appUrl: "" });
+    expect(mail.text).not.toContain("/dashboard");
+    expect(mail.html).not.toContain("/dashboard");
+    // The rest of the email still has to stand on its own.
+    expect(mail.text).toContain("Your account is ready.");
   });
 
   test("does not promise to be the only email we ever send", () => {

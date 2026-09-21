@@ -19,8 +19,7 @@
  * later, `waitlistApproved` — sending "here's how to start" to somebody who cannot start yet is the
  * one thing this email must never do. The caller in `src/lib/auth.ts` makes that decision.
  */
-import type { EmailContent } from "./downloadRequest";
-import { emailBody } from "./signature";
+import { blocks, transactional, type EmailContent } from "./compose";
 import { getPublicSiteBase } from "@/lib/urls";
 import { FREE_DOCUMENTS } from "@/lib/billing/planLimits";
 import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
@@ -34,18 +33,26 @@ export function welcomeEmail(params: {
   const first = (params.name ?? "").trim().split(/\s+/)[0] ?? "";
   const base = (params.appUrl ?? getPublicSiteBase() ?? "").trim().replace(/\/+$/, "");
 
-  return {
+  return transactional({
     subject: "Welcome to LinkDrop",
-    text: emailBody([
-      first ? `Welcome, ${first}.` : "Welcome.",
-      "",
-      "Your account is ready. Upload a PDF, send the link instead of the file, and you'll see who opened it, which pages they actually read, and how long they spent on each one.",
-      "",
-      `You're on the free plan: ${FREE_DOCUMENTS} shared documents, as many links as you like on each — one per recipient, each with its own analytics — and ${FREE_STARTER_CREDITS} credits for the AI summaries and compares. No card needed.`,
-      base ? "" : null,
-      base ? `Your dashboard: ${base}/dashboard` : null,
-      "",
-      "Notifications about your documents — who opened what, download requests — are yours to set: immediately, once a day, or not at all, from your notification settings.",
-    ]),
-  };
+    preheader: `Your account is ready — ${FREE_DOCUMENTS} shared documents on the free plan, no card needed.`,
+    blocks: blocks(
+      { kind: "heading", text: first ? `Welcome, ${first}.` : "Welcome." },
+      {
+        kind: "p",
+        text: "Your account is ready. Upload a PDF, send the link instead of the file, and you'll see who opened it, which pages they actually read, and how long they spent on each one.",
+      },
+      // Omitted rather than pointed at "/dashboard" when the site URL is unset: a button that goes
+      // nowhere is worse than no button.
+      base ? { kind: "action", label: "Open your dashboard", url: `${base}/dashboard` } : null,
+      {
+        kind: "p",
+        text: `You're on the free plan: ${FREE_DOCUMENTS} shared documents, as many links as you like on each — one per recipient, each with its own analytics — and ${FREE_STARTER_CREDITS} credits for the AI summaries and compares. No card needed.`,
+      },
+      {
+        kind: "muted",
+        text: "Notifications about your documents — who opened what, download requests — are yours to set: immediately, once a day, or not at all, from your notification settings.",
+      },
+    ),
+  });
 }

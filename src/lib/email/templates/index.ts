@@ -14,6 +14,7 @@ export * from "./downloadRequest";
 export * from "./memberRemoved";
 export * from "./waitlistApproved";
 export * from "./welcome";
+export * from "./orgInvite";
 export * from "./viewerIntroduction";
 
 /** One row per email we send: for docs, for support ("which email is this?"), and for review. */
@@ -31,7 +32,7 @@ export const EMAIL_CATALOG: readonly {
   { id: "waitlist_approved", what: "Tells someone in the early-access queue that their account is open", to: "invitee", builtBy: "templates/waitlistApproved.ts" },
   { id: "viewer_verify", what: "Asks a reader who introduced themselves to confirm their address (never a gate)", to: "reader", builtBy: "templates/viewerIntroduction.ts" },
   { id: "viewer_introduced", what: "Tells the owner which reader was behind an anonymous open", to: "owner", builtBy: "templates/viewerIntroduction.ts" },
-  { id: "org_invite", what: "Invites someone to a workspace", to: "invitee", builtBy: "email/sendOrgInviteEmail.ts" },
+  { id: "org_invite", what: "Invites someone to a workspace", to: "invitee", builtBy: "templates/orgInvite.ts" },
   { id: "plan_limit", what: "A Free workspace is over a plan limit (grace, then blocked)", to: "owner", builtBy: "email/sendPlanLimitEmail.ts" },
   { id: "share_views.immediate", what: "A recipient opened a share link", to: "member", builtBy: "notifications/sendNotificationEmails.ts" },
   { id: "share_views.daily", what: "Daily digest of recipient opens", to: "member", builtBy: "notifications/sendNotificationEmails.ts" },

@@ -12,6 +12,7 @@
  * builder would otherwise read the clock, so two renders are byte-identical and a diff in the
  * output is a diff in the template.
  */
+import type { EmailContent } from "@/lib/email/templates/compose";
 import {
   EMAIL_CATALOG,
   downloadRequestApprovedEmail,
@@ -22,6 +23,7 @@ import {
   viewerVerifyEmail,
   waitlistApprovedEmail,
   welcomeEmail,
+  orgInviteEmail,
 } from "@/lib/email/templates";
 import { buildPlanLimitEmail } from "@/lib/email/sendPlanLimitEmail";
 import {
@@ -138,6 +140,17 @@ const VIEW_EVENT_INPUTS: PreviewInput[] = [
 ];
 
 /** Build every preview. Pure: no database, no network, no sending. */
+/**
+ * Spread a template's result into a preview row.
+ *
+ * `...someEmail(...)` followed by a literal `html: null` is what these rows used to be, and it
+ * worked only while every template was text-only: the day they grew an HTML part, the null would
+ * have thrown it away and the previews page would have kept showing text with nothing to say why.
+ */
+function content(c: EmailContent): { subject: string; text: string; html: string | null } {
+  return { subject: c.subject, text: c.text, html: c.html ?? null };
+}
+
 export function buildPreviews(): PreviewRow[] {
   const rows: PreviewRow[] = [];
 
@@ -150,8 +163,7 @@ export function buildPreviews(): PreviewRow[] {
       { label: "name", value: "Dana Lee" },
       { label: "appUrl", value: SITE_URL },
     ],
-    ...welcomeEmail({ name: "Dana Lee", appUrl: SITE_URL }),
-    html: null,
+    ...content(welcomeEmail({ name: "Dana Lee", appUrl: SITE_URL })),
     headers: null,
   });
 
@@ -164,8 +176,7 @@ export function buildPreviews(): PreviewRow[] {
       { label: "name", value: "(empty)" },
       { label: "appUrl", value: SITE_URL },
     ],
-    ...welcomeEmail({ name: null, appUrl: SITE_URL }),
-    html: null,
+    ...content(welcomeEmail({ name: null, appUrl: SITE_URL })),
     headers: null,
   });
 
@@ -177,8 +188,7 @@ export function buildPreviews(): PreviewRow[] {
       { label: "title", value: SAMPLE_TITLE },
       { label: "shareUrl", value: SAMPLE_SHARE_URL },
     ],
-    ...downloadRequestReceivedEmail({ title: SAMPLE_TITLE, shareUrl: SAMPLE_SHARE_URL }),
-    html: null,
+    ...content(downloadRequestReceivedEmail({ title: SAMPLE_TITLE, shareUrl: SAMPLE_SHARE_URL })),
     headers: null,
   });
 
@@ -193,14 +203,13 @@ export function buildPreviews(): PreviewRow[] {
       { label: "approveUrl", value: `${SITE_URL}/download-requests/approve/tok` },
       { label: "denyUrl", value: `${SITE_URL}/download-requests/deny/tok` },
     ],
-    ...downloadRequestOwnerEmail({
+    ...content(downloadRequestOwnerEmail({
       title: SAMPLE_TITLE,
       shareUrl: SAMPLE_SHARE_URL,
       requesterEmail: "dana@example.com",
       approveUrl: `${SITE_URL}/download-requests/approve/tok`,
       denyUrl: `${SITE_URL}/download-requests/deny/tok`,
-    }),
-    html: null,
+    })),
     headers: null,
   });
 
@@ -217,14 +226,13 @@ export function buildPreviews(): PreviewRow[] {
       { label: "approveUrl", value: "(empty)" },
       { label: "denyUrl", value: "(empty)" },
     ],
-    ...downloadRequestOwnerEmail({
+    ...content(downloadRequestOwnerEmail({
       title: "",
       shareUrl: "",
       requesterEmail: "dana@example.com",
       approveUrl: "",
       denyUrl: "",
-    }),
-    html: null,
+    })),
     headers: null,
   });
 
@@ -236,8 +244,7 @@ export function buildPreviews(): PreviewRow[] {
       { label: "title", value: SAMPLE_TITLE },
       { label: "claimUrl", value: `${SITE_URL}/download/claim/tok` },
     ],
-    ...downloadRequestApprovedEmail({ title: SAMPLE_TITLE, claimUrl: `${SITE_URL}/download/claim/tok` }),
-    html: null,
+    ...content(downloadRequestApprovedEmail({ title: SAMPLE_TITLE, claimUrl: `${SITE_URL}/download/claim/tok` })),
     headers: null,
   });
 
@@ -250,8 +257,27 @@ export function buildPreviews(): PreviewRow[] {
       { label: "removedByEmail", value: "owner@example.com" },
       { label: "appUrl", value: SITE_URL },
     ],
-    ...memberRemovedEmail({ orgName: "Acme", removedByEmail: "owner@example.com", appUrl: SITE_URL }),
-    html: null,
+    ...content(memberRemovedEmail({ orgName: "Acme", removedByEmail: "owner@example.com", appUrl: SITE_URL })),
+    headers: null,
+  });
+
+  rows.push({
+    key: "org_invite",
+    catalogId: "org_invite",
+    label: "Invited to a workspace",
+    inputs: [
+      { label: "orgName", value: "Acme" },
+      { label: "role", value: "editor" },
+      { label: "invitedByEmail", value: "dana@example.com" },
+    ],
+    ...content(
+      orgInviteEmail({
+        orgName: "Acme",
+        inviteUrl: `${SITE_URL}/invites/tok`,
+        role: "editor",
+        invitedByEmail: "dana@example.com",
+      }),
+    ),
     headers: null,
   });
 
@@ -263,8 +289,7 @@ export function buildPreviews(): PreviewRow[] {
       { label: "name", value: "Dana" },
       { label: "appUrl", value: SITE_URL },
     ],
-    ...waitlistApprovedEmail({ name: "Dana", appUrl: SITE_URL }),
-    html: null,
+    ...content(waitlistApprovedEmail({ name: "Dana", appUrl: SITE_URL })),
     headers: null,
   });
 
@@ -277,12 +302,11 @@ export function buildPreviews(): PreviewRow[] {
       { label: "workspaceName", value: "Acme" },
       { label: "verifyUrl", value: `${SITE_URL}/share/verify?t=tok` },
     ],
-    ...viewerVerifyEmail({
+    ...content(viewerVerifyEmail({
       documentTitle: SAMPLE_TITLE,
       workspaceName: "Acme",
       verifyUrl: `${SITE_URL}/share/verify?t=tok`,
-    }),
-    html: null,
+    })),
     headers: null,
   });
 
@@ -299,14 +323,13 @@ export function buildPreviews(): PreviewRow[] {
         { label: "viewerEmail", value: "dana@example.com" },
         { label: "documentTitle", value: SAMPLE_TITLE },
       ],
-      ...viewerIntroducedEmail({
+      ...content(viewerIntroducedEmail({
         documentTitle: SAMPLE_TITLE,
         viewerName: "Dana Lee",
         viewerEmail: "dana@example.com",
         verified,
         metricsUrl: `${SITE_URL}/doc/${SAMPLE_DOC_ID}/metrics`,
-      }),
-      html: null,
+      })),
       headers: null,
     });
   }
@@ -325,7 +348,7 @@ export function buildPreviews(): PreviewRow[] {
         { label: "endsAt", value: graceEndsAt.toISOString() },
         { label: "now", value: SAMPLE_NOW.toISOString() },
       ],
-      ...buildPlanLimitEmail({
+      ...content(buildPlanLimitEmail({
         to: "owner@example.com",
         kind,
         workspaceName: "Acme",
@@ -333,8 +356,7 @@ export function buildPreviews(): PreviewRow[] {
         endsAt: graceEndsAt,
         pricingUrl: `${SITE_URL}/pricing`,
         now: SAMPLE_NOW,
-      }),
-      html: null,
+      })),
       headers: null,
     });
   }

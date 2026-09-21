@@ -10,8 +10,7 @@
  * document" already went out anonymously, and the reader said who they were afterwards. Without it
  * that first email stays wrong in the inbox forever and the correction lives only in the feed.
  */
-import type { EmailContent } from "./downloadRequest";
-import { emailBody } from "./signature";
+import { blocks, transactional, type EmailContent } from "./compose";
 
 /** To the reader: one click to confirm the address they typed. Nothing waits on it. */
 export function viewerVerifyEmail(params: {
@@ -25,17 +24,22 @@ export function viewerVerifyEmail(params: {
   const workspace = (params.workspaceName ?? "").trim();
   const what = title ? `"${title}"` : "a document";
 
-  return {
+  return transactional({
     subject: title ? `Confirm your email for "${title}"` : "Confirm your email",
-    text: emailBody([
-      `You introduced yourself while reading ${what}${workspace ? ` from ${workspace}` : ""}.`,
-      "",
-      "Confirm this is your address so the sender sees your name rather than an anonymous reader:",
-      params.verifyUrl,
-      "",
-      "You do not have to. The document stays open either way, and this link simply expires in a day.",
-    ]),
-  };
+    preheader: "Optional \u2014 the document stays open either way.",
+    blocks: blocks(
+      { kind: "p", text: `You introduced yourself while reading ${what}${workspace ? ` from ${workspace}` : ""}.` },
+      {
+        kind: "p",
+        text: "Confirm this is your address so the sender sees your name rather than an anonymous reader:",
+      },
+      { kind: "action", label: "Confirm my email", url: params.verifyUrl },
+      {
+        kind: "muted",
+        text: "You do not have to. The document stays open either way, and this link simply expires in a day.",
+      },
+    ),
+  });
 }
 
 /** To the owner: who the anonymous reader turned out to be, and whether to believe it. */
@@ -51,17 +55,19 @@ export function viewerIntroducedEmail(params: {
   const what = title ? `"${title}"` : "your document";
   const name = (params.viewerName ?? "").trim();
   const who = name ? `${name} (${params.viewerEmail})` : params.viewerEmail;
+  // The distinction the whole email exists to carry: a confirmed address is a fact, a typed one is
+  // a claim. It stays in the body rather than becoming a badge, because a badge is easy to skim past.
+  const standing = params.verified
+    ? "They confirmed the address by email, so it is theirs."
+    : "They typed this address and have not confirmed it yet, so treat it as their claim rather than a fact.";
 
-  return {
+  return transactional({
     subject: name ? `${name} introduced themselves on ${what}` : `A reader introduced themselves on ${what}`,
-    text: emailBody([
-      `${who} says they are the reader who opened ${what}.`,
-      "",
-      params.verified
-        ? "They confirmed the address by email, so it is theirs."
-        : "They typed this address and have not confirmed it yet, so treat it as their claim rather than a fact.",
-      params.metricsUrl ? "" : null,
-      params.metricsUrl ? `What they read: ${params.metricsUrl}` : null,
-    ]),
-  };
+    preheader: params.verified ? "Confirmed by email." : "Unconfirmed \u2014 their claim, not a fact.",
+    blocks: blocks(
+      { kind: "p", text: `${who} says they are the reader who opened ${what}.` },
+      { kind: params.verified ? "p" : "muted", text: standing },
+      params.metricsUrl ? { kind: "action", label: "What they read", url: params.metricsUrl } : null,
+    ),
+  });
 }

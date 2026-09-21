@@ -11,6 +11,8 @@
  * for local runs so nothing is actually sent.
  */
 import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { blocks, transactional, type EmailContent } from "@/lib/email/templates/compose";
+import type { Block } from "@/lib/email/layout";
 import {
   FREE_DOCUMENTS,
   FREE_PROJECTS,
@@ -48,99 +50,109 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** Human summary of what is over the Free limits, one line per limit. */
-function overLimitLines(usage: SendPlanLimitEmailParams["usage"]): string[] {
+/**
+ * What is over, one item per limit.
+ *
+ * These used to carry their own "- " prefix, because the only consumer joined them into a text
+ * body. The renderer owns the bullet now, so the HTML gets a real `<ul>` instead of a paragraph
+ * that begins with a hyphen.
+ */
+function overLimitItems(usage: SendPlanLimitEmailParams["usage"]): string[] {
   const lines: string[] = [];
   if (usage.documents > FREE_DOCUMENTS) {
     lines.push(
-      `- Shared documents: ${usage.documents} (Free includes ${plural(FREE_DOCUMENTS, "shared document", "shared documents")}; links per document are not limited)`,
+      `Shared documents: ${usage.documents} (Free includes ${plural(FREE_DOCUMENTS, "shared document", "shared documents")}; links per document are not limited)`,
     );
   }
   if (usage.projects > FREE_PROJECTS) {
-    lines.push(`- Projects: ${usage.projects} (Free includes ${plural(FREE_PROJECTS, "project", "projects")})`);
+    lines.push(`Projects: ${usage.projects} (Free includes ${plural(FREE_PROJECTS, "project", "projects")})`);
   }
   const collaborators = Math.max(0, usage.members - 1);
   if (collaborators > 0) {
     lines.push(
-      `- Collaborators: ${collaborators} (Free is for one person; Pro includes ${plural(PRO_INCLUDED_COLLABORATORS, "collaborator", "collaborators")})`,
+      `Collaborators: ${collaborators} (Free is for one person; Pro includes ${plural(PRO_INCLUDED_COLLABORATORS, "collaborator", "collaborators")})`,
     );
   }
   return lines;
 }
 
-/** Build the subject + plain-text body for a plan-limit email. */
-export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): { subject: string; text: string } {
+/** Build the subject and both bodies for a plan-limit email. */
+export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): EmailContent {
   const { kind, workspaceName, usage, endsAt, pricingUrl } = params;
   const now = params.now ?? new Date();
   const name = workspaceName.trim() || "your workspace";
   const endsOn = formatDate(endsAt);
-  const over = overLimitLines(usage);
-  const overBlock = over.length ? ["Right now it has:", ...over] : [];
+  const over = overLimitItems(usage);
 
-  const howToFix = [
-    "To stay on Free, bring the workspace back under the limits (archive a document, archive a project, or remove a collaborator).",
-    `Or upgrade to Pro for unlimited documents and projects: ${pricingUrl}`,
+  /** The "what is over" section, or nothing at all when we cannot name a specific limit. */
+  const overBlocks: Array<Block | null> = over.length
+    ? [{ kind: "p", text: "Right now it has:" }, { kind: "bullets", items: over }]
+    : [];
+
+  /** Both ways out, in the order we would rather they took them. */
+  const howToFix: Array<Block | null> = [
+    {
+      kind: "p",
+      text: "To stay on Free, bring the workspace back under the limits (archive a document, archive a project, or remove a collaborator).",
+    },
+    { kind: "action", label: "Upgrade to Pro", url: pricingUrl },
   ];
 
   if (kind === "started") {
-    return {
+    return transactional({
       subject: "Your LinkDrop workspace is over the Free limits",
-      text: [
-        `Hi,`,
-        "",
-        `"${name}" is over the limits of the Free plan.`,
-        "",
-        ...overBlock,
-        ...(overBlock.length ? [""] : []),
-        `Nothing changes today. You have until ${endsOn} to sort it out. After that, sharing new documents and creating projects on this workspace will be paused until it is back under the limits or on Pro.`,
-        "",
-        "Existing links keep working the whole time. Nothing is deleted.",
-        "",
+      preheader: `Nothing changes today — you have until ${endsOn}.`,
+      blocks: blocks(
+        { kind: "p", text: `"${name}" is over the limits of the Free plan.` },
+        ...overBlocks,
+        {
+          kind: "p",
+          text: `Nothing changes today. You have until ${endsOn} to sort it out. After that, sharing new documents and creating projects on this workspace will be paused until it is back under the limits or on Pro.`,
+        },
+        { kind: "p", text: "Existing links keep working the whole time. Nothing is deleted." },
         ...howToFix,
-        "",
-        "- LinkDrop",
-      ].join("\n"),
-    };
+      ),
+    });
   }
 
   if (kind === "reminder") {
     const left = daysLeft(endsAt, now);
     const leftLabel = plural(left, "day", "days");
-    return {
+    return transactional({
       subject: `${leftLabel} left: "${name}" is still over the Free limits`,
-      text: [
-        `Hi,`,
-        "",
-        `Quick reminder: "${name}" is still over the Free plan limits, and the grace period ends on ${endsOn} (${leftLabel} left).`,
-        "",
-        ...overBlock,
-        ...(overBlock.length ? [""] : []),
-        "When it ends, new shared documents and projects on this workspace will be paused. Existing links keep working, and you can still add links to the documents you already share.",
-        "",
+      preheader: `The grace period ends on ${endsOn}.`,
+      blocks: blocks(
+        {
+          kind: "p",
+          text: `Quick reminder: "${name}" is still over the Free plan limits, and the grace period ends on ${endsOn} (${leftLabel} left).`,
+        },
+        ...overBlocks,
+        {
+          kind: "p",
+          text: "When it ends, new shared documents and projects on this workspace will be paused. Existing links keep working, and you can still add links to the documents you already share.",
+        },
         ...howToFix,
-        "",
-        "- LinkDrop",
-      ].join("\n"),
-    };
+      ),
+    });
   }
 
-  return {
+  return transactional({
     subject: "New documents are paused on this workspace",
-    text: [
-      `Hi,`,
-      "",
-      `The grace period for "${name}" ended on ${endsOn}, and it is still over the Free plan limits. Sharing new documents and creating projects are paused on this workspace for now.`,
-      "",
-      ...overBlock,
-      ...(overBlock.length ? [""] : []),
-      "Your existing links keep working and nothing has been deleted.",
-      "",
-      "To pick up where you left off, bring the workspace back under the limits (archive a document, archive a project, or remove a collaborator) and creating resumes immediately.",
-      `Or upgrade to Pro for unlimited documents and projects: ${pricingUrl}`,
-      "",
-      "- LinkDrop",
-    ].join("\n"),
-  };
+    preheader: "Existing links keep working and nothing has been deleted.",
+    blocks: blocks(
+      {
+        kind: "p",
+        text: `The grace period for "${name}" ended on ${endsOn}, and it is still over the Free plan limits. Sharing new documents and creating projects are paused on this workspace for now.`,
+      },
+      ...overBlocks,
+      { kind: "p", text: "Your existing links keep working and nothing has been deleted." },
+      {
+        kind: "p",
+        text: "To pick up where you left off, bring the workspace back under the limits (archive a document, archive a project, or remove a collaborator) and creating resumes immediately.",
+      },
+      { kind: "action", label: "Upgrade to Pro", url: pricingUrl },
+    ),
+  });
 }
 
 /**
@@ -150,6 +162,6 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): { subject
  * `EMAIL_TRANSPORT=console` via `sendTextEmail`.
  */
 export async function sendPlanLimitEmail(params: SendPlanLimitEmailParams): Promise<void> {
-  const { subject, text } = buildPlanLimitEmail(params);
-  await sendTextEmail({ to: params.to, subject, text });
+  const { subject, text, html } = buildPlanLimitEmail(params);
+  await sendTextEmail({ to: params.to, subject, text, ...(html ? { html } : {}) });
 }

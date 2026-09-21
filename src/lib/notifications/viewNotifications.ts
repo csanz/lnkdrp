@@ -50,6 +50,7 @@
  * - Every email carries RFC 8058 one-click unsubscribe headers pointing at the signed off URL, and a
  *   hidden preheader that follows the same identity rule as the body.
  */
+import { renderHtml, renderText, type Block, type EmailFooter } from "@/lib/email/layout";
 import { Types } from "mongoose";
 import { ShareViewModel } from "@/lib/models/ShareView";
 import { ShareVisitModel } from "@/lib/models/ShareVisit";
@@ -285,14 +286,8 @@ export function sanitizeInline(value: unknown, max = TITLE_MAX): string {
   return `${s.slice(0, Math.max(1, max - 1)).trimEnd()}…`;
 }
 
-export function escapeHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+/** Re-exported: the implementation moved to the shared email layout. */
+export { escapeHtml } from "@/lib/email/layout";
 
 /** A label the sender actually chose; the default link's internal name does not count. */
 export function realLinkLabel(link: ViewLinkInfo | null | undefined): string | null {
@@ -686,164 +681,30 @@ export function digestPreheader(newViewers: number, returning: number, documents
   return parts.join(" · ");
 }
 
-type Block =
-  | { kind: "heading"; text: string }
-  | { kind: "p"; text: string }
-  | { kind: "muted"; text: string }
-  | { kind: "rows"; rows: Array<[string, string]> }
-  /** `compact`: one line of a list of viewers (tighter spacing, body size). */
-  | { kind: "subheading"; text: string; compact?: boolean }
-  | { kind: "bullets"; items: string[] }
-  | { kind: "action"; label: string; url: string }
-  | { kind: "divider" };
 
-function footerBlocksText(ctx: ComposeContext): string[] {
-  return [
-    "--",
-    VIEW_EMAIL_FOOTER_REASON,
-    `${TURN_OFF_LABEL}: ${ctx.offUrl}`,
-    `${CHANGE_HOW_OFTEN_LABEL}: ${buildPreferencesUrl(ctx.appUrl)}`,
-  ];
-}
 
-function renderText(blocks: readonly Block[], ctx: ComposeContext): string {
-  const out: string[] = [];
-  let afterCompact = false;
-  for (const b of blocks) {
-    const compact = b.kind === "subheading" && Boolean(b.compact);
-    // A list of compact subheadings has no blank lines inside; give it one after its last line.
-    if (afterCompact && !compact) out.push("");
-    afterCompact = compact;
-    switch (b.kind) {
-      case "heading":
-      case "p":
-      case "muted":
-        out.push(b.text, "");
-        break;
-      case "subheading":
-        out.push(b.text);
-        break;
-      case "rows":
-        for (const [k, v] of b.rows) out.push(k ? `${k}: ${v}` : v);
-        out.push("");
-        break;
-      case "bullets":
-        for (const item of b.items) out.push(`- ${item}`);
-        out.push("");
-        break;
-      case "action":
-        out.push(`${b.label}: ${b.url}`, "");
-        break;
-      case "divider":
-        break;
-    }
-  }
-  if (afterCompact) out.push("");
-  out.push(...footerBlocksText(ctx));
-  return out.join("\n");
-}
-
-const FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
-
-/** Long unbroken user strings (a 120-character title with no spaces) wrap instead of widening the card. */
-const BREAK = "word-break:break-word;overflow-wrap:anywhere;";
-
-/** Pads the hidden preheader so the client does not pull body text into the inbox preview. */
-const PREHEADER_FILLER = "&#847;&zwnj;&nbsp;".repeat(40);
-
-function renderHtml(subject: string, preheader: string, blocks: readonly Block[], ctx: ComposeContext): string {
-  const parts: string[] = [];
-  // Text blocks that follow a compact list get their own top spacing back.
-  let afterCompact = false;
-  for (const b of blocks) {
-    const gap = afterCompact && !(b.kind === "subheading" && b.compact) ? "margin-top:14px;" : "";
-    switch (b.kind) {
-      case "heading":
-        parts.push(`<h1 style="margin:0 0 16px;font-family:${FONT};font-size:20px;line-height:1.35;font-weight:600;color:#18181b;${BREAK}">${escapeHtml(b.text)}</h1>`);
-        break;
-      case "subheading":
-        parts.push(
-          b.compact
-            ? `<p style="margin:0 0 6px;font-family:${FONT};font-size:14px;line-height:1.5;font-weight:600;color:#18181b;${BREAK}">${escapeHtml(b.text)}</p>`
-            : `<h2 style="margin:20px 0 8px;font-family:${FONT};font-size:15px;line-height:1.4;font-weight:600;color:#18181b;${BREAK}">${escapeHtml(b.text)}</h2>`,
-        );
-        break;
-      case "p":
-        parts.push(`<p style="margin:0 0 14px;${gap}font-family:${FONT};font-size:14px;line-height:1.55;color:#27272a;${BREAK}">${escapeHtml(b.text)}</p>`);
-        break;
-      case "muted":
-        parts.push(`<p style="margin:0 0 14px;${gap}font-family:${FONT};font-size:13px;line-height:1.55;color:#71717a;${BREAK}">${escapeHtml(b.text)}</p>`);
-        break;
-      case "rows":
-        if (!b.rows.length) break;
-        parts.push(
-          `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px;border-collapse:collapse;">${b.rows
-            .map(([k, v]) =>
-              k
-                ? `<tr><td style="padding:2px 12px 2px 0;font-family:${FONT};font-size:13px;line-height:1.5;color:#71717a;vertical-align:top;white-space:nowrap;">${escapeHtml(k)}</td><td style="padding:2px 0;font-family:${FONT};font-size:14px;line-height:1.5;color:#18181b;vertical-align:top;${BREAK}">${escapeHtml(v)}</td></tr>`
-                : `<tr><td colspan="2" style="padding:2px 0;font-family:${FONT};font-size:14px;line-height:1.5;color:#18181b;${BREAK}">${escapeHtml(v)}</td></tr>`,
-            )
-            .join("")}</table>`,
-        );
-        break;
-      case "bullets":
-        parts.push(
-          `<ul style="margin:0 0 14px;padding-left:18px;">${b.items
-            .map((i) => `<li style="margin:0 0 4px;font-family:${FONT};font-size:14px;line-height:1.5;color:#27272a;${BREAK}">${escapeHtml(i)}</li>`)
-            .join("")}</ul>`,
-        );
-        break;
-      case "action":
-        // Bulletproof button: Outlook ignores padding and background on <a>, so both sit on the cell.
-        parts.push(
-          `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 18px;${gap}border-collapse:separate;">` +
-            `<tr><td align="center" bgcolor="#18181b" style="background:#18181b;border-radius:8px;padding:10px 16px;">` +
-            `<a href="${escapeHtml(b.url)}" style="display:inline-block;font-family:${FONT};font-size:14px;line-height:1.3;font-weight:600;color:#ffffff;text-decoration:none;">${escapeHtml(b.label)} &rarr;</a>` +
-            `</td></tr></table>`,
-        );
-        break;
-      case "divider":
-        parts.push(`<hr style="margin:18px 0;border:0;border-top:1px solid #e4e4e7;" />`);
-        break;
-    }
-    afterCompact = b.kind === "subheading" && Boolean(b.compact);
-  }
-
-  const footerLink = (href: string, label: string) =>
-    `<a href="${escapeHtml(href)}" style="display:inline-block;padding:4px 0;color:#52525b;font-weight:600;text-decoration:underline;">${escapeHtml(label)}</a>`;
-  const footer =
-    `<p style="margin:0 0 6px;font-family:${FONT};font-size:13px;line-height:1.55;color:#71717a;">${escapeHtml(VIEW_EMAIL_FOOTER_REASON)}</p>` +
-    `<p style="margin:0;font-family:${FONT};font-size:13px;line-height:1.55;color:#71717a;">` +
-    `${footerLink(ctx.offUrl, TURN_OFF_LABEL)} &nbsp;&middot;&nbsp; ${footerLink(buildPreferencesUrl(ctx.appUrl), CHANGE_HOW_OFTEN_LABEL)}</p>`;
-
-  const preheaderHtml = preheader
-    ? `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;color:#f4f4f5;">${escapeHtml(preheader)}${PREHEADER_FILLER}</div>`
-    : "";
-
-  return (
-    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light only">` +
-    `<title>${escapeHtml(subject)}</title></head>` +
-    `<body style="margin:0;padding:0;background:#f4f4f5;">` +
-    preheaderHtml +
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f5;"><tr><td align="center" style="padding:24px 12px;">` +
-    // Outlook desktop ignores max-width; a fixed-width table only it can see holds the card at 560px.
-    `<!--[if mso]><table role="presentation" width="560" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->` +
-    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #e4e4e7;border-radius:12px;font-family:${FONT};">` +
-    `<tr><td style="padding:22px 28px 0;font-family:${FONT};font-size:13px;line-height:1.4;font-weight:600;letter-spacing:0.02em;color:#71717a;">LinkDrop</td></tr>` +
-    `<tr><td style="padding:14px 28px 8px;">${parts.join("")}</td></tr>` +
-    `<tr><td style="padding:16px 28px 22px;border-top:1px solid #f0f0f2;">${footer}</td></tr>` +
-    `</table>` +
-    `<!--[if mso]></td></tr></table><![endif]-->` +
-    `</td></tr></table></body></html>`
-  );
+/**
+ * Why this arrived and how to stop it — the half of the footer only notifications have.
+ *
+ * Transactional mail passes a signature instead: there is no "off" for a download approval, and a
+ * footer implying there is would be worse than none.
+ */
+function viewFooter(ctx: ComposeContext): EmailFooter {
+  return {
+    reason: VIEW_EMAIL_FOOTER_REASON,
+    links: [
+      { label: TURN_OFF_LABEL, url: ctx.offUrl },
+      { label: CHANGE_HOW_OFTEN_LABEL, url: buildPreferencesUrl(ctx.appUrl) },
+    ],
+  };
 }
 
 function composed(subject: string, preheader: string, blocks: readonly Block[], ctx: ComposeContext): ComposedEmail {
+  const footer = viewFooter(ctx);
   return {
     subject,
-    text: renderText(blocks, ctx),
-    html: renderHtml(subject, preheader, blocks, ctx),
+    text: renderText(blocks, footer),
+    html: renderHtml({ subject, preheader, blocks, footer }),
     headers: viewEmailHeaders(ctx.offUrl),
   };
 }

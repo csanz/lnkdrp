@@ -5,26 +5,46 @@
  * approval mail with the claim link. `POST /api/share/[shareId]/download-requests` sends the first
  * two; the approve route sends the third.
  */
-import { emailBody } from "./signature";
+import type { Block } from "@/lib/email/layout";
+import { blocks, transactional, type EmailContent } from "./compose";
 
-export type EmailContent = { subject: string; text: string };
+/** Re-exported: `EmailContent` moved to `compose.ts`, where the renderer that produces it lives. */
+export type { EmailContent };
 
 const MISSING_URL = "(missing NEXT_PUBLIC_SITE_URL)";
+
+/**
+ * A link we have becomes a button; a link we do not becomes a visible complaint.
+ *
+ * The owner mail used to print `Approve: ` with nothing after it when `NEXT_PUBLIC_SITE_URL` was
+ * unset, which reads as a broken email rather than a broken deployment. An `action` block with an
+ * empty href would be the same bug wearing a button, so the fallback stays a labelled row.
+ */
+function linkBlock(label: string, url: string, variant?: "secondary"): Block {
+  if (!url) return { kind: "rows", rows: [[label, MISSING_URL]] };
+  return variant ? { kind: "action", label, url, variant } : { kind: "action", label, url };
+}
 
 /** Receipt to the person who asked, sent once per new request (not for repeats inside the window). */
 export function downloadRequestReceivedEmail(params: { title: string; shareUrl: string }): EmailContent {
   const title = params.title || "Shared document";
-  return {
+  return transactional({
     subject: `Request received: ${title}`,
-    text: emailBody([
-      "We sent your request to the owner to allow downloading this PDF.",
-      "",
-      `Document: ${title}`,
-      params.shareUrl ? `Link: ${params.shareUrl}` : null,
-      "",
-      "If approved, you’ll receive another email with a link to download or save it to your LinkDrop account (sign-in required).",
-    ]),
-  };
+    preheader: "We passed your request to the owner.",
+    blocks: blocks(
+      { kind: "p", text: "We sent your request to the owner to allow downloading this PDF." },
+      {
+        kind: "rows",
+        rows: params.shareUrl
+          ? [["Document", title], ["Link", params.shareUrl]]
+          : [["Document", title]],
+      },
+      {
+        kind: "muted",
+        text: "If approved, you\u2019ll receive another email with a link to download or save it to your LinkDrop account (sign-in required).",
+      },
+    ),
+  });
 }
 
 /** The owner's mail: who asked, for what, and the approve and deny links. */
@@ -36,35 +56,36 @@ export function downloadRequestOwnerEmail(params: {
   denyUrl: string;
 }): EmailContent {
   const title = params.title || "Shared document";
-  return {
+  return transactional({
     subject: `Download request: ${title}`,
-    text: emailBody([
-      "A receiver requested a PDF download.",
-      "",
-      `Document: ${title}`,
-      params.shareUrl ? `Share link: ${params.shareUrl}` : null,
-      "",
-      `Requester email: ${params.requesterEmail}`,
-      "",
-      `Approve: ${params.approveUrl || MISSING_URL}`,
-      `Deny: ${params.denyUrl || MISSING_URL}`,
-    ]),
-  };
+    preheader: `${params.requesterEmail} asked to download it.`,
+    blocks: blocks(
+      { kind: "p", text: "A receiver requested a PDF download." },
+      {
+        kind: "rows",
+        rows: [
+          ["Document", title],
+          ...(params.shareUrl ? ([["Share link", params.shareUrl]] as Array<[string, string]>) : []),
+          ["Requester email", params.requesterEmail],
+        ],
+      },
+      linkBlock("Approve", params.approveUrl),
+      linkBlock("Deny", params.denyUrl, "secondary"),
+    ),
+  });
 }
 
 /** Sent when the owner approves: the claim link, which needs a sign-in. */
 export function downloadRequestApprovedEmail(params: { title: string; claimUrl: string }): EmailContent {
   const title = params.title || "Shared document";
-  return {
+  return transactional({
     subject: `Download approved: ${title}`,
-    text: emailBody([
-      "Your download request was approved.",
-      "",
-      `Document: ${title}`,
-      "",
-      `Open to download or save: ${params.claimUrl || MISSING_URL}`,
-      "",
-      "You’ll need to sign in to LinkDrop to continue.",
-    ]),
-  };
+    preheader: "Sign in to download or save it.",
+    blocks: blocks(
+      { kind: "p", text: "Your download request was approved." },
+      { kind: "rows", rows: [["Document", title]] },
+      linkBlock("Open to download or save", params.claimUrl),
+      { kind: "muted", text: "You\u2019ll need to sign in to LinkDrop to continue." },
+    ),
+  });
 }

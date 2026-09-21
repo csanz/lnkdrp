@@ -1,3 +1,14 @@
+/**
+ * Sends a workspace invite.
+ *
+ * This used to hand-roll its own `fetch` to Resend, which made it the one sender in the codebase
+ * that ignored `EMAIL_TRANSPORT=console` — so every local run that touched the invite route mailed
+ * a real person. It goes through `sendTextEmail` like everything else now, which also means it
+ * honours the `from` fallbacks and the redaction in the failure log.
+ */
+import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { orgInviteEmail } from "@/lib/email/templates/orgInvite";
+
 type SendOrgInviteEmailParams = {
   to: string;
   orgName: string;
@@ -6,58 +17,20 @@ type SendOrgInviteEmailParams = {
   invitedByEmail?: string | null;
 };
 
-/**
- * Email helper: sends a workspace invite email with an org-join link.
- *
- * Uses Resend's HTTP API (`RESEND_API_KEY`).
- */
-
-/** Return an environment variable or throw with a clear configuration error. */
-function mustGetEnv(name: string): string {
-  const value = process.env[name];
-  if (!value) throw new Error(`Missing required env var: ${name}`);
-  return value;
-}
-
 export async function sendOrgInviteEmail(params: SendOrgInviteEmailParams): Promise<void> {
-  const { to, orgName, inviteUrl, role, invitedByEmail } = params;
-
-  const apiKey = mustGetEnv("RESEND_API_KEY");
-  const from = mustGetEnv("INVITE_EMAIL_FROM");
-
-  const subject = `You're invited to join ${orgName}`;
-  const text = [
-    `You're invited to join the workspace "${orgName}".`,
-    "",
-    `Role: ${role}`,
-    "",
-    invitedByEmail ? `Invited by: ${invitedByEmail}` : null,
-    "",
-    `Join: ${inviteUrl}`,
-    "",
-    "- LinkDrop",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from,
-      to: [to],
-      subject,
-      text,
-    }),
+  const { subject, text, html } = orgInviteEmail({
+    orgName: params.orgName,
+    inviteUrl: params.inviteUrl,
+    role: params.role,
+    invitedByEmail: params.invitedByEmail ?? null,
   });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`Failed to send email (${res.status}): ${body || res.statusText}`);
-  }
+  await sendTextEmail({
+    to: params.to,
+    subject,
+    text,
+    ...(html ? { html } : {}),
+    // Invites kept their own From long before NOTIFICATION_EMAIL_FROM existed; preserved so an
+    // operator who configured one does not find invites silently coming from somewhere else.
+    from: (process.env.INVITE_EMAIL_FROM ?? "").trim() || null,
+  });
 }
-
-
