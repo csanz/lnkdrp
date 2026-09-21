@@ -16,7 +16,7 @@ import { randomBase62, newShareId, newSecretToken } from "@/lib/crypto/randomBas
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 import { recordActivity } from "@/lib/activity/log";
 import { checkLimit, planLimitResponse, type LimitCheck, type PlanLimitBlocked } from "@/lib/billing/planLimits";
-import { ensureDefaultLink, setAllLinksEnabled, updateShareLink } from "@/lib/share/links";
+import { ensureDefaultLink, setAllLinksEnabled, syncDocShareState, updateShareLink } from "@/lib/share/links";
 import { buildDocMatch } from "@/lib/docs/docMatch";
 import { removeAllTagsFromTarget } from "@/lib/tags/service";
 
@@ -66,6 +66,19 @@ async function applyShareFieldsToLinks(input: {
   if (typeof body.shareEnabled === "boolean") {
     const res = await setAllLinksEnabled({ orgId, docId: doc._id, enabled: body.shareEnabled });
     if (res.limit && !res.limit.ok) return res.limit;
+    /**
+     * Re-derive, because the switch can change nothing.
+     *
+     * Turning sharing *on* only restores links the switch itself disabled. When every link was
+     * revoked individually there is nothing to restore, `changed` is 0 — and `Doc.shareEnabled`
+     * was still written true, leaving a document that claimed to be shared with no live link on
+     * it. `get_share` then answered `shareEnabled: false` beside `anyLinkActive: true`, two
+     * statements that cannot both hold, from one read.
+     *
+     * `syncDocShareState` derives the flag from the links rather than from the intent, which is
+     * the only version that cannot drift.
+     */
+    await syncDocShareState(doc._id);
   }
   if (typeof body.shareAllowPdfDownload === "boolean" || typeof body.shareAllowRevisionHistory === "boolean") {
     const defaultLink = await ensureDefaultLink({

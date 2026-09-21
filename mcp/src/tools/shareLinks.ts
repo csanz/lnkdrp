@@ -243,13 +243,17 @@ export function registerUpdateShareLinkTool(server: McpServer, ctx: ToolContext)
       if (Object.keys(patch).length === 0) {
         throw new ToolError("validation", "Pass at least one of label, audience, enabled, allowDownload, password, expiresAt, allowRevisionHistory.");
       }
-      const { link, planWarning } = await ctx.api.updateShareLink(args.docId, args.linkId, patch);
+      const { link, planWarning, warnings } = await ctx.api.updateShareLink(args.docId, args.linkId, patch);
       const note = planNote(planWarning, ctx.api.baseUrl);
       return {
         link: withUrl(ctx.api, link),
         shareUrl: ctx.api.shareUrl(link.shareId),
         ...(planWarning ? { planWarning } : {}),
         ...(note ? { planNote: note } : {}),
+        // Enabling one link can re-share the whole document and restore the links its switch had
+        // taken down. The agent that made that happen has to be told, in the response to the call
+        // that did it — not left to notice by listing afterwards.
+        ...(warnings.length ? { warnings } : {}),
       };
     }),
   );

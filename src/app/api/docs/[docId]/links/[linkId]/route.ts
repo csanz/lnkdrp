@@ -125,6 +125,36 @@ export async function PATCH(request: Request, ctx: { params: Promise<{ docId: st
         },
         request,
       });
+
+      /**
+       * The restore is its own event, because it is its own change.
+       *
+       * Enabling one link re-shares the document and brings back every link the document switch had
+       * disabled — so between two rows reading "sharing off" and "link A enabled", a document went
+       * from nothing reachable to five links live, and the feed said nothing about the other four.
+       * An audit trail that cannot account for who regained access is not one.
+       */
+      if (restored?.length) {
+        void recordActivity({
+          orgId: String(orgId),
+          userId: actor.userId,
+          actorKind: actor.kind,
+          type: "share.updated",
+          docId: docObjectId,
+          title,
+          meta: {
+            shareEnabled: true,
+            via: "link_enabled",
+            restoredCount: restored.length,
+            restoredLinks: restored.map((l) => ({
+              linkId: String(l._id),
+              shareId: l.shareId,
+              linkLabel: typeof l.label === "string" ? l.label : null,
+            })),
+          },
+          request,
+        });
+      }
     }
 
     // A refused version_history change is a hard no: nothing was written, so answer 402 with the

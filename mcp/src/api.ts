@@ -1036,11 +1036,22 @@ export class ApiClient {
   }
 
   /** `PATCH /api/docs/:id/links/:linkId` — change one link's settings. */
-  async updateShareLink(docId: string, linkId: string, patch: ShareLinkPatch): Promise<{ link: ApiShareLink; planWarning?: PlanWarning }> {
+  async updateShareLink(
+    docId: string,
+    linkId: string,
+    patch: ShareLinkPatch,
+  ): Promise<{ link: ApiShareLink; planWarning?: PlanWarning; warnings: string[] }> {
     const body = rec(
       await this.request("PATCH", `/api/docs/${encodeURIComponent(docId)}/links/${encodeURIComponent(linkId)}`, { body: patch }),
     );
-    return { link: asShareLink(body.link), planWarning: asPlanWarning(body.planWarning) };
+    return {
+      link: asShareLink(body.link),
+      planWarning: asPlanWarning(body.planWarning),
+      // The route reports when enabling this link re-shared the document and brought its other
+      // links back with it. Dropping that here made a change to who can reach the document
+      // invisible to the agent that caused it.
+      warnings: Array.isArray(body.warnings) ? body.warnings.filter((w): w is string => typeof w === "string") : [],
+    };
   }
 
   /**
