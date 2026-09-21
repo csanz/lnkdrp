@@ -573,7 +573,8 @@ describe("the new-reader fan-out", () => {
     await post({ botId: "bot-brand-new-2", visitId: "v1", pageNumber: 1, tv: 2 });
     await drainAfter();
 
-    const rows = enqueueNotifications.mock.calls[0]?.[0] as Array<Record<string, unknown>>;
+    const calls = enqueueNotifications.mock.calls as unknown as Array<Array<unknown>>;
+    const rows = (calls[0]?.[0] ?? []) as Array<Record<string, unknown>>;
     expect(Array.isArray(rows)).toBe(true);
     expect(rows.length).toBeGreaterThan(0);
     // Per recipient, so a retry, a preference and a failure stay per person: that is the whole
