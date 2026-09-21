@@ -360,9 +360,10 @@ this was done.
 - **Public blob URLs.** Page images and the full extracted text of every PDF live at paths that are
   a pure function of `(docId, uploadId)`, written `access: "public"` with no random suffix, and
   nothing consults the link's state before the blob store serves them. One preview URL, handed to a
-  recipient by a page that is working as designed, spells out both ids — and every other artifact
-  hangs off the same prefix. This is the one finding from the 2026-09-20 review still live. It needs
-  signed URLs or a proxy in front of the store; it is not a patch.
+  recipient by a page that is working as designed, spells out both ids, and every other artifact
+  hangs off the same prefix. This is the one finding from the 2026-09-20 review still live.
+  Options are costed in [lnkdrp-blob-privacy](./prds/lnkdrp-blob-privacy.md), which is waiting on
+  one question: can the store sign URLs with a lifetime we choose? That answer picks the design.
 - **One route still holds a local copy of the blob allowlist.** `fetchStoredBlob`
   (`src/lib/blob/fetchStoredBlob.ts`) is the one place that validates a stored URL and follows its
   redirects, re-checking the host on every hop. Four of the five call sites use it;
