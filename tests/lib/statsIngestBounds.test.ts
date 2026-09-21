@@ -479,3 +479,76 @@ describe("the ceiling on new readers per link", () => {
     expect(enqueueNotification).toHaveBeenCalled();
   });
 });
+
+/**
+ * One heartbeat, one write to the reader's row.
+ *
+ * It used to be three, all to the same `{shareId, botIdHash}` document: the upsert, then a second
+ * to add the page, then a third to add the milliseconds. Every one of them carries `lastViewedAt`
+ * and `updatedDate`, and `shareviews` has six indexes across those two fields, so a single reading
+ * paid that index churn three times. One of the three was also a guaranteed no-op from the second
+ * heartbeat on a page onward, because its filter excludes the page the reader is sitting on.
+ *
+ * This is the hot path in the product: every open, every thirty-second heartbeat, every page turn,
+ * from every recipient.
+ */
+describe("what one heartbeat costs the reader's row", () => {
+  // The `heartbeat` helper above is scoped to its own describe, so this block builds its own.
+  const heartbeatOnKnownPage = () =>
+    post({
+      botId: "bot-of-a-stranger",
+      visitId: "visit-1",
+      pageNumber: 3,
+      tv: 2,
+      durationMs: 9_000,
+      pageDurationMs: 4_000,
+      enteredAtMs: Date.now() - 4_000,
+      leftAtMs: Date.now(),
+    });
+
+  test("the time rides on the upsert rather than a write of its own", async () => {
+    await heartbeatOnKnownPage();
+    await drainAfter();
+
+    const withInc = shareViewWrites().filter((w) => w.update.$inc);
+    expect(withInc).toHaveLength(1);
+    // The same write that creates the row on a first sighting.
+    expect(withInc[0]!.update.$setOnInsert).toBeDefined();
+  });
+
+  test("the page write carries the page and nothing else", async () => {
+    await heartbeatOnKnownPage();
+    await drainAfter();
+
+    const addWrite = shareViewWrites().find((w) => w.update.$addToSet);
+    expect(addWrite).toBeDefined();
+    // It used to re-send `$set: setFields`, which the upsert had already applied to the same
+    // document moments earlier.
+    expect(addWrite!.update.$set).toBeUndefined();
+  });
+
+  test("the reading is still recorded, which is the part that must not change", async () => {
+    await heartbeatOnKnownPage();
+    await drainAfter();
+
+    expect(incKeys()).toContain("timeSpentMs");
+    expect(incKeys()).toContain("pageTimeMsByPage.3");
+    expect(pagesAdded()).toContain(3);
+  });
+
+  test("a lost race still records the heartbeat", async () => {
+    // Two first-time POSTs for the same reader race and the unique index fails the loser. The row
+    // exists, so the insert is unwanted, but the reading is not: before, the catch swallowed and
+    // this heartbeat's time and identity went on the floor.
+    shareViewUpdateOne.mockImplementationOnce(async () => {
+      throw new Error("E11000 duplicate key error collection: shareviews");
+    });
+
+    await heartbeatOnKnownPage();
+    await drainAfter();
+
+    const retried = shareViewWrites().find((w) => w.update.$inc && !w.update.$setOnInsert);
+    expect(retried).toBeDefined();
+    expect(Object.keys(retried!.update.$inc)).toContain("timeSpentMs");
+  });
+});

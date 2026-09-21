@@ -560,20 +560,35 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
            * owes nothing new.
            */
           let createdShareViewId: Types.ObjectId | null = null;
+          /**
+           * The reading's time rides along on this upsert rather than in a write of its own.
+           *
+           * One heartbeat used to touch this document three times: here, again to add the page, and
+           * again to add the milliseconds. All three carry `lastViewedAt`/`updatedDate`, and
+           * `shareviews` has six indexes across those two fields, so the index churn was paid three
+           * times for one reading. The clocks are still separate (`@/lib/analytics/shareTiming.ts`
+           * holds those rules); only the write is shared.
+           */
+          const timingInc: Record<string, number> = {};
+          {
+            const timing = { durationMs, pageDurationMs, enteredAtMs, leftAtMs };
+            const visitMs = visitTimeIncrement(timing);
+            const pageMs = pageNumber ? pageTimeIncrement(timing) : null;
+            if (visitMs) timingInc.timeSpentMs = visitMs;
+            if (pageNumber && pageMs) timingInc[`pageTimeMsByPage.${String(pageNumber)}`] = pageMs;
+          }
+          const viewUpdate = {
+            $setOnInsert: {
+              shareId,
+              docId,
+              botIdHash,
+              pagesSeen: [],
+            },
+            $set: setFields,
+            ...(Object.keys(timingInc).length ? { $inc: timingInc } : {}),
+          };
           try {
-            const upsert = await ShareViewModel.updateOne(
-              { shareId, botIdHash },
-              {
-                $setOnInsert: {
-                  shareId,
-                  docId,
-                  botIdHash,
-                  pagesSeen: [],
-                },
-                $set: setFields,
-              },
-              { upsert: true },
-            );
+            const upsert = await ShareViewModel.updateOne({ shareId, botIdHash }, viewUpdate, { upsert: true });
             created = Boolean((upsert as any)?.upsertedCount);
             const upsertedId = (upsert as { upsertedId?: unknown } | null)?.upsertedId;
             createdShareViewId =
@@ -583,6 +598,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             if (!/E11000|duplicate key/i.test(msg)) throw e;
+            /**
+             * Two first-time POSTs for the same (shareId, botIdHash) raced and the unique index
+             * failed the loser. The row exists, so the insert is not wanted, but everything else in
+             * this update still is: before, the catch simply swallowed and this heartbeat's
+             * `lastViewedAt`, viewer identity and now its milliseconds went on the floor. Rare, and
+             * silent, which is the combination worth removing.
+             */
+            try {
+              await ShareViewModel.updateOne({ shareId, botIdHash }, {
+                $set: setFields,
+                ...(Object.keys(timingInc).length ? { $inc: timingInc } : {}),
+              });
+            } catch {
+              // The retry is best effort; losing it costs one heartbeat, not the request.
+            }
           }
 
           /**
@@ -959,12 +989,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           }
 
           if (pageNumber) {
+            // `$addToSet` only. The `$set: setFields` this used to carry was already applied by the
+            // upsert above, on the same document, moments earlier — so it re-sent the same fields
+            // and re-touched the same six indexes for nothing.
             const add = await ShareViewModel.updateOne(
               { shareId, botIdHash, pagesSeen: { $ne: pageNumber } },
-              {
-                $addToSet: { pagesSeen: pageNumber },
-                ...(Object.keys(setFields).length ? { $set: setFields } : {}),
-              },
+              { $addToSet: { pagesSeen: pageNumber } },
             );
             const added = Boolean((add as any)?.modifiedCount);
             // The same two rules as `numberOfViews`, and it needs both.
@@ -981,18 +1011,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
             if (added && !ownerPreview && !projectTarget) {
               await DocModel.updateOne({ _id: docId }, { $inc: { numberOfPagesViewed: 1 } });
             }
-          }
-
-          // Each counter is fed by its own clock — see `src/lib/analytics/shareTiming.ts`, which
-          // holds the rules and the reasons they are not four lines inline any more.
-          {
-            const timing = { durationMs, pageDurationMs, enteredAtMs, leftAtMs };
-            const visitMs = visitTimeIncrement(timing);
-            const pageMs = pageNumber ? pageTimeIncrement(timing) : null;
-            const inc: Record<string, number> = {};
-            if (visitMs) inc.timeSpentMs = visitMs;
-            if (pageNumber && pageMs) inc[`pageTimeMsByPage.${String(pageNumber)}`] = pageMs;
-            if (Object.keys(inc).length) await ShareViewModel.updateOne({ shareId, botIdHash }, { $inc: inc });
           }
 
           // Per-visit tracking (best-effort). This enables per-session details in owner metrics.
