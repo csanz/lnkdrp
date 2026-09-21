@@ -360,7 +360,13 @@ export default function DashboardShell({ children }: { children: React.ReactNode
       <header className="bg-[var(--bg)]">
         {/* Full-width header: logo pinned left, account menu pinned right. */}
         {/* Keep the logo + workspace pill identical to the app shell (desktop sidebar + mobile top bar). */}
-        <div className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:h-auto md:items-start md:border-b-0 md:px-4 md:pb-6 md:pt-5">
+        {/* Same offset and alignment as the app sidebar's logo row (`LeftSidebar`, `pt-[23px]`).
+            This was `md:pt-5` with `md:items-start`, so the mark and the workspace pill sat three
+            pixels higher here than in the app — and moving between the dashboard and the app made
+            the two fixed points of the product visibly jump. 23px is not arbitrary on either side:
+            it is what puts the mark on the same line as a page title, since `AppPageHeader` is
+            `pt-6` above an `h-8` row and a 34px pill needs 23px above it to match. */}
+        <div className="flex h-14 items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:h-auto md:items-center md:border-b-0 md:px-4 md:pb-6 md:pt-[23px]">
           <div className="flex min-w-0 items-center gap-2">
             <IconButton
               ariaLabel="Open dashboard menu"
