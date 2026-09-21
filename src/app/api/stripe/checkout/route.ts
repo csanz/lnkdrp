@@ -31,6 +31,7 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { getAiCreditsPriceId } from "@/lib/credits/stripeReporting";
 import { isBillableSubscription } from "@/lib/billing/subscriptionState";
 import { ensureWorkspaceStripeCustomer } from "@/lib/billing/workspaceCustomer";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 import { forbidApiKey } from "@/lib/gating/forbidApiKey";
 import { requireOrgRole } from "@/lib/orgs/requireOrgRole";
 
@@ -88,6 +89,19 @@ export async function POST(request: Request) {
        */
       const keyForbidden = forbidApiKey(actor, "start a subscription");
       if (keyForbidden) return keyForbidden;
+      /**
+       * Nobody still in the queue gets to pay.
+       *
+       * `forbidWaitlisted` guarded the eight routes that *make* something — upload, doc, project,
+       * link, request — and stopped short of the two that take money. So a queued account could
+       * not share a single document but could be charged $29 a month for the plan that lets it
+       * share more of them, and the first thing it would then do is fail to upload.
+       *
+       * This is the worse half of the same gate: everywhere else the omission costs someone a
+       * refused click, here it costs them a real charge for something they cannot use.
+       */
+      const queued = await forbidWaitlisted(actor, "start a subscription", { reason: "upgrade" });
+      if (queued) return queued;
       const role = await requireOrgRole({ orgId: actor.orgId, userId: actor.userId, minRole: "admin" });
       if (!role.ok) {
         return NextResponse.json(

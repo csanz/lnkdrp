@@ -8,7 +8,30 @@
  * - Behavior should match existing dashboard CTA implementations.
  */
 
-type StripeRedirectResponse = { url?: string; error?: string } | null;
+type StripeRedirectResponse = { url?: string; error?: string; message?: string; redirectTo?: string } | null;
+
+/**
+ * Turn a refusal into the right thing to do, instead of a thrown error code.
+ *
+ * Gates in this codebase answer `{ error: "WAITLISTED", message, redirectTo }` — a machine-readable
+ * code, a sentence for a person, and where that person should actually be. These two functions used
+ * to throw `json.error`, which put the literal word **WAITLISTED** on screen in a toast and left the
+ * `redirectTo` the gate deliberately includes completely unused.
+ *
+ * Navigates when the refusal names a destination; otherwise throws the sentence, falling back to
+ * the code only when there is nothing better to say.
+ */
+function failOrRedirect(json: StripeRedirectResponse, status: number): never | void {
+  const redirectTo = typeof json?.redirectTo === "string" ? json.redirectTo.trim() : "";
+  // Same-origin only: this is a path from our own API, and following an absolute URL a response
+  // supplied would be an open redirect on a click the person meant as "upgrade".
+  if (redirectTo.startsWith("/") && !redirectTo.startsWith("//")) {
+    window.location.assign(redirectTo);
+    return;
+  }
+  const message = typeof json?.message === "string" && json.message.trim() ? json.message.trim() : "";
+  throw new Error(message || json?.error || `Request failed (${status})`);
+}
 
 /**
  * Extracts and normalizes a redirect URL from Stripe redirect endpoints.
@@ -36,7 +59,7 @@ export async function startCheckout(): Promise<void> {
     body: JSON.stringify({ plan: "pro" }),
   });
   const json = (await res.json().catch(() => null)) as StripeRedirectResponse;
-  if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+  if (!res.ok) return failOrRedirect(json, res.status);
   const url = parseUrl(json);
   if (!url) throw new Error("Invalid response");
   window.location.assign(url);
@@ -55,7 +78,7 @@ export async function openBillingPortal(opts?: { target?: "_self" | "_blank"; fl
     body: JSON.stringify(opts?.flow ? { flow: opts.flow } : {}),
   });
   const json = (await res.json().catch(() => null)) as StripeRedirectResponse;
-  if (!res.ok) throw new Error(json?.error || `Request failed (${res.status})`);
+  if (!res.ok) return failOrRedirect(json, res.status);
   const url = parseUrl(json);
   if (!url) throw new Error("Invalid portal URL");
 

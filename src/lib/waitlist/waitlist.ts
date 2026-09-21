@@ -22,6 +22,41 @@ import { UserModel } from "@/lib/models/User";
 
 export type AccessStatus = "approved" | "waitlisted";
 
+/**
+ * Why someone was sent back to `/waitlist`, for the notice shown there.
+ *
+ * A closed set of codes rather than a sentence, because this value travels in a URL and the page
+ * turns it into copy. A free-text parameter would let anyone hand out a link that makes the product
+ * appear to say something it never said; a code that has to match this list cannot.
+ */
+export type WaitlistBlockedReason = "upgrade" | "credits";
+
+/** The notice `/waitlist` shows for each reason. Anything not in here shows nothing at all. */
+const BLOCKED_NOTICE: Record<WaitlistBlockedReason, string> = {
+  upgrade:
+    "Pro is waiting for you, not the other way round. We will not take payment while your account is still in the queue, so there is nothing to upgrade yet.",
+  credits:
+    "Credits pay for the AI that reads your documents, and that needs an account that is already in. Nothing to buy while you are still in the queue.",
+};
+
+/**
+ * Turn an untrusted `?blocked=` value into a sentence, or null.
+ *
+ * The validation is the point: the page renders what this returns, so an unknown code has to
+ * produce nothing rather than anything derived from what the URL said.
+ */
+export function waitlistBlockedNotice(raw: unknown): string | null {
+  const key = typeof raw === "string" ? raw.trim() : "";
+  // `Object.hasOwn`, not a plain lookup: `?blocked=constructor` (or `toString`, or `__proto__`)
+  // walks the prototype chain and comes back with something truthy that is not one of ours, so
+  // `?? null` never fires and the page renders whatever that was. The key comes from the URL, so
+  // the only safe question is whether this object itself defines it.
+  if (!Object.hasOwn(BLOCKED_NOTICE, key)) return null;
+  const notice = (BLOCKED_NOTICE as Record<string, unknown>)[key];
+  return typeof notice === "string" ? notice : null;
+}
+
+
 /** Is the queue on? `WAITLIST_ENABLED=1|true|on|yes`; anything else, including unset, is off. */
 export function waitlistEnabled(): boolean {
   const raw = (process.env.WAITLIST_ENABLED ?? "").trim().toLowerCase();

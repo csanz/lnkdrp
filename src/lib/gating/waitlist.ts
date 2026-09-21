@@ -31,6 +31,7 @@ import { NextResponse } from "next/server";
 
 import { connectMongo } from "@/lib/mongodb";
 import { UserModel } from "@/lib/models/User";
+import type { WaitlistBlockedReason } from "@/lib/waitlist/waitlist";
 import { accessStatusOf, type AccessStatus } from "@/lib/waitlist/waitlist";
 import type { Actor } from "@/lib/gating/actor";
 
@@ -108,15 +109,23 @@ export async function isWaitlistedActor(actor: Actor): Promise<boolean> {
  *
  * @param what - names the action, e.g. "upload a document". A caller told only "forbidden" retries;
  *   one told which action is held back can say so on screen.
+ * @param opts.reason - tags the redirect so `/waitlist` can explain itself. Without it the person
+ *   presses Upgrade, the page silently changes under them, and nothing says why — which reads as a
+ *   broken button rather than a rule. The code is looked up in a fixed table there, never rendered.
  */
-export async function forbidWaitlisted(actor: Actor, what: string): Promise<NextResponse | null> {
+export async function forbidWaitlisted(
+  actor: Actor,
+  what: string,
+  opts?: { reason?: WaitlistBlockedReason },
+): Promise<NextResponse | null> {
   if (!(await isWaitlistedActor(actor))) return null;
+  const reason = opts?.reason;
   return NextResponse.json(
     {
       error: "WAITLISTED",
       // `redirectTo` so the dashboard's fetch wrapper can send the browser to the same screen the
       // page shell would have, instead of surfacing a bare 403 the person cannot act on.
-      redirectTo: "/waitlist",
+      redirectTo: reason ? `/waitlist?blocked=${encodeURIComponent(reason)}` : "/waitlist",
       message: `Your account is on the early-access waitlist and cannot ${what} yet.`,
     },
     { status: 403, headers: { "cache-control": "no-store" } },

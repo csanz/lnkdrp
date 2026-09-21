@@ -17,10 +17,12 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 
 import PublicFooter from "@/components/PublicFooter";
+import { FREE_DOCUMENTS } from "@/lib/billing/planLimits";
+import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
 import PublicHeader from "@/components/PublicHeader";
 import { authOptions } from "@/lib/auth";
 import { initialsFromNameOrEmail } from "@/lib/format/initials";
-import { readWaitlistState } from "@/lib/waitlist/waitlist";
+import { readWaitlistState, waitlistBlockedNotice } from "@/lib/waitlist/waitlist";
 import SignOutLink from "./SignOutLink";
 
 export const runtime = "nodejs";
@@ -69,7 +71,11 @@ function longDate(value: Date | null): string {
   }
 }
 
-export default async function WaitlistPage() {
+export default async function WaitlistPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const session = await getServerSession(authOptions);
   const userId = typeof session?.user?.id === "string" ? session.user.id : "";
   // Signed out, there is no queue to be in and nothing here to show.
@@ -84,6 +90,11 @@ export default async function WaitlistPage() {
   const email = (session?.user?.email ?? "").trim();
   const image = (session?.user?.image ?? "").trim();
   const initials = initialsFromNameOrEmail(name || email || "?");
+  // Why they were sent back here, when they were sent rather than arriving. `?blocked=` is
+  // attacker-controlled, so the code is looked up in a fixed table and anything unrecognised shows
+  // nothing — the page never renders text the URL supplied.
+  const blockedRaw = (await searchParams)?.blocked;
+  const blockedNotice = waitlistBlockedNotice(Array.isArray(blockedRaw) ? blockedRaw[0] : blockedRaw);
 
   return (
     <main className="relative min-h-[100svh] w-full overflow-hidden bg-[#050506] text-white">
@@ -103,6 +114,14 @@ export default async function WaitlistPage() {
           <div className="grid gap-10 md:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] md:gap-14">
             {/* What is happening, and why. */}
             <div className="max-w-xl">
+              {blockedNotice ? (
+                /* Above the headline on purpose: this person did not browse here, they pressed a
+                   button and the page changed under them. The answer to "what just happened" has to
+                   come before the welcome, or it reads as a broken button. */
+                <div className="mb-6 rounded-xl border border-amber-300/25 bg-amber-300/[0.07] px-4 py-3">
+                  <p className="text-[13px] leading-6 text-amber-100/90">{blockedNotice}</p>
+                </div>
+              ) : null}
               <p className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">Early access</p>
               <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[56px]">
                 You&rsquo;re on the list.
@@ -171,8 +190,8 @@ export default async function WaitlistPage() {
               </div>
 
               <div className="mt-6 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-[13px] leading-6 text-white/55">
-                When it opens you start on Free: three shared documents with tracking, unlimited links on each, and
-                50 credits for the AI features. No card.
+                When it opens you start on Free: {FREE_DOCUMENTS} shared documents with tracking, unlimited links on
+                each, and {FREE_STARTER_CREDITS} credits for the AI features. No card.
               </div>
 
               <div className="mt-6 flex items-center justify-between gap-4">

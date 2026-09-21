@@ -21,6 +21,7 @@ import { isProSubscription } from "@/lib/billing/subscriptionState";
 import { CreditPurchaseModel } from "@/lib/models/CreditPurchase";
 import { ensureWorkspaceStripeCustomer } from "@/lib/billing/workspaceCustomer";
 import { CREDIT_PACK_CURRENCY, PURCHASED_CREDITS_EXPIRY_MONTHS, findCreditPack } from "@/lib/credits/packs";
+import { forbidWaitlisted } from "@/lib/gating/waitlist";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,12 @@ export async function POST(request: Request) {
       if (!Types.ObjectId.isValid(actor.userId) || !Types.ObjectId.isValid(actor.orgId)) {
         return NextResponse.json({ error: "Invalid workspace" }, { status: 400 });
       }
+      // Same rule as the subscription checkout: credits buy AI runs, and a queued account cannot
+      // reach an AI run. Refused before the pack is resolved, so nothing about the catalogue or the
+      // price is disclosed to someone who may not buy.
+      const queued = await forbidWaitlisted(actor, "buy credits", { reason: "credits" });
+      if (queued) return queued;
+
       const body = (await request.json().catch(() => null)) as { packId?: unknown } | null;
       const pack = findCreditPack(body?.packId);
       if (!pack) return NextResponse.json({ error: "Unknown credit pack" }, { status: 400 });
