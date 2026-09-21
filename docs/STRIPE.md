@@ -40,26 +40,43 @@ to tell which world a deployment is actually in.
 Keep the industry wording consistent across the LLC filing, Stripe and the bank. Three different
 descriptions of the same business is a small but real source of review friction.
 
-## The conversion that is still outstanding
+## Activation: as the LLC, which means waiting for it
 
-Stripe was activated as an **individual / sole proprietor**, because the LLC did not exist yet and
-taking payments could not wait for it. That is a deliberate, temporary state.
+**Decision (2026-09-21): Stripe is activated as the Company, not as a sole proprietor.** The whole
+point of forming the LLC was to be the entity behind the payments, and activating as an individual
+would have meant converting later — cheap at a handful of customers, unpleasant past that.
 
-**When the Articles of Organization arrive:**
+The cost of that decision is a few days with no payments, because the sequence cannot be shortened:
 
-1. Get the **EIN** at irs.gov — free, instant, about ten minutes. Do not pay anyone for this.
-2. Open the business bank account (Mercury or similar). It needs the EIN and the Articles.
-3. In Stripe, change the business type to **Company** and submit the LLC's legal name, EIN and
-   address. Payouts move to the business account.
+1. California files the LLC. LegalZoom has the *order*; the stamped Articles of Organization take
+   days. Nothing downstream can start before this.
+2. **EIN** at irs.gov — free, instant, about ten minutes. Do not pay anyone for it. Needs the LLC
+   to exist first.
+3. Business bank account (Mercury or similar). Needs the EIN and the Articles.
+4. **Then** activate Stripe, business type **Company**, with the LLC's legal name, EIN and address.
 
-**Do this while the customer count is small.** Changing business type on an account with a handful
-of subscriptions is paperwork; Stripe sometimes wants a large account moved to a *new* account
-instead, and migrating live subscriptions and saved cards between accounts is a support-assisted
-process worth avoiding. The cost of this conversion grows with every paying customer, so it is not
-a task to leave sitting.
+There is no way to enter a company into Stripe without a tax id, so there is no version of this
+that runs in parallel. If payments become more urgent than the entity, the fallback is to activate
+as an individual and convert once the Articles land — do it while the customer count is small,
+because Stripe sometimes moves a large account to a *new* account rather than converting it, and
+migrating live subscriptions and saved cards is support-assisted and worth avoiding.
 
-Customers see nothing change except, possibly, the statement descriptor — which is why it is set
-to `LNKDRP` rather than a personal name from the start.
+Either way the statement descriptor is `LNKDRP` from the start, so nothing customer-visible changes
+if a conversion does happen.
+
+## Which address goes where
+
+Stripe asks for addresses in two places and they are not the same address.
+
+| field | use | why |
+|---|---|---|
+| Personal / identity | the **home address** | Stripe verifies identity against public records; a mailbox will stall or fail it |
+| Business address | the **PMB** (`455 Market St Ste 1940 PMB 695619, San Francisco CA 94105`) | it is what becomes public, and it is the entity's address of record |
+
+The business address is a PMB (private mailbox, a CMRA in USPS terms). Stripe and banks sometimes
+flag those for extra review, because they are also what someone hiding a location would use. It is
+not a rejection and usually costs a day; if activation stalls with nothing else obviously wrong,
+switching the business address to the home address clears it.
 
 ## Corrections to DEPLOY 4.2
 
