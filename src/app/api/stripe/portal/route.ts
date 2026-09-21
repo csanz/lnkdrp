@@ -11,6 +11,7 @@
  * cancelling there used to leave the person on Stripe with no sign in lnkdrp that anything changed.
  */
 import { NextResponse } from "next/server";
+import { errorJson } from "@/lib/http/errorResponse";
 import { Types } from "mongoose";
 import Stripe from "stripe";
 
@@ -112,8 +113,10 @@ export async function POST(request: Request) {
 
       return NextResponse.json({ url });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return NextResponse.json({ error: message }, { status: 400 });
+      // A caught failure here is ours, not the caller's: the raw message went straight to the
+      // browser (Mongo and Stripe internals included) and nothing reached the logs. `errorJson`
+      // redacts, logs one line always, and keeps `detail` for non-production.
+      return errorJson(err, { status: 500, publicMessage: "Could not open the billing portal.", context: "[api/stripe/portal] POST failed" });
     }
   });
 }
