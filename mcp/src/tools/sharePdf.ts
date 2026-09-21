@@ -196,6 +196,16 @@ export type InlineUpload = {
  */
 export async function prepareInlineUpload(source: InlinePdfSource, opts: { optimize: boolean }): Promise<InlineUpload> {
   let bytes: Buffer;
+  /**
+   * The encoded form we actually checked, which is not always the one the caller sent.
+   *
+   * Stripping a `data:` prefix for validation and then re-sending the original was worse than
+   * refusing it: Node's base64 decoder silently drops `:`, `;` and `,`, so the prefix's remaining
+   * letters decode as payload, shift the whole stream, and the API answers 415 about a file that
+   * was perfectly good. Validating one string and uploading another is the bug; there is only one
+   * string now.
+   */
+  let encoded = source.kind === "bytes" ? source.base64 : "";
   if (source.kind === "file") {
     bytes = await readLocalPdf(source.filePath);
   } else {
@@ -216,6 +226,7 @@ export async function prepareInlineUpload(source: InlinePdfSource, opts: { optim
           "sourceUrl (an https link to the PDF) instead.",
       );
     }
+    encoded = withoutDataUri;
     bytes = Buffer.from(withoutDataUri, "base64");
     if (!bytes.length) {
       throw new ToolError("validation", "fileBase64 decoded to nothing. Check the string was not truncated in transit.");
@@ -233,8 +244,9 @@ export async function prepareInlineUpload(source: InlinePdfSource, opts: { optim
   if (outcome.bytes.byteLength > UPLOAD_MAX_BYTES) {
     throw new ToolError("too_large", `The PDF is larger than ${UPLOAD_MAX_LABEL}. Use sourceUrl for a file this size.`);
   }
-  // Nothing changed and the caller already handed us the encoded form: send exactly that.
-  const base64 = outcome.optimized === null && source.kind === "bytes" ? source.base64 : outcome.bytes.toString("base64");
+  // Nothing changed and we already hold the encoded form we validated: send exactly that. `encoded`
+  // rather than `source.base64`, so a stripped `data:` prefix stays stripped.
+  const base64 = outcome.optimized === null && source.kind === "bytes" ? encoded : outcome.bytes.toString("base64");
   return { base64, fileName: source.fileName, optimized: outcome.optimized, optimizeNote: outcome.note };
 }
 

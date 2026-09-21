@@ -127,26 +127,45 @@ export type ShareView = {
 };
 
 /**
- * A share view whose link fields describe the default link's own state.
+ * A share view that carries both answers under their own names.
  *
- * The document's `shareEnabled` means "any link still opens", so a disabled default link read as
- * enabled while lnkdrp_list_share_links said disabled. `shareEnabled` becomes the default link's,
- * `anyLinkActive` keeps the document-wide answer, and `link` carries the default link's status.
- * Used by every tool that returns this view, so get_share and set_share_access agree.
+ * There are two questions here and they are not the same one: "does this document still open for
+ * anybody" and "does its default link open". An earlier version answered the second under the name
+ * `shareEnabled`, because a disabled default link had been reading as enabled — which fixed that
+ * and broke something worse. `lnkdrp_set_share_access` *writes* `shareEnabled` meaning the switch
+ * over every link, and `lnkdrp_get_share` then *read it back* meaning the default link alone, so
+ * the round trip lied: revoke only the default link and the document reported `shareEnabled: false`
+ * while two other links went on serving the PDF to anyone holding them. An agent asked "is this
+ * still reachable?" got "no" about a document that was.
+ *
+ * So `shareEnabled` keeps the meaning the app writes and the rest of the product uses — any link
+ * live — and the default link's own state is `defaultLinkActive`, plus the `link` object that was
+ * already reporting `status: "disabled"` in exactly this case.
  */
 export async function withDefaultLinkState(api: ApiClient, doc: ApiDoc, view: ShareView) {
   const defaultLink = (await api.listShareLinks(doc.id).catch(() => [])).find((l) => l.isDefault) ?? null;
-  if (!defaultLink) return view;
+  if (!defaultLink) {
+    // No default link row yet (or the listing failed). Still answer with the full shape — a caller
+    // that has to check whether a field exists before reading it has been handed two contracts.
+    const anyLinkActive = doc.isArchived ? false : doc.shareEnabled;
+    return { ...view, shareEnabled: anyLinkActive, anyLinkActive, defaultLinkActive: false, link: null };
+  }
   // An archived document's links stop resolving, but the link rows keep their own enabled/expiry
   // state so unarchiving can restore exactly what was live. Reading them raw made get_share answer
   // "active" about a link that opens for nobody, which is the one question this tool is asked.
-  const live = !doc.isArchived && defaultLink.enabled && defaultLink.active;
+  const defaultLinkActive = !doc.isArchived && defaultLink.enabled && defaultLink.active;
+  const anyLinkActive = doc.isArchived ? false : doc.shareEnabled;
   return {
     ...view,
-    shareEnabled: live,
-    anyLinkActive: doc.isArchived ? false : doc.shareEnabled,
+    shareEnabled: anyLinkActive,
+    anyLinkActive,
+    defaultLinkActive,
     link: {
       id: defaultLink.id,
+      // Carried on both branches so a document's shape does not depend on which of its slugs was
+      // used to ask about it.
+      label: untrustedOrNull(defaultLink.label, "document", UNTRUSTED_LIMITS.short),
+      audience: untrustedOrNull(defaultLink.audience, "document", UNTRUSTED_LIMITS.short),
       isDefault: true,
       status: doc.isArchived ? "archived" : defaultLink.status,
       expiresAt: defaultLink.expiresAt,

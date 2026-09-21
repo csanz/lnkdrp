@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isLocalApiUrl, isLocalFileAccessAllowed, resolvePdfSource } from "../../mcp/src/tools/sharePdf";
+import { isLocalApiUrl, isLocalFileAccessAllowed, prepareInlineUpload, resolvePdfSource } from "../../mcp/src/tools/sharePdf";
 import { UPLOAD_MAX_BYTES } from "../../src/lib/limits/uploads";
 import { ToolError } from "../../mcp/src/errors";
 
@@ -162,5 +162,44 @@ describe("filePath — the local-file gate", () => {
     expect(expectToolError(() => resolvePdfSource({ filePath: "/tmp/x.pdf", sourceUrl: "https://e.com/a.pdf" }, LOCAL, noFlag)).code).toBe(
       "validation",
     );
+  });
+});
+
+/**
+ * What gets validated must be what gets uploaded.
+ *
+ * A `data:application/pdf;base64,` prefix is what every browser API hands you, so it is stripped
+ * rather than refused. Stripping it for the checks and then re-sending the caller's original was
+ * worse than refusing it outright: Node's base64 decoder silently ignores `:`, `;` and `,`, so the
+ * prefix's remaining letters decode as payload, shift the whole stream, and the API rejects a
+ * perfectly good PDF as "not a PDF". Validating one string and sending another is the defect.
+ */
+describe("inline upload: the prefix is stripped from what is sent, not only from what is checked", () => {
+  /** A minimal but genuine PDF, small enough that optimization is skipped and the fast path runs. */
+  const pdfBytes = Buffer.from("%PDF-1.4\n1 0 obj\n<</Type/Catalog>>\nendobj\ntrailer\n<</Root 1 0 R>>\n%%EOF\n");
+  const clean = pdfBytes.toString("base64");
+
+  it("re-sends the stripped form, so the bytes round-trip to a real PDF", async () => {
+    const prepared = await prepareInlineUpload(
+      { kind: "bytes", base64: `data:application/pdf;base64,${clean}`, fileName: "x.pdf" },
+      { optimize: false },
+    );
+    // The payload must decode back to the same file the caller meant.
+    expect(Buffer.from(prepared.base64, "base64").toString("latin1")).toBe(pdfBytes.toString("latin1"));
+    expect(prepared.base64.startsWith("data:")).toBe(false);
+  });
+
+  it("is unchanged for a caller that sends no prefix", async () => {
+    const prepared = await prepareInlineUpload(
+      { kind: "bytes", base64: clean, fileName: "x.pdf" },
+      { optimize: false },
+    );
+    expect(Buffer.from(prepared.base64, "base64").toString("latin1")).toBe(pdfBytes.toString("latin1"));
+  });
+
+  it("still refuses a string that is not base64 at all", async () => {
+    await expect(
+      prepareInlineUpload({ kind: "bytes", base64: "not-base64!!!***", fileName: "x.pdf" }, { optimize: false }),
+    ).rejects.toThrow(/not base64/i);
   });
 });
