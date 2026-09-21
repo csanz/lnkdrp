@@ -1,8 +1,9 @@
 # PRD — Stored artifacts stop being public URLs
 
-**Status:** **Drafted 2026-09-20, awaiting a decision between options B and C.** Nothing here is
-built. This is the last finding from the 2026-09-20 security review that is still live, and the
-only one that could not be closed by a patch. See `docs/SECURITY.md` §9.
+**Status:** **Drafted 2026-09-20. The blocking question is answered: option C does not exist, so
+the design is B, and a cheap first step (B0) can ship on its own.** The recipient-facing half is
+already done — no page hands out a store URL any more. What remains is the store itself.
+See `docs/SECURITY.md` §9.
 **Owner:** chrissanz
 **Last updated:** 2026-09-20
 **Project:** lnkdrp
@@ -26,13 +27,17 @@ docs/<docId>/uploads/<uploadId>/pages/p0001/thumb.jpg
 No code consults `ShareLink.enabled`, `expiresAt`, `archivedAt`, `passwordHash` or `allowDownload`
 before the blob store serves any of them. There is no route in front of them at all.
 
-**The link between "a recipient" and "all of it" is one preview URL.** A recipient of any share
-link is handed `doc.previewImageUrl` as an `<img src>` today, and that one URL spells out both ids.
-Every other artifact hangs off the same prefix, and the page count is on the page. So a recipient
-who opens a link once can, with no tooling beyond a text editor, construct the URL for every page
-image and for the complete extracted text of the document — and those URLs keep working after the
-link is revoked, expired, password-protected or archived, because nothing about the link was ever
-consulted.
+**The link between "a recipient" and "all of it" is one preview URL.** Until 2026-09-20 a recipient
+of any share link was handed `doc.previewImageUrl` as an `<img src>`, and that one URL spells out
+both ids. Every other artifact hangs off the same prefix, and the page count is on the page. So a
+recipient who opened a link once could, with no tooling beyond a text editor, construct the URL for
+every page image and for the complete extracted text — and those URLs keep working after the link is
+revoked, expired, password-protected or archived, because nothing about the link was ever consulted.
+
+**No page hands out a store URL any more.** The OG image, the data-room grid and both "still
+preparing a PDF viewer" fallbacks proxy through our own origin now, each re-proving the link and its
+password. That closes the *handing over*. It does not close the store: anyone who saved such a URL
+before those fixes still has it, and still has everything derivable from it, permanently.
 
 The PDF itself is not in this list: it is already served through `/s/:shareId/pdf` and
 `/p/:shareId/:docId/pdf`, which apply refusals, the password gate and `allowDownload`. This PRD is
@@ -41,10 +46,10 @@ about everything *else* the pipeline wrote, which is most of the document's cont
 ### Why it survived the review
 
 Every other finding was a rule missing from a handler. This one is not a rule that can be added to a
-handler: the bytes are served by a CDN we do not sit in front of. The fixes that shipped on
-2026-09-20 narrowed the blast radius — the OG image and the project preview now proxy through our
-own origin, and `previewImageUrl` is no longer published as `og:image` — but they moved *our* links
-off the store without making the store's own URLs stop working.
+handler: the bytes are served by a CDN we do not sit in front of. The proxies that shipped on
+2026-09-20 moved *our* links off the store; they did not make the store's own URLs stop working, and
+nothing we can write in this repo will, because the store has no access control to configure (see
+option C).
 
 ### What is not the problem
 
@@ -90,18 +95,43 @@ New routes, mirroring what exists:
 - **Migration:** existing artifacts stay where they are and keep working. New uploads write private.
   A backfill can move old ones lazily on first request, or not at all.
 
-### C. Signed URLs with a short life
+### C. Signed URLs with a short life — **ruled out, the store cannot do it**
 
-Keep the artifacts on the CDN, make the bucket private, and hand out time-limited signed URLs minted
-by a route that re-proves the link.
+Checked against `@vercel/blob` v2.0.0, which is what is installed:
 
-- **Pro:** the bytes still come from the CDN, so the hot path stays off our origin. Revocation
-  becomes "the current signature expires", which is minutes rather than never.
-- **Con:** a signed URL is still a bearer token in a URL, so a recipient can still save one and use
-  it until it expires. It narrows the window rather than closing it, and the window is a parameter
-  somebody has to choose. Also needs the store to support signing with the lifetime we want, which
-  is the first thing to check and is **not yet verified** — if Vercel Blob cannot do this the option
-  disappears and B is the answer by default.
+```ts
+// node_modules/@vercel/blob/dist/create-folder-C02EFEPE.d.ts
+/** Whether the blob should be publicly accessible. The only currently allowed value is `public`. */
+access: 'public';
+```
+
+`access` is a literal type with one member. There is no private store to sign for, and the only
+URL-minting export, `getDownloadUrl`, just appends `?download=1` — it is a content-disposition
+helper, not a signature. So the option is not available, and B is the answer by default rather than
+by preference.
+
+This also means **a URL that leaks is public forever**, with no expiry to fall back on, which
+raises the value of B0 below.
+
+### B0. Make the paths unguessable — ships on its own, today
+
+`put()` takes `addRandomSuffix`, which the pipeline currently sets to `false`
+(`src/app/api/uploads/[uploadId]/process/route.ts`). That single flag is why the paths are a pure
+function of `(docId, uploadId)`, and it is the entire reason one preview URL yields every other
+artifact.
+
+Turn it on and the chain breaks at its root: knowing the preview URL tells you nothing about the
+page images, because each carries a random segment nobody can derive. The bytes are still public to
+anyone holding a specific URL — this is not B — but "a recipient who saw one thing" stops being
+"a recipient who has everything", which is the actual complaint.
+
+- **Cost:** one flag, plus storing the returned URL rather than recomputing the path. The pipeline
+  already stores what `put()` returns, so the second part may be free; the reader
+  (`src/lib/blob/clientUpload.ts`) derives paths and would need to stop.
+- **Migration:** existing artifacts keep their guessable paths. A backfill can re-upload, or not —
+  every new upload is safe from the day it ships.
+- **Why it is not enough alone:** a URL a recipient did save still works after revocation. It
+  narrows who can get what, not how long.
 
 ### D. Stop producing the artifacts
 
@@ -115,27 +145,33 @@ Render page images in the client from the PDF the viewer already has.
 
 ## Recommendation
 
-**B, unless C is cheap.** The deciding question is one someone should answer before this is
-scheduled: *can Vercel Blob mint signed URLs for a private store, with a lifetime we choose?* If it
-can, C is a smaller change with a weaker guarantee, and the weakness is bounded by a number we pick.
-If it cannot, B is the only option that closes it, and B is a shape this codebase already knows.
+**B0 now, B when there is appetite.** C is gone, so there is no shortcut: the only way to make
+revocation real is to put a route in front of the bytes.
 
-Either way the first shipped piece is the same and is worth doing on its own: **stop handing raw
-store URLs to recipients.** The OG image and the project preview already proxy; `/s/:shareId` still
-renders `doc.previewImageUrl` directly in its fallback, and that is the one link in the chain that
-turns "a recipient" into "every artifact". Closing it does not fix the store, but it removes the
-only route a normal recipient would ever find.
+But B0 is one flag and buys most of the practical protection, because the complaint is not "a
+determined recipient kept a file". It is "a recipient who was shown one page can reconstruct the
+whole document, including its full text, and keep it after the link is revoked". `addRandomSuffix`
+severs that inference on its own, and it can ship in an afternoon without touching the viewer's hot
+path.
+
+**Already done, 2026-09-20**, and it was the other half of the same problem: no page hands a
+recipient a store URL any longer. The OG image, the data-room grid and both "still preparing"
+fallbacks proxy through our own origin, each re-proving the link and its password. A recipient is
+no longer *handed* the key to the prefix — B0 makes the prefix stop being a key at all.
 
 ---
 
 ## Open questions
 
-1. Can the store sign URLs with a chosen lifetime? **This decides B vs C** and nothing else should
-   be scheduled before it is answered.
-2. What is the acceptable origin cost for page images on a hot deck? B's viability is a cache
+1. ~~Can the store sign URLs with a chosen lifetime?~~ **No.** `access: 'public'` is a one-member
+   literal type in `@vercel/blob` v2.0.0. C is ruled out; see that section for the evidence.
+2. Does `addRandomSuffix: true` break anything that recomputes a path rather than reading the stored
+   URL? `src/lib/blob/clientUpload.ts` derives all four paths, so this is the one real question B0
+   has, and it is a code question with a definite answer rather than a judgement call.
+3. What is the acceptable origin cost for page images on a hot deck? B's viability is a cache
    question, not a security one.
-3. Do existing artifacts need a backfill, or is "new uploads are private, old ones stay public"
-   acceptable given the audit shows the current population is intact?
+4. Do existing artifacts need a backfill, or is "new uploads are unguessable, old ones stay as they
+   are" acceptable given `npm run audit:blob-urls` shows the current population intact?
 4. Does `extracted.txt` need to exist in the store at all? It is the full text of a private
    document, it is the most valuable artifact in the list, and the only consumer is the pipeline.
    Moving it out of the store entirely may be a smaller change than protecting it.
