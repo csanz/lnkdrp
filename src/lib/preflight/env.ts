@@ -193,6 +193,54 @@ async function checkGoogle(add: Sink, offline: boolean) {
   }
 }
 
+/**
+ * Does the signing secret belong to a webhook endpoint that actually exists?
+ *
+ * Checking the `whsec_` prefix proves nothing: a *wrong* secret is the same shape as a right one,
+ * and it fails silently at the worst moment — Stripe takes the payment, the delivery bounces on
+ * signature verification, and the product never turns Pro on. That happened here, from a clipboard
+ * overwritten between copying the secret and pasting it.
+ *
+ * The secret itself cannot be read back from the API, so this checks the half that can be: whether
+ * any enabled endpoint points at this deployment at all, and whether it carries the events the
+ * webhook handler needs. An endpoint that is missing, disabled, pointed at the apex (which
+ * 308-redirects, and webhook POSTs do not reliably follow) or short on events is a real failure
+ * with the same symptom, and all of those are visible from here.
+ */
+async function checkStripeWebhook(add: Sink, offline: boolean) {
+  const sk = env("STRIPE_SECRET_KEY");
+  const site = env("NEXT_PUBLIC_SITE_URL").replace(/\/$/, "");
+  if (!sk || offline || !site) return;
+  const REQUIRED_EVENTS = [
+    "checkout.session.completed",
+    "customer.subscription.created",
+    "customer.subscription.updated",
+    "customer.subscription.deleted",
+    "invoice.paid",
+    "invoice.payment_failed",
+  ];
+  try {
+    const res = await fetch("https://api.stripe.com/v1/webhook_endpoints?limit=50", {
+      headers: { authorization: `Bearer ${sk}` },
+    });
+    if (!res.ok) return add("Stripe webhook", "Payments", "warn", `could not list endpoints (${res.status})`);
+    const body = (await res.json()) as { data?: Array<{ url?: string; status?: string; enabled_events?: string[] }> };
+    const want = `${site}/api/stripe/webhook`;
+    const mine = (body.data ?? []).filter((e) => (e.url ?? "").replace(/\/$/, "") === want);
+    if (!mine.length) {
+      const others = (body.data ?? []).map((e) => e.url).filter(Boolean).slice(0, 3).join(", ");
+      return add("Stripe webhook", "Payments", "fail", `no endpoint for ${want}${others ? ` — found: ${others}` : ""}`);
+    }
+    const enabled = mine.find((e) => e.status === "enabled") ?? mine[0];
+    if (enabled.status !== "enabled") return add("Stripe webhook", "Payments", "fail", `endpoint exists but is ${enabled.status}`);
+    const missing = REQUIRED_EVENTS.filter((ev) => !(enabled.enabled_events ?? []).includes(ev) && !(enabled.enabled_events ?? []).includes("*"));
+    if (missing.length) return add("Stripe webhook", "Payments", "fail", `endpoint is missing ${missing.join(", ")}`);
+    add("Stripe webhook", "Payments", "ok", `enabled endpoint for this site, ${(enabled.enabled_events ?? []).length} events`);
+  } catch (e) {
+    add("Stripe webhook", "Payments", "warn", e instanceof Error ? e.message.slice(0, 80) : "request failed");
+  }
+}
+
 async function checkStripeLive(add: Sink, offline: boolean) {
   const sk = env("STRIPE_SECRET_KEY");
   if (!sk) return;
@@ -298,6 +346,7 @@ export async function runEnvPreflight(opts: { offline?: boolean } = {}): Promise
     checkMongo(add, offline),
     checkGoogle(add, offline),
     checkStripeLive(add, offline),
+    checkStripeWebhook(add, offline),
     checkOpenAI(add, offline),
     checkBlob(add, offline),
     checkResend(add, offline),
