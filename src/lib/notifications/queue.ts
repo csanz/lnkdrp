@@ -247,6 +247,82 @@ export async function enqueueNotification(input: EnqueueNotificationInput): Prom
   }
 }
 
+/**
+ * Enqueue a batch in one round trip.
+ *
+ * The fan-out this exists for is "a new recipient opened a document": one row per member of the
+ * workspace, written together. That was a `Promise.all` over `enqueueNotification`, which is one
+ * `create` and one unique-index probe each — so a thirty-member workspace cost thirty round trips
+ * per new reader, and a two-hundred-person send into it cost six thousand, all inside `after()`
+ * where nothing is retried.
+ *
+ * `claimBatch` three functions down already made this argument in the other direction and was
+ * written as three round trips whatever the batch size. The enqueue side never was.
+ *
+ * `ordered: false` so one duplicate does not abandon the rest of the batch: the unique index on
+ * `dedupeKey` is the idempotency guarantee, and a row that is already there is a success, not a
+ * failure. Mongo reports those as write errors on an otherwise completed insert, so they are
+ * counted rather than thrown.
+ */
+export async function enqueueNotifications(
+  inputs: EnqueueNotificationInput[],
+): Promise<{ enqueued: number; duplicates: number }> {
+  const now = new Date();
+  const docs: Record<string, unknown>[] = [];
+  for (const input of inputs) {
+    const orgId = toObjectId(input.orgId);
+    const userId = toObjectId(input.userId);
+    const dedupeKey = typeof input.dedupeKey === "string" ? input.dedupeKey.trim() : "";
+    if (!orgId || !userId || !dedupeKey) {
+      debugError(1, "[notifications] enqueue skipped: missing orgId/userId/dedupeKey", {
+        kind: input?.kind ?? null,
+        dedupeKey: dedupeKey || null,
+      });
+      continue;
+    }
+    docs.push({
+      orgId,
+      userId,
+      kind: input.kind,
+      dedupeKey,
+      event: normalizeEvent(input.event),
+      occurredAt: input.occurredAt instanceof Date ? input.occurredAt : now,
+      status: "pending",
+      attempts: 0,
+      nextAttemptAt: input.notBefore instanceof Date ? input.notBefore : now,
+      claimedAt: null,
+      lastError: null,
+      sentAt: null,
+      skippedReason: null,
+    });
+  }
+  if (!docs.length) return { enqueued: 0, duplicates: 0 };
+
+  await connectMongo();
+  try {
+    const inserted = await NotificationQueueModel.insertMany(docs, { ordered: false });
+    return { enqueued: inserted.length, duplicates: 0 };
+  } catch (err) {
+    // A partial success: `insertedDocs` is what landed, `writeErrors` the rest. Every duplicate is
+    // an idempotent no-op; anything else is worth a line in the log, once, not per row.
+    const e = err as { insertedDocs?: unknown[]; writeErrors?: Array<{ err?: { code?: number } ; code?: number }> };
+    const enqueued = Array.isArray(e?.insertedDocs) ? e.insertedDocs.length : 0;
+    const errors = Array.isArray(e?.writeErrors) ? e.writeErrors : [];
+    const duplicates = errors.filter((w) => (w?.err?.code ?? w?.code) === 11000).length;
+    const other = errors.length - duplicates;
+    if (other > 0 || (!enqueued && !duplicates)) {
+      debugError(1, "[notifications] enqueue batch partially failed", {
+        attempted: docs.length,
+        enqueued,
+        duplicates,
+        other,
+        message: errorMessage(err),
+      });
+    }
+    return { enqueued, duplicates };
+  }
+}
+
 export type ClaimBatchParams = QueueScope & {
   /** How many rows to claim, capped at `MAX_CLAIM_BATCH`. */
   limit: number;

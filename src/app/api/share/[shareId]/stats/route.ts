@@ -20,7 +20,7 @@ import { resolveProjectLink } from "@/lib/share/projectLinks";
 import { propagateViewerIdentity, viewerIdentityNews } from "@/lib/share/viewerIdentity";
 import { sendViewerIntroductionEmails, viewerIntroductionAppUrl } from "@/lib/share/viewerIntroductionEmails";
 import { isViewerEmailVerified } from "@/lib/share/viewerEmailVerification";
-import { enqueueNotification, notificationDedupeKey } from "@/lib/notifications/queue";
+import { enqueueNotifications, notificationDedupeKey } from "@/lib/notifications/queue";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ProjectLinkViewModel } from "@/lib/models/ProjectLinkView";
 import { ShareViewModel } from "@/lib/models/ShareView";
@@ -925,30 +925,35 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
                   // path in the product is one a freeze can cut off mid-flight — and losing this
                   // row is not losing a feed entry, it is losing the email, which is the exact
                   // failure the queue exists to remove.
-                  await Promise.all(
-                    members.map(async (m) => {
-                      const memberUserId = m?.userId ? String(m.userId) : "";
-                      if (!Types.ObjectId.isValid(memberUserId)) return;
-                      await enqueueNotification({
+                  // One insert for the whole workspace, not one per member. This was a
+                  // `Promise.all` over `enqueueNotification`, which is a `create` and a unique-index
+                  // probe each: a thirty-member workspace cost thirty round trips per new reader,
+                  // and a two-hundred-person send into it cost six thousand, all here inside
+                  // `after()`. The event is identical for every member; only the recipient differs.
+                  const event = {
+                    docId: String(docId),
+                    projectId: projectTarget ? String(projectTarget.project._id) : null,
+                    shareId,
+                    // The PERSON, so `viewerBotIdHash` and never `botIdHash` (decision 9): on a
+                    // project link the latter is the `<digest>.<docId>` composite, and the document
+                    // already has its own field on the row. Three bugs this month came from those
+                    // two shapes being compared literally.
+                    viewerKey: viewerBotIdHash,
+                    viewerName: viewerNameIntro ?? null,
+                    viewerEmail: viewerEmail ?? null,
+                  };
+                  await enqueueNotifications(
+                    members
+                      .map((m) => (m?.userId ? String(m.userId) : ""))
+                      .filter((memberUserId) => Types.ObjectId.isValid(memberUserId))
+                      .map((memberUserId) => ({
                         orgId: docOrgId,
                         userId: memberUserId,
-                        kind: "share_views",
+                        kind: "share_views" as const,
                         dedupeKey: notificationDedupeKey("share_views", memberUserId, createdShareViewId),
-                        event: {
-                          docId: String(docId),
-                          projectId: projectTarget ? String(projectTarget.project._id) : null,
-                          shareId,
-                          // The PERSON, so `viewerBotIdHash` and never `botIdHash` (decision 9): on
-                          // a project link the latter is the `<digest>.<docId>` composite, and the
-                          // document already has its own field on the row. Three bugs this month
-                          // came from those two shapes being compared literally.
-                          viewerKey: viewerBotIdHash,
-                          viewerName: viewerNameIntro ?? null,
-                          viewerEmail: viewerEmail ?? null,
-                        },
+                        event,
                         occurredAt: viewedAt,
-                      });
-                    }),
+                      })),
                   );
                 }
               } catch {

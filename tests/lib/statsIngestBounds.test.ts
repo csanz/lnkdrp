@@ -43,7 +43,7 @@ const {
   shareVisitUpdateOne,
   docUpdateOne,
   recordActivity,
-  enqueueNotification,
+  enqueueNotifications,
   tryResolveAuthUserId,
   isOwnerSideViewer,
   viewerIdentityNews,
@@ -58,7 +58,7 @@ const {
   shareVisitUpdateOne: vi.fn(async () => ({ acknowledged: true })),
   docUpdateOne: vi.fn(async () => ({ modifiedCount: 1 })),
   recordActivity: vi.fn(async () => undefined),
-  enqueueNotification: vi.fn(async () => undefined),
+  enqueueNotifications: vi.fn(async () => ({ enqueued: 0, duplicates: 0 })),
   tryResolveAuthUserId: vi.fn(async () => null as { userId?: string } | null),
   isOwnerSideViewer: vi.fn(async () => false),
   viewerIdentityNews: vi.fn(async () => ({ isNew: true, changed: false })),
@@ -113,7 +113,7 @@ vi.mock("@/lib/share/viewerIdentity", () => ({
 }));
 vi.mock("@/lib/activity/log", () => ({ recordActivity }));
 vi.mock("@/lib/notifications/queue", () => ({
-  enqueueNotification,
+  enqueueNotifications,
   notificationDedupeKey: (...parts: unknown[]) => parts.map(String).join(":"),
 }));
 /** Bucket key prefixes a test wants to report as spent. Reset in `beforeEach`. */
@@ -263,7 +263,7 @@ describe("POST on a password-protected document link", () => {
     await drainAfter();
 
     expect(recordActivity).not.toHaveBeenCalled();
-    expect(enqueueNotification).not.toHaveBeenCalled();
+    expect(enqueueNotifications).not.toHaveBeenCalled();
   });
 
   test("a cookie minted for another link is no cookie", async () => {
@@ -443,7 +443,7 @@ describe("the ceiling on new readers per link", () => {
     await drainAfter();
 
     expect(shareViewUpdateOne).toHaveBeenCalled();
-    expect(enqueueNotification).toHaveBeenCalled();
+    expect(enqueueNotifications).toHaveBeenCalled();
   });
 
   test("past the ceiling the reading is still recorded", async () => {
@@ -464,7 +464,7 @@ describe("the ceiling on new readers per link", () => {
     await post(fresh);
     await drainAfter();
 
-    expect(enqueueNotification).not.toHaveBeenCalled();
+    expect(enqueueNotifications).not.toHaveBeenCalled();
   });
 
   test("the ceiling is per link, so one link under attack does not mute another", async () => {
@@ -476,7 +476,7 @@ describe("the ceiling on new readers per link", () => {
     await post(fresh);
     await drainAfter();
 
-    expect(enqueueNotification).toHaveBeenCalled();
+    expect(enqueueNotifications).toHaveBeenCalled();
   });
 });
 
@@ -550,5 +550,38 @@ describe("what one heartbeat costs the reader's row", () => {
     const retried = shareViewWrites().find((w) => w.update.$inc && !w.update.$setOnInsert);
     expect(retried).toBeDefined();
     expect(Object.keys(retried!.update.$inc)).toContain("timeSpentMs");
+  });
+});
+
+/**
+ * The fan-out is one insert, not one per member.
+ *
+ * "A new recipient opened this" owes one queue row to every member of the workspace, and that was a
+ * `Promise.all` over the single-row enqueue: a `create` and a unique-index probe each. A
+ * thirty-member workspace cost thirty round trips per new reader; a two-hundred-person send into it
+ * cost six thousand, all inside `after()`, where nothing is retried if the lambda is frozen.
+ */
+describe("the new-reader fan-out", () => {
+  test("the whole workspace is enqueued in a single call", async () => {
+    await post({ botId: "bot-brand-new", visitId: "v1", pageNumber: 1, tv: 2 });
+    await drainAfter();
+
+    expect(enqueueNotifications).toHaveBeenCalledTimes(1);
+  });
+
+  test("it hands over one row per member, addressed individually", async () => {
+    await post({ botId: "bot-brand-new-2", visitId: "v1", pageNumber: 1, tv: 2 });
+    await drainAfter();
+
+    const rows = enqueueNotifications.mock.calls[0]?.[0] as Array<Record<string, unknown>>;
+    expect(Array.isArray(rows)).toBe(true);
+    expect(rows.length).toBeGreaterThan(0);
+    // Per recipient, so a retry, a preference and a failure stay per person: that is the whole
+    // reason the queue holds a row each rather than one row for the workspace.
+    expect(new Set(rows.map((r) => String(r.userId))).size).toBe(rows.length);
+    for (const row of rows) {
+      expect(row.kind).toBe("share_views");
+      expect(String(row.dedupeKey)).toContain("share_views");
+    }
   });
 });
