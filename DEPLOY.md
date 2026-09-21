@@ -811,6 +811,18 @@ Scope every variable to Production or Preview on its own. Never use All Environm
 
 ### 5.4 Index check
 
+**One index must be dropped by hand.** `activityevents` carried `orgId_1_createdDate_-1`, which is
+now a prefix of `orgId_1_createdDate_-1__id_-1` and does nothing the wider one does not do.
+`autoIndex` creates and never drops, so both will exist until someone removes the old one, and every
+activity write pays for both:
+
+```
+mongosh "$MONGODB_URI" --quiet --eval 'db.activityevents.dropIndex("orgId_1_createdDate_-1")'
+```
+
+Safe to run at any time and safe to skip: the cost of leaving it is write amplification on the
+busiest collection, not a wrong answer.
+
 Migrations create only some indexes. Mongoose `autoIndex` is on, so every function builds the rest
 of the model indexes at cold start. A unique index that hits duplicate data fails **silently**,
 and the guarantee it gives (Stripe webhook dedupe, credit grant idempotency, one balance per

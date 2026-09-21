@@ -108,13 +108,13 @@ describe("the beacon", () => {
   });
 
   test("every attempt keeps `keepalive`, because the last flush happens during pagehide", async () => {
-    const post = vi.fn(async () => res(200));
+    const post = vi.fn(async (_body: string, _init: RequestInit) => res(200));
     const beacon = createStatsBeacon(URL_, post);
 
     beacon.send("{}");
     await vi.advanceTimersByTimeAsync(0);
 
-    expect((post.mock.calls[0]?.[1] as RequestInit)?.keepalive).toBe(true);
+    expect(post.mock.calls[0]?.[1]?.keepalive).toBe(true);
   });
 
   test("the queue is capped, and it is the oldest that goes", async () => {
