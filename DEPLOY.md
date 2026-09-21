@@ -889,8 +889,8 @@ listed above.
 
 ### 5.5 Admins
 
-Admin tools are `/a` (cron health, credits, data, AI runs, emails, share views, account deletions)
-and `/api/admin/*`. An admin is a
+Admin tools are `/a` (cron health, deployments, credits, data, AI runs, emails, share views,
+account deletions) and `/api/admin/*`. An admin is a
 `users` row with `role: "admin"`. Nothing in the app grants it.
 
 1. Sign in once with the admin's Google account.
@@ -918,6 +918,41 @@ and `/api/admin/*`. An admin is a
 
 To remove an admin, set `role` back to `"user"`. The API stops accepting them on the next call.
 Keep the list short.
+
+### 5.6 Vercel API token, for the Deployments page
+
+`/a/deployments` shows the last deployments with their state, target, commit and build duration.
+That is the one thing the admin area cannot learn from its own database, because only Vercel knows
+it.
+
+**Entirely optional.** With no token the page says "not configured" and names these variables, and
+nothing else in the admin area changes. Do not treat a missing token as a broken deploy.
+
+1. vercel.com, your avatar, **Account Settings**, then **Tokens**.
+2. **Create Token**. Name it for the job, e.g. `lnkdrp-admin-readonly`. **Scope it to the team that
+   owns the project**, not your whole account, and set an expiry you are willing to rotate on.
+3. `VERCEL_PROJECT_ID`: Project Settings, General, "Project ID" (`prj_…`). Or read
+   `.vercel/project.json` after `vercel link`.
+4. `VERCEL_TEAM_ID`: Team Settings, General (`team_…`). **Required when the project belongs to a
+   team**, omitted for a personal account. Leaving it out on a team project is the usual cause of a
+   403, and the page says so when it gets one.
+5. Set all three in Vercel project env vars, production scope. They are read server side only.
+
+```
+VERCEL_API_TOKEN=...
+VERCEL_PROJECT_ID=prj_...
+VERCEL_TEAM_ID=team_...        # team projects only
+```
+
+**Know what you are handing over.** Vercel tokens are not granular: there is no read-only token
+type. The token carries the access of whatever you scope it to, and it is read-only here only
+because `src/lib/vercel/client.ts` issues nothing but GETs. Scope it to one team, give it an expiry,
+and treat it like any other production secret — it never reaches the browser, is never logged, and
+every string the client takes from a Vercel response is scrubbed of it before it reaches an admin
+payload (a commit message containing the token would otherwise have been echoed back, which a test
+caught).
+
+Rotating it is safe at any time: the page degrades to "not configured" until the new value deploys.
 
 ## 6. Realtime server
 

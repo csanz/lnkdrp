@@ -1,11 +1,11 @@
 /**
  * The gate on the admin area.
  *
- * Every one of the 40 endpoints under `/api/admin/*` calls `requireAdmin`, so no admin *data* has
+ * Every endpoint under `/api/admin/*` calls `requireAdmin`, so no admin *data* has
  * ever been reachable without the role. The pages were a different matter: this file was a client
  * component, it gated nothing, and the twenty-two pages under it are all client components that
  * fetch those endpoints. So a signed-out visitor who typed `/a` got the admin chrome, a sidebar
- * naming all sixteen sections, and panels that failed to load.
+ * naming every section, and panels that failed to load.
  *
  * Nothing leaked except the shape of the admin surface, which is still more than a stranger should
  * be handed, and the dead end read as a broken page rather than a closed door.

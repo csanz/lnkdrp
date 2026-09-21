@@ -50,6 +50,7 @@ export default function AdminLeftSidebar() {
         label: "System",
         items: [
           { label: "Cron health", href: "/a/cron-health", exact: true },
+          { label: "Deployments", href: "/a/deployments", exact: true },
           { label: "Deletions", href: "/a/deletions", exact: true },
           { label: "Emails", href: "/a/emails", exact: true },
         ],
