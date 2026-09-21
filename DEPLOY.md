@@ -770,7 +770,7 @@ production env file:
 | 6 | `npx tsx --env-file=prod.env scripts/docchange-from-upload-repair.ts`, then `--apply` | Old version-change rows pointed "from" at the new upload |
 | 7 | `npx tsx --env-file=prod.env scripts/credit-balances-reconcile.ts`, then `--apply` | Team workspaces seeded with Free starter credits; Free workspaces missing the 15-a-day cap. Add `--reset-compare-tier` only if no Free user has chosen a compare tier on purpose: it moves every Free row stored as "standard" back to the plan default (a replacement cost 6 instead of 3) |
 | 8 | `npx tsx --env-file=prod.env scripts/ai-ask-repair.ts`, then `--apply` | Stored summaries with an operating cost taken as the funding ask, and invented "Funding ask"/milestone metrics |
-| 9 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Read-only. It prints "All share-analytics invariants hold" only on a database with no data rooms; otherwise expect one `0 recipient rows exist` line per project link, which is the script's blind spot and not drift. What must be zero is `pageTimeOverruns` (9.1) |
+| 9 | `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts` | Read-only. Must print "All share-analytics invariants hold" (see 9.1) |
 
 `scripts/request-docs-projectids-backfill.mjs` and `scripts/doc-received-via-request-backfill.mjs`
 repair Requests data. Requests are hidden at launch; run them (same form, dry run then `--apply`)
@@ -1249,9 +1249,7 @@ Run in this order; each step depends on the previous.
     **Turn off these emails** in it on a phone or a signed-out browser: the page says view emails
     are off, and Preferences now reads Off.
 12. Recreate `prod.env`, run `npx tsx --env-file=prod.env scripts/verify-share-analytics.ts`
-    against production (read-only), and delete the file again. Read the output against 9.1: the
-    per-link and per-document lines are noise on any workspace with a data room, and the line that
-    must be clean is the page-time one.
+    against production (read-only), and delete the file again.
 13. Revoke the test key from `/connect`; the sidebar returns to Not connected.
 14. Vercel → Settings → Cron Jobs lists 10 jobs. Prove the scheduler, not your step 9 hand runs.
     An hour after the deploy, in Vercel → Settings → Cron Jobs → View Logs, each of the five jobs
@@ -1351,25 +1349,29 @@ Run in this order; each step depends on the previous.
 
 Run `npx tsx --env-file=.env.<target> scripts/verify-share-analytics.ts` against the target
 database before and after any release that touches the share analytics. `npm run verify:analytics`
-always reads `.env.local`, so use it only for the local database. The check is read-only and safe
-against production.
+always reads `.env.local`, so use it only for the local database. The check is read-only, safe against
+production, and exits non-zero, so it also works as a CI step.
 
-> **It does not know about project links, so it cannot be a CI gate yet (2026-09-20).**
-> A project link has `docId: null` — its rows belong to the room, one per (viewer, document), and
-> carry the *document's* `docId`. The per-link check recomputes from document-scoped rows, so for
-> every data-room link it finds nothing and reports the link as completely drifted:
-> `ShareLink.viewCount is 10 but 0 recipient rows exist`, plus the `lastViewedAt` and
-> `downloadCount` variants. The document rollups fail the same way and for the same reason
-> (`people 0 but a fresh viewer-count aggregate says 5`): a read through a project link belongs to
-> the project, so the document's stored figures exclude it while the script's recomputation does
-> not. Confirmed on the local database: three project links reported `0 recipient rows` while 14,
-> 5 and 2 rows respectively existed, all with `isOwnerPreview: false`.
->
-> `analytics-reconcile` is the one telling the truth here — it knows the difference and reports
-> `drift: []` on exactly these links. **Do not "repair" toward the script.** Until it learns the
-> project scope (`src/lib/analytics/docScope.ts`), read its output by hand and ignore the
-> project-link rows; the property worth the trip is the first one in the table below, which is
-> scope-independent and was clean (`pageTimeOverruns: 0`) through the reading-clock change.
+Expect `All share-analytics invariants hold` on a healthy database. It says that now; it could not
+before 2026-09-21, and the reason is worth knowing because the failure mode was the dangerous kind
+— loud where it should have been quiet, and silent where it should have been loud.
+
+`ShareLinkModel.distinct("docId")` returns the `null` that every project link carries, and the
+per-document check ran once on it. `find({ docId: null })` is every data-room link in the database;
+the row aggregate beside it matched rows whose `docId` is null, of which there are none. So each
+project link *with* traffic was reported as completely drifted (`viewCount is 10 but 0 recipient
+rows exist`) and each one without passed by comparing zero to zero — meaning no project link's
+counters were ever actually checked. The document rollups failed the same way for a different
+reason: `freshViewerCount` and `freshVisitTimeMs` matched on `docId` alone, while the route they
+claim to recompute applies `docOnlyShareIdMatch`, so a document in a data room was accused of
+disagreeing with itself over the readers it is right to exclude.
+
+Both are fixed. Project links are now verified against `projectLinkStatsByShareId` — the same
+function the project read paths and `analytics-reconcile` already share, so "what a project link's
+viewCount is" has one definition — and the two tools agree: the run that found `viewCount is 12 but
+13 recipient rows exist` was followed by a reconcile reporting `stored: 12, actual: 13` and
+repairing it. The recomputations apply document scope. Verified by injecting drift into one link of
+each kind and confirming both were caught.
 
 It asserts four properties, each of which failed silently in production shape at least once:
 
@@ -1382,8 +1384,7 @@ It asserts four properties, each of which failed silently in production shape at
 
 Counter drift is repairable and the nightly `analytics-reconcile` job fixes it on its own; you can
 force it with `npx tsx scripts/cron/cron.analytics-reconcile.ts --target=https://lnkdrp.com` (with
-`CRON_SECRET` exported, 3). If the script still reports link drift after a forced run that returned
-`linksReconciled: 0` and `drift: []`, it is the scope mismatch above and not drift at all.
+`CRON_SECRET` exported, 3).
 A **page-time overrun is not repairable and is never repaired automatically**: it means the ingest
 double counted, and overwriting the rows would hide the bug instead of fixing it. The job reports
 those in `CronHealth.lastResult` and marks itself `error` so the run is visible.
@@ -1573,8 +1574,7 @@ monitor is in 12.
   the recipient's address, so treat invite failures in the logs as containing personal data.
 - **Backups:** set up in 4.1 step 4. Restore: follow 10 (Database) — crons off first, point-in-time
   restore to a new cluster, allowlist it as in 4.1, check it with
-  `npx tsx --env-file=.env.restored scripts/verify-share-analytics.ts` (reading it as 9.1 says —
-  project links report false drift), point `MONGODB_URI` at it
+  `npx tsx --env-file=.env.restored scripts/verify-share-analytics.ts`, point `MONGODB_URI` at it
   on the web app and the realtime server and redeploy both, replay Stripe events and reconcile the
   meter before crons go back on. Do one
   test restore before launch. Vercel Blob has no backup and is not in the Atlas restore. Ordinary
@@ -1778,10 +1778,6 @@ monitor is in 12.
   - `db/migration/`: fix the comment in `20260913_0001_sharelinks_indexes.mjs` that says production
     runs with `autoIndex` off (it is on). Optionally make `db/migration/run.mjs` log the redacted
     host and database it connected to.
-  - `scripts/verify-share-analytics.ts`: teach the per-link and per-document checks the project
-    scope, so a workspace with a data room does not fail every run (9.1). Until then it cannot be
-    the required status check the gate workflow below wants, because it is permanently red and a
-    real regression would be one line among the noise.
   - Cron monitoring: `src/app/api/cron/notification-emails/route.ts` still records `ok` when
     `sendFailures` > 0; record `error` as the other jobs now do. In `analytics-reconcile`, report
     overruns only on rows newer than the last run (or exclude acknowledged rows) and stream with a
