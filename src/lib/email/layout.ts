@@ -41,12 +41,20 @@ export function escapeHtml(value: unknown): string {
  * PNG because Gmail does not render SVG in mail, and `public/icon-black.svg` is the only logo the
  * app otherwise has; `public/email-logo.png` is that file rasterised at 4x its display size.
  *
- * Absolute and hard-wired to the public site rather than read from `getPublicSiteBase()`: the
- * recipient opens this from their own inbox, where a `http://localhost:3001/...` src is a broken
- * image. A dev run should still point at the production asset, because that is the one URL that
- * resolves for everybody. `EMAIL_LOGO_URL` overrides it for a deployment on another domain.
+ * It is served from blob storage rather than from this app's own `/public`, and that is the point.
+ * A page resolves a relative path against whatever host served it; an email is opened in somebody
+ * else's mail client, where the only thing that works is an absolute URL to something already
+ * public. A `/public` asset only starts resolving on the next deploy — so every email sent between
+ * adding the file and shipping it carries a broken-image box, which is exactly what happened.
+ * Blob is live the moment `scripts/publish-email-logo.ts` runs, and stays live across deploys and
+ * rollbacks.
+ *
+ * `public/email-logo.png` remains in the repo as the source of truth for what was uploaded.
+ * `EMAIL_LOGO_URL` overrides this for a deployment with its own branding.
  */
-const LOGO_URL = (process.env.EMAIL_LOGO_URL ?? "").trim() || "https://www.lnkdrp.com/email-logo.png";
+const LOGO_URL =
+  (process.env.EMAIL_LOGO_URL ?? "").trim() ||
+  "https://svmsosyeuyawzaqr.public.blob.vercel-storage.com/brand/email-logo.png";
 
 /**
  * Header: the mark and the wordmark together.

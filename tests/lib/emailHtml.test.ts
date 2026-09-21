@@ -172,11 +172,18 @@ describe("senders forward the whole message", () => {
     expect(html).toContain(">LinkDrop</td>");
   });
 
-  test("the logo file the emails point at is actually in the repo", () => {
+  test("the logo source stays in the repo, matching what was published", () => {
     const root = path.resolve(__dirname, "../..");
     const tracked = execSync("git ls-files public/email-logo.png", { cwd: root, encoding: "utf8" }).trim();
-    expect(tracked, "public/email-logo.png must be committed or every email links a 404").toBe(
+    expect(tracked, "keep the source of truth for what publish-email-logo.ts uploaded").toBe(
       "public/email-logo.png",
     );
+  });
+
+  test("the logo is not served from this app's own origin", () => {
+    // An asset under /public only resolves after a deploy, so every email sent in between shows a
+    // broken-image box. That shipped once; blob storage is live the moment it is uploaded.
+    const src = (rows[0].html ?? "").match(/<img src="([^"]+)"/)?.[1] ?? "";
+    expect(src).not.toMatch(/lnkdrp\.com/);
   });
 });
