@@ -104,6 +104,14 @@ const EMAIL_FACTS: Readonly<Record<string, EmailFacts>> = {
     previewNote: null,
     flagGated: null,
   },
+  welcome: {
+    trace: "none",
+    traceNote:
+      "Not recorded: sent from the NextAuth signIn callback on the call that inserted the user row, and swallowed on failure so a mail outage cannot fail a sign-in. User.createdAt records that the account was made, not that the mail arrived. Never sent to a waitlisted signup — waitlist_approved is their first email instead.",
+    previewable: true,
+    previewNote: null,
+    flagGated: null,
+  },
   waitlist_approved: {
     trace: "none",
     traceNote:

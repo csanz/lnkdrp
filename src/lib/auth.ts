@@ -7,6 +7,7 @@ import { UserModel } from "@/lib/models/User";
 import { OrgMembershipModel } from "@/lib/models/OrgMembership";
 import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { initialAccessStatus } from "@/lib/waitlist/waitlist";
+import { sendWelcomeEmail } from "@/lib/email/sendWelcomeEmail";
 
 /**
  * Best-effort backfill of `NEXTAUTH_URL` in development.
@@ -133,7 +134,7 @@ export const authOptions: NextAuthOptions = {
       // Idempotent upsert by email:
       // - createdAt is only set on first creation ($setOnInsert)
       // - lastLoginAt is always updated
-      await UserModel.findOneAndUpdate(
+      const upsert = await UserModel.findOneAndUpdate(
         { email },
         {
           $setOnInsert: {
@@ -153,8 +154,21 @@ export const authOptions: NextAuthOptions = {
           },
           $set: setFields,
         },
-        { upsert: true, new: true },
+        { upsert: true, new: true, includeResultMetadata: true },
       );
+
+      // The welcome email, once, and only to somebody who can actually use the account.
+      //
+      // `lastErrorObject.upserted` is set by the server only on the call that inserted the row, so
+      // two tabs racing through sign-in send exactly one email. The `existing` read further up
+      // cannot promise that: both callers can see `null` before either of them writes.
+      //
+      // Waitlisted signups get nothing here. Their welcome is `waitlistApproved`, sent when an
+      // admin opens the door — telling somebody who is about to meet a queue how to upload their
+      // first document would be the one genuinely bad version of this email.
+      if (upsert?.lastErrorObject?.upserted && initialStatus === "approved") {
+        await sendWelcomeEmail({ to: email, name: p.name ?? null });
+      }
 
       return true;
     },

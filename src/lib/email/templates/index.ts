@@ -13,6 +13,7 @@ export * from "./signature";
 export * from "./downloadRequest";
 export * from "./memberRemoved";
 export * from "./waitlistApproved";
+export * from "./welcome";
 export * from "./viewerIntroduction";
 
 /** One row per email we send: for docs, for support ("which email is this?"), and for review. */
@@ -22,6 +23,7 @@ export const EMAIL_CATALOG: readonly {
   to: "owner" | "member" | "requester" | "invitee" | "reader";
   builtBy: string;
 }[] = [
+  { id: "welcome", what: "Greets a brand-new account, once, at sign-up (never sent to a waitlisted signup)", to: "member", builtBy: "templates/welcome.ts" },
   { id: "download_request.received", what: "Receipt to the person who asked to download a PDF", to: "requester", builtBy: "templates/downloadRequest.ts" },
   { id: "download_request.owner", what: "Asks the owner to approve or deny a download request", to: "owner", builtBy: "templates/downloadRequest.ts" },
   { id: "download_request.approved", what: "Tells the requester their download was approved", to: "requester", builtBy: "templates/downloadRequest.ts" },
