@@ -187,3 +187,30 @@ describe("senders forward the whole message", () => {
     expect(src).not.toMatch(/lnkdrp\.com/);
   });
 });
+
+describe("the test harness cannot leak into real mail", () => {
+  /**
+   * `[TEST]` is a property of the sending *script*, not of any template.
+   *
+   * It exists so a test message landing in a shared inbox is obviously not a live notification,
+   * which means it must never travel the other way: a prefix that drifted into a template, or into
+   * a sender "just while debugging", would put it on the subject line of every real sign-up.
+   * Cheap to pin, and silent if it ever broke.
+   */
+  test("no template or sender prefixes a subject", () => {
+    const root = path.resolve(__dirname, "../..");
+    const files = execSync("git ls-files 'src/**/*.ts' 'src/**/*.tsx'", { cwd: root, encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean);
+    const offenders = files.filter((rel) => /\[TEST\]/i.test(fs.readFileSync(path.join(root, rel), "utf8")));
+    expect(offenders, "the [TEST] prefix belongs to scripts/send-test-emails.ts alone").toEqual([]);
+  });
+
+  test("the subjects production sends carry no decoration", () => {
+    for (const r of rows) {
+      expect(r.subject, r.key).not.toMatch(/^\s*[[(]/);
+      expect(r.subject.trim(), r.key).toBe(r.subject);
+      expect(r.subject.length, r.key).toBeGreaterThan(0);
+    }
+  });
+});
