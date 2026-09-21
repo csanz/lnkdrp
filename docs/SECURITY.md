@@ -363,14 +363,16 @@ this was done.
   recipient by a page that is working as designed, spells out both ids — and every other artifact
   hangs off the same prefix. This is the one finding from the 2026-09-20 review still live. It needs
   signed URLs or a proxy in front of the store; it is not a patch.
-- **Two routes still hold a local copy of the blob allowlist.** `fetchStoredBlob`
+- **One route still holds a local copy of the blob allowlist.** `fetchStoredBlob`
   (`src/lib/blob/fetchStoredBlob.ts`) is the one place that validates a stored URL and follows its
-  redirects, re-checking the host on every hop. Three of the five call sites use it;
-  `/s/:shareId/pdf` and `/p/:shareId/:docId/preview` still carry their own predicate and a bare
-  `fetch`, so they remain redirect-followers until they are converted.
-- **No audit of already-stored URLs.** `blobUrl` and `previewImageUrl` were patchable once. The
-  read-side allowlist makes a poisoned row harmless, but nothing has counted whether any exists, and
-  an affected owner would see a permanent "PDF not available".
+  redirects, re-checking the host on every hop. Four of the five call sites use it;
+  `/p/:shareId/:docId/preview` still carries its own predicate and a bare `fetch`, so it remains a
+  redirect-follower until it is converted.
+- ~~No audit of already-stored URLs.~~ **Answered.** `npm run audit:blob-urls`
+  (`scripts/audit-stored-blob-urls.ts`) walks every document and upload and reports any value the
+  serving path would refuse, asking `blobFetchUrl` rather than re-deriving the rule. Read-only,
+  exit 1 on a finding. First run on the development database: 117 documents, zero off the store.
+  Run it against production before trusting that sentence there too.
 - **Invite email mismatch has no designed screen.** The refusal is correct; the copy is generic.
 - **`REALTIME_SECRET` is not required in production.** The ticket key is derived either way, so a
   single-secret deploy works; making it mandatory is an ops decision.
