@@ -62,7 +62,11 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
         .catch(() => []);
       // Read once, above the branch, for the same reason.
       const allLinks = await ctx.api.listShareLinks(doc.id).catch(() => []);
-      const anyLinkActive = allLinks.some((l) => l.enabled && l.active);
+      const anyLinkActive = !doc.isArchived && allLinks.some((l) => l.enabled && l.active);
+      // The default link's own state, computed here so both branches can report it and a
+      // document's key set stops depending on which of its slugs was used to ask.
+      const defaultLinkRow = allLinks.find((l) => l.isDefault) ?? null;
+      const defaultLinkActive = !doc.isArchived && Boolean(defaultLinkRow?.enabled && defaultLinkRow?.active);
 
       // Asked about one link by its slug: answer about *that* link. The document-level fields
       // (`shareUrl`, download, password, revision history) are the default link's, so an agent
@@ -78,7 +82,18 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
             ...view,
             shareId: link.shareId,
             shareUrl: ctx.api.shareUrl(link.shareId),
-            shareEnabled: link.enabled && link.active,
+            /**
+             * The document-wide answer, on this branch too.
+             *
+             * This override was the same round-trip lie `withDefaultLinkState` was just fixed for,
+             * hiding on the other path: `set_share_access` writes `shareEnabled` meaning "the
+             * switch over every link", and reading it back through a *revoked recipient link*
+             * answered false about a document two other links were still serving. Whether this
+             * particular link opens is `link.status`, which both branches already carry.
+             */
+            shareEnabled: anyLinkActive,
+            anyLinkActive,
+            defaultLinkActive,
             shareAllowPdfDownload: link.allowDownload,
             sharePasswordEnabled: link.passwordEnabled,
             shareAllowRevisionHistory: link.allowRevisionHistory,
@@ -92,10 +107,6 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
             },
             ...(summaryStale ? { summaryStale } : {}),
             tags,
-            // Same reason `tags` is here: a document's key set should not depend on which of its
-            // slugs you named it by. This one is about the *document* — whether any link of it is
-            // live — so it is as true on this branch as on the default one.
-            anyLinkActive,
             warnings,
           };
         }

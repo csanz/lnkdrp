@@ -89,7 +89,7 @@ export const replacePdfInputShape = {
   timeoutSeconds: z.number().int().min(5).max(120).default(60).describe("Max seconds to wait for processing (5-120, default 60)."),
   summary: z
     .string()
-    .min(40)
+    .min(40, "summary must be 40-600 characters, and goes together with keyPoints (2-7 items). Omit both to let lnkdrp write the summary instead, which costs credits.")
     .max(600)
     .optional()
     .describe(

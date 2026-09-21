@@ -277,7 +277,16 @@ export function mapApiError(input: { status: number; body: unknown; method: stri
        * The raw text stays in `details` for whoever debugs it, and out of the message, which an
        * agent may repeat to a human.
        */
-      if (INTERNAL_FAULT_RE.test(errorText)) {
+      /**
+       * Three places the fault can show itself, because the app redacts in production.
+       *
+       * `errorJson` answers `{ error: <public sentence>, code: "UNHANDLED_EXCEPTION" }` and only
+       * attaches the real text as `detail` outside production — so keying on the text alone made
+       * this branch inert on exactly the routes that need it most, and on exactly the deployment
+       * that matters. The code survives redaction; `message` is checked too because some routes
+       * put the driver's sentence there instead of in `error`.
+       */
+      if (bodyCode === "UNHANDLED_EXCEPTION" || INTERNAL_FAULT_RE.test(errorText) || INTERNAL_FAULT_RE.test(message)) {
         return new ToolError(
           "upstream",
           "lnkdrp could not complete that request because of a problem on its side, not with your arguments. " +
