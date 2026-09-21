@@ -33,6 +33,7 @@ import { reserveCreditsOrThrow, markLedgerCharged, failAndRefundLedger, recordUn
 import { getDefaultHistoryQualityTier } from "@/lib/credits/qualityDefaults";
 import { isOutOfCreditsError } from "@/lib/credits/errors";
 import { creditsForRun } from "@/lib/credits/schedule";
+import { getAiAutomation } from "@/lib/credits/aiAutomation";
 import { idempotencyKeyFromRequest } from "@/lib/credits/idempotency";
 import { getCreditsSnapshot } from "@/lib/credits/snapshot";
 import { OUT_OF_CREDITS_CODE } from "@/lib/credits/errors";
@@ -1234,9 +1235,19 @@ export async function POST(
             let historyLedgerId: string | null = null;
             // Credit-gated on every plan (no plan check): the reservation below is the gate. Recipient
             // uploads (request/replace links) never bill the owner, so they get no compare.
-            const historyAllowed = !viaUploadSecret;
+            // ...and the workspace's own switch. Failing open on a read error keeps a database
+            // blip from silently dropping a compare the owner is paying for.
+            const automationCompareOn = await getAiAutomation(actor.orgId)
+              .then((a) => a.compare)
+              .catch(() => true);
+            const historyAllowed = !viaUploadSecret && automationCompareOn;
             if (!historyAllowed) {
-              debugLog(1, "[process] history compare skipped (recipient upload)", { uploadId, docId: String(docId), version: toVersion });
+              debugLog(1, "[process] history compare skipped", {
+                uploadId,
+                docId: String(docId),
+                version: toVersion,
+                why: viaUploadSecret ? "recipient upload" : "turned off for this workspace",
+              });
             }
             if (historyAllowed) {
               try {
@@ -1871,7 +1882,7 @@ export async function POST(
         summary: "done" | "skipped" | "failed" | "pending" | "unchanged";
         compare: "done" | "skipped" | "failed" | "not_applicable" | "pending";
         reason: string | null;
-        code: "out_of_credits" | "daily_cap" | "plan" | "recipient" | "error" | null;
+        code: "out_of_credits" | "daily_cap" | "plan" | "recipient" | "error" | "turned_off" | null;
         creditsNeeded: number | null;
         creditsUsed: number;
         source: "owner" | "recipient";
@@ -1893,12 +1904,29 @@ export async function POST(
         !summaryRerun &&
         Boolean(extractedText) &&
         normalizeForCompare(priorExtractedTextRaw.toString()) === normalizeForCompare(extractedText ?? "");
+      // The workspace switch, which gates only the *automatic* summary: `summaryRerun` is someone
+      // pressing "write it again" on the document page, and an explicit ask is never what a
+      // "summarise every upload" setting is about. Fails open, like the compare above.
+      const automationSummaryOn = summaryRerun
+        ? true
+        : await getAiAutomation(String(existingDocOrgId))
+            .then((a) => a.summary)
+            .catch(() => true);
       const summaryWanted =
         !upload.aiOutput &&
         !agentSummary &&
         !sameAsPreviousVersion &&
+        automationSummaryOn &&
         Boolean(extractedText) &&
         Boolean(process.env.OPENAI_API_KEY);
+      if (!automationSummaryOn) {
+        // Named, not silent: the document page offers "write the summary" and the reader should
+        // know the blank space is a setting rather than a failure or a missing credit.
+        aiState.summary = "skipped";
+        aiState.reason = "automatic summaries are turned off for this workspace";
+        aiState.code = "turned_off";
+        debugLog(1, "[process] AI summary skipped (turned off)", { uploadId, docId: String(docId) });
+      }
       if (sameAsPreviousVersion) {
         // The replacing UI polls this upload row, so the fact rides home on it rather than through
         // a second request for the version history.

@@ -42,6 +42,21 @@ const workspaceCreditBalanceSchema = new Schema(
      */
     defaultReviewQualityTier: { type: String, enum: ["basic", "standard", "advanced"], default: "standard" },
     defaultHistoryQualityTier: { type: String, enum: ["basic", "standard", "advanced"], default: null },
+    /**
+     * The two AI runs nobody asks for, and so the only two worth a switch.
+     *
+     * Every other AI action starts with a click, and not clicking is already the off switch. These
+     * two start on their own — a summary on every upload, a compare on every replacement — so they
+     * are the ones that spend credits while someone is doing something else, and the ones a person
+     * who uploads forty drafts a day wants to stop.
+     *
+     * Both default **on**: the summary is most of what makes a link worth sending, and a workspace
+     * that never sees one has not really seen the product. Off is a deliberate act.
+     *
+     * `undefined` on a row written before this shipped, which `aiAutomation.ts` reads as on.
+     */
+    autoSummaryEnabled: { type: Boolean, default: true },
+    autoCompareEnabled: { type: Boolean, default: true },
   },
   {
     timestamps: { createdAt: "createdDate", updatedAt: "updatedDate" },

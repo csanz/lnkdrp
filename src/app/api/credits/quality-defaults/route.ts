@@ -15,6 +15,7 @@ import { withMongoRequestLogging } from "@/lib/db/mongoRequestLogger";
 import { getWorkspacePlan } from "@/lib/billing/planLimits";
 import { defaultBalanceForWorkspace } from "@/lib/credits/creditService";
 import { parseQualityTier as parseTier, resolveHistoryQualityTier } from "@/lib/credits/qualityDefaults";
+import { parseAutomationFlag, resolveAiAutomation } from "@/lib/credits/aiAutomation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,7 +51,7 @@ export async function GET(request: Request) {
       await connectMongo();
       const [membership, bal, plan] = await Promise.all([
         OrgMembershipModel.findOne({ orgId: ctx.orgId, userId: ctx.userId, isDeleted: { $ne: true } }).select({ role: 1 }).lean(),
-        WorkspaceCreditBalanceModel.findOne({ workspaceId: ctx.orgId }).select({ defaultReviewQualityTier: 1, defaultHistoryQualityTier: 1 }).lean(),
+        WorkspaceCreditBalanceModel.findOne({ workspaceId: ctx.orgId }).select({ defaultReviewQualityTier: 1, defaultHistoryQualityTier: 1, autoSummaryEnabled: 1, autoCompareEnabled: 1 }).lean(),
         getWorkspacePlan(ctx.orgId),
       ]);
       const role = typeof (membership as any)?.role === "string" ? String((membership as any).role) : "";
@@ -60,7 +61,10 @@ export async function GET(request: Request) {
       // Compare tier is plan-aware when unset: Basic on Free, Standard on Pro. A stored value wins.
       const history = resolveHistoryQualityTier((bal as any)?.defaultHistoryQualityTier, plan);
 
-      const payload = { ok: true, review, history };
+      // The two automatic runs. Absent fields read as on; see `aiAutomation.ts`.
+      const automation = resolveAiAutomation(bal as any);
+
+      const payload = { ok: true, review, history, autoSummary: automation.summary, autoCompare: automation.compare };
       qualityDefaultsCache.set(cacheKey, { at: Date.now(), payload });
       if (qualityDefaultsCache.size > 200) {
         // Best-effort eviction: drop an arbitrary entry (avoid full scan).
@@ -93,6 +97,10 @@ export async function POST(request: Request) {
       if (!review || !history) {
         return NextResponse.json({ error: "reviewQualityTier and historyQualityTier must be: basic | standard | advanced" }, { status: 400 });
       }
+      // Optional, and only a real boolean counts: a caller that omits these (the dashboard tier
+      // card, which predates them) must not be read as switching both runs off.
+      const autoSummary = parseAutomationFlag(body?.autoSummary);
+      const autoCompare = parseAutomationFlag(body?.autoCompare);
 
       // Upsert: when this is the first write to the balance row, seed it the same way the reserve
       // and snapshot paths do so the Free starter grant / daily cap are not silently skipped.
@@ -100,7 +108,12 @@ export async function POST(request: Request) {
       await WorkspaceCreditBalanceModel.updateOne(
         { workspaceId: ctx.orgId },
         {
-          $set: { defaultReviewQualityTier: review, defaultHistoryQualityTier: history },
+          $set: {
+            defaultReviewQualityTier: review,
+            defaultHistoryQualityTier: history,
+            ...(autoSummary === null ? {} : { autoSummaryEnabled: autoSummary }),
+            ...(autoCompare === null ? {} : { autoCompareEnabled: autoCompare }),
+          },
           $setOnInsert: { workspaceId: ctx.orgId, ...seed },
         },
         { upsert: true },
@@ -118,7 +131,10 @@ export async function POST(request: Request) {
         // ignore
       }
 
-      return NextResponse.json({ ok: true, review, history }, { headers: { "cache-control": "no-store" } });
+      return NextResponse.json(
+        { ok: true, review, history, ...(autoSummary === null ? {} : { autoSummary }), ...(autoCompare === null ? {} : { autoCompare }) },
+        { headers: { "cache-control": "no-store" } },
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to save defaults";
       return NextResponse.json({ error: msg }, { status: 400 });

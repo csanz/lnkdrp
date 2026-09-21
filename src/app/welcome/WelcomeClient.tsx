@@ -1,5 +1,10 @@
 /**
- * The form on `/welcome`. See the page for why there are only two questions.
+ * The form on `/welcome`. See the page for why there are so few questions.
+ *
+ * The AI section is shown rather than asked. Both runs are already on, and the summary is most of
+ * what makes a link worth opening, so a brand-new account that switched it off here would judge the
+ * product on a version of itself it never saw. What it buys is the absence of a surprise: the first
+ * upload spends a credit and writes something, and this is where that was said out loud.
  *
  * Saving is best-effort per field and never blocks the way in: each call is awaited, a failure is
  * reported, and the screen is still marked done. The alternative — refusing to let someone into
@@ -50,6 +55,8 @@ export default function WelcomeClient({
   const [first, setFirst] = useState(firstName);
   const [last, setLast] = useState(lastName);
   const [mode, setMode] = useState<Mode>("immediate");
+  const [autoSummary, setAutoSummary] = useState(true);
+  const [autoCompare, setAutoCompare] = useState(true);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
@@ -74,6 +81,24 @@ export default function WelcomeClient({
         body: JSON.stringify({ viewEmailMode: mode }),
       }).catch(() => null);
       if (!res?.ok) failed.push("when to email you");
+      // Both already default to on server-side, so the untouched case writes nothing: the common
+      // path through this screen stays the two requests it was before.
+      if (!autoSummary || !autoCompare) {
+        const aiRes = await fetchWithTempUser("/api/credits/quality-defaults", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          // The route requires both tiers, and this screen deliberately does not ask about quality.
+          // Posting the same defaults the workspace already resolves to keeps the write to the two
+          // fields this screen is actually about.
+          body: JSON.stringify({
+            reviewQualityTier: "standard",
+            historyQualityTier: "basic",
+            autoSummary,
+            autoCompare,
+          }),
+        }).catch(() => null);
+        if (!aiRes?.ok) failed.push("your AI settings");
+      }
     }
     // Stamped whatever happened above, including on Skip: see `markFirstRunDone`.
     await fetchWithTempUser("/api/users/me/first-run", { method: "POST" }).catch(() => null);
@@ -109,8 +134,8 @@ export default function WelcomeClient({
       />
       <h1 className="text-3xl font-semibold tracking-tight text-[var(--fg)]">Before your first link</h1>
       <p className="mt-2 text-[15px] leading-6 text-[var(--muted)]">
-        Two things worth deciding now. Everything else has a sensible default, and all of it lives
-        in Settings when you want it.
+        A few things worth knowing before the first one goes out. Everything here has a sensible
+        default, and all of it lives in Settings when you want to change it.
       </p>
 
       <section className="mt-10">
@@ -177,6 +202,55 @@ export default function WelcomeClient({
               </button>
             );
           })}
+        </div>
+      </section>
+
+      <section className="mt-10">
+        <h2 className="text-[13px] font-semibold uppercase tracking-[0.1em] text-[var(--muted-2)]">
+          What the AI does on its own
+        </h2>
+        <p className="mt-1.5 text-[13px] leading-5 text-[var(--muted)]">
+          These two run without being asked, and each one spends a credit or two. Everything else
+          waits for you to click it.
+        </p>
+        <div className="mt-3 grid gap-2">
+          {[
+            {
+              key: "summary",
+              on: autoSummary,
+              set: setAutoSummary,
+              title: "Summarise every upload",
+              body: "A summary and key points written the moment a file lands, so your link says something before anyone opens it.",
+            },
+            {
+              key: "compare",
+              on: autoCompare,
+              set: setAutoCompare,
+              title: "Compare every replacement",
+              body: "Replace a document and you get an explanation of what changed since the last version.",
+            },
+          ].map((run) => (
+            <label
+              key={run.key}
+              className={[
+                "flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 transition-colors",
+                run.on
+                  ? "border-emerald-600/50 bg-emerald-500/5 dark:border-emerald-300/40"
+                  : "border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-hover)]",
+              ].join(" ")}
+            >
+              <input
+                type="checkbox"
+                checked={run.on}
+                onChange={(e) => run.set(e.target.checked)}
+                className="mt-1 h-4 w-4 shrink-0 accent-emerald-600 dark:accent-emerald-400"
+              />
+              <span className="min-w-0">
+                <span className="block text-[14px] font-medium text-[var(--fg)]">{run.title}</span>
+                <span className="mt-1 block text-[13px] leading-5 text-[var(--muted)]">{run.body}</span>
+              </span>
+            </label>
+          ))}
         </div>
       </section>
 
