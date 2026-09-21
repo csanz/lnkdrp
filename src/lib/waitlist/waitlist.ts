@@ -62,21 +62,24 @@ export function accessStatusOf(user: { accessStatus?: unknown; role?: unknown } 
 export type WaitlistState = {
   status: AccessStatus;
   waitlistedAt: Date | null;
-  /** 1-based place in the queue, oldest first. Null when they are not in it. */
-  position: number | null;
-  /** How many people are waiting in total. */
-  total: number;
 };
 
 /**
- * What to tell one person about the queue.
+ * What to tell one person about the queue: whether they are in it, and since when.
  *
- * Two counts rather than one, because "you are 41st" means nothing without "of 380" — and a person
- * who joined early should see their number fall as others are let in, which counting only those
- * still waiting ahead of them does naturally.
+ * It used to also return their place and the size of the queue, and `/waitlist` printed both. That
+ * was removed rather than hidden. "#1 of 1 waiting" is not encouraging, and it sat beside copy
+ * claiming more signups than expected — a page disproving itself in a single viewport, on a
+ * product whose whole pitch is figures you can trust. Every honest alternative was as unflattering,
+ * invented, or meaningless, and at the other end "you are #387" is discouraging too. There is no
+ * size of queue at which the number helps.
+ *
+ * So the two `countDocuments` calls behind it are gone as well; a field nobody renders is not worth
+ * a scan of the users collection on every page load. Bring them back the day there is a question
+ * they answer.
  */
 export async function readWaitlistState(userId: string): Promise<WaitlistState> {
-  if (!Types.ObjectId.isValid(userId)) return { status: "approved", waitlistedAt: null, position: null, total: 0 };
+  if (!Types.ObjectId.isValid(userId)) return { status: "approved", waitlistedAt: null };
   await connectMongo();
 
   const user = (await UserModel.findById(new Types.ObjectId(userId))
@@ -84,18 +87,8 @@ export async function readWaitlistState(userId: string): Promise<WaitlistState> 
     .lean()) as { accessStatus?: unknown; waitlistedAt?: Date | null; role?: unknown } | null;
 
   const status = accessStatusOf(user);
-  if (status === "approved") return { status, waitlistedAt: null, position: null, total: 0 };
-
-  const waitlistedAt = user?.waitlistedAt instanceof Date ? user.waitlistedAt : null;
-  const waiting = { accessStatus: "waitlisted", isActive: { $ne: false } } as const;
-  const [ahead, total] = await Promise.all([
-    waitlistedAt
-      ? UserModel.countDocuments({ ...waiting, waitlistedAt: { $lt: waitlistedAt } })
-      : Promise.resolve(0),
-    UserModel.countDocuments(waiting),
-  ]);
-
-  return { status, waitlistedAt, position: ahead + 1, total };
+  if (status === "approved") return { status, waitlistedAt: null };
+  return { status, waitlistedAt: user?.waitlistedAt instanceof Date ? user.waitlistedAt : null };
 }
 
 /**

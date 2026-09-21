@@ -107,9 +107,13 @@ export default async function WaitlistPage() {
               <h1 className="font-serif text-5xl leading-[1.02] tracking-tight text-white sm:text-6xl md:text-[56px]">
                 You&rsquo;re on the list.
               </h1>
+              {/* No volume claim. The old copy said more people signed up than we planned for, which
+                  the panel beside it could disprove at a glance while the queue was small — a page
+                  contradicting itself in one viewport, on a product whose whole pitch is figures you
+                  can trust. This says the same thing and stays true at any size. */}
               <p className="mt-6 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
-                Your account is made and waiting. More people signed up this week than we planned for, so we are
-                opening it up in small groups rather than all at once.
+                Your account is made and waiting. We are letting people in a few at a time while it is early,
+                rather than everyone at once.
               </p>
               <p className="mt-4 max-w-lg text-sm leading-6 text-white/60 sm:text-base">
                 We are early, and the documents people put in here matter: a deck going to an investor, a data room
@@ -146,16 +150,14 @@ export default async function WaitlistPage() {
                 </div>
               </div>
 
-              <div className="mt-6 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-white/10">
-                <div className="bg-[#0a0a0c] px-4 py-4">
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">In line</div>
-                  <div className="mt-1 font-serif text-3xl tracking-tight text-white">
-                    {state.position ? `#${state.position.toLocaleString()}` : "—"}
-                  </div>
-                  <div className="mt-1 text-[12px] text-white/45">
-                    of {state.total.toLocaleString()} waiting
-                  </div>
-                </div>
+              {/* The queue position is gone, and nothing replaces it.
+                  "#1 of 1 waiting" is not encouraging, and every honest alternative is either as
+                  unflattering, invented (an estimated wait nobody can predict), or meaningless. A
+                  number that has to be spun is not worth showing, least of all here. What remains
+                  answers the questions somebody actually has: am I in, since when, and what happens
+                  next — and it stays true whether one person is waiting or four hundred, where
+                  "you are #387" would have been discouraging anyway. */}
+              <div className="mt-6 overflow-hidden rounded-xl bg-white/10 p-px">
                 <div className="bg-[#0a0a0c] px-4 py-4">
                   <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">Status</div>
                   <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-amber-300/10 px-2.5 py-1 text-[12px] font-semibold text-amber-200 ring-1 ring-amber-300/25">
