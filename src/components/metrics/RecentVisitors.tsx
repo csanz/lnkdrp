@@ -128,7 +128,7 @@ export default function RecentVisitors({
   return (
     <section
       className={[
-        "rounded-2xl border bg-[var(--panel)] px-5 py-4",
+        "rounded-2xl border bg-[var(--panel)] px-5 py-4 shadow-[var(--shadow-card)]",
         // A fresh visit is the one thing on this page worth a second look, so the card says so
         // with its edge rather than with a colour that would compete with the charts.
         // emerald-300 at 40% composites to #c5f5e2 on a white card — 1.20:1, *fainter* than the

@@ -43,7 +43,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
         <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--muted-2)]">{title}</h2>
         {hint ? <span className="shrink-0 text-[11px] text-[var(--muted-2)]">{hint}</span> : null}
       </div>
-      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]">{children}</div>
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-[var(--shadow-card)]">{children}</div>
     </section>
   );
 }

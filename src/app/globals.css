@@ -21,7 +21,7 @@
     deliberately softened both ends (see the comment on the dark block); 16.1:1 here matches dark's
     15.94:1 and is still far above AA.
   */
-  --bg: #ffffff;
+  --bg: #f6f6f7;
   --fg: #1c1c1c;
 
   --panel: #ffffff;
@@ -75,8 +75,11 @@
      11px type needs. The pill says a paid plan is running out — the one notice in the product a
      reader must not have to squint at. */
   --plan-ending-fg: #9c4707;
-  /* Stepped down with `--bg`: at #fafafa/#f4f4f5 against a white page these were a 1.04:1 and a
-     1.10:1 band, so a filter bar or a stat tile drawn on `--panel-2` had no visible surface. */
+  /* These were stepped DOWN to fight a white page: at #fafafa/#f4f4f5 against #ffffff they were a
+     1.04:1 and a 1.10:1 band, so a filter bar or a stat tile drawn on `--panel-2` had no visible
+     surface. The page is no longer white, so the pressure is off and they step back up — at
+     #f7f7f7 an inset would now be within one step of the #f6f6f7 ground and read as a smudge on it
+     rather than as a recess in a white card, which is where insets actually live. */
   /*
    * Neutral means neutral here.
    *
@@ -89,14 +92,17 @@
    * grays feel off" being true of one hue in two contexts. Lightness is unchanged wherever the
    * comments below argue from it; only the cast is gone.
    */
-  --panel-2: #f7f7f7;
+  --panel-2: #fafafa;
   /* Steps with `--panel-2`, not with the page. When that surface dropped and this did not, the
      selected stat tile on the metrics pages fell to ΔL* 2.10 from its unselected siblings and
      stopped reading as the chosen one; 3.15 is the step dark gets. */
-  --panel-hover: #efefef;
+  --panel-hover: #f2f2f2;
 
   /* ChatGPT-like surfaces */
-  --sidebar-bg: #ffffff;
+  /* Between the page and a card: the column is not the ground, and it is not a raised surface
+     either. With all three at #ffffff the only thing marking the sidebar's edge was
+     `--sidebar-edge`, a hairline doing the work a surface should do. */
+  --sidebar-bg: #fbfbfb;
   --sidebar-hover: #f2f2f2;
   /* The current row. It used to paint `--sidebar-hover`, the same token `hover:` uses, so selected
      and hovered were indistinguishable and whichever row the pointer was over read as the page you
