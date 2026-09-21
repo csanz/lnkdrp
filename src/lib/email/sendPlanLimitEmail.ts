@@ -103,11 +103,12 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): EmailCont
       subject: "Your LinkDrop workspace is over the Free limits",
       preheader: `Nothing changes today — you have until ${endsOn}.`,
       blocks: blocks(
-        { kind: "p", text: `"${name}" is over the limits of the Free plan.` },
+        { kind: "heading", text: `"${name}" is over the Free plan limits` },
+        { kind: "p", text: "Nothing is paused yet." },
         ...overBlocks,
         {
           kind: "p",
-          text: `Nothing changes today. You have until ${endsOn} to sort it out. After that, sharing new documents and creating projects on this workspace will be paused until it is back under the limits or on Pro.`,
+          text: `You have until ${endsOn} to sort it out. After that, sharing new documents and creating projects on this workspace will be paused until it is back under the limits or on Pro.`,
         },
         { kind: "p", text: "Existing links keep working the whole time. Nothing is deleted." },
         ...howToFix,
@@ -122,9 +123,10 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): EmailCont
       subject: `${leftLabel} left: "${name}" is still over the Free limits`,
       preheader: `The grace period ends on ${endsOn}.`,
       blocks: blocks(
+        { kind: "heading", text: `${leftLabel} left on "${name}"` },
         {
           kind: "p",
-          text: `Quick reminder: "${name}" is still over the Free plan limits, and the grace period ends on ${endsOn} (${leftLabel} left).`,
+          text: `It is still over the Free plan limits, and the grace period ends on ${endsOn}.`,
         },
         ...overBlocks,
         {
@@ -140,9 +142,10 @@ export function buildPlanLimitEmail(params: SendPlanLimitEmailParams): EmailCont
     subject: "New documents are paused on this workspace",
     preheader: "Existing links keep working and nothing has been deleted.",
     blocks: blocks(
+      { kind: "heading", text: `New documents are paused on "${name}"` },
       {
         kind: "p",
-        text: `The grace period for "${name}" ended on ${endsOn}, and it is still over the Free plan limits. Sharing new documents and creating projects are paused on this workspace for now.`,
+        text: `The grace period ended on ${endsOn} and the workspace is still over the Free plan limits, so sharing new documents and creating projects are paused for now.`,
       },
       ...overBlocks,
       { kind: "p", text: "Your existing links keep working and nothing has been deleted." },

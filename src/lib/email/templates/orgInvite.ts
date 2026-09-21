@@ -24,7 +24,8 @@ export function orgInviteEmail(params: {
     subject: `You're invited to join ${workspace}`,
     preheader: invitedBy ? `${invitedBy} added you.` : "Open the link to join.",
     blocks: blocks(
-      { kind: "p", text: `You're invited to join the workspace "${workspace}".` },
+      { kind: "heading", text: `You're invited to ${workspace}` },
+      { kind: "p", text: "Someone added you to their LinkDrop workspace." },
       {
         kind: "rows",
         rows: [

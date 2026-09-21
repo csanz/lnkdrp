@@ -29,7 +29,8 @@ export function memberRemovedEmail(params: {
     subject: `You were removed from ${workspace}`,
     preheader: "Your own account and personal workspace are unchanged.",
     blocks: blocks(
-      { kind: "p", text: `You no longer have access to the workspace \u201C${workspace}\u201D.` },
+      { kind: "heading", text: `You were removed from ${workspace}` },
+      { kind: "p", text: "You no longer have access to that workspace." },
       removedBy ? { kind: "rows", rows: [["Removed by", removedBy]] } : null,
       {
         kind: "p",

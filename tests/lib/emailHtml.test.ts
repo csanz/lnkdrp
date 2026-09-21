@@ -10,6 +10,10 @@
  * these bodies, and they are attacker-influenced: a reader types their own name. An unescaped `<`
  * in an HTML mail is not just broken layout, it is markup injected into something a person opens.
  */
+import fs from "node:fs";
+import path from "node:path";
+import { execSync } from "node:child_process";
+
 import { describe, expect, test } from "vitest";
 
 import { buildPreviews } from "@/lib/email/previews";
@@ -123,5 +127,56 @@ describe("blocks", () => {
   test("an empty rows block renders nothing rather than an empty table", () => {
     const blocks: Block[] = [{ kind: "rows", rows: [] }];
     expect(renderHtml({ subject: "s", blocks })).not.toContain("<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" style=\"margin:0 0 14px");
+  });
+});
+
+describe("senders forward the whole message", () => {
+  /**
+   * The bug this pins actually shipped for an afternoon.
+   *
+   * Every sender read `const { subject, text } = someEmail(...)`, which was right while templates
+   * were text-only. The day they grew an HTML part, eight of them kept taking two fields out of
+   * three: the mail still sent, still read correctly, and simply arrived as plain text. No error,
+   * no failing test, and the previews page looked perfect the whole time — because it calls the
+   * template, not the sender.
+   *
+   * `sendEmailContent` takes the whole `EmailContent`, so a part added later travels on its own.
+   * A new `const { subject, text } =` is the shape of the old bug coming back.
+   */
+  test("no sender destructures a template into subject and text alone", () => {
+    const root = path.resolve(__dirname, "../..");
+    const files = execSync("git ls-files 'src/**/*.ts' 'src/**/*.tsx'", { cwd: root, encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean);
+    const offenders: string[] = [];
+    for (const rel of files) {
+      const src = fs.readFileSync(path.join(root, rel), "utf8");
+      for (const line of src.split("\n")) {
+        // Comments are allowed to quote the old shape while explaining why it was wrong.
+        if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
+        const m = line.match(/const \{\s*subject,\s*text\s*\}\s*=\s*(\w+)\(/);
+        if (m) offenders.push(`${rel}: const { subject, text } = ${m[1]}(`);
+      }
+    }
+    expect(offenders, "use sendEmailContent, so an added part is not silently dropped").toEqual([]);
+  });
+
+  test("the header logo is a PNG on an absolute URL, and the wordmark survives a blocked image", () => {
+    const html = rows[0].html ?? "";
+    const src = html.match(/<img src="([^"]+)"/)?.[1] ?? "";
+    expect(src).toMatch(/^https:\/\//);
+    // Gmail does not render SVG in mail; the app's own logo is only an SVG, hence the raster copy.
+    expect(src).toMatch(/\.png$/);
+    expect(html).toContain("width=\"22\" height=\"22\"");
+    // Most clients block remote images until the reader allows them; the name must not vanish.
+    expect(html).toContain(">LinkDrop</td>");
+  });
+
+  test("the logo file the emails point at is actually in the repo", () => {
+    const root = path.resolve(__dirname, "../..");
+    const tracked = execSync("git ls-files public/email-logo.png", { cwd: root, encoding: "utf8" }).trim();
+    expect(tracked, "public/email-logo.png must be committed or every email links a 404").toBe(
+      "public/email-logo.png",
+    );
   });
 });

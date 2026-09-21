@@ -10,7 +10,7 @@ import { Types } from "mongoose";
 import { resolveShareLink, shareLinkUnlocked } from "@/lib/share/links";
 import { UserModel } from "@/lib/models/User";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
-import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { sendEmailContent } from "@/lib/email/sendTextEmail";
 import { downloadRequestOwnerEmail, downloadRequestReceivedEmail } from "@/lib/email/templates";
 import { getPublicSiteBase } from "@/lib/urls";
 import { debugLog, debugWarn } from "@/lib/debug";
@@ -213,8 +213,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       const base = getPublicSiteBase();
       const title = docTitle ?? "Shared document";
       const shareUrl = base ? new URL(`/s/${encodeURIComponent(shareId)}`, base).toString() : "";
-      const { subject, text } = downloadRequestReceivedEmail({ title, shareUrl });
-      await sendTextEmail({ to: email, subject, text });
+      await sendEmailContent({ to: email, ...downloadRequestReceivedEmail({ title, shareUrl }) });
       emailedRequester = true;
       await ShareDownloadRequestModel.updateOne(
         { _id: created._id },
@@ -254,8 +253,10 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     let emailedOwner = false;
     if (ownerEmail) {
       try {
-        const { subject, text } = downloadRequestOwnerEmail({ title, shareUrl, requesterEmail: email, approveUrl, denyUrl });
-        await sendTextEmail({ to: ownerEmail, subject, text });
+        await sendEmailContent({
+          to: ownerEmail,
+          ...downloadRequestOwnerEmail({ title, shareUrl, requesterEmail: email, approveUrl, denyUrl }),
+        });
         emailedOwner = true;
         await ShareDownloadRequestModel.updateOne(
           { _id: created._id },

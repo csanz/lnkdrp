@@ -74,7 +74,9 @@ describe("member removed email", () => {
       appUrl: "https://lnkdrp.com/",
     });
     expect(mail.subject).toBe("You were removed from USAVX");
-    expect(mail.text).toContain("You no longer have access to the workspace \u201cUSAVX\u201d.");
+    // The workspace is named in the opening line; the sentence under it does not repeat it.
+    expect(mail.text).toContain("You were removed from USAVX");
+    expect(mail.text).toContain("You no longer have access to that workspace.");
     expect(mail.text).toContain("Removed by: owner@example.com");
     expect(mail.text).toContain("Anything you uploaded stays with the workspace");
     // The trailing slash is trimmed rather than doubled into the URL.

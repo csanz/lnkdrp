@@ -37,7 +37,12 @@ vi.mock("@/lib/models/ShareDownloadRequest", () => ({
 vi.mock("@/lib/models/Doc", () => ({
   DocModel: { findOne: () => chain({ _id: DOC_ID, title: "Quarterly plan", orgId: "org_1" }) },
 }));
-vi.mock("@/lib/email/sendTextEmail", () => ({ sendTextEmail: (...a: unknown[]) => sendTextEmail(...a) }));
+// Both entry points land on one spy: the assertions below mean "an email went out", and which
+// helper the route reached for is not what they are testing.
+vi.mock("@/lib/email/sendTextEmail", () => ({
+  sendTextEmail: (...a: unknown[]) => sendTextEmail(...a),
+  sendEmailContent: (...a: unknown[]) => sendTextEmail(...a),
+}));
 vi.mock("@/lib/email/templates", () => ({
   downloadRequestApprovedEmail: () => ({ subject: "Download approved", text: "claim link" }),
 }));

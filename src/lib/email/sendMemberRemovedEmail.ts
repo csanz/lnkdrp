@@ -12,7 +12,7 @@
  * The body lives in `templates/memberRemoved.ts` with every other email we send, so it can be read
  * and tested without going through the revoke route.
  */
-import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { sendEmailContent } from "@/lib/email/sendTextEmail";
 import { memberRemovedEmail } from "@/lib/email/templates";
 
 type SendMemberRemovedEmailParams = {
@@ -25,10 +25,10 @@ type SendMemberRemovedEmailParams = {
 };
 
 export async function sendMemberRemovedEmail(params: SendMemberRemovedEmailParams): Promise<void> {
-  const { subject, text } = memberRemovedEmail({
+  const content = memberRemovedEmail({
     orgName: params.orgName,
     removedByEmail: params.removedByEmail,
     appUrl: params.appUrl,
   });
-  await sendTextEmail({ to: params.to, subject, text });
+  await sendEmailContent({ to: params.to, ...content });
 }

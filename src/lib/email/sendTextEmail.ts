@@ -148,3 +148,36 @@ function mustGetEnv(name: string): string {
   if (!value) throw new Error(`Missing required env var: ${name}`);
   return value;
 }
+
+/**
+ * Send a built template, whole.
+ *
+ * `sendTextEmail` takes loose fields, and every caller reached it the same way:
+ * `const { subject, text } = someEmail(...)`. That was correct while templates were text-only and
+ * became a silent bug the day they grew an HTML part — eight senders kept destructuring two fields
+ * out of three, so the mail still went, still read fine, and simply arrived as plain text. Nothing
+ * failed and no test noticed.
+ *
+ * Passing the whole `EmailContent` through makes that impossible: a part added to a template
+ * reaches the transport without anyone remembering to widen a destructure.
+ */
+export async function sendEmailContent(
+  params: { to: string; from?: string | null } & EmailContentLike,
+): Promise<void> {
+  await sendTextEmail({
+    to: params.to,
+    subject: params.subject,
+    text: params.text,
+    ...(params.html ? { html: params.html } : {}),
+    ...(params.headers ? { headers: params.headers } : {}),
+    ...(params.from ? { from: params.from } : {}),
+  });
+}
+
+/** Structural, not imported: keeps this module free of a dependency on the template layer. */
+type EmailContentLike = {
+  subject: string;
+  text: string;
+  html?: string;
+  headers?: Record<string, string>;
+};

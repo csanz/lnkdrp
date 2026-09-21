@@ -32,7 +32,8 @@ export function downloadRequestReceivedEmail(params: { title: string; shareUrl: 
     subject: `Request received: ${title}`,
     preheader: "We passed your request to the owner.",
     blocks: blocks(
-      { kind: "p", text: "We sent your request to the owner to allow downloading this PDF." },
+      { kind: "heading", text: "Request sent" },
+      { kind: "p", text: "We passed your request to the owner of this document." },
       {
         kind: "rows",
         rows: params.shareUrl
@@ -60,7 +61,8 @@ export function downloadRequestOwnerEmail(params: {
     subject: `Download request: ${title}`,
     preheader: `${params.requesterEmail} asked to download it.`,
     blocks: blocks(
-      { kind: "p", text: "A receiver requested a PDF download." },
+      { kind: "heading", text: "Someone wants to download this" },
+      { kind: "p", text: "A reader of your share link asked for the PDF." },
       {
         kind: "rows",
         rows: [
@@ -82,7 +84,8 @@ export function downloadRequestApprovedEmail(params: { title: string; claimUrl: 
     subject: `Download approved: ${title}`,
     preheader: "Sign in to download or save it.",
     blocks: blocks(
-      { kind: "p", text: "Your download request was approved." },
+      { kind: "heading", text: "Approved" },
+      { kind: "p", text: "The owner approved your download request." },
       { kind: "rows", rows: [["Document", title]] },
       linkBlock("Open to download or save", params.claimUrl),
       { kind: "muted", text: "You\u2019ll need to sign in to LinkDrop to continue." },

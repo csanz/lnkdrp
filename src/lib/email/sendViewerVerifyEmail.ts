@@ -8,7 +8,7 @@
  * The bodies live in `templates/viewerIntroduction.ts` with every other email we send, so they can
  * be read and tested without going through the route that sends them.
  */
-import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { sendEmailContent } from "@/lib/email/sendTextEmail";
 import { viewerIntroducedEmail, viewerVerifyEmail } from "@/lib/email/templates";
 
 type SendViewerVerifyEmailParams = {
@@ -21,12 +21,12 @@ type SendViewerVerifyEmailParams = {
 };
 
 export async function sendViewerVerifyEmail(params: SendViewerVerifyEmailParams): Promise<void> {
-  const { subject, text } = viewerVerifyEmail({
+  const content = viewerVerifyEmail({
     documentTitle: params.documentTitle,
     workspaceName: params.workspaceName,
     verifyUrl: params.verifyUrl,
   });
-  await sendTextEmail({ to: params.to, subject, text });
+  await sendEmailContent({ to: params.to, ...content });
 }
 
 type SendViewerIntroducedEmailParams = {
@@ -40,12 +40,12 @@ type SendViewerIntroducedEmailParams = {
 };
 
 export async function sendViewerIntroducedEmail(params: SendViewerIntroducedEmailParams): Promise<void> {
-  const { subject, text } = viewerIntroducedEmail({
+  const content = viewerIntroducedEmail({
     documentTitle: params.documentTitle,
     viewerName: params.viewerName,
     viewerEmail: params.viewerEmail,
     verified: params.verified,
     metricsUrl: params.metricsUrl,
   });
-  await sendTextEmail({ to: params.to, subject, text });
+  await sendEmailContent({ to: params.to, ...content });
 }

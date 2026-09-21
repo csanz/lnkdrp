@@ -18,7 +18,7 @@ import crypto from "node:crypto";
 import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { ShareDownloadRequestModel } from "@/lib/models/ShareDownloadRequest";
-import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { sendEmailContent } from "@/lib/email/sendTextEmail";
 import { downloadRequestApprovedEmail } from "@/lib/email/templates";
 import { getPublicSiteBase } from "@/lib/urls";
 import { recordActivity } from "@/lib/activity/log";
@@ -296,8 +296,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
   if (to) {
     try {
-      const { subject, text } = downloadRequestApprovedEmail({ title, claimUrl });
-      await sendTextEmail({ to, subject, text });
+      await sendEmailContent({ to, ...downloadRequestApprovedEmail({ title, claimUrl }) });
       await ShareDownloadRequestModel.updateOne(
         { _id: reqDoc._id },
         { $set: { claimEmailSentAt: new Date(), claimEmailError: null } },

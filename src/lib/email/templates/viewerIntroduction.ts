@@ -28,6 +28,7 @@ export function viewerVerifyEmail(params: {
     subject: title ? `Confirm your email for "${title}"` : "Confirm your email",
     preheader: "Optional \u2014 the document stays open either way.",
     blocks: blocks(
+      { kind: "heading", text: "Confirm your email" },
       { kind: "p", text: `You introduced yourself while reading ${what}${workspace ? ` from ${workspace}` : ""}.` },
       {
         kind: "p",
@@ -65,6 +66,7 @@ export function viewerIntroducedEmail(params: {
     subject: name ? `${name} introduced themselves on ${what}` : `A reader introduced themselves on ${what}`,
     preheader: params.verified ? "Confirmed by email." : "Unconfirmed \u2014 their claim, not a fact.",
     blocks: blocks(
+      { kind: "heading", text: name ? `${name} introduced themselves` : "A reader introduced themselves" },
       { kind: "p", text: `${who} says they are the reader who opened ${what}.` },
       { kind: params.verified ? "p" : "muted", text: standing },
       params.metricsUrl ? { kind: "action", label: "What they read", url: params.metricsUrl } : null,

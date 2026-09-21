@@ -11,12 +11,11 @@
  * milliseconds, once, on the first sign-in an account ever makes.
  */
 import { welcomeEmail } from "@/lib/email/templates/welcome";
-import { sendTextEmail } from "@/lib/email/sendTextEmail";
+import { sendEmailContent } from "@/lib/email/sendTextEmail";
 
 export async function sendWelcomeEmail(params: { to: string; name?: string | null }): Promise<void> {
   try {
-    const { subject, text } = welcomeEmail({ name: params.name ?? null });
-    await sendTextEmail({ to: params.to, subject, text });
+    await sendEmailContent({ to: params.to, ...welcomeEmail({ name: params.name ?? null }) });
   } catch (err) {
     // Logged, not rethrown: see above. The account still exists and they are still signed in.
     // eslint-disable-next-line no-console

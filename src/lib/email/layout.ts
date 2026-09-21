@@ -35,6 +35,38 @@ export function escapeHtml(value: unknown): string {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * The mark in the header, as an absolute URL to a PNG.
+ *
+ * PNG because Gmail does not render SVG in mail, and `public/icon-black.svg` is the only logo the
+ * app otherwise has; `public/email-logo.png` is that file rasterised at 4x its display size.
+ *
+ * Absolute and hard-wired to the public site rather than read from `getPublicSiteBase()`: the
+ * recipient opens this from their own inbox, where a `http://localhost:3001/...` src is a broken
+ * image. A dev run should still point at the production asset, because that is the one URL that
+ * resolves for everybody. `EMAIL_LOGO_URL` overrides it for a deployment on another domain.
+ */
+const LOGO_URL = (process.env.EMAIL_LOGO_URL ?? "").trim() || "https://www.lnkdrp.com/email-logo.png";
+
+/**
+ * Header: the mark and the wordmark together.
+ *
+ * The wordmark stays as text on purpose. Most clients block remote images until the reader allows
+ * them, so a header that is only an image is a blank space on first open — for a welcome email,
+ * the first thing a new account ever sees from us. The `alt` is empty because the name is already
+ * sitting next to it; giving the image the same alt text prints "LinkDrop LinkDrop" when blocked.
+ */
+function header(): string {
+  return (
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>` +
+    `<td style="padding:0 8px 0 0;vertical-align:middle;line-height:0;">` +
+    `<img src="${escapeHtml(LOGO_URL)}" width="22" height="22" alt="" style="display:block;width:22px;height:22px;border:0;outline:none;text-decoration:none;" />` +
+    `</td>` +
+    `<td style="vertical-align:middle;font-family:${FONT};font-size:13px;line-height:1.4;font-weight:600;letter-spacing:0.02em;color:#71717a;">LinkDrop</td>` +
+    `</tr></table>`
+  );
+}
+
 export type Block =
   | { kind: "heading"; text: string }
   | { kind: "p"; text: string }
@@ -214,7 +246,7 @@ export function renderHtml(params: {
     // Outlook desktop ignores max-width; a fixed-width table only it can see holds the card at 560px.
     `<!--[if mso]><table role="presentation" width="560" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->` +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #e4e4e7;border-radius:12px;font-family:${FONT};">` +
-    `<tr><td style="padding:22px 28px 0;font-family:${FONT};font-size:13px;line-height:1.4;font-weight:600;letter-spacing:0.02em;color:#71717a;">LinkDrop</td></tr>` +
+    `<tr><td style="padding:22px 28px 0;">${header()}</td></tr>` +
     `<tr><td style="padding:14px 28px 8px;">${parts.join("")}</td></tr>` +
     (footerHtml ? `<tr><td style="padding:16px 28px 22px;border-top:1px solid #f0f0f2;">${footerHtml}</td></tr>` : "") +
     `</table>` +
