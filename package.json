@@ -54,6 +54,7 @@
     "@heroicons/react": "^2.1.5",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@napi-rs/canvas": "^0.1.84",
+    "@vercel/analytics": "^2.0.1",
     "@vercel/blob": "^2.0.0",
     "ai": "^5.0.0",
     "dotenv": "^17.2.3",

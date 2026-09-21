@@ -939,7 +939,19 @@ account deletions) and `/api/admin/*`. An admin is a
 To remove an admin, set `role` back to `"user"`. The API stops accepting them on the next call.
 Keep the list short.
 
-### 5.6 Vercel API token, for the Deployments page
+### 5.6 Web Analytics
+
+`@vercel/analytics` is mounted in the root layout and reports visitors and page views for the
+marketing and app pages. Turn it on in the Vercel dashboard under the project's Analytics tab; there
+is no key and nothing to configure in the app. It is inert outside production, so previews and local
+development post nothing.
+
+Keep it straight from the product's own numbers, because they answer different questions and will
+never agree. This counts people visiting LinkDrop. `ShareView` and `ShareVisit` count a recipient
+reading a document somebody shared, which happens on pages this script also runs on and on bytes it
+does not. If the two are ever compared in a meeting, that is the sentence to say.
+
+### 5.7 Vercel API token, for the Deployments page
 
 `/a/deployments` shows the last deployments with their state, target, commit and build duration.
 That is the one thing the admin area cannot learn from its own database, because only Vercel knows
