@@ -111,9 +111,12 @@ describe("approving someone takes effect now", () => {
 });
 
 describe("the page shell and the API agree", () => {
-  test("the layout decides from the same module the routes do", () => {
+  test("every page entry point decides from the same module the routes do", () => {
     // The drift between these two *was* the bug. Whatever the queue means, it has to mean the
-    // same thing to the shell and to the endpoints behind it.
-    expect(read("src/app/(app)/layout.tsx")).toContain('from "@/lib/gating/waitlist"');
+    // same thing to the shell and to the endpoints behind it — and to the root route, which is
+    // outside the `(app)` group and for a while ran no gate at all.
+    expect(read("src/lib/gating/entryGate.ts")).toContain('from "@/lib/gating/waitlist"');
+    expect(read("src/app/(app)/layout.tsx")).toContain("enforceEntryGates");
+    expect(read("src/app/page.tsx")).toContain("enforceEntryGates");
   });
 });

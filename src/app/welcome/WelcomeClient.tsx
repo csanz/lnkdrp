@@ -8,8 +8,10 @@
  */
 "use client";
 
+import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useTheme } from "next-themes";
+import { useEffect, useState } from "react";
 
 import { fetchWithTempUser } from "@/lib/gating/tempUserClient";
 
@@ -40,6 +42,11 @@ export default function WelcomeClient({
   email: string;
 }) {
   const router = useRouter();
+  // `resolvedTheme` is undefined until the client has mounted; picking the black mark until then
+  // keeps the server and first client render agreeing, so React does not warn about a mismatch.
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const [first, setFirst] = useState(firstName);
   const [last, setLast] = useState(lastName);
   const [mode, setMode] = useState<Mode>("immediate");
@@ -83,6 +90,23 @@ export default function WelcomeClient({
 
   return (
     <main className="mx-auto w-full max-w-[640px] px-4 py-12 sm:py-20">
+      {/* The mark, and nothing else. This screen is not the app — there is no workspace to
+          navigate yet and nowhere to go but forward — so the logo is a signpost saying whose
+          product this is, not a link back to somewhere. Without it the first screen of a brand
+          new account is an unbranded form.
+
+          Two files rather than one recoloured: the mark is a solid fill, and `icon-white.svg` on
+          this page's light background is a white plane on white. The sidebar picks between them
+          the same way, on the resolved theme rather than on `prefers-color-scheme`, so an explicit
+          light choice inside a dark OS still gets the black one. */}
+      <Image
+        src={mounted && resolvedTheme === "dark" ? "/icon-white.svg?v=3" : "/icon-black.svg?v=3"}
+        alt="LinkDrop"
+        width={28}
+        height={28}
+        priority
+        className="mb-8 block"
+      />
       <h1 className="text-3xl font-semibold tracking-tight text-[var(--fg)]">Before your first link</h1>
       <p className="mt-2 text-[15px] leading-6 text-[var(--muted)]">
         Two things worth deciding now. Everything else has a sensible default, and all of it lives

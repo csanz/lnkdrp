@@ -38,6 +38,20 @@ export default async function Home() {
 
   const session = await getServerSession(authOptions);
 
+  /**
+   * The root is an entry point, and entry points owe a signed-in visitor two redirects.
+   *
+   * This page sits outside the `(app)` route group, so the layout that gates every other
+   * authenticated route does not run here — and `/` is exactly where sign-in lands you. A queued
+   * visitor got the app home instead of `/waitlist`, and a new account never reached `/welcome`.
+   * Imported lazily for the same reason `next-auth` is: this module must stay importable when auth
+   * is not configured (see `authIsEnabled` above).
+   */
+  if (session) {
+    const { enforceEntryGates } = await import("@/lib/gating/entryGate");
+    await enforceEntryGates(session.user?.id);
+  }
+
   // Authenticated users should never see the marketing animation; show the upload home directly.
   return session ? <HomeAuthedClient /> : <HomeUnauthedClient authTransitionHint={authTransitionHint} />;
 }

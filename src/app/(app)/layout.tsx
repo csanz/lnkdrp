@@ -12,25 +12,15 @@
  * endpoints cannot answer differently — and an admin approval that clears the cache clears it for
  * both at once.
  */
-import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 
 import { authOptions } from "@/lib/auth";
-import { readAccessStatus } from "@/lib/gating/waitlist";
-import { FIRST_RUN_PATH, userNeedsFirstRun } from "@/lib/onboarding/firstRun";
+import { enforceEntryGates } from "@/lib/gating/entryGate";
 import AppShellLayout from "./AppShellLayout";
 
 export default async function Layout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
-  const userId = typeof session?.user?.id === "string" ? session.user.id : "";
-  if (userId) {
-    // The position and the total belong to `/waitlist`, which reads them itself; all this needs is
-    // the decision, so it takes the cached one rather than paying for two counts per navigation.
-    if ((await readAccessStatus(userId)) === "waitlisted") redirect("/waitlist");
-    // After the queue, never before it: somebody who cannot get in yet has nothing to set up.
-    // `userNeedsFirstRun` answers false for every account that existed before the screen did, so
-    // this is one indexed read that says no for everyone but a genuinely new sign-in.
-    if (await userNeedsFirstRun(userId)) redirect(FIRST_RUN_PATH);
-  }
+  // The same two gates the root route applies, from the same function — see `entryGate`.
+  await enforceEntryGates(session?.user?.id);
   return <AppShellLayout>{children}</AppShellLayout>;
 }

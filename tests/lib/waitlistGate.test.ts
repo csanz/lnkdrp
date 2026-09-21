@@ -156,14 +156,20 @@ describe("the read behind it", () => {
 });
 
 describe("the page shell and the gate answer from one place", () => {
-  test("the app layout reads the shared gate instead of its own status query", () => {
-    const layout = fs.readFileSync(path.join(ROOT, "src/app/(app)/layout.tsx"), "utf8");
-    // The original bug was one surface holding the only copy of the decision. If the layout goes
-    // back to reading `accessStatus` for itself, the two can drift apart again silently.
-    expect(layout, "the layout must decide from @/lib/gating/waitlist").toContain(
-      'from "@/lib/gating/waitlist"',
-    );
-    expect(layout).toMatch(/readAccessStatus\(userId\)/);
-    expect(layout).toContain('redirect("/waitlist")');
+  test("every authenticated entry point runs the shared gate", () => {
+    // The original bug was one surface holding the only copy of the decision. The second bug was
+    // the opposite: a surface holding *no* copy. `src/app/page.tsx` is outside the `(app)` route
+    // group, so the layout never ran for it — and `/` is where sign-in lands you, so a queued
+    // visitor got the app home and a new account never saw `/welcome`. Both entry points now call
+    // one function, and this pins that neither drifts back to deciding for itself.
+    const gate = fs.readFileSync(path.join(ROOT, "src/lib/gating/entryGate.ts"), "utf8");
+    expect(gate, "the gate must decide from @/lib/gating/waitlist").toContain('from "@/lib/gating/waitlist"');
+    expect(gate).toMatch(/readAccessStatus\(userId\)/);
+    expect(gate).toContain('redirect("/waitlist")');
+
+    for (const entry of ["src/app/(app)/layout.tsx", "src/app/page.tsx"]) {
+      const src = fs.readFileSync(path.join(ROOT, entry), "utf8");
+      expect(src, `${entry} must run enforceEntryGates`).toContain("enforceEntryGates");
+    }
   });
 });
