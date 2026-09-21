@@ -144,9 +144,29 @@ export function withWorkspace(result: CallToolResult, who: Pick<Whoami, "orgId" 
 
 /** Create a server with every tool registered against `ctx`. */
 export function createMcpServer(ctx: ToolContext): McpServer {
+  /**
+   * The instructions are built before the session knows whose workspace it is.
+   *
+   * `ctx.whoami()` throws until `initialize` has run, and `--stdio` builds the server first and
+   * fetches the identity in `oninitialized` — so this line killed that mode at startup, before it
+   * read a byte. HTTP happened to survive because it fetches whoami during the handshake.
+   *
+   * The identity is only used for a sentence naming the workspace, so its absence is a missing
+   * sentence rather than a reason to refuse to start. Everything that reads `ctx.whoami()` at call
+   * time — the workspace envelope on every result, the confirmation prompt's label — is unaffected,
+   * because by then there is one.
+   */
+  let workspacePrefix = "";
+  try {
+    workspacePrefix = workspaceInstructions(ctx.whoami());
+  } catch {
+    workspacePrefix =
+      "This connection acts on one lnkdrp workspace: everything these tools read, create, change or spend is in " +
+      "that workspace, and every result carries workspace { id, name }. Call lnkdrp_whoami first to see which one. ";
+  }
   const server = new McpServer(
     { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
-    { instructions: workspaceInstructions(ctx.whoami()) + SERVER_INSTRUCTIONS },
+    { instructions: workspacePrefix + SERVER_INSTRUCTIONS },
   );
   setConfirmationWorkspace(server, () => workspaceLabel(ctx.whoami()));
 

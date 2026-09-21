@@ -42,7 +42,7 @@ export function registerGetShareStatsTool(server: McpServer, ctx: ToolContext): 
         "owner testing it, and neither views nor includeViewers can prove otherwise. " +
         "A shareId scopes every number to that one link (perLink: true); a docId covers the document and all of its links. " +
         "To read one non-default link, pass its docId and shareId together (both come from lnkdrp_list_share_links). " +
-        "analyticsTier is basic on Free (window clamped, no viewer identities) or deep on Pro; with includeViewers on Pro, " +
+        "analyticsTier is basic on Free (window clamped, no viewer identities) or deep on Pro. " +
         "On EVERY call - not only with includeViewers - totals and the series cover the document's OWN links only: reads that arrived through a project's link are " +
         "reported separately in projectLinkTraffic (views, viewers, per-link rows, and named readers on the deep tier), " +
         "because a project link belongs to the room rather than to this document. On a document inside a data room that " +

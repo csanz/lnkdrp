@@ -193,13 +193,24 @@ export function registerListDocsTool(server: McpServer, ctx: ToolContext): void 
            * the whole tag the first time this narrowing was added. So `archived` is applied by an
            * ids lookup and `query` by a search, and an id has to survive both.
            */
-          const [byArchived, byQuery] = await Promise.all([
-            ctx.api.listDocsPage({ ids: docIds.slice(0, 50), archived: args.archived }),
+          /**
+           * Every id, in pages of fifty — not the first fifty.
+           *
+           * `GET /api/docs?ids=` takes at most fifty, and slicing to the first fifty was the
+           * truncation this branch was written to remove: a tag carrying sixty documents answered
+           * about fifty of them and called it the total. The ids are chunked instead, so the count
+           * describes the tag rather than the first page of it.
+           */
+          const CHUNK = 50;
+          const chunks: string[][] = [];
+          for (let i = 0; i < docIds.length; i += CHUNK) chunks.push(docIds.slice(i, i + CHUNK));
+          const [archivedPages, byQuery] = await Promise.all([
+            Promise.all(chunks.map((ids) => ctx.api.listDocsPage({ ids, archived: args.archived }))),
             args.query
               ? ctx.api.listDocsPage({ q: args.query, limit: 50, archived: args.archived })
               : Promise.resolve(null),
           ]);
-          const live = new Set(byArchived.docs.map((d) => d.id));
+          const live = new Set(archivedPages.flatMap((page) => page.docs.map((d) => d.id)));
           const matched = byQuery ? new Set(byQuery.docs.map((d) => d.id)) : null;
           docIds = docIds.filter((id) => live.has(id) && (!matched || matched.has(id)));
         }

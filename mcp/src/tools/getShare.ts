@@ -112,7 +112,7 @@ export function registerGetShareTool(server: McpServer, ctx: ToolContext): void 
         }
       }
       return {
-        ...(await withDefaultLinkState(ctx.api, doc, view)),
+        ...(await withDefaultLinkState(ctx.api, doc, view, allLinks)),
         ...(summaryStale ? { summaryStale } : {}),
         tags,
         warnings,

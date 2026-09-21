@@ -205,13 +205,31 @@ export function registerListShareLinksTool(server: McpServer, ctx: ToolContext):
       // on the link rows: an archived document keeps each link's own enabled/expiry so unarchiving
       // restores exactly what was live. Reported here so a reader is never told "active" about a
       // link that resolves for nobody.
-      const [links, doc] = await Promise.all([ctx.api.listShareLinks(args.docId, args.query), ctx.api.getDoc(args.docId)]);
-      const rows = links.map((l) => {
+      const [page, doc] = await Promise.all([
+        ctx.api.listShareLinksPage(args.docId, args.query),
+        ctx.api.getDoc(args.docId),
+      ]);
+      const rows = page.links.map((l) => {
         const row = withUrl(ctx.api, l);
         if (!doc.isArchived) return row;
         return { ...row, active: false, status: "archived" as const, docArchived: true };
       });
-      return { docId: args.docId, ...(doc.isArchived ? { docArchived: true } : {}), links: rows };
+      return {
+        docId: args.docId,
+        ...(doc.isArchived ? { docArchived: true } : {}),
+        // The route pages at 100. Saying how many there are makes a short answer readable as short,
+        // rather than as all of them — which is what it used to look like.
+        total: page.total,
+        links: rows,
+        ...(page.truncated
+          ? {
+              warnings: [
+                `This document has ${page.total} links and this response carries ${rows.length}. Narrow with query, or ` +
+                  "ask about a specific link by its shareId.",
+              ],
+            }
+          : {}),
+      };
     }),
   );
 }
