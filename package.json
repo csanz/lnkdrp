@@ -10,6 +10,7 @@
     "dev:webpack": "WATCHPACK_POLLING=true WATCHPACK_POLLING_INTERVAL=8000 CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=8000 next dev --webpack -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
+    "preflight:env": "tsx --env-file=.env.local scripts/preflight-env.ts",
     "cron:doc-metrics": "tsx --env-file=.env.local scripts/cron/cron.doc-metrics.ts",
     "cron:stripe-credits-reconcile": "tsx --env-file=.env.local scripts/cron/cron.stripe-credits-reconcile.ts",
     "cron:stripe-credits-report": "tsx --env-file=.env.local scripts/cron/cron.stripe-credits-report.ts",
