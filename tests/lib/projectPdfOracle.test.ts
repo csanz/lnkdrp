@@ -89,7 +89,7 @@ const lockedLink = { _id: LINK, orgId: ORG, passwordHash: "hash", passwordSalt: 
 const openLink = { _id: LINK, orgId: ORG, passwordHash: null, passwordSalt: null, allowDownload: true, label: null, isDefault: true };
 const project = { _id: PROJECT, name: "Data room", orgId: ORG, isRequest: false };
 
-const memberDoc = { _id: MEMBER_DOC, blobUrl: "https://blob.test/deck.pdf", title: "Term sheet", fileName: "term-sheet.pdf", orgId: ORG, userId: OWNER };
+const memberDoc = { _id: MEMBER_DOC, blobUrl: "https://store123.public.blob.vercel-storage.com/deck.pdf", title: "Term sheet", fileName: "term-sheet.pdf", orgId: ORG, userId: OWNER };
 const bytelessDoc = { _id: BYTELESS_DOC, blobUrl: "", title: "Still processing", fileName: null, orgId: ORG, userId: OWNER };
 
 /** The room's real contents, so the old code's three-way split has something to split on. */

@@ -38,7 +38,7 @@ const docFindOneAndUpdate = vi.fn((_filter: Record<string, any>, ..._rest: unkno
   lean: async () => null,
 }));
 const docFindOne = vi.fn((_filter: Record<string, any>) => ({
-  select: () => ({ lean: async () => ({ _id: DOC, orgId: ORG, userId: ME, blobUrl: "https://blob.test/x.pdf", title: "Deck", fileName: "deck.pdf" }) }),
+  select: () => ({ lean: async () => ({ _id: DOC, orgId: ORG, userId: ME, blobUrl: "https://store123.public.blob.vercel-storage.com/x.pdf", title: "Deck", fileName: "deck.pdf" }) }),
 }));
 const shareViewUpdateOne = vi.fn(async (..._a: unknown[]) => ({ upsertedCount: 1 }));
 const touchShareLink = vi.fn(async () => undefined);

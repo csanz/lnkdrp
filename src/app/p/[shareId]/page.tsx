@@ -46,12 +46,21 @@ function pickDocTitle(doc: PublicProjectDoc): string {
   return "Untitled document";
 }
 
-function pickDocPreviewUrl(doc: PublicProjectDoc): string | null {
+/**
+ * Whether this document has a stored first-page image at all — **not** where it is.
+ *
+ * This used to return the stored value and the card rendered it as `<img src>`. That value is a
+ * Vercel Blob URL on a public, unauthenticated CDN, so the room's HTML handed every visitor a
+ * permanent copy of the first page of every document in it (with the document and upload ids in the
+ * path), which no revoke, expiry or password could take back. The bytes now come through
+ * `/p/:shareId/:docId/preview`, which re-proves this link's gate on every request; all this
+ * predicate still decides is whether to draw the frame or the "No preview" placeholder.
+ */
+function docHasPreview(doc: PublicProjectDoc): boolean {
   const a = typeof doc.previewImageUrl === "string" ? doc.previewImageUrl.trim() : "";
-  if (a) return a;
+  if (a) return true;
   const b = typeof doc.firstPagePngUrl === "string" ? doc.firstPagePngUrl.trim() : "";
-  if (b) return b;
-  return null;
+  return Boolean(b);
 }
 
 type OgLike = { description?: unknown };
@@ -131,8 +140,11 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
    */
   if (resolved.project.isRequest) notFound();
   const { link, project } = resolved;
-  // Expiry is the one refusal a recipient can act on, so it gets its own words (see RefusalNotice);
-  // a disabled or archived link reads exactly as it did before this feature existed.
+  // Kept, and no longer normally reached: `layout.tsx` now `notFound()`s a refused link so the
+  // response carries the 404 this screen was being served under a 200 with. The branch stays as the
+  // page's own check — the layout is the status, not the authorization — but a recipient sees the
+  // `/p` not-found screen, not these words. (Expiry used to get its own actionable copy here; a 404
+  // body cannot know which slug was asked for, so that wording belongs in `/p/not-found.tsx` now.)
   if (resolved.refusal) return <RefusalNotice kind={resolved.refusal === "expired" ? "expired" : "disabled"} />;
 
   // Who this is from, on every branch below including the gate.
@@ -190,8 +202,9 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
             {docs.map((d) => {
               const docId = String(d._id);
               const title = pickDocTitle(d);
-              const previewUrl = pickDocPreviewUrl(d);
+              const hasPreview = docHasPreview(d);
               const summary = pickDocSummary(d.aiOutput ?? null);
+              const base = `/p/${encodeURIComponent(shareId)}/${encodeURIComponent(docId)}`;
 
               return (
                 <Link
@@ -199,15 +212,18 @@ export default async function PublicProjectSharePage(props: { params: Promise<{ 
                   // The document opens *under this link*, never at `/s/<its own slug>`: that is what
                   // makes the reading time, the session and any download attributable to the
                   // audience this link was sent to.
-                  href={`/p/${encodeURIComponent(shareId)}/${encodeURIComponent(docId)}`}
+                  href={base}
                   className="group overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-sm transition-colors hover:bg-[var(--panel-hover)]"
                   aria-label={`Open shared document: ${title}`}
                 >
                   <div className="relative aspect-[16/10] w-full bg-[var(--panel-2)]">
-                    {previewUrl ? (
+                    {hasPreview ? (
+                      // Same origin, never the blob CDN: this path re-runs the link's own checks on
+                      // every request, so the thumbnail stops being servable the moment the link
+                      // does. See `docHasPreview` above and the route's own header comment.
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={previewUrl}
+                        src={`${base}/preview`}
                         alt=""
                         loading="lazy"
                         decoding="async"

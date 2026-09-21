@@ -85,6 +85,27 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
     // The request is about one link: a refused link answers 404, and the download permission that
     // decides whether a request is needed is the link's (docs/prds/lnkdrp-multi-links.md).
+    //
+    // KNOWN GAP — a project link's slug lands in the 404 below, so "Request download" never works
+    // inside a data room. `resolveShareLink` returns null for a project slug by design, and this
+    // route could resolve one: `resolveProjectStatsTarget({ shareId, request, bodyDocId })` in
+    // `src/lib/share/projectPublic.ts` names the document from the body or the `/p/:slug/:docId`
+    // referer and re-proves its membership, `shareLinkUnlocked` already works on a project row
+    // (same cookie, same HMAC — `/p/**` uses it), and `link.allowDownload` carries the same meaning
+    // there (project-links PRD decision 3). Approval would stay per-document, because a claim token
+    // is minted against this row's `docId` and never touches `allowDownload`.
+    //
+    // It is not done here because the *rest of the chain* refuses the same slug, and half a chain
+    // is worse than an honest failure: the owner would be emailed, they would approve, and the
+    // requester's claim link would 404. All three claim routes gate on
+    // `resolveShareLink(reqDoc.shareId)` and bail on null — `api/download/[token]/route.ts:61`,
+    // `api/download/[token]/pdf/route.ts:81`, `api/download/[token]/save/route.ts:82` — which is
+    // the right gate (an approval is permission *through that link*) applied by a resolver that
+    // cannot see project links. Storing the document's own default-link slug on the row instead is
+    // not a fix: it would answer with a different link's enable/expiry/password state than the one
+    // the recipient actually used. The fix is one shared resolver those three routes call, falling
+    // back to `resolveProjectLink` + `findProjectDocument` for a project slug; then delete this
+    // note and take the branch above.
     const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
     if (!resolved || resolved.refusal) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

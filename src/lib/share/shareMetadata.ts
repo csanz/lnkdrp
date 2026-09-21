@@ -10,6 +10,10 @@
  * anything, so the title and first page would reach every member of that channel — the leak the
  * password exists to prevent. Callers decide that a link is locked or refused and simply pass no
  * `title`/`description`/`previewUrl`; this helper never resolves a link itself.
+ *
+ * Because every share page's metadata comes through here, this is also the one place that can put
+ * `noindex` on all of them at once; see the `robots` field below, and `src/app/robots.ts` for the
+ * other half of that fix.
  */
 import type { Metadata } from "next";
 import { headers } from "next/headers";
@@ -70,6 +74,24 @@ export async function buildShareMetadata(input: {
     title,
     description,
     metadataBase,
+    // Not in a search index — but still a good preview in a chat.
+    //
+    // These pages carried no robots directive at all, so the card built right above (the document's
+    // title, its AI summary, its cover image) was as indexable as the marketing site. A share URL
+    // reaches crawlers without anyone publishing it on purpose: webmail providers prefetch links,
+    // public channels unfurl and archive them, browser toolbars report visited URLs. Once indexed,
+    // a deck meant for one recipient is findable by anyone searching its title.
+    //
+    // Two controls, and each buys a different thing. `src/app/robots.ts` disallows `/s/` and `/p/`,
+    // which stops a well-behaved crawler from *fetching* the page at all — that also keeps bot hits
+    // out of the sender's view analytics — but it is advisory and a crawler may ignore it. This
+    // `noindex` is the control that actually holds: it is read by anything that fetched the page
+    // anyway, and it says do not index this and do not follow what is on it.
+    //
+    // `openGraph`/`twitter` stay exactly as they were, on purpose. `noindex` is not `nosnippet`:
+    // an unfurl is a deliberate forward by someone who already holds the link, and that preview is
+    // the product. The goal is "not in a search index", not "no preview".
+    robots: { index: false, follow: false },
     twitter: { card: "summary_large_image", title, description, images },
     openGraph: { type: "website", title, description, images },
   };

@@ -9,10 +9,15 @@
  * arrival. This is the only chance to put a name on it.
  *
  * It is a sibling of the viewer's modal rather than the same component: the identity they store is
- * shared (`@/lib/share/viewerProfile`, one key, one pair of normalizers, so answering here means
- * never being asked inside a document), but the words are not. "The owner of this document sees who
- * opened it" is the wrong sentence on a page listing eleven files, and a recipient reads the
- * sentence, not the component tree.
+ * shared (`@/lib/share/viewerProfile`, one scope, one pair of normalizers, so answering here means
+ * never being asked inside a document of this same sender's), but the words are not. "The owner of
+ * this document sees who opened it" is the wrong sentence on a page listing eleven files, and a
+ * recipient reads the sentence, not the component tree.
+ *
+ * The scope matters: the stored identity used to live under one origin-wide key, so answering here
+ * also answered for every unrelated sender whose link this browser opened next. It is now keyed on
+ * the workspace (`ownerKey`), falling back to this link while that key is still being plumbed
+ * through — see `@/lib/share/viewerProfile`.
  */
 import { useEffect, useMemo, useState } from "react";
 
@@ -23,11 +28,22 @@ import {
   normalizeShareViewerEmail,
   normalizeShareViewerName,
   readShareViewerProfile,
+  readShareViewerProfilePrefill,
   writeShareViewerProfile,
   type ShareViewerProfile,
+  type ShareViewerScope,
 } from "@/lib/share/viewerProfile";
 
-export default function IntroduceYourself({ shareId, projectName }: { shareId: string; projectName: string }) {
+export default function IntroduceYourself({
+  shareId,
+  projectName,
+  ownerKey = null,
+}: {
+  shareId: string;
+  projectName: string;
+  /** The workspace that owns this room, when the page has it: what the stored identity is keyed on. */
+  ownerKey?: string | null;
+}) {
   const [profile, setProfile] = useState<ShareViewerProfile | null>(null);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -44,15 +60,23 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
    */
   const [saved, setSaved] = useState<{ name: string | null; email: string } | null>(null);
 
+  const scope: ShareViewerScope = useMemo(() => ({ ownerKey, shareId }), [ownerKey, shareId]);
+
   // Hydrated in an effect, not at first render: the server has no localStorage, and a button that
   // says "Introduce yourself" on the server and "Viewing as Michael" in the browser is a hydration
   // mismatch.
+  //
+  // Two different reads on purpose. `profile` is what this room's owner has actually been told, and
+  // it alone drives "Viewing as" and the landing POST. The fields may additionally be pre-filled
+  // from the identity this browser last saved somewhere else — typing saved, nothing sent, until
+  // the recipient presses Save here.
   useEffect(() => {
-    const stored = readShareViewerProfile();
+    const stored = readShareViewerProfile(scope);
+    const prefill = stored ?? readShareViewerProfilePrefill();
     setProfile(stored);
-    setName(stored?.name ?? "");
-    setEmail(stored?.email ?? "");
-  }, []);
+    setName(prefill?.name ?? "");
+    setEmail(prefill?.email ?? "");
+  }, [scope]);
 
   const previewName = useMemo(() => (name ? normalizeShareViewerName(name) : null), [name]);
   const previewEmail = useMemo(() => (email ? normalizeShareViewerEmail(email) : null), [email]);
@@ -69,7 +93,7 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
     setError(null);
     try {
       // Stored first: the recipient has answered, and that is true whether or not the network is.
-      writeShareViewerProfile({ name: cleanName, email: cleanEmail });
+      writeShareViewerProfile(scope, { name: cleanName, email: cleanEmail });
       setProfile({ ...(cleanName ? { name: cleanName } : {}), email: cleanEmail });
       const botId = getOrCreateBotId();
       if (botId) {
@@ -306,7 +330,7 @@ export default function IntroduceYourself({ shareId, projectName }: { shareId: s
               className="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60"
               disabled={busy}
               onClick={() => {
-                clearShareViewerProfile();
+                clearShareViewerProfile(scope);
                 setProfile(null);
                 setName("");
                 setEmail("");

@@ -23,18 +23,18 @@ describe("redactDocRow", () => {
     title: "Series A deck",
     status: "ready",
     sizeBytes: 12345,
-    blobUrl: "https://blob.example.com/secret.pdf",
+    blobUrl: "https://store123.public.blob.vercel-storage.com.com/secret.pdf",
     blobPathname: "org/doc/secret.pdf",
-    previewImageUrl: "https://blob.example.com/p.png",
-    firstPagePngUrl: "https://blob.example.com/1.png",
-    extractedTextBlobUrl: "https://blob.example.com/t.txt",
+    previewImageUrl: "https://store123.public.blob.vercel-storage.com.com/p.png",
+    firstPagePngUrl: "https://store123.public.blob.vercel-storage.com.com/1.png",
+    extractedTextBlobUrl: "https://store123.public.blob.vercel-storage.com.com/t.txt",
     extractedTextBlobPathname: "org/doc/t.txt",
     rawExtractedText: "the whole document text",
     pdfText: "the whole document text",
     extractedText: "the whole document text",
     slideNodes: [
-      { page: 1, imageUrl: "https://blob.example.com/s1.jpg", thumbUrl: "https://blob.example.com/t1.jpg" },
-      { page: 2, imageUrl: "https://blob.example.com/s2.jpg", thumbUrl: "https://blob.example.com/t2.jpg" },
+      { page: 1, imageUrl: "https://store123.public.blob.vercel-storage.com.com/s1.jpg", thumbUrl: "https://store123.public.blob.vercel-storage.com.com/t1.jpg" },
+      { page: 2, imageUrl: "https://store123.public.blob.vercel-storage.com.com/s2.jpg", thumbUrl: "https://store123.public.blob.vercel-storage.com.com/t2.jpg" },
     ],
     aiOutput: { summary: "what the document says" },
     pageSlugs: ["a", "b", "c"],
@@ -98,7 +98,7 @@ describe("redactDocRow", () => {
   it("does not mutate its input", () => {
     const input = { ...row };
     redactDocRow(input);
-    expect(input.blobUrl).toBe("https://blob.example.com/secret.pdf");
+    expect(input.blobUrl).toBe("https://store123.public.blob.vercel-storage.com.com/secret.pdf");
   });
 
   it("redacts a list", () => {

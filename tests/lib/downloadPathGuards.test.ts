@@ -50,7 +50,7 @@ const docFindOne = vi.fn((_filter: Record<string, unknown>) => chain({
   _id: SOURCE_DOC,
   title: "Series A deck",
   fileName: "deck.pdf",
-  blobUrl: "https://blob.example/deck.pdf",
+  blobUrl: "https://store123.public.blob.vercel-storage.com/deck.pdf",
 }));
 const userFindOne = vi.fn((_filter: Record<string, unknown>) => chain({ _id: ME, email: RECIPIENT }));
 
@@ -219,7 +219,7 @@ beforeEach(() => {
   resolveShareLink.mockResolvedValue(liveLink());
   userFindOne.mockImplementation(() => chain({ _id: ME, email: RECIPIENT }));
   docFindOne.mockImplementation(() =>
-    chain({ _id: SOURCE_DOC, title: "Series A deck", fileName: "deck.pdf", blobUrl: "https://blob.example/deck.pdf" }),
+    chain({ _id: SOURCE_DOC, title: "Series A deck", fileName: "deck.pdf", blobUrl: "https://store123.public.blob.vercel-storage.com/deck.pdf" }),
   );
   docCreate.mockImplementation(async (attrs: Record<string, unknown>) => ({ ...attrs, _id: new Types.ObjectId() }));
   shareRequestCreate.mockImplementation(async (attrs: Record<string, unknown>) => ({ ...attrs, _id: REQUEST_ROW }));

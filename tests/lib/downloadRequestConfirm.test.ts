@@ -166,4 +166,66 @@ describe("already settled", () => {
     expect(shareRequestUpdateOne).not.toHaveBeenCalled();
     expect(await res.text()).toContain("Already approved");
   });
+
+  test("a denied request cannot be approved", async () => {
+    requestRow = { ...(requestRow as Record<string, unknown>), status: "denied" };
+    const res = await approvePost(formPost("approve", { confirm: "anything" }), ctx);
+
+    expect(shareRequestUpdateOne).not.toHaveBeenCalled();
+    expect(await res.text()).toContain("Already denied");
+  });
+});
+
+/**
+ * Deny used to act on `pending` alone and answer "Already approved" otherwise, which made an
+ * approval — the owner's, or a mail scanner's before the split above — the one decision here that
+ * could not be taken back. The requester kept a claim link that re-downloads the PDF and can take
+ * a permanent copy through `/api/download/:token/save`.
+ */
+describe("deny takes back an approval", () => {
+  beforeEach(() => {
+    requestRow = { ...(requestRow as Record<string, unknown>), status: "approved", claimTokenHash: "claim_hash" };
+  });
+
+  test("a GET on an approved request offers the revoke, and still writes nothing", async () => {
+    const res = await denyGet(scannerGet("deny"), ctx);
+    const html = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(shareRequestUpdateOne).not.toHaveBeenCalled();
+    expect(html).toContain("Take back this approval?");
+    // The card says what the owner actually came back to undo.
+    expect(html).toContain("already emailed");
+    expect(html).not.toContain("Already approved");
+  });
+
+  test("submitting it denies the row and clears the claim token", async () => {
+    const page = await (await denyGet(scannerGet("deny"), ctx)).text();
+    const res = await denyPost(formPost("deny", { confirm: confirmFieldFrom(page) }), ctx);
+
+    expect(statusWrites()).toContain("denied");
+    // The claim link in the requester's inbox hashes to the value being overwritten, so it matches
+    // no row; the placeholder is the row's own request-token hash, never a missing field (the
+    // create route documents why).
+    const set = shareRequestUpdateOne.mock.calls[0][1] as { $set?: Record<string, unknown> };
+    expect(set.$set?.claimTokenHash).toEqual(expect.any(String));
+    expect(set.$set?.claimTokenHash).not.toBe("claim_hash");
+    expect(await res.text()).toContain("Approval taken back");
+  });
+
+  test("the update is conditional, so a row decided elsewhere is not reported as revoked", async () => {
+    shareRequestUpdateOne.mockResolvedValueOnce({ modifiedCount: 0 });
+    const page = await (await denyGet(scannerGet("deny"), ctx)).text();
+    const res = await denyPost(formPost("deny", { confirm: confirmFieldFrom(page) }), ctx);
+
+    expect(recordActivity).not.toHaveBeenCalled();
+    expect(await res.text()).toContain("Already handled");
+  });
+
+  test("a GET on an approved request is still inert for a mail scanner", async () => {
+    await denyGet(scannerGet("deny"), ctx);
+
+    expect(shareRequestUpdateOne).not.toHaveBeenCalled();
+    expect(recordActivity).not.toHaveBeenCalled();
+  });
 });

@@ -10,6 +10,18 @@
  * legitimate request before the owner had read the message. Denial is one-way: the row leaves
  * `pending` and no later click can bring it back. The emailed URL is unchanged, so links already
  * in mailboxes keep working; only the write moved behind a form submit.
+ *
+ * **Deny also revokes an approval.** It used to act on `pending` alone and answer "Already
+ * approved" otherwise, which made an approval the one decision in this flow that could not be
+ * taken back: an owner who fat-fingered Approve — or whose mail scanner did it for them, before
+ * the GET/POST split above closed that — went back to the same message, clicked Deny, and was told
+ * nothing could be done. The requester kept a claim link that re-downloads the PDF indefinitely
+ * and can take a permanent copy through `/api/download/:token/save`, and the owner's only
+ * remaining lever was disabling or archiving the whole share link, which cuts off every other
+ * recipient it was created for. So an approved row can now be denied, and the write clears the
+ * claim token as well as the status: `/api/download/:token{,/pdf,/save}` all match on
+ * `{ claimTokenHash, status: "approved" }`, so either half alone is enough and both together
+ * leave nothing for the emailed claim link to match. Only `denied` is terminal.
  */
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
@@ -126,15 +138,28 @@ async function findRequestRow(shareId: string, requestTokenHash: string): Promis
   return (row as RequestRow | null) ?? null;
 }
 
-/** Terminal states render the same card on GET and POST, so a second click never re-denies. */
+/**
+ * The one terminal state, rendered the same on GET and POST so a second click never re-denies.
+ *
+ * `approved` used to be listed here too, which is what made an approval irreversible; it is now a
+ * state this route can act on, and {@link denyMode} decides which card it gets.
+ */
 function settledPage(row: RequestRow): Response | null {
-  const status = row.status;
-  if (status === "approved") {
-    return htmlPage("Already approved", `<div style="font-weight:700;">Already approved</div><div class="muted" style="margin-top:10px;">This request was already approved.</div>`);
-  }
-  if (status === "denied") {
+  if (row.status === "denied") {
     return htmlPage("Already denied", `<div style="font-weight:700;">Already denied</div><div class="muted" style="margin-top:10px;">This request has already been denied.</div>`);
   }
+  return null;
+}
+
+/**
+ * Which decision this row is asking for: denying a request nobody has answered, or taking back an
+ * approval. Anything else (a row in a state a future migration adds) is not this route's to touch.
+ */
+type DenyMode = "deny" | "revoke";
+
+function denyMode(row: RequestRow): DenyMode | null {
+  if (row.status === "pending") return "deny";
+  if (row.status === "approved") return "revoke";
   return null;
 }
 
@@ -147,18 +172,32 @@ function notFoundPage(): Response {
  * The read-only card a GET lands on: who asked, and a single button that POSTs back to this same
  * URL. Posting to "" keeps the form on the current path without the route having to know how it is
  * proxied.
+ *
+ * The revoke wording is not decoration. An owner arriving here after an approval needs to know
+ * that the claim link already sitting in the requester's inbox is what stops working — that is the
+ * thing they came back to undo, and it is the only part of the approval that is still live.
  */
-function confirmPage(args: { requesterEmail: string; requestTokenHash: string; note?: string }): Response {
+function confirmPage(args: { mode: DenyMode; requesterEmail: string; requestTokenHash: string; note?: string }): Response {
   const note = args.note ? `<div class="muted" style="margin-top:10px;">${escapeHtml(args.note)}</div>` : "";
+  const who = escapeHtml(args.requesterEmail || "A recipient");
+  const heading = args.mode === "revoke" ? "Take back this approval?" : "Deny this download?";
+  const lead =
+    args.mode === "revoke"
+      ? `${who} was approved to download this document.`
+      : `${who} asked to download this document.`;
+  const consequence =
+    args.mode === "revoke"
+      ? "The download link already emailed to them stops working. Denying is final, so they would have to ask again."
+      : "Denying is final, so they would have to ask again.";
   return htmlPage(
-    "Deny download",
-    `<div style="font-weight:700;">Deny this download?</div>
-      <div class="muted" style="margin-top:10px;">${escapeHtml(args.requesterEmail || "A recipient")} asked to download this document.</div>
-      <div class="muted" style="margin-top:10px;">Denying is final — they would have to ask again.</div>
+    args.mode === "revoke" ? "Take back approval" : "Deny download",
+    `<div style="font-weight:700;">${heading}</div>
+      <div class="muted" style="margin-top:10px;">${lead}</div>
+      <div class="muted" style="margin-top:10px;">${consequence}</div>
       ${note}
       <form method="post" action="">
         <input type="hidden" name="${CONFIRM_FIELD}" value="${escapeHtml(confirmValue(args.requestTokenHash))}" />
-        <button type="submit">Deny download</button>
+        <button type="submit">${args.mode === "revoke" ? "Take back approval" : "Deny download"}</button>
       </form>`,
     { status: args.note ? 400 : 200 },
   );
@@ -177,11 +216,14 @@ export async function GET(_request: Request, ctx: { params: Promise<{ shareId: s
   const settled = settledPage(reqDoc);
   if (settled) return settled;
 
+  const mode = denyMode(reqDoc);
+  if (!mode) return notFoundPage();
+
   const requesterEmail = typeof reqDoc.requesterEmail === "string" ? reqDoc.requesterEmail : "";
-  return confirmPage({ requesterEmail, requestTokenHash });
+  return confirmPage({ mode, requesterEmail, requestTokenHash });
 }
 
-/** The write: flip the row to denied and log the activity. */
+/** The write: flip the row to denied, kill any claim token it handed out, and log the activity. */
 export async function POST(request: Request, ctx: { params: Promise<{ shareId: string; token: string }> }) {
   const { shareId, token } = await ctx.params;
   if (!shareId || !token) return NextResponse.json({ error: "Missing params" }, { status: 400 });
@@ -194,25 +236,49 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
   const settled = settledPage(reqDoc);
   if (settled) return settled;
 
+  const mode = denyMode(reqDoc);
+  if (!mode) return notFoundPage();
+
   const requesterEmail = typeof reqDoc.requesterEmail === "string" ? reqDoc.requesterEmail : "";
   const supplied = await readConfirmField(request);
   if (!confirmMatches(supplied, requestTokenHash)) {
     // Degrade rather than refuse: an owner whose browser dropped the field gets the card back with
     // a working button instead of a dead end. Denial being irreversible, refusing here is cheap.
     return confirmPage({
+      mode,
       requesterEmail,
       requestTokenHash,
-      note: "Confirmation was missing, so nothing has changed yet. Press the button to deny.",
+      note: "Confirmation was missing, so nothing has changed yet. Press the button to confirm.",
     });
   }
 
+  /**
+   * One conditional update covers both modes, so a double submit — or an Approve landing between
+   * this row being read and written — still produces exactly one decision.
+   *
+   * `claimTokenHash` is reset to the row's own `requestTokenHash` rather than `$unset`. That is the
+   * unique placeholder the create route writes for exactly the reason it documents there: some
+   * environments carry a non-sparse unique index on this field, where two rows with the value
+   * missing collide as duplicate nulls. `requestTokenHash` is itself unique, so the placeholder
+   * cannot collide, and no claim link can match it — the token in the requester's inbox hashes to
+   * the value we are overwriting, and a caller who somehow held the *request* token would still be
+   * turned away by the `status: "approved"` half of the claim routes' filter.
+   */
   const updateRes = await ShareDownloadRequestModel.updateOne(
-    { _id: reqDoc._id, status: "pending" },
-    { $set: { status: "denied", deniedAt: new Date() } },
+    { _id: reqDoc._id, status: mode === "revoke" ? "approved" : "pending" },
+    { $set: { status: "denied", deniedAt: new Date(), claimTokenHash: requestTokenHash } },
   );
+  if (updateRes.modifiedCount !== 1) {
+    // Somebody else decided this row between the read above and the write. Say so rather than
+    // reporting a denial that did not happen.
+    return htmlPage(
+      "Already handled",
+      `<div style="font-weight:700;">Already handled</div><div class="muted" style="margin-top:10px;">This request was updated in another session.</div>`,
+    );
+  }
 
   // Activity (best-effort): one doc lookup for org + title; the owner acted via an emailed capability link.
-  if (updateRes.modifiedCount === 1) {
+  {
     const docId = reqDoc.docId;
     const doc = docId
       ? await DocModel.findOne({ _id: docId }).select({ title: 1, orgId: 1 }).lean().catch(() => null)
@@ -230,11 +296,21 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
           email: requesterEmail ? maskEmail(requesterEmail) : null,
           shareId,
           requestId: String(reqDoc._id),
+          // The row ends `denied` either way, so the feed's wording ("denied a download request
+          // for …", `src/lib/activity/labels.ts`) stays true for both — but a revoke also killed a
+          // claim link that was already out, and an owner reading the feed later needs that on the
+          // record. The flag is the durable half; the label can learn to say "took back" from it.
+          revokedApproval: mode === "revoke",
         },
         request,
       });
     }
   }
 
-  return htmlPage("Denied", `<div style="font-weight:700;">Denied</div><div class="muted" style="margin-top:10px;">This download request has been denied.</div>`);
+  return mode === "revoke"
+    ? htmlPage(
+        "Approval taken back",
+        `<div style="font-weight:700;">Approval taken back</div><div class="muted" style="margin-top:10px;">This download request is now denied, and the download link already emailed to the requester no longer works.</div>`,
+      )
+    : htmlPage("Denied", `<div style="font-weight:700;">Denied</div><div class="muted" style="margin-top:10px;">This download request has been denied.</div>`);
 }

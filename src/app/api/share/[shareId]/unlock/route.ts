@@ -52,6 +52,36 @@ const UNLOCK_FAILURE_PENALTY = 1;
 const UNLOCK_IP_LIMIT = 60;
 const UNLOCK_IP_WINDOW_MS = 5 * 60 * 1000;
 /**
+ * Longest slug this route will look up. Slugs are 12 base62 characters (`newShareId`; 16 on the
+ * collision fallback), so this is far past anything real.
+ *
+ * The bound exists because the limiter key is built from the slug and `ratelimits.key` carries a
+ * unique index. A slug of a couple of kilobytes pushes that key past Mongo's 1024-byte index limit,
+ * the upsert throws something that is not a duplicate-key error, and `rateLimit` fails open — on
+ * purpose, so a limiter outage never becomes an app outage. But that turns "the caller chooses the
+ * key" into "the caller chooses to have no limiter", and on this route that is all three buckets at
+ * once. A slug that could not exist is refused before a key is ever built from it.
+ */
+const SHARE_ID_MAX = 64;
+/**
+ * The slug the lookup and the buckets have to agree on.
+ *
+ * `resolveShareLink` and `resolveProjectLink` both match on `shareId.trim()`. This route did not
+ * trim: it keyed its buckets on the raw path segment. So `/api/share/%20<slug>/unlock` unlocked the
+ * *same* link while spending a *different* budget, and `String.trim` strips tab, newline, NBSP, the
+ * U+2000 block and the BOM, in any combination — an endless supply of spellings. A guesser could
+ * mint a fresh share-wide bucket for every attempt and walk straight past the ceiling this route
+ * exists to impose, which is the whole of the defence against an attacker with a pool of addresses.
+ *
+ * Normalise once, the way the resolvers do, and use that one value for the lookup, the three
+ * buckets, the cookie and the activity row, so the five cannot disagree again.
+ */
+function normalizeShareId(raw: string): string | null {
+  const slug = raw.trim();
+  if (!slug || slug.length > SHARE_ID_MAX) return null;
+  return slug;
+}
+/**
  * As Non Empty String (uses trim).
  */
 
@@ -68,8 +98,13 @@ function asNonEmptyString(v: unknown): string | null {
 
 export async function POST(request: Request, ctx: { params: Promise<{ shareId: string }> }) {
   try {
-    const { shareId } = await ctx.params;
-    if (!shareId) return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
+    const { shareId: rawShareId } = await ctx.params;
+    if (!rawShareId) return NextResponse.json({ error: "Missing shareId" }, { status: 400 });
+    // Everything below this line uses the normalised slug, never the path segment. A segment that
+    // cannot be a slug is the same 404 as a slug nobody ever minted — it unlocks nothing, so there
+    // is nothing to count, and the answer must not tell the two apart.
+    const shareId = normalizeShareId(rawShareId);
+    if (!shareId) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
     const body = (await request.json().catch(() => ({}))) as unknown;
     const password = asNonEmptyString((body as { password?: unknown }).password);
@@ -96,7 +131,16 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
     if (!rlIp.ok) return rateLimitedResponse(rlIp, "Too many attempts. Please try again later.");
 
     // The password lives on the link, so each recipient's link unlocks independently
-    // (docs/prds/lnkdrp-multi-links.md). A refused link is a 404, like an unknown slug.
+    // (docs/prds/lnkdrp-multi-links.md). A refused link — archived, disabled, expired, document
+    // gone — is a 404, identical to a slug nobody ever minted, which is the distinction that has to
+    // stay hidden: it is the one a holder of an old link could otherwise use to learn that the
+    // sender revoked it rather than that it never existed.
+    //
+    // The 401 below is a different question and is deliberately not folded into this 404. It only
+    // separates "this link exists and is protected" from "no such link", and `/s/:shareId` already
+    // answers that to anyone who asks: it renders the password gate for the first and `notFound()`
+    // for the second. Flattening the API while the page still speaks would hide nothing and would
+    // leave the gate unable to tell a wrong password from a dead link.
     //
     // A project link's slug unlocks here too, and through the same gate component: the cookie is
     // named for the slug and scoped to `path: "/"`, so one unlock covers `/p/:shareId` and every

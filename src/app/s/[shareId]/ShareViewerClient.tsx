@@ -51,6 +51,8 @@ export default function ShareViewerClient(props: {
   allowDownload: boolean;
   downloadUrl: string | null;
   revisionHistoryEnabled: boolean;
+  /** Only a data room sets this, and only to false — see the prop's note in `PdfJsViewer`. */
+  canRequestDownload?: boolean;
   revisionHistoryUrl: string | null;
   /** The workspace that shared this, for the viewer's header. */
   workspace?: ShareWorkspaceBrand | null;
@@ -74,6 +76,7 @@ export default function ShareViewerClient(props: {
       allowDownload={props.allowDownload}
       downloadUrl={props.downloadUrl}
       revisionHistoryEnabled={props.revisionHistoryEnabled}
+      canRequestDownload={props.canRequestDownload}
       revisionHistoryUrl={props.revisionHistoryUrl}
       workspace={props.workspace ?? null}
       backHref={props.backHref ?? null}

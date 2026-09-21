@@ -190,28 +190,6 @@ function normalizeEmail(v: string): string | null {
   return s;
 }
 /**
- * How many pages the current version of this document actually has, or null when we cannot tell
- * (a document still processing has no slide nodes yet).
- *
- * `slideNodes` is the per-page render of the current upload, denormalized onto the document, and is
- * the cheapest authoritative page count available on a path that already reads the document — the
- * plain `metadata.pages` number lives on the `Upload`, and a second query per heartbeat is not a
- * trade this route can make. Same derivation as `docTitlesAndPages` in
- * `@/lib/notifications/viewNotifications`, so a page number judged in range here and a "3 of 12
- * pages" line in the owner's mail cannot disagree about how long the deck is.
- */
-function docPageCount(slideNodes: unknown): number | null {
-  if (!Array.isArray(slideNodes) || slideNodes.length === 0) return null;
-  let max = 0;
-  for (const node of slideNodes) {
-    const n = Number((node as { pageNumber?: unknown } | null)?.pageNumber);
-    if (Number.isFinite(n) && n > max) max = Math.floor(n);
-  }
-  // Nodes with no `pageNumber` still tell us how many pages were rendered.
-  return max > 0 ? max : slideNodes.length;
-}
-
-/**
  * As Duration Ms (clamped).
  */
 function asDurationMs(v: unknown): number | null {
@@ -346,7 +324,8 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
        * Map fields on ONE analytics document — enough of them and the row passes Mongo's 16MB
        * limit, at which point every further write to that viewer fails and the owner's stats
        * overlay for the link stops loading. 1..5000 is the same ceiling `parsePageBound` already
-       * imposed on the neighbouring fields; the document's own page count narrows it further below.
+       * imposed on the neighbouring fields, and it is the only bound — narrowing to the document's
+       * own page count was tried and reverted, for the reason recorded at `pageNumber` below.
        */
       const pageNumberRaw = parsePageBound((body as { pageNumber?: unknown })?.pageNumber);
       const durationMs = asDurationMs((body as { durationMs?: unknown })?.durationMs);
@@ -388,9 +367,11 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       if (!rl.ok) return rateLimitedResponse(rl);
 
       // Views are recorded against the link that was opened; a refused link records nothing.
-      // `slideNodes.pageNumber` rides along on a query that already runs: it is the document's real
-      // page count, which bounds `pageNumber` below. One small subdocument per page, projected.
-      const resolved = await resolveShareLink(shareId, { select: { title: 1, "slideNodes.pageNumber": 1 } as Record<string, 1> });
+      // `slideNodes.pageNumber` used to ride along here as the document's real page count, to narrow
+      // `pageNumber` below. That narrowing is gone (see the note at `pageNumber`), so the projection
+      // went with it: it is one subdocument per page pulled out of Mongo on every 30-second
+      // heartbeat of every open viewer, for a value nothing reads.
+      const resolved = await resolveShareLink(shareId, { select: { title: 1 } as Record<string, 1> });
       /**
        * The project-link path (PRD decision 5). `resolveShareLink` returns null for a project
        * slug by design, so only then do we ask which document of that project is being read — from
@@ -401,7 +382,7 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
        */
       const projectTarget = resolved
         ? null
-        : await resolveProjectStatsTarget({ shareId, request, bodyDocId: (body as { docId?: unknown })?.docId, select: { title: 1, userId: 1, orgId: 1, "slideNodes.pageNumber": 1 } as Record<string, 1> });
+        : await resolveProjectStatsTarget({ shareId, request, bodyDocId: (body as { docId?: unknown })?.docId, select: { title: 1, userId: 1, orgId: 1 } as Record<string, 1> });
       if ((!resolved || resolved.refusal) && (!projectTarget || projectTarget.refusal)) {
         // Same quiet 200 the locked case answers below, so a guessed id learns nothing about what
         // the room holds. See `lockedProjectLink`.
@@ -437,21 +418,23 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
       }
       const doc = (resolved ? resolved.doc : projectTarget!.doc) as Record<string, unknown> & { _id: unknown; orgId?: unknown };
       /**
-       * The page this POST claims to be about, now judged against the document it claims to be in.
+       * The page this POST claims to be about. Its only bound is the 1..5000 parse above.
        *
-       * The 1..5000 parse above bounds the damage; this bounds the lie. A deck has the pages it has,
-       * so a `pageNumber` past the last one is not a reading — it is a stranger inflating "Pages
-       * viewed" and planting keys in the row's per-page maps. The page side effects are *skipped*
-       * rather than refused: the visit is still a visit, its time still counts, and a document whose
-       * slide nodes have not been written yet (still processing) has no count to check against and
-       * keeps the 5000 ceiling as its only bound.
+       * A second narrowing — to the document's own page count, from `docPageCount(doc.slideNodes)`
+       * — was written here and removed, and the comment that described it as live outlived it by a
+       * commit. It is not coming back in that form: `Doc.slideNodes` is a render artifact, and when
+       * a replacement upload's slide pass fails the *previous* version's nodes are deliberately kept
+       * while `blobUrl` moves on to the new file (see `finalSlideNodes` in
+       * `/api/uploads/:uploadId/process`). A 9-page v1 then sits on a 30-page v2, recipients read
+       * the 30-page PDF, and every genuine reading past page 9 was being discarded — no `pagesSeen`,
+       * no heatmap, no "read to page N" in the owner's mail. Silently dropping real readings is a
+       * worse failure than the one the narrowing was added for.
+       *
+       * The finding it was added for was that `pageNumber` was *unbounded*: each distinct value is
+       * an entry in the row's `pagesSeen` and a key under `pageTimeMsByPage` / `pageVisitCountByPage`
+       * — Map fields on one analytics document, which stops accepting writes at Mongo's 16MB limit.
+       * `parsePageBound` is that bound, and it is the same one `toPage` and `numPages` get.
        */
-      // Narrowing to the document's own page count was tried here and removed. `Doc.slideNodes` is
-      // a render artifact, and when a replacement's slide pass fails the *previous* version's nodes
-      // are deliberately kept while `blobUrl` moves on — so a 9-page v1 can sit on a 30-page v2, and
-      // every genuine reading past page 9 was being thrown away. Silently dropping real reads is a
-      // worse failure than the one the bound was added for: the 1..5000 parse above already stops a
-      // caller growing the per-page maps without limit, which was the finding.
       const pageNumber = pageNumberRaw;
       const shareLinkId = link._id;
       // Denormalized tenancy on the analytics rows (see `ShareView.orgId`).

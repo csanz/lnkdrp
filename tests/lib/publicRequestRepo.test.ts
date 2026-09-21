@@ -64,7 +64,7 @@ function resolvedRoom(project: Record<string, unknown>) {
 }
 
 /** The submission the finding was about — now a separate answer, from `findProjectDocument`. */
-const SUBMISSION = { _id: DOC_ID, blobUrl: "https://blob.test/secret.pdf", title: "Submission", fileName: "submission.pdf" };
+const SUBMISSION = { _id: DOC_ID, blobUrl: "https://store123.public.blob.vercel-storage.com/secret.pdf", title: "Submission", fileName: "submission.pdf" };
 
 /** Anonymous, no cookies — the attacker in the finding. */
 function get(query = "") {

@@ -210,6 +210,22 @@ describe("resolveProjectDocument", () => {
     const r = await resolveProjectDocument("SLUG", String(DOC_A));
     expect(r!.refusal).toBe("expired");
   });
+
+  test("a refused link answers the same for a member id and an outsider id, and asks the room nothing", async () => {
+    // The refusal branch used to look the document up and return `null` on a miss — the same `null`
+    // that means "not a project link at all" — so an expired link's two answers spelled out the
+    // room's contents to anyone walking candidate ids. A refusal is a property of the link.
+    resolveProjectLink.mockResolvedValue({ link: { shareId: "SLUG" }, project, refusal: "expired" });
+    docFilters = [];
+    const member = await resolveProjectDocument("SLUG", String(DOC_A));
+    const outsider = await resolveProjectDocument("SLUG", String(OUTSIDER));
+    const nonsense = await resolveProjectDocument("SLUG", "not-an-object-id");
+    expect(member).toEqual(outsider);
+    expect(nonsense).toEqual(outsider);
+    // Nothing of the room comes back with the refusal, and nothing of the room was read.
+    expect(Object.keys(member!.doc)).toEqual(["_id"]);
+    expect(docFilters).toEqual([]);
+  });
 });
 
 describe("resolveProjectStatsTarget", () => {

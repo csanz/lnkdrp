@@ -153,6 +153,19 @@ function docTitle(doc: { title?: unknown } | null): string {
   return typeof doc?.title === "string" && doc.title ? doc.title : "Shared document";
 }
 
+/**
+ * The way back out of an approval, spelled on every card that reports one.
+ *
+ * Approving used to be the one decision here that could not be taken back, so an owner who hit the
+ * wrong button had no lever short of disabling the link for everybody. The sibling deny route now
+ * revokes an approval and kills the claim link with it — but only if the owner knows that, and the
+ * only place they will be looking is this page. No URL is built for it: the deny link is one line
+ * below the approve link in the same message (`downloadRequestOwnerEmail`), and naming the mail is
+ * more robust than this route guessing how it is proxied.
+ */
+const UNDO_NOTE =
+  `<div class="muted" style="margin-top:10px;">Approved by mistake? The “Deny” link in the same email takes it back and stops the claim link working.</div>`;
+
 /** Terminal states render the same card on GET and POST, so a second click never re-approves. */
 function settledPage(row: RequestRow): Response | null {
   const status = row.status;
@@ -163,7 +176,7 @@ function settledPage(row: RequestRow): Response | null {
   if (status === "approved" && typeof row.claimTokenHash === "string") {
     return htmlPage(
       "Already approved",
-      `<div style="font-weight:700;">Already approved</div><div class="muted" style="margin-top:10px;">The requester has already been emailed a claim link.</div>`,
+      `<div style="font-weight:700;">Already approved</div><div class="muted" style="margin-top:10px;">The requester has already been emailed a claim link.</div>${UNDO_NOTE}`,
     );
   }
   return null;
@@ -300,6 +313,6 @@ export async function POST(request: Request, ctx: { params: Promise<{ shareId: s
 
   return htmlPage(
     "Approved",
-    `<div style="font-weight:700;">Approved</div><div class="muted" style="margin-top:10px;">The requester will receive an email with a link to download or save this document.</div>`,
+    `<div style="font-weight:700;">Approved</div><div class="muted" style="margin-top:10px;">The requester will receive an email with a link to download or save this document.</div>${UNDO_NOTE}`,
   );
 }

@@ -41,7 +41,7 @@ const recordActivity = vi.fn(async (..._a: unknown[]) => undefined);
 
 const doc = {
   _id: DOC,
-  blobUrl: "https://blob.test/deck.pdf",
+  blobUrl: "https://store123.public.blob.vercel-storage.com/deck.pdf",
   title: "Deck",
   fileName: "deck.pdf",
   orgId: ORG,

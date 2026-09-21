@@ -21,6 +21,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { DocModel } from "@/lib/models/Doc";
 import { DOC_LINK_FILTER, ShareLinkModel, type ShareLink, type ShareLinkKind } from "@/lib/models/ShareLink";
 import { ShareViewModel } from "@/lib/models/ShareView";
+import { ensurePersonalOrgForUserId } from "@/lib/models/Org";
 import { newShareId } from "@/lib/crypto/randomBase62";
 import { encryptSharePassword, hashSharePassword, shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { checkLimit, type LimitCheck } from "@/lib/billing/planLimits";
@@ -245,11 +246,35 @@ export function toShareLinkDTO(link: ShareLink, stats?: ShareLinkStats | null): 
 /**
  * Materialise the default link for a document that predates the model, copying its share
  * settings. Idempotent: the unique `shareId` index makes a concurrent double-create a no-op.
+ *
+ * Null when the document has neither a workspace nor an owner to hang the link on — see
+ * {@link ensureDefaultLink}, the throwing wrapper every org-scoped caller uses. Only the public
+ * resolve below can meet such a document, and its answer is a miss, not an error.
  */
-export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web" | "api" | "mcp" } = {}): Promise<ShareLink> {
+async function ensureDefaultLinkOrNull(doc: DocLike, opts: { createdVia?: "web" | "api" | "mcp" } = {}): Promise<ShareLink | null> {
   await connectMongo();
   const existing = await ShareLinkModel.findOne({ docId: doc._id, isDefault: true }).lean<ShareLink>();
   if (existing) return existing;
+  // `ShareLink.orgId` is `required: true`, so a document that predates workspaces — no `orgId`,
+  // only a `userId`, which is exactly the row `buildDocMatch`'s `allowLegacyByUserId` exists to
+  // serve and the one `scripts/sharelinks-backfill.ts` deliberately skips — used to make this a
+  // *throw* rather than a backfill: `create` was rejected by the required field, the catch below
+  // found no row to fall back on and rethrew, and the throw came out of `resolveShareLink` as the
+  // error boundary on the public `/s/:shareId`. The recipient's link was neither served nor
+  // refused. Adopt the document into its owner's personal workspace instead and write the id back
+  // so it happens once — the same move `ensureDefaultProjectLink` makes for `/p/:shareId`.
+  let orgId = doc.orgId ?? null;
+  if (!orgId && doc.userId) {
+    try {
+      orgId = (await ensurePersonalOrgForUserId({ userId: oid(doc.userId) })).orgId;
+      await DocModel.updateOne({ _id: doc._id }, { $set: { orgId } });
+    } catch {
+      orgId = null;
+    }
+  }
+  // Nothing to adopt it into (no owner either): hand back nothing rather than throw, so the caller
+  // treats the slug as a miss instead of 500-ing on it.
+  if (!orgId) return null;
   let shareId = (doc.shareId && String(doc.shareId).trim()) || newShareId();
   const byShareId = await ShareLinkModel.findOne({ shareId }).lean<ShareLink>();
   // `Doc.shareId` and `Project.shareId` are unique in their own collections but not against each
@@ -260,7 +285,7 @@ export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web"
   else if (byShareId) return byShareId;
   try {
     const created = await ShareLinkModel.create({
-      orgId: doc.orgId ?? undefined,
+      orgId,
       docId: doc._id,
       shareId,
       label: DEFAULT_LINK_LABEL,
@@ -295,6 +320,21 @@ export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web"
   }
 }
 
+/**
+ * {@link ensureDefaultLinkOrNull} for the callers that already hold an org-scoped document and so
+ * cannot be handed a null: every route and script here reached the document through a workspace or
+ * its owner, which means the adoption above always finds one, and a document with neither is a
+ * corrupt row rather than a case to branch on. Kept non-null so those call sites stay unchanged.
+ *
+ * The public slug is the one caller that can genuinely meet a document with no owner at all, and it
+ * uses the nullable form — a stranger gets a 404, never a 500.
+ */
+export async function ensureDefaultLink(doc: DocLike, opts: { createdVia?: "web" | "api" | "mcp" } = {}): Promise<ShareLink> {
+  const link = await ensureDefaultLinkOrNull(doc, opts);
+  if (!link) throw new ShareLinkError("not_found", "This document has no workspace or owner to attach a link to.");
+  return link;
+}
+
 export type ResolvedShareLink = {
   link: ShareLink;
   doc: DocLike & Record<string, unknown>;
@@ -304,8 +344,9 @@ export type ResolvedShareLink = {
 
 /**
  * Turn a public slug into its link and document. Falls back to `Doc.shareId` for documents that
- * have no link row yet (and creates their default link). Returns null when nothing matches.
- * The caller decides what to do with `refusal` (share routes answer 404).
+ * have no link row yet (and creates their default link). Returns null when nothing matches — and
+ * also when a matching document has no workspace to hang a link on, which is a miss rather than an
+ * error. The caller decides what to do with `refusal` (share routes answer 404).
  */
 export async function resolveShareLink(shareId: string, opts: { select?: Record<string, 1> } = {}): Promise<ResolvedShareLink | null> {
   const slug = (shareId || "").trim();
@@ -328,7 +369,11 @@ export async function resolveShareLink(shareId: string, opts: { select?: Record<
       .select({ ...DOC_SHARE_FIELDS, ...(opts.select ?? {}) })
       .lean()) as (DocLike & Record<string, unknown>) | null;
     if (!doc) return null;
-    link = await ensureDefaultLink(doc);
+    link = await ensureDefaultLinkOrNull(doc);
+    // No link could be materialised (a document with neither workspace nor owner). The slug is
+    // real but there is nothing to serve it with, so this is a 404, never a 500 — the same answer
+    // `resolveProjectLink` gives for the project-shaped version of this row.
+    if (!link) return null;
   }
   if (!doc || doc.isDeleted) return link ? { link, doc: doc ?? ({ _id: link.docId } as DocLike & Record<string, unknown>), refusal: "doc_gone" } : null;
   const refusal: ResolvedShareLink["refusal"] = doc.isArchived

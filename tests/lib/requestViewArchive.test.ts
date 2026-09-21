@@ -36,7 +36,7 @@ const docFindFilters: unknown[] = [];
 
 /** `null` here stands for "the filter matched nothing" — the shape both fixes rely on. */
 let projectRow: unknown = { _id: PROJECT, name: "Diligence", description: "", isRequest: true };
-let docRow: unknown = { _id: DOC, blobUrl: "https://blob.example/x.pdf", title: "Cap table", fileName: "cap-table.pdf" };
+let docRow: unknown = { _id: DOC, blobUrl: "https://store123.public.blob.vercel-storage.com/x.pdf", title: "Cap table", fileName: "cap-table.pdf" };
 let docRows: unknown[] = [];
 
 function chain(value: unknown): Record<string, unknown> {
@@ -88,7 +88,7 @@ beforeEach(() => {
   docFindOneFilters.length = 0;
   docFindFilters.length = 0;
   projectRow = { _id: PROJECT, name: "Diligence", description: "", isRequest: true };
-  docRow = { _id: DOC, blobUrl: "https://blob.example/x.pdf", title: "Cap table", fileName: "cap-table.pdf" };
+  docRow = { _id: DOC, blobUrl: "https://store123.public.blob.vercel-storage.com/x.pdf", title: "Cap table", fileName: "cap-table.pdf" };
   docRows = [];
   vi.stubGlobal("fetch", upstreamFetch);
 });

@@ -10,6 +10,7 @@ import { tryResolveAuthUserId } from "@/lib/gating/actor";
 import { shareAuthCookieName, shareAuthCookieValue } from "@/lib/sharePassword";
 import { clientIpFromRequest, rateLimit } from "@/lib/http/rateLimit";
 import crypto from "node:crypto";
+import net from "node:net";
 import { blobFetchUrl, fetchStoredBlob } from "@/lib/blob/fetchStoredBlob";
 
 export const runtime = "nodejs";
@@ -45,10 +46,19 @@ function pickFirstForwardedIp(v: string): string {
   return v.split(",")[0]?.trim() ?? "";
 }
 /**
- * Normalize Ip (uses trim, startsWith, includes).
+ * Trim a forwarding-header value down to a bare IP literal, or reject it.
+ *
+ * Every candidate header below is client-influenced text: `cf-connecting-ip` and `true-client-ip`
+ * are set by a caller reaching this origin directly, and even `x-forwarded-for` is appended to, not
+ * replaced. This used to return whatever was left after stripping a port — so the 128 characters of
+ * anything a stranger put in `cf-connecting-ip` were written verbatim into `ShareView.viewerIp`,
+ * the field the owner reads in the admin share-view tables. The stats ingest next door
+ * (`/api/share/[shareId]/stats`) and `clientIpFromRequest` both already ended on `net.isIP`; this
+ * copy of the helper was the one that did not. It now rejects anything that is not an IP literal,
+ * and the loop falls through to the next header, exactly as it does for an absent one — so a
+ * spoofed header can still *choose* which address is attributed, which it always could, but can no
+ * longer put arbitrary text in front of the owner.
  */
-
-
 function normalizeIp(raw: string): string | null {
   const s = raw.trim();
   if (!s) return null;
@@ -57,21 +67,25 @@ function normalizeIp(raw: string): string | null {
   // Handle bracketed IPv6 like "[::1]:1234"
   if (s.startsWith("[") && s.includes("]")) {
     const inside = s.slice(1, s.indexOf("]")).trim();
-    return inside || null;
+    return inside && net.isIP(inside) ? inside : null;
   }
 
   // Strip port for "1.2.3.4:5678"
+  let ip = s;
   if (/^\d{1,3}(\.\d{1,3}){3}:\d+$/.test(s)) {
-    return s.slice(0, s.lastIndexOf(":"));
+    ip = s.slice(0, s.lastIndexOf(":"));
   }
 
-  return s;
+  return net.isIP(ip) ? ip : null;
 }
 /**
- * Get client ip.
+ * Best-effort viewer address for analytics attribution only.
+ *
+ * Deliberately not the rate-limiter's idea of the caller: the limiter uses `clientIpFromRequest`,
+ * which reads only the hops a proxy sets, because a caller who can name their own bucket has no
+ * limit at all (see the comment at the tracking block). This one takes the first hop of whichever
+ * header is present, all of them now validated by `normalizeIp`.
  */
-
-
 function getClientIp(request: Request): string | null {
   const h = request.headers;
   const candidates = [
