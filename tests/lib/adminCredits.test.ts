@@ -3,8 +3,8 @@
  *
  * The anomaly list on `/a/credits` accuses a workspace of being broken, so each rule has to fire on
  * exactly the states the writing code could not have produced and stay quiet on the ones it could:
- * a Free workspace holding 50 starter credits and a 15/day brake is normal, the same row on Pro is a
- * cycle grant that never ran. These tests pin that boundary, and the last block pins the constants
+ * a Free workspace holding its full starter grant and a 15/day brake is normal, the same row on Pro
+ * is a cycle grant that never ran. These tests pin that boundary, and the last block pins the constants
  * the routes feed in, so a change to the credit rules fails here rather than silently re-labelling
  * healthy workspaces.
  */
@@ -29,14 +29,14 @@ import {
 } from "@/lib/admin/creditsAdmin";
 
 /** Today's rules, as the routes pass them in. */
-const LIMITS: CreditRuleLimits = { starterGrant: 50, includedPerCycle: 300, freeDailyCap: 15 };
+const LIMITS: CreditRuleLimits = { starterGrant: 100, includedPerCycle: 500, freeDailyCap: 15 };
 
 /** A workspace in the state the seed code actually leaves it in, for the plan given. */
 function healthy(plan: AdminCreditPlan) {
   return plan === "pro"
     ? {
         plan,
-        buckets: { starter: 0, included: 300, purchased: 0 },
+        buckets: { starter: 0, included: LIMITS.includedPerCycle, purchased: 0 },
         dailyCreditCap: null,
         onDemandEnabled: true,
         onDemandMonthlyLimitCents: 1000,
@@ -44,7 +44,7 @@ function healthy(plan: AdminCreditPlan) {
       }
     : {
         plan,
-        buckets: { starter: 50, included: 0, purchased: 0 },
+        buckets: { starter: LIMITS.starterGrant, included: 0, purchased: 0 },
         dailyCreditCap: 15,
         onDemandEnabled: false,
         onDemandMonthlyLimitCents: 0,
@@ -113,15 +113,16 @@ describe("admin/creditsAdmin — balance anomalies fire on impossible rows", () 
   });
 
   test("more starter credits than the one-time grant", () => {
-    expect(codes({ ...healthy("free"), buckets: { starter: 100, included: 0, purchased: 0 } })).toContain(
-      "starter_over_grant",
-    );
+    // Derived from LIMITS, not written out: these numbers are "over" and "exactly at" the grant,
+    // and a pricing change that moves the grant must not silently turn them into neither. Raising
+    // the starter grant to 100 did exactly that to the literals that used to sit here.
+    const over = { starter: LIMITS.starterGrant + 1, included: 0, purchased: 0 };
+    expect(codes({ ...healthy("free"), buckets: over })).toContain("starter_over_grant");
   });
 
   test("exactly the grant is not over it", () => {
-    expect(codes({ ...healthy("free"), buckets: { starter: 50, included: 0, purchased: 0 } })).not.toContain(
-      "starter_over_grant",
-    );
+    const exact = { starter: LIMITS.starterGrant, included: 0, purchased: 0 };
+    expect(codes({ ...healthy("free"), buckets: exact })).not.toContain("starter_over_grant");
   });
 
   test("on-demand enabled off Pro, where the snapshot forces it off anyway", () => {
@@ -141,20 +142,23 @@ describe("admin/creditsAdmin — balance anomalies fire on impossible rows", () 
   });
 
   test("included credits on a workspace that is not paying for them", () => {
-    expect(codes({ ...healthy("free"), buckets: { starter: 50, included: 120, purchased: 0 } })).toContain(
-      "free_holds_included",
-    );
+    expect(
+      codes({ ...healthy("free"), buckets: { starter: LIMITS.starterGrant, included: 120, purchased: 0 } }),
+    ).toContain("free_holds_included");
   });
 
   test("more included credits than a cycle grants, with no rollover to explain it", () => {
-    const found = codes({ ...healthy("pro"), buckets: { starter: 0, included: 450, purchased: 0 } });
+    const found = codes({
+      ...healthy("pro"),
+      buckets: { starter: 0, included: LIMITS.includedPerCycle + 1, purchased: 0 },
+    });
     expect(found).toEqual(["included_over_grant"]);
   });
 
   test("a cancelled Pro that kept its cycle credits trips both plan rules", () => {
-    expect(codes({ ...healthy("free"), buckets: { starter: 0, included: 300, purchased: 0 } })).toEqual([
-      "free_holds_included",
-    ]);
+    expect(
+      codes({ ...healthy("free"), buckets: { starter: 0, included: LIMITS.includedPerCycle, purchased: 0 } }),
+    ).toEqual(["free_holds_included"]);
   });
 
   test("the rules follow the constants passed in, not hardcoded numbers", () => {

@@ -7,7 +7,7 @@
  * global credits tool you pasted an id into.
  *
  * Strictly read-only. In particular it reads `WorkspaceCreditBalance` directly instead of calling
- * `getCreditsSnapshot`, which upserts a balance row (seeding 50 starter credits and the daily cap)
+ * `getCreditsSnapshot`, which upserts a balance row (seeding 100 starter credits and the daily cap)
  * as a side effect — inspecting a workspace must not change it. The cost is that a workspace that
  * has never run anything shows em dashes rather than its would-be starter balance.
  *
@@ -108,7 +108,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ workspaceId
         .lean(),
       WorkspaceCreditBalanceModel.findOne({ workspaceId: orgId }).lean(),
       // live documents, projects and members, using the same definitions the plan limits enforce —
-      // so "3 of 3 documents" here means exactly what the app blocks on.
+      // so "10 of 10 documents" here means exactly what the app blocks on.
       getWorkspaceUsage(orgId),
       DocModel.countDocuments({ orgId, isArchived: true, isDeleted: { $ne: true } }),
       DocModel.countDocuments({ orgId, isDeleted: { $ne: true } }),

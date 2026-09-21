@@ -24,6 +24,7 @@ import {
 } from "@/lib/billing/planLimits";
 import { getBillingProPriceLabel } from "@/lib/billing/proPriceLabel";
 import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
+import { comparesFor } from "@/lib/client/planNumbers";
 import { CREDITS_COPY, whatHappensAfterFreeCredits } from "@/lib/client/planLimit";
 import { cn } from "@/lib/cn";
 import PricingCta from "./PricingCta";
@@ -33,7 +34,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Pricing",
-  description: "Free to send a few. Pro to send every day. Three shared documents free, forever, each with unlimited links; deep analytics and 300 AI credits a month on Pro.",
+  description: `Free to send a few. Pro to send every day. ${FREE_DOCUMENTS} shared documents free, forever, each with unlimited links; deep analytics and ${INCLUDED_CREDITS_PER_CYCLE} AI credits a month on Pro.`,
 };
 
 /** Read the Pro price label without letting a database hiccup take the page down. */
@@ -169,7 +170,7 @@ export default async function PricingPage() {
                   "Unlimited projects",
                   "Deep analytics: who opened it, time per page, full history",
                   "Recipients can browse every version and see what changed",
-                  "300 credits a month, about 60 AI compares at standard quality",
+                  `${INCLUDED_CREDITS_PER_CYCLE} credits a month, about ${comparesFor(INCLUDED_CREDITS_PER_CYCLE)} AI compares at standard quality`,
                   `${PRO_INCLUDED_COLLABORATORS} collaborator included · more on request`,
                   "Agents never take a seat",
                   "AI summary on every link, 1 credit; free when your agent writes it",
@@ -219,8 +220,10 @@ export default async function PricingPage() {
                   Pick a level, pay per run.
                 </h2>
                 <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
-                  Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month: about 150 basic compares, 60 standard, or
-                  25 advanced. Higher levels run a deeper analysis and cost more per run. The summary on every
+                  Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month: about{" "}
+                  {comparesFor(INCLUDED_CREDITS_PER_CYCLE, "basic")} basic compares,{" "}
+                  {comparesFor(INCLUDED_CREDITS_PER_CYCLE)} standard, or{" "}
+                  {comparesFor(INCLUDED_CREDITS_PER_CYCLE, "advanced")} advanced. Higher levels run a deeper analysis and cost more per run. The summary on every
                   link is one credit, so a busy month of uploads still leaves most of the allowance. Links,
                   uploads, replacements and stats never need credits.
                 </p>
@@ -350,12 +353,12 @@ export default async function PricingPage() {
                   a: `Per workspace. Upgrade a workspace once and every link, project, and member in it is on Pro. The base price includes ${PRO_INCLUDED_COLLABORATORS} collaborator; contact us to add more seats to a workspace.`,
                 },
                 {
-                  q: "I already have more than 3 shared documents. What happens?",
+                  q: `I already have more than ${FREE_DOCUMENTS} shared documents. What happens?`,
                   a: "Nothing changes right away. Workspaces that were over the Free limits at launch get a 14-day grace period with reminders; after that, new documents and projects wait until you archive some or upgrade. Existing links never stop working, and you can keep adding links to the documents you already have. Links are not capped on any plan.",
                 },
                 {
                   q: "What do credits pay for?",
-                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Personal Free workspaces start with ${FREE_STARTER_CREDITS} credits, one time, and use at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes 300 credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.`,
+                  a: `AI runs. Links, uploads, replacements and stats never need credits. The summary and key points written for every upload cost 1 credit at the basic level they run at automatically. They cost 0 when your own agent writes the summary through MCP or the API, and for files recipients upload through a request or replace link. AI compare of two versions: 2 credits for basic, 5 for standard, 12 for advanced. Personal Free workspaces start with ${FREE_STARTER_CREDITS} credits, one time, and use at most ${CREDITS_COPY.freeDailyCap} credits a day; once they run out, ${whatHappensAfterFreeCredits()}. Pro includes ${INCLUDED_CREDITS_PER_CYCLE} credits a month, which reset monthly and do not roll over; if you turn on on-demand, extra credits are $0.10 each, billed monthly through Stripe under a hard spend limit you set.`,
                 },
                 {
                   q: "What happens when I run out of credits?",

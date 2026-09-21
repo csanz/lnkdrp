@@ -21,9 +21,9 @@ export type AdminCreditPlan = "pro" | "payg" | "free";
 
 /** The credit rules in force, read from the source-of-truth constants by the caller. */
 export type CreditRuleLimits = {
-  /** `FREE_STARTER_CREDITS`: the one-time grant every non-Pro workspace gets (50 today). */
+  /** `FREE_STARTER_CREDITS`: the one-time grant every non-Pro workspace gets (100 today). */
   starterGrant: number;
-  /** `INCLUDED_CREDITS_PER_CYCLE`: Pro's monthly included credits (300 today), no rollover. */
+  /** `INCLUDED_CREDITS_PER_CYCLE`: Pro's monthly included credits (500 today), no rollover. */
   includedPerCycle: number;
   /** `FREE_DAILY_CREDIT_CAP`: the Free daily brake (15 today); Pro has none. */
   freeDailyCap: number;

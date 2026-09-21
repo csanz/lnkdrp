@@ -11,6 +11,8 @@
 import type { EmailContent } from "./downloadRequest";
 import { emailBody } from "./signature";
 import { getPublicSiteBase } from "@/lib/urls";
+import { FREE_DOCUMENTS } from "@/lib/billing/planLimits";
+import { FREE_STARTER_CREDITS } from "@/lib/credits/grants";
 
 export function waitlistApprovedEmail(params: {
   /** Their first name, when we have one — "You're in, Dana" reads like a person wrote it. */
@@ -30,7 +32,7 @@ export function waitlistApprovedEmail(params: {
       base ? "" : null,
       base ? `Start here: ${base}` : null,
       "",
-      "You're on the free plan: three shared documents with view and download tracking, as many links as you like on each, and 50 credits for the AI summaries and compares. No card needed.",
+      `You're on the free plan: ${FREE_DOCUMENTS} shared documents with view and download tracking, as many links as you like on each, and ${FREE_STARTER_CREDITS} credits for the AI summaries and compares. No card needed.`,
       "",
       "Thanks for waiting.",
     ]),

@@ -3,7 +3,7 @@
  *
  * Client-safe (no database imports): the credits page, the checkout route and the webhook all read
  * this one list, so a price shown is always the price charged. Priced above Pro on purpose — Pro is
- * $29 for 300 credits every month (~$0.10 each) — so the page can honestly point people at Pro when
+ * $29 for 500 credits every month (~$0.10 each) — so the page can honestly point people at Pro when
  * they buy often. Prices live here rather than in the Stripe catalog: Checkout is created with
  * inline `price_data`, so changing a price is a code change and a deploy, not a dashboard edit that
  * could drift from what the page shows.

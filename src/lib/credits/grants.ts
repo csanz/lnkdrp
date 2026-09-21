@@ -4,7 +4,7 @@ import { connectMongo } from "@/lib/mongodb";
 import { CreditLedgerModel } from "@/lib/models/CreditLedger";
 import { WorkspaceCreditBalanceModel } from "@/lib/models/WorkspaceCreditBalance";
 
-export const INCLUDED_CREDITS_PER_CYCLE = 300;
+export const INCLUDED_CREDITS_PER_CYCLE = 500;
 
 /**
  * One-time starter credits for every Free workspace, personal or team (no cycle reset), granted by
@@ -12,7 +12,7 @@ export const INCLUDED_CREDITS_PER_CYCLE = 300;
  * dashboard snapshot) and shown on the pricing card. Each workspace is its own customer with its
  * own plan, so each starts with these. Set to 0 to skip the grant entirely.
  */
-export const FREE_STARTER_CREDITS = 50;
+export const FREE_STARTER_CREDITS = 100;
 
 
 /**

@@ -12,7 +12,7 @@
  * Webhooks remain the primary mechanism. This cron is the backstop.
  *
  * The Free monthly floor pass that ran here until 2026-09-15 is gone with the floor itself:
- * Free is 50 starter credits once, then pay-as-you-go or Pro (`src/lib/billing/subscriptionState.ts`).
+ * Free is 100 starter credits once, then pay-as-you-go or Pro (`src/lib/billing/subscriptionState.ts`).
  */
 import { NextResponse } from "next/server";
 import Stripe from "stripe";

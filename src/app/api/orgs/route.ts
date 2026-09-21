@@ -229,7 +229,7 @@ export async function POST(request: Request) {
     /**
      * How many team workspaces this person may own.
      *
-     * Every other plan limit in the product is counted per workspace — three shared documents, one
+     * Every other plan limit in the product is counted per workspace — ten shared documents, two
      * project, no collaborators — and creating a workspace was free, instant and unlimited. So the
      * Free caps were only ever "per workspace you happen to have", and the way around all of them
      * was the New workspace button. This is the limit that makes the rest mean what they say.

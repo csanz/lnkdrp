@@ -7,6 +7,7 @@
  * session flag so the sidebar can nudge once a limit has been hit.
  */
 import { UPSELL_COPY, upsellKeyForLimit } from "@/lib/client/upsellCopy";
+import { CREDITS_COPY } from "@/lib/client/planNumbers";
 import { CREDIT_PACKS, formatPackPrice } from "@/lib/credits/packs";
 
 /**
@@ -36,29 +37,10 @@ export type PlanLimitError = {
   grace: PlanLimitGrace;
 };
 
-/** Free-plan numbers, mirrored from `src/lib/billing/planLimits.ts` for copy on client surfaces. */
-export const FREE_PLAN_LIMITS_COPY = {
-  documents: 3,
-  projects: 1,
-  analyticsDays: 7,
-} as const;
-
-/**
- * Credit numbers for copy on client surfaces, mirrored from `src/lib/credits/grants.ts`
- * (`FREE_STARTER_CREDITS`, `INCLUDED_CREDITS_PER_CYCLE`), which is server-only.
- */
-export const CREDITS_COPY = {
-  /** One-time starter grant for Free workspaces (no cycle reset). */
-  freeStarter: 50,
-  /** Included credits per billing cycle on Pro. */
-  proPerMonth: 300,
-  /** Free daily brake (`FREE_DAILY_CREDIT_CAP` in `src/lib/credits/creditService.ts`). */
-  freeDailyCap: 15,
-  /** Pay-as-you-go price per credit (`USD_CENTS_PER_CREDIT`), for a Free workspace with a card on file or Pro on-demand. */
-  perCreditUsd: "$0.10",
-  /** "No card needed" family, since Free asks for one only once the starter grant runs out. */
-  noCardToStart: "No card needed to start.",
-} as const;
+// The numbers themselves live in `planNumbers.ts`: `upsellCopy.ts` needs them too and already
+// imports this module, so defining them here would make that a runtime cycle. Re-exported so the
+// ten surfaces that read them from here keep working.
+export { CREDITS_COPY, FREE_PLAN_LIMITS_COPY, comparesFor } from "@/lib/client/planNumbers";
 
 /**
  * The clause that used to be six copies of "topped up every month" scattered across the hero,

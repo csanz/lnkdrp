@@ -7,6 +7,7 @@
  * turns on when its confirmation arrives, whether or not this page is still open.
  */
 "use client";
+import { comparesFor } from "@/lib/client/planNumbers";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -292,7 +293,8 @@ export default function SuccessClient({ demo: demoRaw, proCredits, proCollaborat
               <p className="text-sm text-black/55">AI credits, every month</p>
               <p className="mt-2 font-serif text-6xl leading-none tracking-tight tabular-nums">{proCredits}</p>
               <p className="mt-4 max-w-xs text-sm leading-6 text-black/60">
-                About 60 AI compares at standard quality. Unused credits don’t roll over to the next month.
+                About {comparesFor(proCredits)} AI compares at standard quality. Unused credits don’t roll over to the
+                next month.
               </p>
             </div>
             <div className="border-t border-black/10 p-7 sm:p-8 md:border-l md:border-t-0">

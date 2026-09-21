@@ -23,6 +23,7 @@ import { clampNonNegInt, formatInt } from "@/lib/format/number";
 import { formatDateRange, formatMonthLabel, formatShortDate } from "@/lib/format/date";
 import { formatUsdFromCents, formatUsdOrNotAvailable } from "@/lib/format/money";
 import { openBillingPortal, resumeSubscription } from "@/lib/billing/clientActions";
+import { CREDITS_COPY, comparesFor } from "@/lib/client/planLimit";
 import { usePlan } from "@/lib/client/usePlan";
 import WorkspaceIcon from "@/components/WorkspaceIcon";
 
@@ -909,10 +910,11 @@ export default function BillingInvoicesTab() {
                       , and <span className="font-semibold text-[var(--fg)]">{formatInt(summary!.balances.trialRemaining)}</span> are left
                     </>
                   ) : null}
-                  . Pro includes 300 credits a month, about 60 standard AI compares.
+                  . Pro includes {CREDITS_COPY.proPerMonth} credits a month, about{" "}
+                  {comparesFor(CREDITS_COPY.proPerMonth)} standard AI compares.
                 </>
               ) : (
-                "Includes 300 credits a month, about 60 standard AI compares. Credits reset on your renewal date."
+                `Includes ${CREDITS_COPY.proPerMonth} credits a month, about ${comparesFor(CREDITS_COPY.proPerMonth)} standard AI compares. Credits reset on your renewal date.`
               )}
             </div>
             <button

@@ -4,12 +4,13 @@
  * Two modes read from it: the blocking `UpgradeModal` (opened via `useUpgradeModal()` when an
  * action is refused or a Pro-only control is tapped) and the quiet inline `PlanLimitNotice`
  * (passive states such as the sidebar fallback nudge). Facts mirror `/pricing` and
- * `src/lib/billing/planLimits.ts`: Free = 3 shared documents (links are unlimited), 1 project, 7-day analytics, single user,
+ * `src/lib/billing/planLimits.ts`: Free = 10 shared documents (links are unlimited), 2 projects, 7-day analytics, single user,
  * version history and AI compare on credits; Pro = unlimited links and projects, full analytics
- * history, a version list recipients can browse, 300 credits a month, 1 collaborator included (more on
+ * history, a version list recipients can browse, 500 credits a month, 1 collaborator included (more on
  * request), agents never take a seat.
  */
 import type { PlanLimitKey } from "@/lib/client/planLimit";
+import { CREDITS_COPY, comparesFor } from "@/lib/client/planNumbers";
 
 /** Which upsell to show. `pro` is the generic pitch (sidebar link, no wall hit); the next five mirror API limit keys; `credits` is passive. */
 export type UpsellKey =
@@ -114,7 +115,7 @@ export const UPSELL_COPY: Record<UpsellKey, UpsellCopy> = {
     title: "More credits on Pro",
     reason: "Credits pay for AI runs: the summary on each upload and AI compare. Links, uploads and stats never need credits.",
     bullets: [
-      "300 credits a month, about 60 standard AI compares",
+      `${CREDITS_COPY.proPerMonth} credits a month, about ${comparesFor(CREDITS_COPY.proPerMonth)} standard AI compares`,
       "On-demand credits at $0.10 each, under a spend limit you set",
       "Recipients can browse every version of what you share",
     ],

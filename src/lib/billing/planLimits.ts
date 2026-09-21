@@ -50,9 +50,9 @@ import { liveProjectFilter } from "@/lib/projects/scope";
  * documents was told "11 of 3 · At your link limit". The cap was always on documents and the gates
  * were always on creating or sharing one; only the counting drifted.
  */
-export const FREE_DOCUMENTS = 3;
+export const FREE_DOCUMENTS = 10;
 /** Free plan: non-request projects. */
-export const FREE_PROJECTS = 1;
+export const FREE_PROJECTS = 2;
 /** Free plan: viewer analytics window in days. */
 export const FREE_ANALYTICS_DAYS = 7;
 /** Pro plan: collaborators (members beyond the owner) included in the base price. */

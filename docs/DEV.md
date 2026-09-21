@@ -372,7 +372,7 @@ Stripe API version note (stripe@20 → `2025-12-15.clover`): `current_period_sta
 
 ### Credits & Metered Billing
 
-Pro includes **300 credits per billing cycle** (resets on subscription anniversary):
+Pro includes **500 credits per billing cycle** (resets on subscription anniversary):
 
 ```
 Cycle Key = ${stripeSubscriptionId}:${currentPeriodStartUnixSeconds}

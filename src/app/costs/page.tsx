@@ -12,7 +12,7 @@ import Link from "next/link";
 import PublicFooter from "@/components/PublicFooter";
 import PublicHeader from "@/components/PublicHeader";
 import { COST_CATALOG, FREE_ACTIONS, QUALITY_BLURBS, QUALITY_LABELS, QUALITY_TIERS, costAnchorId } from "@/lib/credits/costCatalog";
-import { INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
+import { FREE_STARTER_CREDITS, INCLUDED_CREDITS_PER_CYCLE } from "@/lib/credits/grants";
 
 export const metadata: Metadata = {
   title: "What credits cost",
@@ -123,7 +123,7 @@ export default function CostsPage() {
           <div className="mt-16 rounded-2xl border border-white/10 bg-white/[0.03] p-7 sm:p-8">
             <h2 className="font-serif text-2xl tracking-tight text-white">Where credits come from</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
-          Every workspace starts with 50 starter credits, once. Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month and can turn
+          Every workspace starts with {FREE_STARTER_CREDITS} starter credits, once. Pro includes {INCLUDED_CREDITS_PER_CYCLE} credits a month and can turn
           on on-demand usage at $0.10 a credit under a spend limit you set. On Free, buy a credit pack from $5.
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px]">
